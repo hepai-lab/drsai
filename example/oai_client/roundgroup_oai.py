@@ -1,0 +1,53 @@
+import sys
+sys.path.append('/home/xiongdb/work/drsai2')
+
+from drsai import AssistantAgent, HepAIAIChatCompletionClient
+
+import asyncio
+from autogen_agentchat.conditions import ExternalTermination, TextMentionTermination
+from autogen_agentchat.teams import RoundRobinGroupChat
+from drsai import AssistantAgent, HepAIAIChatCompletionClient, DrSaiAPP
+import os, json
+import asyncio
+
+# Create an OpenAI model client.
+model_client = HepAIAIChatCompletionClient(
+    model="openai/gpt-4o",
+    # api_key="sk-...", # Optional if you have an HEPAI_API_KEY env variable set.
+)
+
+# Create the primary agent.
+primary_agent = AssistantAgent(
+    "primary",
+    model_client=model_client,
+    system_message="You are a helpful AI assistant.",
+)
+
+# Create the critic agent.
+critic_agent = AssistantAgent(
+    "critic",
+    model_client=model_client,
+    system_message="Provide constructive feedback. Respond with 'APPROVE' to when your feedbacks are addressed.",
+)
+
+# Define a termination condition that stops the task if the critic approves.
+text_termination = TextMentionTermination("APPROVE")
+
+# Create a team with the primary and critic agents.
+team = RoundRobinGroupChat([primary_agent, critic_agent], termination_condition=text_termination)
+
+async def main():
+
+    drsaiapp = DrSaiAPP(agent=team)
+    stream =  drsaiapp.start_chat_completions(messages=[{"content":"Write a short poem about the fall season.", "role":"user"}])
+
+    async for message in stream:
+        oai_json = json.loads(message.split("data: ")[1])
+        textchunck = oai_json["choices"][0]["delta"]["content"]
+        if textchunck:
+            sys.stdout.write(textchunck)
+            sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
