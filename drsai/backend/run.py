@@ -39,7 +39,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
 
     @HRModel.remote_callable
     async def a_chat_completions(self, *args, **kwargs):
-        return self.drsai.a_start_chat_completions(*args, **kwargs)
+        return await self.drsai.a_start_chat_completions(*args, **kwargs)
     
     # @HRModel.remote_callable
     # def models(self, *args, **kwargs):
