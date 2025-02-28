@@ -35,7 +35,7 @@ agent = AssistantAgent(
 async def main():
 
     drsaiapp = DrSaiAPP(agent=agent)
-    stream =  drsaiapp.start_chat_completions(messages=[{"content":"What is the weather in New York?", "role":"user"}])
+    stream =  drsaiapp.a_start_chat_completions(messages=[{"content":"What is the weather in New York?", "role":"user"}])
 
     async for message in stream:
         oai_json = json.loads(message.split("data: ")[1])
@@ -48,4 +48,4 @@ async def main():
 
 if __name__ == "__main__":
     # asyncio.run(main())
-    run_backend(agent=agent)
+    asyncio.run(run_backend(agent=agent))

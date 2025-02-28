@@ -38,12 +38,12 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             yield f"data: {json.dumps(x)}\n\n"
 
     @HRModel.remote_callable
-    def chat_completions(self, *args, **kwargs):
-        return self.drsai.start_chat_completions(*args, **kwargs)
+    async def a_chat_completions(self, *args, **kwargs):
+        return self.drsai.a_start_chat_completions(*args, **kwargs)
     
-    @HRModel.remote_callable
-    def models(self, *args, **kwargs):
-        return self.drsai.a_list_models(*args, **kwargs)
+    # @HRModel.remote_callable
+    # def models(self, *args, **kwargs):
+    #     return self.drsai.a_list_models(*args, **kwargs)
 
         # request = self.params2request(*args, **kwargs)
         # return self.drsai.a_chat_completions(request=request)
@@ -87,7 +87,7 @@ class Run_DrSaiAPP:
         print(self.model_args)
         print(self.worker_args)
 
-    def run_drsai(self, 
+    async def run_drsai(self, 
                   model_name: str = None,
                   host: str = None,
                   port: int = None,
@@ -110,8 +110,17 @@ class Run_DrSaiAPP:
         self.app: FastAPI = HWorkerAPP(model, worker_config=self.worker_args)  # Instantiate the APP, which is a FastAPI application.
         self.app.include_router(model.drsai.router)
         print(self.app.worker.get_worker_info(), flush=True)
-        # 启动服务
-        uvicorn.run(self.app, host=self.app.host, port=self.app.port)
+        # # 启动服务
+        # uvicorn.run(self.app, host=self.app.host, port=self.app.port)
+        # 创建uvicorn配置和服务实例
+        config = uvicorn.Config(
+            self.app, 
+            host=self.worker_args.host,  # 确保这里使用的是正确的host参数
+            port=self.worker_args.port   # 确保这里使用的是正确的port参数
+        )
+        server = uvicorn.Server(config)
+        # 在现有事件循环中启动服务
+        await server.serve()
 
 async def run_console(agent: AssistantAgent|BaseGroupChat, task: str, **kwargs):
     drsaiapp = DrSaiAPP(agent = agent)
@@ -122,7 +131,7 @@ async def run_console(agent: AssistantAgent|BaseGroupChat, task: str, **kwargs):
     except Exception as e:
         raise "Error: " + str(e)
 
-def run_backend(agent: AssistantAgent|BaseGroupChat, **kwargs):
+async def run_backend(agent: AssistantAgent|BaseGroupChat, **kwargs):
     '''
     启动后端服务
     '''
@@ -132,7 +141,7 @@ def run_backend(agent: AssistantAgent|BaseGroupChat, **kwargs):
     host: str =  kwargs.get("host", None)
     port: int =  kwargs.get("port", None)
     no_register: bool =  kwargs.get("no_register", True)
-    Run_DrSaiAPP().run_drsai(
+    await Run_DrSaiAPP().run_drsai(
         model_name=model_name,
         host=host,
         port=port,
@@ -140,7 +149,7 @@ def run_backend(agent: AssistantAgent|BaseGroupChat, **kwargs):
         drsaiapp=drsaiapp
     )
 
-def run_hepai_worker(agent: AssistantAgent|BaseGroupChat, **kwargs):
+async def run_hepai_worker(agent: AssistantAgent|BaseGroupChat, **kwargs):
     '''
     启动Hepai Worker
     '''
@@ -150,7 +159,7 @@ def run_hepai_worker(agent: AssistantAgent|BaseGroupChat, **kwargs):
     host: str =  kwargs.get("host", None)
     port: int =  kwargs.get("port", None)
     no_register: bool =  kwargs.get("no_register", False)
-    Run_DrSaiAPP().run_drsai(
+    await Run_DrSaiAPP().run_drsai(
         model_name=model_name,
         host=host,
         port=port,
