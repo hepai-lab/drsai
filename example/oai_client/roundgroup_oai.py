@@ -21,6 +21,7 @@ primary_agent = AssistantAgent(
     "primary",
     model_client=model_client,
     system_message="You are a helpful AI assistant.",
+    model_client_stream=True,
 )
 
 # Create the critic agent.
@@ -28,6 +29,7 @@ critic_agent = AssistantAgent(
     "critic",
     model_client=model_client,
     system_message="Provide constructive feedback. Respond with 'APPROVE' to when your feedbacks are addressed.",
+    model_client_stream=True,
 )
 
 # Define a termination condition that stops the task if the critic approves.
@@ -39,7 +41,7 @@ team = RoundRobinGroupChat([primary_agent, critic_agent], termination_condition=
 async def main():
 
     drsaiapp = DrSaiAPP(agent=team)
-    stream =  drsaiapp.start_chat_completions(messages=[{"content":"Write a short poem about the fall season.", "role":"user"}])
+    stream =  drsaiapp.a_start_chat_completions(messages=[{"content":"Write a short poem about the fall season.", "role":"user"}])
 
     async for message in stream:
         oai_json = json.loads(message.split("data: ")[1])

@@ -199,7 +199,7 @@ class DrSai:
         usermessage = messages[-1]["content"]
         # 大模型配置
         api_key = kwargs.pop('api_key', None)
-        temperature = kwargs.pop('temperature', 0)
+        temperature = kwargs.pop('temperature', 0.6)
         top_p = kwargs.pop('top_p', 1)
         cache_seed = kwargs.pop('cache_seed', None)
         # 额外的请求参数
@@ -214,14 +214,32 @@ class DrSai:
         oai_chunk = copy.deepcopy(chatcompletionchunk)
         res = self.agent.run_stream(task=usermessage)
         tool_flag = 0
+        role = ""
         async for message in res:
             # print(message)
             if isinstance(message, ModelClientStreamingChunkEvent):
-                if stream:
+                if stream and isinstance(self.agent, BaseChatAgent):
                     content = message.content
                     oai_chunk["choices"][0]["delta"]['content'] = content
                     oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
                     yield f'data: {json.dumps(oai_chunk)}\n\n'
+                elif stream and isinstance(self.agent, BaseGroupChat):
+                    role_tmp = message.source
+                    if role != role_tmp:
+                        role = role_tmp
+                        oai_chunk["choices"][0]["delta"]['content'] = f"\n**Speaker: {role}**\n\n"
+                        oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
+                        yield f'data: {json.dumps(oai_chunk)}\n\n'
+                    content = message.content
+                    oai_chunk["choices"][0]["delta"]['content'] = content
+                    oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
+                    yield f'data: {json.dumps(oai_chunk)}\n\n'
+                    
+                else:
+                    if stream:
+                        raise ValueError("No valid agent type for chat completions")
+                    else:
+                        pass
             elif isinstance(message, TaskResult):
                 if stream:
                     # 最后一个chunk
@@ -238,17 +256,24 @@ class DrSai:
                         content = message.content
                         chatcompletions["choices"][0]["message"]["content"] = content
                         yield f'data: {json.dumps(chatcompletions)}\n\n'
-                if isinstance(self.agent, BaseGroupChat):
+                elif (not stream) and isinstance(self.agent, BaseGroupChat):
                     if message.source!="user":
                         content = message.content
                         source = message.source
                         content = f"\nSpeaker: {source}\n\n{content}\n\n"
-                        content_list: List[str] = split_string(content, 5)
-                        for chunk in content_list:
-                            oai_chunk["choices"][0]["delta"]['content'] = chunk
-                            oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
-                            yield f'data: {json.dumps(oai_chunk)}\n\n'
-                            asyncio.sleep(0.1)
+                        chatcompletions["choices"][0]["message"]["content"] = content
+                        yield f'data: {json.dumps(chatcompletions)}\n\n'
+                        # content_list: List[str] = split_string(content, 5)
+                        # for chunk in content_list:
+                        #     oai_chunk["choices"][0]["delta"]['content'] = chunk
+                        #     oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
+                        #     yield f'data: {json.dumps(oai_chunk)}\n\n'
+                        #     asyncio.sleep(0.1)
+                else:
+                    if (not stream):
+                        raise ValueError("No valid agent type for chat completions")
+                    else:
+                        pass
             elif isinstance(message, ToolCallRequestEvent):
                 tool_flag = 1
                 tool_content: List[FunctionCall]=message.content

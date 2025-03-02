@@ -92,6 +92,7 @@ class Run_DrSaiAPP:
                   host: str = None,
                   port: int = None,
                   no_register: bool = True,
+                  controller_address: str = "http://localhost:42601",
                   drsaiapp: DrSaiAPP = DrSaiAPP):  # 传入DrSaiAPP实例:
         
         if isinstance(drsaiapp, type): # 传入DrSaiAPP类而不是实例
@@ -107,6 +108,7 @@ class Run_DrSaiAPP:
             self.worker_args.port = port
         if no_register is not None:
             self.worker_args.no_register = no_register
+        self.worker_args.controller_address = controller_address
         self.app: FastAPI = HWorkerAPP(model, worker_config=self.worker_args)  # Instantiate the APP, which is a FastAPI application.
         self.app.include_router(model.drsai.router)
         print(self.app.worker.get_worker_info(), flush=True)
@@ -141,11 +143,13 @@ async def run_backend(agent: AssistantAgent|BaseGroupChat, **kwargs):
     host: str =  kwargs.get("host", None)
     port: int =  kwargs.get("port", None)
     no_register: bool =  kwargs.get("no_register", True)
+    controller_address: str =  kwargs.get("controller_address", "http://localhost:42601")
     await Run_DrSaiAPP().run_drsai(
         model_name=model_name,
         host=host,
         port=port,
         no_register=no_register,
+        controller_address=controller_address,
         drsaiapp=drsaiapp
     )
 
@@ -159,10 +163,12 @@ async def run_hepai_worker(agent: AssistantAgent|BaseGroupChat, **kwargs):
     host: str =  kwargs.get("host", None)
     port: int =  kwargs.get("port", None)
     no_register: bool =  kwargs.get("no_register", False)
+    controller_address: str =  kwargs.get("controller_address", "https://aiapi.ihep.ac.cn")
     await Run_DrSaiAPP().run_drsai(
         model_name=model_name,
         host=host,
         port=port,
         no_register=no_register,
+        controller_address=controller_address,
         drsaiapp=drsaiapp
     )
