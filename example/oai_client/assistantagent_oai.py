@@ -48,5 +48,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+    # from drsai import run_console, run_backend, run_hepai_worker
+    # asyncio.run(run_console(team, "What is the weather in New York?"))
     # asyncio.run(run_backend(agent=agent))
     # asyncio.run(run_hepai_worker(agent=agent))
