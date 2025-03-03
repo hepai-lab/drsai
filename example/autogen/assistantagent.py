@@ -1,14 +1,14 @@
 import sys
 sys.path.append('/home/xiongdb/work/drsai2')
 
-from drsai import AssistantAgent, HepAIAIChatCompletionClient
+from drsai import AssistantAgent, HepAIChatCompletionClient
 from autogen_agentchat.ui import Console
 import os
 import asyncio
 
 # Define a model client. You can use other model client that implements
 # the `ChatCompletionClient` interface.
-model_client = HepAIAIChatCompletionClient(
+model_client = HepAIChatCompletionClient(
     model="openai/gpt-4o",
     # api_key=os.environ.get("HEPAI_API_KEY"),
 )

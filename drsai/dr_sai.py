@@ -46,6 +46,7 @@ class DrSai:
     def __init__(self, **kwargs):
         self.username = "anonymous"
         self.agent: AssistantAgent|BaseGroupChat = kwargs.pop('agent', None)
+        self.stream = False if not isinstance(self.agent, AssistantAgent) else self.agent._model_client_stream
 
     #### --- 关于AutoGen --- ####
     async def start_console(
@@ -83,7 +84,7 @@ class DrSai:
         **kwargs: 其他参数
         """
         # 是否使用流式模式
-        stream = kwargs.pop('stream', True)
+        stream = kwargs.pop('stream', self.stream)
         # 传入的消息列表
         messages: List[Dict[str, str]] = kwargs.pop('messages', [])
         usermessage = messages[-1]["content"]
@@ -193,7 +194,7 @@ class DrSai:
         **kwargs: 其他参数
         """
         # 是否使用流式模式
-        stream = kwargs.pop('stream', True)
+        stream = kwargs.pop('stream', self.stream)
         # 传入的消息列表
         messages: List[Dict[str, str]] = kwargs.pop('messages', [])
         usermessage = messages[-1]["content"]

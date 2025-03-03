@@ -5,7 +5,7 @@ from autogen_core.models import ModelFamily
 from typing_extensions import Unpack
 import os
 
-class HepAIAIChatCompletionClient(OpenAIChatCompletionClient):
+class HepAIChatCompletionClient(OpenAIChatCompletionClient):
 
     def __init__(self, **kwargs: Unpack[OpenAIClientConfiguration]):
 

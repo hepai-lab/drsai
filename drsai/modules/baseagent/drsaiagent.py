@@ -2,19 +2,22 @@ from typing import AsyncGenerator, List, Sequence, Dict, Any, Callable, Awaitabl
 import asyncio
 import logging
 import warnings
+import inspect
 
 from autogen_core import CancellationToken, FunctionCall
 from autogen_core.tools import BaseTool
 from autogen_core.memory import Memory
 from autogen_core.model_context import ChatCompletionContext
 from autogen_core.models import (
-    AssistantMessage,
     ChatCompletionClient,
     CreateResult,
     FunctionExecutionResult,
     FunctionExecutionResultMessage,
     LLMMessage,
     UserMessage,
+    AssistantMessage,
+    SystemMessage,
+    RequestUsage
 )
 from autogen_core import EVENT_LOGGER_NAME
 from autogen_agentchat.agents import AssistantAgent
@@ -56,8 +59,14 @@ class DrSaiAgent(AssistantAgent):
             reflect_on_tool_use: bool = False,
             tool_call_summary_format: str = "{result}",
             memory: Sequence[Memory] | None = None,
+            memory_function: Callable = None,
+            reply_function: Callable = None,
             **kwargs,
             ):
+        '''
+        memory_function: 自定义的memory_function，用于RAG检索等功能，为大模型回复增加最新的知识
+        reply_function: 自定义的reply_function，用于自定义对话回复的定制
+        '''
         super().__init__(
             name, 
             model_client,
@@ -72,7 +81,8 @@ class DrSaiAgent(AssistantAgent):
             memory=memory
             )
         
-        self.on_messages_stream_function = kwargs.get("on_messages_stream_function", self.on_messages_stream)
+        self._reply_function = reply_function
+        self._memory_function = memory_function
 
     @property
     def produced_message_types(self) -> Sequence[type[ChatMessage]]:
@@ -84,6 +94,34 @@ class DrSaiAgent(AssistantAgent):
             message_types.append(ToolCallSummaryMessage)
         return tuple(message_types)
     
+    async def llm_messages2oai_messages(self, llm_messages: List[LLMMessage]) -> List[Dict[str, str]]:
+        """Convert a list of LLM messages to a list of OAI chat messages."""
+        messages = []
+        for llm_message in llm_messages:
+            if isinstance(llm_message, SystemMessage):
+                messages.append({"role": "system", "content": llm_message.content} )
+            if isinstance(llm_message, UserMessage):
+                messages.append({"role": "user", "content": llm_message.content, "name": llm_message.source})
+            if isinstance(llm_message, AssistantMessage):
+                messages.append({"role": "assistant", "content": llm_message.content, "name": llm_message.source})
+            if isinstance(llm_message, FunctionExecutionResultMessage):
+                messages.append({"role": "function", "content": llm_message.content})
+        return messages
+    
+    async def oai_messages2llm_messages(self, oai_messages: List[Dict[str, str]]) -> List[LLMMessage]:
+        """Convert a list of OAI chat messages to a list of LLM messages."""
+        messages = []
+        for oai_message in oai_messages:
+            if oai_message["role"] == "system":
+                messages.append(SystemMessage(content=oai_message["content"]))
+            if oai_message["role"] == "user":
+                messages.append(UserMessage(content=oai_message["content"], source=oai_message.get("name", self.name)))
+            if oai_message["role"] == "assistant":
+                messages.append(AssistantMessage(content=oai_message["content"], source=oai_message.get("name", self.name)))
+            if oai_message["role"] == "function":
+                messages.append(FunctionExecutionResultMessage(content=oai_message["content"]))
+        return messages
+
     async def on_messages(self, messages: Sequence[ChatMessage], cancellation_token: CancellationToken) -> Response:
         async for message in self.on_messages_stream(messages, cancellation_token):
             if isinstance(message, Response):
@@ -93,6 +131,11 @@ class DrSaiAgent(AssistantAgent):
     async def on_messages_stream(
         self, messages: Sequence[ChatMessage], cancellation_token: CancellationToken
     ) -> AsyncGenerator[AgentEvent | ChatMessage | Response, None]:
+        '''
+        支持用于传入自定义的memory_function和reply_function
+        memory_function: 自定义的memory_function，用于RAG检索等功能，为大模型回复增加最新的知识
+        reply_function: 自定义的reply_function，用于自定义对话回复的定制
+        '''
         # Add messages to the model context.
         for msg in messages:
             if isinstance(msg, HandoffMessage):
@@ -117,23 +160,69 @@ class DrSaiAgent(AssistantAgent):
 
         # Generate an inference result based on the current model context.
         llm_messages = self._get_compatible_context(self._system_messages + await self._model_context.get_messages())
+        
+        # memory_function: 自定义的memory_function，用于RAG检索等功能，为大模型回复增加最新的知识
+        if self._memory_function is not None:
+            memory_messages = await self.llm_messages2oai_messages(llm_messages)
+            try:
+                memory_messages_with_new_knowledge: List[Dict[str, str]] = await self._memory_function(memory_messages)
+                llm_messages = await self.oai_messages2llm_messages(memory_messages_with_new_knowledge)
+            except Exception as e:
+                raise ValueError(f"Error: memory_function: {self._memory_function.__name__} failed with error {e}.")
+
+        
         model_result: CreateResult | None = None
-        if self._model_client_stream:
-            # Stream the model client.
-            async for chunk in self._model_client.create_stream(
-                llm_messages, tools=self._tools + self._handoff_tools, cancellation_token=cancellation_token
-            ):
-                if isinstance(chunk, CreateResult):
-                    model_result = chunk
-                elif isinstance(chunk, str):
-                    yield ModelClientStreamingChunkEvent(content=chunk, source=self.name)
-                else:
-                    raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
-            assert isinstance(model_result, CreateResult)
+
+        if self._reply_function is not None:
+            oai_messages = await self.llm_messages2oai_messages(llm_messages)
+            if self._model_client_stream:
+                # 如果reply_function不是返回一个异步生成器而使用了流式模式，则会报错
+                if not inspect.isasyncgenfunction(self._reply_function):
+                    raise ValueError("reply_function must be a coroutine function if model_client_stream is True.")
+                # Stream the reply_function.
+                response = ""
+                async for chunk in self._reply_function(
+                    oai_messages, tools=self._tools + self._handoff_tools, cancellation_token=cancellation_token
+                    ):
+                    if isinstance(chunk, str):
+                        yield ModelClientStreamingChunkEvent(content=chunk, source=self.name)
+                        response += chunk
+                    else:
+                        raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
+                assert isinstance(response, str)
+                model_result = CreateResult(
+                    content=response, finish_reason="stop",
+                    usage = RequestUsage(prompt_tokens=0, completion_tokens=0),
+                    cached=False)
+            else:
+                # 如果reply_function不是异步函数，或者是一个异步生成器，则会报错
+                if not asyncio.iscoroutinefunction(self._reply_function) and not inspect.isasyncgenfunction(self._reply_function):
+                    raise ValueError("reply_function must be a coroutine function if model_client_stream is False.")
+                response = await self._reply_function(
+                    oai_messages, tools=self._tools + self._handoff_tools, cancellation_token=cancellation_token
+                    )
+                model_result = CreateResult(
+                    content=response, finish_reason="stop",
+                    usage = RequestUsage(prompt_tokens=0, completion_tokens=0),
+                    cached=False)
+            # pass
         else:
-            model_result = await self._model_client.create(
-                llm_messages, tools=self._tools + self._handoff_tools, cancellation_token=cancellation_token
-            )
+            if self._model_client_stream:
+                # Stream the model client.
+                async for chunk in self._model_client.create_stream(
+                    llm_messages, tools=self._tools + self._handoff_tools, cancellation_token=cancellation_token
+                ):
+                    if isinstance(chunk, CreateResult):
+                        model_result = chunk
+                    elif isinstance(chunk, str):
+                        yield ModelClientStreamingChunkEvent(content=chunk, source=self.name)
+                    else:
+                        raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
+                assert isinstance(model_result, CreateResult)
+            else:
+                model_result = await self._model_client.create(
+                    llm_messages, tools=self._tools + self._handoff_tools, cancellation_token=cancellation_token
+                )
 
         # Add the response to the model context.
         await self._model_context.add_message(AssistantMessage(content=model_result.content, source=self.name))
