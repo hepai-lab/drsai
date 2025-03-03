@@ -84,8 +84,6 @@ class Run_DrSaiAPP:
             **kwargs
             ):
         self.model_args, self.worker_args = hepai.parse_args((model_args, worker_args))
-        print(self.model_args)
-        print(self.worker_args)
 
     async def run_drsai(self, 
                   model_name: str = None,
@@ -109,6 +107,12 @@ class Run_DrSaiAPP:
         if no_register is not None:
             self.worker_args.no_register = no_register
         self.worker_args.controller_address = controller_address
+        
+        print(self.model_args)
+        print()
+        print(self.worker_args)
+        print()
+        # 实例化HWorkerAPP
         self.app: FastAPI = HWorkerAPP(model, worker_config=self.worker_args)  # Instantiate the APP, which is a FastAPI application.
         self.app.include_router(model.drsai.router)
         print(self.app.worker.get_worker_info(), flush=True)
