@@ -20,13 +20,17 @@ async def get_weather(city: str) -> str:
     """Get the weather for a given city."""
     return f"The weather in {city} is 73 degrees and Sunny."
 
+async def write_code(request: str) -> str:
+    """Write code for a given request."""
+    return f"{request}."
 
 # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
 # The system message instructs the agent via natural language.
 agent = AssistantAgent(
     name="weather_agent",
+    description="A weather agent that can provide weather information.",
     model_client=model_client,
-    tools=[get_weather],
+    tools=[get_weather, write_code],
     system_message="You are a helpful assistant.",
     reflect_on_tool_use=False,
     model_client_stream=True,  # Enable streaming tokens from the model client.
@@ -42,7 +46,7 @@ agent = AssistantAgent(
 # asyncio.run(main())
 
 from drsai import run_console, run_backend, run_hepai_worker
-asyncio.run(run_console(agent, "What is the weather in New York?"))
+asyncio.run(run_console(agent, "please write python code to calculate the area of a rectangle"))
 
 # {"messages":
 #  [{"content":"You are a helpful assistant.","role":"system"},

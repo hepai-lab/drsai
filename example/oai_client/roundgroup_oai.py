@@ -41,7 +41,10 @@ team = RoundRobinGroupChat([primary_agent, critic_agent], termination_condition=
 async def main():
 
     drsaiapp = DrSaiAPP(agent=team)
-    stream =  drsaiapp.a_start_chat_completions(messages=[{"content":"Write a short poem about the fall season.", "role":"user"}])
+    stream =  drsaiapp.a_start_chat_completions(
+        messages=[{"content":"Write a short poem about the fall season.", "role":"user"}],
+        stream=True,
+        )
 
     async for message in stream:
         oai_json = json.loads(message.split("data: ")[1])
