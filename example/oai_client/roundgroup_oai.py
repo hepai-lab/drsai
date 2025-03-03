@@ -5,7 +5,7 @@ from drsai import AssistantAgent, HepAIChatCompletionClient
 
 import asyncio
 from autogen_agentchat.conditions import ExternalTermination, TextMentionTermination
-from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
 import os, json
 import asyncio
