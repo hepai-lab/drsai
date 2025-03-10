@@ -5,3 +5,4 @@ autogen-core>=0.4.7
 autogen-ext>=0.4.7
 hepai>=1.1.29
 schedule>=1.2.2
+tiktoken>=0.9.0

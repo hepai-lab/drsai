@@ -16,6 +16,7 @@ setup(
         "autogen-ext>=0.4.7",
         "hepai>=1.1.29",
         "schedule>=1.2.2",
+        "tiktoken>=0.9.0",
         ],
     classifiers=[  # 分类标签，帮助用户找到你的项目
         "Programming Language :: Python :: 3",
