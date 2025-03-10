@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="DrSai",  # 项目名称
-    version="0.4.1",  # 版本号
+    version="0.4.3",  # 版本号
     author="HepAI",  # 作者信息
     author_email="hepai@ihep.ac.cn",  # 作者邮箱
     description="A development framework for single and multi-agent collaborative systems developed by the Dr.Sai team at the IHEP, CAS.",  # 项目描述
