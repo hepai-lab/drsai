@@ -1,5 +1,3 @@
-import sys
-sys.path.append('/home/xiongdb/work/drsai2')
 
 from drsai import AssistantAgent, HepAIChatCompletionClient
 from autogen_agentchat.ui import Console

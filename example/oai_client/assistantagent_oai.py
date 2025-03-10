@@ -1,7 +1,8 @@
+import sys
 try:
     import drsai
 except ImportError:
-    import sys
+    
     sys.path.append("../../drsai")
 
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_hepai_worker, run_backend
