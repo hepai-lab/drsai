@@ -1,5 +1,8 @@
-import sys
-sys.path.append('/home/xiongdb/work/drsai2')
+try:
+    import drsai
+except ImportError:
+    import sys
+    sys.path.append("../../drsai")
 
 from drsai import HepAIChatCompletionClient
 from drsai import AssistantAgent, UserProxyAgent
