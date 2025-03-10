@@ -192,7 +192,7 @@ client = HepAI(api_key=HEPAI_API_KEY, base_url=base_url)
 completion = client.chat.completions.create(
   model='hepai/Dr-Sai',
   messages=[
-    {"role": "user", "content": "请使用百度搜索什么是Ptychography?"}
+    {"role": "user", "content": "What is the weather in New York?"}
   ],
   stream=True
 )
