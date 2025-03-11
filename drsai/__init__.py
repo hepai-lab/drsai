@@ -9,7 +9,6 @@ from drsai.backend.run import (
 from drsai.backend.app_worker import DrSaiAPP
 
 from autogen_agentchat.agents import (
-    AssistantAgent, 
     UserProxyAgent, 
     BaseChatAgent,
     CodeExecutorAgent, 
