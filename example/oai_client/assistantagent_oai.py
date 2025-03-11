@@ -1,9 +1,13 @@
-import sys
 try:
     import drsai
 except ImportError:
-    
-    sys.path.append("../../drsai")
+    import sys
+    import os
+    current_file_path = os.path.abspath(__file__)
+    current_directory = os.path.dirname(current_file_path)
+    drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
+    sys.path.append(drsai_path)
+
 
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_hepai_worker, run_backend
 import os, json

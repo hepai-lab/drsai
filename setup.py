@@ -11,9 +11,9 @@ setup(
     url="https://code.ihep.ac.cn/hepai/drsai/-/tree/drsai-0.4?ref_type=heads",  # 项目主页
     packages=find_packages(),  # 自动寻找项目中的包
     install_requires=[  # 项目的依赖包列表
-        "autogen-agentchat>=0.4.7",
-        "autogen-core>=0.4.7",
-        "autogen-ext>=0.4.7",
+        "autogen-agentchat>=0.4.8",
+        "autogen-core>=0.4.8",
+        "autogen-ext>=0.4.8",
         "hepai>=1.1.29",
         "schedule>=1.2.2",
         "tiktoken>=0.9.0",
