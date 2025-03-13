@@ -182,13 +182,14 @@ async def run_hepai_worker(agent: AssistantAgent|BaseGroupChat, **kwargs):
 
 async def run_pipelines(pipelines_port: int = 9097, **kwargs):
 
-    NOTES=f"""++++++++++++++++++++++++++++++++
+    NOTES=f"""++++++++++++++++++++++++++++++++\n\n
 Open-webui pipelines is starting... \n
 If any error, maybe you need to install open-webui first:
 ```
 pip install open-webui
 ```
-Any requriments refrence to https://github.com/open-webui/pipelines\n"
+Any requriments refrence to https://github.com/open-webui/pipelines"
+
 """
     print(NOTES)
 
@@ -226,10 +227,12 @@ Any requriments refrence to https://github.com/open-webui/pipelines\n"
         stderr=subprocess.PIPE
     )
 
+    print("++++++++++++++++++++++++++++++++ \n\n")
+
 
 async def run_openwebui(openwebui_port: int = 8088, **kwargs):
 
-    NOTES= f'''++++++++++++++++++++++++++++++++
+    NOTES= f'''++++++++++++++++++++++++++++++++\n\n
 Open-webui frontend is starting... \n
 If any error, maybe you need to install open-webui first:
 ```
@@ -271,19 +274,18 @@ Any requriments refrence to https://github.com/open-webui/open-webui \n
         stderr=subprocess.PIPE
     )
 
+    print("++++++++++++++++++++++++++++++++ \n\n")
+
 async def run_drsai_app(agent: AssistantAgent|BaseGroupChat, **kwargs):
     ''''
     pm2 启动drsai后端/openwebui pipelines/openwebui前端
     '''
-    # # 启动 drsai FASTAPI 后端服务
-    # print("Starting drsai backend...\n")
-    # await run_backend(agent, **kwargs)
-
-    # # 启动openwebui pipelines FASTAPI 后端服务
-    # await run_pipelines(**kwargs)
-
-    # # 启动openwebui frontend
-    # await run_openwebui(**kwargs)
+    # 检查是否安装了pm2
+    try:
+        subprocess.check_output("pm2 -v", shell=True)
+    except:
+        print("Please install pm2 first: `npm install -g pm2`")
+        return
 
     # 并行启动所有服务
     await asyncio.gather(

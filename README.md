@@ -170,8 +170,9 @@ asyncio.run(run_console(agent, "What is the weather in New York?"))
 ### 4.1.部署为OpenAI格式的后端模型服务/HepAI worker服务
 ```python
 from DrSai import run_backend, run_hepai_worker
-run_backend(agent) # 部署为OpenAI格式的后端模型服务
-# run_hepai_worker(agent) # 部署为HepAI worker服务
+import asyncio
+asyncio.run(run_backend(agent)) # 部署为OpenAI格式的后端模型服务
+# asyncio.run(run_hepai_worker(agent)) # 部署为HepAI worker服务
 ```
 
 ### 4.2.使用HepAI client访问的方式访问定制好的智能体
@@ -202,13 +203,26 @@ for chunk in completion:
 print('\n')
 ```
 
-## 5.详细文档
+## 5.OpenWebUI Pipeline接入
+
+一键启动DrSai的OpenWebUI Pipeline和OpenWebUI服务：
+```shell
+pip install openwebui
+```
+
+```python
+from DrSai import run_drsai_app
+import asyncio
+asyncio.run(run_drsai_app(agent=agent))
+```
+
+## 6.详细文档
 见docs目录：
 ```shell
 开发中
 ```
 
-## 6.联系我们
+## 7.联系我们
 
 - 邮箱：hepai@ihep.ac.cn/xiongdb@ihep.ac.cn
 - 微信：xiongdongbo_12138

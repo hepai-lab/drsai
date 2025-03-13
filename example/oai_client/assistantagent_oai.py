@@ -63,4 +63,4 @@ if __name__ == "__main__":
     # asyncio.run(run_console(agent, "What is the weather in New York?"))
     # asyncio.run(run_backend(agent=agent))
     # asyncio.run(run_hepai_worker(agent=agent))
-    # asyncio.run(run_drsai_app(agent=agent))
+    asyncio.run(run_drsai_app(agent=agent))
