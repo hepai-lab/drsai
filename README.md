@@ -205,7 +205,15 @@ print('\n')
 
 ## 5.OpenWebUI Pipeline接入
 
-一键启动DrSai的OpenWebUI Pipeline和OpenWebUI服务：
+- 检查本地是否安装了```pm2```后台任务管理工具：
+
+```shell
+pm2 -v
+```
+具体见：https://pm2.io/docs/plus/quick-start/
+
+- 一键启动DrSai的OpenWebUI Pipeline和OpenWebUI服务：
+
 ```shell
 pip install openwebui
 ```
