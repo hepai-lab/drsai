@@ -208,7 +208,11 @@ print('\n')
 开发中
 ```
 
-## 6.联系我们
+## 6.OpenWebUI Pipeline接入
+
+
+
+## 7.联系我们
 
 - 邮箱：hepai@ihep.ac.cn/xiongdb@ihep.ac.cn
 - 微信：xiongdongbo_12138

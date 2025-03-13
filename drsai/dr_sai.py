@@ -4,7 +4,7 @@ import copy, json, time, asyncio
 
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent, BaseChatAgent
 from autogen_agentchat.base import Response, TaskResult
-from autogen_core import FunctionCall
+from autogen_core import FunctionCall, CancellationToken
 from autogen_agentchat.messages import (
     AgentEvent,
     ChatMessage,
@@ -247,6 +247,16 @@ class DrSai:
              self.username = kwargs.get('username', "anonymous")
         
         oai_chunk = copy.deepcopy(chatcompletionchunk)
+
+        # 启动聊天任务
+        ## 清空历史聊天记录
+        if isinstance(self.agent, AssistantAgent):
+            await self.agent.on_reset(CancellationToken())
+        elif isinstance(self.agent, BaseGroupChat):
+            await self.agent.reset()
+        ## TODO: 将前端的聊天记录作为memory重新加载
+        
+
         res = self.agent.run_stream(task=usermessage)
         tool_flag = 0
         role = ""

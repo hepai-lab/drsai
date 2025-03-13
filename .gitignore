@@ -33,3 +33,5 @@ DrSai/repos/*
 DrSai.egg-info/
 dist/
 build/
+
+.webui_secret_key

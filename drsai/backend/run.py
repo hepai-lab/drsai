@@ -7,10 +7,13 @@ from hepai import HRModel, HModelConfig, HWorkerConfig, HWorkerAPP
 import hepai
 
 import json
+import os, subprocess
 from dataclasses import dataclass, field
 from typing import Dict, List, Union
 from fastapi import FastAPI
 import uvicorn
+from uvicorn import Server, Config
+import asyncio
 
 class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from HRModel.
     def __init__(
@@ -175,4 +178,116 @@ async def run_hepai_worker(agent: AssistantAgent|BaseGroupChat, **kwargs):
         no_register=no_register,
         controller_address=controller_address,
         drsaiapp=drsaiapp
+    )
+
+async def run_pipelines(pipelines_port: int = 9097, **kwargs):
+
+    NOTES=f"""++++++++++++++++++++++++++++++++
+Open-webui pipelines is starting... \n
+If any error, maybe you need to install open-webui first:
+```
+pip install open-webui
+```
+Any requriments refrence to https://github.com/open-webui/pipelines\n"
+"""
+    print(NOTES)
+
+    # 获取当前文件夹路径
+    current_path = os.path.dirname(os.path.abspath(__file__))
+    # 获取pipelines文件夹路径./pipelines/main.py
+    pipelines_path = os.path.join(current_path, "pipelines")
+    command = f"pm2 start -n pipelines --cwd {pipelines_path} 'python main.py --port {pipelines_port}'"
+
+    print(f"command: {command}")
+
+    # 使用subprocess的asyncio接口来异步执行命令
+    process = await asyncio.create_subprocess_shell(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    
+    # 获取命令输出
+    stdout, stderr = await process.communicate()
+    
+    # 打印输出信息
+    print(f'[Standard output]\n{stdout.decode()}')
+    print(f'[Standard error]\n{stderr.decode()}')
+    
+    # 检查命令是否执行成功
+    if process.returncode == 0:
+        print(f'Command executed successfully, please visit http://localhost:{pipelines_port}\n"pm2 logs pipelines" to check logs. ')
+    else:
+        print('Command execution failed')
+    
+    await asyncio.create_subprocess_shell(
+        "pm2 save",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+
+
+async def run_openwebui(openwebui_port: int = 8088, **kwargs):
+
+    NOTES= f'''++++++++++++++++++++++++++++++++
+Open-webui frontend is starting... \n
+If any error, maybe you need to install open-webui first:
+```
+pip install open-webui
+```
+Any requriments refrence to https://github.com/open-webui/open-webui \n
+'''
+    print(NOTES)
+
+    # 将huggface镜像站点添加到环境变量：
+    os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+
+    # 构建命令
+    command = f"pm2 start -n open-webui 'open-webui serve --port {openwebui_port}'"
+    
+    # 使用subprocess的asyncio接口来异步执行命令
+    process = await asyncio.create_subprocess_shell(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    
+    # 获取命令输出
+    stdout, stderr = await process.communicate()
+    
+    # 打印输出信息
+    print(f'[Standard output]\n{stdout.decode()}')
+    print(f'[Standard error]\n{stderr.decode()}')
+    
+    # 检查命令是否执行成功
+    if process.returncode == 0:
+        print(f'Command executed successfully, please visit http://localhost:{openwebui_port}\n"pm2 logs open-webui" to check logs. ')
+    else:
+        print('Command execution failed')
+    
+    await asyncio.create_subprocess_shell(
+        "pm2 save",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+
+async def run_drsai_app(agent: AssistantAgent|BaseGroupChat, **kwargs):
+    ''''
+    pm2 启动drsai后端/openwebui pipelines/openwebui前端
+    '''
+    # # 启动 drsai FASTAPI 后端服务
+    # print("Starting drsai backend...\n")
+    # await run_backend(agent, **kwargs)
+
+    # # 启动openwebui pipelines FASTAPI 后端服务
+    # await run_pipelines(**kwargs)
+
+    # # 启动openwebui frontend
+    # await run_openwebui(**kwargs)
+
+    # 并行启动所有服务
+    await asyncio.gather(
+        run_backend(agent, **kwargs),
+        run_pipelines(**kwargs),
+        run_openwebui(**kwargs)
     )

@@ -17,7 +17,8 @@ import asyncio
 # the `ChatCompletionClient` interface.
 model_client = HepAIChatCompletionClient(
     model="openai/gpt-4o",
-    # api_key=os.environ.get("HEPAI_API_KEY"),
+    api_key=os.environ.get("HEPAI_API_KEY"),
+    # base_url = "http://192.168.32.148:42601/apiv2"
 )
 
 
@@ -57,8 +58,9 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
-    # from drsai import run_console, run_backend, run_hepai_worker
-    # asyncio.run(run_console(team, "What is the weather in New York?"))
+    # asyncio.run(main())
+    from drsai import run_console, run_backend, run_hepai_worker, run_openwebui, run_pipelines,run_drsai_app
+    # asyncio.run(run_console(agent, "What is the weather in New York?"))
     # asyncio.run(run_backend(agent=agent))
     # asyncio.run(run_hepai_worker(agent=agent))
+    # asyncio.run(run_drsai_app(agent=agent))

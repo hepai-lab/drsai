@@ -5,7 +5,10 @@ from drsai.backend.run import (
     Run_DrSaiAPP, 
     run_backend, 
     run_console, 
-    run_hepai_worker)
+    run_hepai_worker,
+    run_openwebui,
+    run_pipelines,
+    run_drsai_app)
 from drsai.backend.app_worker import DrSaiAPP
 
 from autogen_agentchat.agents import (
