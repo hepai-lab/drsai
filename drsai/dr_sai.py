@@ -45,8 +45,7 @@ class DrSai:
     """
     def __init__(self, **kwargs):
         self.username = "anonymous"
-        self.agent: AssistantAgent|BaseGroupChat = kwargs.pop('agent', None)
-        self.stream = False if not isinstance(self.agent, AssistantAgent) else self.agent._model_client_stream
+        self.agent_factory: callable = kwargs.pop('agent_factory', None)
 
     #### --- 关于AutoGen --- ####
     async def start_console(
@@ -57,156 +56,18 @@ class DrSai:
         """
         启动aotugen原生多智能体运行方式和多智能体逻辑
         """
-        agent = agent or self.agent
+        agent: AssistantAgent|BaseGroupChat = self.agent_factory() if agent is None else agent
 
         stream = agent._model_client_stream if not isinstance(agent, BaseGroupChat) else agent._participants[0]._model_client_stream
         if stream:
             await Console(agent.run_stream(task=task))
             return 
         else:
-            result = await agent.run(task=task)
-            return result
+            result:TaskResult = await agent.run(task=task)
+            print(result)
+            # return result
     
     #### --- 关于OpenAI Chat/Completions --- ####
-    def start_chat_completions(
-            self, 
-            **kwargs) -> Generator:
-        """
-        启动聊天任务，使用completions后端模式
-        加载默认的Agents, 并启动聊天任务, 这里默认使用GroupChat
-        params:
-        stream: bool, 是否使用流式模式
-        messages: List[Dict[str, str]], 传入的消息列表
-        HEPAI_API_KEY: str, 访问hepai的api_key
-        usr_info: Dict, 用户信息
-        base_models: Union[str, List[str]], 智能体基座模型
-        chat_mode: str, 聊天模式，默认once
-        **kwargs: 其他参数
-        """
-        # 是否使用流式模式
-        stream = kwargs.pop('stream', self.stream)
-        if isinstance(self.agent, BaseGroupChat) and stream:
-            for participant in self.agent._participants:
-                if not participant._model_client_stream:
-                    raise ValueError("Streaming mode is not supported when participant._model_client_stream is False")
-        
-        # 传入的消息列表
-        messages: List[Dict[str, str]] = kwargs.pop('messages', [])
-        usermessage = messages[-1]["content"]
-        # 大模型配置
-        api_key = kwargs.pop('api_key', None)
-        temperature = kwargs.pop('temperature', 0)
-        top_p = kwargs.pop('top_p', 1)
-        cache_seed = kwargs.pop('cache_seed', None)
-        # 额外的请求参数
-        extra_body: Union[Dict, None] = kwargs.pop('extra_body', None)
-        if extra_body is not None:
-            ## 用户信息 从DDF2传入的
-            user_info: Dict = kwargs.pop('extra_body', {}).get("user", {})
-            self.username = user_info.get("name", "anonymous")
-        else:
-             self.username = kwargs.get('username', "anonymous")
-        
-        oai_chunk = copy.deepcopy(chatcompletionchunk)
-        res = self.agent.run_stream(task=usermessage)
-        tool_flag = 0
-        for message in sync_wrapper(res):
-            # print(message)
-            if isinstance(message, ModelClientStreamingChunkEvent):
-                if stream and isinstance(self.agent, BaseChatAgent):
-                    content = message.content
-                    oai_chunk["choices"][0]["delta"]['content'] = content
-                    oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
-                    yield f'data: {json.dumps(oai_chunk)}\n\n'
-                elif stream and isinstance(self.agent, BaseGroupChat):
-                    role_tmp = message.source
-                    if role != role_tmp:
-                        role = role_tmp
-                        oai_chunk["choices"][0]["delta"]['content'] = f"\n\n**Speaker: {role}**\n\n"
-                        oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
-                        yield f'data: {json.dumps(oai_chunk)}\n\n'
-                    content = message.content
-                    oai_chunk["choices"][0]["delta"]['content'] = content
-                    oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
-                    yield f'data: {json.dumps(oai_chunk)}\n\n'
-                    
-                else:
-                    if stream:
-                        raise ValueError("No valid agent type for chat completions")
-                    else:
-                        pass
-            elif isinstance(message, TaskResult):
-                if stream:
-                    # 最后一个chunk
-                    yield f'data: {json.dumps(chatcompletionchunkend)}\n\n'
-            elif isinstance(message, Response):
-                # logger.info("Response:" + str(message))
-                print("Response:" + str(message))
-            elif isinstance(message, UserInputRequestedEvent):
-                # logger.info("UserInputRequestedEvent:" + str(message))
-                print("UserInputRequestedEvent:" + str(message))
-            elif isinstance(message, TextMessage):
-                if (not stream) and isinstance(self.agent, BaseChatAgent):
-                    if message.source!="user":
-                        content = message.content
-                        chatcompletions["choices"][0]["message"]["content"] = content
-                        yield f'data: {json.dumps(chatcompletions)}\n\n'
-                elif (not stream) and isinstance(self.agent, BaseGroupChat):
-                    if message.source!="user":
-                        content = message.content
-                        source = message.source
-                        content = f"\n\nSpeaker: {source}\n\n{content}\n\n"
-                        chatcompletions["choices"][0]["message"]["content"] = content
-                        yield f'data: {json.dumps(chatcompletions)}\n\n'
-                        # content_list: List[str] = split_string(content, 5)
-                        # for chunk in content_list:
-                        #     oai_chunk["choices"][0]["delta"]['content'] = chunk
-                        #     oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
-                        #     yield f'data: {json.dumps(oai_chunk)}\n\n'
-                        #     asyncio.sleep(0.1)
-                else:
-                    if (not stream):
-                        raise ValueError("No valid agent type for chat completions")
-                    else:
-                        pass
-            elif isinstance(message, ToolCallRequestEvent):
-                tool_flag = 1
-                tool_content: List[FunctionCall]=message.content
-                tool_calls = []
-                for tool in tool_content:
-                    tool_calls.append(
-                        {"id": tool.id, "type": "function","function": {"name": tool.name,"arguments": tool.arguments}}
-                         )
-                if stream:
-                    oai_chunk["choices"][0]["delta"]['tool_calls'] = tool_calls
-                    oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
-                    yield f'data: {json.dumps(oai_chunk)}\n\n'
-                else:
-                    chatcompletions["choices"][0]["message"]["tool_calls"] = tool_calls
-                # logger.info("ToolCallRequestEvent:" + str(message))
-            elif isinstance(message, ToolCallExecutionEvent):
-                tool_flag = 2
-                # logger.info("ToolCallExecutionEvent:" + str(message))
-            elif isinstance(message, ToolCallSummaryMessage):
-                if tool_flag == 2:
-                    if not stream:
-                        content = message.content
-                        chatcompletions["choices"][0]["message"]["content"] = content
-                        yield f'data: {json.dumps(chatcompletions)}\n\n'
-                    else:
-                        oai_chunk["choices"][0]["delta"]['content'] = message.content
-                        oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
-                        yield f'data: {json.dumps(oai_chunk)}\n\n'
-                    tool_flag = 0
-                # logger.info("ToolCallSummaryMessage:" + str(message))
-            elif isinstance(message, MultiModalMessage):
-                # logger.info("MultiModalMessage:" + str(message))
-                print("MultiModalMessage:" + str(message))
-            else:
-                # logger.info(str(type(message)))
-                # logger.warning("Unknown message:" + str(message))
-                print("Unknown message:" + str(message))
-
     async def a_start_chat_completions(
             self, 
             **kwargs) -> AsyncGenerator:
@@ -222,13 +83,17 @@ class DrSai:
         chat_mode: str, 聊天模式，默认once
         **kwargs: 其他参数
         """
+        
+        # 从函数工厂中获取定义的Agents
+        agent: AssistantAgent|BaseGroupChat = self.agent_factory()
+
         # 是否使用流式模式
-        stream = kwargs.pop('stream', self.stream)
-        if isinstance(self.agent, BaseGroupChat) and stream:
-            for participant in self.agent._participants:
+        stream = kwargs.pop('stream', agent._model_client_stream)
+        if isinstance(agent, BaseGroupChat) and stream:
+            for participant in agent._participants:
                 if not participant._model_client_stream:
                     raise ValueError("Streaming mode is not supported when participant._model_client_stream is False")
-        # 传入的消息列表
+        
         # 传入的消息列表
         messages: List[Dict[str, str]] = kwargs.pop('messages', [])
         usermessage = messages[-1]["content"]
@@ -248,27 +113,22 @@ class DrSai:
         
         oai_chunk = copy.deepcopy(chatcompletionchunk)
 
-        # 启动聊天任务
-        ## 清空历史聊天记录
-        if isinstance(self.agent, AssistantAgent):
-            await self.agent.on_reset(CancellationToken())
-        elif isinstance(self.agent, BaseGroupChat):
-            await self.agent.reset()
-        ## TODO: 将前端的聊天记录作为memory重新加载
+        # 使用thread加载后端的聊天记录
+        # TODO: 这里需要改成异步加载
         
-
-        res = self.agent.run_stream(task=usermessage)
+        # 启动聊天任务
+        res = agent.run_stream(task=usermessage)
         tool_flag = 0
         role = ""
         async for message in res:
             # print(message)
             if isinstance(message, ModelClientStreamingChunkEvent):
-                if stream and isinstance(self.agent, BaseChatAgent):
+                if stream and isinstance(agent, BaseChatAgent):
                     content = message.content
                     oai_chunk["choices"][0]["delta"]['content'] = content
                     oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
                     yield f'data: {json.dumps(oai_chunk)}\n\n'
-                elif stream and isinstance(self.agent, BaseGroupChat):
+                elif stream and isinstance(agent, BaseGroupChat):
                     role_tmp = message.source
                     if role != role_tmp:
                         role = role_tmp
@@ -296,12 +156,12 @@ class DrSai:
                 # logger.info("UserInputRequestedEvent:" + str(message))
                 print("UserInputRequestedEvent:" + str(message))
             elif isinstance(message, TextMessage):
-                if (not stream) and isinstance(self.agent, BaseChatAgent):
+                if (not stream) and isinstance(agent, BaseChatAgent):
                     if message.source!="user":
                         content = message.content
                         chatcompletions["choices"][0]["message"]["content"] = content
                         yield f'data: {json.dumps(chatcompletions)}\n\n'
-                elif (not stream) and isinstance(self.agent, BaseGroupChat):
+                elif (not stream) and isinstance(agent, BaseGroupChat):
                     if message.source!="user":
                         content = message.content
                         source = message.source

@@ -39,7 +39,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient):
         "claude-3.5-sonnet"]
         for allowed_model in allowed_models:
             model = kwargs.get("model", "")
-            if allowed_model in model:
+            if allowed_model in model.lower():
                 kwargs["model_info"]["family"] = allowed_model
                 kwargs["model_info"]["function_calling"] = True
                 break

@@ -57,32 +57,36 @@ from drsai import AssistantAgent, HepAIChatCompletionClient
 import os
 import asyncio
 
-# Define a model client. You can use other model client that implements
-# the `ChatCompletionClient` interface.
-model_client = HepAIChatCompletionClient(
-    model="openai/gpt-4o",
-    # api_key=os.environ.get("HEPAI_API_KEY"),
-)
+# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
+def create_agent() -> AssistantAgent:
+    
+    # Define a model client. You can use other model client that implements
+    # the `ChatCompletionClient` interface.
+    model_client = HepAIChatCompletionClient(
+        model="openai/gpt-4o",
+        api_key=os.environ.get("HEPAI_API_KEY"),
+        # base_url = "http://192.168.32.148:42601/apiv2"
+    )
 
-# Define a simple function tool that the agent can use.
-# For this example, we use a fake weather tool for demonstration purposes.
-async def get_weather(city: str) -> str:
-    """Get the weather for a given city."""
-    return f"The weather in {city} is 73 degrees and Sunny."
+    # Define a simple function tool that the agent can use.
+    # For this example, we use a fake weather tool for demonstration purposes.
+    async def get_weather(city: str) -> str:
+        """Get the weather for a given city."""
+        return f"The weather in {city} is 73 degrees and Sunny."
 
-# Define an AssistantAgent with the model, tool, system message, and reflection enabled.
-# The system message instructs the agent via natural language.
-agent = AssistantAgent(
-    name="weather_agent",
-    model_client=model_client,
-    tools=[get_weather],
-    system_message="You are a helpful assistant.",
-    reflect_on_tool_use=False,
-    model_client_stream=True,  # Enable streaming tokens from the model client.
-)
+    # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
+    # The system message instructs the agent via natural language.
+    return AssistantAgent(
+        name="weather_agent",
+        model_client=model_client,
+        tools=[get_weather],
+        system_message="You are a helpful assistant.",
+        reflect_on_tool_use=False,
+        model_client_stream=True,  # Enable streaming tokens from the model client.
+    )
 
-from drsai import run_console, run_backend, run_hepai_worker
-asyncio.run(run_console(agent, "What is the weather in New York?"))
+from drsai import run_console
+asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
 ```
 
 ## 3.自定义智能体开发案例
@@ -95,34 +99,37 @@ import os
 import asyncio
 from typing import List, Dict, Union
 
-# Define a model client. You can use other model client that implements
-# the `ChatCompletionClient` interface.
-model_client = HepAIChatCompletionClient(
-    model="openai/gpt-4o",
-    # api_key=os.environ.get("HEPAI_API_KEY"),
-)
+# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
+def create_agent() -> AssistantAgent:
 
-# Define a simple rag-demo for the assistant.
-async def rag_demo(messages: List[Dict], **kwargs):
-    query = messages[-1]["content"]  # Select the last message of the chat history as the RAG query statement.
-    retrieve_txt = "1. Humans will be destroyed by AI in 2050;\n2. Humans are destroyed by AI due to their arrogance and conceit."
-    last_txt = f"""The following are some reference materials, and you must refer to these materials to answer the question:\n{retrieve_txt}. My question is: {query}"""
-    messages[-1]["content"] = last_txt
-    return messages
+    # Define a model client. You can use other model client that implements
+    # the `ChatCompletionClient` interface.
+    model_client = HepAIChatCompletionClient(
+        model="openai/gpt-4o",
+        # api_key=os.environ.get("HEPAI_API_KEY"),
+    )
 
-# Define an AssistantAgent with the model, tool, system message, and reflection enabled.
-# The system message instructs the agent via natural language.
-agent = AssistantAgent(
-    name="weather_agent",
-    model_client=model_client,
-    memory_function=rag_demo,
-    system_message="You are a helpful assistant.",
-    reflect_on_tool_use=False,
-    model_client_stream=True,  # Enable streaming tokens from the model client.
-)
+    # Define a simple rag-demo for the assistant.
+    async def rag_demo(messages: List[Dict], **kwargs):
+        query = messages[-1]["content"]  # Select the last message of the chat history as the RAG query statement.
+        retrieve_txt = "1. Humans will be destroyed by AI in 2050;\n2. Humans are destroyed by AI due to their arrogance and conceit."
+        last_txt = f"""The following are some reference materials, and you must refer to these materials to answer the question:\n{retrieve_txt}. My question is: {query}"""
+        messages[-1]["content"] = last_txt
+        return messages
 
-from drsai import run_console, run_backend, run_hepai_worker
-asyncio.run(run_console(agent, "Why will humans be destroyed"))
+    # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
+    # The system message instructs the agent via natural language.
+    return AssistantAgent(
+        name="weather_agent",
+        model_client=model_client,
+        memory_function=rag_demo,
+        system_message="You are a helpful assistant.",
+        reflect_on_tool_use=False,
+        model_client_stream=True,  # Enable streaming tokens from the model client.
+    )
+
+from drsai import run_console
+asyncio.run(run_console(agent_factory=create_agent, task="Why will humans be destroyed"))
 ```
 
 ### 3.2.自定义智能体的回复逻辑
@@ -134,35 +141,38 @@ import os
 import asyncio
 from typing import List, Dict, Union, Generator
 
-# Define a model client. You can use other model client that implements
-# the `ChatCompletionClient` interface.
-model_client = HepAIChatCompletionClient(
-    model="openai/gpt-4o",
-    # api_key=os.environ.get("HEPAI_API_KEY"),
-)
+# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
+def create_agent() -> AssistantAgent:
 
-# # Set to True if the model client supports streaming. !!!! This is important for reply_function to work.
-model_client_stream = False  
+    # Define a model client. You can use other model client that implements
+    # the `ChatCompletionClient` interface.
+    model_client = HepAIChatCompletionClient(
+        model="openai/gpt-4o",
+        # api_key=os.environ.get("HEPAI_API_KEY"),
+    )
 
-# Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
-async def interface(messages: List[Dict], **kwargs) -> Union[str, Generator[str, None, None]]:
-    """Address the messages and return the response."""
-    return "test_worker reply"
+    # # Set to True if the model client supports streaming. !!!! This is important for reply_function to work.
+    model_client_stream = False  
+
+    # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
+    async def interface(messages: List[Dict], **kwargs) -> Union[str, Generator[str, None, None]]:
+        """Address the messages and return the response."""
+        return "test_worker reply"
 
 
-# Define an AssistantAgent with the model, tool, system message, and reflection enabled.
-# The system message instructs the agent via natural language.
-agent = AssistantAgent(
-    name="weather_agent",
-    model_client=model_client,
-    reply_function=interface,
-    system_message="You are a helpful assistant.",
-    reflect_on_tool_use=False,
-    model_client_stream=model_client_stream,  # Must set to True if reply_function returns a generator.
-)
+    # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
+    # The system message instructs the agent via natural language.
+    return AssistantAgent(
+        name="weather_agent",
+        model_client=model_client,
+        reply_function=interface,
+        system_message="You are a helpful assistant.",
+        reflect_on_tool_use=False,
+        model_client_stream=model_client_stream,  # Must set to True if reply_function returns a generator.
+    )
 
-from drsai import run_console, run_backend, run_hepai_worker
-asyncio.run(run_console(agent, "What is the weather in New York?"))
+from drsai import run_console
+asyncio.run(run_console(agent_factory=create_agent, task="Why will humans be destroyed"))
 ```
 
 ## 4.将DrSai部署为OpenAI格式的后端模型服务或者HepAI woker服务

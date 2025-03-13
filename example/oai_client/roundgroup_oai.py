@@ -18,37 +18,41 @@ from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
 import os, json
 import asyncio
 
-# Create an OpenAI model client.
-model_client = HepAIChatCompletionClient(
-    model="openai/gpt-4o",
-    # api_key="sk-...", # Optional if you have an HEPAI_API_KEY env variable set.
-)
+# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
+def create_team() -> RoundRobinGroupChat:
+    # Create an OpenAI model client.
+    model_client = HepAIChatCompletionClient(
+        model="openai/gpt-4o",
+        # api_key="sk-...", # Optional if you have an HEPAI_API_KEY env variable set.
+    )
 
-# Create the primary agent.
-primary_agent = AssistantAgent(
-    "primary",
-    model_client=model_client,
-    system_message="You are a helpful AI assistant.",
-    model_client_stream=True,
-)
+    # Create the primary agent.
+    primary_agent = AssistantAgent(
+        "primary",
+        model_client=model_client,
+        system_message="You are a helpful AI assistant.",
+        model_client_stream=True,
+    )
 
-# Create the critic agent.
-critic_agent = AssistantAgent(
-    "critic",
-    model_client=model_client,
-    system_message="Provide constructive feedback. Respond with 'APPROVE' to when your feedbacks are addressed.",
-    model_client_stream=True,
-)
+    # Create the critic agent.
+    critic_agent = AssistantAgent(
+        "critic",
+        model_client=model_client,
+        system_message="Provide constructive feedback. Respond with 'APPROVE' to when your feedbacks are addressed.",
+        model_client_stream=True,
+    )
 
-# Define a termination condition that stops the task if the critic approves.
-text_termination = TextMentionTermination("APPROVE")
+    # Define a termination condition that stops the task if the critic approves.
+    text_termination = TextMentionTermination("APPROVE")
 
-# Create a team with the primary and critic agents.
-team = RoundRobinGroupChat([primary_agent, critic_agent], termination_condition=text_termination)
+    # Create a team with the primary and critic agents.
+    return RoundRobinGroupChat(
+        participants=[primary_agent, critic_agent], 
+        termination_condition=text_termination)
 
 async def main():
 
-    drsaiapp = DrSaiAPP(agent=team)
+    drsaiapp = DrSaiAPP(agent_factory=create_team)
     stream =  drsaiapp.a_start_chat_completions(
         messages=[{"content":"Write a short poem about the fall season.", "role":"user"}],
         stream=True,
@@ -63,8 +67,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
-    # from drsai import run_console, run_backend, run_hepai_worker
-    # asyncio.run(run_console(team, "Write a short poem about the fall season."))
-    # asyncio.run(run_backend(agent=agent))
-    # asyncio.run(run_hepai_worker(agent=agent))
+    # asyncio.run(main())
+    from drsai import run_console, run_backend, run_hepai_worker
+    asyncio.run(run_console(agent_factory=create_team, task="Write a short poem about the fall season."))
+    # asyncio.run(run_backend(agent_factory=create_team))
+    # asyncio.run(run_hepai_worker(agent_factory=create_team))

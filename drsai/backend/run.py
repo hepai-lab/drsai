@@ -131,20 +131,18 @@ class Run_DrSaiAPP:
         # 在现有事件循环中启动服务
         await server.serve()
 
-async def run_console(agent: AssistantAgent|BaseGroupChat, task: str, **kwargs):
-    drsaiapp = DrSaiAPP(agent = agent)
-    try:
-        result = await drsaiapp.start_console(task=task, **kwargs)
-        if result is not None:
-            return result
-    except Exception as e:
-        raise "Error: " + str(e)
+async def run_console(agent_factory: callable, task: str, **kwargs):
+    drsaiapp = DrSaiAPP(agent_factory = agent_factory)
+    result = await drsaiapp.start_console(task=task, **kwargs)
+    if result is not None:
+        return result
 
-async def run_backend(agent: AssistantAgent|BaseGroupChat, **kwargs):
+
+async def run_backend(agent_factory: callable, **kwargs):
     '''
     启动后端服务
     '''
-    drsaiapp = DrSaiAPP(agent = agent)
+    drsaiapp = DrSaiAPP(agent_factory = agent_factory)
 
     model_name: str = kwargs.get("model_name", None)
     host: str =  kwargs.get("host", None)
@@ -160,11 +158,11 @@ async def run_backend(agent: AssistantAgent|BaseGroupChat, **kwargs):
         drsaiapp=drsaiapp
     )
 
-async def run_hepai_worker(agent: AssistantAgent|BaseGroupChat, **kwargs):
+async def run_hepai_worker(agent_factory: callable, **kwargs):
     '''
     启动Hepai Worker
     '''
-    drsaiapp = DrSaiAPP(agent = agent)
+    drsaiapp = DrSaiAPP(agent_factory = agent_factory)
 
     model_name: str = kwargs.get("model_name", None)
     host: str =  kwargs.get("host", None)
@@ -276,7 +274,7 @@ Any requriments refrence to https://github.com/open-webui/open-webui \n
 
     print("++++++++++++++++++++++++++++++++ \n\n")
 
-async def run_drsai_app(agent: AssistantAgent|BaseGroupChat, **kwargs):
+async def run_drsai_app(agent_factory: callable, **kwargs):
     ''''
     pm2 启动drsai后端/openwebui pipelines/openwebui前端
     '''
@@ -289,7 +287,7 @@ async def run_drsai_app(agent: AssistantAgent|BaseGroupChat, **kwargs):
 
     # 并行启动所有服务
     await asyncio.gather(
-        run_backend(agent, **kwargs),
+        run_backend(agent_factory=agent_factory, **kwargs),
         run_pipelines(**kwargs),
         run_openwebui(**kwargs)
     )

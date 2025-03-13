@@ -13,37 +13,39 @@ from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_hepai
 import os, json
 import asyncio
 
-# Define a model client. You can use other model client that implements
-# the `ChatCompletionClient` interface.
-model_client = HepAIChatCompletionClient(
-    model="openai/gpt-4o",
-    api_key=os.environ.get("HEPAI_API_KEY"),
-    # base_url = "http://192.168.32.148:42601/apiv2"
-)
+# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
+def create_agent() -> AssistantAgent:
+    
+    # Define a model client. You can use other model client that implements
+    # the `ChatCompletionClient` interface.
+    model_client = HepAIChatCompletionClient(
+        model="openai/gpt-4o",
+        api_key=os.environ.get("HEPAI_API_KEY"),
+        # base_url = "http://192.168.32.148:42601/apiv2"
+    )
 
 
-# Define a simple function tool that the agent can use.
-# For this example, we use a fake weather tool for demonstration purposes.
-async def get_weather(city: str) -> str:
-    """Get the weather for a given city."""
-    return f"The weather in {city} is 73 degrees and Sunny."
+    # Define a simple function tool that the agent can use.
+    # For this example, we use a fake weather tool for demonstration purposes.
+    async def get_weather(city: str) -> str:
+        """Get the weather for a given city."""
+        return f"The weather in {city} is 73 degrees and Sunny."
 
-
-# Define an AssistantAgent with the model, tool, system message, and reflection enabled.
-# The system message instructs the agent via natural language.
-agent = AssistantAgent(
-    name="weather_agent",
-    model_client=model_client,
-    tools=[get_weather],
-    system_message="You are a helpful assistant.",
-    reflect_on_tool_use=False,
-    model_client_stream=True,  # Enable streaming tokens from the model client.
-)
+    # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
+    # The system message instructs the agent via natural language.
+    return AssistantAgent(
+        name="weather_agent",
+        model_client=model_client,
+        tools=[get_weather],
+        system_message="You are a helpful assistant.",
+        reflect_on_tool_use=False,
+        model_client_stream=True,  # Enable streaming tokens from the model client.
+    )
 
 
 async def main():
 
-    drsaiapp = DrSaiAPP(agent=agent)
+    drsaiapp = DrSaiAPP(agent_factory=create_agent)
     stream =  drsaiapp.a_start_chat_completions(
         messages=[{"content":"What is the weather in New York?", "role":"user"}],
         stream=True,)
@@ -60,7 +62,7 @@ async def main():
 if __name__ == "__main__":
     # asyncio.run(main())
     from drsai import run_console, run_backend, run_hepai_worker, run_openwebui, run_pipelines,run_drsai_app
-    # asyncio.run(run_console(agent, "What is the weather in New York?"))
-    # asyncio.run(run_backend(agent=agent))
-    # asyncio.run(run_hepai_worker(agent=agent))
-    asyncio.run(run_drsai_app(agent=agent))
+    asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
+    # asyncio.run(run_backend(agent_factory=create_agent))
+    # asyncio.run(run_hepai_worker(agent_factory=create_agent))
+    # asyncio.run(run_drsai_app(agent_factory=create_agent))
