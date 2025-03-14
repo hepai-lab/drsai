@@ -2,6 +2,10 @@
 from typing import List, Dict, Union, AsyncGenerator, Type, Generator
 import copy, json, time, asyncio
 
+from drsai.modules.managers.threads_manager import ThreadsManager
+THREADS_MGR = ThreadsManager()
+from drsai.modules.managers.base_thread import Thread
+
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent, BaseChatAgent
 from autogen_agentchat.base import Response, TaskResult
 from autogen_core import FunctionCall, CancellationToken
@@ -45,6 +49,7 @@ class DrSai:
     """
     def __init__(self, **kwargs):
         self.username = "anonymous"
+        self.threads_mgr = THREADS_MGR
         self.agent_factory: callable = kwargs.pop('agent_factory', None)
 
     #### --- 关于AutoGen --- ####
@@ -88,7 +93,8 @@ class DrSai:
         agent: AssistantAgent|BaseGroupChat = self.agent_factory()
 
         # 是否使用流式模式
-        stream = kwargs.pop('stream', agent._model_client_stream)
+        agent_stream = agent._model_client_stream if not isinstance(agent, BaseGroupChat) else agent._participants[0]._model_client_stream
+        stream = kwargs.pop('stream', agent_stream)
         if isinstance(agent, BaseGroupChat) and stream:
             for participant in agent._participants:
                 if not participant._model_client_stream:
@@ -108,14 +114,18 @@ class DrSai:
             ## 用户信息 从DDF2传入的
             user_info: Dict = kwargs.pop('extra_body', {}).get("user", {})
             self.username = user_info.get("name", "anonymous")
+            dialog_id = extra_body.get("dialog_id", None) # 获取前端聊天端口的session_id
         else:
              self.username = kwargs.get('username', "anonymous")
+             dialog_id = kwargs.pop('dialog_id', None) # 获取前端聊天端口的session_id
         
         oai_chunk = copy.deepcopy(chatcompletionchunk)
 
         # 使用thread加载后端的聊天记录
         # TODO: 这里需要改成异步加载
-        
+        thread: Thread = self.threads_mgr.create_threads(username=self.username, dialog_id=dialog_id)
+        agent._thread = thread
+        agent._thread_mgr = self.threads_mgr
         # 启动聊天任务
         res = agent.run_stream(task=usermessage)
         tool_flag = 0
@@ -150,10 +160,8 @@ class DrSai:
                     # 最后一个chunk
                     yield f'data: {json.dumps(chatcompletionchunkend)}\n\n'
             elif isinstance(message, Response):
-                # logger.info("Response:" + str(message))
                 print("Response:" + str(message))
             elif isinstance(message, UserInputRequestedEvent):
-                # logger.info("UserInputRequestedEvent:" + str(message))
                 print("UserInputRequestedEvent:" + str(message))
             elif isinstance(message, TextMessage):
                 if (not stream) and isinstance(agent, BaseChatAgent):
@@ -168,12 +176,6 @@ class DrSai:
                         content = f"\n\nSpeaker: {source}\n\n{content}\n\n"
                         chatcompletions["choices"][0]["message"]["content"] = content
                         yield f'data: {json.dumps(chatcompletions)}\n\n'
-                        # content_list: List[str] = split_string(content, 5)
-                        # for chunk in content_list:
-                        #     oai_chunk["choices"][0]["delta"]['content'] = chunk
-                        #     oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
-                        #     yield f'data: {json.dumps(oai_chunk)}\n\n'
-                        #     asyncio.sleep(0.1)
                 else:
                     if (not stream):
                         raise ValueError("No valid agent type for chat completions")
@@ -193,10 +195,8 @@ class DrSai:
                     yield f'data: {json.dumps(oai_chunk)}\n\n'
                 else:
                     chatcompletions["choices"][0]["message"]["tool_calls"] = tool_calls
-                # logger.info("ToolCallRequestEvent:" + str(message))
             elif isinstance(message, ToolCallExecutionEvent):
                 tool_flag = 2
-                # logger.info("ToolCallExecutionEvent:" + str(message))
             elif isinstance(message, ToolCallSummaryMessage):
                 if tool_flag == 2:
                     if not stream:
@@ -208,13 +208,9 @@ class DrSai:
                         oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
                         yield f'data: {json.dumps(oai_chunk)}\n\n'
                     tool_flag = 0
-                # logger.info("ToolCallSummaryMessage:" + str(message))
             elif isinstance(message, MultiModalMessage):
-                # logger.info("MultiModalMessage:" + str(message))
                 print("MultiModalMessage:" + str(message))
             else:
-                # logger.info(str(type(message)))
-                # logger.warning("Unknown message:" + str(message))
                 print("Unknown message:" + str(message))
 
 

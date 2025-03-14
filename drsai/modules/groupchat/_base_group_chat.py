@@ -1,8 +1,8 @@
-from autogen_agentchat.teams import BaseGroupChat
+
 import asyncio
 import logging
 
-from typing import Any, AsyncGenerator, List, Sequence
+from typing import Any, AsyncGenerator, List, Sequence, Callable
 
 from autogen_core import (
     AgentId,
@@ -13,10 +13,43 @@ from autogen_agentchat.base import ChatAgent, TaskResult, TerminationCondition
 from autogen_agentchat.messages import AgentEvent, BaseChatMessage, ChatMessage, ModelClientStreamingChunkEvent, TextMessage
 from autogen_agentchat.teams._group_chat._events import GroupChatStart
 from autogen_agentchat.teams._group_chat._sequential_routed_agent import SequentialRoutedAgent
+from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
+from autogen_agentchat.teams import BaseGroupChat
 
-logger = logging.getLogger(__name__)
+from drsai.modules.managers.base_thread import Thread
+from drsai.modules.managers.threads_manager import ThreadsManager
+from drsai.modules.managers.base_thread_message import ThreadMessage, Content, Text
 
-class DraiGroupChat(BaseGroupChat):
+event_logger = logging.getLogger(__name__)
+
+
+class DrSaiGroupChatManager(BaseGroupChatManager):
+
+    def __init__(
+        self,
+        group_topic_type: str,
+        output_topic_type: str,
+        participant_topic_types: List[str],
+        participant_descriptions: List[str],
+        termination_condition: TerminationCondition | None = None,
+        max_turns: int | None = None,
+        thread: Thread = None,
+        thread_mgr: ThreadsManager = None,
+    ):
+        super().__init__(
+            group_topic_type = group_topic_type,
+            output_topic_type = output_topic_type,
+            participant_topic_types = participant_topic_types,
+            participant_descriptions = participant_descriptions,
+            termination_condition = termination_condition,
+            max_turns = max_turns
+        )
+        self._theard: Thread = thread
+        self._thread_mgr: ThreadsManager = thread_mgr
+
+
+
+class DrSaiGroupChat(BaseGroupChat):
 
     component_type = "team"
 
@@ -26,8 +59,41 @@ class DraiGroupChat(BaseGroupChat):
         group_chat_manager_class: type[SequentialRoutedAgent],
         termination_condition: TerminationCondition | None = None,
         max_turns: int | None = None,
+        thread: Thread = None,
+        thread_mgr: ThreadsManager = None,
+        **kwargs: Any
     ):
-        super().__init__(participants, group_chat_manager_class, termination_condition, max_turns)
+        super().__init__(
+            participants = participants, 
+            group_chat_manager_class = group_chat_manager_class, 
+            termination_condition = termination_condition, 
+            max_turns = max_turns
+            )
+        self._thread: Thread = thread
+        self._thread_mgr: ThreadsManager = thread_mgr
+
+    def _create_group_chat_manager_factory(
+        self,
+        group_topic_type: str,
+        output_topic_type: str,
+        participant_topic_types: List[str],
+        participant_descriptions: List[str],
+        termination_condition: TerminationCondition | None,
+        max_turns: int | None,
+    ) -> Callable[[], DrSaiGroupChatManager]:
+        def _factory() -> DrSaiGroupChatManager:
+            return DrSaiGroupChatManager(
+                group_topic_type,
+                output_topic_type,
+                participant_topic_types,
+                participant_descriptions,
+                termination_condition,
+                max_turns,
+                thread=self._thread,
+                thread_mgr=self._thread_mgr,
+            )
+
+        return _factory
     
     async def run_stream(
         self,
@@ -133,13 +199,20 @@ class DraiGroupChat(BaseGroupChat):
         """
 
         # Create the messages list if the task is a string or a chat message.
-        messages: List[ChatMessage] | None = None
+        messages: List[ChatMessage] = []
+
+        # 从thread中获取历史消息
+        if self._thread is not None:
+            history_thread_messages: List[ThreadMessage] = self._thread.messages
+            for history_thread_message in history_thread_messages:
+                messages.append(TextMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
+
         if task is None:
             pass
         elif isinstance(task, str):
-            messages = [TextMessage(content=task, source="user")]
+            messages.append(TextMessage(content=task, source="user"))
         elif isinstance(task, BaseChatMessage):
-            messages = [task]
+            messages.append(task)
         else:
             if not task:
                 raise ValueError("Task list cannot be empty.")
@@ -152,7 +225,9 @@ class DraiGroupChat(BaseGroupChat):
         if self._is_running:
             raise ValueError("The team is already running, it cannot run again until it is stopped.")
         self._is_running = True
+        
         yield messages[-1]
+
         # Start the runtime.
         # TODO: The runtime should be started by a managed context.
         self._runtime.start()
@@ -162,8 +237,10 @@ class DraiGroupChat(BaseGroupChat):
 
         # Start a coroutine to stop the runtime and signal the output message queue is complete.
         async def stop_runtime() -> None:
-            await self._runtime.stop_when_idle()
-            await self._output_message_queue.put(None)
+            try:
+                await self._runtime.stop_when_idle()
+            finally:
+                await self._output_message_queue.put(None)
 
         shutdown_task = asyncio.create_task(stop_runtime())
 
@@ -185,6 +262,7 @@ class DraiGroupChat(BaseGroupChat):
                     cancellation_token.link_future(message_future)
                 # Wait for the next message, this will raise an exception if the task is cancelled.
                 message = await message_future
+
                 if message is None:
                     break
                 if message == messages[-1]:
@@ -196,16 +274,29 @@ class DraiGroupChat(BaseGroupChat):
                     continue
                 output_messages.append(message)
 
+                # 使用thread储存完整的文本消息，以后可能有多模态消息
+                if self._thread is not None:
+                    self._thread_mgr.create_message(
+                        thread=self._thread,
+                        role = "assistant" if (message.source != "user" or message.source != "system") else message.source,
+                        content=[Content(type="text", text=Text(value=message.content,annotations=[]))],
+                        sender=message.source,
+                        metadata={},
+                        )
+
             # Yield the final result.
             yield TaskResult(messages=output_messages, stop_reason=self._stop_reason)
 
         finally:
             # Wait for the shutdown task to finish.
-            await shutdown_task
+            try:
+                # This will propagate any exceptions raised in the shutdown task.
+                # We need to ensure we cleanup though.
+                await shutdown_task
+            finally:
+                # Clear the output message queue.
+                while not self._output_message_queue.empty():
+                    self._output_message_queue.get_nowait()
 
-            # Clear the output message queue.
-            while not self._output_message_queue.empty():
-                self._output_message_queue.get_nowait()
-
-            # Indicate that the team is no longer running.
-            self._is_running = False
+                # Indicate that the team is no longer running.
+                self._is_running = False

@@ -1,8 +1,8 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from typing import AsyncGenerator, Generator
 
-
-def sync_wrapper(async_gen):
+def sync_wrapper(async_gen: AsyncGenerator) -> Generator:
     loop = asyncio.new_event_loop()
     with ThreadPoolExecutor(1) as executor:
         while True:

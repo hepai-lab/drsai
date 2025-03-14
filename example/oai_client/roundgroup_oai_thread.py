@@ -9,17 +9,17 @@ except ImportError:
     sys.path.append(drsai_path)
 
 
-from drsai import AssistantAgent, HepAIChatCompletionClient
+from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiRoundRobinGroupChat
 
 import asyncio
 from autogen_agentchat.conditions import ExternalTermination, TextMentionTermination
-from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat
+from autogen_agentchat.teams import  RoundRobinGroupChat, SelectorGroupChat
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
 import os, json
 import asyncio
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
-def create_team() -> RoundRobinGroupChat:
+def create_team() -> DrSaiRoundRobinGroupChat:
     # Create an OpenAI model client.
     model_client = HepAIChatCompletionClient(
         model="openai/gpt-4o",
@@ -46,7 +46,7 @@ def create_team() -> RoundRobinGroupChat:
     text_termination = TextMentionTermination("APPROVE")
 
     # Create a team with the primary and critic agents.
-    return RoundRobinGroupChat(
+    return DrSaiRoundRobinGroupChat(
         participants=[primary_agent, critic_agent], 
         termination_condition=text_termination)
 

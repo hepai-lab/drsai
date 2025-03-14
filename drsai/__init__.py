@@ -11,6 +11,9 @@ from drsai.backend.run import (
     run_drsai_app)
 from drsai.backend.app_worker import DrSaiAPP
 
+from drsai.modules.groupchat._round_robin_group_chat import DrSaiRoundRobinGroupChat
+
+
 from autogen_agentchat.agents import (
     UserProxyAgent, 
     BaseChatAgent,
