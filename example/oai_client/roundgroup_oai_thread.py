@@ -9,7 +9,7 @@ except ImportError:
     sys.path.append(drsai_path)
 
 
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiRoundRobinGroupChat
+from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiRoundRobinGroupChat,DrSaiGroupChatManager, DrSaiGroupChat
 
 import asyncio
 from autogen_agentchat.conditions import ExternalTermination, TextMentionTermination

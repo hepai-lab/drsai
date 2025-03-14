@@ -12,7 +12,7 @@ from drsai.backend.run import (
 from drsai.backend.app_worker import DrSaiAPP
 
 from drsai.modules.groupchat._round_robin_group_chat import DrSaiRoundRobinGroupChat
-
+from drsai.modules.groupchat._base_group_chat import DrSaiGroupChatManager, DrSaiGroupChat
 
 from autogen_agentchat.agents import (
     UserProxyAgent, 
