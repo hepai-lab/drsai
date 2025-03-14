@@ -65,4 +65,4 @@ if __name__ == "__main__":
     asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
     # asyncio.run(run_backend(agent_factory=create_agent))
     # asyncio.run(run_hepai_worker(agent_factory=create_agent))
-    # asyncio.run(run_drsai_app(agent_factory=create_agent))
+    # asyncio.run(run_drsai_app(agent_factory=create_agent,  pipelines_path="your_path_to_drsai/backend/pipelines"))

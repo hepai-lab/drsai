@@ -11,7 +11,7 @@ except ImportError:
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_hepai_worker, run_backend
 import os, json
 import asyncio
-from typing import List, Dict, Union, Generator
+from typing import List, Dict, Union, AsyncGenerator
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
 def create_agent() -> AssistantAgent:
@@ -27,7 +27,7 @@ def create_agent() -> AssistantAgent:
     model_client_stream = False  
 
     # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
-    async def interface(messages: List[Dict], **kwargs) -> Union[str, Generator[str, None, None]]:
+    async def interface(messages: List[Dict], **kwargs) -> Union[str, AsyncGenerator[str, None, None]]:
         """Address the messages and return the response."""
         return "test_worker reply"
 
@@ -67,4 +67,4 @@ if __name__ == "__main__":
     asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
     # asyncio.run(run_backend(agent_factory=create_agent))
     # asyncio.run(run_hepai_worker(agent_factory=create_agent))
-    # asyncio.run(run_drsai_app(agent_factory=create_agent))
+    # asyncio.run(run_drsai_app(agent_factory=create_agent, pipelines_path="your_path_to_drsai/backend/pipelines"))

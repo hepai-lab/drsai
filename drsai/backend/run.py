@@ -178,7 +178,7 @@ async def run_hepai_worker(agent_factory: callable, **kwargs):
         drsaiapp=drsaiapp
     )
 
-async def run_pipelines(pipelines_port: int = 9097, **kwargs):
+async def run_pipelines(pipelines_path: str, pipelines_port: int = 9097):
 
     NOTES=f"""++++++++++++++++++++++++++++++++\n\n
 Open-webui pipelines is starting... \n
@@ -191,10 +191,10 @@ Any requriments refrence to https://github.com/open-webui/pipelines"
 """
     print(NOTES)
 
-    # 获取当前文件夹路径
-    current_path = os.path.dirname(os.path.abspath(__file__))
-    # 获取pipelines文件夹路径./pipelines/main.py
-    pipelines_path = os.path.join(current_path, "pipelines")
+    # # 获取当前文件夹路径
+    # current_path = os.path.dirname(os.path.abspath(__file__))
+    # # 获取pipelines文件夹路径./pipelines/main.py
+    # pipelines_path = os.path.join(current_path, "pipelines")
     command = f"pm2 start -n pipelines --cwd {pipelines_path} 'python main.py --port {pipelines_port}'"
 
     print(f"command: {command}")
@@ -228,7 +228,7 @@ Any requriments refrence to https://github.com/open-webui/pipelines"
     print("++++++++++++++++++++++++++++++++ \n\n")
 
 
-async def run_openwebui(openwebui_port: int = 8088, **kwargs):
+async def run_openwebui(openwebui_port: int = 8088):
 
     NOTES= f'''++++++++++++++++++++++++++++++++\n\n
 Open-webui frontend is starting... \n
@@ -274,7 +274,7 @@ Any requriments refrence to https://github.com/open-webui/open-webui \n
 
     print("++++++++++++++++++++++++++++++++ \n\n")
 
-async def run_drsai_app(agent_factory: callable, **kwargs):
+async def run_drsai_app(agent_factory: callable, pipelines_path: str, **kwargs):
     ''''
     pm2 启动drsai后端/openwebui pipelines/openwebui前端
     '''
@@ -282,12 +282,14 @@ async def run_drsai_app(agent_factory: callable, **kwargs):
     try:
         subprocess.check_output("pm2 -v", shell=True)
     except:
-        print("Please install pm2 first: `npm install -g pm2`")
+        print("Please install pm2 first: `https://pm2.io/`")
         return
 
     # 并行启动所有服务
+    pipelines_port = kwargs.pop("pipelines_port", 9097)
+    openwebui_port = kwargs.pop("openwebui_port", 8088)
     await asyncio.gather(
         run_backend(agent_factory=agent_factory, **kwargs),
-        run_pipelines(**kwargs),
-        run_openwebui(**kwargs)
+        run_pipelines(pipelines_path=pipelines_path, pipelines_port=pipelines_port),
+        run_openwebui(openwebui_port=openwebui_port)
     )

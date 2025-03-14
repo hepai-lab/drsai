@@ -155,7 +155,7 @@ def create_agent() -> AssistantAgent:
     model_client_stream = False  
 
     # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
-    async def interface(messages: List[Dict], **kwargs) -> Union[str, Generator[str, None, None]]:
+    async def interface(messages: List[Dict], **kwargs) -> Union[str, AsyncGenerator[str, None, None]]:
         """Address the messages and return the response."""
         return "test_worker reply"
 
@@ -215,14 +215,26 @@ print('\n')
 
 ## 5.OpenWebUI Pipeline接入
 
-- 检查本地是否安装了```pm2```后台任务管理工具：
+### 基于pm2进程管理的一键启动配置
+
+- 1.python环境中安装openwebui：
+
+```shell
+pip install openwebui
+```
+
+- 2.克隆DrSai仓库到本地:
+适配DrSai的OpenWebUI Pipeline的相对路径在：```drsai/backend/pipelines```，在启动时需要使用绝对路径:```pipelines_path = your_path_to_drsai/backend/pipelines```
+
+
+- 3.检查本地是否安装了```pm2```后台任务管理工具：
 
 ```shell
 pm2 -v
 ```
 具体见：https://pm2.io/docs/plus/quick-start/
 
-- 一键启动DrSai的OpenWebUI Pipeline和OpenWebUI服务：
+- 4.一键启动DrSai的OpenWebUI Pipeline和OpenWebUI服务：
 
 ```shell
 pip install openwebui
@@ -231,7 +243,28 @@ pip install openwebui
 ```python
 from DrSai import run_drsai_app
 import asyncio
-asyncio.run(run_drsai_app(agent=agent))
+asyncio.run(run_drsai_app(agent=agent, pipelines_path=pipelines_path))
+```
+
+### 不需pm2进程管理的后台启动方式
+
+- 1. 启动OpenWebUI服务：
+
+python环境中安装openwebui
+```shell
+pip install openwebui
+```
+在命令行中运行：```open-webui serve --port 8088```启动OpenWebUI服务。
+
+- 2. 启动DrSai的OpenWebUI Pipeline:
+克隆DrSai仓库到本地，适配DrSai的OpenWebUI Pipeline的相对路径在：```drsai/backend/pipelines```。进入该目录下，使用：```python main.py --port 9097```启动OpenWebUI Pipeline。
+
+- 3. 启动DrSai的后端服务：
+
+```python
+from DrSai import run_backend
+import asyncio
+asyncio.run(run_backend(agent))
 ```
 
 ## 6.详细文档
