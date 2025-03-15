@@ -199,20 +199,20 @@ class DrSaiGroupChat(BaseGroupChat):
         """
 
         # Create the messages list if the task is a string or a chat message.
-        messages: List[ChatMessage] = []
+        messages: List[ChatMessage] | None = None
 
-        # 从thread中获取历史消息
-        if self._thread is not None:
-            history_thread_messages: List[ThreadMessage] = self._thread.messages
-            for history_thread_message in history_thread_messages:
-                messages.append(TextMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
+        # # TODO: 目前autogen不支持把历史消息加入到groupchat消息队列中，因此现在把加载历史消息和保存放到了每个Agent中
+        # if self._thread is not None:
+        #     history_thread_messages: List[ThreadMessage] = self._thread.messages
+        #     for history_thread_message in history_thread_messages:
+        #         messages.append(TextMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
 
         if task is None:
             pass
         elif isinstance(task, str):
-            messages.append(TextMessage(content=task, source="user"))
+            messages = [TextMessage(content=task, source="user")]
         elif isinstance(task, BaseChatMessage):
-            messages.append(task)
+            messages = [task]
         else:
             if not task:
                 raise ValueError("Task list cannot be empty.")
@@ -227,6 +227,15 @@ class DrSaiGroupChat(BaseGroupChat):
         self._is_running = True
         
         yield messages[-1]
+        # 储存第一条用户提问消息
+        if self._thread is not None:
+            self._thread_mgr.create_message(
+                thread=self._thread,
+                role = "user",
+                content=[Content(type="text", text=Text(value=messages[-1].content,annotations=[]))],
+                sender=messages[-1].source,
+                metadata={},
+                )
 
         # Start the runtime.
         # TODO: The runtime should be started by a managed context.
@@ -274,15 +283,15 @@ class DrSaiGroupChat(BaseGroupChat):
                     continue
                 output_messages.append(message)
 
-                # 使用thread储存完整的文本消息，以后可能有多模态消息
-                if self._thread is not None:
-                    self._thread_mgr.create_message(
-                        thread=self._thread,
-                        role = "assistant" if (message.source != "user" or message.source != "system") else message.source,
-                        content=[Content(type="text", text=Text(value=message.content,annotations=[]))],
-                        sender=message.source,
-                        metadata={},
-                        )
+                # # 使用thread储存完整的文本消息，以后可能有多模态消息
+                # if self._thread is not None:
+                #     self._thread_mgr.create_message(
+                #         thread=self._thread,
+                #         role = "assistant" if (message.source != "user" or message.source != "system") else message.source,
+                #         content=[Content(type="text", text=Text(value=message.content,annotations=[]))],
+                #         sender=message.source,
+                #         metadata={},
+                #         )
 
             # Yield the final result.
             yield TaskResult(messages=output_messages, stop_reason=self._stop_reason)

@@ -192,7 +192,7 @@ class DrSaiAgent(AssistantAgent):
                 if history_thread_message.role == "user":
                     llm_messages.append(UserMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
                 elif history_thread_message.role == "assistant":
-                    llm_messages.append(AssistantMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
+                    llm_messages.append(UserMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
                 elif history_thread_message.role == "system":
                     llm_messages.append(SystemMessage(content=history_thread_message.content_str()))
                 elif history_thread_message.role == "function":

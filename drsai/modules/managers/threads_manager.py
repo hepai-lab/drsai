@@ -242,7 +242,7 @@ class ThreadsManager(BaseJsonSaver):
                 # 如果是从json文件中回复的，message=str，需要从硬盘加载message
                 msg_save_path = f"{self.message_save_dir}/{username}/messages_of_{thread_id}.jsonl"
                 messages = self.load_messages_from_disk(msg_save_path)
-                threads[0]["messages"] = messages
+                thread.messages = messages
         if thread.deleted:
             raise ModuleNotFoundError(f"Thread has been deleted, id: `{thread_id}`")
         if return_index:

@@ -126,6 +126,13 @@ class DrSai:
         thread: Thread = self.threads_mgr.create_threads(username=self.username, dialog_id=dialog_id)
         agent._thread = thread
         agent._thread_mgr = self.threads_mgr
+
+        # 由于groupchat中不能将历史消息传入队列中，因为必须由每个Agent来处理历史消息
+        if isinstance(agent, BaseGroupChat):
+            for participant in agent._participants:
+                participant._thread = thread
+                participant._thread_mgr = self.threads_mgr
+
         # 启动聊天任务
         res = agent.run_stream(task=usermessage)
         tool_flag = 0
