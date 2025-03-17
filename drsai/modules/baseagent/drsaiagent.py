@@ -53,7 +53,7 @@ class DrSaiAgent(AssistantAgent):
             system_message: (
                 str | None
             ) = "You are a helpful AI assistant. Solve tasks using your tools. Reply with TERMINATE when the task has been completed.",
-            model_client_stream: bool = False,
+            model_client_stream: bool = True,
             reflect_on_tool_use: bool = False,
             tool_call_summary_format: str = "{result}",
             memory: Sequence[Memory] | None = None,
@@ -203,7 +203,7 @@ class DrSaiAgent(AssistantAgent):
             llm_messages = await self._call_memory_function(llm_messages)
 
         all_tools = tools + handoff_tools
-        
+        model_result: Optional[CreateResult] = None
         if self._reply_function is not None:
             # 自定义的reply_function，用于自定义对话回复的定制
             async for result in self._call_reply_function(
@@ -212,7 +212,7 @@ class DrSaiAgent(AssistantAgent):
                 yield result
         else:
             if model_client_stream:
-                model_result: Optional[CreateResult] = None
+                
                 async for chunk in model_client.create_stream(
                     llm_messages, tools=all_tools, cancellation_token=cancellation_token
                 ):

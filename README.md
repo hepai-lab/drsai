@@ -148,7 +148,7 @@ asyncio.run(run_console(agent_factory=create_agent, task="Why will humans be des
 from drsai import AssistantAgent, HepAIChatCompletionClient
 import os
 import asyncio
-from typing import List, Dict, Union, Generator
+from typing import List, Dict, Union, AsyncGenerator
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
 def create_agent() -> AssistantAgent:
@@ -160,13 +160,10 @@ def create_agent() -> AssistantAgent:
         # api_key=os.environ.get("HEPAI_API_KEY"),
     )
 
-    # # Set to True if the model client supports streaming. !!!! This is important for reply_function to work.
-    model_client_stream = False  
-
     # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
-    async def interface(messages: List[Dict], **kwargs) -> Union[str, AsyncGenerator[str, None, None]]:
+    async def interface(messages: List[Dict], **kwargs) -> Union[str, AsyncGenerator[str, None]]:
         """Address the messages and return the response."""
-        return "test_worker reply"
+        yield "test_worker reply"
 
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
@@ -176,8 +173,7 @@ def create_agent() -> AssistantAgent:
         model_client=model_client,
         reply_function=interface,
         system_message="You are a helpful assistant.",
-        reflect_on_tool_use=False,
-        model_client_stream=model_client_stream,  # Must set to True if reply_function returns a generator.
+        reflect_on_tool_use=False
     )
 
 from drsai import run_console
@@ -188,7 +184,7 @@ asyncio.run(run_console(agent_factory=create_agent, task="Why will humans be des
 
 ### 4.1.部署为OpenAI格式的后端模型服务/HepAI worker服务
 ```python
-from DrSai import run_backend, run_hepai_worker
+from drsai import run_backend, run_hepai_worker
 import asyncio
 asyncio.run(run_backend(agent_factory=create_agent)) # 部署为OpenAI格式的后端模型服务
 # asyncio.run(run_hepai_worker(agent_factory=create_agent)) # 部署为HepAI worker服务
@@ -203,7 +199,7 @@ import json
 import requests
 import sys
 
-HEPAI_API_KEY = os.getenv("HEPAI_API_KEY2")
+HEPAI_API_KEY = os.getenv("HEPAI_API_KEY")
 base_url = "http://localhost:42801/apiv2"
 
 
