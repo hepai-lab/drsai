@@ -3,7 +3,7 @@
 autogen-agentchat>=0.4.8
 autogen-core>=0.4.8
 autogen-ext>=0.4.8
-hepai>=1.1.29
+hepai>=1.1.30
 schedule>=1.2.2
 tiktoken>=0.9.0
 # open_webui>=0.5.20

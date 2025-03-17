@@ -88,13 +88,16 @@ class Run_DrSaiAPP:
             ):
         self.model_args, self.worker_args = hepai.parse_args((model_args, worker_args))
 
-    async def run_drsai(self, 
-                  model_name: str = None,
-                  host: str = None,
-                  port: int = None,
-                  no_register: bool = True,
-                  controller_address: str = "http://localhost:42601",
-                  drsaiapp: DrSaiAPP = DrSaiAPP):  # 传入DrSaiAPP实例:
+    async def run_drsai(
+        self, 
+        model_name: str = None,
+        host: str = None,
+        port: int = None,
+        no_register: bool = True,
+        controller_address: str = "http://localhost:42601",
+        drsaiapp: DrSaiAPP = DrSaiAPP, # 传入DrSaiAPP实例:
+        enable_pipeline: bool = False,
+        ):
         
         if isinstance(drsaiapp, type): # 传入DrSaiAPP类而不是实例
             drsaiapp = drsaiapp()  # Instantiate the DrSaiAPP instance.
@@ -115,9 +118,25 @@ class Run_DrSaiAPP:
         print()
         print(self.worker_args)
         print()
-        # 实例化HWorkerAPP
-        self.app: FastAPI = HWorkerAPP(model, worker_config=self.worker_args)  # Instantiate the APP, which is a FastAPI application.
+        
+        if enable_pipeline:
+            # 通过Pipeline适配OpenWebUI
+            from .owebui_pipeline.api import app as owebui_pipeline_app
+            from .owebui_pipeline.api import lifespan as owebui_lifespan
+            # 实例化HWorkerAPP
+            self.app: FastAPI = HWorkerAPP(
+                model, worker_config=self.worker_args,
+                lifespan=owebui_lifespan,
+                )  # Instantiate the APP, which is a FastAPI application.
+            self.app.mount("/pipelines", app=owebui_pipeline_app)
+        else:
+            self.app: FastAPI = HWorkerAPP(
+                model, worker_config=self.worker_args
+                )
+       
         self.app.include_router(model.drsai.router)
+      
+        
         print(self.app.worker.get_worker_info(), flush=True)
         # # 启动服务
         # uvicorn.run(self.app, host=self.app.host, port=self.app.port)
@@ -141,6 +160,8 @@ async def run_console(agent_factory: callable, task: str, **kwargs):
 async def run_backend(agent_factory: callable, **kwargs):
     '''
     启动后端服务
+    : args:
+        enable_openwebui_pipeline: bool = False,  # 是否启动openwebui pipelines
     '''
     drsaiapp = DrSaiAPP(agent_factory = agent_factory)
 
@@ -149,13 +170,16 @@ async def run_backend(agent_factory: callable, **kwargs):
     port: int =  kwargs.get("port", None)
     no_register: bool =  kwargs.get("no_register", True)
     controller_address: str =  kwargs.get("controller_address", "http://localhost:42601")
+    enable_pipeline: bool = kwargs.get("enable_openwebui_pipeline", False)
+        
     await Run_DrSaiAPP().run_drsai(
         model_name=model_name,
         host=host,
         port=port,
         no_register=no_register,
         controller_address=controller_address,
-        drsaiapp=drsaiapp
+        drsaiapp=drsaiapp,
+        enable_pipeline=enable_pipeline,
     )
 
 async def run_hepai_worker(agent_factory: callable, **kwargs):

@@ -38,7 +38,7 @@ cd drsai
 ```shell
 conda create -n drsai python>=3.10
 conda activate drsai
-pip install .
+pip install -e .  # 以开发者模式安装，任何仓库内的修改会直接生效 ，无需重新安装。
 ```
 
 #### 配置HepAI平台的API访问密钥
