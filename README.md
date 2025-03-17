@@ -217,13 +217,13 @@ print('\n')
 
 ### 5.1.基于pm2进程管理的一键启动配置
 
-- 1.python环境中安装openwebui：
+- 1. python环境中安装openwebui：
 
 ```shell
 pip install open-webui
 ```
 
-- 2.克隆DrSai仓库到本地:
+- 2. 克隆DrSai仓库到本地:
 
 适配DrSai的OpenWebUI Pipeline的相对路径在：```drsai/backend/pipelines```，在启动时需要使用绝对路径:```pipelines_path = your_path_to_drsai/backend/pipelines```
 
@@ -242,6 +242,16 @@ from DrSai import run_drsai_app
 import asyncio
 asyncio.run(run_drsai_app(agent_factory=create_agent, pipelines_path=pipelines_path))
 ```
+
+openwebui服务默认启动在```http://localhost:8088```, 通过```openwebui_port```参数可自定义端口;
+
+drsai的pipeline服务默认启动在```http://localhost:9097```，通过```pipelines_port```参数可自定义端口;
+
+drsai后端服务默认启动在```http://localhost:42801/apiv2```, 通过```port```参数可自定义端口;
+
+- 5.将pipeline的密钥加入OpenWebUI：
+
+pipeline的密钥在```drsai/backend/pipelines/config.py```中，默认为：```0p3n-w3bu!```，将密钥和pipeline后端服务的地址：```http://localhost:9097```加入OpenWebUI的```管理员面板-设置-外部连接-管理OpenAI API连接```中。
 
 ### 5.2.不需pm2进程管理的后台启动方式
 
@@ -265,6 +275,16 @@ from DrSai import run_backend
 import asyncio
 asyncio.run(run_backend(agent_factory=create_agent))
 ```
+
+openwebui服务默认启动在```http://localhost:8088```, 通过```openwebui_port```参数可自定义端口;
+
+drsai的pipeline服务默认启动在```http://localhost:9097```，通过```pipelines_port```参数可自定义端口;
+
+drsai后端服务默认启动在```http://localhost:42801/apiv2```, 通过```port```参数可自定义端口;
+
+- 4. 将pipeline的密钥加入OpenWebUI：
+
+pipeline的密钥在```drsai/backend/pipelines/config.py```中，默认为：```0p3n-w3bu!```，将密钥和pipeline后端服务的地址：```http://localhost:9097```加入OpenWebUI的```管理员面板-设置-外部连接-管理OpenAI API连接```中。
 
 ## 6.详细文档
 见docs目录：

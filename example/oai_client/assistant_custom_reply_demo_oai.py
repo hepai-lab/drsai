@@ -55,9 +55,9 @@ async def main():
             textchunck = oai_json["choices"][0]["delta"]["content"]
         else:
             textchunck = oai_json["choices"][0]["message"]["content"]
-            if textchunck:
-                sys.stdout.write(textchunck)
-                sys.stdout.flush()
+        if textchunck:
+            sys.stdout.write(textchunck)
+            sys.stdout.flush()
     print()
 
 

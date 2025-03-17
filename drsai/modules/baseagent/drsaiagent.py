@@ -233,12 +233,25 @@ class DrSaiAgent(AssistantAgent):
         
         # 使用thread储存完整的文本消息，以后可能有多模态消息
         if self._thread is not None and model_result is not None:
-            self._thread_mgr.create_message(
-                thread=self._thread,
-                role = "assistant",
-                content=[Content(type="text", text=Text(value=model_result.content,annotations=[]))],
-                sender=self.name,
-                metadata={},
-                )
+            thread_content = None
+            if isinstance(model_result.content, str):
+                thread_content = [Content(type="text", text=Text(value=model_result.content,annotations=[]))]
+            elif isinstance(model_result.content, List):
+                context_str = ""
+                for content_item in model_result.content:
+                    if isinstance(content_item, FunctionCall):
+                        context_str += f"{content_item.name}({content_item.arguments})"
+                thread_content = [Content(type="text", text=Text(value=context_str,annotations=[]))]
+            else :
+                print(f"Invalid content type: {type(model_result.content)}")
+
+            if thread_content is not None:
+                self._thread_mgr.create_message(
+                    thread=self._thread,
+                    role = "assistant",
+                    content=thread_content,
+                    sender=self.name,
+                    metadata={},
+                    )
 
 
