@@ -21,9 +21,9 @@
 #### pip 安装
 
 ```shell
-conda create -n drsai python=>3.10
+conda create -n drsai python=>3.11
 conda activate drsai
-pip install DrSai -U
+pip install drsai -U
 ```
 
 #### 从源码安装和配置DrSai运行环境
@@ -36,7 +36,7 @@ cd drsai
 
 配置conda环境，安装依赖包：
 ```shell
-conda create -n drsai python>=3.10
+conda create -n drsai python>=3.11
 conda activate drsai
 pip install .
 ```
@@ -181,8 +181,8 @@ asyncio.run(run_console(agent_factory=create_agent, task="Why will humans be des
 ```python
 from DrSai import run_backend, run_hepai_worker
 import asyncio
-asyncio.run(run_backend(agent)) # 部署为OpenAI格式的后端模型服务
-# asyncio.run(run_hepai_worker(agent)) # 部署为HepAI worker服务
+asyncio.run(run_backend(agent_factory=create_agent)) # 部署为OpenAI格式的后端模型服务
+# asyncio.run(run_hepai_worker(agent_factory=create_agent)) # 部署为HepAI worker服务
 ```
 
 ### 4.2.使用HepAI client访问的方式访问定制好的智能体
@@ -215,15 +215,16 @@ print('\n')
 
 ## 5.OpenWebUI Pipeline接入
 
-### 基于pm2进程管理的一键启动配置
+### 5.1.基于pm2进程管理的一键启动配置
 
 - 1.python环境中安装openwebui：
 
 ```shell
-pip install openwebui
+pip install open-webui
 ```
 
 - 2.克隆DrSai仓库到本地:
+
 适配DrSai的OpenWebUI Pipeline的相对路径在：```drsai/backend/pipelines```，在启动时需要使用绝对路径:```pipelines_path = your_path_to_drsai/backend/pipelines```
 
 
@@ -236,27 +237,25 @@ pm2 -v
 
 - 4.一键启动DrSai的OpenWebUI Pipeline和OpenWebUI服务：
 
-```shell
-pip install openwebui
-```
-
 ```python
 from DrSai import run_drsai_app
 import asyncio
-asyncio.run(run_drsai_app(agent=agent, pipelines_path=pipelines_path))
+asyncio.run(run_drsai_app(agent_factory=create_agent, pipelines_path=pipelines_path))
 ```
 
-### 不需pm2进程管理的后台启动方式
+### 5.2.不需pm2进程管理的后台启动方式
 
 - 1. 启动OpenWebUI服务：
 
 python环境中安装openwebui
+
 ```shell
-pip install openwebui
+pip install open-webui
 ```
 在命令行中运行：```open-webui serve --port 8088```启动OpenWebUI服务。
 
 - 2. 启动DrSai的OpenWebUI Pipeline:
+
 克隆DrSai仓库到本地，适配DrSai的OpenWebUI Pipeline的相对路径在：```drsai/backend/pipelines```。进入该目录下，使用：```python main.py --port 9097```启动OpenWebUI Pipeline。
 
 - 3. 启动DrSai的后端服务：
@@ -264,7 +263,7 @@ pip install openwebui
 ```python
 from DrSai import run_backend
 import asyncio
-asyncio.run(run_backend(agent))
+asyncio.run(run_backend(agent_factory=create_agent))
 ```
 
 ## 6.详细文档
