@@ -8,6 +8,8 @@ here = Path(__file__).parent
 
 
 pipe_dir = f'{here}/pipelines'
+
+
 sys.path.insert(0, pipe_dir)
 from .pipelines.main import app
 from .pipelines.main import lifespan

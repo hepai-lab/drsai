@@ -67,7 +67,16 @@ class DrSaiAPP(DrSai):
     ### --- 关于chat_completions的路由 --- ###
     async def a_chat_completions(self, request: Request):
 
-        apikey = request.headers.get("authorization").split(" ")[-1]
+        headers = request.headers
+        if not isinstance(headers, dict):
+            headers = dict(headers)
+        authorization = headers.get("authorization", None)
+        if authorization:
+            apikey = authorization.split(" ")[-1]
+        else:
+            apikey = None
+
+        # apikey = headers.get("authorization").split(" ")[-1]
         params = await request.json()
         params.update({"apikey": apikey})
         if "messages" not in params or "model" not in params:

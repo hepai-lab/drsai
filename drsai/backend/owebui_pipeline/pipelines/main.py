@@ -248,7 +248,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(docs_url="/docs", redoc_url=None, lifespan=lifespan)
-
+app.api_key = API_KEY
 app.state.PIPELINES = PIPELINES
 
 

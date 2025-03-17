@@ -129,6 +129,7 @@ class Run_DrSaiAPP:
                 lifespan=owebui_lifespan,
                 )  # Instantiate the APP, which is a FastAPI application.
             self.app.mount("/pipelines", app=owebui_pipeline_app)
+            
         else:
             self.app: FastAPI = HWorkerAPP(
                 model, worker_config=self.worker_args
@@ -136,7 +137,6 @@ class Run_DrSaiAPP:
        
         self.app.include_router(model.drsai.router)
       
-        
         print(self.app.worker.get_worker_info(), flush=True)
         # # 启动服务
         # uvicorn.run(self.app, host=self.app.host, port=self.app.port)
@@ -148,6 +148,8 @@ class Run_DrSaiAPP:
         )
         server = uvicorn.Server(config)
         # 在现有事件循环中启动服务
+        if enable_pipeline:
+            print(f"Enable OpenWebUI pipelines: `http://{self.worker_args.host}:{self.worker_args.port}/pipelines` with API-KEY: `{owebui_pipeline_app.api_key}`")
         await server.serve()
 
 async def run_console(agent_factory: callable, task: str, **kwargs):
