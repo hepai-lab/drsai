@@ -55,7 +55,8 @@ source ~/.bashrc
 ```
 windows平台：
 ```shell
-setx HEPAI_API_KEY "your_api_key"
+setx "HEPAI_API_KEY" "your_api_key"
+# 注意 windows环境变量需要重启电脑才会生效
 ```
 
 ### 2.2.创建一个可以使用函数作为工具的简单智能体
