@@ -39,15 +39,22 @@ cd drsai
 conda create -n drsai python>=3.11
 conda activate drsai
 pip install .
+# 使用镜像
+# pip install . -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 ```
 
 #### 配置HepAI平台的API访问密钥
 
 配置[HepAI](https://ai.ihep.ac.cn)DDF2平台的API访问密钥等环境变量(Based on bash)：
+linux/mac平台:
 ```shell
 vi ~/.bashrc
 export HEPAI_API_KEY=your_api_key
 source ~/.bashrc
+```
+windows平台：
+```shell
+setx HEPAI_API_KEY "your_api_key"
 ```
 
 ### 2.2.创建一个可以使用函数作为工具的简单智能体
