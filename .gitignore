@@ -1,3 +1,7 @@
+
+
+drsai/backend/owebui_pipeline/pipelines/pipelines/drsai_pipeline/*.json
+
 # 忽略操作系统相关的文件
 .DS_Store
 Thumbs.db
@@ -35,3 +39,5 @@ dist/
 build/
 
 .webui_secret_key
+
+drsai/backend/pipelines/pipelines/drsai_pipeline/valves.json

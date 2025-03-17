@@ -21,9 +21,9 @@
 #### pip 安装
 
 ```shell
-conda create -n drsai python=>3.10
+conda create -n drsai python=>3.11
 conda activate drsai
-pip install DrSai -U
+pip install drsai -U
 ```
 
 #### 从源码安装和配置DrSai运行环境
@@ -36,7 +36,7 @@ cd drsai
 
 配置conda环境，安装依赖包：
 ```shell
-conda create -n drsai python>=3.10
+conda create -n drsai python>=3.11
 conda activate drsai
 pip install -e .  # 以开发者模式安装，任何仓库内的修改会直接生效 ，无需重新安装。
 ```
@@ -44,10 +44,17 @@ pip install -e .  # 以开发者模式安装，任何仓库内的修改会直接
 #### 配置HepAI平台的API访问密钥
 
 配置[HepAI](https://ai.ihep.ac.cn)DDF2平台的API访问密钥等环境变量(Based on bash)：
+
+linux/mac平台:
 ```shell
 vi ~/.bashrc
 export HEPAI_API_KEY=your_api_key
 source ~/.bashrc
+```
+windows平台：
+```shell
+setx "HEPAI_API_KEY" "your_api_key"
+# 注意 windows环境变量需要重启电脑才会生效
 ```
 
 ### 2.2.创建一个可以使用函数作为工具的简单智能体
@@ -139,7 +146,7 @@ asyncio.run(run_console(agent_factory=create_agent, task="Why will humans be des
 from drsai import AssistantAgent, HepAIChatCompletionClient
 import os
 import asyncio
-from typing import List, Dict, Union, Generator
+from typing import List, Dict, Union, AsyncGenerator
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
 def create_agent() -> AssistantAgent:
@@ -151,13 +158,10 @@ def create_agent() -> AssistantAgent:
         # api_key=os.environ.get("HEPAI_API_KEY"),
     )
 
-    # # Set to True if the model client supports streaming. !!!! This is important for reply_function to work.
-    model_client_stream = False  
-
     # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
-    async def interface(messages: List[Dict], **kwargs) -> Union[str, AsyncGenerator[str, None, None]]:
+    async def interface(messages: List[Dict], **kwargs) -> Union[str, AsyncGenerator[str, None]]:
         """Address the messages and return the response."""
-        return "test_worker reply"
+        yield "test_worker reply"
 
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
@@ -167,8 +171,7 @@ def create_agent() -> AssistantAgent:
         model_client=model_client,
         reply_function=interface,
         system_message="You are a helpful assistant.",
-        reflect_on_tool_use=False,
-        model_client_stream=model_client_stream,  # Must set to True if reply_function returns a generator.
+        reflect_on_tool_use=False
     )
 
 from drsai import run_console
@@ -179,10 +182,10 @@ asyncio.run(run_console(agent_factory=create_agent, task="Why will humans be des
 
 ### 4.1.部署为OpenAI格式的后端模型服务/HepAI worker服务
 ```python
-from DrSai import run_backend, run_hepai_worker
+from drsai import run_backend, run_hepai_worker
 import asyncio
-asyncio.run(run_backend(agent)) # 部署为OpenAI格式的后端模型服务
-# asyncio.run(run_hepai_worker(agent)) # 部署为HepAI worker服务
+asyncio.run(run_backend(agent_factory=create_agent)) # 部署为OpenAI格式的后端模型服务
+# asyncio.run(run_hepai_worker(agent_factory=create_agent)) # 部署为HepAI worker服务
 ```
 
 ### 4.2.使用HepAI client访问的方式访问定制好的智能体
@@ -194,7 +197,7 @@ import json
 import requests
 import sys
 
-HEPAI_API_KEY = os.getenv("HEPAI_API_KEY2")
+HEPAI_API_KEY = os.getenv("HEPAI_API_KEY")
 base_url = "http://localhost:42801/apiv2"
 
 
@@ -215,15 +218,16 @@ print('\n')
 
 ## 5.OpenWebUI Pipeline接入
 
-### 基于pm2进程管理的一键启动配置
+### 5.1.基于pm2进程管理的一键启动配置
 
-- 1.python环境中安装openwebui：
+- 1. python环境中安装openwebui：
 
 ```shell
-pip install openwebui
+pip install open-webui
 ```
 
-- 2.克隆DrSai仓库到本地:
+- 2. 克隆DrSai仓库到本地:
+
 适配DrSai的OpenWebUI Pipeline的相对路径在：```drsai/backend/pipelines```，在启动时需要使用绝对路径:```pipelines_path = your_path_to_drsai/backend/pipelines```
 
 
@@ -236,27 +240,35 @@ pm2 -v
 
 - 4.一键启动DrSai的OpenWebUI Pipeline和OpenWebUI服务：
 
-```shell
-pip install openwebui
-```
-
 ```python
 from DrSai import run_drsai_app
 import asyncio
-asyncio.run(run_drsai_app(agent=agent, pipelines_path=pipelines_path))
+asyncio.run(run_drsai_app(agent_factory=create_agent, pipelines_path=pipelines_path))
 ```
 
-### 不需pm2进程管理的后台启动方式
+openwebui服务默认启动在```http://localhost:8088```, 通过```openwebui_port```参数可自定义端口;
+
+drsai的pipeline服务默认启动在```http://localhost:9097```，通过```pipelines_port```参数可自定义端口;
+
+drsai后端服务默认启动在```http://localhost:42801/apiv2```, 通过```port```参数可自定义端口;
+
+- 5.将pipeline的密钥加入OpenWebUI：
+
+pipeline的密钥在```drsai/backend/pipelines/config.py```中，默认为：```0p3n-w3bu!```，将密钥和pipeline后端服务的地址：```http://localhost:9097```加入OpenWebUI的```管理员面板-设置-外部连接-管理OpenAI API连接```中。
+
+### 5.2.不需pm2进程管理的后台启动方式
 
 - 1. 启动OpenWebUI服务：
 
 python环境中安装openwebui
+
 ```shell
-pip install openwebui
+pip install open-webui
 ```
 在命令行中运行：```open-webui serve --port 8088```启动OpenWebUI服务。
 
 - 2. 启动DrSai的OpenWebUI Pipeline:
+
 克隆DrSai仓库到本地，适配DrSai的OpenWebUI Pipeline的相对路径在：```drsai/backend/pipelines```。进入该目录下，使用：```python main.py --port 9097```启动OpenWebUI Pipeline。
 
 - 3. 启动DrSai的后端服务：
@@ -264,8 +276,18 @@ pip install openwebui
 ```python
 from DrSai import run_backend
 import asyncio
-asyncio.run(run_backend(agent))
+asyncio.run(run_backend(agent_factory=create_agent))
 ```
+
+openwebui服务默认启动在```http://localhost:8088```, 通过```openwebui_port```参数可自定义端口;
+
+drsai的pipeline服务默认启动在```http://localhost:9097```，通过```pipelines_port```参数可自定义端口;
+
+drsai后端服务默认启动在```http://localhost:42801/apiv2```, 通过```port```参数可自定义端口;
+
+- 4. 将pipeline的密钥加入OpenWebUI：
+
+pipeline的密钥在```drsai/backend/pipelines/config.py```中，默认为：```0p3n-w3bu!```，将密钥和pipeline后端服务的地址：```http://localhost:9097```加入OpenWebUI的```管理员面板-设置-外部连接-管理OpenAI API连接```中。
 
 ## 6.详细文档
 见docs目录：

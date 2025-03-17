@@ -53,7 +53,7 @@ class DrSaiAgent(AssistantAgent):
             system_message: (
                 str | None
             ) = "You are a helpful AI assistant. Solve tasks using your tools. Reply with TERMINATE when the task has been completed.",
-            model_client_stream: bool = False,
+            model_client_stream: bool = True,
             reflect_on_tool_use: bool = False,
             tool_call_summary_format: str = "{result}",
             memory: Sequence[Memory] | None = None,
@@ -139,7 +139,7 @@ class DrSaiAgent(AssistantAgent):
         if self._model_client_stream:
             # 如果reply_function不是返回一个异步生成器而使用了流式模式，则会报错
             if not inspect.isasyncgenfunction(self._reply_function):
-                raise ValueError("reply_function must be a coroutine function if model_client_stream is True.")
+                raise ValueError("reply_function must be AsyncGenerator function if model_client_stream is True.")
             # Stream the reply_function.
             response = ""
             async for chunk in self._reply_function(
@@ -203,7 +203,7 @@ class DrSaiAgent(AssistantAgent):
             llm_messages = await self._call_memory_function(llm_messages)
 
         all_tools = tools + handoff_tools
-        
+        model_result: Optional[CreateResult] = None
         if self._reply_function is not None:
             # 自定义的reply_function，用于自定义对话回复的定制
             async for result in self._call_reply_function(
@@ -212,7 +212,7 @@ class DrSaiAgent(AssistantAgent):
                 yield result
         else:
             if model_client_stream:
-                model_result: Optional[CreateResult] = None
+                
                 async for chunk in model_client.create_stream(
                     llm_messages, tools=all_tools, cancellation_token=cancellation_token
                 ):
@@ -233,12 +233,25 @@ class DrSaiAgent(AssistantAgent):
         
         # 使用thread储存完整的文本消息，以后可能有多模态消息
         if self._thread is not None and model_result is not None:
-            self._thread_mgr.create_message(
-                thread=self._thread,
-                role = "assistant",
-                content=[Content(type="text", text=Text(value=model_result.content,annotations=[]))],
-                sender=self.name,
-                metadata={},
-                )
+            thread_content = None
+            if isinstance(model_result.content, str):
+                thread_content = [Content(type="text", text=Text(value=model_result.content,annotations=[]))]
+            elif isinstance(model_result.content, List):
+                context_str = ""
+                for content_item in model_result.content:
+                    if isinstance(content_item, FunctionCall):
+                        context_str += f"{content_item.name}({content_item.arguments})"
+                thread_content = [Content(type="text", text=Text(value=context_str,annotations=[]))]
+            else :
+                print(f"Invalid content type: {type(model_result.content)}")
+
+            if thread_content is not None:
+                self._thread_mgr.create_message(
+                    thread=self._thread,
+                    role = "assistant",
+                    content=thread_content,
+                    sender=self.name,
+                    metadata={},
+                    )
 
 
