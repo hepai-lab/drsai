@@ -46,6 +46,7 @@ pip install .
 #### 配置HepAI平台的API访问密钥
 
 配置[HepAI](https://ai.ihep.ac.cn)DDF2平台的API访问密钥等环境变量(Based on bash)：
+
 linux/mac平台:
 ```shell
 vi ~/.bashrc
