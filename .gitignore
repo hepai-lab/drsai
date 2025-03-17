@@ -35,3 +35,5 @@ dist/
 build/
 
 .webui_secret_key
+
+drsai/backend/pipelines/pipelines/drsai_pipeline/valves.json
