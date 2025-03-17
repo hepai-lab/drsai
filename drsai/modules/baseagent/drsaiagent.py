@@ -139,7 +139,7 @@ class DrSaiAgent(AssistantAgent):
         if self._model_client_stream:
             # 如果reply_function不是返回一个异步生成器而使用了流式模式，则会报错
             if not inspect.isasyncgenfunction(self._reply_function):
-                raise ValueError("reply_function must be a coroutine function if model_client_stream is True.")
+                raise ValueError("reply_function must be AsyncGenerator function if model_client_stream is True.")
             # Stream the reply_function.
             response = ""
             async for chunk in self._reply_function(
