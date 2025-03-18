@@ -241,7 +241,7 @@ pm2 -v
 - 4.一键启动DrSai的OpenWebUI Pipeline和OpenWebUI服务：
 
 ```python
-from DrSai import run_drsai_app
+from drsai import run_drsai_app
 import asyncio
 asyncio.run(run_drsai_app(agent_factory=create_agent, pipelines_path=pipelines_path))
 ```
@@ -274,7 +274,7 @@ pip install open-webui
 - 3. 启动DrSai的后端服务：
 
 ```python
-from DrSai import run_backend
+from drsai import run_backend
 import asyncio
 asyncio.run(run_backend(agent_factory=create_agent))
 ```
