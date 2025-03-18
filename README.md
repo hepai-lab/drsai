@@ -279,10 +279,6 @@ import asyncio
 asyncio.run(run_backend(agent_factory=create_agent))
 ```
 
-openwebui服务默认启动在```http://localhost:8088```, 通过```openwebui_port```参数可自定义端口;
-
-drsai的pipeline服务默认启动在```http://localhost:9097```，通过```pipelines_port```参数可自定义端口;
-
 drsai后端服务默认启动在```http://localhost:42801/apiv2```, 通过```port```参数可自定义端口;
 
 - 4. 将pipeline的密钥加入OpenWebUI：
