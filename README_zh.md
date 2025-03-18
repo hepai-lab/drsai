@@ -16,7 +16,7 @@
 
 ## 2.快速开始
 
-### 2.1.安装DrSai
+### 2.1.安装OpenDrSai
 
 #### pip 安装
 
@@ -26,7 +26,7 @@ conda activate drsai
 pip install drsai -U
 ```
 
-#### 从源码安装和配置DrSai运行环境
+#### 从源码安装和配置OpenDrSai运行环境
 
 创建[code.ihep.ac.cn](https://code.ihep.ac.cn/)账号，克隆OpenDrSai仓库到本地：
 ```shell
@@ -178,7 +178,7 @@ from drsai import run_console
 asyncio.run(run_console(agent_factory=create_agent, task="Why will humans be destroyed"))
 ```
 
-## 4.将DrSai部署为OpenAI格式的后端模型服务或者HepAI woker服务
+## 4.将OpenDrSai部署为OpenAI格式的后端模型服务或者HepAI woker服务
 
 ### 4.1.部署为OpenAI格式的后端模型服务/HepAI worker服务
 ```python
@@ -187,6 +187,7 @@ import asyncio
 asyncio.run(run_backend(agent_factory=create_agent)) # 部署为OpenAI格式的后端模型服务
 # asyncio.run(run_hepai_worker(agent_factory=create_agent)) # 部署为HepAI worker服务
 ```
+后端默认启动在```http://localhost:42801/apiv2```, 通过```port```参数可自定义端口
 
 ### 4.2.使用HepAI client访问的方式访问定制好的智能体
 
@@ -218,72 +219,29 @@ print('\n')
 
 ## 5.OpenWebUI Pipeline接入
 
-### 5.1.基于pm2进程管理的一键启动配置
-
-- 1. python环境中安装openwebui：
-
-```shell
-pip install open-webui
-```
-
-- 2. 克隆DrSai仓库到本地:
-
-适配DrSai的OpenWebUI Pipeline的相对路径在：```drsai/backend/pipelines```，在启动时需要使用绝对路径:```pipelines_path = your_path_to_drsai/backend/pipelines```
-
-
-- 3.检查本地是否安装了```pm2```后台任务管理工具：
-
-```shell
-pm2 -v
-```
-具体见：https://pm2.io/docs/plus/quick-start/
-
-- 4.一键启动DrSai的OpenWebUI Pipeline和OpenWebUI服务：
+### 5.1.启动包含OpenWebUI Pipeline的OpenDrSai服务
 
 ```python
-from drsai import run_drsai_app
-import asyncio
-asyncio.run(run_drsai_app(agent_factory=create_agent, pipelines_path=pipelines_path))
+asyncio.run(run_backend(agent_factory=create_agent, enable_openwebui_pipeline=True))
 ```
 
-openwebui服务默认启动在```http://localhost:8088```, 通过```openwebui_port```参数可自定义端口;
+后端默认启动在```http://localhost:42801/apiv2```, 通过```port```参数可自定义端口；OpenWebUI Pipeline默认启动在```http://localhost:42801/pipelines```
 
-drsai的pipeline服务默认启动在```http://localhost:9097```，通过```pipelines_port```参数可自定义端口;
-
-drsai后端服务默认启动在```http://localhost:42801/apiv2```, 通过```port```参数可自定义端口;
-
-- 5.将pipeline的密钥加入OpenWebUI：
-
-pipeline的密钥在```drsai/backend/pipelines/config.py```中，默认为：```0p3n-w3bu!```，将密钥和pipeline后端服务的地址：```http://localhost:9097```加入OpenWebUI的```管理员面板-设置-外部连接-管理OpenAI API连接```中。
-
-### 5.2.不需pm2进程管理的后台启动方式
-
-- 1. 启动OpenWebUI服务：
-
-python环境中安装openwebui
+### 5.2.安装OpenWebUI
 
 ```shell
 pip install open-webui
 ```
+
 在命令行中运行：```open-webui serve --port 8088```启动OpenWebUI服务。
 
-- 2. 启动DrSai的OpenWebUI Pipeline:
+### 5.3.配置OpenWebUI Pipeline
 
-克隆DrSai仓库到本地，适配DrSai的OpenWebUI Pipeline的相对路径在：```drsai/backend/pipelines```。进入该目录下，使用：```python main.py --port 9097```启动OpenWebUI Pipeline。
+pipeline的密钥在```drsai/backend/pipelines/config.py```中，默认为：```0p3n-w3bu!```，将密钥和pipeline后端服务的地址：```http://localhost:42801/pipelines```加入OpenWebUI的```管理员面板-设置-外部连接-管理OpenAI API连接```中。
 
-- 3. 启动DrSai的后端服务：
+### 5.4.自定义Pipeline
 
-```python
-from drsai import run_backend
-import asyncio
-asyncio.run(run_backend(agent_factory=create_agent))
-```
-
-drsai后端服务默认启动在```http://localhost:42801/apiv2```, 通过```port```参数可自定义端口;
-
-- 4. 将pipeline的密钥加入OpenWebUI：
-
-pipeline的密钥在```drsai/backend/pipelines/config.py```中，默认为：```0p3n-w3bu!```，将密钥和pipeline后端服务的地址：```http://localhost:9097```加入OpenWebUI的```管理员面板-设置-外部连接-管理OpenAI API连接```中。
+将OpenDrSai项目中的```drsai/backend/owebui_pipeline/pipelines/pipelines/drsai_pipeline.py```复制到在自定义文件夹下，进行自定义修改，设置环境变量```PIPELINES_DIR```，让OpenWebUI Pipeline加载自定义的pipeline文件。
 
 ## 6.详细文档
 见docs目录：

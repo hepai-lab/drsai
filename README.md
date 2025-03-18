@@ -16,7 +16,7 @@
 
 ## 2.快速开始
 
-### 2.1.安装DrSai
+### 2.1.安装OpenDrSai
 
 #### pip 安装
 
@@ -26,7 +26,7 @@ conda activate drsai
 pip install drsai -U
 ```
 
-#### 从源码安装和配置DrSai运行环境
+#### 从源码安装和配置OpenDrSai运行环境
 
 创建[code.ihep.ac.cn](https://code.ihep.ac.cn/)账号，克隆OpenDrSai仓库到本地：
 ```shell
@@ -241,7 +241,7 @@ pipeline的密钥在```drsai/backend/pipelines/config.py```中，默认为：```
 
 ### 5.4.自定义Pipeline
 
-将DrSai项目中的```drsai/backend/owebui_pipeline/pipelines/pipelines/drsai_pipeline.py```复制到在自定义文件夹下，进行自定义修改，设置环境变量```PIPELINES_DIR```，让OpenWebUI Pipeline加载自定义的pipeline文件。
+将OpenDrSai项目中的```drsai/backend/owebui_pipeline/pipelines/pipelines/drsai_pipeline.py```复制到在自定义文件夹下，进行自定义修改，设置环境变量```PIPELINES_DIR```，让OpenWebUI Pipeline加载自定义的pipeline文件。
 
 ## 6.详细文档
 见docs目录：
