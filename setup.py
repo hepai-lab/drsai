@@ -1,5 +1,13 @@
 from setuptools import setup, find_packages
 
+def get_requirements():
+    with open('requirements.txt', encoding='utf-8') as f:
+        return [
+            line.strip()
+            for line in f.readlines()
+            if not line.startswith('#') and line.strip() != ''
+        ]
+    
 setup(
     name="DrSai",  # 项目名称
     version="0.4.3",  # 版本号
@@ -10,20 +18,13 @@ setup(
     long_description_content_type="text/markdown",  # 描述的格式
     url="https://code.ihep.ac.cn/hepai/drsai/-/tree/drsai-0.4?ref_type=heads",  # 项目主页
     packages=find_packages(),  # 自动寻找项目中的包
-    install_requires=[  # 项目的依赖包列表
-        "autogen-agentchat>=0.4.8",
-        "autogen-core>=0.4.8",
-        "autogen-ext>=0.4.8",
-        "hepai>=1.1.29",
-        "schedule>=1.2.2",
-        "tiktoken>=0.9.0",
-        ],
+    install_requires=get_requirements(),  # 依赖的包列表
     classifiers=[  # 分类标签，帮助用户找到你的项目
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.10',  # Python版本要求
+    python_requires='>=3.11',  # Python版本要求
     # entry_points={  # 可选的部分，用于创建命令行工具
     #     "console_scripts": [
     #         "your_command=your_module:main_function",

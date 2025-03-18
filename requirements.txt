@@ -1,4 +1,4 @@
-# python>=3.10
+# python>=3.11
 
 autogen-agentchat>=0.4.8
 autogen-core>=0.4.8

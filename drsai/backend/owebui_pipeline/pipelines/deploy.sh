@@ -1,1 +1,0 @@
-nohup ./dev.sh > dev.log 2>&1 &

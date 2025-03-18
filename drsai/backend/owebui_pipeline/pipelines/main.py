@@ -8,9 +8,9 @@ from pydantic import BaseModel, ConfigDict
 from typing import List, Union, Generator, Iterator
 
 
-from utils.pipelines.auth import bearer_security, get_current_user
-from utils.pipelines.main import get_last_user_message, stream_message_template
-from utils.pipelines.misc import convert_to_raw_url
+from .utils.pipelines.auth import bearer_security, get_current_user
+from .utils.pipelines.main import get_last_user_message, stream_message_template
+from .utils.pipelines.misc import convert_to_raw_url
 
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
@@ -29,7 +29,7 @@ import sys
 import subprocess
 
 
-from config import API_KEY, PIPELINES_DIR
+from .config import API_KEY, PIPELINES_DIR
 
 if not os.path.exists(PIPELINES_DIR):
     os.makedirs(PIPELINES_DIR)
