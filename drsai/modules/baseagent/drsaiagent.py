@@ -87,6 +87,8 @@ class DrSaiAgent(AssistantAgent):
         self._memory_function: Callable = memory_function
         self._thread: Thread = thread
         self._thread_mgr: ThreadsManager = thread_mgr
+        self._usr_params: Dict[str, Any] = {}
+        self._usr_params.update(kwargs)
 
     async def llm_messages2oai_messages(self, llm_messages: List[LLMMessage]) -> List[Dict[str, str]]:
         """Convert a list of LLM messages to a list of OAI chat messages."""
@@ -121,7 +123,7 @@ class DrSaiAgent(AssistantAgent):
         # memory_function: 自定义的memory_function，用于RAG检索等功能，为大模型回复增加最新的知识
         memory_messages = await self.llm_messages2oai_messages(llm_messages)
         try:
-            memory_messages_with_new_knowledge: List[Dict[str, str]] = await self._memory_function(memory_messages)
+            memory_messages_with_new_knowledge: List[Dict[str, str]] = await self._memory_function(memory_messages, **self._usr_params)
             llm_messages = await self.oai_messages2llm_messages(memory_messages_with_new_knowledge)
             return llm_messages
         except Exception as e:
@@ -157,7 +159,8 @@ class DrSaiAgent(AssistantAgent):
                 agent_name = agent_name,
                 llm_messages = llm_messages, 
                 tools=tools, 
-                cancellation_token=cancellation_token, **self._usr_params
+                cancellation_token=cancellation_token, 
+                **self._usr_params
                 ):
                 if isinstance(chunk, CreateResult):
                         model_result = chunk

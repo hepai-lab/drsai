@@ -23,13 +23,10 @@ def create_agent() -> AssistantAgent:
         # api_key=os.environ.get("HEPAI_API_KEY"),
     )
 
-    # # Set to True if the model client supports streaming. !!!! This is important for reply_function to work.
-    model_client_stream = False  
-
     # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
-    async def interface(messages: List[Dict], **kwargs) -> Union[str, AsyncGenerator[str, None, None]]:
+    async def interface(messages: List[Dict], **kwargs) -> Union[str, AsyncGenerator]:
         """Address the messages and return the response."""
-        return "test_worker reply"
+        yield "test_worker reply"
 
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
@@ -40,7 +37,7 @@ def create_agent() -> AssistantAgent:
         reply_function=interface,
         system_message="You are a helpful assistant.",
         reflect_on_tool_use=False,
-        model_client_stream=model_client_stream,  # Must set to True if reply_function returns a generator.
+        model_client_stream=True,  # Must set to True if reply_function returns a generator.
     )
 
 
