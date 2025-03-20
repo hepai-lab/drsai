@@ -31,6 +31,8 @@ from autogen_agentchat.messages import (
     ToolCallExecutionEvent,
     ToolCallRequestEvent,
     ToolCallSummaryMessage,
+    UserInputRequestedEvent,
+    ThoughtEvent
 )
 
 from drsai.modules.managers.base_thread import Thread
@@ -136,6 +138,14 @@ class DrSaiAgent(AssistantAgent):
 
         oai_messages = await self.llm_messages2oai_messages(llm_messages)
 
+        model_result: Optional[CreateResult] = None
+        allowed_events = [
+            ToolCallRequestEvent,
+            ToolCallExecutionEvent,MemoryQueryEvent,
+            UserInputRequestedEvent,
+            ModelClientStreamingChunkEvent,
+            ThoughtEvent]
+        
         if self._model_client_stream:
             # 如果reply_function不是返回一个异步生成器而使用了流式模式，则会报错
             if not inspect.isasyncgenfunction(self._reply_function):
@@ -143,29 +153,58 @@ class DrSaiAgent(AssistantAgent):
             # Stream the reply_function.
             response = ""
             async for chunk in self._reply_function(
-                oai_messages, tools=tools, cancellation_token=cancellation_token
+                oai_messages, 
+                agent_name = agent_name,
+                llm_messages = llm_messages, 
+                tools=tools, 
+                cancellation_token=cancellation_token, **self._usr_params
                 ):
-                if isinstance(chunk, str):
-                    yield ModelClientStreamingChunkEvent(content=chunk, source=agent_name)
+                if isinstance(chunk, CreateResult):
+                        model_result = chunk
+                elif isinstance(chunk, str):
                     response += chunk
+                    yield ModelClientStreamingChunkEvent(content=chunk, source=agent_name)
+                elif any(isinstance(chunk, event_type) for event_type in allowed_events):
+                    yield chunk
                 else:
                     raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
-            assert isinstance(response, str)
-            model_result = CreateResult(
-                content=response, finish_reason="stop",
-                usage = RequestUsage(prompt_tokens=0, completion_tokens=0),
-                cached=False)
+            if isinstance(model_result, CreateResult):
+                pass
+            elif model_result is None:
+            #     if isinstance(chunk, str):
+            #         yield ModelClientStreamingChunkEvent(content=chunk, source=agent_name)
+            #         response += chunk
+            #     elif isinstance(chunk, AgentEvent):
+            #         yield chunk
+            #     elif isinstance(chunk, BaseAgentEvent):
+            #     else:
+            #         raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
+                assert isinstance(response, str)
+                model_result = CreateResult(
+                    content=response, finish_reason="stop",
+                    usage = RequestUsage(prompt_tokens=0, completion_tokens=0),
+                    cached=False)
         else:
             # 如果reply_function不是异步函数，或者是一个异步生成器，则会报错
             if not asyncio.iscoroutinefunction(self._reply_function) and not inspect.isasyncgenfunction(self._reply_function):
                 raise ValueError("reply_function must be a coroutine function if model_client_stream is False.")
             response = await self._reply_function(
-                oai_messages, tools=tools, cancellation_token=cancellation_token
+                oai_messages, 
+                agent_name = agent_name,
+                llm_messages = llm_messages, 
+                tools=tools, 
+                cancellation_token=cancellation_token, 
+                **self._usr_params
                 )
-            model_result = CreateResult(
-                content=response, finish_reason="stop",
-                usage = RequestUsage(prompt_tokens=0, completion_tokens=0),
-                cached=False)
+            if isinstance(response, str):
+                model_result = CreateResult(
+                    content=response, finish_reason="stop",
+                    usage = RequestUsage(prompt_tokens=0, completion_tokens=0),
+                    cached=False)
+            elif isinstance(response, CreateResult):
+                model_result = response
+            else:
+                raise RuntimeError(f"Invalid response type: {type(response)}")
         yield model_result
 
     async def _call_llm(
