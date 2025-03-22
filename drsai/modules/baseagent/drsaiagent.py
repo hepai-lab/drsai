@@ -87,8 +87,8 @@ class DrSaiAgent(AssistantAgent):
         self._memory_function: Callable = memory_function
         self._thread: Thread = thread
         self._thread_mgr: ThreadsManager = thread_mgr
-        self._usr_params: Dict[str, Any] = {}
-        self._usr_params.update(kwargs)
+        self._user_params: Dict[str, Any] = {}
+        self._user_params.update(kwargs)
 
     async def llm_messages2oai_messages(self, llm_messages: List[LLMMessage]) -> List[Dict[str, str]]:
         """Convert a list of LLM messages to a list of OAI chat messages."""
@@ -123,7 +123,7 @@ class DrSaiAgent(AssistantAgent):
         # memory_function: 自定义的memory_function，用于RAG检索等功能，为大模型回复增加最新的知识
         memory_messages = await self.llm_messages2oai_messages(llm_messages)
         try:
-            memory_messages_with_new_knowledge: List[Dict[str, str]] = await self._memory_function(memory_messages, **self._usr_params)
+            memory_messages_with_new_knowledge: List[Dict[str, str]] = await self._memory_function(memory_messages, **self._user_params)
             llm_messages = await self.oai_messages2llm_messages(memory_messages_with_new_knowledge)
             return llm_messages
         except Exception as e:
@@ -160,7 +160,7 @@ class DrSaiAgent(AssistantAgent):
                 llm_messages = llm_messages, 
                 tools=tools, 
                 cancellation_token=cancellation_token, 
-                **self._usr_params
+                **self._user_params
                 ):
                 if isinstance(chunk, CreateResult):
                         model_result = chunk
@@ -197,7 +197,7 @@ class DrSaiAgent(AssistantAgent):
                 llm_messages = llm_messages, 
                 tools=tools, 
                 cancellation_token=cancellation_token, 
-                **self._usr_params
+                **self._user_params
                 )
             if isinstance(response, str):
                 model_result = CreateResult(
@@ -209,6 +209,39 @@ class DrSaiAgent(AssistantAgent):
             else:
                 raise RuntimeError(f"Invalid response type: {type(response)}")
         yield model_result
+
+    @classmethod
+    async def call_llm(
+        cls,
+        agent_name: str,
+        model_client: ChatCompletionClient,
+        llm_messages: List[LLMMessage], 
+        tools: List[BaseTool[Any, Any]], 
+        model_client_stream: bool,
+        cancellation_token: CancellationToken,
+        ) -> AsyncGenerator:
+    
+        model_result: Optional[CreateResult] = None
+
+        if model_client_stream:
+                
+            async for chunk in model_client.create_stream(
+                llm_messages, tools=tools, cancellation_token=cancellation_token
+            ):
+                if isinstance(chunk, CreateResult):
+                    model_result = chunk
+                elif isinstance(chunk, str):
+                    yield ModelClientStreamingChunkEvent(content=chunk, source=agent_name)
+                else:
+                    raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
+            if model_result is None:
+                raise RuntimeError("No final model result in streaming mode.")
+            yield model_result
+        else:
+            model_result = await model_client.create(
+                llm_messages, tools=tools, cancellation_token=cancellation_token
+            )
+            yield model_result
 
     async def _call_llm(
         self,
@@ -248,30 +281,24 @@ class DrSaiAgent(AssistantAgent):
         model_result: Optional[CreateResult] = None
         if self._reply_function is not None:
             # 自定义的reply_function，用于自定义对话回复的定制
-            async for result in self._call_reply_function(
+            async for chunk in self._call_reply_function(
                 llm_messages, tools=all_tools, agent_name=agent_name, cancellation_token=cancellation_token
             ):
-                yield result
+                if isinstance(chunk, CreateResult):
+                    model_result = chunk
+                yield chunk
         else:
-            if model_client_stream:
-                
-                async for chunk in model_client.create_stream(
-                    llm_messages, tools=all_tools, cancellation_token=cancellation_token
-                ):
-                    if isinstance(chunk, CreateResult):
-                        model_result = chunk
-                    elif isinstance(chunk, str):
-                        yield ModelClientStreamingChunkEvent(content=chunk, source=agent_name)
-                    else:
-                        raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
-                if model_result is None:
-                    raise RuntimeError("No final model result in streaming mode.")
-                yield model_result
-            else:
-                model_result = await model_client.create(
-                    llm_messages, tools=all_tools, cancellation_token=cancellation_token
-                )
-                yield model_result
+           async for chunk in self.call_llm(
+                agent_name = agent_name,
+                model_client = model_client,
+                llm_messages = llm_messages, 
+                tools = all_tools, 
+                model_client_stream = model_client_stream,
+                cancellation_token = cancellation_token,
+           ):
+               if isinstance(chunk, CreateResult):
+                    model_result = chunk
+               yield chunk
         
         # 使用thread储存完整的文本消息，以后可能有多模态消息
         if self._thread is not None and model_result is not None:
