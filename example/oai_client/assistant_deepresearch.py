@@ -38,7 +38,7 @@ def web_search(user_input: str,num_results:int=30) -> List:
         "num_results":num_results
     }
 
-    return requests.get("http://localhost:42999/",params=param).content.decode('utf-8')
+    return requests.get("http://196.168.60.170:42999/",params=param).content.decode('utf-8')
 
 async def __get_useful_data__(model_client,llm_messages,cancellation_token):
     async for chunk in model_client.create_stream(
