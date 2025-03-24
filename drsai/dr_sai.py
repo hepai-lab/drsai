@@ -1,6 +1,6 @@
 
 from typing import List, Dict, Union, AsyncGenerator, Type, Generator
-import copy, json, time, asyncio
+import copy, json, time, asyncio, inspect
 
 from drsai.modules.managers.threads_manager import ThreadsManager
 THREADS_MGR = ThreadsManager()
@@ -61,7 +61,17 @@ class DrSai:
         """
         启动aotugen原生多智能体运行方式和多智能体逻辑
         """
-        agent: AssistantAgent|BaseGroupChat = self.agent_factory() if agent is None else agent
+
+        # agent: AssistantAgent|BaseGroupChat = self.agent_factory() if agent is None else agent
+        agent: AssistantAgent | BaseGroupChat = (
+            await self.agent_factory() 
+            if agent is None and inspect.isawaitable(self.agent_factory())
+            else (
+                self.agent_factory() 
+                if agent is None 
+                else agent
+            )
+        )
 
         stream = agent._model_client_stream if not isinstance(agent, BaseGroupChat) else agent._participants[0]._model_client_stream
         if stream:
@@ -90,7 +100,12 @@ class DrSai:
         """
         
         # 从函数工厂中获取定义的Agents
-        agent: AssistantAgent|BaseGroupChat = self.agent_factory()
+        # agent: AssistantAgent|BaseGroupChat = self.agent_factory()
+        agent: AssistantAgent | BaseGroupChat = (
+            await self.agent_factory() 
+            if inspect.isawaitable(self.agent_factory())
+            else (self.agent_factory())
+        )
 
         # 是否使用流式模式
         agent_stream = agent._model_client_stream if not isinstance(agent, BaseGroupChat) else agent._participants[0]._model_client_stream
