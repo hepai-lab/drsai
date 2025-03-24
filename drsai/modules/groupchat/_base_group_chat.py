@@ -27,25 +27,18 @@ class DrSaiGroupChatManager(BaseGroupChatManager):
 
     def __init__(
         self,
-        name: str,
-        group_topic_type: str,
-        output_topic_type: str,
-        participant_topic_types: List[str],
-        participant_descriptions: List[str],
-        termination_condition: TerminationCondition | None = None,
-        max_turns: int | None = None,
+        # name: str,
+        # group_topic_type: str,
+        # output_topic_type: str,
+        # participant_topic_types: List[str],
+        # participant_descriptions: List[str],
+        # termination_condition: TerminationCondition | None = None,
+        # max_turns: int | None = None,
         thread: Thread = None,
         thread_mgr: ThreadsManager = None,
+        **kwargs,
     ):
-        super().__init__(
-            name = name,
-            group_topic_type = group_topic_type,
-            output_topic_type = output_topic_type,
-            participant_topic_types = participant_topic_types,
-            participant_descriptions = participant_descriptions,
-            termination_condition = termination_condition,
-            max_turns = max_turns
-        )
+        super().__init__(**kwargs)
         self._theard: Thread = thread
         self._thread_mgr: ThreadsManager = thread_mgr
 
