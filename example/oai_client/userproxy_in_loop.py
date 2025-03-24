@@ -19,7 +19,13 @@ import asyncio
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
 def create_team() -> RoundRobinGroupChat:
     # Create the agents.
-    model_client = HepAIChatCompletionClient(model="openai/gpt-4o-mini")
+    model_client = HepAIChatCompletionClient(
+        model="deepseek-r1-250120",
+        api_key=os.environ.get("VOLCES_API_KEY"),
+        base_url=os.environ.get("VOLCES_BASE_URL"),
+        # model="openai/gpt-4o",
+        # api_key="sk-...", # Optional if you have an HEPAI_API_KEY env variable set.
+    )
     assistant = AssistantAgent("assistant", model_client=model_client)
     user_proxy = UserProxyAgent("user_proxy", input_func=input)  # Use input() to get user input from console.
 

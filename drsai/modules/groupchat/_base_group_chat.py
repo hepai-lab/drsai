@@ -290,7 +290,14 @@ class DrSaiGroupChat(BaseGroupChat):
                     cancellation_token.link_future(message_future)
                 # Wait for the next message, this will raise an exception if the task is cancelled.
                 message = await message_future
-
+                if isinstance(message, GroupChatTermination):
+                    # If the message is None, it means the group chat has terminated.
+                    # TODO: how do we handle termination when the runtime is not embedded
+                    # and there is an exception in the group chat?
+                    # The group chat manager may not be able to put a GroupChatTermination event in the queue,
+                    # and this loop will never end.
+                    stop_reason = message.message.content
+                    break
                 if message is None:
                     break
                 if message == messages[-1]:
@@ -313,7 +320,7 @@ class DrSaiGroupChat(BaseGroupChat):
                 #         )
 
             # Yield the final result.
-            yield TaskResult(messages=output_messages, stop_reason=self._stop_reason)
+            yield TaskResult(messages=output_messages, stop_reason=stop_reason)
 
         finally:
             # Wait for the shutdown task to finish.
