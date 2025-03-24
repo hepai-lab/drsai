@@ -20,6 +20,7 @@ class DrSaiRoundRobinGroupChatManager(DrSaiGroupChatManager):
 
     def __init__(
         self,
+        name: str,
         group_topic_type: str,
         output_topic_type: str,
         participant_topic_types: List[str],
@@ -31,6 +32,7 @@ class DrSaiRoundRobinGroupChatManager(DrSaiGroupChatManager):
         **kwargs: Any
     ) -> None:
         super().__init__(
+            name = name,
             group_topic_type = group_topic_type,
             output_topic_type = output_topic_type,
             participant_topic_types = participant_topic_types,

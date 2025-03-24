@@ -27,6 +27,7 @@ class DrSaiGroupChatManager(BaseGroupChatManager):
 
     def __init__(
         self,
+        name: str,
         group_topic_type: str,
         output_topic_type: str,
         participant_topic_types: List[str],
@@ -37,6 +38,7 @@ class DrSaiGroupChatManager(BaseGroupChatManager):
         thread_mgr: ThreadsManager = None,
     ):
         super().__init__(
+            name = name,
             group_topic_type = group_topic_type,
             output_topic_type = output_topic_type,
             participant_topic_types = participant_topic_types,
@@ -64,7 +66,8 @@ class DrSaiGroupChat(BaseGroupChat):
         **kwargs: Any
     ):
         super().__init__(
-            participants = participants, 
+            participants = participants,
+            group_chat_manager_name = "DrSaiGroupChatManager",
             group_chat_manager_class = group_chat_manager_class, 
             termination_condition = termination_condition, 
             max_turns = max_turns
