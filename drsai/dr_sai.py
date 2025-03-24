@@ -22,6 +22,7 @@ from autogen_agentchat.messages import (
 )
 from autogen_agentchat.teams import BaseGroupChat
 from autogen_agentchat.ui import Console
+import time
 
 from drsai.utils import Logger
 logger = Logger.get_logger("dr_sai.py")
@@ -153,6 +154,8 @@ class DrSai:
         async for message in res:
             # print(message)
             oai_chunk = copy.deepcopy(chatcompletionchunk)
+            # The Unix timestamp (in seconds) of when the chat completion was created
+            oai_chunk["created"] = int(time.time())
             if isinstance(message, ModelClientStreamingChunkEvent):
                 if stream and isinstance(agent, BaseChatAgent):
                     content = message.content
