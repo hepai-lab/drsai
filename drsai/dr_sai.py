@@ -1,6 +1,6 @@
 
 from typing import List, Dict, Union, AsyncGenerator, Type, Generator
-import copy, json, time, asyncio, inspect
+import copy, json, asyncio
 
 from drsai.modules.managers.threads_manager import ThreadsManager
 THREADS_MGR = ThreadsManager()
@@ -65,7 +65,7 @@ class DrSai:
         # agent: AssistantAgent|BaseGroupChat = self.agent_factory() if agent is None else agent
         agent: AssistantAgent | BaseGroupChat = (
             await self.agent_factory() 
-            if agent is None and inspect.isawaitable(self.agent_factory())
+            if agent is None and asyncio.iscoroutinefunction(self.agent_factory)
             else (
                 self.agent_factory() 
                 if agent is None 
@@ -103,7 +103,7 @@ class DrSai:
         # agent: AssistantAgent|BaseGroupChat = self.agent_factory()
         agent: AssistantAgent | BaseGroupChat = (
             await self.agent_factory() 
-            if inspect.isawaitable(self.agent_factory())
+            if asyncio.iscoroutinefunction(self.agent_factory)
             else (self.agent_factory())
         )
 
@@ -133,8 +133,6 @@ class DrSai:
         else:
              self.username = kwargs.get('username', "anonymous")
              dialog_id = kwargs.pop('dialog_id', None) # 获取前端聊天端口的session_id
-        
-        oai_chunk = copy.deepcopy(chatcompletionchunk)
 
         # 使用thread加载后端的聊天记录
         # TODO: 这里需要改成异步加载
@@ -154,6 +152,7 @@ class DrSai:
         role = ""
         async for message in res:
             # print(message)
+            oai_chunk = copy.deepcopy(chatcompletionchunk)
             if isinstance(message, ModelClientStreamingChunkEvent):
                 if stream and isinstance(agent, BaseChatAgent):
                     content = message.content

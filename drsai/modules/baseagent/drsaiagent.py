@@ -1,7 +1,14 @@
-from typing import AsyncGenerator, List, Sequence, Dict, Any, Callable, Awaitable, Union, Optional
+from typing import (
+    AsyncGenerator, List, Sequence, 
+    Dict, Any, Callable, Awaitable, 
+    Union, Optional, Tuple)
+
 import asyncio
 import logging
 import inspect
+import json
+
+from pydantic import BaseModel
 
 from autogen_core import CancellationToken, FunctionCall
 from autogen_core.tools import BaseTool
@@ -11,11 +18,12 @@ from autogen_core.models import (
     ChatCompletionClient,
     CreateResult,
     FunctionExecutionResultMessage,
+    FunctionExecutionResult,
     LLMMessage,
     UserMessage,
     AssistantMessage,
     SystemMessage,
-    RequestUsage
+    RequestUsage,
 )
 from autogen_core import EVENT_LOGGER_NAME
 from autogen_agentchat.agents import AssistantAgent
@@ -40,6 +48,11 @@ from drsai.modules.managers.threads_manager import ThreadsManager
 from drsai.modules.managers.base_thread_message import ThreadMessage, Content, Text
 
 event_logger = logging.getLogger(EVENT_LOGGER_NAME)
+
+
+class TextContent(BaseModel):
+    type: str
+    text: str
 
 class DrSaiAgent(AssistantAgent):
     """基于aotogen AssistantAgent的定制Agent"""
@@ -243,6 +256,9 @@ class DrSaiAgent(AssistantAgent):
             )
             yield model_result
 
+
+### autogen 更改源码区
+
     async def _call_llm(
         self,
         model_client: ChatCompletionClient,
@@ -322,5 +338,53 @@ class DrSaiAgent(AssistantAgent):
                     sender=self.name,
                     metadata={},
                     )
+    
+    @staticmethod
+    async def _execute_tool_call(
+        tool_call: FunctionCall,
+        tools: List[BaseTool[Any, Any]],
+        handoff_tools: List[BaseTool[Any, Any]],
+        agent_name: str,
+        cancellation_token: CancellationToken,
+    ) -> Tuple[FunctionCall, FunctionExecutionResult]:
+        """Execute a single tool call and return the result."""
+        try:
+            all_tools = tools + handoff_tools
+            if not all_tools:
+                raise ValueError("No tools are available.")
+            tool = next((t for t in all_tools if t.name == tool_call.name), None)
+            if tool is None:
+                raise ValueError(f"The tool '{tool_call.name}' is not available.")
+            arguments: Dict[str, Any] = json.loads(tool_call.arguments) if tool_call.arguments else {}
+            result = await tool.run_json(arguments, cancellation_token)
+            
+            # 从执行的result中获取返回值，并转换为字符串
+            if isinstance(result, list):
+                result = result[0].text
+            elif isinstance(result, TextContent):
+                result = result.get("text", "")
+            else:
+                pass
+
+            result_as_str = tool.return_value_as_string(result)
+            return (
+                tool_call,
+                FunctionExecutionResult(
+                    content=result_as_str,
+                    call_id=tool_call.id,
+                    is_error=False,
+                    name=tool_call.name,
+                ),
+            )
+        except Exception as e:
+            return (
+                tool_call,
+                FunctionExecutionResult(
+                    content=f"Error: {e}",
+                    call_id=tool_call.id,
+                    is_error=True,
+                    name=tool_call.name,
+                ),
+            )
 
 

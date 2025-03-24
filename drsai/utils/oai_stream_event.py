@@ -7,7 +7,7 @@ chatcompletionchunk = {
                 "system_fingerprint": "fp_44709d6fcb", 
                 "usage": None,
                 "choices":[{"index":0,
-                            "delta":{"content":None, "function_call": None, "role": None, "tool_calls": None},
+                            "delta":{"content":"", "function_call": None, "role": None, "tool_calls": None},
                             "logprobs":None,
                             "finish_reason":None}] # 非None或者stop字段会触发前端askuser
                 } 
