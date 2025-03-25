@@ -114,7 +114,7 @@ async def search_and_refine(key,model_client,llm_messages,cancellation_token):
         4.最终返回的结果需要尽可能的丰富，包含与{key}相关的的全部内容。
         5.最大返回字数不超过5000字,但也不能过少。
 
-        链接嵌入格式: ![1](xxxx)
+        链接嵌入格式: [xxx](xxxx)
         展示格式: 1.xxxx
         """+"""
         返回格式：
@@ -168,7 +168,7 @@ def create_agent() -> AssistantAgent:
                 - **结论**：总结搜索结果的主要结论或建议。
                 3. **简洁明了**：语言简洁，避免冗余，每条内容不超过 2 行。
                 4. **保持客观**：仅基于搜索结果内容生成摘要，不添加主观推测或额外信息。
-                链接嵌入格式: ![1](xxxx)
+                链接嵌入格式: [xxx](xxxx)
                 展示格式: 1.xxxx
 
                 如果用户传入的信息足够丰富能生成，则返回相关摘要总结，返回结果如下：
@@ -224,16 +224,17 @@ def create_agent() -> AssistantAgent:
                         key_to_info[key]=info[key]
                     else:
                         keys.append(key)
-                yield f"**正在进行第{k+1}层深度搜索，搜索关键字：{keys}...**\n\n"
+                yield f"**正在进行第{k+1}层深度搜索，搜索关键字：{keys_}...**\n\n"
 
-                search_out=[]
+                # search_out=[]
                 # for key in keys:
                 #      search_out.append(await search_and_refine(key,model_client,llm_messages,cancellation_token))
                 search_out=await asyncio.gather(*[search_and_refine(key,model_client,llm_messages,cancellation_token) for key in keys])
                 search_out={keys[inf]:search_out[inf] for inf in range(len(search_out))}
                 yield f"**分析搜索到的文档...**\n\n"
                 for key in search_out:
-                    info[key]=search_out[key]
+                    if len(key)>200:
+                        info[key]=search_out[key]
                     key_to_info[key]=search_out[key]
                 with open('key_to_info.json','w',encoding='utf-8') as f:
                     json.dump(info,f,ensure_ascii=False,indent=4)
@@ -262,7 +263,7 @@ def create_agent() -> AssistantAgent:
                 "return":1,
                 "info":你生成的摘要总结，markdown格式。
                 }
-                链接嵌入格式: ![1](xxxx)
+                链接嵌入格式: [xxx](xxxx)
                 展示格式: 1.xxxx
 
                 用户输入的需要写摘要总结的一段内容:
