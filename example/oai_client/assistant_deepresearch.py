@@ -136,8 +136,8 @@ async def search_and_refine(key,model_client,llm_messages,cancellation_token):
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
 def create_agent() -> AssistantAgent:
     model_client = HepAIChatCompletionClient(model="deepseek-r1-250120",
-                                             base_url="https://ark.cn-beijing.volces.com/api/v3",
-                                             api_key="68d92faa-9b6e-4ba4-9fdc-b6055ce6c5bc"
+                                             base_url="your url",
+                                             api_key="your api_key"
                                             )
 
     async def interface(oai_messages: List[Dict], **kwargs) -> AsyncGenerator:
