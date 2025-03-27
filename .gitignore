@@ -1,6 +1,8 @@
 
 
 drsai/backend/owebui_pipeline/pipelines/pipelines/drsai_pipeline/*.json
+drsai/backend/owebui_pipeline/pipelines/pipelines/failed/
+drsai/backend/owebui_pipeline/pipelines/pipelines/__init__/
 
 # 忽略操作系统相关的文件
 .DS_Store
