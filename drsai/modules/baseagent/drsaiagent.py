@@ -145,6 +145,7 @@ class DrSaiAgent(AssistantAgent):
     async def _call_reply_function(
             self, 
             llm_messages: List[LLMMessage],
+            model_client: ChatCompletionClient,
             tools: List[BaseTool[Any, Any]],
             agent_name: str,
             cancellation_token: CancellationToken,
@@ -171,6 +172,7 @@ class DrSaiAgent(AssistantAgent):
                 oai_messages, 
                 agent_name = agent_name,
                 llm_messages = llm_messages, 
+                model_client=model_client, 
                 tools=tools, 
                 cancellation_token=cancellation_token, 
                 **self._user_params
@@ -298,7 +300,11 @@ class DrSaiAgent(AssistantAgent):
         if self._reply_function is not None:
             # 自定义的reply_function，用于自定义对话回复的定制
             async for chunk in self._call_reply_function(
-                llm_messages, tools=all_tools, agent_name=agent_name, cancellation_token=cancellation_token
+                llm_messages, 
+                model_client = model_client, 
+                tools=all_tools, 
+                agent_name=agent_name, 
+                cancellation_token=cancellation_token
             ):
                 if isinstance(chunk, CreateResult):
                     model_result = chunk

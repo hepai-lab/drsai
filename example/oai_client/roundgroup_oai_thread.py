@@ -22,7 +22,10 @@ import asyncio
 def create_team() -> DrSaiRoundRobinGroupChat:
     # Create an OpenAI model client.
     model_client = HepAIChatCompletionClient(
-        model="openai/gpt-4o",
+        model="deepseek-r1-250120",
+        api_key=os.environ.get("VOLCES_API_KEY"),
+        base_url=os.environ.get("VOLCES_BASE_URL"),
+        # model="openai/gpt-4o",
         # api_key="sk-...", # Optional if you have an HEPAI_API_KEY env variable set.
     )
 

@@ -1,16 +1,20 @@
 from typing import Any, Callable, List, Mapping
+import asyncio
 
-from autogen_core import Component, ComponentModel
+from autogen_core import Component, ComponentModel, AgentRuntime
 from pydantic import BaseModel
 from typing_extensions import Self
 
 from autogen_agentchat.base import ChatAgent, TerminationCondition
+# from autogen_agentchat.teams import RoundRobinGroupChat
+from autogen_agentchat.teams._group_chat._round_robin_group_chat import RoundRobinGroupChatManager, RoundRobinGroupChatConfig
 from autogen_agentchat.messages import AgentEvent, ChatMessage
 from autogen_agentchat.state import RoundRobinManagerState
 # from autogen_agentchat.teams import BaseGroupChat
 # from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
 from drsai.modules.groupchat._base_group_chat import DrSaiGroupChat
 from drsai.modules.groupchat._base_group_chat import DrSaiGroupChatManager
+from autogen_agentchat.teams._group_chat._events import GroupChatTermination
 
 from drsai.modules.managers.base_thread import Thread
 from drsai.modules.managers.threads_manager import ThreadsManager
@@ -24,24 +28,28 @@ class DrSaiRoundRobinGroupChatManager(DrSaiGroupChatManager):
         group_topic_type: str,
         output_topic_type: str,
         participant_topic_types: List[str],
+        participant_names: List[str],
         participant_descriptions: List[str],
+        output_message_queue: asyncio.Queue[AgentEvent | ChatMessage | GroupChatTermination],
         termination_condition: TerminationCondition | None,
         max_turns: int | None = None,
         thread: Thread = None,
         thread_mgr: ThreadsManager = None,
         **kwargs: Any
     ) -> None:
+       
         super().__init__(
-            name = name,
-            group_topic_type = group_topic_type,
-            output_topic_type = output_topic_type,
-            participant_topic_types = participant_topic_types,
-            participant_descriptions = participant_descriptions,
-            termination_condition = termination_condition,
-            max_turns = max_turns,
-            thread = thread,
-            thread_mgr = thread_mgr,
-            **kwargs
+            name=name,
+            group_topic_type=group_topic_type,
+            output_topic_type=output_topic_type,
+            participant_topic_types=participant_topic_types,
+            participant_names=participant_names,
+            participant_descriptions=participant_descriptions,
+            output_message_queue=output_message_queue,
+            termination_condition=termination_condition,
+            max_turns=max_turns,
+            thread=thread,
+            thread_mgr=thread_mgr,
         )
         self._next_speaker_index = 0
 
@@ -72,20 +80,12 @@ class DrSaiRoundRobinGroupChatManager(DrSaiGroupChatManager):
     async def select_speaker(self, thread: List[AgentEvent | ChatMessage]) -> str:
         """Select a speaker from the participants in a round-robin fashion."""
         current_speaker_index = self._next_speaker_index
-        self._next_speaker_index = (current_speaker_index + 1) % len(self._participant_topic_types)
-        current_speaker = self._participant_topic_types[current_speaker_index]
+        self._next_speaker_index = (current_speaker_index + 1) % len(self._participant_names)
+        current_speaker = self._participant_names[current_speaker_index]
         return current_speaker
 
 
-class RoundRobinGroupChatConfig(BaseModel):
-    """The declarative configuration RoundRobinGroupChat."""
-
-    participants: List[ComponentModel]
-    termination_condition: ComponentModel | None = None
-    max_turns: int | None = None
-
-
-class DrSaiRoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
+class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
     """A team that runs a group chat with participants taking turns in a round-robin fashion
     to publish a message to all.
 
@@ -165,35 +165,47 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConf
         participants: List[ChatAgent],
         termination_condition: TerminationCondition | None = None,
         max_turns: int | None = None,
+        runtime: AgentRuntime | None = None,
         thread: Thread = None,
+        thread_mgr: ThreadsManager = None,
         **kwargs: Any
     ) -> None:
         super().__init__(
-            participants,
+            participants=participants,
+            group_chat_manager_name="DrSaiRoundRobinGroupChatManager",
             group_chat_manager_class=DrSaiRoundRobinGroupChatManager,
             termination_condition=termination_condition,
             max_turns=max_turns,
-            thread = thread,
+            runtime=runtime,
+            thread=thread,
+            thread_mgr=thread_mgr,
             **kwargs
         )
 
     def _create_group_chat_manager_factory(
         self,
+        name: str,
         group_topic_type: str,
         output_topic_type: str,
         participant_topic_types: List[str],
+        participant_names: List[str],
         participant_descriptions: List[str],
+        output_message_queue: asyncio.Queue[AgentEvent | ChatMessage | GroupChatTermination],
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
     ) -> Callable[[], DrSaiRoundRobinGroupChatManager]:
+
         def _factory() -> DrSaiRoundRobinGroupChatManager:
             return DrSaiRoundRobinGroupChatManager(
-                group_topic_type,
-                output_topic_type,
-                participant_topic_types,
-                participant_descriptions,
-                termination_condition,
-                max_turns,
+                name=name,
+                group_topic_type=group_topic_type,
+                output_topic_type=output_topic_type,
+                participant_topic_types=participant_topic_types,
+                participant_names=participant_names,
+                participant_descriptions=participant_descriptions,
+                output_message_queue=output_message_queue,
+                termination_condition=termination_condition,
+                max_turns=max_turns,
                 thread=self._thread,
                 thread_mgr=self._thread_mgr,
             )
