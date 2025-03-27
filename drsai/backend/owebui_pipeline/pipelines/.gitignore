@@ -3,9 +3,8 @@ __pycache__
 
 /litellm
 
-pipelines/hepai_pipeline
-utils/drsai/persistent_variable
-
+drsai/backend/owebui_pipeline/pipelines/pipelines/failed/
+drsai/backend/owebui_pipeline/pipelines/pipelines/__init__/
 
 # pipelines/*
 # !pipelines/.gitignore
