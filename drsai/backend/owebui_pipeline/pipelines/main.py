@@ -694,7 +694,7 @@ async def generate_openai_chat_completion(request: Request, form_data: OpenAICha
 
                 if isinstance(res, str):
                     message = stream_message_template(form_data.model, res)
-                    logging.info(f"stream_content:str:{message}")
+                    # logging.info(f"stream_content:str:{message}")
                     yield f"data: {json.dumps(message)}\n\n"
 
                 if isinstance(res, Iterator):
@@ -708,7 +708,7 @@ async def generate_openai_chat_completion(request: Request, form_data: OpenAICha
                         except:
                             pass
 
-                        logging.info(f"stream_content:Generator:{line}")
+                        # logging.info(f"stream_content:Generator:{line}")
 
                         if line.startswith("data:"):
                             yield f"{line}\n\n"

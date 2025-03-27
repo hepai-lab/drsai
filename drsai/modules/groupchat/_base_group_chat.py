@@ -23,6 +23,7 @@ from drsai.modules.managers.base_thread_message import ThreadMessage, Content, T
 event_logger = logging.getLogger(__name__)
 
 
+
 class DrSaiGroupChatManager(BaseGroupChatManager):
 
     def __init__(
@@ -79,14 +80,14 @@ class DrSaiGroupChat(BaseGroupChat):
     ) -> Callable[[], DrSaiGroupChatManager]:
         def _factory() -> DrSaiGroupChatManager:
             return DrSaiGroupChatManager(
+                
                 group_topic_type,
                 output_topic_type,
                 participant_topic_types,
                 participant_descriptions,
                 termination_condition,
                 max_turns,
-                thread=self._thread,
-                thread_mgr=self._thread_mgr,
+                
             )
 
         return _factory

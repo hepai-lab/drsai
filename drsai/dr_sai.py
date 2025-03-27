@@ -1,7 +1,7 @@
 
 from typing import List, Dict, Union, AsyncGenerator, Type, Generator
 import copy, json, asyncio
-
+import time
 from drsai.modules.managers.threads_manager import ThreadsManager
 THREADS_MGR = ThreadsManager()
 from drsai.modules.managers.base_thread import Thread
@@ -151,8 +151,23 @@ class DrSai:
         tool_flag = 0
         role = ""
         async for message in res:
+            
             # print(message)
-            oai_chunk = copy.deepcopy(chatcompletionchunk)
+            # oai_chunk = copy.deepcopy(chatcompletionchunk)
+            
+            oai_chunk = {
+                "id":"chatcmpl-123",
+                "object":"chat.completion.chunk",
+                "created": time.time(),
+                "model":"DrSai", 
+                "system_fingerprint": "fp_44709d6fcb", 
+                "usage": None,
+                "choices":[{"index":0,
+                            "delta":{"content":"", "function_call": None, "role": None, "tool_calls": None},
+                            "logprobs":None,
+                            "finish_reason":None}] # 非None或者stop字段会触发前端askuser
+                } 
+            
             if isinstance(message, ModelClientStreamingChunkEvent):
                 if stream and isinstance(agent, BaseChatAgent):
                     content = message.content
@@ -163,9 +178,12 @@ class DrSai:
                     role_tmp = message.source
                     if role != role_tmp:
                         role = role_tmp
-                        oai_chunk["choices"][0]["delta"]['content'] = f"\n\n**Speaker: {role}**\n\n"
+                        # oai_chunk["choices"][0]["delta"]['content'] = f"\n\n**Speaker: {role}**\n\n"
+                        if role:
+                            oai_chunk["choices"][0]["delta"]['content'] = f"\n\n**{role}发言：**\n\n"
                         oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
                         yield f'data: {json.dumps(oai_chunk)}\n\n'
+                    
                     content = message.content
                     oai_chunk["choices"][0]["delta"]['content'] = content
                     oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
@@ -181,7 +199,9 @@ class DrSai:
                     # 最后一个chunk
                     yield f'data: {json.dumps(chatcompletionchunkend)}\n\n'
             elif isinstance(message, Response):
-                print("Response:" + str(message))
+                # print("Response: " + str(message))
+                # print(f"Response: {ty}")
+                pass
             elif isinstance(message, UserInputRequestedEvent):
                 print("UserInputRequestedEvent:" + str(message))
             elif isinstance(message, TextMessage):
@@ -232,7 +252,8 @@ class DrSai:
             elif isinstance(message, MultiModalMessage):
                 print("MultiModalMessage:" + str(message))
             else:
-                print("Unknown message:" + str(message))
+                # print("Unknown message:" + str(message))
+                print(f"Unknown message, type: {type(message)}")
 
 
         

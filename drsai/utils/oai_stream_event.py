@@ -1,3 +1,6 @@
+
+
+
 # 标准openai chat/completions stream模式
 chatcompletionchunk = {
                 "id":"chatcmpl-123",
