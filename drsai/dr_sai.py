@@ -137,15 +137,16 @@ class DrSai:
 
         # 使用thread加载后端的聊天记录
         # TODO: 这里需要改成异步加载
-        thread: Thread = self.threads_mgr.create_threads(username=self.username, dialog_id=dialog_id)
-        agent._thread = thread
-        agent._thread_mgr = self.threads_mgr
+        if dialog_id:
+            thread: Thread = self.threads_mgr.create_threads(username=self.username, dialog_id=dialog_id)
+            agent._thread = thread
+            agent._thread_mgr = self.threads_mgr
 
-        # 由于groupchat中不能将历史消息传入队列中，因为必须由每个Agent来处理历史消息
-        if isinstance(agent, BaseGroupChat):
-            for participant in agent._participants:
-                participant._thread = thread
-                participant._thread_mgr = self.threads_mgr
+            # 由于groupchat中不能将历史消息传入队列中，因为必须由每个Agent来处理历史消息
+            if isinstance(agent, BaseGroupChat):
+                for participant in agent._participants:
+                    participant._thread = thread
+                    participant._thread_mgr = self.threads_mgr
 
         # 启动聊天任务
         res = agent.run_stream(task=usermessage)
@@ -186,14 +187,10 @@ class DrSai:
             elif isinstance(message, TaskResult):
                 if stream:
                     # 最后一个chunk
+                    chatcompletionchunkend["created"] = int(time.time())
                     yield f'data: {json.dumps(chatcompletionchunkend)}\n\n'
-            elif isinstance(message, Response):
-                # print("Response: " + str(message))
-                # print(f"Response: {ty}")
-                pass
-            elif isinstance(message, UserInputRequestedEvent):
-                print("UserInputRequestedEvent:" + str(message))
             elif isinstance(message, TextMessage):
+                chatcompletions["choices"][0]["message"]["created"] = int(time.time())
                 if (not stream) and isinstance(agent, BaseChatAgent):
                     if message.source!="user":
                         content = message.content
@@ -238,11 +235,18 @@ class DrSai:
                         oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
                         yield f'data: {json.dumps(oai_chunk)}\n\n'
                     tool_flag = 0
-            elif isinstance(message, MultiModalMessage):
-                print("MultiModalMessage:" + str(message))
+            # elif isinstance(message, Response):
+            #     # print("Response: " + str(message))
+            # elif isinstance(message, UserInputRequestedEvent):
+            #     print("UserInputRequestedEvent:" + str(message))
+            # elif isinstance(message, MultiModalMessage):
+            #     print("MultiModalMessage:" + str(message))
+            # elif isinstance(message, ThoughtEvent):
+            #     print("ThoughtEvent:" + str(message))
             else:
                 # print("Unknown message:" + str(message))
-                print(f"Unknown message, type: {type(message)}")
+                # print(f"Unknown message, type: {type(message)}")
+                pass
 
 
         
