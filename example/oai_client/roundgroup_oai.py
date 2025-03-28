@@ -73,3 +73,4 @@ if __name__ == "__main__":
     # asyncio.run(run_console(agent_factory=create_team, task="Write a short poem about the fall season."))
     # asyncio.run(run_backend(agent_factory=create_team))
     # asyncio.run(run_hepai_worker(agent_factory=create_team))
+    # asyncio.run(run_backend(agent_factory=create_team, enable_openwebui_pipeline=True))

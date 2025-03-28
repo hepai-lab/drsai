@@ -690,7 +690,7 @@ async def generate_openai_chat_completion(request: Request, form_data: OpenAICha
                     headers=headers,
                 )
 
-                logging.info(f"stream:true:{res}")
+                # logging.info(f"stream:true:{res}")
 
                 if isinstance(res, str):
                     message = stream_message_template(form_data.model, res)

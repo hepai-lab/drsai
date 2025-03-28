@@ -24,6 +24,9 @@ from autogen_agentchat.teams import BaseGroupChat
 from autogen_agentchat.ui import Console
 import time
 
+from drsai.modules.managers.threads_manager import ThreadsManager
+from drsai.modules.managers.base_thread_message import ThreadMessage, Content, Text
+
 from drsai.utils import Logger
 logger = Logger.get_logger("dr_sai.py")
 
@@ -132,21 +135,35 @@ class DrSai:
             self.username = user_info.get("name", "anonymous")
             dialog_id = extra_body.get("dialog_id", None) # 获取前端聊天端口的session_id
         else:
-             self.username = kwargs.get('username', "anonymous")
+            #  {'model': 'drsai_pipeline', 'user': {'name': '888', 'id': '888', 'email': 888', 'role': 'admin'}, 'metadata': {}, 'base_models': 'openai/gpt-4o', 'apikey': 'sk-88'}
+             user_info = kwargs.pop('user', {})
+             self.username = user_info.get('name', "anonymous")
              dialog_id = kwargs.pop('dialog_id', None) # 获取前端聊天端口的session_id
-
+        if not dialog_id: 
+            dialog_id = kwargs.pop('chat_id', None)
+                
         # 使用thread加载后端的聊天记录
         # TODO: 这里需要改成异步加载
-        if dialog_id:
-            thread: Thread = self.threads_mgr.create_threads(username=self.username, dialog_id=dialog_id)
-            agent._thread = thread
-            agent._thread_mgr = self.threads_mgr
+        thread: Thread = self.threads_mgr.create_threads(username=self.username, dialog_id=dialog_id)
+        agent._thread = thread
+        agent._thread_mgr = self.threads_mgr
+        # 如果前端没有给定dialog_id，则将当前历史消息记录加入到新的thread中
+        if not dialog_id:
+            for message in messages:
+                thread_content = [Content(type="text", text=Text(value=message["content"],annotations=[]))]
+                self.threads_mgr.create_message(
+                    thread=thread,
+                    role = message["role"],
+                    content=thread_content,
+                    sender=message["role"],
+                    metadata={},
+                    )
 
-            # 由于groupchat中不能将历史消息传入队列中，因为必须由每个Agent来处理历史消息
-            if isinstance(agent, BaseGroupChat):
-                for participant in agent._participants:
-                    participant._thread = thread
-                    participant._thread_mgr = self.threads_mgr
+        # 由于groupchat中不能将历史消息传入队列中，因为必须由每个Agent来处理历史消息
+        if isinstance(agent, BaseGroupChat):
+            for participant in agent._participants:
+                participant._thread = thread
+                participant._thread_mgr = self.threads_mgr
 
         # 启动聊天任务
         res = agent.run_stream(task=usermessage)
