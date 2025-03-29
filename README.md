@@ -146,7 +146,13 @@ asyncio.run(run_console(agent_factory=create_agent, task="Why will humans be des
 from drsai import AssistantAgent, HepAIChatCompletionClient
 import os
 import asyncio
-from typing import List, Dict, Union, AsyncGenerator
+from autogen_core import CancellationToken
+from autogen_core.tools import BaseTool
+from autogen_core.models import (
+    LLMMessage,
+    ChatCompletionClient,
+)
+from typing import List, Dict, Any, Union, AsyncGenerator
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
 def create_agent() -> AssistantAgent:
@@ -159,7 +165,14 @@ def create_agent() -> AssistantAgent:
     )
 
     # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
-    async def interface(messages: List[Dict], **kwargs) -> Union[str, AsyncGenerator[str, None]]:
+    async def interface(
+        oai_messages: List[str],  # OAI messages
+        agent_name: str,  # Agent name
+        llm_messages: List[LLMMessage],  # AutoGen LLM messages
+        model_client: ChatCompletionClient,  # AutoGen LLM Model client
+        tools: List[BaseTool[Any, Any]],  # AutoGen tools
+        cancellation_token: CancellationToken,  # AutoGen cancellation token,
+        **kwargs) -> Union[str, AsyncGenerator[str, None]]:
         """Address the messages and return the response."""
         yield "test_worker reply"
 
