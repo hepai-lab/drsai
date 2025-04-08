@@ -57,26 +57,28 @@ class TextContent(BaseModel):
 class DrSaiAgent(AssistantAgent):
     """基于aotogen AssistantAgent的定制Agent"""
     def __init__(
-            self, 
-            name: str,
-            model_client: ChatCompletionClient,
-            *,
-            tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
-            handoffs: List[HandoffBase | str] | None = None,
-            model_context: ChatCompletionContext | None = None,
-            description: str = "An agent that provides assistance with ability to use tools.",
-            system_message: (
-                str | None
-            ) = "You are a helpful AI assistant. Solve tasks using your tools. Reply with TERMINATE when the task has been completed.",
-            model_client_stream: bool = True,
-            reflect_on_tool_use: bool = False,
-            tool_call_summary_format: str = "{result}",
-            memory: Sequence[Memory] | None = None,
-            memory_function: Callable = None,
-            reply_function: Callable = None,
-            thread: Thread = None,
-            thread_mgr: ThreadsManager = None,
-            **kwargs,
+            self,
+        name: str,
+        model_client: ChatCompletionClient,
+        *,
+        tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
+        handoffs: List[HandoffBase | str] | None = None,
+        model_context: ChatCompletionContext | None = None,
+        description: str = "An agent that provides assistance with ability to use tools.",
+        system_message: (
+            str | None
+        ) = "You are a helpful AI assistant. Solve tasks using your tools. Reply with TERMINATE when the task has been completed.",
+        model_client_stream: bool = False,
+        reflect_on_tool_use: bool | None = None,
+        tool_call_summary_format: str = "{result}",
+        output_content_type: type[BaseModel] | None = None,
+        memory: Sequence[Memory] | None = None,
+        metadata: Dict[str, str] | None = None,
+        memory_function: Callable = None,
+        reply_function: Callable = None,
+        thread: Thread = None,
+        thread_mgr: ThreadsManager = None,
+        **kwargs,
             ):
         '''
         memory_function: 自定义的memory_function，用于RAG检索等功能，为大模型回复增加最新的知识
@@ -93,7 +95,9 @@ class DrSaiAgent(AssistantAgent):
             model_client_stream=model_client_stream,
             reflect_on_tool_use=reflect_on_tool_use,
             tool_call_summary_format=tool_call_summary_format,
-            memory=memory
+            output_content_type=output_content_type,
+            memory=memory,
+            metadata=metadata
             )
         
         self._reply_function: Callable = reply_function
@@ -234,6 +238,7 @@ class DrSaiAgent(AssistantAgent):
         tools: List[BaseTool[Any, Any]], 
         model_client_stream: bool,
         cancellation_token: CancellationToken,
+        output_content_type: type[BaseModel] | None,
         ) -> AsyncGenerator:
     
         model_result: Optional[CreateResult] = None
@@ -241,7 +246,10 @@ class DrSaiAgent(AssistantAgent):
         if model_client_stream:
                 
             async for chunk in model_client.create_stream(
-                llm_messages, tools=tools, cancellation_token=cancellation_token
+                llm_messages, 
+                tools=tools,
+                json_output=output_content_type,
+                cancellation_token=cancellation_token
             ):
                 if isinstance(chunk, CreateResult):
                     model_result = chunk
@@ -271,6 +279,7 @@ class DrSaiAgent(AssistantAgent):
         handoff_tools: List[BaseTool[Any, Any]],
         agent_name: str,
         cancellation_token: CancellationToken,
+        output_content_type: type[BaseModel] | None,
     ) -> AsyncGenerator[Union[CreateResult, ModelClientStreamingChunkEvent], None]:
         """
         Perform a model inference and yield either streaming chunk events or the final CreateResult.
@@ -317,6 +326,7 @@ class DrSaiAgent(AssistantAgent):
                 tools = all_tools, 
                 model_client_stream = model_client_stream,
                 cancellation_token = cancellation_token,
+                output_content_type = output_content_type,
            ):
                if isinstance(chunk, CreateResult):
                     model_result = chunk

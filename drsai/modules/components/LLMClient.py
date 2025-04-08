@@ -65,6 +65,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient):
                 "vision": False,
                 "function_calling": False,  # You must sure that the model can handle function calling
                 "json_output": False,
+                "structured_output": False,
                 "family": ModelFamily.UNKNOWN,
             }
             kwargs["model_info"] = model_info
@@ -88,6 +89,8 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient):
             if allowed_model in model.lower():
                 kwargs["model_info"]["family"] = allowed_model
                 kwargs["model_info"]["function_calling"] = True
+                kwargs["model_info"]["json_output"] = True,
+                kwargs["model_info"]["structured_output"] = True
                 break
 
         super().__init__(**kwargs)

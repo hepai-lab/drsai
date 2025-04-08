@@ -11,7 +11,15 @@ except ImportError:
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_hepai_worker, run_backend
 import os, json
 import asyncio
-from typing import List, Dict, Union, AsyncGenerator
+from typing import List, Dict, Union, AsyncGenerator, Tuple, Any
+
+
+from autogen_core import CancellationToken
+from autogen_core.tools import BaseTool
+from autogen_core.models import (
+    LLMMessage,
+    ChatCompletionClient,
+)
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
 def create_agent() -> AssistantAgent:
@@ -27,7 +35,14 @@ def create_agent() -> AssistantAgent:
     )
 
     # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
-    async def interface(messages: List[Dict], **kwargs) -> Union[str, AsyncGenerator]:
+    async def interface( 
+        oai_messages: List[str],  # OAI messages
+        agent_name: str,  # Agent name
+        llm_messages: List[LLMMessage],  # AutoGen LLM messages
+        model_client: ChatCompletionClient,  # AutoGen LLM Model client
+        tools: List[BaseTool[Any, Any]],  # AutoGen tools
+        cancellation_token: CancellationToken,  # AutoGen cancellation token,
+        **kwargs) -> Union[str, AsyncGenerator[str, None]]:
         """Address the messages and return the response."""
         yield "test_worker reply"
 

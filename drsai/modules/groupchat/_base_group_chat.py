@@ -11,7 +11,14 @@ from autogen_core import (
 )
 
 from autogen_agentchat.base import ChatAgent, TaskResult, TerminationCondition
-from autogen_agentchat.messages import AgentEvent, BaseChatMessage, ChatMessage, ModelClientStreamingChunkEvent, TextMessage
+from autogen_agentchat.messages import (
+    BaseAgentEvent, 
+    AgentEvent, 
+    BaseChatMessage, 
+    ChatMessage, 
+    MessageFactory,
+    ModelClientStreamingChunkEvent, 
+    TextMessage)
 from autogen_agentchat.teams._group_chat._events import GroupChatStart, GroupChatTermination
 from autogen_agentchat.teams._group_chat._sequential_routed_agent import SequentialRoutedAgent
 from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
@@ -35,9 +42,10 @@ class DrSaiGroupChatManager(BaseGroupChatManager):
         participant_topic_types: List[str],
         participant_names: List[str],
         participant_descriptions: List[str],
-        output_message_queue: asyncio.Queue[AgentEvent | ChatMessage | GroupChatTermination],
-        termination_condition: TerminationCondition | None = None,
-        max_turns: int | None = None,
+        output_message_queue: asyncio.Queue[BaseAgentEvent | BaseChatMessage | GroupChatTermination],
+        termination_condition: TerminationCondition | None,
+        max_turns: int | None,
+        message_factory: MessageFactory,
         thread: Thread = None,
         thread_mgr: ThreadsManager = None,
         **kwargs: Any
@@ -53,6 +61,7 @@ class DrSaiGroupChatManager(BaseGroupChatManager):
             output_message_queue=output_message_queue,
             termination_condition=termination_condition,
             max_turns=max_turns,
+            message_factory=message_factory,
         )
         self._theard: Thread = thread
         self._thread_mgr: ThreadsManager = thread_mgr
@@ -71,6 +80,7 @@ class DrSaiGroupChat(BaseGroupChat):
         termination_condition: TerminationCondition | None = None,
         max_turns: int | None = None,
         runtime: AgentRuntime | None = None,
+        custom_message_types: List[type[BaseAgentEvent | BaseChatMessage]] | None = None,
         thread: Thread = None,
         thread_mgr: ThreadsManager = None,
         **kwargs: Any
@@ -82,6 +92,7 @@ class DrSaiGroupChat(BaseGroupChat):
             termination_condition=termination_condition,
             max_turns=max_turns,
             runtime=runtime,
+            custom_message_types=custom_message_types,
             )
         self._thread: Thread = thread
         self._thread_mgr: ThreadsManager = thread_mgr
@@ -94,13 +105,14 @@ class DrSaiGroupChat(BaseGroupChat):
         participant_topic_types: List[str],
         participant_names: List[str],
         participant_descriptions: List[str],
-        output_message_queue: asyncio.Queue[AgentEvent | ChatMessage | GroupChatTermination],
+        output_message_queue: asyncio.Queue[BaseAgentEvent | BaseChatMessage | GroupChatTermination],
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
+        message_factory: MessageFactory,
+        **kwargs: Any
     ) -> Callable[[], DrSaiGroupChatManager]:
         def _factory() -> DrSaiGroupChatManager:
             return DrSaiGroupChatManager(
-                
                 name = name,
                 group_topic_type = group_topic_type,
                 output_topic_type = output_topic_type,
@@ -110,7 +122,10 @@ class DrSaiGroupChat(BaseGroupChat):
                 output_message_queue = output_message_queue,
                 termination_condition = termination_condition,
                 max_turns = max_turns,
-                
+                message_factory = message_factory,
+                thread = self._thread,
+                thread_mgr = self._thread_mgr,
+                **kwargs, 
             )
 
         return _factory

@@ -8,7 +8,7 @@ from typing_extensions import Self
 from autogen_agentchat.base import ChatAgent, TerminationCondition
 # from autogen_agentchat.teams import RoundRobinGroupChat
 from autogen_agentchat.teams._group_chat._round_robin_group_chat import RoundRobinGroupChatManager, RoundRobinGroupChatConfig
-from autogen_agentchat.messages import AgentEvent, ChatMessage
+from autogen_agentchat.messages import AgentEvent, ChatMessage, BaseAgentEvent, BaseChatMessage, MessageFactory
 from autogen_agentchat.state import RoundRobinManagerState
 # from autogen_agentchat.teams import BaseGroupChat
 # from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
@@ -30,9 +30,10 @@ class DrSaiRoundRobinGroupChatManager(DrSaiGroupChatManager):
         participant_topic_types: List[str],
         participant_names: List[str],
         participant_descriptions: List[str],
-        output_message_queue: asyncio.Queue[AgentEvent | ChatMessage | GroupChatTermination],
+        output_message_queue: asyncio.Queue[BaseAgentEvent | BaseChatMessage | GroupChatTermination],
         termination_condition: TerminationCondition | None,
-        max_turns: int | None = None,
+        max_turns: int | None,
+        message_factory: MessageFactory,
         thread: Thread = None,
         thread_mgr: ThreadsManager = None,
         **kwargs: Any
@@ -48,8 +49,10 @@ class DrSaiRoundRobinGroupChatManager(DrSaiGroupChatManager):
             output_message_queue=output_message_queue,
             termination_condition=termination_condition,
             max_turns=max_turns,
+            message_factory=message_factory,
             thread=thread,
             thread_mgr=thread_mgr,
+            **kwargs
         )
         self._next_speaker_index = 0
 
@@ -166,6 +169,7 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
         termination_condition: TerminationCondition | None = None,
         max_turns: int | None = None,
         runtime: AgentRuntime | None = None,
+        custom_message_types: List[type[BaseAgentEvent | BaseChatMessage]] | None = None,
         thread: Thread = None,
         thread_mgr: ThreadsManager = None,
         **kwargs: Any
@@ -177,6 +181,7 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
             termination_condition=termination_condition,
             max_turns=max_turns,
             runtime=runtime,
+            custom_message_types=custom_message_types,
             thread=thread,
             thread_mgr=thread_mgr,
             **kwargs
@@ -190,22 +195,24 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
         participant_topic_types: List[str],
         participant_names: List[str],
         participant_descriptions: List[str],
-        output_message_queue: asyncio.Queue[AgentEvent | ChatMessage | GroupChatTermination],
+        output_message_queue: asyncio.Queue[BaseAgentEvent | BaseChatMessage | GroupChatTermination],
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
+        message_factory: MessageFactory,
     ) -> Callable[[], DrSaiRoundRobinGroupChatManager]:
 
         def _factory() -> DrSaiRoundRobinGroupChatManager:
             return DrSaiRoundRobinGroupChatManager(
-                name=name,
-                group_topic_type=group_topic_type,
-                output_topic_type=output_topic_type,
-                participant_topic_types=participant_topic_types,
-                participant_names=participant_names,
-                participant_descriptions=participant_descriptions,
-                output_message_queue=output_message_queue,
-                termination_condition=termination_condition,
-                max_turns=max_turns,
+                name,
+                group_topic_type,
+                output_topic_type,
+                participant_topic_types,
+                participant_names,
+                participant_descriptions,
+                output_message_queue,
+                termination_condition,
+                max_turns,
+                message_factory,
                 thread=self._thread,
                 thread_mgr=self._thread_mgr,
             )
