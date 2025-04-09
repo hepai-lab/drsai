@@ -153,6 +153,9 @@ class DrSaiAgent(AssistantAgent):
             tools: List[BaseTool[Any, Any]],
             agent_name: str,
             cancellation_token: CancellationToken,
+            thread: Thread = None,
+            thread_mgr: ThreadsManager = None,
+            **kwargs,
             ):
         """使用自定义的reply_function，自定义对话回复的定制"""
 
@@ -179,6 +182,8 @@ class DrSaiAgent(AssistantAgent):
                 model_client=model_client, 
                 tools=tools, 
                 cancellation_token=cancellation_token, 
+                thread=thread, 
+                thread_mgr=thread_mgr, 
                 **self._user_params
                 ):
                 if isinstance(chunk, CreateResult):
@@ -292,13 +297,13 @@ class DrSaiAgent(AssistantAgent):
             history_thread_messages: List[ThreadMessage] = self._thread.messages
             for history_thread_message in history_thread_messages:
                 if history_thread_message.role == "user":
-                    llm_messages.append(UserMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
+                    llm_messages.insert(-1, UserMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
                 elif history_thread_message.role == "assistant":
-                    llm_messages.append(UserMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
+                    llm_messages.insert(-1, UserMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
                 elif history_thread_message.role == "system":
-                    llm_messages.append(SystemMessage(content=history_thread_message.content_str()))
+                    llm_messages.insert(-1, SystemMessage(content=history_thread_message.content_str()))
                 elif history_thread_message.role == "function":
-                    llm_messages.append(FunctionExecutionResultMessage(content=history_thread_message.content_str()))
+                    llm_messages.insert(-1, FunctionExecutionResultMessage(content=history_thread_message.content_str()))
 
         # 自定义的memory_function，用于RAG检索等功能，为大模型回复增加最新的知识
         if self._memory_function is not None:
@@ -313,7 +318,9 @@ class DrSaiAgent(AssistantAgent):
                 model_client = model_client, 
                 tools=all_tools, 
                 agent_name=agent_name, 
-                cancellation_token=cancellation_token
+                cancellation_token=cancellation_token,
+                thread = self._thread,
+                thread_mgr = self._thread_mgr,
             ):
                 if isinstance(chunk, CreateResult):
                     model_result = chunk

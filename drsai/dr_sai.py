@@ -122,6 +122,10 @@ class DrSai:
         # 传入的消息列表
         messages: List[Dict[str, str]] = kwargs.pop('messages', [])
         usermessage = messages[-1]["content"]
+
+        # 保存用户的extra_requests
+        extra_requests: Dict = copy.deepcopy(kwargs)
+
         # 大模型配置
         api_key = kwargs.pop('api_key', None)
         temperature = kwargs.pop('temperature', 0.6)
@@ -145,11 +149,12 @@ class DrSai:
         # 使用thread加载后端的聊天记录
         # TODO: 这里需要改成异步加载
         thread: Thread = self.threads_mgr.create_threads(username=self.username, dialog_id=dialog_id)
+        thread.metadata["extra_requests"] = extra_requests
         agent._thread = thread
         agent._thread_mgr = self.threads_mgr
         # 如果前端没有给定dialog_id，则将当前历史消息记录加入到新的thread中
         if not dialog_id:
-            for message in messages:
+            for message in messages[:-1]:
                 thread_content = [Content(type="text", text=Text(value=message["content"],annotations=[]))]
                 self.threads_mgr.create_message(
                     thread=thread,

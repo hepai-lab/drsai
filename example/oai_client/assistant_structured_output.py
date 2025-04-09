@@ -8,68 +8,56 @@ except ImportError:
     drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
     sys.path.append(drsai_path)
 
+
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_hepai_worker, run_backend
 import os, json
 import asyncio
-from typing import List, Dict, Union, AsyncGenerator, Tuple, Any
-
-
-from autogen_core import CancellationToken
-from autogen_core.tools import BaseTool
-from autogen_core.models import (
-    LLMMessage,
-    ChatCompletionClient,
-)
+from pydantic import BaseModel
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
 def create_agent() -> AssistantAgent:
+    
+    class Step(BaseModel):
+        explanation: str
+        output: str
 
+    class MathReasoning(BaseModel):
+        steps: list[Step]
+        final_answer: str
+    
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
     model_client = HepAIChatCompletionClient(
-        model="deepseek-r1-250120",
-        api_key=os.environ.get("VOLCES_API_KEY"),
-        base_url=os.environ.get("VOLCES_BASE_URL"),
-        # model="openai/gpt-4o",
+        model="openai/gpt-4o",
         # api_key=os.environ.get("HEPAI_API_KEY"),
+        
     )
-
-    # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
-    async def interface( 
-        oai_messages: List[str],  # OAI messages
-        agent_name: str,  # Agent name
-        llm_messages: List[LLMMessage],  # AutoGen LLM messages
-        model_client: ChatCompletionClient,  # AutoGen LLM Model client
-        tools: List[BaseTool[Any, Any]],  # AutoGen tools
-        cancellation_token: CancellationToken,  # AutoGen cancellation token,
-        **kwargs) -> Union[str, AsyncGenerator[str, None]]:
-        """Address the messages and return the response."""
-        yield "test_worker reply"
-
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
     # The system message instructs the agent via natural language.
     return AssistantAgent(
         name="weather_agent",
         model_client=model_client,
-        reply_function=interface,
         system_message="You are a helpful assistant.",
+        output_content_type = MathReasoning,
         reflect_on_tool_use=False,
-        model_client_stream=True,  # Must set to True if reply_function returns a generator.
+        model_client_stream=True,  # Enable streaming tokens from the model client.
     )
 
 
 async def main():
 
     drsaiapp = DrSaiAPP(agent_factory=create_agent)
-    stream =  drsaiapp.a_start_chat_completions(messages=[{"content":"Why will humans be destroyed", "role":"user"}])
-    model_client_stream = create_agent()._model_client_stream
+    stream =  drsaiapp.a_start_chat_completions(
+        messages=[
+        {"role": "system", "content": "You are a helpful math tutor. Guide the user through the solution step by step."},
+        {"role": "user", "content": "how can I solve 8x + 7 = -23"}
+    ],
+        stream=True,)
+
     async for message in stream:
         oai_json = json.loads(message.split("data: ")[1])
-        if model_client_stream:
-            textchunck = oai_json["choices"][0]["delta"]["content"]
-        else:
-            textchunck = oai_json["choices"][0]["message"]["content"]
+        textchunck = oai_json["choices"][0]["delta"]["content"]
         if textchunck:
             sys.stdout.write(textchunck)
             sys.stdout.flush()
