@@ -9,6 +9,8 @@ except ImportError:
     sys.path.append(drsai_path)
 
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_hepai_worker, run_backend
+from drsai.modules.managers.base_thread import Thread
+from drsai.modules.managers.threads_manager import ThreadsManager
 import os, json
 import asyncio
 from typing import List, Dict, Union, AsyncGenerator, Tuple, Any
@@ -42,6 +44,8 @@ def create_agent() -> AssistantAgent:
         model_client: ChatCompletionClient,  # AutoGen LLM Model client
         tools: List[BaseTool[Any, Any]],  # AutoGen tools
         cancellation_token: CancellationToken,  # AutoGen cancellation token,
+        thread: Thread,  # DrSai thread
+        thread_mgr: ThreadsManager,  # DrSai thread manager
         **kwargs) -> Union[str, AsyncGenerator[str, None]]:
         """Address the messages and return the response."""
         yield "test_worker reply"
