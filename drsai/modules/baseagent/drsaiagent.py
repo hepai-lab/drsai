@@ -68,7 +68,7 @@ class DrSaiAgent(AssistantAgent):
         system_message: (
             str | None
         ) = "You are a helpful AI assistant. Solve tasks using your tools. Reply with TERMINATE when the task has been completed.",
-        model_client_stream: bool = False,
+        model_client_stream: bool = True,
         reflect_on_tool_use: bool | None = None,
         tool_call_summary_format: str = "{result}",
         output_content_type: type[BaseModel] | None = None,
