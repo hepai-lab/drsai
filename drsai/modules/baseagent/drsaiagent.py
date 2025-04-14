@@ -186,13 +186,13 @@ class DrSaiAgent(AssistantAgent):
                 thread_mgr=thread_mgr, 
                 **self._user_params
                 ):
-                if isinstance(chunk, CreateResult):
-                        model_result = chunk
-                elif isinstance(chunk, str):
+                if isinstance(chunk, str):
                     response += chunk
                     yield ModelClientStreamingChunkEvent(content=chunk, source=agent_name)
                 elif any(isinstance(chunk, event_type) for event_type in allowed_events):
                     yield chunk
+                elif isinstance(chunk, CreateResult):
+                    model_result = chunk
                 else:
                     raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
             if isinstance(model_result, CreateResult):
