@@ -60,6 +60,7 @@ async def main():
         messages=[{"content":"Write a short poem about the fall season.", "role":"user"}],
         stream=True,
         dialog_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
+        history_mode = "backend", #"frontend",
         )
 
     async for message in stream:

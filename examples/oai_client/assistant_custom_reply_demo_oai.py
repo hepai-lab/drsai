@@ -66,7 +66,10 @@ def create_agent() -> AssistantAgent:
 async def main():
 
     drsaiapp = DrSaiAPP(agent_factory=create_agent)
-    stream =  drsaiapp.a_start_chat_completions(messages=[{"content":"Why will humans be destroyed", "role":"user"}])
+    stream =  drsaiapp.a_start_chat_completions(
+        messages=[{"content":"Why will humans be destroyed", "role":"user"}],
+        # dialog_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
+        )
     model_client_stream = create_agent()._model_client_stream
     async for message in stream:
         oai_json = json.loads(message.split("data: ")[1])

@@ -55,6 +55,7 @@ class DrSai:
         self.username = "anonymous"
         self.threads_mgr = THREADS_MGR
         self.agent_factory: callable = kwargs.pop('agent_factory', None)
+        self.history_mode = kwargs.pop('history_mode', 'backend') # backend or frontend
 
     #### --- 关于AutoGen --- ####
     async def start_console(
@@ -143,6 +144,7 @@ class DrSai:
              user_info = kwargs.pop('user', {})
              self.username = user_info.get('name', "anonymous")
              dialog_id = kwargs.pop('dialog_id', None) # 获取前端聊天端口的session_id
+             history_mode = kwargs.pop('history_mode', None) or self.history_mode # backend or frontend
         if not dialog_id: 
             dialog_id = kwargs.pop('chat_id', None)
                 
@@ -152,8 +154,9 @@ class DrSai:
         thread.metadata["extra_requests"] = extra_requests
         agent._thread = thread
         agent._thread_mgr = self.threads_mgr
-        # 如果前端没有给定dialog_id，则将当前历史消息记录加入到新的thread中
-        if not dialog_id:
+        # 如果前端没有给定dialog_id，则将当前历史消息记录加入到新的thread中/或者使用前端历史消息
+        if not dialog_id or history_mode == "frontend":
+            thread.messages = [] # 清空历史消息
             for message in messages[:-1]:
                 thread_content = [Content(type="text", text=Text(value=message["content"],annotations=[]))]
                 self.threads_mgr.create_message(
@@ -163,6 +166,10 @@ class DrSai:
                     sender=message["role"],
                     metadata={},
                     )
+                
+        # 将历史消息单独保存到metadata中
+        history_aoi_messages = [ {"role": x.role, "content": x.content_str(), "name": x.sender} for x in thread.messages] # 不将usermessage加入到历史消息中，在智能体会重复发送
+        thread.metadata["history_aoi_messages"] = history_aoi_messages
 
         # 由于groupchat中不能将历史消息传入队列中，因为必须由每个Agent来处理历史消息
         if isinstance(agent, BaseGroupChat):
@@ -212,6 +219,14 @@ class DrSai:
                     chatcompletionchunkend["created"] = int(time.time())
                     yield f'data: {json.dumps(chatcompletionchunkend)}\n\n'
             elif isinstance(message, TextMessage):
+                # 将智能体回复加入thread.messages中
+                self.threads_mgr.create_message(
+                    thread=thread,
+                    role = "assistant",
+                    content=[Content(type="text", text=Text(value=message.content,annotations=[]))],
+                    sender=message.source,
+                    metadata={},
+                    )
                 chatcompletions["choices"][0]["message"]["created"] = int(time.time())
                 if (not stream) and isinstance(agent, BaseChatAgent):
                     if message.source!="user":
@@ -247,6 +262,14 @@ class DrSai:
             elif isinstance(message, ToolCallExecutionEvent):
                 tool_flag = 2
             elif isinstance(message, ToolCallSummaryMessage):
+                # 将智能体的ToolCallSummaryMessage回复加入thread.messages中
+                self.threads_mgr.create_message(
+                    thread=thread,
+                    role = "assistant",
+                    content=[Content(type="text", text=Text(value=message.content,annotations=[]))],
+                    sender=message.source,
+                    metadata={},
+                    )
                 if tool_flag == 2:
                     if not stream:
                         content = message.content

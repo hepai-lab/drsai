@@ -12,12 +12,12 @@ except ImportError:
 from drsai import HepAIChatCompletionClient
 from drsai import AssistantAgent, UserProxyAgent
 from drsai import TextMentionTermination
-from drsai import RoundRobinGroupChat
+from drsai import RoundRobinGroupChat, DrSaiRoundRobinGroupChat
 from drsai import Console
 import asyncio
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
-def create_team() -> RoundRobinGroupChat:
+def create_team() -> DrSaiRoundRobinGroupChat:
     # Create the agents.
     model_client = HepAIChatCompletionClient(
         model="deepseek-r1-250120",
@@ -35,7 +35,7 @@ def create_team() -> RoundRobinGroupChat:
     termination = TextMentionTermination("APPROVE")
 
     # Create the team.
-    return RoundRobinGroupChat([ assistant, user_proxy,], termination_condition=termination)
+    return DrSaiRoundRobinGroupChat([ assistant, user_proxy,], termination_condition=termination)
 
 
 if __name__ == "__main__":

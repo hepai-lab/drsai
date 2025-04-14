@@ -164,7 +164,8 @@ class DrSaiAgent(AssistantAgent):
         model_result: Optional[CreateResult] = None
         allowed_events = [
             ToolCallRequestEvent,
-            ToolCallExecutionEvent,MemoryQueryEvent,
+            ToolCallExecutionEvent,
+            MemoryQueryEvent,
             UserInputRequestedEvent,
             ModelClientStreamingChunkEvent,
             ThoughtEvent]
@@ -190,6 +191,7 @@ class DrSaiAgent(AssistantAgent):
                     response += chunk
                     yield ModelClientStreamingChunkEvent(content=chunk, source=agent_name)
                 elif any(isinstance(chunk, event_type) for event_type in allowed_events):
+                    response += str(chunk.content)
                     yield chunk
                 elif isinstance(chunk, CreateResult):
                     model_result = chunk
@@ -289,21 +291,39 @@ class DrSaiAgent(AssistantAgent):
         """
         Perform a model inference and yield either streaming chunk events or the final CreateResult.
         """
-        all_messages = await model_context.get_messages()
+        
+        if self._thread is None:
+            all_messages = await model_context.get_messages()
+        else:
+            # 从thread中获取历史消息，并于autogen中的消息记录合并
+            all_messages = await model_context.get_messages()
+            history_aoi_messages: List[Dict[str, str]] = self._thread.metadata["history_aoi_messages"]
+            history = []
+            for  history_aoi_message in history_aoi_messages:
+                if  history_aoi_message["role"] == "user":
+                    history.append(UserMessage(content=history_aoi_message["content"], source=history_aoi_message["name"]))
+                elif history_aoi_message["role"] == "assistant":
+                    history.append(UserMessage(content=history_aoi_message["content"], source=history_aoi_message["name"]))
+                elif history_aoi_message["role"] == "system":
+                    history.append(SystemMessage(content=history_aoi_message["content"]))
+                elif history_aoi_message["role"] == "function":
+                    history.append(FunctionExecutionResultMessage(content=history_aoi_message["content"]))
+            all_messages = history + all_messages
+            # 全部从thread中加载历史消息
+            # all_messages = []
+            # history_thread_messages: List[ThreadMessage] = self._thread.messages
+            # for history_thread_message in history_thread_messages:
+            #     if history_thread_message.role == "user":
+            #         all_messages.append(UserMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
+            #     elif history_thread_message.role == "assistant":
+            #         all_messages.append(UserMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
+            #     elif history_thread_message.role == "system":
+            #         all_messages.append(SystemMessage(content=history_thread_message.content_str()))
+            #     elif history_thread_message.role == "function":
+            #         all_messages.append(FunctionExecutionResultMessage(content=history_thread_message.content_str()))
+            
+        
         llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
-
-        # 从thread中获取历史消息
-        if self._thread is not None:
-            history_thread_messages: List[ThreadMessage] = self._thread.messages
-            for history_thread_message in history_thread_messages:
-                if history_thread_message.role == "user":
-                    llm_messages.insert(-1, UserMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
-                elif history_thread_message.role == "assistant":
-                    llm_messages.insert(-1, UserMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
-                elif history_thread_message.role == "system":
-                    llm_messages.insert(-1, SystemMessage(content=history_thread_message.content_str()))
-                elif history_thread_message.role == "function":
-                    llm_messages.insert(-1, FunctionExecutionResultMessage(content=history_thread_message.content_str()))
 
         # 自定义的memory_function，用于RAG检索等功能，为大模型回复增加最新的知识
         if self._memory_function is not None:
@@ -339,28 +359,28 @@ class DrSaiAgent(AssistantAgent):
                     model_result = chunk
                yield chunk
         
-        # 使用thread储存完整的文本消息，以后可能有多模态消息
-        if self._thread is not None and model_result is not None:
-            thread_content = None
-            if isinstance(model_result.content, str):
-                thread_content = [Content(type="text", text=Text(value=model_result.content,annotations=[]))]
-            elif isinstance(model_result.content, List):
-                context_str = ""
-                for content_item in model_result.content:
-                    if isinstance(content_item, FunctionCall):
-                        context_str += f"{content_item.name}({content_item.arguments})"
-                thread_content = [Content(type="text", text=Text(value=context_str,annotations=[]))]
-            else :
-                print(f"Invalid content type: {type(model_result.content)}")
+        # # 使用thread储存完整的文本消息，以后可能有多模态消息
+        # if self._thread is not None and model_result is not None:
+        #     thread_content = None
+        #     if isinstance(model_result.content, str):
+        #         thread_content = [Content(type="text", text=Text(value=model_result.content,annotations=[]))]
+        #     elif isinstance(model_result.content, List):
+        #         context_str = ""
+        #         for content_item in model_result.content:
+        #             if isinstance(content_item, FunctionCall):
+        #                 context_str += f"{content_item.name}({content_item.arguments})"
+        #         thread_content = [Content(type="text", text=Text(value=context_str,annotations=[]))]
+        #     else :
+        #         print(f"Invalid content type: {type(model_result.content)}")
 
-            if thread_content is not None:
-                self._thread_mgr.create_message(
-                    thread=self._thread,
-                    role = "assistant",
-                    content=thread_content,
-                    sender=self.name,
-                    metadata={},
-                    )
+        #     if thread_content is not None:
+        #         self._thread_mgr.create_message(
+        #             thread=self._thread,
+        #             role = "assistant",
+        #             content=thread_content,
+        #             sender=self.name,
+        #             metadata={},
+        #             )
     
     @staticmethod
     async def _execute_tool_call(
