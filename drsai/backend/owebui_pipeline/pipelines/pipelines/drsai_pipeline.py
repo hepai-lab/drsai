@@ -1,8 +1,8 @@
-from typing import List, Union, Generator, Iterator
+from typing import List, Union, Generator, Iterator, Callable, Awaitable, Optional
 from pydantic import BaseModel, Field
 import os
 import requests
-from hepai import HepAI
+from openai import OpenAI
 
 
 
@@ -38,8 +38,12 @@ class Pipeline:
         # self.id = "openai_pipeline"
 
         self.valves = self.Valves()
-
-        self.name = self.valves.DRSAI_NAME # Pipeline name
+        self.user_id = None
+        self.user_name = None
+        self.user_email = None
+        self.message_id = None
+        self.chat_id = None
+        # self.name = self.valves.DRSAI_NAME 
         pass
 
     async def on_startup(self):
@@ -51,45 +55,41 @@ class Pipeline:
         # This function is called when the server is stopped.
         print(f"on_shutdown:{__name__}")
         pass
+    
+    async def inlet(self, body: dict, user: Optional[dict] = None) -> dict:
+        print(f"inlet:{__name__}")
+        # print(f"body: {body}")
+        # print(f"user: {user}")
+        self.user_id = user.get("id")
+        self.user_name = user.get("name")
+        self.user_email = user.get("email")
+        self.chat_id = body.get("metadata").get("chat_id")
+        self.message_id = body.get("metadata").get("message_id")
+        body["user"] = user
+        return body
 
     def pipe(
-        self, user_message: str, model_id: str, messages: List[dict], body: dict, headers: dict = None
+        self, user_message: str, 
+        model_id: str, messages: List[dict], 
+        body: dict, 
+        headers: dict = None,
+        **kwargs
     ) -> Union[str, Generator, Iterator]:
         
-        # 配置hepai平台的api_key和base_url
         self.backend_base_url = self.valves.DRSAI_URL # 连接drsai后端的地址
+        # 配置hepai平台的api_key和base_url
         self.base_models = self.valves.BASE_MODELS # drsai后端使用的基座模型
-        self.hepai_client = HepAI(
+        self.hepai_client = OpenAI(
             api_key=self.valves.HEPAI_API_KEY, base_url=self.valves.HEPAI_BASE_URL
         )
-        self.name = self.valves.DRSAI_NAME 
-        # 前端的pipeline变量检测
-        # print("/n-----------/n")
-        # print(f"values:{self.valves}")
-        # print(f"base_models: {self.base_models}")
-        # print("/n-----------/n")
-
-        # print(f"messages: {messages}")
 
         # This is where you can add your custom pipelines like RAG.
-        print(f"pipe:{__name__}") # {'stream': True, 'model': 'hepai_pipeline', 'messages': [...], 'user': {'name': 'adimin', 'id': '3e00f09f-b234-47af-ba17-6ec4f7d2ee28', 'email': 'admin@localhost', 'role': 'admin'}, 'metadata': {'chat_id': 'eafaaa5e-8d5c-4784-8992-d37cd0c71446', 'message_id': '6a85e05b-ffac-4569-9aa5-75ab057791dd', 'session_id': 'UYh4cA4CIrOlIK0OAAAL', 'tool_ids': None, 'files': None}}
-        # print(f"body:\n {body}\n\n") 
-        # print(f"headers\n: {headers}\n\n") # {'host': 'localhost:9097', 'authorization': 'Bearer sk-odRpRPOouBgTRrJIMHWdUjkJQEZqVZvxGQsUTvyzMgDtDJL', 'content-type': 'application/json', 'accept': '*/*', 'accept-encoding': 'gzip, deflate', 'user-agent': 'Python/3.11 aiohttp/3.11.8', 'content-length': '1674'}
-        # print(f"messages: {messages}")
-        # print(f"user_message: {user_message}")
-
-        # 提取前端的特殊参数
-        metadata = body.get("metadata", {})
-        if not metadata:
-            body["metadata"] = {}
-        # print(f"metadata: {metadata}")
+        print(f"pipe:{__name__}") 
 
         # 构建访问openai的请求头和参数
-        # print(headers)
         new_hearers = {}
         new_hearers["Authorization"] = f"Bearer {self.valves.HEPAI_API_KEY}"
         new_hearers["Content-Type"] = "application/json"
-        # print(f"new_hearers: {new_hearers}")
 
         # title_generation任务
         if body["stream"] is False:
@@ -111,22 +111,23 @@ class Pipeline:
                 )
                 r.raise_for_status()
                 response = r.iter_lines()
-                # print(f"Response without stream: {response}")
                 return response
             except Exception as e:
                 return f"Error: {e}"
 
 
         # 访问drsai多智能体框架后端接口
-        if user_message == "自动继续":
-            payload["messages"][-1]["content"] = "exit"
+        # if user_message == "自动继续": # 适配特殊前端
+        #     body["messages"][-1]["content"] = "exit"
         try:
             body["base_models"] = self.base_models
+            body["chat_id"] = self.chat_id
+            body["message_id"] = self.message_id
             r = requests.post(
                 f"{self.backend_base_url}/chat/completions", 
                 headers=new_hearers,
                 json=body,
-                stream=True
+                stream=True,
                 )
             r.raise_for_status()
             return r.iter_lines()

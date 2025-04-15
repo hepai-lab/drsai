@@ -137,25 +137,23 @@ class DrSai:
         if extra_body is not None:
             ## 用户信息 从DDF2传入的
             user_info: Dict = kwargs.pop('extra_body', {}).get("user", {})
-            self.username = user_info.get("name", "anonymous")
-            dialog_id = extra_body.get("dialog_id", None) # 获取前端聊天端口的session_id
+            self.username = user_info.get('email', None) or user_info.get('name', "anonymous")
+            chat_id = extra_body.get("chat_id", None) # 获取前端聊天界面的session_id
         else:
             #  {'model': 'drsai_pipeline', 'user': {'name': '888', 'id': '888', 'email': 888', 'role': 'admin'}, 'metadata': {}, 'base_models': 'openai/gpt-4o', 'apikey': 'sk-88'}
              user_info = kwargs.pop('user', {})
-             self.username = user_info.get('name', "anonymous")
-             dialog_id = kwargs.pop('dialog_id', None) # 获取前端聊天端口的session_id
+             self.username = user_info.get('email', None) or user_info.get('name', "anonymous")
+             chat_id = kwargs.pop('chat_id', None) # 获取前端聊天端口的session_id
              history_mode = kwargs.pop('history_mode', None) or self.history_mode # backend or frontend
-        if not dialog_id: 
-            dialog_id = kwargs.pop('chat_id', None)
                 
         # 使用thread加载后端的聊天记录
         # TODO: 这里需要改成异步加载
-        thread: Thread = self.threads_mgr.create_threads(username=self.username, dialog_id=dialog_id)
+        thread: Thread = self.threads_mgr.create_threads(username=self.username, dialog_id=chat_id)
         thread.metadata["extra_requests"] = extra_requests
         agent._thread = thread
         agent._thread_mgr = self.threads_mgr
         # 如果前端没有给定dialog_id，则将当前历史消息记录加入到新的thread中/或者使用前端历史消息
-        if not dialog_id or history_mode == "frontend":
+        if not chat_id or history_mode == "frontend":
             thread.messages = [] # 清空历史消息
             for message in messages[:-1]:
                 thread_content = [Content(type="text", text=Text(value=message["content"],annotations=[]))]

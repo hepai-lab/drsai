@@ -9,3 +9,11 @@
 - ```thread.messages```的历史消息存储由```drsai/modules/baseagent/drsaiagent.py```的```_call_llm```函数转移到了```drsai/modules/baseagent/drsaiagent.py```的```a_start_chat_completions```函数中，通过捕捉```TextMessage```和```ToolCallSummaryMessage```事件来更新```thread.messages```。drsai智能体的内部的非思考文本输出和工具调用的输出会被捕捉并存储。用户还通过自定义事件和捕获来进行自定义储存修改。
 
 - 自定义消息事件类型，使用多智能体系统时需要在```DrSaiGroupChat```中传入注册。具体见https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/messages.html。这意味着我们可以定义自己的消息类型，用户捕获特殊的事件进行操作。
+
+**2025-04-15: **
+- 1.open-webui重复打印：需要注释open-webui源码```utils/middleware.py```中的```post_response_handler```函数中的```tag_content_handler```函数中的：
+```python
+# if before_tag:
+#     content_blocks[-1]["content"] = before_tag
+```
+- 2.已经修改了```drsai/backend/owebui_pipeline/pipelines/pipelines/drsai_pipeline.py```，默认将open-webui前端的```chat_id```作为后端的```thread_id```，这意味着前后端的状态可以通过```thread+chat_id```进行同步。同时thread已经被传递到了每个智能体、智能体的自定义回复函数和多智能体中，这意味每个智能体和用户的自定义开发都可与open-webui前端保持一致。注意：用户需要更新自己pipeline目录下的```drsai_pipeline.py```文件。
