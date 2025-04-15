@@ -165,15 +165,18 @@ async def run_backend(agent_factory: callable, **kwargs):
     : args:
         enable_openwebui_pipeline: bool = False,  # 是否启动openwebui pipelines
     '''
-    drsaiapp = DrSaiAPP(agent_factory = agent_factory)
-
-    model_name: str = kwargs.get("model_name", None)
-    host: str =  kwargs.get("host", None)
-    port: int =  kwargs.get("port", None)
-    no_register: bool =  kwargs.get("no_register", True)
-    controller_address: str =  kwargs.get("controller_address", "http://localhost:42601")
-    enable_pipeline: bool = kwargs.get("enable_openwebui_pipeline", False)
-        
+    model_name: str = kwargs.pop("model_name", None)
+    host: str =  kwargs.pop("host", None)
+    port: int =  kwargs.pop("port", None)
+    no_register: bool =  kwargs.pop("no_register", True)
+    controller_address: str =  kwargs.pop("controller_address", "http://localhost:42601")
+    enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
+    
+    drsaiapp = DrSaiAPP(
+        agent_factory = agent_factory,
+        **kwargs
+        )
+    
     await Run_DrSaiAPP().run_drsai(
         model_name=model_name,
         host=host,
@@ -188,13 +191,17 @@ async def run_hepai_worker(agent_factory: callable, **kwargs):
     '''
     启动Hepai Worker
     '''
-    drsaiapp = DrSaiAPP(agent_factory = agent_factory)
+    model_name: str = kwargs.pop("model_name", None)
+    host: str =  kwargs.pop("host", None)
+    port: int =  kwargs.pop("port", None)
+    no_register: bool =  kwargs.pop("no_register", False)
+    controller_address: str =  kwargs.pop("controller_address", "https://aiapi.ihep.ac.cn")
 
-    model_name: str = kwargs.get("model_name", None)
-    host: str =  kwargs.get("host", None)
-    port: int =  kwargs.get("port", None)
-    no_register: bool =  kwargs.get("no_register", False)
-    controller_address: str =  kwargs.get("controller_address", "https://aiapi.ihep.ac.cn")
+    drsaiapp = DrSaiAPP(
+        agent_factory = agent_factory,
+        **kwargs
+        )
+    
     await Run_DrSaiAPP().run_drsai(
         model_name=model_name,
         host=host,

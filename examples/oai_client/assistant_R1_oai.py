@@ -52,9 +52,9 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # asyncio.run(main())
     from drsai import run_console, run_backend, run_hepai_worker, run_openwebui, run_pipelines,run_drsai_app
     # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
     # asyncio.run(run_backend(agent_factory=create_agent))
     # asyncio.run(run_hepai_worker(agent_factory=create_agent))
-    # asyncio.run(run_backend(agent_factory=create_agent, enable_openwebui_pipeline=True))
+    asyncio.run(run_backend(agent_factory=create_agent, enable_openwebui_pipeline=True, history_mode = "backend"))
