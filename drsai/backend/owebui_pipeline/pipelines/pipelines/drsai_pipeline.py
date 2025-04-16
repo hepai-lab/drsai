@@ -43,7 +43,7 @@ class Pipeline:
         self.user_email = None
         self.message_id = None
         self.chat_id = None
-        # self.name = self.valves.DRSAI_NAME 
+        self.name = self.valves.DRSAI_NAME 
         pass
 
     async def on_startup(self):

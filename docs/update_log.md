@@ -17,3 +17,5 @@
 #     content_blocks[-1]["content"] = before_tag
 ```
 - 2.已经修改了```drsai/backend/owebui_pipeline/pipelines/pipelines/drsai_pipeline.py```，默认将open-webui前端的```chat_id```作为后端的```thread_id```，这意味着前后端的状态可以通过```thread+chat_id```进行同步。同时thread已经被传递到了每个智能体、智能体的自定义回复函数和多智能体中，这意味每个智能体和用户的自定义开发都可与open-webui前端保持一致。注意：用户需要更新自己pipeline目录下的```drsai_pipeline.py```文件。
+
+- 3.在autogen的代码，只存第一次"<think>"后的内容到```TextMessage```中，后面同一智能体多次内部"<think>"将不会被存入```TextMessage```中。请自定义回复函数开发者注意，这时候可以使用```history_mode='frontend'```来加载前端的历史消息，这个BUG后面将会被修复。
