@@ -74,7 +74,7 @@ class BaseJsonSaver:
                 os.makedirs(os.path.dirname(file_path))
             self.save(file_path, data)
             return data
-        with open(file_path, 'r') as f:
+        with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         return data
 
@@ -89,7 +89,7 @@ class BaseJsonSaver:
         """
         file_path = file_path or self.file_path
         data = data or self.data
-        with open(file_path, 'w') as f:
+        with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
         logger.debug(f"Data saved to {file_path}")
         self.dirty = False
