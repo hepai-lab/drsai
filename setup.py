@@ -1,4 +1,5 @@
 from setuptools import setup, find_packages
+from drsai import version
 
 def get_requirements():
     with open('requirements.txt', encoding='utf-8') as f:
@@ -9,11 +10,11 @@ def get_requirements():
         ]
     
 setup(
-    name="DrSai",  # 项目名称
-    version="0.5.4",  # 版本号
-    author="HepAI",  # 作者信息
-    author_email="hepai@ihep.ac.cn",  # 作者邮箱
-    description="A development framework for single and multi-agent collaborative systems developed by the Dr.Sai team at the IHEP, CAS.",  # 项目描述
+    name=version.__appname__,  # 项目名称
+    version=version.__version__,  # 版本号
+    author=version.__author__,  # 作者信息
+    author_email=version.__email__,  # 作者邮箱
+    description=version.__description__,  # 项目描述
     long_description=open("README.md",encoding="utf-8").read(),  # 详细描述, 通常从README.md文件读取
     long_description_content_type="text/markdown",  # 描述的格式
     url="https://code.ihep.ac.cn/hepai/drsai/",  # 项目主页

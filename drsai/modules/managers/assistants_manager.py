@@ -13,7 +13,7 @@ except:
     from drsai.version import __version__
 from drsai.utils import BaseJsonSaver, Logger
 from drsai.version import __appname__
-import hepai as hai
+
 from drsai.modules.managers.base_assistant import Assistant, Tool, AssistantDeleted
 
 logger = Logger.get_logger("assistants_manager.py")

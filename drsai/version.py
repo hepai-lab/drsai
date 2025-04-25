@@ -1,6 +1,6 @@
 
-__version__ = "0.0.4"
+__version__ = "0.5.4a"
 __appname__ = 'DrSai'
 __author__ = 'hepai'
 __email__ = 'hepai@ihep.ac.cn'
-__description__ = 'A Gneral Multi-agents Framework by HEPAI Group'
+__description__ = 'A development framework for single and multi-agent collaborative systems developed by the Dr.Sai team at the IHEP, CAS.'
