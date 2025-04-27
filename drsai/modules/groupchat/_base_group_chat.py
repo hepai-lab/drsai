@@ -52,6 +52,7 @@ class DrSaiGroupChatManager(BaseGroupChatManager):
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
         message_factory: MessageFactory,
+        emit_team_events: bool = False,
         thread: Thread = None,
         thread_mgr: ThreadsManager = None,
         **kwargs: Any
@@ -68,6 +69,7 @@ class DrSaiGroupChatManager(BaseGroupChatManager):
             termination_condition=termination_condition,
             max_turns=max_turns,
             message_factory=message_factory,
+            emit_team_events=emit_team_events,
         )
         self._theard: Thread = thread
         self._thread_mgr: ThreadsManager = thread_mgr
@@ -87,6 +89,7 @@ class DrSaiGroupChat(BaseGroupChat):
         max_turns: int | None = None,
         runtime: AgentRuntime | None = None,
         custom_message_types: List[type[BaseAgentEvent | BaseChatMessage]] | None = None,
+        emit_team_events: bool = False,
         thread: Thread = None,
         thread_mgr: ThreadsManager = None,
         **kwargs: Any
@@ -99,6 +102,7 @@ class DrSaiGroupChat(BaseGroupChat):
             max_turns=max_turns,
             runtime=runtime,
             custom_message_types=custom_message_types,
+            emit_team_events=emit_team_events,
             )
         self._thread: Thread = thread
         self._thread_mgr: ThreadsManager = thread_mgr

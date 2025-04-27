@@ -11,7 +11,7 @@ import json
 from pydantic import BaseModel
 
 from autogen_core import CancellationToken, FunctionCall
-from autogen_core.tools import BaseTool
+from autogen_core.tools import BaseTool, FunctionTool, StaticWorkbench, Workbench, ToolResult, TextResultContent
 from autogen_core.memory import Memory
 from autogen_core.model_context import ChatCompletionContext
 from autogen_core.models import (
@@ -57,11 +57,12 @@ class TextContent(BaseModel):
 class DrSaiAgent(AssistantAgent):
     """基于aotogen AssistantAgent的定制Agent"""
     def __init__(
-            self,
+        self,
         name: str,
         model_client: ChatCompletionClient,
         *,
         tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
+        workbench: Workbench | None = None,
         handoffs: List[HandoffBase | str] | None = None,
         model_context: ChatCompletionContext | None = None,
         description: str = "An agent that provides assistance with ability to use tools.",
@@ -72,6 +73,7 @@ class DrSaiAgent(AssistantAgent):
         reflect_on_tool_use: bool | None = None,
         tool_call_summary_format: str = "{result}",
         output_content_type: type[BaseModel] | None = None,
+        output_content_type_format: str | None = None,
         memory: Sequence[Memory] | None = None,
         metadata: Dict[str, str] | None = None,
         memory_function: Callable = None,
@@ -88,6 +90,7 @@ class DrSaiAgent(AssistantAgent):
             name, 
             model_client,
             tools=tools,
+            workbench=workbench,
             handoffs=handoffs,
             model_context=model_context,
             description=description,
@@ -96,6 +99,7 @@ class DrSaiAgent(AssistantAgent):
             reflect_on_tool_use=reflect_on_tool_use,
             tool_call_summary_format=tool_call_summary_format,
             output_content_type=output_content_type,
+            output_content_type_format=output_content_type_format,
             memory=memory,
             metadata=metadata
             )
@@ -282,7 +286,7 @@ class DrSaiAgent(AssistantAgent):
         model_client_stream: bool,
         system_messages: List[SystemMessage],
         model_context: ChatCompletionContext,
-        tools: List[BaseTool[Any, Any]],
+        workbench: Workbench,
         handoff_tools: List[BaseTool[Any, Any]],
         agent_name: str,
         cancellation_token: CancellationToken,
@@ -291,12 +295,11 @@ class DrSaiAgent(AssistantAgent):
         """
         Perform a model inference and yield either streaming chunk events or the final CreateResult.
         """
-        
+        all_messages = await model_context.get_messages()
         if self._thread is None:
-            all_messages = await model_context.get_messages()
+            pass
         else:
             # 从thread中获取历史消息，并于autogen中的消息记录合并
-            all_messages = await model_context.get_messages()
             history_aoi_messages: List[Dict[str, str]] = self._thread.metadata["history_aoi_messages"]
             history = []
             for  history_aoi_message in history_aoi_messages:
@@ -309,19 +312,6 @@ class DrSaiAgent(AssistantAgent):
                 elif history_aoi_message["role"] == "function":
                     history.append(FunctionExecutionResultMessage(content=history_aoi_message["content"]))
             all_messages = history + all_messages
-            # 全部从thread中加载历史消息
-            # all_messages = []
-            # history_thread_messages: List[ThreadMessage] = self._thread.messages
-            # for history_thread_message in history_thread_messages:
-            #     if history_thread_message.role == "user":
-            #         all_messages.append(UserMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
-            #     elif history_thread_message.role == "assistant":
-            #         all_messages.append(UserMessage(content=history_thread_message.content_str(), source=history_thread_message.sender))
-            #     elif history_thread_message.role == "system":
-            #         all_messages.append(SystemMessage(content=history_thread_message.content_str()))
-            #     elif history_thread_message.role == "function":
-            #         all_messages.append(FunctionExecutionResultMessage(content=history_thread_message.content_str()))
-            
         
         llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
 
@@ -329,6 +319,7 @@ class DrSaiAgent(AssistantAgent):
         if self._memory_function is not None:
             llm_messages = await self._call_memory_function(llm_messages)
 
+        tools = (await workbench.list_tools()) + handoff_tools
         all_tools = tools + handoff_tools
         model_result: Optional[CreateResult] = None
         if self._reply_function is not None:
@@ -358,68 +349,20 @@ class DrSaiAgent(AssistantAgent):
                if isinstance(chunk, CreateResult):
                     model_result = chunk
                yield chunk
-        
-        # # 使用thread储存完整的文本消息，以后可能有多模态消息
-        # if self._thread is not None and model_result is not None:
-        #     thread_content = None
-        #     if isinstance(model_result.content, str):
-        #         thread_content = [Content(type="text", text=Text(value=model_result.content,annotations=[]))]
-        #     elif isinstance(model_result.content, List):
-        #         context_str = ""
-        #         for content_item in model_result.content:
-        #             if isinstance(content_item, FunctionCall):
-        #                 context_str += f"{content_item.name}({content_item.arguments})"
-        #         thread_content = [Content(type="text", text=Text(value=context_str,annotations=[]))]
-        #     else :
-        #         print(f"Invalid content type: {type(model_result.content)}")
 
-        #     if thread_content is not None:
-        #         self._thread_mgr.create_message(
-        #             thread=self._thread,
-        #             role = "assistant",
-        #             content=thread_content,
-        #             sender=self.name,
-        #             metadata={},
-        #             )
-    
     @staticmethod
     async def _execute_tool_call(
         tool_call: FunctionCall,
-        tools: List[BaseTool[Any, Any]],
+        workbench: Workbench,
         handoff_tools: List[BaseTool[Any, Any]],
         agent_name: str,
         cancellation_token: CancellationToken,
     ) -> Tuple[FunctionCall, FunctionExecutionResult]:
         """Execute a single tool call and return the result."""
+        # Load the arguments from the tool call.
         try:
-            all_tools = tools + handoff_tools
-            if not all_tools:
-                raise ValueError("No tools are available.")
-            tool = next((t for t in all_tools if t.name == tool_call.name), None)
-            if tool is None:
-                raise ValueError(f"The tool '{tool_call.name}' is not available.")
-            arguments: Dict[str, Any] = json.loads(tool_call.arguments) if tool_call.arguments else {}
-            result = await tool.run_json(arguments, cancellation_token)
-            
-            # 从执行的result中获取返回值，并转换为字符串
-            if isinstance(result, list):
-                result = result[0].text
-            elif isinstance(result, TextContent):
-                result = result.get("text", "")
-            else:
-                pass
-
-            result_as_str = tool.return_value_as_string(result)
-            return (
-                tool_call,
-                FunctionExecutionResult(
-                    content=result_as_str,
-                    call_id=tool_call.id,
-                    is_error=False,
-                    name=tool_call.name,
-                ),
-            )
-        except Exception as e:
+            arguments = json.loads(tool_call.arguments)
+        except json.JSONDecodeError as e:
             return (
                 tool_call,
                 FunctionExecutionResult(
@@ -429,5 +372,55 @@ class DrSaiAgent(AssistantAgent):
                     name=tool_call.name,
                 ),
             )
+
+        # Check if the tool call is a handoff.
+        # TODO: consider creating a combined workbench to handle both handoff and normal tools.
+        for handoff_tool in handoff_tools:
+            if tool_call.name == handoff_tool.name:
+                # Run handoff tool call.
+                result = await handoff_tool.run_json(arguments, cancellation_token)
+                result_as_str = handoff_tool.return_value_as_string(result)
+                return (
+                    tool_call,
+                    FunctionExecutionResult(
+                        content=result_as_str,
+                        call_id=tool_call.id,
+                        is_error=False,
+                        name=tool_call.name,
+                    ),
+                )
+
+        # Handle normal tool call using workbench.
+        result = await workbench.call_tool(
+            name=tool_call.name,
+            arguments=arguments,
+            cancellation_token=cancellation_token,
+        )
+
+        # 从执行的result中获取返回值，并转换为字符串
+        result_as_str = ""
+        if isinstance(result, ToolResult):
+            results = result.result
+            for r in results:
+                if isinstance(r, TextResultContent):
+                    try:
+                        json_result = json.loads(r.content)
+                        if isinstance(json_result, list):
+                            for item in json_result:
+                                result_as_str = item["text"] + "\n"
+                    except json.JSONDecodeError:
+                        result_as_str = r.content
+        else:
+            pass
+        return (
+            tool_call,
+            FunctionExecutionResult(
+                # content=result.to_text(),
+                content=result_as_str,
+                call_id=tool_call.id,
+                is_error=result.is_error,
+                name=tool_call.name,
+            ),
+        )
 
 
