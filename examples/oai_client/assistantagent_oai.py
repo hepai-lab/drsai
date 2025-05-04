@@ -18,11 +18,12 @@ def create_agent() -> AssistantAgent:
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
-    model_client = HepAIChatCompletionClient(
-        model="openai/gpt-4o",
-        api_key=os.environ.get("HEPAI_API_KEY"),
-        # base_url = "http://192.168.32.148:42601/apiv2"
-    )
+    # model_client = HepAIChatCompletionClient(
+    #     model="openai/gpt-4o",
+    #     api_key=os.environ.get("HEPAI_API_KEY"),
+    #     # base_url = "http://192.168.32.148:42601/apiv2"
+    # )
+    model_client = None
 
 
     # Define a simple function tool that the agent can use.
