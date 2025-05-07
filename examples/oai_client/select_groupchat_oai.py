@@ -8,18 +8,12 @@ except ImportError:
     drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
     sys.path.append(drsai_path)
 
-
-from drsai import AssistantAgent, HepAIChatCompletionClient
-
-import asyncio
-from autogen_agentchat.conditions import ExternalTermination, TextMentionTermination
-from autogen_agentchat.teams import RoundRobinGroupChat, SelectorGroupChat
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
-import os, json
+from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, DrSaiSelectorGroupChat, TextMentionTermination
+import json
 import asyncio
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
-def create_team() -> RoundRobinGroupChat:
+def create_team() -> DrSaiSelectorGroupChat:
     # Create an OpenAI model client.
     model_client = HepAIChatCompletionClient(
         model="openai/gpt-4o",
@@ -46,7 +40,7 @@ def create_team() -> RoundRobinGroupChat:
     text_termination = TextMentionTermination("APPROVE")
 
     # Create a team with the primary and critic agents.
-    return RoundRobinGroupChat(
+    return DrSaiSelectorGroupChat(
         participants=[primary_agent, critic_agent], 
         termination_condition=text_termination)
 
@@ -56,7 +50,7 @@ async def main():
     stream =  drsaiapp.a_start_chat_completions(
         messages=[{"content":"Write a short poem about the fall season.", "role":"user"}],
         stream=True,
-        dialog_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
+        chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
         )
 
     async for message in stream:

@@ -9,23 +9,18 @@ except ImportError:
     sys.path.append(drsai_path)
 
 
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiRoundRobinGroupChat,DrSaiGroupChatManager, DrSaiGroupChat
-
-import asyncio
-from autogen_agentchat.conditions import ExternalTermination, TextMentionTermination
-from autogen_agentchat.teams import  RoundRobinGroupChat, SelectorGroupChat
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
-import os, json
+from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiRoundRobinGroupChat, DrSaiAPP, TextMentionTermination
+import json
 import asyncio
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
 def create_team() -> DrSaiRoundRobinGroupChat:
     # Create an OpenAI model client.
     model_client = HepAIChatCompletionClient(
-        model="deepseek-r1-250120",
-        api_key=os.environ.get("VOLCES_API_KEY"),
-        base_url=os.environ.get("VOLCES_BASE_URL"),
-        # model="openai/gpt-4o",
+        # model="deepseek-r1-250120",
+        # api_key=os.environ.get("VOLCES_API_KEY"),
+        # base_url=os.environ.get("VOLCES_BASE_URL"),
+        model="openai/gpt-4o",
         # api_key="sk-...", # Optional if you have an HEPAI_API_KEY env variable set.
     )
 
@@ -59,7 +54,7 @@ async def main():
     stream =  drsaiapp.a_start_chat_completions(
         messages=[{"content":"Write a short poem about the fall season.", "role":"user"}],
         stream=True,
-        dialog_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
+        chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
         history_mode = "backend", #"frontend",
         )
 
@@ -73,7 +68,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    # asyncio.run(main())
     # from drsai import run_console, run_backend, run_hepai_worker
     # asyncio.run(run_console(agent_factory=create_team, task="Write a short poem about the fall season."))
     # asyncio.run(run_backend(agent_factory=create_team))

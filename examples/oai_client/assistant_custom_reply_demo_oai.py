@@ -17,7 +17,7 @@ from typing import List, Dict, Union, AsyncGenerator, Tuple, Any
 
 
 from autogen_core import CancellationToken
-from autogen_core.tools import BaseTool
+from autogen_core.tools import BaseTool, FunctionTool, StaticWorkbench, Workbench, ToolResult, TextResultContent
 from autogen_core.models import (
     LLMMessage,
     ChatCompletionClient,
@@ -42,7 +42,7 @@ def create_agent() -> AssistantAgent:
         agent_name: str,  # Agent name
         llm_messages: List[LLMMessage],  # AutoGen LLM messages
         model_client: ChatCompletionClient,  # AutoGen LLM Model client
-        tools: List[BaseTool[Any, Any]],  # AutoGen tools
+        tools: Union[StaticWorkbench, Workbench],  # AutoGen Workbench
         cancellation_token: CancellationToken,  # AutoGen cancellation token,
         thread: Thread,  # DrSai thread
         thread_mgr: ThreadsManager,  # DrSai thread manager
@@ -68,7 +68,7 @@ async def main():
     drsaiapp = DrSaiAPP(agent_factory=create_agent)
     stream =  drsaiapp.a_start_chat_completions(
         messages=[{"content":"Why will humans be destroyed", "role":"user"}],
-        # dialog_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
+        # chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
         )
     model_client_stream = create_agent()._model_client_stream
     async for message in stream:

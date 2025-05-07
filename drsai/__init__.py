@@ -8,6 +8,8 @@ from drsai.modules.baseagent.drsaiagent import DrSaiAgent as AssistantAgent
 
 # Groupchat
 from drsai.modules.groupchat._round_robin_group_chat import DrSaiRoundRobinGroupChat, DrSaiRoundRobinGroupChatManager
+from drsai.modules.groupchat._selector_group_chat import DrSaiSelectorGroupChat
+from drsai.modules.groupchat._swarm_group_chat import DrSaiSwarm
 from drsai.modules.groupchat._base_group_chat import DrSaiGroupChatManager, DrSaiGroupChat
 
 # manager
@@ -15,6 +17,11 @@ from drsai.modules.managers.base_thread import Thread
 from drsai.modules.managers.threads_manager import ThreadsManager
 from drsai.modules.managers.base_thread_message import ThreadMessage, Content, Text
 
+# reply functions
+from drsai.modules.baseagent.toolagent import tools_reply_function, tools_recycle_reply_function
+
+# tools
+from drsai.modules.components.tools.mcps_std import web_fetch
 
 # utils
 from drsai.utils.message_convert import (
@@ -36,6 +43,10 @@ from drsai.backend.run import (
     run_pipelines,
     run_drsai_app)
 from drsai.backend.app_worker import DrSaiAPP
+
+###########
+# Autogen #
+###########
 
 # autogen_ext Models
 from autogen_ext.models.openai import OpenAIChatCompletionClient
@@ -97,6 +108,7 @@ from autogen_agentchat.messages import (
     ToolCallSummaryMessage,
     ModelClientStreamingChunkEvent,
     TextMessage,
+    HandoffMessage,
 )
 
 # autogen_core Tools
@@ -107,6 +119,11 @@ from autogen_core.tools import (
     BaseTool,
     BaseToolWithState,
     FunctionTool,
+    StaticWorkbench,
+    ImageResultContent, 
+    TextResultContent, 
+    ToolResult, 
+    Workbench
     )
 
 # autogen_ext mcp
@@ -116,6 +133,8 @@ from autogen_ext.tools.mcp import (
     StdioServerParams,
     StdioMcpToolAdapter,
     SseMcpToolAdapter,
+    McpWorkbench,
+    create_mcp_server_session,
     mcp_server_tools)
 
 from autogen_core import Image as AGImage

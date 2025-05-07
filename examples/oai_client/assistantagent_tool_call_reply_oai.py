@@ -10,11 +10,14 @@ except ImportError:
 
 
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_hepai_worker, run_backend
+from drsai import StdioServerParams, mcp_server_tools
+# 使用tool_reply_function让大模型执行函数，并根据函数结果生成回复。
+from drsai import tools_reply_function, tools_recycle_reply_function
 import os, json
 import asyncio
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
-def create_agent() -> AssistantAgent:
+async def create_agent() -> AssistantAgent:
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
@@ -28,28 +31,42 @@ def create_agent() -> AssistantAgent:
 
     # Define a simple function tool that the agent can use.
     # For this example, we use a fake weather tool for demonstration purposes.
-    async def get_weather(city: str) -> str:
-        """Get the weather for a given city."""
-        return f"The weather in {city} is 73 degrees and Sunny."
+    tools = []
+    tools.extend(await mcp_server_tools(
+        StdioServerParams(
+            command="conda",
+            args=[
+                    "run",
+                    "-n",
+                    "drsai",
+                    "--live-stream",
+                    "python",
+                    "examples/oai_client/MCP_tools/mcp_server.py"
+                    ],
+            env=None)))
+    # async def get_weather(city: str) -> str:
+    #     """Get the weather for a given city."""
+    #     return f"The weather in {city} is 73 degrees and Sunny."
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
     # The system message instructs the agent via natural language.
     return AssistantAgent(
         name="weather_agent",
         model_client=model_client,
-        tools=[get_weather],
+        tools=tools,
         system_message="You are a helpful assistant.",
-        reflect_on_tool_use=False,
-        model_client_stream=True,  # Enable streaming tokens from the model client.
+        # reply_function=tools_reply_function
+        reply_function=tools_recycle_reply_function,
+        max_turns = 5
     )
-
+    
 
 async def main():
 
     drsaiapp = DrSaiAPP(agent_factory=create_agent)
     stream =  drsaiapp.a_start_chat_completions(
         messages=[{"content":"What is the weather in New York?", "role":"user"}],
-        # dialog_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
+        # chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
         stream=True,)
 
     async for message in stream:
