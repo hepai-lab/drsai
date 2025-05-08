@@ -95,5 +95,5 @@ async def main():
     await handle_oai_stream(stream)
 
 if __name__ == "__main__":
-    asyncio.run(run_team_stream())
-    # asyncio.run(main())
+    # asyncio.run(run_team_stream())
+    asyncio.run(main())

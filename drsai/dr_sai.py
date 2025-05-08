@@ -139,18 +139,18 @@ class DrSai:
             if extra_body is not None:
                 ## 用户信息 从DDF2传入的
                 user_info: Dict = kwargs.pop('extra_body', {}).get("user", {})
-                self.username = user_info.get('email', None) or user_info.get('name', "anonymous")
+                username = user_info.get('email', None) or user_info.get('name', "anonymous")
                 chat_id = extra_body.get("chat_id", None) # 获取前端聊天界面的chat_id
             else:
                 #  {'model': 'drsai_pipeline', 'user': {'name': '888', 'id': '888', 'email': 888', 'role': 'admin'}, 'metadata': {}, 'base_models': 'openai/gpt-4o', 'apikey': 'sk-88'}
                 user_info = kwargs.pop('user', {})
-                self.username = user_info.get('email', None) or user_info.get('name', "anonymous")
+                username = user_info.get('email', None) or user_info.get('name', "anonymous")
                 chat_id = kwargs.pop('chat_id', None) # 获取前端聊天端口的chat_id
                 history_mode = kwargs.pop('history_mode', None) or self.history_mode # backend or frontend
                     
             # 使用thread加载后端的聊天记录
             # TODO: 这里需要改成异步加载
-            thread: Thread = self.threads_mgr.create_threads(username=self.username, chat_id=chat_id)
+            thread: Thread = self.threads_mgr.create_threads(username=username, chat_id=chat_id)
             thread.metadata["extra_requests"] = extra_requests
             agent._thread = thread
             agent._thread_mgr = self.threads_mgr
@@ -180,7 +180,7 @@ class DrSai:
             # 启动聊天任务
 
             ## 先判断handoff_target是否为user，如果是，则使用HandoffMessage传入
-            if thread.metadata.get("handoff_target") == "user":
+            if (HandoffMessage in agent._participants[0].produced_message_types) and thread.metadata.get("handoff_target") == "user":
                 res = agent.run_stream(task=HandoffMessage(source="user", target=thread.metadata.get("handoff_source"), content=usermessage))
             else:
                 res = agent.run_stream(task=usermessage)
