@@ -246,6 +246,10 @@ asyncio.run(run_backend(agent_factory=create_agent, enable_openwebui_pipeline=Tr
 pip install open-webui
 ```
 
+**设置HuggingFace镜像：**
+将HuggingFace镜像：'HF_ENDPOINT '= 'https://hf-mirror.com'加入到本地的环境。对于Linux系统，可以将其加入到~/.bashrc文件中：
+```export HF_ENDPOINT=https://hf-mirror.com```
+
 在命令行中运行：```open-webui serve --port 8088```启动OpenWebUI服务。
 
 ### 5.3.配置OpenWebUI Pipeline
