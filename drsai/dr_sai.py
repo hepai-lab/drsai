@@ -181,6 +181,8 @@ class DrSai:
                 ## 先判断handoff_target是否为user，如果是，则使用HandoffMessage传入
                 if (HandoffMessage in agent._participants[0].produced_message_types) and thread.metadata.get("handoff_target") == "user":
                     res = agent.run_stream(task=HandoffMessage(source="user", target=thread.metadata.get("handoff_source"), content=usermessage))
+                else:
+                    res = agent.run_stream(task=usermessage)
             else:
                 res = agent.run_stream(task=usermessage)
                 
