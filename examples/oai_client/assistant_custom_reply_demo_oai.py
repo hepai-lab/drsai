@@ -17,7 +17,14 @@ from typing import List, Dict, Union, AsyncGenerator, Tuple, Any
 
 
 from autogen_core import CancellationToken
-from autogen_core.tools import BaseTool, FunctionTool, StaticWorkbench, Workbench, ToolResult, TextResultContent
+from autogen_core.tools import  (
+    BaseTool, 
+    FunctionTool, 
+    StaticWorkbench, 
+    Workbench, 
+    ToolResult, 
+    TextResultContent, 
+    ToolSchema)
 from autogen_core.models import (
     LLMMessage,
     ChatCompletionClient,
@@ -42,7 +49,9 @@ def create_agent() -> AssistantAgent:
         agent_name: str,  # Agent name
         llm_messages: List[LLMMessage],  # AutoGen LLM messages
         model_client: ChatCompletionClient,  # AutoGen LLM Model client
-        tools: Union[StaticWorkbench, Workbench],  # AutoGen Workbench
+        workbench: Workbench,
+        handoff_tools: List[BaseTool[Any, Any]],
+        tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
         cancellation_token: CancellationToken,  # AutoGen cancellation token,
         thread: Thread,  # DrSai thread
         thread_mgr: ThreadsManager,  # DrSai thread manager

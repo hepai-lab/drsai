@@ -12,7 +12,14 @@ import os
 from pydantic import BaseModel
 
 from autogen_core import CancellationToken, FunctionCall
-from autogen_core.tools import BaseTool, FunctionTool, StaticWorkbench, Workbench, ToolResult, TextResultContent
+from autogen_core.tools import (
+    BaseTool, 
+    FunctionTool, 
+    StaticWorkbench, 
+    Workbench, 
+    ToolResult, 
+    TextResultContent, 
+    ToolSchema)
 from autogen_core.memory import Memory
 from autogen_core.model_context import ChatCompletionContext
 from autogen_core.models import (
@@ -159,7 +166,9 @@ class DrSaiAgent(AssistantAgent):
             self, 
             llm_messages: List[LLMMessage],
             model_client: ChatCompletionClient,
-            tools: Workbench,
+            workbench: Workbench,
+            handoff_tools: List[BaseTool[Any, Any]],
+            tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
             agent_name: str,
             cancellation_token: CancellationToken,
             thread: Thread = None,
@@ -190,6 +199,8 @@ class DrSaiAgent(AssistantAgent):
                 agent_name = agent_name,
                 llm_messages = llm_messages, 
                 model_client=model_client, 
+                workbench=workbench, 
+                handoff_tools=handoff_tools, 
                 tools=tools, 
                 cancellation_token=cancellation_token, 
                 thread=thread, 
@@ -324,15 +335,16 @@ class DrSaiAgent(AssistantAgent):
         if self._memory_function is not None:
             llm_messages = await self._call_memory_function(llm_messages)
 
-        tools = (await workbench.list_tools()) + handoff_tools
-        all_tools = tools + handoff_tools
+        all_tools = (await workbench.list_tools()) + handoff_tools
         # model_result: Optional[CreateResult] = None
         if self._reply_function is not None:
             # 自定义的reply_function，用于自定义对话回复的定制
             async for chunk in self._call_reply_function(
                 llm_messages, 
                 model_client = model_client, 
-                tools=workbench, 
+                workbench=workbench,
+                handoff_tools=handoff_tools,
+                tools = all_tools,
                 agent_name=agent_name, 
                 cancellation_token=cancellation_token,
                 thread = self._thread,

@@ -171,19 +171,19 @@ class DrSai:
             history_aoi_messages = [ {"role": x.role, "content": x.content_str(), "name": x.sender} for x in thread.messages] # 不将usermessage加入到历史消息中，在智能体会重复发送
             thread.metadata["history_aoi_messages"] = history_aoi_messages
 
-            # 由于groupchat中不能将历史消息传入队列中，因为必须由每个Agent来处理历史消息
+            # 启动聊天任务
+            ## 由于groupchat中不能将历史消息传入队列中，因为必须由每个Agent来处理历史消息
             if isinstance(agent, BaseGroupChat):
                 for participant in agent._participants:
                     participant._thread = thread
                     participant._thread_mgr = self.threads_mgr
 
-            # 启动聊天任务
-
-            ## 先判断handoff_target是否为user，如果是，则使用HandoffMessage传入
-            if (HandoffMessage in agent._participants[0].produced_message_types) and thread.metadata.get("handoff_target") == "user":
-                res = agent.run_stream(task=HandoffMessage(source="user", target=thread.metadata.get("handoff_source"), content=usermessage))
+                ## 先判断handoff_target是否为user，如果是，则使用HandoffMessage传入
+                if (HandoffMessage in agent._participants[0].produced_message_types) and thread.metadata.get("handoff_target") == "user":
+                    res = agent.run_stream(task=HandoffMessage(source="user", target=thread.metadata.get("handoff_source"), content=usermessage))
             else:
                 res = agent.run_stream(task=usermessage)
+                
             tool_flag = 0
             role = ""
             async for message in res:
