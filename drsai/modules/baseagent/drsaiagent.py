@@ -339,7 +339,7 @@ class DrSaiAgent(AssistantAgent):
 
         all_tools = (await workbench.list_tools()) + handoff_tools
         # model_result: Optional[CreateResult] = None
-        if self._reply_function is not None and self._allow_reply_function:
+        if self._allow_reply_function:
             # 自定义的reply_function，用于自定义对话回复的定制
             async for chunk in self._call_reply_function(
                 llm_messages, 
