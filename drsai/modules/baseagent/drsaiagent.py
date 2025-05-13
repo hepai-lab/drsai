@@ -175,7 +175,7 @@ class DrSaiAgent(AssistantAgent):
             thread_mgr: ThreadsManager = None,
             **kwargs,
             ) -> AsyncGenerator[Union[CreateResult, ModelClientStreamingChunkEvent], None]:
-        """使用自定义的reply_function，自定义对话回复的定制"""
+        """使用自定义的reply_function，自定义对话回复的定制, CreateResult被期待在最后一个事件返回"""
 
         oai_messages = await self.llm_messages2oai_messages(llm_messages)
 
