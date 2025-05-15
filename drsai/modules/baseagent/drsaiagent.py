@@ -215,6 +215,8 @@ class DrSaiAgent(AssistantAgent):
                 elif any(isinstance(chunk, event_type) for event_type in allowed_events):
                     response += str(chunk.content)
                     yield chunk
+                elif isinstance(chunk, HandoffMessage):
+                    yield chunk
                 elif isinstance(chunk, CreateResult):
                     model_result = chunk
                 else:

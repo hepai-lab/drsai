@@ -37,6 +37,7 @@ DrSai/repos/*
 
 # 忽略所有的pip分发包文件
 DrSai.egg-info/
+drsai.egg-info/
 dist/
 build/
 
