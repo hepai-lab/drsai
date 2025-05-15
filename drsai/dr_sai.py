@@ -14,10 +14,17 @@ from drsai.modules.managers.base_thread import Thread
 from autogen_agentchat.agents import AssistantAgent, UserProxyAgent, BaseChatAgent
 from autogen_agentchat.base import Response, TaskResult
 from autogen_core import FunctionCall, CancellationToken
+from autogen_core.model_context import (
+    ChatCompletionContext,
+    UnboundedChatCompletionContext,
+)
 from autogen_agentchat.messages import (
     AgentEvent,
+    ThoughtEvent,
     ChatMessage,
+    LLMMessage,
     TextMessage,
+    UserMessage,
     HandoffMessage,
     ToolCallSummaryMessage,
     ToolCallRequestEvent,
@@ -148,13 +155,16 @@ class DrSai:
                 chat_id = kwargs.pop('chat_id', None) # 获取前端聊天端口的chat_id
                 history_mode = kwargs.pop('history_mode', None) or self.history_mode # backend or frontend
                     
-            # 使用thread加载后端的聊天记录
-            # TODO: 这里需要改成异步加载
-            thread: Thread = self.threads_mgr.create_threads(username=username, chat_id=chat_id)
+            # 创建/加载thread后端，来绑定指定前端的chat_id
+            thread: Thread = self.threads_mgr.create_threads(username=username, chat_id=chat_id) # TODO: 这里需要改成异步加载
             thread.metadata["extra_requests"] = extra_requests
+
+            # 判断agent是否有self._thread和self._thread_mgr属性，没有直接保存，说明drsai仅支持带有self._thread和self._thread_mgr属性的agent
+            assert hasattr(agent, "_thread") and hasattr(agent, "_thread_mgr"), "Agent must have _thread and _thread_mgr attributes, please check your agent factory while from drsai."
             agent._thread = thread
             agent._thread_mgr = self.threads_mgr
-            # 如果前端没有给定dialog_id，则将当前历史消息记录加入到新的thread中/或者使用前端历史消息
+
+            # 如果前端没有给定chat_id，则将当前历史消息记录加入到新的thread中/或者使用前端历史消息
             if not chat_id or history_mode == "frontend":
                 thread.messages = [] # 清空历史消息
                 for message in messages[:-1]: # 除了最后一个用户消息，都作为历史消息
@@ -167,14 +177,31 @@ class DrSai:
                         metadata={},
                         )
                     
-            # 将历史消息单独保存到metadata中
+            # 提取历史消息
             history_aoi_messages = [ {"role": x.role, "content": x.content_str(), "name": x.sender} for x in thread.messages] # 不将usermessage加入到历史消息中，在智能体会重复发送
-            thread.metadata["history_aoi_messages"] = history_aoi_messages
+            history: List[LLMMessage] = []
+            for  history_aoi_message in history_aoi_messages:
+                if  history_aoi_message["role"] == "user":
+                    history.append(UserMessage(content=history_aoi_message["content"], source=history_aoi_message["name"]))
+                elif history_aoi_message["role"] == "assistant":
+                    history.append(UserMessage(content=history_aoi_message["content"], source=history_aoi_message["name"]))
+                # 暂时不加载系统消息和工具消息
+                # elif history_aoi_message["role"] == "system":
+                #     history.append(SystemMessage(content=history_aoi_message["content"]))
+                # elif history_aoi_message["role"] == "function":
+                #     history.append(FunctionExecutionResultMessage(content=history_aoi_message["content"]))
 
             # 启动聊天任务
-            ## 由于groupchat中不能将历史消息传入队列中，因为必须由每个Agent来处理历史消息
+            async def add_history_to_model_context(model_context: ChatCompletionContext, history: List[LLMMessage]) -> str:
+                if history:
+                    for message in history:
+                        await model_context.add_message(message)
+                else:
+                    pass
+            ## 将thread/self.threads_mgr/history加入每个智能体
             if isinstance(agent, BaseGroupChat):
                 for participant in agent._participants:
+                    await add_history_to_model_context(participant._model_context, history)
                     participant._thread = thread
                     participant._thread_mgr = self.threads_mgr
 
@@ -184,9 +211,11 @@ class DrSai:
                 else:
                     res = agent.run_stream(task=usermessage)
             else:
+                await add_history_to_model_context(agent._model_context, history)
                 res = agent.run_stream(task=usermessage)
                 
             tool_flag = 0
+            ThoughtContent = None
             role = ""
             async for message in res:
                 
@@ -222,14 +251,17 @@ class DrSai:
                             pass
 
                 elif isinstance(message, TextMessage):
-                    # 将智能体回复加入thread.messages中
+                    # 将智能体回复加入thread.messages中 TODO: 加入thinking事件的内容
                     self.threads_mgr.create_message(
                         thread=thread,
                         role = "assistant",
-                        content=[Content(type="text", text=Text(value=message.content,annotations=[]))],
+                        content=[Content(type="text", text=Text(value=message.content,annotations=[]), thought=ThoughtContent)],
                         sender=message.source,
                         metadata={},
                         )
+                    if ThoughtContent is not None:
+                        ThoughtContent = None # 重置thought内容
+
                     chatcompletions["choices"][0]["message"]["created"] = int(time.time())
                     if (not stream) and isinstance(agent, BaseChatAgent):
                         if message.source!="user":
@@ -285,7 +317,7 @@ class DrSai:
                             yield f'data: {json.dumps(oai_chunk)}\n\n'
                         tool_flag = 0
 
-                # TODO: 这里暂时不向前端发送消息
+                # TODO: 这里暂时不向前端发送智能体转移消息
                 # elif isinstance(message, HandoffMessage):
                 #     # 解析handoff_target
                 #     if isinstance(message.content, str):
@@ -294,6 +326,9 @@ class DrSai:
                 #         oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
                 #         yield f'data: {json.dumps(oai_chunk)}\n\n'
                 
+                elif isinstance(message, ThoughtEvent):
+                    ThoughtContent = message.content
+
                 elif isinstance(message, TaskResult):
                     # 判断最后一条消息是否是转移给user的HandoffMessage
                     last_message = message.messages[-1]
@@ -304,18 +339,19 @@ class DrSai:
                         # 最后一个chunk
                         chatcompletionchunkend["created"] = int(time.time())
                         yield f'data: {json.dumps(chatcompletionchunkend)}\n\n'
+
+                # TODO：其他消息类型暂时不处理
                 # elif isinstance(message, Response):
                 #     # print("Response: " + str(message))
                 # elif isinstance(message, UserInputRequestedEvent):
                 #     print("UserInputRequestedEvent:" + str(message))
                 # elif isinstance(message, MultiModalMessage):
                 #     print("MultiModalMessage:" + str(message))
-                # elif isinstance(message, ThoughtEvent):
-                #     print("ThoughtEvent:" + str(message))
                 else:
                     # print("Unknown message:" + str(message))
                     # print(f"Unknown message, type: {type(message)}")
                     pass
+
         except Exception as e:
             raise traceback.print_exc()
         finally:
