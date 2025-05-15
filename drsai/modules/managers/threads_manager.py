@@ -417,15 +417,14 @@ class ThreadsManager(BaseJsonSaver):
                         annotations=kwargs.get('annotations', [])
                     )),
                 ]
-        elif isinstance(content, List):
-            for i in range(len(content)):
-                content[i]=Content(
-                    type="text",
-                    text=Text(
-                        value=content[i].text.value, 
-                        annotations=kwargs.get('annotations', [])
-                    ))
-
+        # elif isinstance(content, List):
+        #     for i in range(len(content)):
+        #         content[i]=Content(
+        #             type="text",
+        #             text=Text(
+        #                 value=content[i].text.value, 
+        #                 annotations=kwargs.get('annotations', [])
+        #             ))
         else:
             content = content
 

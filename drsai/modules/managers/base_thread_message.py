@@ -18,13 +18,15 @@ class Text:
 
 @dataclass
 class Content:
-    type: Literal["text", "image", "video", "audio", "file"]
+    type: Literal["text", "image", "video", "audio", "file", "function_call"]
     text: Text = None
+    thought: str | None = None
 
     def to_dict(self):
         return {
             "type": self.type,
-            "text": self.text.to_dict() if self.text else None
+            "text": self.text.to_dict() if self.text else None,
+            "thought": self.thought
         
         }
 

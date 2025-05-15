@@ -316,22 +316,22 @@ class DrSaiAgent(AssistantAgent):
         Perform a model inference and yield either streaming chunk events or the final CreateResult.
         """
         all_messages = await model_context.get_messages()
-        if self._thread is None:
-            pass
-        else:
-            # 从thread中获取历史消息，并于autogen中的消息记录合并
-            history_aoi_messages: List[Dict[str, str]] = self._thread.metadata["history_aoi_messages"]
-            history = []
-            for  history_aoi_message in history_aoi_messages:
-                if  history_aoi_message["role"] == "user":
-                    history.append(UserMessage(content=history_aoi_message["content"], source=history_aoi_message["name"]))
-                elif history_aoi_message["role"] == "assistant":
-                    history.append(UserMessage(content=history_aoi_message["content"], source=history_aoi_message["name"]))
-                elif history_aoi_message["role"] == "system":
-                    history.append(SystemMessage(content=history_aoi_message["content"]))
-                elif history_aoi_message["role"] == "function":
-                    history.append(FunctionExecutionResultMessage(content=history_aoi_message["content"]))
-            all_messages = history + all_messages
+        # if self._thread is None:
+        #     pass
+        # else:
+        #     # 从thread中获取历史消息，并于autogen中的消息记录合并
+        #     history_aoi_messages: List[Dict[str, str]] = self._thread.metadata["history_aoi_messages"]
+        #     history = []
+        #     for  history_aoi_message in history_aoi_messages:
+        #         if  history_aoi_message["role"] == "user":
+        #             history.append(UserMessage(content=history_aoi_message["content"], source=history_aoi_message["name"]))
+        #         elif history_aoi_message["role"] == "assistant":
+        #             history.append(UserMessage(content=history_aoi_message["content"], source=history_aoi_message["name"]))
+        #         elif history_aoi_message["role"] == "system":
+        #             history.append(SystemMessage(content=history_aoi_message["content"]))
+        #         elif history_aoi_message["role"] == "function":
+        #             history.append(FunctionExecutionResultMessage(content=history_aoi_message["content"]))
+        #     all_messages = history + all_messages
         
         llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
 
