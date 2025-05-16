@@ -178,9 +178,10 @@ class DrSai:
                         )
                     
             # 提取历史消息
-            history_aoi_messages = [ {"role": x.role, "content": x.content_str(), "name": x.sender} for x in thread.messages] # 不将usermessage加入到历史消息中，在智能体会重复发送
+            history_oai_messages = [ {"role": x.role, "content": x.content_str(), "name": x.sender} for x in thread.messages] # 不将usermessage加入到历史消息中，在智能体会重复发送
+            thread.metadata["history_oai_messages"] = history_oai_messages
             history: List[LLMMessage] = []
-            for  history_aoi_message in history_aoi_messages:
+            for  history_aoi_message in history_oai_messages:
                 if  history_aoi_message["role"] == "user":
                     history.append(UserMessage(content=history_aoi_message["content"], source=history_aoi_message["name"]))
                 elif history_aoi_message["role"] == "assistant":
