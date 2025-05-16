@@ -52,3 +52,8 @@ handoff_tools: List[BaseTool[Any, Any]],  # AutoGen handoff tools, 可直接mode
 tools: Union[ToolSchema, List[BaseTool[Any, Any]]],  # AutoGen Workbench ToolSchema + handoff tools, 可直接model_client使用
 ```
 具体见```drsai/modules/baseagent/toolagent.py```和```examples/oai_client/assistantagent_tool_call_reply_oai.py```
+
+**2025-05-015: **
+
+- 1.将每个智能体在内部从thread.metadata[“history”]加载历史消息，变成了在drsai主程序中，每个agent使用agent._model_context直接加载到自己的上下文中。
+- 2.增加thought字段和 function_call type,thread_message增加对think内容的添加。
