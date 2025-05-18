@@ -30,5 +30,5 @@ class DrSaiSwarm(Swarm):
             emit_team_events=emit_team_events,
         )
 
-        self._theard: Thread = thread
+        self._thread: Thread = thread
         self._thread_mgr: ThreadsManager = thread_mgr
