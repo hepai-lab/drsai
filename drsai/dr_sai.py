@@ -237,8 +237,8 @@ class DrSai:
                             # oai_chunk["choices"][0]["delta"]['content'] = f"\n\n**Speaker: {role}**\n\n"
                             if role:
                                 oai_chunk["choices"][0]["delta"]['content'] = f"\n\n**{role}发言：**\n\n"
-                            oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
-                            yield f'data: {json.dumps(oai_chunk)}\n\n'
+                                oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
+                                yield f'data: {json.dumps(oai_chunk)}\n\n'
                         
                         content = message.content
                         oai_chunk["choices"][0]["delta"]['content'] = content
@@ -308,17 +308,19 @@ class DrSai:
                         metadata={},
                         )
                     if tool_flag == 2:
+                        role_tmp = message.source
+                        if role != role_tmp:
+                            role = role_tmp
                         if not stream:
-                            role_tmp = message.source
-                            if role != role_tmp:
-                                role = role_tmp
-                                # oai_chunk["choices"][0]["delta"]['content'] = f"\n\n**Speaker: {role}**\n\n"
-                                if role:
-                                    oai_chunk["choices"][0]["delta"]['content'] = f"\n\n**{role}发言：**\n\n"
                             content = message.content
                             chatcompletions["choices"][0]["message"]["content"] = content + "\n\n"
                             yield f'data: {json.dumps(chatcompletions)}\n\n'
                         else:
+                            if role and isinstance(agent, BaseGroupChat):
+                                oai_chunk["choices"][0]["delta"]['content'] = f"\n\n**{role}发言：**\n\n"
+                                oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
+                                yield f'data: {json.dumps(oai_chunk)}\n\n'
+
                             oai_chunk["choices"][0]["delta"]['content'] = message.content + "\n\n"
                             oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
                             yield f'data: {json.dumps(oai_chunk)}\n\n'
