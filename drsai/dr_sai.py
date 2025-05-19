@@ -309,6 +309,12 @@ class DrSai:
                         )
                     if tool_flag == 2:
                         if not stream:
+                            role_tmp = message.source
+                            if role != role_tmp:
+                                role = role_tmp
+                                # oai_chunk["choices"][0]["delta"]['content'] = f"\n\n**Speaker: {role}**\n\n"
+                                if role:
+                                    oai_chunk["choices"][0]["delta"]['content'] = f"\n\n**{role}发言：**\n\n"
                             content = message.content
                             chatcompletions["choices"][0]["message"]["content"] = content + "\n\n"
                             yield f'data: {json.dumps(chatcompletions)}\n\n'
