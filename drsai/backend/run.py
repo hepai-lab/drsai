@@ -171,6 +171,15 @@ async def run_backend(agent_factory: callable, **kwargs):
     no_register: bool =  kwargs.pop("no_register", True)
     controller_address: str =  kwargs.pop("controller_address", "http://localhost:42601")
     enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
+
+    pipelines_dir = kwargs.pop("pipelines_dir", None)
+    if pipelines_dir is not None:
+        os.environ['PIPELINES_DIR'] = pipelines_dir
+        pipelines_dir = os.getenv('PIPELINES_DIR')
+        if not os.path.exists(pipelines_dir):
+            print(f"PIPELINES_DIR {pipelines_dir} not exists!")
+        else:
+            print(f"Set PIPELINES_DIR to {pipelines_dir}")
     
     drsaiapp = DrSaiAPP(
         agent_factory = agent_factory,
