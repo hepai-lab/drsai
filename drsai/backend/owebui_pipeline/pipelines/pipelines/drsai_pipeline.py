@@ -4,7 +4,7 @@ import os
 import requests
 from openai import OpenAI
 
-
+backend_port = os.environ.get("BACKEND_PORT", "42801")
 
 class Pipeline:
     class Valves(BaseModel):
@@ -22,7 +22,7 @@ class Pipeline:
             description="你的Dr.Sai智能体后端的名称, 默认为DrSai",
         )
         DRSAI_URL: str = Field(
-            default="http://localhost:42801/apiv2",
+            default=f"http://localhost:{backend_port}/apiv2",
             description="你的Dr.Sai智能体后端的地址, 默认为http://localhost:42801/apiv2",
         )
         BASE_MODELS: str = Field(
