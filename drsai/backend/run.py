@@ -167,7 +167,7 @@ async def run_backend(agent_factory: callable, **kwargs):
     '''
     model_name: str = kwargs.pop("model_name", None)
     host: str =  kwargs.pop("host", None)
-    port: int =  kwargs.pop("port", None)
+    port: int =  kwargs.pop("port", 42801)
     os.environ['BACKEND_PORT'] = str(port)
     no_register: bool =  kwargs.pop("no_register", True)
     controller_address: str =  kwargs.pop("controller_address", "http://localhost:42601")
