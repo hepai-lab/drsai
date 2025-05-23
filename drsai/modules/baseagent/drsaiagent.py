@@ -68,7 +68,6 @@ class DrSaiAgent(AssistantAgent):
     def __init__(
         self,
         name: str,
-        *,
         model_client: ChatCompletionClient = None,
         tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
         workbench: Workbench | None = None,

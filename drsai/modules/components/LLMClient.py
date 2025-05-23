@@ -86,12 +86,17 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient):
         "claude-3-sonnet",
         "claude-3-opus",
         "claude-3.5-haiku",
-        "claude-3.5-sonnet"]
+        "claude-3.5-sonnet",
+        "qwen3-235b-a22b",
+        "qwen3-30b-a3b"
+        ]
         for allowed_model in allowed_models:
             model = kwargs.get("model", "")
             if allowed_model in model.lower():
                 if allowed_model == "v3":
                     allowed_model = "gpt-4o"
+                elif allowed_model == ["qwen3-235b-a22b", "qwen3-30b-a3b"]:
+                    allowed_model = "r1"
                 kwargs["model_info"]["family"] = allowed_model
                 kwargs["model_info"]["function_calling"] = True
                 kwargs["model_info"]["json_output"] = True,
@@ -304,12 +309,11 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient):
         if full_tool_calls:
             # This is a tool call response
             content = list(full_tool_calls.values())
-            if content_deltas:
-                if thought_deltas:
-                    thought = "".join(thought_deltas).lstrip("<think>").rstrip("</think>")
-                else:
-                # Store any text alongside tool calls as thoughts
-                    thought = "".join(content_deltas)
+            if thought_deltas:
+                thought = "".join(thought_deltas).lstrip("<think>").rstrip("</think>")
+            else:
+            # Store any text alongside tool calls as thoughts
+                thought = "".join(content_deltas)
         else:
             # This is a text response (possibly with thoughts)
             if content_deltas:
