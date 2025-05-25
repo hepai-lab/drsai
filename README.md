@@ -101,7 +101,8 @@ asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in
 ### 3.1.使用简单的RAG函数作为智能体的记忆层
 
 ```python
-from drsai import AssistantAgent, HepAIChatCompletionClient
+from drsai import AssistantAgent, HepAIChatCompletionClient, LLMMessage, CancellationToken
+
 import os
 import asyncio
 from typing import List, Dict, Union
@@ -117,12 +118,18 @@ def create_agent() -> AssistantAgent:
     )
 
     # Define a simple rag-demo for the assistant.
-    async def rag_demo(messages: List[Dict], **kwargs):
-        query = messages[-1]["content"]  # Select the last message of the chat history as the RAG query statement.
+    async def rag_demo(
+        oai_messages: List[Dict], 
+        llm_messages: List[LLMMessage], 
+        model_client: HepAIChatCompletionClient,
+        cancellation_token: CancellationToken,
+        agent_name: str,
+         **kwargs):
+        query = oai_messages[-1]["content"]  # Select the last message of the chat history as the RAG query statement.
         retrieve_txt = "1. Humans will be destroyed by AI in 2050;\n2. Humans are destroyed by AI due to their arrogance and conceit."
         last_txt = f"""The following are some reference materials, and you must refer to these materials to answer the question:\n{retrieve_txt}. My question is: {query}"""
-        messages[-1]["content"] = last_txt
-        return messages
+        oai_messages[-1]["content"] = last_txt
+        return oai_messages
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
     # The system message instructs the agent via natural language.

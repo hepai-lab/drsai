@@ -152,13 +152,27 @@ class DrSaiAgent(AssistantAgent):
                 messages.append(FunctionExecutionResultMessage(content=oai_message["content"]))
         return messages
     
-    async def _call_memory_function(self, llm_messages: List[LLMMessage]):
+    async def _call_memory_function(
+            self, 
+            llm_messages: List[LLMMessage],
+            model_client: ChatCompletionClient,
+            cancellation_token: CancellationToken,
+            agent_name: str,) -> List[LLMMessage]:
         """使用自定义的memory_function，为大模型回复增加最新的知识"""
         # memory_function: 自定义的memory_function，用于RAG检索等功能，为大模型回复增加最新的知识
-        memory_messages = await self.llm_messages2oai_messages(llm_messages)
+        memory_messages: List[Dict[str, str]] = await self.llm_messages2oai_messages(llm_messages)
         try:
-            memory_messages_with_new_knowledge: List[Dict[str, str]] = await self._memory_function(memory_messages, **self._user_params)
-            llm_messages = await self.oai_messages2llm_messages(memory_messages_with_new_knowledge)
+            memory_messages_with_new_knowledge: List[Dict[str, str]]|List[LLMMessage] = await self._memory_function(
+                memory_messages, 
+                llm_messages, 
+                model_client, 
+                cancellation_token,
+                agent_name,
+                **self._user_params)
+            if isinstance(memory_messages_with_new_knowledge[0], dict):
+                llm_messages: List[LLMMessage] = await self.oai_messages2llm_messages(memory_messages_with_new_knowledge)
+            else:
+                llm_messages = memory_messages_with_new_knowledge
             return llm_messages
         except Exception as e:
             raise ValueError(f"Error: memory_function: {self._memory_function.__name__} failed with error {e}.")
@@ -336,7 +350,7 @@ class DrSaiAgent(AssistantAgent):
 
         # 自定义的memory_function，用于RAG检索等功能，为大模型回复增加最新的知识
         if self._memory_function is not None:
-            llm_messages = await self._call_memory_function(llm_messages)
+            llm_messages = await self._call_memory_function(llm_messages, model_client, cancellation_token, agent_name)
 
         all_tools = (await workbench.list_tools()) + handoff_tools
         # model_result: Optional[CreateResult] = None

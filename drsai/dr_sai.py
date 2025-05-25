@@ -363,15 +363,15 @@ class DrSai:
 
         except Exception as e:
             raise traceback.print_exc()
-        finally:
-            # 关闭model_client
-            if isinstance(agent, BaseGroupChat):
-                clients = {p._model_client for p in agent._participants}
-                for client in clients:
-                    if client is not None:  # 避免空引用
-                        await client.close()
-            else:
-                await agent._model_client.close()
+        # finally:
+        #     # 关闭model_client
+        #     if isinstance(agent, BaseGroupChat):
+        #         clients = {p._model_client for p in agent._participants}
+        #         for client in clients:
+        #             if client is not None:  # 避免空引用
+        #                 await client.close()
+        #     else:
+        #         await agent._model_client.close()
 
 
         
