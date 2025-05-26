@@ -42,7 +42,7 @@ def create_agent() -> AssistantAgent:
         # model="openai/gpt-4o",
         # api_key=os.environ.get("HEPAI_API_KEY"),
     )
-
+    # model_client._client.api_key = os.environ.get("HEPAI_API_KEY")
     # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
     async def interface( 
         oai_messages: List[str],  # OAI messages
@@ -75,9 +75,15 @@ def create_agent() -> AssistantAgent:
 async def main():
 
     drsaiapp = DrSaiAPP(agent_factory=create_agent)
+
+    # agent_info = await drsaiapp.get_agents_info()
+    # print(agent_info)
+
     stream =  drsaiapp.a_start_chat_completions(
         messages=[{"content":"Why will humans be destroyed", "role":"user"}],
         # chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
+        use_api_key_mode = "frontend",  # Use frontend API key mode
+        api_key = os.environ.get("HEPAI_API_KEY"),
         )
     model_client_stream = create_agent()._model_client_stream
     async for message in stream:

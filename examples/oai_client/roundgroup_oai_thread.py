@@ -10,6 +10,7 @@ except ImportError:
 
 
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiRoundRobinGroupChat, DrSaiAPP, TextMentionTermination
+from drsai import run_console, run_backend, run_hepai_worker
 import json
 import asyncio
 
@@ -50,12 +51,26 @@ def create_team() -> DrSaiRoundRobinGroupChat:
 
 async def main():
 
-    drsaiapp = DrSaiAPP(agent_factory=create_team)
-    stream =  drsaiapp.a_start_chat_completions(
+    drsaiapp = DrSaiAPP(agent_factory=create_team,
+                        use_api_key_mode = "backend", #"frontend"
+                        )
+
+    # agent_info = await drsaiapp.get_agents_info()
+    # print(agent_info)
+
+    # stream =  drsaiapp.a_start_chat_completions(
+    #     messages=[{"content":"Write a short poem about the fall season.", "role":"user"}],
+    #     stream=True,
+    #     chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
+    #     history_mode = "backend", #"frontend",
+    #     )
+
+    stream =  drsaiapp.test_agents(
         messages=[{"content":"Write a short poem about the fall season.", "role":"user"}],
         stream=True,
         chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
-        history_mode = "backend", #"frontend",
+        history_mode = "frontend", #
+        agent_name = "primary",
         )
 
     async for message in stream:
@@ -67,9 +82,9 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
-    # from drsai import run_console, run_backend, run_hepai_worker
+    # asyncio.run(main())
+    
     # asyncio.run(run_console(agent_factory=create_team, task="Write a short poem about the fall season."))
     # asyncio.run(run_backend(agent_factory=create_team))
     # asyncio.run(run_hepai_worker(agent_factory=create_team))
-    # asyncio.run(run_backend(agent_factory=create_team, enable_openwebui_pipeline=True))
+    asyncio.run(run_backend(agent_factory=create_team, enable_openwebui_pipeline=True))

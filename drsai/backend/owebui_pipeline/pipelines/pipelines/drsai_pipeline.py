@@ -26,8 +26,8 @@ class Pipeline:
             description="你的Dr.Sai智能体后端的地址, 默认为http://localhost:42801/apiv2",
         )
         BASE_MODELS: str = Field(
-            default="openai/gpt-4o",
-            description="drsai后端使用的基座模型名称，默认openai/gpt-4o",
+            default="deepseek-ai/deepseek-v3:671b",
+            description="drsai后端使用的基座模型名称，默认deepseek-ai/deepseek-v3:671b",
         )
 
     def __init__(self):
@@ -79,9 +79,6 @@ class Pipeline:
         self.backend_base_url = self.valves.DRSAI_URL # 连接drsai后端的地址
         # 配置hepai平台的api_key和base_url
         self.base_models = self.valves.BASE_MODELS # drsai后端使用的基座模型
-        self.hepai_client = OpenAI(
-            api_key=self.valves.HEPAI_API_KEY, base_url=self.valves.HEPAI_BASE_URL
-        )
 
         # This is where you can add your custom pipelines like RAG.
         print(f"pipe:{__name__}") 
@@ -93,6 +90,9 @@ class Pipeline:
 
         # title_generation任务
         if body["stream"] is False:
+            self.hepai_client = OpenAI(
+                api_key=self.valves.HEPAI_API_KEY, base_url=self.valves.HEPAI_BASE_URL
+            )
             payload = {**body, "model": self.base_models}
             if "user" in payload:
                 del payload["user"]

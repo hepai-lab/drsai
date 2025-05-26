@@ -99,7 +99,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient):
                     allowed_model = "r1"
                 kwargs["model_info"]["family"] = allowed_model
                 kwargs["model_info"]["function_calling"] = True
-                kwargs["model_info"]["json_output"] = True,
+                kwargs["model_info"]["json_output"] = True
                 kwargs["model_info"]["structured_output"] = True
                 break
 

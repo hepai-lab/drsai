@@ -11,7 +11,7 @@ Thumbs.db
 
 # 忽略日志文件
 *.log
-.env
+*.env
 
 # 忽略 Python 编译文件
 *.pyc

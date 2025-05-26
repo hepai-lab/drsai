@@ -1,5 +1,6 @@
 
-from typing import List, Dict, Union, AsyncGenerator, Type, Generator
+from typing import List, Dict, Union, AsyncGenerator, Any
+import os
 import copy
 import json
 import asyncio
@@ -53,8 +54,11 @@ from drsai.utils.async_process import sync_wrapper
 from drsai.utils.oai_stream_event import (
     chatcompletionchunk, 
     chatcompletionchunkend,
-    chatcompletions,
-    split_string)
+    chatcompletions)
+
+import uuid
+from dotenv import load_dotenv
+load_dotenv(dotenv_path = "drsai_test.env")
 
 class DrSai:
     """
@@ -65,6 +69,20 @@ class DrSai:
         self.threads_mgr = THREADS_MGR
         self.agent_factory: callable = kwargs.pop('agent_factory', None)
         self.history_mode = kwargs.pop('history_mode', 'backend') # backend or frontend
+        self.use_api_key_mode = kwargs.pop('use_api_key_mode', "frontend") # frontend or backend
+
+        # 后端测试接口
+        load_test_api_key = os.environ.get("LOAD_TEST_API_KEY", None)
+        if not load_test_api_key:
+            ## 创建一个随机的api_key，并存入本地的.env文件中
+            load_test_api_key = "DrSai_" + str(uuid.uuid4())
+            with open("drsai_test.env", "w") as f:
+                f.write(f"LOAD_TEST_API_KEY={load_test_api_key}\n")
+            # load_dotenv(dotenv_path = "drsai_test.env")
+            # load_test_api_key = os.environ.get("LOAD_TEST_API_KEY", None)
+        self.drsai_test_api_key = load_test_api_key
+        print(f"\nDrSai_test_api_key: {self.drsai_test_api_key}\n")
+
 
     #### --- 关于AutoGen --- ####
     async def start_console(
@@ -95,11 +113,9 @@ class DrSai:
             result:TaskResult = await agent.run(task=task)
             print(result)
             # return result
-    
+
     #### --- 关于OpenAI Chat/Completions --- ####
-    async def a_start_chat_completions(
-            self, 
-            **kwargs) -> AsyncGenerator:
+    async def a_start_chat_completions(self, **kwargs) -> AsyncGenerator:
         """
         启动聊天任务，使用completions后端模式
         加载默认的Agents, 并启动聊天任务, 这里默认使用GroupChat
@@ -114,12 +130,13 @@ class DrSai:
         """
         try:
             # 从函数工厂中获取定义的Agents
-            # agent: AssistantAgent|BaseGroupChat = self.agent_factory()
-            agent: AssistantAgent | BaseGroupChat = (
-                await self.agent_factory() 
-                if asyncio.iscoroutinefunction(self.agent_factory)
-                else (self.agent_factory())
-            )
+            agent = kwargs.pop('agent', None) 
+            if agent is None:
+                agent: AssistantAgent | BaseGroupChat = (
+                    await self.agent_factory() 
+                    if asyncio.iscoroutinefunction(self.agent_factory)
+                    else (self.agent_factory())
+                )
 
             # 是否使用流式模式
             agent_stream = agent._model_client_stream if not isinstance(agent, BaseGroupChat) else agent._participants[0]._model_client_stream
@@ -137,7 +154,7 @@ class DrSai:
             extra_requests: Dict = copy.deepcopy(kwargs)
 
             # 大模型配置
-            api_key = kwargs.pop('api_key', None)
+            api_key = kwargs.pop('apikey', None)
             temperature = kwargs.pop('temperature', 0.6)
             top_p = kwargs.pop('top_p', 1)
             cache_seed = kwargs.pop('cache_seed', None)
@@ -181,7 +198,7 @@ class DrSai:
             history_oai_messages = [ {"role": x.role, "content": x.content_str(), "name": x.sender} for x in thread.messages] # 不将usermessage加入到历史消息中，在智能体会重复发送
             thread.metadata["history_oai_messages"] = history_oai_messages
             history: List[LLMMessage] = []
-            for  history_aoi_message in history_oai_messages:
+            for history_aoi_message in history_oai_messages:
                 if  history_aoi_message["role"] == "user":
                     history.append(UserMessage(content=history_aoi_message["content"], source=history_aoi_message["name"]))
                 elif history_aoi_message["role"] == "assistant":
@@ -199,8 +216,16 @@ class DrSai:
                         await model_context.add_message(message)
                 else:
                     pass
-            ## 将thread/self.threads_mgr/history加入每个智能体
+            ## 将api_key(可选的)/thread/self.threads_mgr/history加入每个智能体
             if isinstance(agent, BaseGroupChat):
+                ## 传入前端的api_key
+                if self.use_api_key_mode == "frontend":
+                    if hasattr(agent, "_model_client"):
+                        agent._model_client._client.api_key = api_key
+                    for participant in agent._participants:
+                        if hasattr(participant, "_model_client"):
+                            participant._model_client._client.api_key = api_key
+
                 for participant in agent._participants:
                     await add_history_to_model_context(participant._model_context, history)
                     participant._thread = thread
@@ -213,6 +238,10 @@ class DrSai:
                     res = agent.run_stream(task=usermessage)
             else:
                 await add_history_to_model_context(agent._model_context, history)
+                ## 传入前端的api_key
+                if self.use_api_key_mode == "frontend":
+                    if hasattr(agent, "_model_client"):
+                        agent._model_client._client.api_key = api_key
                 res = agent.run_stream(task=usermessage)
                 
             tool_flag = 0
@@ -372,6 +401,68 @@ class DrSai:
         #                 await client.close()
         #     else:
         #         await agent._model_client.close()
+    
+    #### --- 关于get agent/groupchat infomation --- ####
+    async def get_agents_info(self) -> List[Dict[str, Any]]:
+        """
+        获取当前运行的Agents信息
+        """
+        # 从函数工厂中获取定义的Agents
+        agent: AssistantAgent | BaseGroupChat = (
+            await self.agent_factory() 
+            if asyncio.iscoroutinefunction(self.agent_factory)
+            else (self.agent_factory())
+        )
+        agent_info = []
+        if isinstance(agent, AssistantAgent):
+            agent_info.append(agent._to_config().model_dump())
+            return agent_info
+        elif isinstance(agent, BaseGroupChat):
+            participant_names = [participant.name for participant in agent._participants]
+            for participant in agent._participants:
+                agent_info.append(participant._to_config().model_dump())
+            agent_info.append({"name": "groupchat", "participants": participant_names})
+            return agent_info
+        else:
+            raise ValueError("Agent must be AssistantAgent or BaseGroupChat")
+
+    #### --- 关于测试 agent/groupchat --- ####
+    async def test_agents(self, **kwargs) -> AsyncGenerator:
+
+        agent: AssistantAgent | BaseGroupChat = (
+            await self.agent_factory() 
+            if asyncio.iscoroutinefunction(self.agent_factory)
+            else (self.agent_factory())
+        )
+
+        agent_name = kwargs.pop('model', None)
+
+        assert agent_name is not None, "agent_name must be provided"
+
+        if isinstance(agent, AssistantAgent):
+            kwargs.update({"agent": agent})
+        elif isinstance(agent, BaseGroupChat):
+            if agent_name == "groupchat":
+                kwargs.update({"agent": agent})
+            else:
+                agent_names = [participant.name for participant in agent._participants]
+                
+                if agent_name not in agent_names:
+                    raise ValueError(f"agent_name must be one of {agent_names}")
+                participant = next((p for p in agent._participants if p.name == agent_name), None)
+                kwargs.update({"agent": participant})
+        else:
+            raise ValueError("Agent must be AssistantAgent or BaseGroupChat")
+        
+        # 启动聊天任务
+        async for message in self.a_start_chat_completions(**kwargs):
+            yield message
+                
+            
+
+
+
+        
 
 
         

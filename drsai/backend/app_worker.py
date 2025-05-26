@@ -2,7 +2,7 @@ from drsai import DrSai
 import os, sys
 from pathlib import Path
 here = Path(__file__).parent
-from typing import Generator, Optional, Union, Dict
+from typing import Generator, Optional, Union, Dict, Any
 from fastapi import FastAPI, Request, Header
 from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse, JSONResponse, PlainTextResponse
 from dataclasses import dataclass, field
@@ -59,6 +59,11 @@ class DrSaiAPP(DrSai):
         # chat/completion路由
         DrSaiAPP.router.post("/chat/completions")(self.a_chat_completions)
 
+        # agents/groupchat测试路由
+        DrSaiAPP.router.get("/agents/get_info")(self.a_get_agents_info)
+        DrSaiAPP.router.post("/agents/test_api")(self.a_agents_test_api)
+
+
 
     #### --- 关于DrSai的路由 --- ####
     async def index(self, request: Request):
@@ -86,6 +91,51 @@ class DrSaiAPP(DrSai):
         #     )
         return await self.try_except_raise_http_exception(
             self.a_start_chat_completions, **params
+            )
+    
+    async def a_get_agents_info(self, request: Request) -> list[dict[str, Any]]:
+        """
+        获取agents/groupchat的相关信息
+        """
+        headers = request.headers
+        if not isinstance(headers, dict):
+            headers = dict(headers)
+        authorization = headers.get("authorization", None)
+        if authorization:
+            apikey = authorization.split(" ")[-1]
+        else:
+            apikey = None
+            
+        if apikey != self.drsai_test_api_key:
+            return {"error": "Invalid drsai_test_api_key"}
+        
+        return await self.try_except_raise_http_exception(
+            self.get_agents_info,
+        )
+
+    async def a_agents_test_api(self, request: Request):
+        """
+        groupchat/agents的测试端口
+        """
+        headers = request.headers
+        if not isinstance(headers, dict):
+            headers = dict(headers)
+        authorization = headers.get("authorization", None)
+        if authorization:
+            apikey = authorization.split(" ")[-1]
+        else:
+            apikey = None
+
+        # apikey = headers.get("authorization").split(" ")[-1]
+        params = await request.json()
+        params.update({"apikey": apikey})
+        if "messages" not in params or "model" not in params:
+            raise HTTPException(status_code=400, detail="messages and model must be required, see https://platform.openai.com/docs/api-reference/chat")
+        # return self.try_except_raise_http_exception(
+        #     self.a_start_chat_completions, **params
+        #     )
+        return await self.try_except_raise_http_exception(
+            self.test_agents, **params
             )
 
     ### --- 其它函数 --- #### 
