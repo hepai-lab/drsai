@@ -55,7 +55,7 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires='>=3.11',  # Python版本要求
+    python_requires='>=3.10',  # Python版本要求
     # entry_points={  # 可选的部分，用于创建命令行工具
     #     "console_scripts": [
     #         "your_command=your_module:main_function",
