@@ -169,7 +169,11 @@ class ThreadsManager(BaseJsonSaver):
         try:
         #    thread = self.alive_threads[thread_id]
         #    return thread
-            return self.get_thread(thread_id, username=username)
+            if thread_id in self.thread_id_to_thread:
+                return self.thread_id_to_thread[thread_id]
+            thread=self.get_thread(thread_id, username=username)
+            self.thread_id_to_thread[thread_id]=thread
+            return thread
         except:
             order_ids = [int(x['order_id']) for x in self.entities]
             order_id = int(max(order_ids)) if order_ids else 0
@@ -186,6 +190,7 @@ class ThreadsManager(BaseJsonSaver):
             username=username,
             order_id=order_id
         )
+        self.thread_id_to_thread[thread_id]=thread
 
         if messages:
             raise NotImplementedError("Creating thread with messages is not supported yet.")

@@ -32,6 +32,7 @@ class BaseJsonSaver:
         self._data = None
         self.dirty = False  # 是否有数据更新
         self.debug = debug
+        self.thread_id_to_thread={}
 
         if auto_save:
             atexit.register(self.check_and_save)
@@ -55,7 +56,8 @@ class BaseJsonSaver:
     def ids(self):
         ids = list(set([x.get('id', None) for x in self.entities]))
         return ids
-        
+    
+    
 
     def _init_load(self, file_path: str, **kwargs):
         """
