@@ -5,7 +5,7 @@ import requests
 import sys
 
 HEPAI_API_KEY = os.getenv("HEPAI_API_KEY")
-base_url = "http://localhost:42801/apiv2"
+base_url = "http://localhost:42807/apiv2"
 # base_url = "https://aiapi.ihep.ac.cn/apiv2"
 
 client = HepAI(api_key=HEPAI_API_KEY, base_url=base_url)
@@ -37,6 +37,7 @@ body={
 }
 r = requests.post(
     f"{base_url}/agents/test_api", 
+    # f"{base_url}/chat/completions",
     headers=hearers,
     json=body,
     stream=True,
