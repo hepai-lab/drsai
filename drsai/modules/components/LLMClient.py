@@ -90,8 +90,8 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient):
         "qwen3-235b-a22b",
         "qwen3-30b-a3b"
         ]
+        model = kwargs.get("model", "")
         for allowed_model in allowed_models:
-            model = kwargs.get("model", "")
             if allowed_model in model.lower():
                 if allowed_model == "v3":
                     allowed_model = "gpt-4o"
