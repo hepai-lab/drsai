@@ -95,7 +95,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient):
             if allowed_model in model.lower():
                 if allowed_model == "v3":
                     allowed_model = "gpt-4o"
-                elif allowed_model == ["qwen3-235b-a22b", "qwen3-30b-a3b"]:
+                elif allowed_model in ["qwen3-235b-a22b", "qwen3-30b-a3b"]:
                     allowed_model = "r1"
                 kwargs["model_info"]["family"] = allowed_model
                 kwargs["model_info"]["function_calling"] = True
