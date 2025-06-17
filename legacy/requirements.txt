@@ -1,0 +1,26 @@
+# python>=3.11
+
+# hepai>=1.1.34
+
+schedule
+tiktoken
+passlib
+jwt
+aiohttp
+python-multipart
+json_schema_to_pydantic
+
+# autogen
+autogen-agentchat==0.5.7
+autogen-core==0.5.7
+autogen-ext==0.5.7
+mcp # TODO: for autogen-agentchat
+
+openai
+loguru
+
+# UI
+yaml
+fastapi
+# pydantic>=2.11.3
+# open_webui>=0.6.2

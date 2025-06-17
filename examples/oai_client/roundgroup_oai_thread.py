@@ -10,7 +10,7 @@ except ImportError:
 
 
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiRoundRobinGroupChat, DrSaiAPP, TextMentionTermination
-from drsai import run_console, run_backend, run_hepai_worker
+from drsai import run_backend, run_console
 import json
 import asyncio
 
@@ -18,9 +18,9 @@ import asyncio
 def create_team() -> DrSaiRoundRobinGroupChat:
     # Create an OpenAI model client.
     model_client = HepAIChatCompletionClient(
-        # model="deepseek-r1-250120",
-        # api_key=os.environ.get("VOLCES_API_KEY"),
-        # base_url=os.environ.get("VOLCES_BASE_URL"),
+        # model="deepseek-ai/deepseek-r1:671b",
+        # api_key=os.environ.get("HEPAI_API_KEY"),
+        # base_url="https://aiapi.ihep.ac.cn/apiv2",
         model="openai/gpt-4o",
         # api_key="sk-...", # Optional if you have an HEPAI_API_KEY env variable set.
     )
@@ -82,9 +82,12 @@ async def main():
 
 
 if __name__ == "__main__":
-    # asyncio.run(main())
-    
-    # asyncio.run(run_console(agent_factory=create_team, task="Write a short poem about the fall season."))
-    # asyncio.run(run_backend(agent_factory=create_team))
-    # asyncio.run(run_hepai_worker(agent_factory=create_team))
-    asyncio.run(run_backend(agent_factory=create_team, enable_openwebui_pipeline=True))
+    asyncio.run(main())
+    # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
+    # asyncio.run(run_backend(
+    #     agent_factory=create_agent, 
+    #     port = 42805, 
+    #     enable_openwebui_pipeline=True, 
+    #     history_mode = "backend",
+    #     use_api_key_mode = "backend")
+    #     )

@@ -1,4 +1,4 @@
-from hepai import HepAI 
+from openai import OpenAI
 import os
 import json
 import requests
@@ -8,7 +8,7 @@ HEPAI_API_KEY = os.getenv("HEPAI_API_KEY")
 base_url = "http://localhost:42801/apiv2"
 # base_url = "https://aiapi.ihep.ac.cn/apiv2"
 
-client = HepAI(api_key=HEPAI_API_KEY, base_url=base_url)
+client = OpenAI(api_key=HEPAI_API_KEY, base_url=base_url)
 
 models = client.models.list()
 for idx, model in enumerate(models):
