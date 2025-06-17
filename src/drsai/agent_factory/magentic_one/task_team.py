@@ -403,3 +403,19 @@ async def create_magentic_round_team(
     else:
         logger.error(f"Only supports AssistantAgent")
         raise NotImplementedError("GroupChat mode not implemented yet")
+
+
+async def create_magentic_general_team(
+    team_config: Union[str, Path, Dict[str, Any], ComponentModel],
+    state: Optional[Mapping[str, Any] | str] = None,
+    input_func: Optional[InputFuncType] = None,
+    env_vars: Optional[List[EnvironmentVariable]] = None,
+    settings_config: dict[str, Any] = {},
+    *,
+    paths: RunPaths,
+    config: dict[str, Any],
+    load_from_config: bool = False,
+    inside_docker: bool = True,
+) -> tuple[Team, int, int]:
+    '''通过本地PIP安装的智能体/多智能体系统进行通用加载'''
+    ...

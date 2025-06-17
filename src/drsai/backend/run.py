@@ -177,6 +177,9 @@ def console(agent_config: Optional[str]= None):
         agent_config: str, the path to the YAML configuration file used to create the Agent/GroupChat instance
     '''
     
+    here_parent = Path(__file__).parent.parent.resolve()
+    yaml_example = f"{here_parent}/configs/agent_config.yaml"
+
     if agent_config:
         # check if the agent_config file exists
         if not os.path.isfile(agent_config):
@@ -184,8 +187,6 @@ def console(agent_config: Optional[str]= None):
             typer.echo(f"Please provide an Agent/GroupChat config file. Example config file: {yaml_example}")
             raise typer.Exit(1)
     else:
-        here_parent = Path(__file__).parent.parent.resolve()
-        yaml_example = f"{here_parent}/configs/agent_config.yaml"
         typer.echo(f"Please provide an Agent/GroupChat config file. Example config file: {yaml_example}")
         raise typer.Exit(1)
     
@@ -224,6 +225,9 @@ def backend(
         history_mode: str = "backend",  # 历史消息的加载模式，可选值：backend、frontend 默认backend
         use_api_key_mode: str = "frontend",  # api key的使用模式，可选值：frontend、backend 默认frontend， 调试模式下建议设置为backend
     '''
+    here_parent = Path(__file__).parent.parent.resolve()
+    yaml_example = f"{here_parent}/configs/agent_config.yaml"
+    
     if agent_config:
         # check if the agent_config file exists
         if not os.path.isfile(agent_config):
@@ -231,8 +235,6 @@ def backend(
             typer.echo(f"Please provide an Agent/GroupChat config file. Example config file: {yaml_example}")
             raise typer.Exit(1)
     else:
-        here_parent = Path(__file__).parent.parent.resolve()
-        yaml_example = f"{here_parent}/configs/agent_config.yaml"
         typer.echo(f"Please provide an Agent/GroupChat config file. Example config file: {yaml_example}")
         raise typer.Exit(1)
     
