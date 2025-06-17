@@ -9,7 +9,8 @@ except ImportError:
     sys.path.append(drsai_path)
 
 
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_hepai_worker, run_backend
+from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
+from drsai import run_console, run_backend
 from drsai import StdioServerParams, mcp_server_tools
 # 使用tool_reply_function让大模型执行函数，并根据函数结果生成回复。
 from drsai import tools_reply_function, tools_recycle_reply_function
@@ -80,8 +81,11 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    from drsai import run_console, run_backend, run_hepai_worker, run_openwebui, run_pipelines,run_drsai_app
     # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
-    # asyncio.run(run_backend(agent_factory=create_agent, enable_openwebui_pipeline=True))
-    # asyncio.run(run_hepai_worker(agent_factory=create_agent))
-    # asyncio.run(run_backend(agent_factory=create_agent, enable_openwebui_pipeline=True))
+    # asyncio.run(run_backend(
+    #     agent_factory=create_agent, 
+    #     port = 42805, 
+    #     enable_openwebui_pipeline=True, 
+    #     history_mode = "backend",
+    #     use_api_key_mode = "backend")
+    #     )

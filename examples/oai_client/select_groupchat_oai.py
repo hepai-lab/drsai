@@ -11,6 +11,8 @@ except ImportError:
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, DrSaiSelectorGroupChat, TextMentionTermination
 import json
 import asyncio
+from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
+from drsai import run_backend, run_console
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
 def create_team() -> DrSaiSelectorGroupChat:
@@ -63,8 +65,11 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    # from drsai import run_console, run_backend, run_hepai_worker
-    # asyncio.run(run_console(agent_factory=create_team, task="Write a short poem about the fall season."))
-    # asyncio.run(run_backend(agent_factory=create_team))
-    # asyncio.run(run_hepai_worker(agent_factory=create_team))
-    # asyncio.run(run_backend(agent_factory=create_team, enable_openwebui_pipeline=True))
+    # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
+    # asyncio.run(run_backend(
+    #     agent_factory=create_agent, 
+    #     port = 42805, 
+    #     enable_openwebui_pipeline=True, 
+    #     history_mode = "backend",
+    #     use_api_key_mode = "backend")
+    #     )

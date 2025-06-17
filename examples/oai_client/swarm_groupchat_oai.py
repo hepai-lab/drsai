@@ -12,6 +12,7 @@ except ImportError:
     sys.path.append(drsai_path)
 
 from drsai import AssistantAgent, HandoffTermination, TextMentionTermination
+from drsai import run_backend, run_console
 from drsai import HandoffMessage
 from drsai import DrSaiSwarm
 from drsai import Console, DrSaiAPP
@@ -97,3 +98,11 @@ async def main():
 if __name__ == "__main__":
     # asyncio.run(run_team_stream())
     asyncio.run(main())
+    # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
+    # asyncio.run(run_backend(
+    #     agent_factory=create_agent, 
+    #     port = 42805, 
+    #     enable_openwebui_pipeline=True, 
+    #     history_mode = "backend",
+    #     use_api_key_mode = "backend")
+    #     )

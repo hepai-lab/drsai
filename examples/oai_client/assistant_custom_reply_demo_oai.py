@@ -8,7 +8,7 @@ except ImportError:
     drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
     sys.path.append(drsai_path)
 
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_hepai_worker, run_backend
+from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_console, run_backend
 from drsai.modules.managers.base_thread import Thread
 from drsai.modules.managers.threads_manager import ThreadsManager
 import os, json
@@ -36,11 +36,9 @@ def create_agent() -> AssistantAgent:
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
     model_client = HepAIChatCompletionClient(
-        model="deepseek-r1-250120",
-        api_key=os.environ.get("VOLCES_API_KEY"),
-        base_url=os.environ.get("VOLCES_BASE_URL"),
-        # model="openai/gpt-4o",
-        # api_key=os.environ.get("HEPAI_API_KEY"),
+        model="deepseek-ai/deepseek-r1:671b",
+        api_key=os.environ.get("HEPAI_API_KEY"),
+        base_url="https://aiapi.ihep.ac.cn/apiv2",
     )
     # model_client._client.api_key = os.environ.get("HEPAI_API_KEY")
     # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
@@ -100,8 +98,11 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    from drsai import run_console, run_backend, run_hepai_worker, run_openwebui, run_pipelines,run_drsai_app
     # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
-    # asyncio.run(run_backend(agent_factory=create_agent))
-    # asyncio.run(run_hepai_worker(agent_factory=create_agent))
-    # asyncio.run(run_backend(agent_factory=create_agent, enable_openwebui_pipeline=True))
+    # asyncio.run(run_backend(
+    #     agent_factory=create_agent, 
+    #     port = 42805, 
+    #     enable_openwebui_pipeline=True, 
+    #     history_mode = "backend",
+    #     use_api_key_mode = "backend")
+    #     )
