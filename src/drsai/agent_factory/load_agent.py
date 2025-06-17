@@ -345,7 +345,6 @@ async def a_load_agent_factory_from_config(
     # TODO: 完善GroupChat的加载, UI模式下的Groupchat需要MagenticGroupChat
 
     # TODO: 通过本地PIP安装的智能体/多智能体系统进行通用加载
-    
     assert len(assistant_list) > 0, "AssistantAgent配置不能为空"
     def agent_factory() -> AssistantAgent:
         return assistant_list[0]
