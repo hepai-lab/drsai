@@ -191,6 +191,9 @@ def load_agent_factory_from_config(
                     ))
                 
     # TODO: 完善GroupChat的加载, UI模式下的Groupchat需要MagenticGroupChat
+
+    # TODO: 通过本地PIP安装的智能体/多智能体系统进行通用加载
+
     assert len(assistant_list) > 0, "AssistantAgent配置不能为空"
     def agent_factory() -> AssistantAgent:
         return assistant_list[0]
@@ -295,6 +298,7 @@ async def a_load_memory_functions(memory_functions_config: dict) -> Callable:
             last_txt = f"\n\nPlease provide closely related answers based on the reference materials provided below. Ensure that your response is closely integrated with the content of the reference materials to provide appropriate and well-supported answers.\nThe reference materials are: {retrieve_txt}."
             memory_messages[-1]["content"] += last_txt
             return memory_messages
+        return memory_functions
     except ImportError:
         raise ImportError("please install <hepai> package")
 
@@ -339,6 +343,9 @@ async def a_load_agent_factory_from_config(
                     ))
                 
     # TODO: 完善GroupChat的加载, UI模式下的Groupchat需要MagenticGroupChat
+
+    # TODO: 通过本地PIP安装的智能体/多智能体系统进行通用加载
+    
     assert len(assistant_list) > 0, "AssistantAgent配置不能为空"
     def agent_factory() -> AssistantAgent:
         return assistant_list[0]
