@@ -18,6 +18,8 @@ from .approval_guard import (
     ApprovalConfig,
     BaseApprovalGuard,
 )
+from .agents.drsai_agents import RemoteAgent
+
 from drsai.backend.ui.ui_backend.input_func import InputFuncType, make_agentchat_input_func
 from drsai.backend.ui.ui_backend.learning.memory_provider import MemoryControllerProvider
 from drsai.backend.ui.ui_backend.utils import get_internal_urls
@@ -41,6 +43,7 @@ from typing import (
 from ..load_agent import a_load_agent_factory_from_config
 
 import yaml
+import importlib
 from loguru import logger
 
 async def get_task_team(
@@ -383,11 +386,43 @@ async def create_magentic_round_team(
     config: dict[str, Any],
     load_from_config: bool = False,
     inside_docker: bool = True,
+    run_info: dict[str, Any] = {},
 ) -> tuple[Team, int, int]:
     
     model_configs: Dict[str, Any] = settings_config.get("model_configs")
-    agent_factory: Callable[[], Union[AssistantAgent, BaseGroupChat]] = await a_load_agent_factory_from_config(model_configs, mode = "ui")
-    agent: AssistantAgent|BaseGroupChat = agent_factory()
+
+    Use_remote_model = model_configs.get("Use_remote_Agent_Groupchat_mode", False)
+    Use_installed_model = model_configs.get("Use_installed_Agent_Groupchat_mode", False)
+    if Use_remote_model:
+        run_id = run_info.get("id")
+        user_id = run_info.get("user_id")
+        session_id = run_info.get("session_id")
+        thread_id = str(user_id)+str(session_id)
+        run_id = thread_id+str(run_id)
+        agent = RemoteAgent(
+            name=Use_remote_model.get("name", ""),
+            model_remote_configs = Use_remote_model,
+            thread_id=thread_id,
+            run_id = run_id, 
+            )
+    if Use_installed_model:
+        module = importlib.import_module(Use_installed_model["provider"])
+        agent_factory: Callable[[], Union[AssistantAgent, BaseGroupChat]] = await module.a_load_agent_factory_from_installed(
+            team_config = team_config,
+            state = state,
+            input_func = input_func,
+            env_vars = env_vars,
+            settings_config = settings_config,
+            paths = paths,
+            config = config,
+            load_from_config = load_from_config,
+            inside_docker = inside_docker,
+            run_info = run_info,
+        )
+        agent: AssistantAgent|BaseGroupChat = await agent_factory()
+    else:
+        agent_factory: Callable[[], Union[AssistantAgent, BaseGroupChat]] = await a_load_agent_factory_from_config(model_configs, mode = "ui")
+        agent: AssistantAgent|BaseGroupChat = await agent_factory()
 
     if isinstance(agent, AssistantAgent):
         user_proxy_input_func = make_agentchat_input_func(input_func)
@@ -399,10 +434,27 @@ async def create_magentic_round_team(
         team = RoundRobinGroupChat(
             participants=[agent, user_proxy, ],
         )
-        return team, -1, -1
+        
     else:
         logger.error(f"Only supports AssistantAgent")
         raise NotImplementedError("GroupChat mode not implemented yet")
+    
+    await team.lazy_init()
+
+    if state:
+        if isinstance(state, str):
+            try:
+                # Try to decompress if it's compressed
+                state_dict = decompress_state(state)
+                await team.load_state(state_dict)
+            except Exception:
+                # If decompression fails, assume it's a regular JSON string
+                state_dict = json.loads(state)
+                await team.load_state(state_dict)
+        else:
+            await team.load_state(state)
+
+    return team, -1, -1
 
 
 async def create_magentic_general_team(

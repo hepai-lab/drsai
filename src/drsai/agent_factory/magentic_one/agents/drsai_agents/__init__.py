@@ -1,3 +1,3 @@
 from .drsai_agent import MagenticAgent
-
-__all__ = ["MagenticAgent"]
+from .drsai_remote_agent import RemoteAgent
+__all__ = ["MagenticAgent", "RemoteAgent"]

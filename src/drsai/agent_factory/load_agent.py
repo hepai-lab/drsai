@@ -344,9 +344,11 @@ async def a_load_agent_factory_from_config(
                 
     # TODO: 完善GroupChat的加载, UI模式下的Groupchat需要MagenticGroupChat
 
-    # TODO: 通过本地PIP安装的智能体/多智能体系统进行通用加载
+    # TODO: 通过本地PIP安装的智能体/多智能体系统进行通用加载，需要实现a_load_agent_factory_from_config
+
+    # TODO: 通过远程启动智能体/多智能体系统进行通用加载-》基于MagenticAgent实现一个智能体OpenAPI接口，可以暂停/关闭等远程模型连接的功能
     assert len(assistant_list) > 0, "AssistantAgent配置不能为空"
-    def agent_factory() -> AssistantAgent:
+    async def agent_factory() -> AssistantAgent:
         return assistant_list[0]
     return agent_factory
          
