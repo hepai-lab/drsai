@@ -146,7 +146,7 @@ class TeamManager:
         settings_config: dict[str, Any] = {},
         *,
         paths: RunPaths,
-        # mode: Optional[str] = None,
+        run: Optional[Run] = None,
     ) -> None:
         """Create team instance from config"""
 
@@ -163,6 +163,8 @@ class TeamManager:
                         logger.error(f"Error loading model configs: {e}")
                         raise e
                 settings_config["model_configs"] = model_configs
+
+                # 判断是否使用本地加载的
                 self.mode = model_configs.get("Use_default_Agent_Groupchat_mode", {}).get("mode", None)
                 if self.mode in ["magentic-one"]:
                     model_configs_new = model_configs["Use_default_Agent_Groupchat_mode"]["config"]
@@ -183,7 +185,7 @@ class TeamManager:
                 else:
                     # from drsai.agent_factory.load_agent import a_load_agent_factory_from_config
                     # agent_factory= await a_load_agent_factory_from_config(model_configs, mode = "ui")
-                    # team = agent_factory()
+                    # team = await agent_factory()
                     
                     team, novnc_port, playwright_port = await create_magentic_round_team(
                         team_config = team_config,
@@ -195,6 +197,7 @@ class TeamManager:
                         config = self.config,
                         load_from_config = self.load_from_config,
                         inside_docker = self.inside_docker,
+                        run_info = run.model_json_schema(),
                     )
                     self.novnc_port = novnc_port
                     self.playwright_port = playwright_port
@@ -355,7 +358,6 @@ class TeamManager:
 
             if self.team is None:
                 # TODO: if we start allowing load from config, we'll need to write the novnc and playwright ports back to the team config..
-                
                 await self._create_team(
                     team_config,
                     state,
@@ -363,7 +365,7 @@ class TeamManager:
                     env_vars,
                     settings_config or {},
                     paths=paths,
-                    # mode=mode,
+                    run=run,
                 )
 
                 # Initialize known files by name for tracking

@@ -6,6 +6,8 @@
 
 ## 1.3.多智能体系统框架开放以及开发指南
 
+## 1.4.定制的智能体/多智能体系统快速接入UI和配置文件启动指南
+
 # 2.通过配置文件快速构建自定义智能体和多智能体系统
 
 ```yaml
@@ -91,8 +93,8 @@ myassistant:
 #     file_surfer_client: *client
 #     action_guard_client: *client
 
-# Use_default_Agent_Groupchat_mode: 
-#   mode: besiii
+# Use_installed_Agent_Groupchat_mode: 
+#   provider: besiii
 #   config:
 #     planner_client: *client
 #     coder_client: *client
@@ -101,4 +103,9 @@ myassistant:
 #       name: besiii_boss_08
 #       api_key: sk-***
 #       url: https://aiapi.ihep.ac.cn/apiv2
+
+# Use_remote_Agent_Groupchat_mode: 
+#   name: drsai_besiii
+#   api_key: sk-***
+#   url: https://aiapi.ihep.ac.cn/apiv2/chat/completions
 ```

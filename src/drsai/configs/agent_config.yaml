@@ -79,8 +79,8 @@ myassistant:
 #     file_surfer_client: *client
 #     action_guard_client: *client
 
-# Use_default_Agent_Groupchat_mode: 
-#   mode: besiii
+# Use_installed_Agent_Groupchat_mode: 
+#   provider: besiii
 #   config:
 #     planner_client: *client
 #     coder_client: *client
@@ -89,3 +89,8 @@ myassistant:
 #       name: besiii_boss_08
 #       api_key: sk-***
 #       url: https://aiapi.ihep.ac.cn/apiv2
+
+# Use_remote_Agent_Groupchat_mode: 
+#   name: drsai_besiii
+#   api_key: sk-***
+#   url: https://aiapi.ihep.ac.cn/apiv2/chat/completions
