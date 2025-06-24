@@ -5,12 +5,29 @@ from drsai.modules.components.LLMClient import HepAIChatCompletionClient
 
 # Agents
 from drsai.modules.baseagent.drsaiagent import DrSaiAgent as AssistantAgent
+from drsai.agent_factory.magentic_one.agents.drsai_agents.drsai_agent import MagenticAgent
+from drsai.agent_factory.magentic_one.agents.drsai_agents.drsai_remote_agent import RemoteAgent
+from drsai.agent_factory.magentic_one.agents._coder import CoderAgent, CoderAgentConfig, CoderAgentState
+from drsai.agent_factory.magentic_one.agents.web_surfer import WebSurfer, WebSurferConfig, WebSurferCUA
 
 # Groupchat
 from drsai.modules.groupchat._round_robin_group_chat import DrSaiRoundRobinGroupChat, DrSaiRoundRobinGroupChatManager
 from drsai.modules.groupchat._selector_group_chat import DrSaiSelectorGroupChat
 from drsai.modules.groupchat._swarm_group_chat import DrSaiSwarm
 from drsai.modules.groupchat._base_group_chat import DrSaiGroupChatManager, DrSaiGroupChat
+
+# load_agent from config
+from drsai.agent_factory.load_agent import (
+    get_model_client, 
+    load_mcp_tools, 
+    load_hepai_tools,
+    load_memory_functions,
+    load_agent_factory_from_config,
+    a_load_mcp_tools, 
+    a_load_hepai_tools,
+    a_load_memory_functions,
+    a_load_agent_factory_from_config,
+    )
 
 # manager
 from drsai.modules.managers.base_thread import Thread
