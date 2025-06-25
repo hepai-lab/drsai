@@ -26,6 +26,21 @@ conda activate drsai
 pip install drsai -U
 ```
 
+#### 从源码安装和配置OpenDrSai运行环境
+
+创建[code.ihep.ac.cn](https://code.ihep.ac.cn/)账号，克隆OpenDrSai仓库到本地：
+```shell
+git clone https://code.ihep.ac.cn/hepai/drsai.git drsai
+cd drsai
+```
+
+配置conda环境，安装依赖包：
+```shell
+conda create -n drsai python>=3.11
+conda activate drsai
+pip install -e .  # 以开发者模式安装，任何仓库内的修改会直接生效 ，无需重新安装。
+```
+
 #### 配置HepAI平台的API访问密钥
 
 配置[HepAI](https://ai.ihep.ac.cn)DDF2平台的API访问密钥等环境变量(Based on bash)：
