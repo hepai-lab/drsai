@@ -83,7 +83,7 @@ class DrSaiAgent(AssistantAgent):
         memory: Sequence[Memory] | None = None,
         metadata: Dict[str, str] | None = None,
         memory_function: Callable = None,
-        allow_reply_function: bool = False,
+        # allow_reply_function: bool = False,
         reply_function: Callable = None,
         thread: Thread = None,
         thread_mgr: ThreadsManager = None,
@@ -114,7 +114,7 @@ class DrSaiAgent(AssistantAgent):
             metadata=metadata
             )
         
-        self._allow_reply_function: bool = allow_reply_function
+        # self._allow_reply_function: bool = allow_reply_function
         self._reply_function: Callable = reply_function
         self._memory_function: Callable = memory_function
         self._thread: Thread = thread
@@ -336,7 +336,7 @@ class DrSaiAgent(AssistantAgent):
 
         all_tools = (await workbench.list_tools()) + handoff_tools
         # model_result: Optional[CreateResult] = None
-        if self._allow_reply_function:
+        if self._reply_function is not None:
             # 自定义的reply_function，用于自定义对话回复的定制
             async for chunk in self._call_reply_function(
                 llm_messages, 
