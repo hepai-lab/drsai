@@ -44,7 +44,10 @@ async def main():
             {"content":"What is the weather in New York?", "role":"user"},
             {"content":"布吉岛啊？？", "role":"assistant"},
             {"content":"What is the weather in New York?", "role":"user"}],
-        stream=True,)
+        stream=True,
+        use_api_key_mode = "frontend",  # Use frontend API key mode
+        api_key = os.environ.get("HEPAI_API_KEY"),
+        )
 
     async for message in stream:
         oai_json = json.loads(message.split("data: ")[1])
@@ -56,12 +59,13 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # asyncio.run(main())
     # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
-    # asyncio.run(run_backend(
-    #     agent_factory=create_agent, 
-    #     port = 42805, 
-    #     enable_openwebui_pipeline=True, 
-    #     history_mode = "backend",
-    #     use_api_key_mode = "backend")
-    #     )
+    asyncio.run(run_backend(
+        agent_factory=create_agent, 
+        port = 42805, 
+        enable_openwebui_pipeline=True, 
+        agnet_name = "R1agent",
+        history_mode = "backend",
+        use_api_key_mode = "backend")
+        )

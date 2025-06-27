@@ -51,7 +51,10 @@ async def main():
     stream =  drsaiapp.a_start_chat_completions(
         messages=[{"content":"What is the weather in New York?", "role":"user"}],
         # chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
-        stream=True,)
+        stream=True,
+        use_api_key_mode = "frontend",  # Use frontend API key mode
+        api_key = os.environ.get("HEPAI_API_KEY"),
+        )
 
     async for message in stream:
         oai_json = json.loads(message.split("data: ")[1])
@@ -63,8 +66,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
-    # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
+    # asyncio.run(main())
+    asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
     # asyncio.run(run_backend(
     #     agent_factory=create_agent, 
     #     port = 42805, 

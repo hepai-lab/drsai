@@ -53,6 +53,8 @@ async def main():
         messages=[{"content":"Write a short poem about the fall season.", "role":"user"}],
         stream=True,
         chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
+        history_mode = "frontend", #
+        agent_name = "primary",
         )
 
     async for message in stream:
@@ -64,8 +66,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
-    # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
+    # asyncio.run(main())
+    asyncio.run(run_console(agent_factory=create_team, task="What is the weather in New York?"))
     # asyncio.run(run_backend(
     #     agent_factory=create_agent, 
     #     port = 42805, 

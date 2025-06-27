@@ -54,7 +54,9 @@ async def main():
         {"role": "system", "content": "You are a helpful math tutor. Guide the user through the solution step by step."},
         {"role": "user", "content": "how can I solve 8x + 7 = -23"}
     ],
-        stream=True,)
+        stream=True,
+        use_api_key_mode = "frontend",  # Use frontend API key mode
+        api_key = os.environ.get("HEPAI_API_KEY"),)
 
     async for message in stream:
         oai_json = json.loads(message.split("data: ")[1])
@@ -66,8 +68,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
-    # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
+    # asyncio.run(main())
+    asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
     # asyncio.run(run_backend(
     #     agent_factory=create_agent, 
     #     port = 42805, 
