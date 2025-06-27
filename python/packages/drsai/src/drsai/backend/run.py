@@ -75,6 +75,8 @@ async def run_backend(agent_factory: callable, **kwargs):
     host: str =  kwargs.pop("host", "0.0.0.0")
     port: int =  kwargs.pop("port", 42801)
     os.environ['BACKEND_PORT'] = str(port)
+    agnet_name = kwargs.pop("agnet_name", "Dr.Sai")
+    os.environ['AGNET_NAME'] = agnet_name
 
     enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
 

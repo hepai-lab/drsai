@@ -5,6 +5,7 @@ import requests
 from openai import OpenAI
 
 backend_port = os.environ.get("BACKEND_PORT", "42801")
+agnet_name = os.environ.get("AGNET_NAME", "DrSai")
 
 class Pipeline:
     class Valves(BaseModel):
@@ -18,7 +19,7 @@ class Pipeline:
             description="大模型的服务商的base_url, 默认HepAI平台的base_url",
         )
         DRSAI_NAME: str = Field(
-            default="DrSai",
+            default=agnet_name,
             description="你的Dr.Sai智能体后端的名称, 默认为DrSai",
         )
         DRSAI_URL: str = Field(
