@@ -38,14 +38,14 @@ from autogen_agentchat.ui import Console
 # from loguru import logger
 # logger = logger.bind(name="dr_sai.py")
 
-# import logging
-# # 单个模型日志
-# third_party_logger1 = logging.getLogger("autogen_core")
-# third_party_logger1.propagate = False
-# third_party_logger2 = logging.getLogger("autogen_agentchat.events")
-# third_party_logger2.propagate = False
-# third_party_logger3 = logging.getLogger("httpx")
-# third_party_logger3.propagate = False
+# 单个模型日志
+import logging
+third_party_logger1 = logging.getLogger("autogen_core")
+third_party_logger1.propagate = False
+third_party_logger2 = logging.getLogger("autogen_agentchat.events")
+third_party_logger2.propagate = False
+third_party_logger3 = logging.getLogger("httpx")
+third_party_logger3.propagate = False
 
 # from drsai.utils.async_process import sync_wrapper
 
