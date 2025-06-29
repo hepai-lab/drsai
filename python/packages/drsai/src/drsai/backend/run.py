@@ -68,33 +68,33 @@ async def run_backend(agent_factory: callable, **kwargs):
         host: str = , "0.0.0.0" ,  # 后端服务host
         port: int = 42801,  # 后端服务port
         enable_openwebui_pipeline: bool = False,  # 是否启动openwebui pipelines
+        agnet_name: str = "Dr.Sai",  # 智能体的名称
         pipelines_dir: str = None,  # openwebui pipelines目录
         history_mode: str = "backend",  # 历史消息的加载模式，可选值：backend、frontend 默认backend
         use_api_key_mode: str = "frontend",  # api key的使用模式，可选值：frontend、backend 默认frontend， 调试模式下建议设置为backend
     '''
     host: str =  kwargs.pop("host", "0.0.0.0")
     port: int =  kwargs.pop("port", 42801)
-    os.environ['BACKEND_PORT'] = str(port)
-    agnet_name = kwargs.pop("agnet_name", "Dr.Sai")
-    os.environ['AGNET_NAME'] = agnet_name
-
-    enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
-
-    pipelines_dir = kwargs.pop("pipelines_dir", None)
-    if pipelines_dir is not None:
-        os.environ['PIPELINES_DIR'] = pipelines_dir
-        pipelines_dir = os.getenv('PIPELINES_DIR')
-        if not os.path.exists(pipelines_dir):
-            print(f"PIPELINES_DIR {pipelines_dir} not exists!")
-        else:
-            print(f"Set PIPELINES_DIR to {pipelines_dir}")
     
     drsaiapp = DrSaiAPP(
         agent_factory = agent_factory,
         **kwargs
         )
     
+    enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
     if enable_pipeline:
+        os.environ['BACKEND_PORT'] = str(port)
+        agnet_name = kwargs.pop("agnet_name", "Dr.Sai")
+        os.environ['AGNET_NAME'] = agnet_name
+        pipelines_dir = kwargs.pop("pipelines_dir", None)
+        if pipelines_dir is not None:
+            os.environ['PIPELINES_DIR'] = pipelines_dir
+            pipelines_dir = os.getenv('PIPELINES_DIR')
+            if not os.path.exists(pipelines_dir):
+                print(f"PIPELINES_DIR {pipelines_dir} not exists!")
+            else:
+                print(f"Set PIPELINES_DIR to {pipelines_dir}")
+
         from contextlib import asynccontextmanager
         # 通过Pipeline适配OpenWebUI
         from .owebui_pipeline.api import app as owebui_pipeline_app
