@@ -75,7 +75,7 @@ myassistant:
 ## 3.详细文档
 见docs目录：
 ```
-docs/develop.md: 智能体/多智能体系统开发指南
+docs/develop.md: 智能体/多智能体系统代码开发案例
 docs/agent_factory.md: 智能体/多智能体开放和社区开发指南
 docs/drsai_ui.md: 人机交互前端使用指南
 docs/open-webui.md：OpenAI格式的前端访问，以及OpenWebui的Pipeline插件的使用指南
