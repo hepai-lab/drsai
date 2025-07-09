@@ -15,7 +15,7 @@ from .ui_backend.backend.cli import (
     get_env_file_path,)
 from .ui_backend.backend.web.app import app as ui_app
 from .agent_factory.magentic_one.check_docker import check_docker
-from .agent_factory.load_agent import load_agent_factory_from_config
+from .agent_factory.load_agent import a_load_agent_factory_from_config
 
 from drsai.backend.run import run_backend, start_console
 
@@ -52,7 +52,7 @@ def console(agent_config: Optional[str]= None):
         with open(agent_config, 'r') as file:
             config = yaml.safe_load(file)
             # print(config)
-            agent_factory=load_agent_factory_from_config(config)
+            agent_factory=asyncio.run(a_load_agent_factory_from_config(config))
             userinput = input(">>>>> Enter your message: ")
             asyncio.run(start_console(task=userinput, agent_factory=agent_factory))
 
@@ -98,7 +98,7 @@ def backend(
         with open(agent_config, 'r') as file:
             config = yaml.safe_load(file)
             # print(config)
-            agent_factory=load_agent_factory_from_config(config)
+            agent_factory=asyncio.run(a_load_agent_factory_from_config(config))
             asyncio.run(run_backend(
                 agent_factory=agent_factory,
                 host=host,
