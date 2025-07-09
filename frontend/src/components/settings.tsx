@@ -220,14 +220,17 @@ parser_client: *client
   }, [isOpen, user?.email]);
 
   const handleUpdateConfig = async (changes: any) => {
-    updateConfig(changes);
+    // updateConfig(changes);
+    // console.log('changes:',changes)
     setHasChanges(true);
 
     // Save to database
     if (user?.email) {
       try {
         const updatedConfig = { ...config, ...changes };
-        await settingsAPI.updateSettings(user.email, updatedConfig);
+       const res = await settingsAPI.updateSettings(user.email, updatedConfig);
+       
+        updateConfig( { model_configs: res.config.model_configs });
       } catch (error) {
         console.error("Failed to save settings:", error);
       }

@@ -29,7 +29,12 @@ const IndexPage = ({ data }: any) => {
   //     </main>
   //   </MagenticUILayout>
   // );
+
+  React.useEffect(() => {
+    console.log('data::',data)
+  })
   return (
+    // <div>111</div>
     <MagenticUILayout meta={data.site.siteMetadata} title="Home" link={"/"}>
       <main style={{ height: "100%" }} className=" h-full ">
       </main>
