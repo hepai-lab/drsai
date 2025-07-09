@@ -742,6 +742,7 @@ async def generate_openai_chat_completion(request: Request, form_data: OpenAICha
                 model_id=pipeline_id,
                 messages=messages,
                 body=form_data.model_dump(),
+                headers=headers,
             )
             logging.info(f"stream:false:{res}")
 

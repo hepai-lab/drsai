@@ -86,13 +86,19 @@ class Pipeline:
 
         # 构建访问openai的请求头和参数
         new_hearers = {}
-        new_hearers["Authorization"] = f"Bearer {self.valves.HEPAI_API_KEY}"
+        if headers:
+            new_hearers["Authorization"] = headers["authorization"]
+            if new_hearers["Authorization"].split(" ")[-1] == "0p3n-w3bu!":
+                new_hearers["Authorization"] = f"Bearer {self.valves.HEPAI_API_KEY}"
+        else: 
+            new_hearers["Authorization"] = f"Bearer {self.valves.HEPAI_API_KEY}"
         new_hearers["Content-Type"] = "application/json"
 
         # title_generation任务
         if body["stream"] is False:
+            HEPAI_API_KEY = new_hearers["Authorization"].split(" ")[-1]
             self.hepai_client = OpenAI(
-                api_key=self.valves.HEPAI_API_KEY, base_url=self.valves.HEPAI_BASE_URL
+                api_key=HEPAI_API_KEY, base_url=self.valves.HEPAI_BASE_URL
             )
             payload = {**body, "model": self.base_models}
             if "user" in payload:

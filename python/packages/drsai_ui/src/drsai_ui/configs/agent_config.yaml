@@ -68,16 +68,15 @@ source_tools_1: &source_tool_1
 ##########################
 # Memory configuration #
 ##########################
-memory_cofig_1: &memory_1
-  worker_name: hepai_rag
-  api_key: sk-***
-  url: https://aiapi.ihep.ac.cn/apiv2
-  rag_config:
-    username: your_username
-    collection: myassistant_memory
-    retrieve_method: get_full_text # retrieve
-    similarity_top_k: 10
-    score_threshold: 0.25
+knowledge_cofig_1: &ragflow_1
+  type: RAGFlow
+  config: 
+    api_key: ragflow-***
+    base_url: https://aiweb01.ihep.ac.cn:886
+    dataset_ids:
+      - 70722df8519011f08a170242ac120006
+    similarity_threshold: 0.2
+
 
 ##########################
 # Constructing agent #
@@ -94,15 +93,15 @@ myassistant:
     - *hepai_tool_1
   source_tools:
     - *source_tool_1
-  
-  memory_cofig: *memory_1
+  knowledge_cofig: *ragflow_1
+  # memory_cofig: *memory_1
 
 
 ##########################
 # Some preset Agent and Groupchat modes #
 ##########################
 # Use_default_Agent_Groupchat_mode: 
-#   mode: magentic-one
+#   provider: magentic-one
 #   config:
 #     orchestrator_client: *client
 #     coder_client: *client
