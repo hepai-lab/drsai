@@ -1,6 +1,8 @@
 # api/app.py
 import os
 import yaml
+from dotenv import load_dotenv
+load_dotenv()
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Any
 

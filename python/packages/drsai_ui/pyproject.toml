@@ -37,6 +37,7 @@ dependencies = [
 
     # SSO
     "hepai>=1.1.36",
+    "damei",
     "dotmap",
     "authlib",
     "itsdangerous",

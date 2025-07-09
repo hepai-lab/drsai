@@ -48,6 +48,7 @@ const MagenticUILayout = ({
       } else {
         // 没有本地用户信息，跳转到sso-login
         if (typeof window !== "undefined") {
+          // TODO: 单点登录后续再接入
           window.location.href = "/sso-login";
         }
       }

@@ -1,6 +1,7 @@
 import { Session, SessionRuns } from "../types/datamodel";
 import { getServerUrl } from "../utils";
 import { Team, AgentConfig } from "../types/datamodel";
+import { GeneralConfig } from "../store";
 export class SessionAPI {
   private getBaseUrl(): string {
     return getServerUrl();
@@ -430,7 +431,7 @@ export class SettingsAPI {
   async updateSettings(
     userId: string,
     config: Record<string, any>
-  ): Promise<void> {
+  ): Promise<{config:GeneralConfig}> {
     const response = await fetch(`${this.getBaseUrl()}/settings/`, {
       method: "PUT",
       headers: this.getHeaders(),
@@ -442,6 +443,7 @@ export class SettingsAPI {
     const data = await response.json();
     if (!data.status)
       throw new Error(data.message || "Failed to update settings");
+    return data.data;
   }
 }
 
