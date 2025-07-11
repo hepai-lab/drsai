@@ -5,6 +5,7 @@ class RAGFlowMemory:
     """
     Functions to interact with RAGFlow Memory API
     - List datasets 
+    - list_documents
     - retrieve chunks by question
     """
     def __init__(
