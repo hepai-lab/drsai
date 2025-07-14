@@ -4,8 +4,6 @@
 ![](https://note.ihep.ac.cn/uploads/ccf0779c-c944-4b3a-a44f-e3c32452487f.png)
 
 
-[toc]
-
 
 # 0.引言
 
@@ -41,7 +39,7 @@
 
 在评估智能体可以带来价值的领域时，应优先考虑那些之前难以实现自动化的工作流程，特别是传统方法遇到阻力的地方：
 
-<html><body><table><tr><td>01</td><td>复杂决策</td><td>涉及细致判断、例外情况或依赖上下文的决策的 工作流程，例如客户服务工作流程中的退款审批。</td></tr><tr><td>02</td><td>难以维护的规则</td><td>由于规则集庞大且复杂，导致系统变得难以管理， 使得更新成本高昂或容易出错，例如供应商安全审查。</td></tr><tr><td>03</td><td>对非结构化数据 的高度依赖</td><td>需要解释自然语言、从文档中提取意义或以对话 方式与用户互动的场景，例如处理家庭保险索赔。</td></tr></table></body></html> 
+<html><body><table><tr><td>01</td><td>复杂决策</td><td>涉及细致判断、例外情况或依赖上下文的决策的工作流程，例如具有多轮下上文信息的提取和意图判断。</td></tr><tr><td>02</td><td>难以维护的规则</td><td>由于规则集庞大且复杂，导致系统变得难以管理，使得更新成本高昂或容易出错，例如流程安全审查。</td></tr><tr><td>03</td><td>对非结构化数据的高度依赖</td><td>需要解释自然语言、从文档中提取意义或以对话方式与用户互动的场景，例如处理论文等非结构化数据。</td></tr></table></body></html> 
 
 在决定构建智能体之前，请验证您的用例是否能清晰地满足这些标准。否则，确定性解决方案可能已足够。 
 
@@ -81,13 +79,14 @@ AssistantAgent(
 **获取可用模型的方法：**
 
 ```Python  
-from hepai import HepAI     
-client=HepAI(api_key="Your API Key")   
+# please 'pip install drsai -U' to get the latest version of drsai
+from openai import OpenAI 
+client=OpenAI(api_key="Your API Key")   
 models=client.models.list()  
 ```
 
 你可以在此处创建和获取 [HepAI平台API-KEY](https://ai.ihep.ac.cn/mine)。
-你可以在此处找到 [HepAI 模型选择的详细指南](https://note.ihep.ac.cn/s/Ud7Vlhaxf)。
+你可以在此处找到 [HepAI 模型选择的详细指南](../../tutorials/base01-hepai.md)。
 
 ## 3.2 定义工具 
 
@@ -107,6 +106,7 @@ from drsai import AssistantAgent, HepAIChatCompletionClient, StdioServerParams, 
 tools = []
 
 # Web fetch MCP tools
+# please 'pip install uv' before running this code
 tools.extend(
 await mcp_server_tools(
     StdioServerParams(
@@ -181,8 +181,8 @@ HepAI Agents默认智能体的运行方式包括模型根据指令（提示词�
 **示例用法：**
 
 ```python
-# Use asyncio.run(...) if you are running this in a script.
-await Console(agent.run_stream(task="What is the weather in New York?")
+import asyncio
+asyncio.run(Console(agent.run_stream(task="What is the weather in New York?")))
 ```
 
 甚至你可以定义多个具有关联的工具，让智能体根据具体的任务进行规划，依次调用多个工具进行复杂任务的分解与执行，对此，你只需要加上一行``` reply_function=tools_recycle_reply_function```：
@@ -290,8 +290,8 @@ team = SelectorGroupChat(
     participants=[planning_agent, Spanish_Agent, French_Agent, Italian_Agent], 
     termination_condition=text_termination
 )
-# Use asyncio.run(...) if you are running this in a script.
-await Console(team.run_stream(task="Translate 'hello' to spanish, french, and Italian for me!")
+import asyncio
+asyncio.run(Console(team.run_stream(task="Translate 'hello' to spanish, french, and Italian for me!")))
 ```
 
 部分框架采用声明式设计，要求开发者通过由节点（智能体）和边（确定性或动态移交）构成的图结构，预先明确定义工作流中的所有分支、循环及条件。虽然这种模式在可视化清晰度方面具有优势，但随着工作流动态性和复杂度的提升，其配置过程会迅速变得冗长且难以维护，通常需要开发者掌握特定领域的专业流程。
@@ -370,9 +370,7 @@ async def run_team_stream() -> None:
         )
         last_message = task_result.messages[-1]
 
-
-# Use asyncio.run(...) if you are running this in a script.
-await run_team_stream()
+asyncio.run(run_team_stream())
 ```
 
 在上述示例中，理想的过程是用户的初始消息首先发送至planner，当planner完成计划制定给后转给host，然后host让coder写代码，最后tester结束后给host。所有智能体根据自己的能力和下一步需要做的事对任务直接进行处理后直接移交给潜在的对象，在每个智能体遇到问题时都可以直接向用户反馈。
