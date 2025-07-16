@@ -101,31 +101,37 @@ models=client.models.list()
 例如：使用 SDK 为智能体配备一系列工具，包含预定义 MCP 工具和自定义工具：
 
 ```python	
-from drsai import AssistantAgent, HepAIChatCompletionClient, StdioServerParams, mcp_server_tools
+import asyncio
+from drsai import AssistantAgent, HepAIChatCompletionClient, StdioServerParams, mcp_server_tools, Console
 
-tools = []
+async def main():
 
-# Web fetch MCP tools
-# please 'pip install uv' before running this code
-tools.extend(
-await mcp_server_tools(
-    StdioServerParams(
-        command=config["uvx"],
-        args=config["run", "mcp-server-fetch"],
-        env=None)))
+    tools = []
 
-# Self-def tools
-async def get_weather(city: str) -> str:
-   """Get the weather for a given city."""
-   return f"The weather in {city} is 73 degrees and Sunny."
-tools.append(get_weather)
+    # Web fetch MCP tools
+    # please 'pip install uv' before running this code
+    tools.extend(
+    await mcp_server_tools(
+        StdioServerParams(
+            command="uvx",
+            args=["run", "mcp-server-fetch"],
+            env=None)))
 
-agent = AssistantAgent(
-    name="Web_Agent",
-    system_message="You are a helpful agent who can talk to users about the weather and web content.",
-    tools= tools,
-)
+    # Self-def tools
+    async def get_weather(city: str) -> str:
+    """Get the weather for a given city."""
+    return f"The weather in {city} is 73 degrees and Sunny."
+    tools.append(get_weather)
 
+    agent = AssistantAgent(
+        name="Web_Agent",
+        system_message="You are a helpful agent who can talk to users about the weather and web content.",
+        tools= tools,
+    )
+
+    await Console(agent.run_stream(task="What is the weather in New York?"))
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 你可以在此处找到更多预定义 [MCP](https://github.com/modelcontextprotocol/servers) 工具。

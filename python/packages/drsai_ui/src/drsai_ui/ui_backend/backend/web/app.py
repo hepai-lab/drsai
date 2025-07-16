@@ -24,6 +24,7 @@ from .routes import (
     teams,
     validation,
     ws,
+    agent_mode,
 )
 import httpx
 from fastapi.responses import HTMLResponse
@@ -154,6 +155,15 @@ api.include_router(
     settingsroute.router,
     prefix="/settings",
     tags=["settings"],
+    responses={404: {"description": "Not found"}},
+)
+
+# 添加的新路由
+
+api.include_router(
+    agent_mode.router,
+    prefix="/agentmode",
+    tags=["agentmode"],
     responses={404: {"description": "Not found"}},
 )
 

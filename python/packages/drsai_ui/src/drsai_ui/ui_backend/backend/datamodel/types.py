@@ -104,3 +104,14 @@ class SocketMessage(BaseModel):
     connection_id: str
     data: Dict[str, Any]
     type: str
+
+
+# 添加的新类型
+
+class Agent_mode(BaseModel):
+    mode: str
+    name: str
+    description: str
+
+class AgentModeConfig(BaseModel):
+    agent_modes: List[Agent_mode] = []
