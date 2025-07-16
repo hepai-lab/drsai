@@ -1,22 +1,21 @@
-import React, { useMemo } from "react";
-import { Tooltip, Dropdown, Menu } from "antd";
+import { Dropdown, Menu, Tooltip } from "antd";
 import {
-  Plus,
-  Edit,
-  Trash2,
-  InfoIcon,
-  RefreshCcw,
-  Loader2,
-  FileText,
   Archive,
+  Edit,
+  FileText,
+  InfoIcon,
   MoreVertical,
+  Plus,
+  RefreshCcw,
   StopCircle,
+  Trash2
 } from "lucide-react";
-import type { Session, RunStatus } from "../types/datamodel";
-import SubMenu from "../common/SubMenu";
-import { SessionRunStatusIndicator } from "./statusicon";
-import LearnPlanButton from "../features/Plans/LearnPlanButton";
+import React, { useMemo } from "react";
 import { Button } from "../common/Button";
+import SubMenu from "../common/SubMenu";
+import LearnPlanButton from "../features/Plans/LearnPlanButton";
+import type { RunStatus, Session } from "../types/datamodel";
+import { SessionRunStatusIndicator } from "./statusicon";
 
 interface SidebarProps {
   isOpen: boolean;

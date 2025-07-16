@@ -129,6 +129,7 @@ export const useConfigStore = create<IConfigState>()(
       partialize: (state) => ({
         sidebar: state.sidebar,
         agentFlow: state.agentFlow,
+        session: state.session,
       }),
     }
   )

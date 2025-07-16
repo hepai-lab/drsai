@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 
 export interface GeneralConfig {
   cooperative_planning: boolean;
@@ -17,6 +18,7 @@ export interface GeneralConfig {
   do_bing_search: boolean;
   websurfer_loop: boolean;
   model_configs?: string;
+  model_name?: string;
   retrieve_relevant_plans: "never" | "hint" | "reuse"; // this is for using task centric memory to retrieve relevant plans
 }
 
@@ -85,14 +87,23 @@ interface SettingsState {
   resetToDefaults: () => void;
 }
 
-export const useSettingsStore = create<SettingsState>()((set) => ({
-  config: defaultConfig,
-  updateConfig: (update) =>
-    set((state) => ({
-      config: { ...state.config, ...update },
-    })),
-  resetToDefaults: () => set({ config: defaultConfig }),
-}));
+export const useSettingsStore = create<SettingsState>()(
+  persist(
+      (set) => ({
+          config: defaultConfig,
+          updateConfig: (update: Partial<GeneralConfig>) =>
+              set((state: SettingsState) => ({
+                  config: { ...state.config, ...update },
+              })),
+          resetToDefaults: () => set({ config: defaultConfig }),
+      }),
+      {
+          name: "drsai_settings",
+          storage: createJSONStorage(() => localStorage),
+          partialize: (state: SettingsState) => ({ config: state.config }),
+      }
+  )
+);
 
 export function generateOpenAIModelConfig(model: string) {
   return `model_config: &client

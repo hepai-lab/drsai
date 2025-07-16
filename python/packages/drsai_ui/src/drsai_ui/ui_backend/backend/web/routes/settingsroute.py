@@ -17,8 +17,6 @@ async def get_settings(user_id: str, db=Depends(get_db)) -> Dict:
         response = db.get(Settings, filters={"user_id": user_id})
         if not response.status or not response.data:
             # create a default settings
-            from .....drsai_adapter.singleton import personal_key_config_fetcher as fetcher
-
             config = fetcher.get_default_config(username=user_id)
             # config = {}
             default_settings = Settings(user_id=user_id, config=config)

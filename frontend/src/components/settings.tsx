@@ -23,6 +23,21 @@ import {
 import { InfoCircleOutlined, UploadOutlined } from "@ant-design/icons";
 import { Plus } from "lucide-react";
 
+
+export const MODEL_OPTIONS = [
+  // { value: "drsai-foundry", label: "Dr.Sai Foundry Template" },
+  { value: "hepai-foundry", label: "HepAI Foundry Template" },
+  { value: "gpt-4.1-2025-04-14", label: "OpenAI GPT-4.1" },
+  { value: "gpt-4.1-mini-2025-04-14", label: "OpenAI GPT-4.1 Mini" },
+  { value: "azure-ai-foundry", label: "Azure AI Foundry Template" },
+  { value: "ollama", label: "Ollama (Local)" },
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "gpt-4.1-nano-2025-04-14", label: "OpenAI GPT-4.1 Nano" },
+  { value: "o4-mini-2025-04-16", label: "OpenAI O4 Mini" },
+  { value: "o3-mini-2025-01-31", label: "OpenAI O3 Mini" },
+  { value: "gpt-4o-2024-08-06", label: "OpenAI GPT-4o" },
+  { value: "gpt-4o-mini-2024-07-18", label: "OpenAI GPT-4o Mini" },
+];
 const { TextArea } = AntInput;
 
 interface SettingsMenuProps {
@@ -42,21 +57,9 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ isOpen, onClose }) => {
   const [websiteInput, setWebsiteInput] = React.useState("");
   const [cachedWebsites, setCachedWebsites] = React.useState<string[]>([]);
   const [allowedlistEnabled, setAllowedlistEnabled] = React.useState(false);
+  const [modelLabel, setModelLabel] = React.useState<string>()
 
-  const MODEL_OPTIONS = [
-    // { value: "drsai-foundry", label: "Dr.Sai Foundry Template" },
-    { value: "hepai-foundry", label: "HepAI Foundry Template" },
-    { value: "gpt-4.1-2025-04-14", label: "OpenAI GPT-4.1" },
-    { value: "gpt-4.1-mini-2025-04-14", label: "OpenAI GPT-4.1 Mini" },
-    { value: "azure-ai-foundry", label: "Azure AI Foundry Template" },
-    { value: "ollama", label: "Ollama (Local)" },
-    { value: "openrouter", label: "OpenRouter" },
-    { value: "gpt-4.1-nano-2025-04-14", label: "OpenAI GPT-4.1 Nano" },
-    { value: "o4-mini-2025-04-16", label: "OpenAI O4 Mini" },
-    { value: "o3-mini-2025-01-31", label: "OpenAI O3 Mini" },
-    { value: "gpt-4o-2024-08-06", label: "OpenAI GPT-4o" },
-    { value: "gpt-4o-mini-2024-07-18", label: "OpenAI GPT-4o Mini" },
-  ];
+ 
 
   const AZURE_AI_FOUNDRY_YAML = `model_config: &client
   provider: AzureOpenAIChatCompletionClient
@@ -167,34 +170,34 @@ host_client: *r1_client
 parser_client: *client
 `;
 
-//  const DRSAI_FOUNDRY_YAML = `model_config: &client
-//   provider: drsai.HepAIChatCompletionClient
-//   config:
-//     model: deepseek-v3-250324
-//     api_key: 68d92faa-9b6e-4ba4-9fdc-b6055ce6c5bc
-//     base_url: "https://ark.cn-beijing.volces.com/api/v3"
-//     max_retries: 10
+ const DRSAI_FOUNDRY_YAML = `model_config: &client
+  provider: drsai.HepAIChatCompletionClient
+  config:
+    model: deepseek-v3-250324
+    api_key: 68d92faa-9b6e-4ba4-9fdc-b6055ce6c5bc
+    base_url: "https://ark.cn-beijing.volces.com/api/v3"
+    max_retries: 10
 
-// r1_config: &r1_client
-//   provider: drsai.HepAIChatCompletionClient
-//   config:
-//     model: deepseek-r1-250120
-//     api_key: 68d92faa-9b6e-4ba4-9fdc-b6055ce6c5bc
-//     base_url: "https://ark.cn-beijing.volces.com/api/v3"
-//     max_retries: 10
+r1_config: &r1_client
+  provider: drsai.HepAIChatCompletionClient
+  config:
+    model: deepseek-r1-250120
+    api_key: 68d92faa-9b6e-4ba4-9fdc-b6055ce6c5bc
+    base_url: "https://ark.cn-beijing.volces.com/api/v3"
+    max_retries: 10
 
-// mode: drsai_besiii
+mode: drsai_besiii
 
-// orchestrator_client: *client
-// web_surfer_client: *client
-// file_surfer_client: *client
-// action_guard_client: *client
-// planner_client: *client
-// coder_client: *r1_client
-// tester_client: *r1_client
-// host_client: *r1_client
-// parser_client: *client
-// `;
+orchestrator_client: *client
+web_surfer_client: *client
+file_surfer_client: *client
+action_guard_client: *client
+planner_client: *client
+coder_client: *r1_client
+tester_client: *r1_client
+host_client: *r1_client
+parser_client: *client
+`;
 
 
   React.useEffect(() => {
@@ -230,7 +233,7 @@ parser_client: *client
         const updatedConfig = { ...config, ...changes };
        const res = await settingsAPI.updateSettings(user.email, updatedConfig);
        
-        updateConfig( { model_configs: res.config.model_configs });
+        updateConfig( { model_configs: res.config.model_configs ,model_name:res.config.model_name});
       } catch (error) {
         console.error("Failed to save settings:", error);
       }
@@ -307,7 +310,7 @@ parser_client: *client
       reader.onload = (e) => {
         const content = e.target?.result as string;
         if (validateYamlConfig(content)) {
-          handleUpdateConfig({ model_configs: content });
+          handleUpdateConfig({ model_configs: content ,model_name: modelLabel});
           message.success("YAML configuration imported successfully");
         }
       };
@@ -322,36 +325,46 @@ parser_client: *client
     return false; // Prevent default upload behavior
   };
 
-  const updateModelInConfig = (modelName: string) => {
+  const updateModelInConfig = (
+    {
+      value: modelName,
+      label: modelLabel,
+    }: {
+        value: string;
+        label: string;
+  }
+  ) => {   
+    setModelLabel(modelLabel)
     try {
       if (modelName === "azure-ai-foundry") {
-        handleUpdateConfig({ model_configs: AZURE_AI_FOUNDRY_YAML });
+        handleUpdateConfig({ model_configs: AZURE_AI_FOUNDRY_YAML ,model_name:modelLabel});
         message.success("Azure AI Foundry configuration applied");
         return;
       }
       if (modelName === "openrouter") {
-        handleUpdateConfig({ model_configs: OPENROUTER_YAML });
+        handleUpdateConfig({ model_configs: OPENROUTER_YAML ,model_name:modelLabel});
         message.success("OpenRouter configuration applied");
         return;
       }
       if (modelName === "hepai-foundry") {
-        handleUpdateConfig({ model_configs: HEPAI_FOUNDRY_YAML });
+        handleUpdateConfig({ model_configs: HEPAI_FOUNDRY_YAML,model_name:modelLabel });
         message.success("HepAI configuration applied");
         return;
       }
       if (modelName === "drsai-foundry") {
-        handleUpdateConfig({ model_configs: DRSAI_FOUNDRY_YAML });
+        handleUpdateConfig({ model_configs: DRSAI_FOUNDRY_YAML,model_name:modelLabel });
         message.success("Dr.Sai configuration applied");
         return;
       }
       if (modelName === "ollama") {
-        handleUpdateConfig({ model_configs: OLLAMA_YAML });
+        handleUpdateConfig({ model_configs: OLLAMA_YAML,model_name:modelLabel });
         message.success("Ollama configuration applied");
         return;
       }
       // For OpenAI models, reset YAML to default with only client and selected model
       handleUpdateConfig({
         model_configs: generateOpenAIModelConfig(modelName),
+        model_name: modelLabel,
       });
       message.success("OpenAI model configuration applied");
     } catch (error) {
@@ -664,10 +677,11 @@ parser_client: *client
                             </Tooltip>
                           </div>
                           <Select
+                            labelInValue
                             style={{ width: "100%" }}
                             options={MODEL_OPTIONS}
-                            onChange={(value: string) =>
-                              updateModelInConfig(value)
+                            onChange={(option) =>
+                              updateModelInConfig(option)
                             }
                             placeholder="Select model to use for all clients"
                           />
