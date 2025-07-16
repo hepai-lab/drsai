@@ -1,9 +1,10 @@
+import { graphql } from "gatsby";
 import * as React from "react";
 import MagenticUILayout from "../components/layout";
-import { graphql, navigate } from "gatsby";
 
 // markup
 const IndexPage = ({ data }: any) => {
+
   // React.useEffect(() => {
   //   // 没有token则跳转登录
   //   const localToken = localStorage.getItem("token");
@@ -30,11 +31,7 @@ const IndexPage = ({ data }: any) => {
   //   </MagenticUILayout>
   // );
 
-  React.useEffect(() => {
-    console.log('data::',data)
-  })
   return (
-    // <div>111</div>
     <MagenticUILayout meta={data.site.siteMetadata} title="Home" link={"/"}>
       <main style={{ height: "100%" }} className=" h-full ">
       </main>

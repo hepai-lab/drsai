@@ -28,6 +28,7 @@ import {
 } from "../../types/plan";
 import SampleTasks from "./sampletasks";
 import ProgressBar from "./progressbar";
+import AgentSelectorAdvanced, { Agent } from "../../common/AgentSelectorAdvanced";
 
 // Extend RunStatus for sidebar status reporting
 type SidebarRunStatus = BaseRunStatus | "final_answer_awaiting_input";
@@ -122,6 +123,9 @@ export default function ChatView({
 
   // Replace stepTitles state with currentPlan state
   const [currentPlan, setCurrentPlan] = React.useState<StepProgress["plan"]>();
+
+  const { config } = useSettingsStore();
+  
 
   // Create a Message object from AgentMessageConfig
   const createMessage = (
@@ -946,14 +950,59 @@ export default function ChatView({
     }
   };
 
+   const [selectedAgent, setSelectedAgent] = React.useState<Agent | undefined>();
+
+   const agents: Agent[] = [
+    {
+        id: "custom",
+        name: "Custom Agent",
+        type: "custom",
+        description: "自定义智能体，可根据需求进行个性化配置",
+    },
+    {
+        id: "besiii",
+        name: "Dr.Sai-BESIII",
+        type: "drsai-besiii",
+        description: "BESIII实验专用智能体，专为高能物理实验优化",
+    },
+    {
+        id: "drsai",
+        name: "Dr.Sai Agent",
+        type: "drsai-agent",
+        description: "Dr.Sai通用智能体，适用于多种科学计算任务",
+    },
+    {
+        id: "magentic",
+        name: "Magentic-one",
+        type: "magentic-one",
+        description: "Magentic-one智能体，支持高级AI协作功能",
+    },
+    {
+        id: "remote",
+        name: "Remote Agent",
+        type: "remote",
+        description: "远程智能体，可连接到外部AI服务",
+    },
+];
+
   if (!visible) {
     return null;
   }
+
+
+
 
   return (
     <div className="text-primary h-[calc(100vh-100px)] bg-primary relative rounded flex-1 scroll w-full">
       {contextHolder}
       <div className="flex flex-col h-full w-full">
+          <AgentSelectorAdvanced
+            agents={agents}
+            selectedAgent={selectedAgent}
+            onAgentSelect={setSelectedAgent}
+          placeholder="Select Your Agent"
+          className=" w-96"
+        />
         {/* Progress Bar - Sticky at top */}
         <div className="progress-container" style={{ height: "3.5rem" }}>
           <div
@@ -984,6 +1033,7 @@ export default function ChatView({
               : ""
           }`}
         >
+          
           <div
             className={`${
               showDetailViewer && !isDetailViewerMinimized
@@ -1022,6 +1072,9 @@ export default function ChatView({
               </>
             }
           </div>
+          
+
+          
 
           {/* No existing messages in run - centered content */}
           {currentRun && noMessagesYet && teamConfig && (
@@ -1032,6 +1085,8 @@ export default function ChatView({
                   : "w-full max-w-full md:max-w-4xl lg:max-w-5xl xl:max-w-6xl"
               } mx-auto px-4 sm:px-6 md:px-8`}
             >
+              <div>{config.model_name}</div>
+
               <div className="text-secondary text-lg mb-6">
                 Welcome to Dr.Sai, Enter a message to get started
                 {/* 欢迎使用Dr.Sai智能体，输入消息开始对话 */}

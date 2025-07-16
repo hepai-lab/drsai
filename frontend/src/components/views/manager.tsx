@@ -1,22 +1,22 @@
+import { message, Spin } from "antd";
 import React, {
   useCallback,
-  useEffect,
-  useState,
   useContext,
+  useEffect,
   useMemo,
+  useState,
 } from "react";
-import { message, Spin } from "antd";
-import { useConfigStore } from "../../hooks/store";
 import { appContext } from "../../hooks/provider";
-import { sessionAPI } from "./api";
-import { SessionEditor } from "./session_editor";
-import type { Session } from "../types/datamodel";
-import ChatView from "./chat/chat";
-import { Sidebar } from "./sidebar";
-import { getServerUrl } from "../utils";
-import { RunStatus } from "../types/datamodel";
+import { useConfigStore } from "../../hooks/store";
 import ContentHeader from "../contentheader";
 import PlanList from "../features/Plans/PlanList";
+import type { Session } from "../types/datamodel";
+import { RunStatus } from "../types/datamodel";
+import { getServerUrl } from "../utils";
+import { sessionAPI } from "./api";
+import ChatView from "./chat/chat";
+import { SessionEditor } from "./session_editor";
+import { Sidebar } from "./sidebar";
 
 interface SessionWebSocket {
   socket: WebSocket;
@@ -179,9 +179,10 @@ export const SessionManager: React.FC = () => {
         });
       }
 
-      const response = await sessionAPI.deleteSession(sessionId, user.email);
+      await sessionAPI.deleteSession(sessionId, user.email);
       setSessions(sessions.filter((s) => s.id !== sessionId));
       if (session?.id === sessionId || sessions.length === 0) {
+        console.log('session:', session, 'sessions:', sessions);
         setSession(sessions[0] || null);
         window.history.pushState({}, "", window.location.pathname); // Clear URL params
       }
@@ -526,7 +527,6 @@ export const SessionManager: React.FC = () => {
             </div>
           )}
         </div>
-
         <SessionEditor
           session={editingSession}
           isOpen={isEditorOpen}

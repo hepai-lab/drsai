@@ -1,8 +1,8 @@
+import { ConfigProvider, theme } from "antd";
+import "antd/dist/reset.css";
 import * as React from "react";
 import { appContext } from "../hooks/provider";
 import { useConfigStore } from "../hooks/store";
-import "antd/dist/reset.css";
-import { ConfigProvider, theme } from "antd";
 import { SessionManager } from "./views/manager";
 
 const classNames = (...classes: (string | undefined | boolean)[]) => {
@@ -33,6 +33,7 @@ const MagenticUILayout = ({
   const { sidebar } = useConfigStore();
   const { isExpanded } = sidebar;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
+
 
   React.useEffect(() => {
 
