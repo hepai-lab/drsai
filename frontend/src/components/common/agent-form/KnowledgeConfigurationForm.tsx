@@ -12,6 +12,8 @@ interface KnowledgeConfigurationFormProps {
     darkMode?: string;
 }
 
+
+
 const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
     config,
     onConfigChange,
@@ -19,9 +21,27 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
 }) => {
     const handleGetApiKey = () => {
         // 默认URL，可以根据实际需求修改
-        const defaultUrl = "https://example.com/api-key";
+        const defaultUrl = "https://aiweb01.ihep.ac.cn:886/user-setting/api";
         window.open(defaultUrl, "_blank");
     };
+
+    const [dataSets, setDataSets] = React.useState<string[]>([]);
+
+    const fetchDataSets = async () => {
+        // 模拟异步获取数据集列表
+        const response = await fetch("https://aiweb01.ihep.ac.cn:886/api/v1/datasets", {
+            method: "GET",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${config.apiKey}`,
+            },
+        });
+        const data = await response.json();
+        setDataSets(data.data.map(item => ({ label: item.name, value: item.name })));
+    };
+    React.useEffect(() => {
+        fetchDataSets();
+    }, [config.apiKey]);
 
     return (
         <div className="space-y-4">
@@ -134,7 +154,7 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                 onChange={(e) =>
                                     onConfigChange("dataSetName", e.target.value)
                                 }
-                                placeholder="请输入数据集名称"
+                                placeholder="请选择数据集名称"
                                 className={`
                                     w-full px-3 py-2 rounded-md border
                                     ${darkMode === "dark"
@@ -144,34 +164,6 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                     focus:outline-none focus:border-[#4d3dc3]
                                 `}
                             />
-                            <button
-                                type="button"
-                                className={`
-                                    absolute right-2 top-1/2 transform -translate-y-1/2 p-1
-                                    ${darkMode === "dark"
-                                        ? "text-[#e5e5e5] hover:text-[#4d3dc3]"
-                                        : "text-[#4a5568] hover:text-[#4d3dc3]"
-                                    }
-                                `}
-                            >
-                                <Info className="w-4 h-4" />
-                                {/* DataSet Name Help Tooltip */}
-                                <div
-                                    className={`
-                                        absolute bottom-full right-0 mb-2 p-3 rounded-md text-sm w-72 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-10
-                                        ${darkMode === "dark"
-                                            ? "bg-[#3a3a3a] text-[#e5e5e5] border border-[#e5e5e530]"
-                                            : "bg-[#f9fafb] text-[#4a5568] border border-[#e2e8f0]"
-                                        }
-                                    `}
-                                >
-                                    <p className="mb-2">⚠️ 重要提醒：</p>
-                                    <p>
-                                        这里填写的名称必须与您刚刚创建的知识库名称完全一致，否则系统无法成功调用您创建的知识库。
-                                    </p>
-                                    <div className="absolute top-full right-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-[#3a3a3a]"></div>
-                                </div>
-                            </button>
                         </div>
                     </div>
                 </div>
