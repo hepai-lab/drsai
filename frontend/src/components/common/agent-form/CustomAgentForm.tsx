@@ -182,7 +182,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
     return (
         <div
             className={`
-            p-6 rounded-lg border my-4
+            p-6 px-4 rounded-lg border my-4
             ${darkMode === "dark"
                     ? "bg-[#2a2a2a] border-[#e5e5e530]"
                     : "bg-white border-[#e2e8f0]"
@@ -198,7 +198,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                 Custom Your Agent
             </h2>
 
-            <form onSubmit={handleSubmit} className="space-y-4 h-[400px]  overflow-auto">
+            <form onSubmit={handleSubmit} className="space-y-4 pr-4 h-[400px] overflow-auto">
                 {/* Name Field */}
                 <div className="flex items-center">
                     <label

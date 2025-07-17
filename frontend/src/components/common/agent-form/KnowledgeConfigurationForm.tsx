@@ -40,6 +40,7 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
             }
         );
         const data = await response.json();
+
         setDataSets(
             data.data.map((item: any) => ({
                 label: item.name,
@@ -48,7 +49,9 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
         );
     };
     React.useEffect(() => {
-        fetchDataSets();
+        if (config.apiKey) {
+            fetchDataSets();
+        }
     }, [config.apiKey]);
 
     return (

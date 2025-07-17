@@ -988,8 +988,6 @@ export default function ChatView({
     },
   ]);
 
-
-
   const handleAgentList = async (agents: Agent[]) => {
     console.log("Fetching agent list for user:", user?.email);
     try {
