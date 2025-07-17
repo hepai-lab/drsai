@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Plus, X, ChevronDown } from "lucide-react";
 import { appContext } from "../../../hooks/provider";
 
@@ -20,12 +20,14 @@ interface CustomAgentFormProps {
     onSubmit: (data: CustomAgentData) => void;
     onCancel: () => void;
     initialData?: Partial<CustomAgentData>;
+    models: { id: string }[]; // 可选的模型列表
 }
 
 const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
     onSubmit,
     onCancel,
     initialData,
+    models,
 }) => {
     const { darkMode } = React.useContext(appContext);
     const [formData, setFormData] = useState<CustomAgentData>({
@@ -41,15 +43,22 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
     const [llmModelOpen, setLlmModelOpen] = useState(false);
     const [knowledgeOpen, setKnowledgeOpen] = useState(false);
     const [toolsOpen, setToolsOpen] = useState<{ [key: string]: boolean }>({});
+    const [llmModelOptions, setLlmModelOptions] = useState<{ value: string; label: string }[]>([]);
 
+    useEffect(() => {
+        if (models) {
+            setLlmModelOptions(models.map((model) => ({ value: model.id, label: model.id })))
+        }
+    }, [models])
     // LLM Model options
-    const llmModelOptions = [
-        { value: "MCP", label: "MCP" },
-        { value: "HepAI", label: "HepAI" },
-        { value: "Open API", label: "Open API" },
-        { value: "GPT-4", label: "GPT-4" },
-        { value: "Claude", label: "Claude" },
-    ];
+    // const llmModelOptions = [
+    //     { value: "MCP", label: "MCP" },
+    //     { value: "HepAI", label: "HepAI" },
+    //     { value: "Open API", label: "Open API" },
+    //     { value: "GPT-4", label: "GPT-4" },
+    //     { value: "Claude", label: "Claude" },
+    // ];
+
 
     // Knowledge options
     const knowledgeOptions = [
@@ -131,10 +140,9 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                     className={`
                         w-full flex items-center justify-between px-3 py-2 rounded-md
                         border transition-all duration-200
-                        ${
-                            darkMode === "dark"
-                                ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] hover:border-[#e5e5e560]"
-                                : "bg-white text-[#4a5568] border-[#e2e8f0] hover:border-[#4d3dc3]"
+                        ${darkMode === "dark"
+                            ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] hover:border-[#e5e5e560]"
+                            : "bg-white text-[#4a5568] border-[#e2e8f0] hover:border-[#4d3dc3]"
                         }
                     `}
                 >
@@ -142,9 +150,8 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                         {selectedOption ? selectedOption.label : placeholder}
                     </span>
                     <ChevronDown
-                        className={`w-4 h-4 transition-transform ${
-                            isOpen ? "rotate-180" : ""
-                        }`}
+                        className={`w-4 h-4 transition-transform ${isOpen ? "rotate-180" : ""
+                            }`}
                     />
                 </button>
 
@@ -152,11 +159,10 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                     <div
                         className={`
                         absolute top-full left-0 right-0 mt-1 z-50 rounded-md shadow-lg border
-                        ${
-                            darkMode === "dark"
+                        ${darkMode === "dark"
                                 ? "bg-[#3a3a3a] border-[#e5e5e530]"
                                 : "bg-white border-[#e2e8f0]"
-                        }
+                            }
                     `}
                     >
                         {options.map((option) => (
@@ -169,17 +175,15 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                 }}
                                 className={`
                                     w-full text-left px-3 py-2 text-sm transition-colors
-                                    ${
-                                        darkMode === "dark"
-                                            ? "text-[#e5e5e5] hover:bg-[#444444]"
-                                            : "text-[#4a5568] hover:bg-[#f9fafb]"
+                                    ${darkMode === "dark"
+                                        ? "text-[#e5e5e5] hover:bg-[#444444]"
+                                        : "text-[#4a5568] hover:bg-[#f9fafb]"
                                     }
-                                    ${
-                                        value === option.value
-                                            ? darkMode === "dark"
-                                                ? "bg-[#4d3dc3] text-white"
-                                                : "bg-[#e7e5f2] text-[#4d3dc3]"
-                                            : ""
+                                    ${value === option.value
+                                        ? darkMode === "dark"
+                                            ? "bg-[#4d3dc3] text-white"
+                                            : "bg-[#e7e5f2] text-[#4d3dc3]"
+                                        : ""
                                     }
                                 `}
                             >
@@ -196,11 +200,10 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         <div
             className={`
             p-6 rounded-lg border my-4
-            ${
-                darkMode === "dark"
+            ${darkMode === "dark"
                     ? "bg-[#2a2a2a] border-[#e5e5e530]"
                     : "bg-white border-[#e2e8f0]"
-            }
+                }
         `}
         >
             <h2
@@ -218,11 +221,10 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                     <label
                         className={`
                         w-20 text-sm font-medium
-                        ${
-                            darkMode === "dark"
+                        ${darkMode === "dark"
                                 ? "text-[#e5e5e5]"
                                 : "text-[#4a5568]"
-                        }
+                            }
                     `}
                     >
                         Name:
@@ -236,10 +238,9 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                         placeholder="Value"
                         className={`
                             flex-1 ml-4 px-3 py-2 rounded-md border
-                            ${
-                                darkMode === "dark"
-                                    ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                                    : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
+                            ${darkMode === "dark"
+                                ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
+                                : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
                             }
                             focus:outline-none focus:border-[#4d3dc3]
                         `}
@@ -251,11 +252,10 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                     <label
                         className={`
                         w-20 text-sm font-medium
-                        ${
-                            darkMode === "dark"
+                        ${darkMode === "dark"
                                 ? "text-[#e5e5e5]"
                                 : "text-[#4a5568]"
-                        }
+                            }
                     `}
                     >
                         LLM Model:
@@ -278,10 +278,9 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                         key={config.id}
                         className={`
                             border-2 rounded-md p-4
-                            ${
-                                darkMode === "dark"
-                                    ? "border-[#e5e5e530] bg-[#3a3a3a]"
-                                    : "border-[#e2e8f0] bg-[#f9fafb]"
+                            ${darkMode === "dark"
+                                ? "border-[#e5e5e530] bg-[#3a3a3a]"
+                                : "border-[#e2e8f0] bg-[#f9fafb]"
                             }
                         `}
                     >
@@ -289,11 +288,10 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                             <span
                                 className={`
                                 text-sm font-medium
-                                ${
-                                    darkMode === "dark"
+                                ${darkMode === "dark"
                                         ? "text-[#e5e5e5]"
                                         : "text-[#4a5568]"
-                                }
+                                    }
                             `}
                             >
                                 Configuration {index + 1}
@@ -304,10 +302,9 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                     onClick={() => removeToolConfig(config.id)}
                                     className={`
                                         p-1 rounded-full hover:bg-red-100
-                                        ${
-                                            darkMode === "dark"
-                                                ? "hover:bg-red-900"
-                                                : ""
+                                        ${darkMode === "dark"
+                                            ? "hover:bg-red-900"
+                                            : ""
                                         }
                                     `}
                                 >
@@ -321,11 +318,10 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                             <label
                                 className={`
                                 w-16 text-sm font-medium
-                                ${
-                                    darkMode === "dark"
+                                ${darkMode === "dark"
                                         ? "text-[#e5e5e5]"
                                         : "text-[#4a5568]"
-                                }
+                                    }
                             `}
                             >
                                 Tools:
@@ -366,11 +362,10 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                             <label
                                 className={`
                                 w-16 text-sm font-medium
-                                ${
-                                    darkMode === "dark"
+                                ${darkMode === "dark"
                                         ? "text-[#e5e5e5]"
                                         : "text-[#4a5568]"
-                                }
+                                    }
                             `}
                             >
                                 URL:
@@ -388,10 +383,9 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                 placeholder="Value"
                                 className={`
                                     flex-1 ml-4 px-3 py-2 rounded-md border
-                                    ${
-                                        darkMode === "dark"
-                                            ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                                            : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
+                                    ${darkMode === "dark"
+                                        ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
+                                        : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
                                     }
                                     focus:outline-none focus:border-[#4d3dc3]
                                 `}
@@ -403,11 +397,10 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                             <label
                                 className={`
                                 w-16 text-sm font-medium
-                                ${
-                                    darkMode === "dark"
+                                ${darkMode === "dark"
                                         ? "text-[#e5e5e5]"
                                         : "text-[#4a5568]"
-                                }
+                                    }
                             `}
                             >
                                 Token:
@@ -425,10 +418,9 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                 placeholder="Value"
                                 className={`
                                     flex-1 ml-4 px-3 py-2 rounded-md border
-                                    ${
-                                        darkMode === "dark"
-                                            ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                                            : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
+                                    ${darkMode === "dark"
+                                        ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
+                                        : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
                                     }
                                     focus:outline-none focus:border-[#4d3dc3]
                                 `}
@@ -442,11 +434,10 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                     <label
                         className={`
                         w-20 text-sm font-medium
-                        ${
-                            darkMode === "dark"
+                        ${darkMode === "dark"
                                 ? "text-[#e5e5e5]"
                                 : "text-[#4a5568]"
-                        }
+                            }
                     `}
                     >
                         Knowledge:
@@ -470,10 +461,9 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                         onClick={onCancel}
                         className={`
                             flex-1 px-4 py-2 rounded-md font-medium transition-colors
-                            ${
-                                darkMode === "dark"
-                                    ? "bg-gray-600 text-[#e5e5e5] hover:bg-gray-700"
-                                    : "bg-gray-200 text-[#4a5568] hover:bg-gray-300"
+                            ${darkMode === "dark"
+                                ? "bg-gray-600 text-[#e5e5e5] hover:bg-gray-700"
+                                : "bg-gray-200 text-[#4a5568] hover:bg-gray-300"
                             }
                         `}
                     >

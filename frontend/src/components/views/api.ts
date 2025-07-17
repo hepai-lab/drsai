@@ -447,7 +447,48 @@ export class SettingsAPI {
   }
 }
 
+export class Agent {
+  private getBaseUrl(): string {
+    return getServerUrl();
+  }
+
+  private getHeaders(): HeadersInit {
+    return {
+      "Content-Type": "application/json",
+    };
+  }
+
+  async getAgentList(userId: string): Promise<any[]> {
+    console.log("Fetching agent list for user:", userId);
+    const response = await fetch(`${this.getBaseUrl()}/agentmode/?user_id=${userId}`, {
+      headers: {
+        "Content-Type": "application/json",
+
+      },
+    });
+    const data = await response.json();
+    if (!data.status) throw new Error(data.message || "Failed to fetch agents");
+    return data.data;
+  }
+
+  // save agent config
+  async saveAgentConfig(userId: string, agentConfig: any): Promise<any> {
+    const response = await fetch(`${this.getBaseUrl()}/agentmode/`, {
+      method: "POST",
+      headers: this.getHeaders(),
+      body: JSON.stringify({
+        user_id: userId,
+        config: agentConfig,
+      }),
+    });
+    const data = await response.json();
+    if (!data.status) throw new Error(data.message || "Failed to save agent config");
+    return data.data;
+  }
+}
+
 export const teamAPI = new TeamAPI();
 export const sessionAPI = new SessionAPI();
 export const planAPI = new PlanAPI();
 export const settingsAPI = new SettingsAPI();
+export const agentAPI = new Agent();

@@ -16,7 +16,7 @@ import {
 } from "../../types/datamodel";
 import { appContext } from "../../../hooks/provider";
 import ChatInput from "./chatinput";
-import { sessionAPI, settingsAPI } from "../api";
+import { agentAPI, sessionAPI, settingsAPI } from "../api";
 import RunView from "./runview";
 import { messageUtils } from "./rendermessage";
 import { useSettingsStore, GeneralConfig } from "../../store";
@@ -29,6 +29,7 @@ import {
 import SampleTasks from "./sampletasks";
 import ProgressBar from "./progressbar";
 import AgentSelectorAdvanced, { Agent } from "../../common/AgentSelectorAdvanced";
+import { parse } from "yaml"
 
 // Extend RunStatus for sidebar status reporting
 type SidebarRunStatus = BaseRunStatus | "final_answer_awaiting_input";
@@ -125,7 +126,7 @@ export default function ChatView({
   const [currentPlan, setCurrentPlan] = React.useState<StepProgress["plan"]>();
 
   const { config } = useSettingsStore();
-  
+
 
   // Create a Message object from AgentMessageConfig
   const createMessage = (
@@ -385,8 +386,8 @@ export default function ChatView({
             message.status === "complete"
               ? "complete"
               : message.status === "error"
-              ? "error"
-              : "stopped";
+                ? "error"
+                : "stopped";
 
           const isTeamResult = (data: any): data is TeamResult => {
             return (
@@ -950,58 +951,109 @@ export default function ChatView({
     }
   };
 
-   const [selectedAgent, setSelectedAgent] = React.useState<Agent | undefined>();
+  const [selectedAgent, setSelectedAgent] = React.useState<Agent | undefined>();
+  const [secretKey, setSecretKey] = React.useState<string | undefined>();
+  const [baseUrl, setBaseUrl] = React.useState<string | undefined>();
+  const [models, setModels] = React.useState<{ id: string }[]>([]);
+  const [agents, setAgents] = React.useState<Agent[]>([
+    {
+      mode: "custom",
+      name: "Custom Agent",
+      type: "custom",
+      description: "自定义智能体，可根据需求进行个性化配置",
+    },
+    {
+      mode: "besiii",
+      name: "Dr.Sai-BESIII",
+      type: "drsai-besiii",
+      description: "BESIII实验专用智能体，专为高能物理实验优化",
+    },
+    {
+      mode: "drsai",
+      name: "Dr.Sai Agent",
+      type: "drsai-agent",
+      description: "Dr.Sai通用智能体，适用于多种科学计算任务",
+    },
+    {
+      mode: "magentic",
+      name: "Magentic-one",
+      type: "magentic-one",
+      description: "Magentic-one智能体，支持高级AI协作功能",
+    },
+    {
+      mode: "remote",
+      name: "Remote Agent",
+      type: "remote",
+      description: "远程智能体，可连接到外部AI服务",
+    },
+  ]);
 
-   const agents: Agent[] = [
-    {
-        id: "custom",
-        name: "Custom Agent",
-        type: "custom",
-        description: "自定义智能体，可根据需求进行个性化配置",
-    },
-    {
-        id: "besiii",
-        name: "Dr.Sai-BESIII",
-        type: "drsai-besiii",
-        description: "BESIII实验专用智能体，专为高能物理实验优化",
-    },
-    {
-        id: "drsai",
-        name: "Dr.Sai Agent",
-        type: "drsai-agent",
-        description: "Dr.Sai通用智能体，适用于多种科学计算任务",
-    },
-    {
-        id: "magentic",
-        name: "Magentic-one",
-        type: "magentic-one",
-        description: "Magentic-one智能体，支持高级AI协作功能",
-    },
-    {
-        id: "remote",
-        name: "Remote Agent",
-        type: "remote",
-        description: "远程智能体，可连接到外部AI服务",
-    },
-];
 
+
+  const handleAgentList = async (agents: Agent[]) => {
+    console.log("Fetching agent list for user:", user?.email);
+    try {
+      const res = await agentAPI.getAgentList(user?.email || "");
+      setAgents(res.config.agent_modes);
+    } catch (error) {
+      console.error("Error fetching agent list:", error);
+
+    }
+  }
+
+  React.useEffect(() => {
+    handleAgentList(agents);
+  }, [])
   if (!visible) {
     return null;
   }
 
+  React.useEffect(() => {
+    const loadSettings = async () => {
+      if (user?.email) {
+        try {
+          const settings = await settingsAPI.getSettings(user.email);
+          const parsed = parse(settings.model_configs);
+          const secretKey = parsed.model_config.config.api_key;
+          const baseUrl = parsed.model_config.config.base_url;
+          setSecretKey(secretKey);
+          setBaseUrl(baseUrl);
+        } catch (error) {
+          console.error("Failed to load settings");
+        }
+      }
+    };
+    loadSettings();
+  }, [user?.email]);
 
+  React.useEffect(() => {
+    const loadModels = async () => {
+      if (secretKey) {
+        const response = await fetch(`${baseUrl}/models`, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${secretKey}`,
+          }
+        })
+        const data = (await response.json()).data;
+        setModels(data);
+      }
+    }
+    loadModels();
+  }, [secretKey]);
 
 
   return (
     <div className="text-primary h-[calc(100vh-100px)] bg-primary relative rounded flex-1 scroll w-full">
       {contextHolder}
       <div className="flex flex-col h-full w-full">
-          <AgentSelectorAdvanced
-            agents={agents}
-            selectedAgent={selectedAgent}
-            onAgentSelect={setSelectedAgent}
+        <AgentSelectorAdvanced
+          agents={agents}
+          models={models}
+          selectedAgent={selectedAgent}
+          onAgentSelect={setSelectedAgent}
           placeholder="Select Your Agent"
-          className=" w-96"
+          className="w-96"
         />
         {/* Progress Bar - Sticky at top */}
         <div className="progress-container" style={{ height: "3.5rem" }}>
@@ -1010,9 +1062,9 @@ export default function ChatView({
             style={{
               opacity:
                 currentRun?.status === "active" ||
-                currentRun?.status === "awaiting_input" ||
-                currentRun?.status === "paused" ||
-                currentRun?.status === "pausing"
+                  currentRun?.status === "awaiting_input" ||
+                  currentRun?.status === "paused" ||
+                  currentRun?.status === "pausing"
                   ? 1
                   : 0,
             }}
@@ -1027,21 +1079,18 @@ export default function ChatView({
 
         <div
           ref={chatContainerRef}
-          className={`flex-1 overflow-y-auto scroll mt-1 min-h-0 relative w-full h-full ${
-            noMessagesYet && currentRun
-              ? "flex items-center justify-center"
-              : ""
-          }`}
-        >
-          
-          <div
-            className={`${
-              showDetailViewer && !isDetailViewerMinimized
-                ? "w-full"
-                : "max-w-full md:max-w-5xl lg:max-w-6xl xl:max-w-7xl"
-            } mx-auto px-4 sm:px-6 md:px-8 h-full ${
-              noMessagesYet && currentRun ? "hidden" : ""
+          className={`flex-1 overflow-y-auto scroll mt-1 min-h-0 relative w-full h-full ${noMessagesYet && currentRun
+            ? "flex items-center justify-center"
+            : ""
             }`}
+        >
+
+          <div
+            className={`${showDetailViewer && !isDetailViewerMinimized
+              ? "w-full"
+              : "max-w-full md:max-w-5xl lg:max-w-6xl xl:max-w-7xl"
+              } mx-auto px-4 sm:px-6 md:px-8 h-full ${noMessagesYet && currentRun ? "hidden" : ""
+              }`}
           >
             {
               <>
@@ -1072,18 +1121,17 @@ export default function ChatView({
               </>
             }
           </div>
-          
 
-          
+
+
 
           {/* No existing messages in run - centered content */}
           {currentRun && noMessagesYet && teamConfig && (
             <div
-              className={`text-center ${
-                showDetailViewer && !isDetailViewerMinimized
-                  ? "w-full"
-                  : "w-full max-w-full md:max-w-4xl lg:max-w-5xl xl:max-w-6xl"
-              } mx-auto px-4 sm:px-6 md:px-8`}
+              className={`text-center ${showDetailViewer && !isDetailViewerMinimized
+                ? "w-full"
+                : "w-full max-w-full md:max-w-4xl lg:max-w-5xl xl:max-w-6xl"
+                } mx-auto px-4 sm:px-6 md:px-8`}
             >
               <div>{config.model_name}</div>
 
