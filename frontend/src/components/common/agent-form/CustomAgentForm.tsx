@@ -38,7 +38,6 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
 
     // 为每个下拉框添加独立的状态
     const [llmModelOpen, setLlmModelOpen] = useState(false);
-    const [knowledgeOpen, setKnowledgeOpen] = useState(false);
     const [toolsOpen, setToolsOpen] = useState<{ [key: string]: boolean }>({});
     const [llmModelOptions, setLlmModelOptions] = useState<
         { value: string; label: string }[]
@@ -51,25 +50,6 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
             );
         }
     }, [models]);
-    // LLM Model options
-    // const llmModelOptions = [
-    //     { value: "MCP", label: "MCP" },
-    //     { value: "HepAI", label: "HepAI" },
-    //     { value: "Open API", label: "Open API" },
-    //     { value: "GPT-4", label: "GPT-4" },
-    //     { value: "Claude", label: "Claude" },
-    // ];
-
-    // Knowledge options
-    const knowledgeOptions = [
-        { value: "none", label: "无知识库" },
-        { value: "general", label: "通用知识库" },
-        { value: "scientific", label: "科学知识库" },
-        { value: "custom", label: "自定义知识库" },
-        { value: "besiii", label: "BESIII实验知识库" },
-    ];
-
-
 
     const handleInputChange = (field: keyof CustomAgentData, value: string) => {
         setFormData((prev) => ({ ...prev, [field]: value }));
@@ -276,38 +256,65 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                 </div>
 
                 {/* Tool Configs */}
-                {formData.toolConfigs.map((config, index) => (
-                    <div key={config.id} className="space-y-4">
-                        <ToolConfigurationForm
-                            config={config}
-                            index={index}
-                            onConfigChange={handleToolConfigChange}
-                            onRemove={removeToolConfig}
-                            canRemove={formData.toolConfigs.length > 1}
-                            toolsOpen={toolsOpen[config.id] || false}
-                            onToolsOpenChange={(open) =>
-                                setToolsOpen((prev) => ({
-                                    ...prev,
-                                    [config.id]: open,
-                                }))
-                            }
-                        />
-                        {index === formData.toolConfigs.length - 1 && (
-                            <div className="flex justify-center">
-                                <button
-                                    type="button"
-                                    onClick={addToolConfig}
-                                    className={`
-                                        p-2 rounded-full bg-[#4d3dc3] text-white hover:bg-[#3d2db3]
-                                        transition-colors duration-200
-                                    `}
+                <div className="space-y-4">
+                    <div className="flex items-center">
+                        <label
+                            className={`
+                            w-20 text-sm font-medium
+                            ${darkMode === "dark"
+                                    ? "text-[#e5e5e5]"
+                                    : "text-[#4a5568]"
+                                }
+                        `}
+                        >
+                            Tools:
+                        </label>
+                        <div className="flex-1 ml-4">
+                            {formData.toolConfigs.map((config, index) => (
+                                <div
+                                    key={config.id}
+                                    className="flex items-start gap-2 mb-2"
                                 >
-                                    <Plus className="w-4 h-4" />
-                                </button>
-                            </div>
-                        )}
+                                    <div className="flex-1">
+                                        <ToolConfigurationForm
+                                            config={config}
+                                            index={index}
+                                            onConfigChange={
+                                                handleToolConfigChange
+                                            }
+                                            onRemove={removeToolConfig}
+                                            canRemove={
+                                                formData.toolConfigs.length > 1
+                                            }
+                                            toolsOpen={
+                                                toolsOpen[config.id] || false
+                                            }
+                                            onToolsOpenChange={(open) =>
+                                                setToolsOpen((prev) => ({
+                                                    ...prev,
+                                                    [config.id]: open,
+                                                }))
+                                            }
+                                        />
+                                    </div>
+                                    {index ===
+                                        formData.toolConfigs.length - 1 && (
+                                            <button
+                                                type="button"
+                                                onClick={addToolConfig}
+                                                className={`
+                                                p-2 rounded-full bg-[#4d3dc3] text-white hover:bg-[#3d2db3]
+                                                transition-colors duration-200 mt-2
+                                            `}
+                                            >
+                                                <Plus className="w-4 h-4" />
+                                            </button>
+                                        )}
+                                </div>
+                            ))}
+                        </div>
                     </div>
-                ))}
+                </div>
 
                 {/* Knowledge Field */}
                 <KnowledgeConfigurationForm

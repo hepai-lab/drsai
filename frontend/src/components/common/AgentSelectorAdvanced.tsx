@@ -50,8 +50,6 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         { id: "2", tools: "HepAI", url: "", token: "", workerName: "" },
         { id: "3", tools: "OpenAPI", url: "", token: "", workerName: "" },
     ]);
-    const [toolsOpen, setToolsOpen] = useState<{ [key: string]: boolean }>({});
-
     // Filter agents based on search term
     const filteredAgents = useMemo(() => {
         if (!searchable || !searchTerm.trim()) {
@@ -159,7 +157,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         };
 
 
-        const res = await agentAPI.saveAgentConfig(user?.email || "", newCustomAgent);
+        // const res = await agentAPI.saveAgentConfig(user?.email || "", newCustomAgent);
         onAgentSelect(newCustomAgent);
         setShowCustomForm(false);
     };
