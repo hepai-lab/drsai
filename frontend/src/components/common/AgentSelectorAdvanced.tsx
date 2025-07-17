@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from "react";
 import { ChevronDown, Bot, Search, X } from "lucide-react";
 import { appContext } from "../../hooks/provider";
 import CustomAgentForm, { CustomAgentData } from "./agent-form/CustomAgentForm";
-import { agentAPI } from "../views/api";
+import DrsaiAgentForm, { DrsaiAgentData } from "./agent-form/DrsaiAgentForm";
 import { ToolConfig } from "./agent-form/ToolConfigurationForm";
 
 export interface Agent {
@@ -41,6 +41,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
     const [searchTerm, setSearchTerm] = useState("");
     const [focusedIndex, setFocusedIndex] = useState(-1);
     const [showCustomForm, setShowCustomForm] = useState(false);
+    const [showDrsaiForm, setShowDrsaiForm] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const { darkMode } = React.useContext(appContext);
@@ -139,6 +140,12 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             setIsOpen(false);
             setSearchTerm("");
             setFocusedIndex(-1);
+        } else if (agent.name === "Dr.Sai Agent") {
+            setShowDrsaiForm(true);
+            onAgentSelect(agent);
+            setIsOpen(false);
+            setSearchTerm("");
+            setFocusedIndex(-1);
         } else {
             onAgentSelect(agent);
             setIsOpen(false);
@@ -164,6 +171,24 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
 
     const handleCustomFormCancel = () => {
         setShowCustomForm(false);
+    };
+
+    const handleDrsaiFormSubmit = async (data: DrsaiAgentData) => {
+        // 创建新的 Drsai 智能体
+        const newDrsaiAgent: Agent = {
+            mode: `drsai-${Date.now()}`,
+            name: data.name || "Dr.Sai Agent",
+            type: "drsai-agent",
+            description: `Planer: ${data.planer.llmModel}, Coder: ${data.coder.llmModel}, Tester: ${data.tester.tools}`,
+        };
+
+        // const res = await agentAPI.saveAgentConfig(user?.email || "", newDrsaiAgent);
+        onAgentSelect(newDrsaiAgent);
+        setShowDrsaiForm(false);
+    };
+
+    const handleDrsaiFormCancel = () => {
+        setShowDrsaiForm(false);
     };
 
     const toggleDropdown = () => {
@@ -393,6 +418,20 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                                 models={models}
                                 onSubmit={handleCustomFormSubmit}
                                 onCancel={handleCustomFormCancel}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Drsai Agent Form Modal */}
+            {showDrsaiForm && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="w-full max-w-2xl">
+                        <div className="min-h-0">
+                            <DrsaiAgentForm
+                                models={models}
+                                onSubmit={handleDrsaiFormSubmit}
+                                onCancel={handleDrsaiFormCancel}
                             />
                         </div>
                     </div>
