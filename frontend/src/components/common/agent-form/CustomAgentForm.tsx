@@ -198,7 +198,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                 Custom Your Agent
             </h2>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-4 h-[400px]  overflow-auto">
                 {/* Name Field */}
                 <div className="flex items-center">
                     <label
