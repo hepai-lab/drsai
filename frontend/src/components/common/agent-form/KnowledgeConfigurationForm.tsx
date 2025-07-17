@@ -12,8 +12,6 @@ interface KnowledgeConfigurationFormProps {
     darkMode?: string;
 }
 
-
-
 const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
     config,
     onConfigChange,
@@ -25,19 +23,29 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
         window.open(defaultUrl, "_blank");
     };
 
-    const [dataSets, setDataSets] = React.useState<string[]>([]);
+    const [dataSets, setDataSets] = React.useState<
+        { label: string; value: string }[]
+    >([]);
 
     const fetchDataSets = async () => {
         // 模拟异步获取数据集列表
-        const response = await fetch("https://aiweb01.ihep.ac.cn:886/api/v1/datasets", {
-            method: "GET",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${config.apiKey}`,
-            },
-        });
+        const response = await fetch(
+            "https://aiweb01.ihep.ac.cn:886/api/v1/datasets",
+            {
+                method: "GET",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${config.apiKey}`,
+                },
+            }
+        );
         const data = await response.json();
-        setDataSets(data.data.map(item => ({ label: item.name, value: item.name })));
+        setDataSets(
+            data.data.map((item: any) => ({
+                label: item.name,
+                value: item.name,
+            }))
+        );
     };
     React.useEffect(() => {
         fetchDataSets();
@@ -58,11 +66,13 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                 >
                     Knowledge:
                 </label>
-                <div className={`flex-1 ml-4 space-y-4 w-full items-center justify-between px-3 py-2 rounded-md
+                <div
+                    className={`flex-1 ml-4 space-y-4 w-full items-center justify-between px-3 py-2 rounded-md
                         border transition-all duration-200  ${darkMode === "dark"
-                        ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                        : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
-                    }  `} >
+                            ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
+                            : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
+                        }  `}
+                >
                     {/* API Key Field */}
                     <div className="flex items-center">
                         <label
@@ -115,7 +125,8 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                     `}
                                 >
                                     <p>
-                                        请输入您的API Key以访问知识库服务。如果没有API
+                                        请输入您的API
+                                        Key以访问知识库服务。如果没有API
                                         Key，请点击"获取"按钮。
                                     </p>
                                     <div className="absolute top-full right-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-[#3a3a3a]"></div>
@@ -148,13 +159,14 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                             DataSet Name:
                         </label>
                         <div className="flex-1 ml-4 relative group">
-                            <input
-                                type="text"
+                            <select
                                 value={config.dataSetName}
                                 onChange={(e) =>
-                                    onConfigChange("dataSetName", e.target.value)
+                                    onConfigChange(
+                                        "dataSetName",
+                                        e.target.value
+                                    )
                                 }
-                                placeholder="请选择数据集名称"
                                 className={`
                                     w-full px-3 py-2 rounded-md border
                                     ${darkMode === "dark"
@@ -163,7 +175,14 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                     }
                                     focus:outline-none focus:border-[#4d3dc3]
                                 `}
-                            />
+                            >
+                                <option value="">请选择数据集名称</option>
+                                {dataSets.map((dataset, index) => (
+                                    <option key={index} value={dataset.value}>
+                                        {dataset.label}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
                     </div>
                 </div>
