@@ -2,12 +2,15 @@ import React, { useEffect, useState } from "react";
 import { ChevronDown, Plus } from "lucide-react";
 import { appContext } from "../../../hooks/provider";
 import ToolConfigurationForm, { ToolConfig } from "./ToolConfigurationForm";
+import KnowledgeConfigurationForm, {
+    KnowledgeConfig,
+} from "./KnowledgeConfigurationForm";
 
 export interface CustomAgentData {
     name: string;
     llmModel: string;
     toolConfigs: ToolConfig[];
-    knowledge: string;
+    knowledge: KnowledgeConfig;
 }
 
 interface CustomAgentFormProps {
@@ -30,7 +33,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         toolConfigs: initialData?.toolConfigs || [
             { id: "1", tools: "", url: "", token: "", workerName: "" },
         ],
-        knowledge: initialData?.knowledge || "none",
+        knowledge: initialData?.knowledge || { apiKey: "", dataSetName: "" },
     });
 
     // 为每个下拉框添加独立的状态
@@ -65,6 +68,8 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         { value: "custom", label: "自定义知识库" },
         { value: "besiii", label: "BESIII实验知识库" },
     ];
+
+
 
     const handleInputChange = (field: keyof CustomAgentData, value: string) => {
         setFormData((prev) => ({ ...prev, [field]: value }));
@@ -103,6 +108,16 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                 ),
             }));
         }
+    };
+
+    const handleKnowledgeConfigChange = (
+        field: keyof KnowledgeConfig,
+        value: string
+    ) => {
+        setFormData((prev) => ({
+            ...prev,
+            knowledge: { ...prev.knowledge, [field]: value },
+        }));
     };
 
     const handleSubmit = (e: React.FormEvent) => {
@@ -295,29 +310,11 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                 ))}
 
                 {/* Knowledge Field */}
-                <div className="flex items-center">
-                    <label
-                        className={`
-                        w-20 text-sm font-medium
-                        ${darkMode === "dark"
-                                ? "text-[#e5e5e5]"
-                                : "text-[#4a5568]"
-                            }
-                    `}
-                    >
-                        Knowledge:
-                    </label>
-                    <div className="flex-1 ml-4">
-                        {renderSelect(
-                            formData.knowledge,
-                            knowledgeOptions,
-                            (value) => handleInputChange("knowledge", value),
-                            "Value",
-                            knowledgeOpen,
-                            setKnowledgeOpen
-                        )}
-                    </div>
-                </div>
+                <KnowledgeConfigurationForm
+                    config={formData.knowledge}
+                    onConfigChange={handleKnowledgeConfigChange}
+                    darkMode={darkMode}
+                />
 
                 {/* Action Buttons */}
                 <div className="flex gap-4 pt-4">
