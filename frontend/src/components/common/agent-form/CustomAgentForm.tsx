@@ -1,13 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { Plus, X, ChevronDown } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import { appContext } from "../../../hooks/provider";
-
-export interface ToolConfig {
-    id: string;
-    tools: string;
-    url: string;
-    token: string;
-}
+import ToolConfigurationForm, { ToolConfig } from "./ToolConfigurationForm";
 
 export interface CustomAgentData {
     name: string;
@@ -34,7 +28,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         name: initialData?.name || "",
         llmModel: initialData?.llmModel || "MCP",
         toolConfigs: initialData?.toolConfigs || [
-            { id: "1", tools: "", url: "", token: "" },
+            { id: "1", tools: "", url: "", token: "", workerName: "" },
         ],
         knowledge: initialData?.knowledge || "none",
     });
@@ -43,13 +37,17 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
     const [llmModelOpen, setLlmModelOpen] = useState(false);
     const [knowledgeOpen, setKnowledgeOpen] = useState(false);
     const [toolsOpen, setToolsOpen] = useState<{ [key: string]: boolean }>({});
-    const [llmModelOptions, setLlmModelOptions] = useState<{ value: string; label: string }[]>([]);
+    const [llmModelOptions, setLlmModelOptions] = useState<
+        { value: string; label: string }[]
+    >([]);
 
     useEffect(() => {
         if (models) {
-            setLlmModelOptions(models.map((model) => ({ value: model.id, label: model.id })))
+            setLlmModelOptions(
+                models.map((model) => ({ value: model.id, label: model.id }))
+            );
         }
-    }, [models])
+    }, [models]);
     // LLM Model options
     // const llmModelOptions = [
     //     { value: "MCP", label: "MCP" },
@@ -59,7 +57,6 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
     //     { value: "Claude", label: "Claude" },
     // ];
 
-
     // Knowledge options
     const knowledgeOptions = [
         { value: "none", label: "无知识库" },
@@ -67,15 +64,6 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         { value: "scientific", label: "科学知识库" },
         { value: "custom", label: "自定义知识库" },
         { value: "besiii", label: "BESIII实验知识库" },
-    ];
-
-    // Tools options (示例)
-    const toolsOptions = [
-        { value: "web_search", label: "Web搜索" },
-        { value: "file_reader", label: "文件读取" },
-        { value: "calculator", label: "计算器" },
-        { value: "code_executor", label: "代码执行" },
-        { value: "database", label: "数据库查询" },
     ];
 
     const handleInputChange = (field: keyof CustomAgentData, value: string) => {
@@ -101,7 +89,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
             ...prev,
             toolConfigs: [
                 ...prev.toolConfigs,
-                { id: newId, tools: "", url: "", token: "" },
+                { id: newId, tools: "", url: "", token: "", workerName: "" },
             ],
         }));
     };
@@ -274,76 +262,23 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
 
                 {/* Tool Configs */}
                 {formData.toolConfigs.map((config, index) => (
-                    <div
-                        key={config.id}
-                        className={`
-                            border-2 rounded-md p-4
-                            ${darkMode === "dark"
-                                ? "border-[#e5e5e530] bg-[#3a3a3a]"
-                                : "border-[#e2e8f0] bg-[#f9fafb]"
+                    <div key={config.id} className="space-y-4">
+                        <ToolConfigurationForm
+                            config={config}
+                            index={index}
+                            onConfigChange={handleToolConfigChange}
+                            onRemove={removeToolConfig}
+                            canRemove={formData.toolConfigs.length > 1}
+                            toolsOpen={toolsOpen[config.id] || false}
+                            onToolsOpenChange={(open) =>
+                                setToolsOpen((prev) => ({
+                                    ...prev,
+                                    [config.id]: open,
+                                }))
                             }
-                        `}
-                    >
-                        <div className="flex items-center justify-between mb-3">
-                            <span
-                                className={`
-                                text-sm font-medium
-                                ${darkMode === "dark"
-                                        ? "text-[#e5e5e5]"
-                                        : "text-[#4a5568]"
-                                    }
-                            `}
-                            >
-                                Configuration {index + 1}
-                            </span>
-                            {formData.toolConfigs.length > 1 && (
-                                <button
-                                    type="button"
-                                    onClick={() => removeToolConfig(config.id)}
-                                    className={`
-                                        p-1 rounded-full hover:bg-red-100
-                                        ${darkMode === "dark"
-                                            ? "hover:bg-red-900"
-                                            : ""
-                                        }
-                                    `}
-                                >
-                                    <X className="w-4 h-4 text-red-500" />
-                                </button>
-                            )}
-                        </div>
-
-                        {/* Tools */}
-                        <div className="flex items-center mb-3">
-                            <label
-                                className={`
-                                w-16 text-sm font-medium
-                                ${darkMode === "dark"
-                                        ? "text-[#e5e5e5]"
-                                        : "text-[#4a5568]"
-                                    }
-                            `}
-                            >
-                                Tools:
-                            </label>
-                            <div className="flex-1 ml-4 flex items-center gap-2">
-                                {renderSelect(
-                                    config.tools,
-                                    toolsOptions,
-                                    (value) =>
-                                        handleToolConfigChange(
-                                            config.id,
-                                            "tools",
-                                            value
-                                        ),
-                                    "Value",
-                                    toolsOpen[config.id] || false,
-                                    (open) =>
-                                        setToolsOpen((prev) => ({
-                                            ...prev,
-                                            [config.id]: open,
-                                        }))
-                                )}
+                        />
+                        {index === formData.toolConfigs.length - 1 && (
+                            <div className="flex justify-center">
                                 <button
                                     type="button"
                                     onClick={addToolConfig}
@@ -355,77 +290,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                     <Plus className="w-4 h-4" />
                                 </button>
                             </div>
-                        </div>
-
-                        {/* URL */}
-                        <div className="flex items-center mb-3">
-                            <label
-                                className={`
-                                w-16 text-sm font-medium
-                                ${darkMode === "dark"
-                                        ? "text-[#e5e5e5]"
-                                        : "text-[#4a5568]"
-                                    }
-                            `}
-                            >
-                                URL:
-                            </label>
-                            <input
-                                type="text"
-                                value={config.url}
-                                onChange={(e) =>
-                                    handleToolConfigChange(
-                                        config.id,
-                                        "url",
-                                        e.target.value
-                                    )
-                                }
-                                placeholder="Value"
-                                className={`
-                                    flex-1 ml-4 px-3 py-2 rounded-md border
-                                    ${darkMode === "dark"
-                                        ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                                        : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
-                                    }
-                                    focus:outline-none focus:border-[#4d3dc3]
-                                `}
-                            />
-                        </div>
-
-                        {/* Token */}
-                        <div className="flex items-center">
-                            <label
-                                className={`
-                                w-16 text-sm font-medium
-                                ${darkMode === "dark"
-                                        ? "text-[#e5e5e5]"
-                                        : "text-[#4a5568]"
-                                    }
-                            `}
-                            >
-                                Token:
-                            </label>
-                            <input
-                                type="password"
-                                value={config.token}
-                                onChange={(e) =>
-                                    handleToolConfigChange(
-                                        config.id,
-                                        "token",
-                                        e.target.value
-                                    )
-                                }
-                                placeholder="Value"
-                                className={`
-                                    flex-1 ml-4 px-3 py-2 rounded-md border
-                                    ${darkMode === "dark"
-                                        ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                                        : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
-                                    }
-                                    focus:outline-none focus:border-[#4d3dc3]
-                                `}
-                            />
-                        </div>
+                        )}
                     </div>
                 ))}
 

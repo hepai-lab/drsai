@@ -3,6 +3,7 @@ import { ChevronDown, Bot, Search, X } from "lucide-react";
 import { appContext } from "../../hooks/provider";
 import CustomAgentForm, { CustomAgentData } from "./agent-form/CustomAgentForm";
 import { agentAPI } from "../views/api";
+import { ToolConfig } from "./agent-form/ToolConfigurationForm";
 
 export interface Agent {
     mode: string;
@@ -44,6 +45,12 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
     const searchInputRef = useRef<HTMLInputElement>(null);
     const { darkMode } = React.useContext(appContext);
     const { user } = React.useContext(appContext);
+    const [toolConfigs, setToolConfigs] = useState<ToolConfig[]>([
+        { id: "1", tools: "MCP", url: "", token: "", workerName: "" },
+        { id: "2", tools: "HepAI", url: "", token: "", workerName: "" },
+        { id: "3", tools: "OpenAPI", url: "", token: "", workerName: "" },
+    ]);
+    const [toolsOpen, setToolsOpen] = useState<{ [key: string]: boolean }>({});
 
     // Filter agents based on search term
     const filteredAgents = useMemo(() => {
@@ -184,6 +191,31 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             style={{ color: "var(--color-magenta-800)" }}
         />
     );
+
+    const handleConfigChange = (
+        id: string,
+        field: keyof ToolConfig,
+        value: string
+    ) => {
+        setToolConfigs((prev) =>
+            prev.map((config) =>
+                config.id === id ? { ...config, [field]: value } : config
+            )
+        );
+    };
+
+    const handleRemove = (id: string) => {
+        setToolConfigs((prev) => prev.filter((config) => config.id !== id));
+    };
+
+    const addConfig = () => {
+        const newId = (toolConfigs.length + 1).toString();
+        setToolConfigs((prev) => [
+            ...prev,
+            { id: newId, tools: "", url: "", token: "", workerName: "" },
+        ]);
+    };
+
 
     return (
         <>
