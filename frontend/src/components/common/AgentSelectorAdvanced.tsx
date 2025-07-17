@@ -2,9 +2,10 @@ import React, { useState, useRef, useEffect, useMemo } from "react";
 import { ChevronDown, Bot, Search, X } from "lucide-react";
 import { appContext } from "../../hooks/provider";
 import CustomAgentForm, { CustomAgentData } from "./agent-form/CustomAgentForm";
+import { agentAPI } from "../views/api";
 
 export interface Agent {
-    id: string;
+    mode: string;
     name: string;
     type: "custom" | "drsai-besiii" | "drsai-agent" | "magentic-one" | "remote";
     description?: string;
@@ -14,6 +15,7 @@ export interface Agent {
 
 interface AgentSelectorAdvancedProps {
     agents: Agent[];
+    models: { id: string }[];
     selectedAgent?: Agent;
     onAgentSelect: (agent: Agent) => void;
     placeholder?: string;
@@ -25,6 +27,7 @@ interface AgentSelectorAdvancedProps {
 
 const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
     agents,
+    models,
     selectedAgent,
     onAgentSelect,
     placeholder = "Select Your Agent",
@@ -40,6 +43,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
     const dropdownRef = useRef<HTMLDivElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const { darkMode } = React.useContext(appContext);
+    const { user } = React.useContext(appContext);
 
     // Filter agents based on search term
     const filteredAgents = useMemo(() => {
@@ -126,6 +130,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         // 如果选择的是Custom Agent，显示配置表单
         if (agent.name === "Custom Agent") {
             setShowCustomForm(true);
+            onAgentSelect(agent);
             setIsOpen(false);
             setSearchTerm("");
             setFocusedIndex(-1);
@@ -137,15 +142,17 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         }
     };
 
-    const handleCustomFormSubmit = (data: CustomAgentData) => {
+    const handleCustomFormSubmit = async (data: CustomAgentData) => {
         // 创建新的自定义智能体
         const newCustomAgent: Agent = {
-            id: `custom-${Date.now()}`,
+            mode: `custom-${Date.now()}`,
             name: data.name || "Custom Agent",
             type: "custom",
             description: `LLM: ${data.llmModel}, Tools: ${data.toolConfigs.length} config(s)`,
         };
 
+
+        const res = await agentAPI.saveAgentConfig(user?.email || "", newCustomAgent);
         onAgentSelect(newCustomAgent);
         setShowCustomForm(false);
     };
@@ -189,16 +196,14 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                     className={`
           w-full flex items-center justify-between px-4 py-3 rounded-lg
           transition-all duration-200 ease-in-out
-          ${
-              darkMode === "dark"
-                  ? "bg-[#3a3a3a] text-[#e5e5e5] border border-[#e5e5e530] hover:border-[#e5e5e560]"
-                  : "bg-white text-[#4a5568] border border-[#e2e8f0] hover:border-[#4d3dc3]"
-          }
-          ${
-              disabled
-                  ? "opacity-50 cursor-not-allowed"
-                  : "cursor-pointer hover:shadow-md"
-          }
+          ${darkMode === "dark"
+                            ? "bg-[#3a3a3a] text-[#e5e5e5] border border-[#e5e5e530] hover:border-[#e5e5e560]"
+                            : "bg-white text-[#4a5568] border border-[#e2e8f0] hover:border-[#4d3dc3]"
+                        }
+          ${disabled
+                            ? "opacity-50 cursor-not-allowed"
+                            : "cursor-pointer hover:shadow-md"
+                        }
         `}
                     aria-haspopup="listbox"
                     aria-expanded={isOpen}
@@ -210,9 +215,8 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                         </span>
                     </div>
                     <ChevronDown
-                        className={`w-4 h-4 transition-transform duration-200 ${
-                            isOpen ? "rotate-180" : ""
-                        }`}
+                        className={`w-4 h-4 transition-transform duration-200 ${isOpen ? "rotate-180" : ""
+                            }`}
                     />
                 </button>
 
@@ -222,11 +226,10 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                         className={`
             absolute top-full left-0 right-0 mt-1 z-50 rounded-lg shadow-lg
             border transition-all duration-200 ease-in-out
-            ${
-                darkMode === "dark"
-                    ? "bg-[#3a3a3a] border-[#e5e5e530] shadow-black/20"
-                    : "bg-white border-[#e2e8f0] shadow-gray-200/50"
-            }
+            ${darkMode === "dark"
+                                ? "bg-[#3a3a3a] border-[#e5e5e530] shadow-black/20"
+                                : "bg-white border-[#e2e8f0] shadow-gray-200/50"
+                            }
           `}
                         style={{
                             maxHeight,
@@ -239,11 +242,10 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                                 <div
                                     className={`
                 relative flex items-center
-                ${
-                    darkMode === "dark"
-                        ? "bg-[#444444] border-[#e5e5e530]"
-                        : "bg-[#f9fafb] border-[#e2e8f0]"
-                }
+                ${darkMode === "dark"
+                                            ? "bg-[#444444] border-[#e5e5e530]"
+                                            : "bg-[#f9fafb] border-[#e2e8f0]"
+                                        }
                 border rounded-md px-3 py-2
               `}
                                 >
@@ -294,11 +296,11 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                                 {filteredAgents.map((agent, index) => {
                                     const isFocused = index === focusedIndex;
                                     const isSelected =
-                                        selectedAgent?.id === agent.id;
+                                        selectedAgent?.mode === agent.mode;
 
                                     return (
                                         <button
-                                            key={agent.id}
+                                            key={agent.mode}
                                             type="button"
                                             onClick={() =>
                                                 handleAgentSelect(agent)
@@ -306,25 +308,22 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                                             className={`
                       w-full flex items-center gap-3 px-3 py-2 rounded-md
                       text-sm transition-colors duration-150
-                      ${
-                          darkMode === "dark"
-                              ? "text-[#e5e5e5] hover:bg-[#444444]"
-                              : "text-[#4a5568] hover:bg-[#f9fafb]"
-                      }
-                      ${
-                          isSelected
-                              ? darkMode === "dark"
-                                  ? "bg-[#4d3dc3] text-white"
-                                  : "bg-[#e7e5f2] text-[#4d3dc3]"
-                              : ""
-                      }
-                      ${
-                          isFocused && !isSelected
-                              ? darkMode === "dark"
-                                  ? "bg-[#444444]"
-                                  : "bg-[#f9fafb]"
-                              : ""
-                      }
+                      ${darkMode === "dark"
+                                                    ? "text-[#e5e5e5] hover:bg-[#444444]"
+                                                    : "text-[#4a5568] hover:bg-[#f9fafb]"
+                                                }
+                      ${isSelected
+                                                    ? darkMode === "dark"
+                                                        ? "bg-[#4d3dc3] text-white"
+                                                        : "bg-[#e7e5f2] text-[#4d3dc3]"
+                                                    : ""
+                                                }
+                      ${isFocused && !isSelected
+                                                    ? darkMode === "dark"
+                                                        ? "bg-[#444444]"
+                                                        : "bg-[#f9fafb]"
+                                                    : ""
+                                                }
                     `}
                                         >
                                             <RobotIcon />
@@ -336,11 +335,10 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                                                     <div
                                                         className={`
                           text-xs truncate mt-1
-                          ${
-                              darkMode === "dark"
-                                  ? "text-[#e5e5e58f]"
-                                  : "text-[#4a5568]"
-                          }
+                          ${darkMode === "dark"
+                                                                ? "text-[#e5e5e58f]"
+                                                                : "text-[#4a5568]"
+                                                            }
                         `}
                                                     >
                                                         {agent.description}
@@ -362,6 +360,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                     <div className="w-full max-w-2xl">
                         <div className="min-h-0">
                             <CustomAgentForm
+                                models={models}
                                 onSubmit={handleCustomFormSubmit}
                                 onCancel={handleCustomFormCancel}
                             />
