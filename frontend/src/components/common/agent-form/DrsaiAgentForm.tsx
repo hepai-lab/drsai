@@ -2,6 +2,9 @@ import React, { useEffect, useState } from "react";
 import { ChevronDown, Plus } from "lucide-react";
 import { appContext } from "../../../hooks/provider";
 import ToolConfigurationForm, { ToolConfig } from "./ToolConfigurationForm";
+import KnowledgeConfigurationForm, {
+    KnowledgeConfig,
+} from "./KnowledgeConfigurationForm";
 
 export interface DrsaiAgentData {
     name: string;
@@ -10,7 +13,6 @@ export interface DrsaiAgentData {
     };
     coder: {
         llmModel: string;
-        knowledge: string;
     };
     tester: ToolConfig;
     host: {
@@ -19,6 +21,7 @@ export interface DrsaiAgentData {
     parser: {
         llmModel: string;
     };
+    knowledge: KnowledgeConfig;
 }
 
 interface DrsaiAgentFormProps {
@@ -38,7 +41,7 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
     const [formData, setFormData] = useState<DrsaiAgentData>({
         name: initialData?.name || "",
         planer: initialData?.planer || { llmModel: "" },
-        coder: initialData?.coder || { llmModel: "", knowledge: "" },
+        coder: initialData?.coder || { llmModel: "" },
         tester: initialData?.tester || {
             id: "1",
             tools: "",
@@ -48,6 +51,7 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
         },
         host: initialData?.host || { llmModel: "" },
         parser: initialData?.parser || { llmModel: "" },
+        knowledge: initialData?.knowledge || { apiKey: "", dataSetName: "" },
     });
 
     // 为每个下拉框添加独立的状态
@@ -97,6 +101,16 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
         setFormData((prev) => ({
             ...prev,
             tester: { ...prev.tester, [field]: value },
+        }));
+    };
+
+    const handleKnowledgeConfigChange = (
+        field: keyof KnowledgeConfig,
+        value: string
+    ) => {
+        setFormData((prev) => ({
+            ...prev,
+            knowledge: { ...prev.knowledge, [field]: value },
         }));
     };
 
@@ -307,7 +321,6 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
                 onSubmit={handleSubmit}
                 className="space-y-4 pr-4 h-[400px] overflow-auto"
             >
-
                 {/* Planer Section */}
                 {renderSection(
                     "planer",
@@ -318,12 +331,35 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
                 {/* Coder Section */}
                 {renderSection(
                     "coder",
-                    [
-                        { key: "llmModel", label: "LLM Model", type: "select" },
-                        { key: "knowledge", label: "Knowledge", type: "text" },
-                    ],
+                    [{ key: "llmModel", label: "LLM Model", type: "select" }],
                     "coder"
                 )}
+
+                {/* Knowledge Section */}
+                <div className="space-y-3">
+                    <div className="flex items-center">
+                        <div className="w-2 h-4 bg-[#4d3dc3] rounded mr-3"></div>
+                        <h3
+                            className={`
+                            text-sm font-medium
+                            ${darkMode === "dark"
+                                    ? "text-[#e5e5e5]"
+                                    : "text-[#4a5568]"
+                                }
+                        `}
+                        >
+                            Knowledge:
+                        </h3>
+                    </div>
+                    <div className="ml-5">
+                        <KnowledgeConfigurationForm
+                            config={formData.knowledge}
+                            onConfigChange={handleKnowledgeConfigChange}
+                            darkMode={darkMode}
+                            showLabel={false}
+                        />
+                    </div>
+                </div>
 
                 {/* Tester Section */}
                 <div className="space-y-3">
