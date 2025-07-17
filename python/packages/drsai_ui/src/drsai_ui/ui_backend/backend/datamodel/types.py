@@ -113,5 +113,5 @@ class Agent_mode(BaseModel):
     name: str
     description: str
 
-class AgentModeConfig(BaseModel):
+class AgentModeSetting(BaseModel):
     agent_modes: List[Agent_mode] = []

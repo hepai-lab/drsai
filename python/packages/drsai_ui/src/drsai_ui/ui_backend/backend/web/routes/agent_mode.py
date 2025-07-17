@@ -2,7 +2,7 @@
 from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException
 
-from ...datamodel.db import AgentModeSettings
+from ...datamodel.db import AgentModeSettings, AgentModeConfig
 from ..deps import get_db
 from .....agent_factory.agent_mode_cofigs import get_agent_mode_config
 
@@ -20,6 +20,19 @@ async def get_agent_mode_settings(user_id: str, db=Depends(get_db)) -> Dict:
             default_settings = AgentModeSettings(user_id=user_id, config=config)
             db.upsert(default_settings)
             response = db.get(AgentModeSettings, filters={"user_id": user_id})
+        settings = response.data[0]
+        return {"status": True, "data": settings}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+@router.post("/")
+async def update_agent_mode_settings(mode_config: AgentModeConfig, db=Depends(get_db)) -> Dict:
+    try:
+        # response = db.get(AgentModeConfig, filters={"user_id": mode_config.user_id})
+        default_settings = AgentModeConfig(user_id=mode_config.user_id, config=mode_config.config)
+        db.upsert(default_settings)
+        response = db.get(AgentModeConfig, filters={"user_id": mode_config.user_id})
         settings = response.data[0]
         return {"status": True, "data": settings}
     
