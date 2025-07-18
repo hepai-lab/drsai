@@ -13,10 +13,12 @@ import PlanList from "../features/Plans/PlanList";
 import type { Session } from "../types/datamodel";
 import { RunStatus } from "../types/datamodel";
 import { getServerUrl } from "../utils";
-import { sessionAPI } from "./api";
+import { agentAPI, sessionAPI, settingsAPI } from "./api";
 import ChatView from "./chat/chat";
 import { SessionEditor } from "./session_editor";
 import { Sidebar } from "./sidebar";
+import AgentSelectorAdvanced, { Agent } from "../common/AgentSelectorAdvanced";
+import { parse } from "yaml";
 
 interface SessionWebSocket {
   socket: WebSocket;
@@ -48,12 +50,97 @@ export const SessionManager: React.FC = () => {
 
   const { user } = useContext(appContext);
   const { session, setSession, sessions, setSessions } = useConfigStore();
+  const [secretKey, setSecretKey] = React.useState<string | undefined>();
+  const [baseUrl, setBaseUrl] = React.useState<string | undefined>();
+  const [selectedAgent, setSelectedAgent] = React.useState<Agent | undefined>();
+  const [models, setModels] = React.useState<{ id: string }[]>([]);
+  const [agents, setAgents] = React.useState<Agent[]>([
+    {
+      mode: "custom",
+      name: "Custom Agent",
+      type: "custom",
+      description: "自定义智能体，可根据需求进行个性化配置",
+    },
+    {
+      mode: "besiii",
+      name: "Dr.Sai-BESIII",
+      type: "drsai-besiii",
+      description: "BESIII实验专用智能体，专为高能物理实验优化",
+    },
+    {
+      mode: "drsai",
+      name: "Dr.Sai Agent",
+      type: "drsai-agent",
+      description: "Dr.Sai通用智能体，适用于多种科学计算任务",
+    },
+    {
+      mode: "magentic",
+      name: "Magentic-one",
+      type: "magentic-one",
+      description: "Magentic-one智能体，支持高级AI协作功能",
+    },
+    {
+      mode: "remote",
+      name: "Remote Agent",
+      type: "remote",
+      description: "远程智能体，可连接到外部AI服务",
+    },
+  ]);
+  const handleAgentList = async (agents: Agent[]) => {
+    console.log("Fetching agent list for user:", user?.email);
+    try {
+      const res = await agentAPI.getAgentList(user?.email || "");
+      setAgents(res.config.agent_modes);
+    } catch (error) {
+      console.error("Error fetching agent list:", error);
 
+    }
+  }
+
+  React.useEffect(() => {
+    handleAgentList(agents);
+  }, [])
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem("sessionSidebar", JSON.stringify(isSidebarOpen));
     }
   }, [isSidebarOpen]);
+
+  React.useEffect(() => {
+    const loadSettings = async () => {
+      if (user?.email) {
+        try {
+          // const settings = useSettingsStore.getState().config; // Use the settings from the store
+          // const parsed = parse(settings.model_configs);
+          const settings = await settingsAPI.getSettings(user.email);
+          const parsed = parse(settings.model_configs);
+          const secretKey = parsed.model_config.config.api_key;
+          const baseUrl = parsed.model_config.config.base_url;
+          setSecretKey(secretKey);
+          setBaseUrl(baseUrl);
+        } catch (error) {
+          console.error("Failed to load settings");
+        }
+      }
+    };
+    loadSettings();
+  }, [user?.email]);
+
+  React.useEffect(() => {
+    const loadModels = async () => {
+      if (secretKey) {
+        const response = await fetch(`${baseUrl}/models`, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${secretKey}`,
+          }
+        })
+        const data = (await response.json()).data;
+        setModels(data);
+      }
+    }
+    loadModels();
+  }, [secretKey]);
 
   const fetchSessions = useCallback(async () => {
     if (!user?.email) return;
@@ -466,9 +553,8 @@ export const SessionManager: React.FC = () => {
 
       <div className="flex flex-1 relative">
         <div
-          className={`absolute left-0 top-0 h-full transition-all duration-200 ease-in-out ${
-            isSidebarOpen ? "w-77" : "w-0"
-          }`}
+          className={`absolute left-0 top-0 h-full transition-all duration-200 ease-in-out ${isSidebarOpen ? "w-77" : "w-0"
+            }`}
         >
           <Sidebar
             isOpen={isSidebarOpen}
@@ -505,10 +591,17 @@ export const SessionManager: React.FC = () => {
         </div>
 
         <div
-          className={`flex-1 transition-all -mr-4 duration-200 w-[200px] ${
-            isSidebarOpen ? "ml-64" : "ml-0"
-          }`}
+          className={`flex-1 transition-all -mr-4 duration-200 w-[200px] ${isSidebarOpen ? "ml-64" : "ml-0"
+            }`}
         >
+          <AgentSelectorAdvanced
+            agents={agents}
+            models={models}
+            selectedAgent={selectedAgent}
+            onAgentSelect={setSelectedAgent}
+            placeholder="Select Your Agent"
+            className="w-96"
+          />
           {activeSubMenuItem === "current_session" ? (
             session && sessions.length > 0 ? (
               <div className="pl-4">{chatViews}</div>

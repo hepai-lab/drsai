@@ -952,110 +952,19 @@ export default function ChatView({
     }
   };
 
-  const [selectedAgent, setSelectedAgent] = React.useState<Agent | undefined>();
-  const [secretKey, setSecretKey] = React.useState<string | undefined>();
-  const [baseUrl, setBaseUrl] = React.useState<string | undefined>();
-  const [models, setModels] = React.useState<{ id: string }[]>([]);
-  const [agents, setAgents] = React.useState<Agent[]>([
-    {
-      mode: "custom",
-      name: "Custom Agent",
-      type: "custom",
-      description: "自定义智能体，可根据需求进行个性化配置",
-    },
-    {
-      mode: "besiii",
-      name: "Dr.Sai-BESIII",
-      type: "drsai-besiii",
-      description: "BESIII实验专用智能体，专为高能物理实验优化",
-    },
-    {
-      mode: "drsai",
-      name: "Dr.Sai Agent",
-      type: "drsai-agent",
-      description: "Dr.Sai通用智能体，适用于多种科学计算任务",
-    },
-    {
-      mode: "magentic",
-      name: "Magentic-one",
-      type: "magentic-one",
-      description: "Magentic-one智能体，支持高级AI协作功能",
-    },
-    {
-      mode: "remote",
-      name: "Remote Agent",
-      type: "remote",
-      description: "远程智能体，可连接到外部AI服务",
-    },
-  ]);
 
-  const handleAgentList = async (agents: Agent[]) => {
-    console.log("Fetching agent list for user:", user?.email);
-    try {
-      const res = await agentAPI.getAgentList(user?.email || "");
-      setAgents(res.config.agent_modes);
-    } catch (error) {
-      console.error("Error fetching agent list:", error);
-
-    }
-  }
-
-  React.useEffect(() => {
-    handleAgentList(agents);
-  }, [])
   if (!visible) {
     return null;
   }
 
-  React.useEffect(() => {
-    const loadSettings = async () => {
-      if (user?.email) {
-        try {
-          // const settings = useSettingsStore.getState().config; // Use the settings from the store
-          // const parsed = parse(settings.model_configs);
-          const settings = await settingsAPI.getSettings(user.email);
-          const parsed = parse(settings.model_configs);
-          const secretKey = parsed.model_config.config.api_key;
-          const baseUrl = parsed.model_config.config.base_url;
-          setSecretKey(secretKey);
-          setBaseUrl(baseUrl);
-        } catch (error) {
-          console.error("Failed to load settings");
-        }
-      }
-    };
-    loadSettings();
-  }, [user?.email]);
 
-  React.useEffect(() => {
-    const loadModels = async () => {
-      if (secretKey) {
-        const response = await fetch(`${baseUrl}/models`, {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${secretKey}`,
-          }
-        })
-        const data = (await response.json()).data;
-        setModels(data);
-      }
-    }
-    loadModels();
-  }, [secretKey]);
 
 
   return (
     <div className="text-primary h-[calc(100vh-100px)] bg-primary relative rounded flex-1 scroll w-full">
       {contextHolder}
       <div className="flex flex-col h-full w-full">
-        <AgentSelectorAdvanced
-          agents={agents}
-          models={models}
-          selectedAgent={selectedAgent}
-          onAgentSelect={setSelectedAgent}
-          placeholder="Select Your Agent"
-          className="w-96"
-        />
+
         {/* Progress Bar - Sticky at top */}
         <div className="progress-container" style={{ height: "3.5rem" }}>
           <div
