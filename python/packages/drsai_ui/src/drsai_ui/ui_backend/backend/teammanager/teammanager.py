@@ -164,11 +164,12 @@ class TeamManager:
                         raise e
                 settings_config["model_configs"] = model_configs
 
-                # 判断是否使用本地加载的
-                self.mode = model_configs.get("Use_default_Agent_Groupchat_mode", {}).get("mode", None)
+                # 判断前端的agent mode配置, 并进行相应的agent/team的创建
+                agent_mode_config: dict[str, Any] = settings_config.pop("agent_mode_config", {})
+                self.mode = agent_mode_config.get("mode", "magentic-one")
+                
                 if self.mode in ["magentic-one"]:
-                    model_configs_new = model_configs["Use_default_Agent_Groupchat_mode"]["config"]
-                    settings_config["model_configs"] = model_configs_new
+                    settings_config["model_configs"] = model_configs
                     team, novnc_port, playwright_port = await create_magentic_one_team(
                         team_config = team_config,
                         state = state,
@@ -183,10 +184,6 @@ class TeamManager:
                     self.novnc_port = novnc_port
                     self.playwright_port = playwright_port
                 else:
-                    # from drsai.agent_factory.load_agent import a_load_agent_factory_from_config
-                    # agent_factory= await a_load_agent_factory_from_config(model_configs, mode = "ui")
-                    # team = await agent_factory()
-                    
                     team, novnc_port, playwright_port = await create_magentic_round_team(
                         team_config = team_config,
                         state = state,
@@ -198,6 +195,7 @@ class TeamManager:
                         load_from_config = self.load_from_config,
                         inside_docker = self.inside_docker,
                         run_info = run.model_json_schema(),
+                        agent_mode_config = agent_mode_config,
                     )
                     self.novnc_port = novnc_port
                     self.playwright_port = playwright_port
