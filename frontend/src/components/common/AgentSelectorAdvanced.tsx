@@ -1,18 +1,19 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
-import { ChevronDown, Bot, Search, X } from "lucide-react";
+import { Bot, ChevronDown, Search, X } from "lucide-react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { appContext } from "../../hooks/provider";
+import { useSettingsStore } from "../store";
+import { agentAPI, settingsAPI } from "../views/api";
 import CustomAgentForm, { CustomAgentData } from "./agent-form/CustomAgentForm";
 import DrsaiAgentForm, { DrsaiAgentData } from "./agent-form/DrsaiAgentForm";
 import { ToolConfig } from "./agent-form/ToolConfigurationForm";
-import { useSettingsStore, GeneralConfig } from "../store";
-import yaml from "yaml";
 export interface Agent {
     mode: string;
     name: string;
-    type: "custom" | "drsai-besiii" | "drsai-agent" | "magentic-one" | "remote";
+    type?: "custom" | "drsai-besiii" | "drsai-agent" | "magentic-one" | "remote";
     description?: string;
     icon?: React.ReactNode;
     tags?: string[];
+    config?: CustomAgentData
 }
 
 interface AgentSelectorAdvancedProps {
@@ -160,10 +161,10 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
     const handleCustomFormSubmit = async (data: CustomAgentData) => {
         // 创建新的自定义智能体
         const newCustomAgent: Agent = {
-            mode: `custom-${Date.now()}`,
+            mode: `custom`,
             name: data.name || "Custom Agent",
-            type: "custom",
-            description: `LLM: ${data.llmModel}, Tools: ${data.toolConfigs.length} config(s)`,
+            config: data,
+            user_id: user?.email || "",
         };
         const modelConfigYaml = `model_config: &client
   provider: ${data.llmProvider || "OpenAIChatCompletionClient"}
@@ -193,10 +194,11 @@ custom_agent_config:
         // };
         // useSettingsStore.getState().updateConfig(sessionSettingsConfig);
 
-        // const res = await agentAPI.saveAgentConfig(user?.email || "", newCustomAgent);
+        const res = await agentAPI.saveAgentConfig(newCustomAgent);
 
 
         console.log("Model Config YAML:", modelConfigYaml);
+
 
         // 更新 settings store
         const currentSettings = useSettingsStore.getState().config;
@@ -205,6 +207,20 @@ custom_agent_config:
             model_configs: modelConfigYaml,
         };
         useSettingsStore.getState().updateConfig(sessionSettingsConfig);
+        if (user?.email) {
+            try {
+                await settingsAPI.updateSettings(
+                    user.email,
+                    sessionSettingsConfig
+                );
+                console.log("Custom agent configuration saved to database");
+            } catch (error) {
+                console.error(
+                    "Failed to save custom agent configuration:",
+                    error
+                );
+            }
+        }
         onAgentSelect(newCustomAgent);
         setShowCustomForm(false);
     };
@@ -278,6 +294,11 @@ custom_agent_config:
             { id: newId, type: "", url: "", token: "", workerName: "" },
         ]);
     };
+
+    useEffect(() => {
+        const res = agentAPI.getAgentConfig("yqsun@ihep.ac.cn", "custom");
+        console.log(res, 'ss');
+    }, []);
 
 
     return (
