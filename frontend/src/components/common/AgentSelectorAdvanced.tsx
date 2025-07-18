@@ -165,12 +165,27 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             type: "custom",
             description: `LLM: ${data.llmModel}, Tools: ${data.toolConfigs.length} config(s)`,
         };
-        const modelConfig: Agent = {
-            mode: `custom-agent`,
-            config: data
-        };
+        const modelConfigYaml = `model_config: &client
+  provider: ${data.llmProvider || "OpenAIChatCompletionClient"}
+  config:
+    model: ${data.llmModel}
+    api_key: ${data.apiKey || "{{AUTO_PERSONAL_KEY_FOR_DR_SAI}}"}
+    base_url: ${data.baseUrl || "https://api.openai.com/v1"}
+    max_retries: 5
 
-        console.log("New Custom Agent Data:", newCustomAgent);
+orchestrator_client: *client
+coder_client: *client
+web_surfer_client: *client
+file_surfer_client: *client
+action_guard_client: *client
+
+# Custom agent configuration
+custom_agent_config:
+  name: ${data.name || "Custom Agent"}
+  type: "custom"
+  tools: ${JSON.stringify(data.toolConfigs)}
+  knowledge: ${JSON.stringify(data.knowledge)}
+`;
         // let currentSettings = settingsConfig;
         // const sessionSettingsConfig = {
         //     ...currentSettings,
@@ -179,6 +194,17 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         // useSettingsStore.getState().updateConfig(sessionSettingsConfig);
 
         // const res = await agentAPI.saveAgentConfig(user?.email || "", newCustomAgent);
+
+
+        console.log("Model Config YAML:", modelConfigYaml);
+
+        // 更新 settings store
+        const currentSettings = useSettingsStore.getState().config;
+        const sessionSettingsConfig = {
+            ...currentSettings,
+            model_configs: modelConfigYaml,
+        };
+        useSettingsStore.getState().updateConfig(sessionSettingsConfig);
         onAgentSelect(newCustomAgent);
         setShowCustomForm(false);
     };

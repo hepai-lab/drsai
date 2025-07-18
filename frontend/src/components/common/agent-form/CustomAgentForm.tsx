@@ -11,6 +11,9 @@ export interface CustomAgentData {
     llmModel: string;
     toolConfigs: ToolConfig[];
     knowledge: KnowledgeConfig;
+    llmProvider?: string;
+    apiKey?: string;
+    baseUrl?: string;
 }
 
 interface CustomAgentFormProps {
