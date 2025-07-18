@@ -4,7 +4,8 @@ import { appContext } from "../../hooks/provider";
 import CustomAgentForm, { CustomAgentData } from "./agent-form/CustomAgentForm";
 import DrsaiAgentForm, { DrsaiAgentData } from "./agent-form/DrsaiAgentForm";
 import { ToolConfig } from "./agent-form/ToolConfigurationForm";
-
+import { useSettingsStore, GeneralConfig } from "../store";
+import yaml from "yaml";
 export interface Agent {
     mode: string;
     name: string;
@@ -47,10 +48,12 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
     const { darkMode } = React.useContext(appContext);
     const { user } = React.useContext(appContext);
     const [toolConfigs, setToolConfigs] = useState<ToolConfig[]>([
-        { id: "1", tools: "MCP", url: "", token: "", workerName: "" },
-        { id: "2", tools: "HepAI", url: "", token: "", workerName: "" },
-        { id: "3", tools: "OpenAPI", url: "", token: "", workerName: "" },
+        { id: "1", type: "MCP", url: "", token: "", workerName: "" },
+        { id: "2", type: "HepAI", url: "", token: "", workerName: "" },
+        { id: "3", type: "OpenAPI", url: "", token: "", workerName: "" },
     ]);
+    const { config } = useSettingsStore();
+    // const settingsConfig = useSettingsStore((state) => state.config);
     // Filter agents based on search term
     const filteredAgents = useMemo(() => {
         if (!searchable || !searchTerm.trim()) {
@@ -162,8 +165,18 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             type: "custom",
             description: `LLM: ${data.llmModel}, Tools: ${data.toolConfigs.length} config(s)`,
         };
+        const modelConfig: Agent = {
+            mode: `custom-agent`,
+            config: data
+        };
 
-        console.log("New Custom Agent Data:", data);
+        console.log("New Custom Agent Data:", newCustomAgent);
+        // let currentSettings = settingsConfig;
+        // const sessionSettingsConfig = {
+        //     ...currentSettings,
+        //     model_configs: yaml.stringify(modelConfig),
+        // };
+        // useSettingsStore.getState().updateConfig(sessionSettingsConfig);
 
         // const res = await agentAPI.saveAgentConfig(user?.email || "", newCustomAgent);
         onAgentSelect(newCustomAgent);
@@ -180,7 +193,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             mode: `drsai-${Date.now()}`,
             name: data.name || "Dr.Sai Agent",
             type: "drsai-agent",
-            description: `Planer: ${data.planer.llmModel}, Coder: ${data.coder.llmModel}, Tester: ${data.tester.tools}`,
+            description: `Planer: ${data.planer.llmModel}, Coder: ${data.coder.llmModel}, Tester: ${data.tester.type}`,
         };
 
         // const res = await agentAPI.saveAgentConfig(user?.email || "", newDrsaiAgent);
@@ -236,7 +249,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         const newId = (toolConfigs.length + 1).toString();
         setToolConfigs((prev) => [
             ...prev,
-            { id: newId, tools: "", url: "", token: "", workerName: "" },
+            { id: newId, type: "", url: "", token: "", workerName: "" },
         ]);
     };
 

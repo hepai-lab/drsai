@@ -31,7 +31,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         name: initialData?.name || "",
         llmModel: initialData?.llmModel || "MCP",
         toolConfigs: initialData?.toolConfigs || [
-            { id: "1", tools: "", url: "", token: "", workerName: "" },
+            { id: "1", type: "", url: "", token: "", workerName: "" },
         ],
         knowledge: initialData?.knowledge || { apiKey: "", dataSetName: "" },
     });
@@ -74,7 +74,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
             ...prev,
             toolConfigs: [
                 ...prev.toolConfigs,
-                { id: newId, tools: "", url: "", token: "", workerName: "" },
+                { id: newId, type: "", url: "", token: "", workerName: "" },
             ],
         }));
     };

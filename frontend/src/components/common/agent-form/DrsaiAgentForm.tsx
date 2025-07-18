@@ -46,7 +46,7 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
         coder: initialData?.coder || { llmModel: "" },
         tester: initialData?.tester || {
             id: "1",
-            tools: "",
+            type: "",
             url: "",
             token: "",
             workerName: "",
