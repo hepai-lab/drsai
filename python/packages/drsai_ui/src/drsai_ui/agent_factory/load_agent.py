@@ -224,5 +224,48 @@ async def a_load_agent_factory_from_config(
     async def agent_factory() -> AssistantAgent:
         return assistant_list[0]
     return agent_factory
-         
+
+async def a_load_agent_factory_from_mode(
+        config: dict,
+        mode = "backend"
+        ) -> Callable[[], Union[AssistantAgent, BaseGroupChat]]:
+    '''
+    加载配置，创建AssistantAgent或BaseGroupChat实例
+    '''
+    name = config.get("name", "AssistantAgent")
+    system_message = config.get("system_message", None)
+    description = config.get("description", None)
+    model_client = get_model_client(config.get("model_client", None))
+    # 加载tools
+    mcp_tools = await a_load_mcp_tools(config.get("mcp_tools", []))
+    hepai_tools = await a_load_hepai_tools(config.get("hepai_tools", []))
+    source_tools = await a_load_source_code_tools(config.get("source_tools", []))
+    # TODO: 加载 agent memory_functions
+    # TODO: 加载RAG等knowledge function
+    knowledge_cofig = config.get("knowledge_cofig", None)
+    memory_function = None
+    if knowledge_cofig:
+        memory_function = await load_memory_function(knowledge_cofig)
+    if mode == "ui":
+        agent = MagenticAgent(
+            name=name,
+            system_message=system_message,
+            description=description,
+            model_client=model_client,
+            tools=mcp_tools+hepai_tools+source_tools if len(mcp_tools+hepai_tools+source_tools) > 0 else None,
+            memory_function=memory_function,
+        )
+    else:
+        agent = AssistantAgent( 
+            name=name,
+            system_message=system_message,
+            description=description,
+            model_client=model_client,
+            tools=mcp_tools+hepai_tools if len(mcp_tools+hepai_tools) > 0 else None,
+            memory_function=memory_function,
+        )
+    async def agent_factory() -> AssistantAgent:
+        return agent
+    return agent_factory
+
 

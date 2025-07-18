@@ -253,6 +253,7 @@ class AgentModeConfig(SQLModel, table=True):
     )  # pylint: disable=not-callable
     user_id: Optional[str] = None
     version: Optional[str] = "0.0.1"
+    mode: Optional[str] = "besiii"
     config: Optional[dict[str, Any]] = Field(
         default_factory=dict, sa_column=Column(JSON)
     )

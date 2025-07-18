@@ -70,8 +70,8 @@ class RemoteAgent(AssistantAgent):
             allow_reply_function: bool = False,
             reply_function: Callable | None = None,
             model_remote_configs: Dict[str, Any] = {},
-            thread_id: str|None = None,
-            run_id: str|None = None,
+            chat_id: str|None = None,
+            run_info: Dict[str, Any] = {},
             **kwargs):
         
         super().__init__(
@@ -89,14 +89,13 @@ class RemoteAgent(AssistantAgent):
         self.is_paused = False
         self._paused = asyncio.Event()
 
-        # self._rag_result = []
-        self._thread_id = thread_id
-        self._run_id = run_id
+        self._chat_id = chat_id
+        run_info.update(kwargs)
+        self._run_info = run_info
         
         # initialize the async model client
-        self.agent_name = model_remote_configs.get("name", "")
-        self.api_key = model_remote_configs.get("api_key", "")
-        self.url = model_remote_configs.get("url", "")
+        self.api_key = model_remote_configs.pop("api_key", "")
+        self.url = model_remote_configs.pop("url", "")
         self.new_hearers = {}
         self.new_hearers["Authorization"] = f"Bearer {self.api_key}"
         self.new_hearers["Content-Type"] = "application/json"
@@ -222,7 +221,12 @@ class RemoteAgent(AssistantAgent):
             all_messages = await model_context.get_messages()
             llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
             oai_massaes = await self.llm_messages2oai_messages(llm_messages)
-            body = {"chat_id": self._thread_id, "run_id": self._run_id, "model":self.agent_name, "messages": oai_massaes}
+            body = {
+                "chat_id": self._chat_id, 
+                "user": self._run_info,
+                "model":agent_name, 
+                "messages": oai_massaes
+                }
             try:
                 full_response = ""
                 async with self._session.post(

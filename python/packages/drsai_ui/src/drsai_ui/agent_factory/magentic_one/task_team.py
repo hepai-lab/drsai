@@ -387,26 +387,42 @@ async def create_magentic_round_team(
     load_from_config: bool = False,
     inside_docker: bool = True,
     run_info: dict[str, Any] = {},
+    agent_mode_config: dict[str, Any] = {},
 ) -> tuple[Team, int, int]:
     
     model_configs: Dict[str, Any] = settings_config.get("model_configs")
 
-    Use_remote_model = model_configs.get("Use_remote_Agent_Groupchat_mode", False)
-    Use_installed_model = model_configs.get("Use_installed_Agent_Groupchat_mode", False)
-    if Use_remote_model:
-        run_id = run_info.get("id")
-        user_id = run_info.get("user_id")
+    # 目前可选的mode有，besiii，drsai，custom，magentic-one，remote
+    agent_mode: str = agent_mode_config.get("mode", "besiii") 
+    agent_config: Dict[str, Any] = agent_mode_config.get("config", {})
+    
+    if agent_mode == "besiii":
+        raise NotImplementedError("BesIII mode not implemented yet")
+    
+    elif agent_mode == "drsai":
+        raise NotImplementedError("DrSai mode not implemented yet")
+    
+    elif agent_mode == "custom":
+        agent_factory: Callable[[], Union[AssistantAgent, BaseGroupChat]] = await a_load_agent_factory_from_config(agent_config, mode = "ui")
+        agent: AssistantAgent|BaseGroupChat = await agent_factory()
+
+    elif agent_mode == "remote":
+        # 配置chat_id
+        user_id = run_info.pop("user_id")
         session_id = run_info.get("session_id")
-        thread_id = str(user_id)+str(session_id)
-        run_id = thread_id+str(run_id)
+        chat_id = str(user_id)+str(session_id)
+        # 配置用户信息
+        run_info["name"] = user_id
+        run_info["email"] = user_id
+        
         agent = RemoteAgent(
-            name=Use_remote_model.get("name", ""),
-            model_remote_configs = Use_remote_model,
-            thread_id=thread_id,
-            run_id = run_id, 
+            name=agent_config.pop("name", "RemoteAgent"),
+            model_remote_configs = agent_config,
+            chat_id=chat_id,
+            run_info=run_info
             )
-    if Use_installed_model:
-        module = importlib.import_module(Use_installed_model["provider"])
+    elif agent_mode == "pip_install":
+        module = importlib.import_module(agent_config["provider"])
         agent_factory: Callable[[], Union[AssistantAgent, BaseGroupChat]] = await module.a_load_agent_factory_from_installed(
             team_config = team_config,
             state = state,
@@ -420,6 +436,7 @@ async def create_magentic_round_team(
             run_info = run_info,
         )
         agent: AssistantAgent|BaseGroupChat = await agent_factory()
+
     else:
         agent_factory: Callable[[], Union[AssistantAgent, BaseGroupChat]] = await a_load_agent_factory_from_config(model_configs, mode = "ui")
         agent: AssistantAgent|BaseGroupChat = await agent_factory()
@@ -432,7 +449,7 @@ async def create_magentic_round_team(
             input_func=user_proxy_input_func,
         )
         team = RoundRobinGroupChat(
-            participants=[agent, user_proxy, ],
+            participants=[agent, user_proxy,],
         )
         
     else:
