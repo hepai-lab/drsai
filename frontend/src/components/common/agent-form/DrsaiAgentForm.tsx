@@ -14,7 +14,9 @@ export interface DrsaiAgentData {
     coder: {
         llmModel: string;
     };
-    tester: ToolConfig;
+    tester: ToolConfig & {
+        llmModel: string;
+    };
     host: {
         llmModel: string;
     };
@@ -48,6 +50,7 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
             url: "",
             token: "",
             workerName: "",
+            llmModel: "",
         },
         host: initialData?.host || { llmModel: "" },
         parser: initialData?.parser || { llmModel: "" },
@@ -378,6 +381,40 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
                         </h3>
                     </div>
                     <div className="ml-5">
+                        {/* LLM Model Selection for Tester */}
+                        <div className="flex items-center mb-3">
+                            <label
+                                className={`
+                                w-20 text-sm font-medium
+                                ${darkMode === "dark"
+                                        ? "text-[#e5e5e5]"
+                                        : "text-[#4a5568]"
+                                    }
+                            `}
+                            >
+                                LLM Model:
+                            </label>
+                            <div className="flex-1 ml-4">
+                                {renderSelect(
+                                    formData.tester.llmModel,
+                                    llmModelOptions,
+                                    (value) =>
+                                        handleTesterConfigChange(
+                                            "1",
+                                            "llmModel",
+                                            value
+                                        ),
+                                    "Select LLM Model",
+                                    llmModelOpen["tester-llmModel"] || false,
+                                    (open) =>
+                                        setLlmModelOpen((prev) => ({
+                                            ...prev,
+                                            ["tester-llmModel"]: open,
+                                        }))
+                                )}
+                            </div>
+                        </div>
+
                         <ToolConfigurationForm
                             config={formData.tester}
                             index={0}

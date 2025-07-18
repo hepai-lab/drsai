@@ -163,6 +163,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             description: `LLM: ${data.llmModel}, Tools: ${data.toolConfigs.length} config(s)`,
         };
 
+        console.log("New Custom Agent Data:", data);
 
         // const res = await agentAPI.saveAgentConfig(user?.email || "", newCustomAgent);
         onAgentSelect(newCustomAgent);
