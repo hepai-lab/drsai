@@ -655,6 +655,7 @@ export default function ChatView({
         ...(planString !== "" && { plan: planString }),
       };
 
+      console.log("Sending task:", currentSettings);
       socket.send(
         JSON.stringify({
           type: "start",
@@ -1010,6 +1011,8 @@ export default function ChatView({
     const loadSettings = async () => {
       if (user?.email) {
         try {
+          // const settings = useSettingsStore.getState().config; // Use the settings from the store
+          // const parsed = parse(settings.model_configs);
           const settings = await settingsAPI.getSettings(user.email);
           const parsed = parse(settings.model_configs);
           const secretKey = parsed.model_config.config.api_key;

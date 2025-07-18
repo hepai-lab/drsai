@@ -4,7 +4,7 @@ import { appContext } from "../../../hooks/provider";
 
 export interface ToolConfig {
     id: string;
-    tools: string;
+    type: string;
     url: string;
     token: string;
     workerName?: string; // 为HepAI添加worker name字段
@@ -151,7 +151,7 @@ const ToolConfigurationForm: React.FC<ToolConfigurationFormProps> = ({
 
     // 根据选择的工具类型渲染不同的字段
     const renderFieldsByToolType = () => {
-        switch (config.tools) {
+        switch (config.type) {
             case "MCP":
                 return (
                     <>
@@ -235,13 +235,13 @@ const ToolConfigurationForm: React.FC<ToolConfigurationFormProps> = ({
                     ${darkMode === "dark" ? "text-[#e5e5e5]" : "text-[#4a5568]"}
                 `}
                 >
-                    Tools:
+                    Type:
                 </label>
                 <div className="flex-1 ml-4">
                     {renderSelect(
-                        config.tools,
+                        config.type,
                         toolsOptions,
-                        (value) => onConfigChange(config.id, "tools", value),
+                        (value) => onConfigChange(config.id, "type", value),
                         "Select Tool Type",
                         toolsOpen,
                         onToolsOpenChange
