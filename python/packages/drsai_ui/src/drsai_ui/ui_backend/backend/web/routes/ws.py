@@ -48,7 +48,7 @@ async def run_websocket(
                 raw_message = await websocket.receive_text()
                 message = json.loads(raw_message)
 
-                if message.get("type") == "start":
+                if message.get("type") == "start" or message.get("type") == "continue":
                     # Handle start message
                     logger.info(f"Received start request for run {run_id}")
                     task = construct_task(

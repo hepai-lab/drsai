@@ -18,7 +18,7 @@ from .approval_guard import (
     ApprovalConfig,
     BaseApprovalGuard,
 )
-from .agents.drsai_agents import RemoteAgent
+from ..remote_agent.drsai_remote_agent import RemoteAgent
 
 from ...ui_backend.input_func import InputFuncType, make_agentchat_input_func
 from ...ui_backend.learning.memory_provider import MemoryControllerProvider
