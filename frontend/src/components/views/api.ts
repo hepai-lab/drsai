@@ -472,17 +472,26 @@ export class Agent {
   }
 
   // save agent config
-  async saveAgentConfig(userId: string, agentConfig: any): Promise<any> {
+  async saveAgentConfig(agentConfig: any): Promise<any> {
     const response = await fetch(`${this.getBaseUrl()}/agentmode/`, {
       method: "POST",
       headers: this.getHeaders(),
-      body: JSON.stringify({
-        user_id: userId,
-        config: agentConfig,
-      }),
+      body: JSON.stringify(agentConfig),
     });
     const data = await response.json();
     if (!data.status) throw new Error(data.message || "Failed to save agent config");
+    return data.data;
+  }
+
+  // get agent config by user_id and mode
+  async getAgentConfig(userId: string, mode: string): Promise<any> {
+    const response = await fetch(`${this.getBaseUrl()}/agentmode/config/?user_id=${userId}&mode=${mode}`, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    const data = await response.json();
+    if (!data.status) throw new Error(data.message || "Failed to fetch agent config");
     return data.data;
   }
 }
