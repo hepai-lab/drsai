@@ -49,8 +49,9 @@ from autogen_core.tools import (
     # ToolSchema
     )
 
-from ...guarded_action import ApprovalDeniedError
+from ..magentic_one.guarded_action import ApprovalDeniedError
 import aiohttp
+from aiohttp import ClientConnectionError
 
 class RemoteAgent(AssistantAgent):
     '''
@@ -60,7 +61,7 @@ class RemoteAgent(AssistantAgent):
             self, 
             name: str,
             model_client: HepAIChatCompletionClient|None = None,
-            model_client_stream: bool = False,
+            model_client_stream: bool = True,
             tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
             description: str = "An agent that provides assistance with ability to use tools.",
             system_message: (
@@ -88,26 +89,27 @@ class RemoteAgent(AssistantAgent):
 
         self.is_paused = False
         self._paused = asyncio.Event()
+        self._current_streaming_response = None
 
         self._chat_id = chat_id
         run_info.update(kwargs)
-        self._run_info = run_info
+        self._run_info = run_info 
         
         # initialize the async model client
         self.api_key = model_remote_configs.pop("api_key", "")
         self.url = model_remote_configs.pop("url", "")
-        self.new_hearers = {}
-        self.new_hearers["Authorization"] = f"Bearer {self.api_key}"
-        self.new_hearers["Content-Type"] = "application/json"
+        self.new_headers = {}
+        self.new_headers["Authorization"] = f"Bearer {self.api_key}"
+        self.new_headers["Content-Type"] = "application/json"
         self._session = None
-        self._connection_timeout = 30
+        self._connection_timeout = 60
 
     async def lazy_init(self) -> None:
         """Initialize the tools and models needed by the agent."""
         if self._session is None:
             self._session = aiohttp.ClientSession(
-                base_url=self.url,
-                headers=self.new_hearers,
+                # base_url=self.url, 如"http://localhost:42807/apiv2"，这里直接在on_messages_stream中使用完整的url
+                headers=self.new_headers,
                 timeout=aiohttp.ClientTimeout(total=self._connection_timeout)
             )
 
@@ -118,16 +120,29 @@ class RemoteAgent(AssistantAgent):
           ...
         """
         logger.info(f"Closing {self.name}...")
-        
-        # 关闭HTTP session
-        if self._session and not self._session.closed:
-            await self._session.close()
+
+        # 中断当前流式响应
+        if self._current_streaming_response:
+            try:
+                self._current_streaming_response.close()
+                # logger.debug(f"Force-closed streaming response for {self.name}")
+            except Exception as e:
+                logger.warning(f"Error closing response: {str(e)}")
+
         # 关闭模型客户端
         if self._model_client:
             await self._model_client.close()
+        
+        # 关闭HTTP session
+        if self._session and not self._session.closed:
+            # await asyncio.sleep(0.5)
+            await self._session.close()
+        
+        logger.info(f"Closed {self.name} successfully.")
 
     async def pause(self) -> None:
         """Pause the agent by setting the paused state."""
+        logger.info(f"Paused {self.name}...")
         self.is_paused = True
         self._paused.set()
 
@@ -152,16 +167,18 @@ class RemoteAgent(AssistantAgent):
             )
             return
 
-        # Set up background task to monitor the pause event and cancel the task if paused.
-        async def monitor_pause() -> None:
-            await self._paused.wait()
-        monitor_pause_task = asyncio.create_task(monitor_pause())
-
          # Set up the cancellation token for the this handler.
         code_execution_token = CancellationToken()
 
         # Cancel the task if the handler's cancellation token is set.
         cancellation_token.add_callback(lambda: code_execution_token.cancel())
+
+        # Set up background task to monitor the pause event and cancel the task if paused.
+        async def monitor_pause() -> None:
+            await self._paused.wait()
+            code_execution_token.cancel()
+        monitor_pause_task = asyncio.create_task(monitor_pause())
+
         
         try:
         ##########Your costum code here##########
@@ -202,69 +219,66 @@ class RemoteAgent(AssistantAgent):
         
             # STEP 3: Run the first inference
             model_result = None
-            # async for inference_output in self._call_llm(
-            #     model_client=model_client,
-            #     model_client_stream=model_client_stream,
-            #     system_messages=system_messages,
-            #     model_context=model_context,
-            #     workbench=workbench,
-            #     handoff_tools=handoff_tools,
-            #     agent_name=agent_name,
-            #     cancellation_token=cancellation_token,
-            #     output_content_type=output_content_type,
-            # ):
-            #     if isinstance(inference_output, CreateResult):
-            #         model_result = inference_output
-            #     else:
-            #         # Streaming chunk event
-            #         yield inference_output
             all_messages = await model_context.get_messages()
             llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
-            oai_massaes = await self.llm_messages2oai_messages(llm_messages)
+            oai_massages = await self.llm_messages2oai_messages(llm_messages)
             body = {
                 "chat_id": self._chat_id, 
                 "user": self._run_info,
                 "model":agent_name, 
-                "messages": oai_massaes
+                "messages": oai_massages
                 }
-            try:
-                full_response = ""
-                async with self._session.post(
-                    self.url,
-                    headers=self.new_hearers,
-                    json=body
-                ) as response:
-                    response.raise_for_status()
-                    
-                    buffer = b''
-                    async for chunk in response.content.iter_chunked(1024):
-                        # 检查取消和暂停状态
-                        if self.is_paused:
-                            break
+            
+            # try:
 
-                        buffer += chunk
-                        while b'\n' in buffer:
-                            line_bytes, buffer = buffer.split(b'\n', 1)
-                            line = line_bytes.decode().strip()
-                            
-                            if line.startswith("data: "):
-                                try:
-                                    json_str = line[6:]  # 去掉"data: "前缀
-                                    oai_json = json.loads(json_str)
-                                    # 安全访问嵌套字段
-                                    if "choices" in oai_json and len(oai_json["choices"]) > 0:
-                                        delta = oai_json["choices"][0].get("delta", {})
-                                        textchunck = delta.get("content", "")
-                                        if textchunck:
-                                            yield ModelClientStreamingChunkEvent(content=textchunck, source=agent_name)
-                                            full_response += textchunck
-                                except (json.JSONDecodeError, KeyError) as parse_error:
-                                    logger.warning(f"Failed to parse SSE data: {str(parse_error)}")
-                model_result = CreateResult(content=full_response, finish_reason="stop", usage=None, cached=False)
-            except aiohttp.ClientError as e:
-                raise RuntimeError(f"HTTP error: {str(e)}")
-            except asyncio.CancelledError:
-                logger.debug("Streaming request cancelled")
+            full_response = ""
+            async with self._session.post(
+                self.url,
+                headers=self.new_headers,
+                json=body
+            ) as response:
+                 
+                self._current_streaming_response = response
+
+                response.raise_for_status()
+                
+                buffer = b''
+                async for chunk in response.content.iter_chunked(1024):
+                    
+                    # 检查取消和暂停状态
+                    if code_execution_token.is_cancelled() or self.is_paused:
+                        raise asyncio.CancelledError()
+
+                    buffer += chunk
+                    while b'\n' in buffer:
+                        line_bytes, buffer = buffer.split(b'\n', 1)
+                        line = line_bytes.decode().strip()
+                        
+                        if line.startswith("data: "):
+                            try:
+                                json_str = line[6:]  # 去掉"data: "前缀
+                                oai_json = json.loads(json_str)
+                                # 安全访问嵌套字段
+                                if "choices" in oai_json and len(oai_json["choices"]) > 0:
+                                    delta = oai_json["choices"][0].get("delta", {})
+                                    textchunck = delta.get("content", "")
+                                    if textchunck:
+                                        yield ModelClientStreamingChunkEvent(content=textchunck, source=agent_name)
+                                        full_response += textchunck
+                            except (json.JSONDecodeError, KeyError) as parse_error:
+                                logger.warning(f"Failed to parse SSE data: {str(parse_error)}")
+
+            self._current_streaming_response = None
+            model_result = CreateResult(content=full_response, finish_reason="stop")
+            
+            # except aiohttp.ClientError as e:
+            #     logger.debug(f"HTTP error: {str(e)}")
+            #     raise RuntimeError(f"HTTP error: {str(e)}")
+
+            # except asyncio.CancelledError:
+            #     logger.debug("Streaming request cancelled")
+            #     raise asyncio.CancelledError()
+
             assert model_result is not None, "No model result was produced."
 
             # --- NEW: If the model produced a hidden "thought," yield it as an event ---
@@ -316,6 +330,8 @@ class RemoteAgent(AssistantAgent):
             )
         except asyncio.CancelledError:
             # If the task is cancelled, we respond with a message.
+            if self._current_streaming_response:
+                self._current_streaming_response.close()
             yield Response(
                 chat_message=TextMessage(
                     content="The task was cancelled by the user.",
@@ -324,8 +340,20 @@ class RemoteAgent(AssistantAgent):
                 ),
                 inner_messages=inner_messages,
             )
+        
+        except ClientConnectionError:
+            # If the task is cancelled, we respond with a message.
+            yield Response(
+                chat_message=TextMessage(
+                    content="The task was cancelled by the user.",
+                    source=self.name,
+                    metadata={"internal": "yes"},
+                ),
+                inner_messages=inner_messages,
+            )
+
         except Exception as e:
-            logger.error(f"Error in CoderAgent: {e}")
+            logger.error(f"Error in {self.name}: {e}")
             # add to chat history
             await model_context.add_message(
                 AssistantMessage(
@@ -342,6 +370,8 @@ class RemoteAgent(AssistantAgent):
                 inner_messages=inner_messages,
             )
         finally:
+
+            self._current_streaming_response = None
             # Cancel the monitor task.
             try:
                 monitor_pause_task.cancel()
