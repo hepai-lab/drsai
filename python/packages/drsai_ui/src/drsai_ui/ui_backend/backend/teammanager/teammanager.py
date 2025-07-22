@@ -156,7 +156,7 @@ class TeamManager:
             if not self.load_from_config:
                 # Load model configurations from settings if provided
                 model_configs: Dict[str, Any] = {}
-                if settings_config.get("model_configs"):
+                if isinstance(settings_config.get("model_configs"), str):
                     try:
                         model_configs = yaml.safe_load(settings_config["model_configs"])
                     except Exception as e:
@@ -194,7 +194,7 @@ class TeamManager:
                         config = self.config,
                         load_from_config = self.load_from_config,
                         inside_docker = self.inside_docker,
-                        run_info = run.model_json_schema(),
+                        run_info = run.model_dump() if run else {},
                         agent_mode_config = agent_mode_config,
                     )
                     self.novnc_port = novnc_port

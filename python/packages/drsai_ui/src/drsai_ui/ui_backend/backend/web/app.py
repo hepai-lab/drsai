@@ -25,6 +25,7 @@ from .routes import (
     validation,
     ws,
     agent_mode,
+    files,
 )
 import httpx
 from fastapi.responses import HTMLResponse
@@ -81,6 +82,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 # Create FastAPI application
 app = FastAPI(lifespan=lifespan, debug=True)
+app.state.initializer = initializer
 
 # CORS middleware configuration
 app.add_middleware(
@@ -167,6 +169,13 @@ api.include_router(
     responses={404: {"description": "Not found"}},
 )
 
+
+api.include_router(
+    files.router,
+    prefix="/files",
+    tags=["files"],
+    responses={404: {"description": "Not found"}},
+)
 
 # Version endpoint
 
