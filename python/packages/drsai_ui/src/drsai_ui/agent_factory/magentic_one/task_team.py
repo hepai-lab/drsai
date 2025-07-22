@@ -26,6 +26,7 @@ from ...ui_backend.utils import get_internal_urls
 from ...ui_backend.types import RunPaths
 from ...ui_backend.backend.datamodel.types import EnvironmentVariable
 from ...ui_backend.backend.utils.utils import decompress_state
+from ...agent_factory.remote_agent import StatusAgent
 
 import json, os
 import aiofiles
@@ -391,13 +392,34 @@ async def create_magentic_round_team(
 ) -> tuple[Team, int, int]:
     
     model_configs: Dict[str, Any] = settings_config.get("model_configs")
+    model_config = model_configs.get("model_config", {})
+    api_key = model_config.get("config", {}).get("api_key")
+    if api_key is None:
+        raise ValueError("API key not provided in model_configs")
 
     # 目前可选的mode有，besiii，drsai，custom，magentic-one，remote
     agent_mode: str = agent_mode_config.get("mode", "besiii") 
     agent_config: Dict[str, Any] = agent_mode_config.get("config", {})
     
+    # 配置chat_id
+    user_id = run_info.pop("user_id")
+    session_id = run_info.get("session_id")
+    chat_id = str(user_id)+str(session_id)
+    # 配置用户信息
+    run_info["name"] = user_id
+    run_info["email"] = user_id
+    
     if agent_mode == "besiii":
-        raise NotImplementedError("BesIII mode not implemented yet")
+        # raise NotImplementedError("BesIII mode not implemented yet")
+        agent = StatusAgent(
+            name='besiii',
+            chat_id=chat_id,
+            run_info=run_info,
+            model_remote_configs={
+                "url": "http://202.122.37.163:42887/apiv2/chat/completions",
+                "api_key": api_key
+            },
+        )
     
     elif agent_mode == "drsai":
         raise NotImplementedError("DrSai mode not implemented yet")
@@ -407,14 +429,6 @@ async def create_magentic_round_team(
         agent: AssistantAgent|BaseGroupChat = await agent_factory()
 
     elif agent_mode == "remote":
-        # 配置chat_id
-        user_id = run_info.pop("user_id")
-        session_id = run_info.get("session_id")
-        chat_id = str(user_id)+str(session_id)
-        # 配置用户信息
-        run_info["name"] = user_id
-        run_info["email"] = user_id
-        
         agent = RemoteAgent(
             name=agent_config.pop("name", "RemoteAgent"),
             model_remote_configs = agent_config,

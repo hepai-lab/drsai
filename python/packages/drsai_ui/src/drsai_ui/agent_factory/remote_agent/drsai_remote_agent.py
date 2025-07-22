@@ -33,6 +33,7 @@ from autogen_core.models import (
     AssistantMessage,
     ChatCompletionClient,
     CreateResult,
+    RequestUsage,
     FunctionExecutionResult,
     FunctionExecutionResultMessage,
     LLMMessage,
@@ -269,7 +270,12 @@ class RemoteAgent(AssistantAgent):
                                 logger.warning(f"Failed to parse SSE data: {str(parse_error)}")
 
             self._current_streaming_response = None
-            model_result = CreateResult(content=full_response, finish_reason="stop")
+            model_result = CreateResult(
+                content=full_response, 
+                finish_reason="stop",
+                usage = RequestUsage(prompt_tokens = 0, completion_tokens = len(full_response.split())),
+                cached = False
+                )
             
             # except aiohttp.ClientError as e:
             #     logger.debug(f"HTTP error: {str(e)}")
