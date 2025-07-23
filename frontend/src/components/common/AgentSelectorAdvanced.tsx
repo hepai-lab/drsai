@@ -6,6 +6,7 @@ import { agentAPI, settingsAPI } from "../views/api";
 import CustomAgentForm, { CustomAgentData } from "./agent-form/CustomAgentForm";
 import DrsaiAgentForm, { DrsaiAgentData } from "./agent-form/DrsaiAgentForm";
 import { ToolConfig } from "./agent-form/ToolConfigurationForm";
+import { useModeConfigStore } from "../../store/modeConfig";
 export interface Agent {
     mode: string;
     name: string;
@@ -54,6 +55,8 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         { id: "3", type: "OpenAPI", url: "", token: "", workerName: "" },
     ]);
     const { config } = useSettingsStore();
+    const { mode, setMode, setConfig } = useModeConfigStore();
+
     // const settingsConfig = useSettingsStore((state) => state.config);
     // Filter agents based on search term
     const filteredAgents = useMemo(() => {
@@ -136,26 +139,53 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         }
     }, [isOpen, searchable]);
 
-    const handleAgentSelect = (agent: Agent) => {
-        // 如果选择的是Custom Agent，显示配置表单
-        if (agent.name === "Custom Agent") {
-            setShowCustomForm(true);
-            onAgentSelect(agent);
-            setIsOpen(false);
-            setSearchTerm("");
-            setFocusedIndex(-1);
-        } else if (agent.name === "Dr.Sai Agent") {
-            setShowDrsaiForm(true);
-            onAgentSelect(agent);
-            setIsOpen(false);
-            setSearchTerm("");
-            setFocusedIndex(-1);
-        } else {
-            onAgentSelect(agent);
-            setIsOpen(false);
-            setSearchTerm("");
-            setFocusedIndex(-1);
+    const handleAgentSelect = async (agent: Agent) => {
+        // 创建新的自定义智能体
+        const newCustomAgent: Agent = {
+            mode: agent.mode,
+            name: agent.name,
+            config: {},
+            user_id: user?.email || "yqsun@ihep.ac.cn",
+        };
+
+        // let currentSettings = settingsConfig;
+        // const sessionSettingsConfig = {
+        //     ...currentSettings,
+        //     model_configs: yaml.stringify(modelConfig),
+        // };
+        // useSettingsStore.getState().updateConfig(sessionSettingsConfig);
+
+        const res = await agentAPI.saveAgentConfig(newCustomAgent);
+        const res2 = await agentAPI.getAgentConfig("yqsun@ihep.ac.cn", agent.mode);
+        console.log("Agent Config Response:", res2);
+        if (res2) {
+            setConfig(res2.config)
+            setMode(res2.mode);
         }
+        onAgentSelect(newCustomAgent);
+        setIsOpen(false);
+
+        // // 如果选择的是Custom Agent，显示配置表单
+        // if (agent.name === "Custom Agent") {
+        //     setShowCustomForm(true);
+        //     onAgentSelect(agent);
+        //     setIsOpen(false);
+        //     setSearchTerm("");
+        //     setFocusedIndex(-1);
+        // } else if (agent.name === "Dr.Sai Agent") {
+        //     setShowDrsaiForm(true);
+        //     onAgentSelect(agent);
+        //     setIsOpen(false);
+        //     setSearchTerm("");
+        //     setFocusedIndex(-1);
+        // } else {
+        //     onAgentSelect(agent);
+        //     setIsOpen(false);
+        //     setSearchTerm("");
+        //     setFocusedIndex(-1);
+        // }
+
+
     };
 
     const handleCustomFormSubmit = async (data: CustomAgentData) => {

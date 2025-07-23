@@ -1,35 +1,34 @@
-import * as React from "react";
 import { message } from "antd";
-import { convertFilesToBase64, getServerUrl } from "../../utils";
+import { RcFile } from "antd/es/upload";
+import * as React from "react";
+import { appContext } from "../../../hooks/provider";
+import { GeneralConfig, useSettingsStore } from "../../store";
 import { IStatus } from "../../types/app";
 import {
-  Run,
-  Message,
-  WebSocketMessage,
-  InputRequestMessage,
-  TeamConfig,
   AgentMessageConfig,
   RunStatus as BaseRunStatus,
-  TeamResult,
-  Session,
   InputRequest,
+  InputRequestMessage,
+  Message,
+  Run,
+  Session,
+  TeamConfig,
+  TeamResult,
+  WebSocketMessage,
 } from "../../types/datamodel";
-import { appContext } from "../../../hooks/provider";
-import ChatInput from "./chatinput";
-import { agentAPI, sessionAPI, settingsAPI } from "../api";
-import RunView from "./runview";
-import { messageUtils } from "./rendermessage";
-import { useSettingsStore, GeneralConfig } from "../../store";
-import { RcFile } from "antd/es/upload";
 import {
   IPlan,
   IPlanStep,
   convertPlanStepsToJsonString,
 } from "../../types/plan";
-import SampleTasks from "./sampletasks";
+import { convertFilesToBase64, getServerUrl } from "../../utils";
+import { sessionAPI, settingsAPI } from "../api";
+import ChatInput from "./chatinput";
 import ProgressBar from "./progressbar";
-import AgentSelectorAdvanced, { Agent } from "../../common/AgentSelectorAdvanced";
-import { parse } from "yaml"
+import { messageUtils } from "./rendermessage";
+import RunView from "./runview";
+import SampleTasks from "./sampletasks";
+import { useModeConfigStore } from "../../../store/modeConfig";
 
 // Extend RunStatus for sidebar status reporting
 type SidebarRunStatus = BaseRunStatus | "final_answer_awaiting_input";
@@ -126,6 +125,8 @@ export default function ChatView({
   const [currentPlan, setCurrentPlan] = React.useState<StepProgress["plan"]>();
 
   const { config } = useSettingsStore();
+  const { mode, config: newConfig, setMode, setConfig } = useModeConfigStore();
+
 
 
   // Create a Message object from AgentMessageConfig
@@ -338,6 +339,60 @@ export default function ChatView({
             ...current,
             messages: [...current.messages, newMessage],
           };
+
+        case "message_chunk":
+          if (!message.data) return current;
+
+          // Handle streaming chunks for typewriter effect
+          const chunkData = message.data as any;
+          if (
+            chunkData.content &&
+            typeof chunkData.content === "string"
+          ) {
+            // Find the last message to append the chunk
+            const lastMessageIndex = current.messages.length - 1;
+            if (lastMessageIndex >= 0) {
+              const lastMessage =
+                current.messages[lastMessageIndex];
+              const updatedMessages = [...current.messages];
+
+              // Update the last message with the new chunk
+              updatedMessages[lastMessageIndex] = {
+                ...lastMessage,
+                config: {
+                  ...lastMessage.config,
+                  content:
+                    (lastMessage.config.content as string) +
+                    chunkData.content,
+                },
+              };
+
+              return {
+                ...current,
+                messages: updatedMessages,
+              };
+            } else {
+              // Create a new message if no previous message exists
+              const newChunkMessage = createMessage(
+                {
+                  source: chunkData.source || "assistant",
+                  content: chunkData.content,
+                  metadata: chunkData.metadata || {},
+                } as AgentMessageConfig,
+                current.id,
+                session.id
+              );
+
+              return {
+                ...current,
+                messages: [
+                  ...current.messages,
+                  newChunkMessage,
+                ],
+              };
+            }
+          }
+          return current;
 
         case "input_request":
           //console.log("InputRequest: " + JSON.stringify(message))
@@ -662,7 +717,12 @@ export default function ChatView({
           task: JSON.stringify(taskJson),
           files: processedFiles,
           team_config: teamConfig,
-          settings_config: currentSettings,
+          settings_config: {
+            ...currentSettings, agent_mode_config: {
+              mode,
+              config: newConfig
+            }
+          },
         })
       );
       const sessionData = {
