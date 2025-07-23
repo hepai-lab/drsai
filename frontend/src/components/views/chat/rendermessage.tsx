@@ -69,10 +69,10 @@ interface RenderStepExecutionProps {
 
 interface ParsedContent {
   text:
-    | string
-    | FunctionCall[]
-    | (string | ImageContent)[]
-    | FunctionExecutionResult[];
+  | string
+  | FunctionCall[]
+  | (string | ImageContent)[]
+  | FunctionExecutionResult[];
   metadata?: Record<string, string>;
   plan?: IPlanStep[];
 }
@@ -102,7 +102,9 @@ const getStepIcon = (
   if (status === "completed")
     return <CheckCircle size={16} className="text-magenta-800" />;
   if (status === "current" && runStatus === "active")
-    return <RefreshCw size={16} className="text-magenta-800 animate-spin" />;
+    return (
+      <RefreshCw size={16} className="text-magenta-800 animate-spin" />
+    );
   if (status === "upcoming")
     return <Clock size={16} className="text-gray-400" />;
   if (status === "failed")
@@ -127,7 +129,8 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
 
     // Handle case where content is in content field
     if (parsedContent.content) {
-      const text = parsedContent.content?.content || parsedContent.content;
+      const text =
+        parsedContent.content?.content || parsedContent.content;
       // If text is an array, it might contain images
       if (Array.isArray(text)) {
         return { text, metadata: content.metadata };
@@ -147,8 +150,21 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
     }
 
     // Return both the content and plan if they exist
+    // 如果 parsedContent.content 是字符串，尝试进一步解析
+    let finalText = parsedContent.content || content;
+    if (typeof finalText === "string") {
+      try {
+        const nestedParsed = JSON.parse(finalText);
+        if (nestedParsed.content) {
+          finalText = nestedParsed.content;
+        }
+      } catch {
+        // 如果嵌套解析失败，保持原样
+      }
+    }
+
     return {
-      text: parsedContent.content || content,
+      text: finalText,
       plan: planSteps.length > 0 ? planSteps : undefined,
       metadata: content.metadata,
     };
@@ -163,7 +179,14 @@ const parseContent = (content: any): string => {
 
   try {
     const parsedContent = JSON.parse(content);
-    return parsedContent.content?.content || parsedContent.content || content;
+    // 优先返回 content.content，然后是 content，最后是原始内容
+    if (parsedContent.content?.content) {
+      return parsedContent.content.content;
+    } else if (parsedContent.content) {
+      return parsedContent.content;
+    } else {
+      return content;
+    }
   } catch {
     return content;
   }
@@ -188,7 +211,15 @@ const parseorchestratorContent = (
     if (messageUtils.isStepExecution(metadata)) {
       return { type: "step-execution" as const, content: parsedContent };
     }
-  } catch {}
+  } catch { }
+
+  // 对于默认类型，尝试解析JSON内容
+  try {
+    const parsedContent = JSON.parse(content);
+    if (parsedContent.content) {
+      return { type: "default" as const, content: parsedContent.content };
+    }
+  } catch { }
 
   return { type: "default" as const, content };
 };
@@ -202,7 +233,8 @@ const RenderMultiModalBrowserStep: React.FC<{
       if (typeof item !== "string") return null;
 
       const hasNextImage =
-        index < content.length - 1 && typeof content[index + 1] === "object";
+        index < content.length - 1 &&
+        typeof content[index + 1] === "object";
 
       return (
         <div key={index} className="relative pl-4">
@@ -229,7 +261,10 @@ const RenderMultiModalBrowserStep: React.FC<{
               className="flex-1 cursor-pointer mt-2"
               onClick={() => onImageClick?.(index)}
             >
-              <MarkdownRenderer content={item} indented={true} />
+              <MarkdownRenderer
+                content={parseContent(item)}
+                indented={true}
+              />
             </div>
           </div>
         </div>
@@ -245,7 +280,10 @@ const RenderMultiModal: React.FC<{
     {content.map((item, index) => (
       <div key={index}>
         {typeof item === "string" ? (
-          <MarkdownRenderer content={item} indented={true} />
+          <MarkdownRenderer
+            content={parseContent(item)}
+            indented={true}
+          />
         ) : (
           <ClickableImage
             src={getImageSource(item)}
@@ -262,10 +300,17 @@ const RenderToolCall: React.FC<{ content: FunctionCall[] }> = memo(
   ({ content }) => (
     <div className="space-y-2 text-sm">
       {content.map((call) => (
-        <div key={call.id} className="border border-secondary rounded p-2">
+        <div
+          key={call.id}
+          className="border border-secondary rounded p-2"
+        >
           <div className="font-medium">Function: {call.name}</div>
           <MarkdownRenderer
-            content={JSON.stringify(JSON.parse(call.arguments), null, 2)}
+            content={JSON.stringify(
+              JSON.parse(call.arguments),
+              null,
+              2
+            )}
             indented={true}
           />
         </div>
@@ -279,8 +324,13 @@ const RenderToolResult: React.FC<{ content: FunctionExecutionResult[] }> = memo(
     <div className="space-y-2 text-sm">
       {content.map((result) => (
         <div key={result.call_id} className="rounded p-2">
-          <div className="font-medium">Result ID: {result.call_id}</div>
-          <MarkdownRenderer content={result.content} indented={true} />
+          <div className="font-medium">
+            Result ID: {result.call_id}
+          </div>
+          <MarkdownRenderer
+            content={result.content}
+            indented={true}
+          />
         </div>
       ))}
     </div>
@@ -301,7 +351,8 @@ const RenderPlan: React.FC<RenderPlanProps> = memo(
       agent_name: step.agent_name || "",
     }));
 
-    const [planSteps, setPlanSteps] = useState<IPlanStep[]>(initialPlanSteps);
+    const [planSteps, setPlanSteps] =
+      useState<IPlanStep[]>(initialPlanSteps);
 
     return (
       <div className="space-y-2 text-sm">
@@ -400,9 +451,15 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
               }
             >
               {isExpanded ? (
-                <ChevronDown size={16} className="text-primary" />
+                <ChevronDown
+                  size={16}
+                  className="text-primary"
+                />
               ) : (
-                <ChevronRight size={16} className="text-primary" />
+                <ChevronRight
+                  size={16}
+                  className="text-primary"
+                />
               )}
             </button>
             <div className="flex-1 mx-2">
@@ -421,11 +478,15 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
           </div>
         </div>
         <div>
-          {isUserProxyInstruction && content.instruction && isExpanded && (
-            <div className="flex items-start">
-              <MarkdownRenderer content={content.instruction} />
-            </div>
-          )}
+          {isUserProxyInstruction &&
+            content.instruction &&
+            isExpanded && (
+              <div className="flex items-start">
+                <MarkdownRenderer
+                  content={content.instruction}
+                />
+              </div>
+            )}
         </div>
       </div>
     );
@@ -443,7 +504,9 @@ const RenderFinalAnswer: React.FC<RenderFinalAnswerProps> = memo(
     return (
       <div className="border-2 border-secondary rounded-lg p-4">
         <div className="flex justify-between items-center">
-          <div className="font-semibold text-primary">Final Answer</div>
+          <div className="font-semibold text-primary">
+            Final Answer
+          </div>
           <LearnPlanButton
             sessionId={sessionId}
             messageId={messageIdx}
@@ -476,7 +539,9 @@ export const messageUtils = {
     );
   },
 
-  isMultiModalContent(content: unknown): content is (string | ImageContent)[] {
+  isMultiModalContent(
+    content: unknown
+  ): content is (string | ImageContent)[] {
     if (!Array.isArray(content)) return false;
     return content.every(
       (item) =>
@@ -582,7 +647,9 @@ const RenderUserMessage: React.FC<{
               ) : (
                 <FileTextIcon className="w-3 h-3" />
               )}
-              <span className="truncate max-w-[150px]">{file.name}</span>
+              <span className="truncate max-w-[150px]">
+                {file.name}
+              </span>
             </div>
           ))}
         </div>
@@ -605,7 +672,7 @@ const RenderUserMessage: React.FC<{
         </div>
       ) : (
         <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
-          {String(parsedContent.text)}
+          {parseContent(parsedContent.text)}
         </div>
       )}
 
@@ -615,9 +682,9 @@ const RenderUserMessage: React.FC<{
           <PlanView
             task={""}
             plan={parsedContent.plan}
-            setPlan={() => {}} // No-op since it's read-only
+            setPlan={() => { }} // No-op since it's read-only
             viewOnly={true}
-            onSavePlan={() => {}} // No-op since it's read-only
+            onSavePlan={() => { }} // No-op since it's read-only
           />
         )}
     </div>
@@ -675,29 +742,26 @@ export const RenderMessage: React.FC<MessageProps> = memo(
 
     return (
       <div
-        className={`relative group mb-3 ${className} w-full break-words ${
-          hidden &&
+        className={`relative group mb-3 ${className} w-full break-words ${hidden &&
           (!orchestratorContent ||
             orchestratorContent.type !== "step-execution")
-            ? "hidden"
-            : ""
-        }`}
+          ? "hidden"
+          : ""
+          }`}
       >
         <div
-          className={`flex ${
-            isUser || isUserProxy ? "justify-end" : "justify-start"
-          } items-start w-full transition-all duration-200`}
+          className={`flex ${isUser || isUserProxy ? "justify-end" : "justify-start"
+            } items-start w-full transition-all duration-200`}
         >
           <div
-            className={`${
-              isUser || isUserProxy
-                ? `text-primary rounded-2xl bg-tertiary rounded-tr-sm px-4 py-2 ${
-                    parsedContent.plan && parsedContent.plan.length > 0
-                      ? "w-[80%]"
-                      : "max-w-[80%]"
-                  }`
-                : "w-full text-primary"
-            } break-words overflow-hidden`}
+            className={`${isUser || isUserProxy
+              ? `text-primary rounded-2xl bg-tertiary rounded-tr-sm px-4 py-2 ${parsedContent.plan &&
+                parsedContent.plan.length > 0
+                ? "w-[80%]"
+                : "max-w-[80%]"
+              }`
+              : "w-full text-primary"
+              } break-words overflow-hidden`}
           >
             {/* Show user message content first */}
             {(isUser || isUserProxy) && (
@@ -717,7 +781,8 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                   onRegeneratePlan={onRegeneratePlan}
                   forceCollapsed={forceCollapsed}
                 />
-              ) : orchestratorContent?.type === "step-execution" ? (
+              ) : orchestratorContent?.type ===
+                "step-execution" ? (
                 <RenderStepExecution
                   content={orchestratorContent.content}
                   hidden={hidden}
@@ -732,29 +797,43 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                   sessionId={sessionId}
                   messageIdx={messageIdx}
                 />
-              ) : messageUtils.isToolCallContent(parsedContent.text) ? (
+              ) : messageUtils.isToolCallContent(
+                parsedContent.text
+              ) ? (
                 <RenderToolCall content={parsedContent.text} />
-              ) : messageUtils.isMultiModalContent(parsedContent.text) ? (
-                message.metadata?.type === "browser_screenshot" ? (
+              ) : messageUtils.isMultiModalContent(
+                parsedContent.text
+              ) ? (
+                message.metadata?.type ===
+                  "browser_screenshot" ? (
                   <RenderMultiModalBrowserStep
                     content={parsedContent.text}
                     onImageClick={onImageClick}
                   />
                 ) : (
-                  <RenderMultiModal content={parsedContent.text} />
+                  <RenderMultiModal
+                    content={parsedContent.text}
+                  />
                 )
-              ) : messageUtils.isFunctionExecutionResult(parsedContent.text) ? (
-                <RenderToolResult content={parsedContent.text} />
+              ) : messageUtils.isFunctionExecutionResult(
+                parsedContent.text
+              ) ? (
+                <RenderToolResult
+                  content={parsedContent.text}
+                />
               ) : (
                 <div className="break-words">
                   {message.metadata?.type === "file" ? (
                     <RenderFile message={message} />
                   ) : (
                     <MarkdownRenderer
-                      content={String(parsedContent.text)}
+                      content={parseContent(
+                        parsedContent.text
+                      )}
                       indented={
                         !orchestratorContent ||
-                        orchestratorContent.type !== "default"
+                        orchestratorContent.type !==
+                        "default"
                       }
                     />
                   )}
