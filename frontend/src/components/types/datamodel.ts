@@ -105,7 +105,8 @@ export interface BaseConfig {
 
 export interface WebSocketMessage {
   type:
-    | "message"
+  | "message"
+   | "message_chunk"
     | "result"
     | "completion"
     | "input_request"

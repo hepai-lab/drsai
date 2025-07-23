@@ -469,7 +469,7 @@ export class Agent {
     const data = await response.json();
     if (!data.status) throw new Error(data.message || "Failed to fetch agents");
     return data.data;
-  }
+  }       
 
   // save agent config
   async saveAgentConfig(agentConfig: any): Promise<any> {
