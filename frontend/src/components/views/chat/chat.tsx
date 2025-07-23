@@ -308,9 +308,9 @@ export default function ChatView({
   }, [session?.id, visible, activeSocket, onRunStatusChange]);
 
   const handleWebSocketMessage = (message: WebSocketMessage) => {
+
     setCurrentRun((current: Run | null) => {
       if (!current || !session?.id) return null;
-
 
       switch (message.type) {
         case "error":
@@ -323,8 +323,6 @@ export default function ChatView({
             setActiveSocket(null);
             activeSocketRef.current = null;
           }
-          console.log("Error: ", message.error);
-
         case "message":
           if (!message.data) return current;
 
@@ -341,6 +339,7 @@ export default function ChatView({
           };
 
         case "message_chunk":
+          console.log("Received message_chunk:", message.data);
           if (!message.data) return current;
 
           // Handle streaming chunks for typewriter effect
