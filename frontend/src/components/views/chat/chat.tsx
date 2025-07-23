@@ -122,12 +122,16 @@ export default function ChatView({
   const [isPlanning, setIsPlanning] = React.useState(false);
 
   // Replace stepTitles state with currentPlan state
-  const [currentPlan, setCurrentPlan] = React.useState<StepProgress["plan"]>();
+  const [currentPlan, setCurrentPlan] =
+    React.useState<StepProgress["plan"]>();
 
   const { config } = useSettingsStore();
-  const { mode, config: newConfig, setMode, setConfig } = useModeConfigStore();
-
-
+  const {
+    mode,
+    config: newConfig,
+    setMode,
+    setConfig,
+  } = useModeConfigStore();
 
   // Create a Message object from AgentMessageConfig
   const createMessage = (
@@ -147,7 +151,10 @@ export default function ChatView({
     if (!session?.id || !user?.email) return null;
 
     try {
-      const response = await sessionAPI.getSessionRuns(session.id, user?.email);
+      const response = await sessionAPI.getSessionRuns(
+        session.id,
+        user?.email
+      );
       const latestRun = response.runs[response.runs.length - 1];
       return latestRun;
     } catch (error) {
@@ -219,7 +226,10 @@ export default function ChatView({
         }
       };
 
-      window.addEventListener("planReady", handlePlanReady as EventListener);
+      window.addEventListener(
+        "planReady",
+        handlePlanReady as EventListener
+      );
 
       return () => {
         window.removeEventListener(
@@ -238,7 +248,8 @@ export default function ChatView({
     if (currentRun && session?.id) {
       // Only call onRunStatusChange if the status has actually changed
       let statusToReport: SidebarRunStatus = currentRun.status;
-      const lastMsg = currentRun.messages?.[currentRun.messages.length - 1];
+      const lastMsg =
+        currentRun.messages?.[currentRun.messages.length - 1];
       const beforeLastMsg =
         currentRun.messages?.[currentRun.messages.length - 2];
       if (
@@ -247,7 +258,9 @@ export default function ChatView({
           messageUtils.isFinalAnswer(lastMsg.config?.metadata)) ||
           (beforeLastMsg &&
             typeof beforeLastMsg.config?.content === "string" &&
-            messageUtils.isFinalAnswer(beforeLastMsg.config?.metadata))) &&
+            messageUtils.isFinalAnswer(
+              beforeLastMsg.config?.metadata
+            ))) &&
         currentRun.status == "awaiting_input"
       ) {
         statusToReport = "final_answer_awaiting_input";
@@ -290,9 +303,16 @@ export default function ChatView({
       const messageHandler = (event: MessageEvent) => {
         try {
           const message = JSON.parse(event.data) as WebSocketMessage;
-          if (message.type === "system" && message.status && session.id) {
+          if (
+            message.type === "system" &&
+            message.status &&
+            session.id
+          ) {
             // Update the run status even when not visible
-            onRunStatusChange(session.id, message.status as BaseRunStatus);
+            onRunStatusChange(
+              session.id,
+              message.status as BaseRunStatus
+            );
           }
         } catch (error) {
           console.error("WebSocket message parsing error:", error);
@@ -308,7 +328,6 @@ export default function ChatView({
   }, [session?.id, visible, activeSocket, onRunStatusChange]);
 
   const handleWebSocketMessage = (message: WebSocketMessage) => {
-
     setCurrentRun((current: Run | null) => {
       if (!current || !session?.id) return null;
 
@@ -326,9 +345,45 @@ export default function ChatView({
         case "message":
           if (!message.data) return current;
 
+          // Check if we already have a message with the same content from chunks
+          const messageData = message.data as AgentMessageConfig;
+          const lastMessageIndex = current.messages.length - 1;
+
+          if (lastMessageIndex >= 0) {
+            const lastMessage = current.messages[lastMessageIndex];
+
+            // If the last message is from the same source and has similar content,
+            // update it instead of creating a new one
+            if (
+              (lastMessage.config.source === "assistant" ||
+                lastMessage.config.source ===
+                messageData.source) &&
+              typeof lastMessage.config.content === "string" &&
+              typeof messageData.content === "string" &&
+              messageData.content.includes(
+                lastMessage.config.content
+              )
+            ) {
+              const updatedMessages = [...current.messages];
+              updatedMessages[lastMessageIndex] = {
+                ...lastMessage,
+                config: {
+                  ...lastMessage.config,
+                  content: messageData.content,
+                  metadata: messageData.metadata || {},
+                },
+              };
+
+              return {
+                ...current,
+                messages: updatedMessages,
+              };
+            }
+          }
+
           // Create new Message object from websocket data
           const newMessage = createMessage(
-            message.data as AgentMessageConfig,
+            messageData,
             current.id,
             session.id
           );
@@ -353,43 +408,49 @@ export default function ChatView({
             if (lastMessageIndex >= 0) {
               const lastMessage =
                 current.messages[lastMessageIndex];
-              const updatedMessages = [...current.messages];
 
-              // Update the last message with the new chunk
-              updatedMessages[lastMessageIndex] = {
-                ...lastMessage,
-                config: {
-                  ...lastMessage.config,
-                  content:
-                    (lastMessage.config.content as string) +
-                    chunkData.content,
-                },
-              };
+              // Check if the last message is from the same source and is an assistant message
+              // This prevents creating duplicate messages when we receive both chunks and full messages
+              if (
+                lastMessage.config.source === "assistant" ||
+                lastMessage.config.source === chunkData.source
+              ) {
+                const updatedMessages = [...current.messages];
 
-              return {
-                ...current,
-                messages: updatedMessages,
-              };
-            } else {
-              // Create a new message if no previous message exists
-              const newChunkMessage = createMessage(
-                {
-                  source: chunkData.source || "assistant",
-                  content: chunkData.content,
-                  metadata: chunkData.metadata || {},
-                } as AgentMessageConfig,
-                current.id,
-                session.id
-              );
+                // Update the last message with the new chunk
+                updatedMessages[lastMessageIndex] = {
+                  ...lastMessage,
+                  config: {
+                    ...lastMessage.config,
+                    content:
+                      (lastMessage.config
+                        .content as string) +
+                      chunkData.content,
+                  },
+                };
 
-              return {
-                ...current,
-                messages: [
-                  ...current.messages,
-                  newChunkMessage,
-                ],
-              };
+                return {
+                  ...current,
+                  messages: updatedMessages,
+                };
+              }
             }
+
+            // Only create a new message if no suitable existing message was found
+            const newChunkMessage = createMessage(
+              {
+                source: "assistant", // Force assistant source for message_chunk
+                content: chunkData.content,
+                metadata: chunkData.metadata || {},
+              } as AgentMessageConfig,
+              current.id,
+              session.id
+            );
+
+            return {
+              ...current,
+              messages: [...current.messages, newChunkMessage],
+            };
           }
           return current;
 
@@ -404,7 +465,8 @@ export default function ChatView({
               input_request = { input_type: "text_input" };
               break;
             case "approval":
-              var input_request_message = message as InputRequestMessage;
+              var input_request_message =
+                message as InputRequestMessage;
               input_request = {
                 input_type: "approval",
                 prompt: input_request_message.prompt,
@@ -463,7 +525,9 @@ export default function ChatView({
             ...current,
             status,
             team_result:
-              message.data && isTeamResult(message.data) ? message.data : null,
+              message.data && isTeamResult(message.data)
+                ? message.data
+                : null,
           };
 
         default:
@@ -479,7 +543,9 @@ export default function ChatView({
     setError({
       status: false,
       message:
-        error instanceof Error ? error.message : "Unknown error occurred",
+        error instanceof Error
+          ? error.message
+          : "Unknown error occurred",
     });
   };
 
@@ -702,7 +768,9 @@ export default function ChatView({
       const processedFiles = await convertFilesToBase64(files);
       // Send start message
 
-      var planString = plan ? convertPlanStepsToJsonString(plan.steps) : "";
+      var planString = plan
+        ? convertPlanStepsToJsonString(plan.steps)
+        : "";
 
       const taskJson = {
         content: query,
@@ -717,10 +785,11 @@ export default function ChatView({
           files: processedFiles,
           team_config: teamConfig,
           settings_config: {
-            ...currentSettings, agent_mode_config: {
+            ...currentSettings,
+            agent_mode_config: {
               mode,
-              config: newConfig
-            }
+              config: newConfig,
+            },
           },
         })
       );
@@ -733,7 +802,9 @@ export default function ChatView({
       setError({
         status: false,
         message:
-          error instanceof Error ? error.message : "Failed to start task",
+          error instanceof Error
+            ? error.message
+            : "Failed to start task",
       });
     }
   };
@@ -792,7 +863,13 @@ export default function ChatView({
   };
 
   React.useEffect(() => {
-    if (localPlan && !planProcessed && visible && session?.id && currentRun) {
+    if (
+      localPlan &&
+      !planProcessed &&
+      visible &&
+      session?.id &&
+      currentRun
+    ) {
       // Only process if the plan belongs to current session
       if (localPlan.sessionId === session.id) {
         processPlan(localPlan);
@@ -855,7 +932,11 @@ export default function ChatView({
         processedPlanIds.add(newPlan.messageId);
       }
     } catch (err) {
-      console.error("Error processing plan for session:", session.id, err);
+      console.error(
+        "Error processing plan for session:",
+        session.id,
+        err
+      );
     }
   };
 
@@ -872,15 +953,22 @@ export default function ChatView({
     if (!currentRun?.messages) return;
 
     // Find the last plan message
-    const lastPlanMessage = [...currentRun.messages].reverse().find((msg) => {
-      if (typeof msg.config.content !== "string") return false;
-      return messageUtils.isPlanMessage(msg.config.metadata);
-    });
+    const lastPlanMessage = [...currentRun.messages]
+      .reverse()
+      .find((msg) => {
+        if (typeof msg.config.content !== "string") return false;
+        return messageUtils.isPlanMessage(msg.config.metadata);
+      });
 
-    if (lastPlanMessage && typeof lastPlanMessage.config.content === "string") {
+    if (
+      lastPlanMessage &&
+      typeof lastPlanMessage.config.content === "string"
+    ) {
       try {
         const content = JSON.parse(lastPlanMessage.config.content);
-        if (messageUtils.isPlanMessage(lastPlanMessage.config.metadata)) {
+        if (
+          messageUtils.isPlanMessage(lastPlanMessage.config.metadata)
+        ) {
           setCurrentPlan({
             task: content.task,
             steps: content.steps,
@@ -1011,21 +1099,19 @@ export default function ChatView({
     }
   };
 
-
   if (!visible) {
     return null;
   }
-
-
-
 
   return (
     <div className="text-primary h-[calc(100vh-100px)] bg-primary relative rounded flex-1 scroll w-full">
       {contextHolder}
       <div className="flex flex-col h-full w-full">
-
         {/* Progress Bar - Sticky at top */}
-        <div className="progress-container" style={{ height: "3.5rem" }}>
+        <div
+          className="progress-container"
+          style={{ height: "3.5rem" }}
+        >
           <div
             className="transition-opacity duration-300"
             style={{
@@ -1053,7 +1139,6 @@ export default function ChatView({
             : ""
             }`}
         >
-
           <div
             className={`${showDetailViewer && !isDetailViewerMinimized
               ? "w-full"
@@ -1070,10 +1155,16 @@ export default function ChatView({
                     onSavePlan={handlePlanUpdate}
                     onPause={handlePause}
                     onRegeneratePlan={handleRegeneratePlan}
-                    isDetailViewerMinimized={isDetailViewerMinimized}
-                    setIsDetailViewerMinimized={setIsDetailViewerMinimized}
+                    isDetailViewerMinimized={
+                      isDetailViewerMinimized
+                    }
+                    setIsDetailViewerMinimized={
+                      setIsDetailViewerMinimized
+                    }
                     showDetailViewer={showDetailViewer}
-                    setShowDetailViewer={setShowDetailViewer}
+                    setShowDetailViewer={
+                      setShowDetailViewer
+                    }
                     onApprove={handleApprove}
                     onDeny={handleDeny}
                     onAcceptPlan={handleAcceptPlan}
@@ -1091,9 +1182,6 @@ export default function ChatView({
             }
           </div>
 
-
-
-
           {/* No existing messages in run - centered content */}
           {currentRun && noMessagesYet && teamConfig && (
             <div
@@ -1105,7 +1193,8 @@ export default function ChatView({
               <div>{config.model_name}</div>
 
               <div className="text-secondary text-lg mb-6">
-                Welcome to Dr.Sai, Enter a message to get started
+                Welcome to Dr.Sai, Enter a message to get
+                started
                 {/* 欢迎使用Dr.Sai智能体，输入消息开始对话 */}
               </div>
 
@@ -1119,10 +1208,15 @@ export default function ChatView({
                     plan?: IPlan
                   ) => {
                     if (
-                      currentRun?.status === "awaiting_input" ||
+                      currentRun?.status ===
+                      "awaiting_input" ||
                       currentRun?.status === "paused"
                     ) {
-                      handleInputResponse(query, accepted, plan);
+                      handleInputResponse(
+                        query,
+                        accepted,
+                        plan
+                      );
                     } else {
                       runTask(query, files, plan, true);
                     }
@@ -1143,13 +1237,16 @@ export default function ChatView({
                     // Set the input value and trigger submit
                     chatInputRef.current.focus();
                     // Set value in textarea
-                    const textarea = document.getElementById(
-                      "queryInput"
-                    ) as HTMLTextAreaElement;
+                    const textarea =
+                      document.getElementById(
+                        "queryInput"
+                      ) as HTMLTextAreaElement;
                     if (textarea) {
                       textarea.value = task;
                       // Trigger input event for React state
-                      const event = new Event("input", { bubbles: true });
+                      const event = new Event("input", {
+                        bubbles: true,
+                      });
                       textarea.dispatchEvent(event);
                     }
                     // Submit the task
@@ -1157,11 +1254,17 @@ export default function ChatView({
                       if (chatInputRef.current) {
                         chatInputRef.current.focus();
                         // Simulate pressing Enter
-                        const enterEvent = new KeyboardEvent("keydown", {
-                          key: "Enter",
-                          bubbles: true,
-                        });
-                        textarea?.dispatchEvent(enterEvent);
+                        const enterEvent =
+                          new KeyboardEvent(
+                            "keydown",
+                            {
+                              key: "Enter",
+                              bubbles: true,
+                            }
+                          );
+                        textarea?.dispatchEvent(
+                          enterEvent
+                        );
                       }
                     }, 100);
                   }
