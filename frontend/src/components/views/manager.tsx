@@ -19,6 +19,7 @@ import { SessionEditor } from "./session_editor";
 import { Sidebar } from "./sidebar";
 import AgentSelectorAdvanced, { Agent } from "../common/AgentSelectorAdvanced";
 import { parse } from "yaml";
+import { useModeConfigStore } from "../../store/modeConfig";
 
 interface SessionWebSocket {
   socket: WebSocket;
@@ -89,7 +90,7 @@ export const SessionManager: React.FC = () => {
   const handleAgentList = async (agents: Agent[]) => {
     console.log("Fetching agent list for user:", user?.email);
     try {
-      const res = await agentAPI.getAgentList(user?.email || "");
+      const res = await agentAPI.getAgentList(user?.email || "yqsun@ihep.ac.cn");
       setAgents(res.config.agent_modes);
     } catch (error) {
       console.error("Error fetching agent list:", error);
@@ -98,7 +99,9 @@ export const SessionManager: React.FC = () => {
   }
 
   React.useEffect(() => {
-    handleAgentList(agents);
+    setTimeout(() => {
+      handleAgentList(agents);
+    }, 2000)
   }, [])
   useEffect(() => {
     if (typeof window !== "undefined") {
