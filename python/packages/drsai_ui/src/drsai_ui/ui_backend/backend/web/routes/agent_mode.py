@@ -18,8 +18,9 @@ async def get_agent_mode_settings(user_id: str, db=Depends(get_db)) -> Dict:
     获取后端的mode种类设置
     '''
     try:
-        response = db.get(AgentModeSettings, filters={"user_id": user_id})
-        if not response.status or not response.data:
+        # response = db.get(AgentModeSettings, filters={"user_id": user_id})
+        # if not response.status or not response.data:
+        if True:
             # create a default settings
             config_dict = get_agent_mode_config(user_id=user_id)
             # Convert dict to AgentModeSetting, only use fields defined in Agent_mode

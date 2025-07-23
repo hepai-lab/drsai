@@ -19,6 +19,8 @@ from .approval_guard import (
     BaseApprovalGuard,
 )
 from ..remote_agent.drsai_remote_agent import RemoteAgent
+from ..magentic_one.agents.drsai_agents.drsai_agent import MagenticAgent
+from ...agent_factory.load_agent import get_model_client
 
 from ...ui_backend.input_func import InputFuncType, make_agentchat_input_func
 from ...ui_backend.learning.memory_provider import MemoryControllerProvider
@@ -422,7 +424,14 @@ async def create_magentic_round_team(
         )
     
     elif agent_mode == "drsai":
-        raise NotImplementedError("DrSai mode not implemented yet")
+        # raise NotImplementedError("DrSai mode not implemented yet")
+        agent = MagenticAgent(
+            name='drsai',
+            system_message="A helpfull assistant.",
+            description="A helpfull assistant.",
+            model_client=get_model_client(model_client_config = model_config)
+        )
+        
     
     elif agent_mode == "custom":
         agent_factory: Callable[[], Union[AssistantAgent, BaseGroupChat]] = await a_load_agent_factory_from_config(agent_config, mode = "ui")
