@@ -56,7 +56,7 @@ class MagenticAgent(AssistantAgent):
             self, 
             name: str,
             model_client: HepAIChatCompletionClient|None = None,
-            model_client_stream: bool = False,
+            model_client_stream: bool = True,
             tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
             description: str = "An agent that provides assistance with ability to use tools.",
             system_message: (

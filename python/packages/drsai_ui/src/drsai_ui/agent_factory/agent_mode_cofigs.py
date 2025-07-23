@@ -4,7 +4,7 @@ def get_agent_mode_config(
         user_id: str,
 ):
     return {"agent_modes": [
-        {"mode": "drsai", "name": "Dr.Sai General", "description": "Dr.Sai通用智能体，适用于多种任务"},
+        {"mode": "magentic-one", "name": "Dr.Sai General", "description": "Dr.Sai通用智能体，适用于多种任务"},
         {"mode": "besiii", "name": "Dr.Sai BESIII", "description": "BESIII实验专用智能体，专为高能物理实验优化"},
         
         # {"mode": "besiii", "name": "Dr.Sai BESIII", "description": "BESIII实验专用智能体，专为高能物理实验优化"},

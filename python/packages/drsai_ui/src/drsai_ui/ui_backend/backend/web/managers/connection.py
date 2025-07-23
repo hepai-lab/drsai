@@ -512,6 +512,7 @@ class WebSocketManager:
         try:
             if run_id in self._connections:
                 websocket = self._connections[run_id]
+                # print(message)
                 await websocket.send_json(message)
         except WebSocketDisconnect:
             logger.warning(
