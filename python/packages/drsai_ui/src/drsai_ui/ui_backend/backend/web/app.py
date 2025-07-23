@@ -169,7 +169,6 @@ api.include_router(
     responses={404: {"description": "Not found"}},
 )
 
-
 api.include_router(
     files.router,
     prefix="/files",

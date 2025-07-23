@@ -99,6 +99,8 @@ Model(id='hepai/bge-m3:latest', created=None, object='model', owned_by=None)
 Model(id='hepai/bge-reranker-v2-m3:latest', created=None, object='model', owned_by=None)
 ```
 
+模型介绍见：https://note.ihep.ac.cn/s/UBRVXiCaB
+
 此时你可以使用[openai的格式](https://platform.openai.com/docs/api-reference)去访问大模型，如openai系列、qwen系列、deepseek系列；进行矢量知识库检索的embedding和reranker模型；PDF/Office/图像等多模态转markdown的工具：```hepai/markitdown```、```hepai/mineru```等。
 
 ### 2.2.测试大模型/智能体工具/知识库及检索等服务
