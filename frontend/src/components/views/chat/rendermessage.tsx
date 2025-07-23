@@ -179,15 +179,56 @@ const parseContent = (content: any): string => {
 
   try {
     const parsedContent = JSON.parse(content);
-    // 优先返回 content.content，然后是 content，最后是原始内容
-    if (parsedContent.content?.content) {
-      return parsedContent.content.content;
-    } else if (parsedContent.content) {
-      return parsedContent.content;
-    } else {
-      return content;
+
+    // 递归查找 content 字段
+    const extractContent = (obj: any): string | null => {
+      if (typeof obj === "string") return obj;
+      if (typeof obj === "object" && obj !== null) {
+        // 优先查找 content 字段
+        if (obj.content !== undefined) {
+          if (typeof obj.content === "string") {
+            return obj.content;
+          } else if (
+            typeof obj.content === "object" &&
+            obj.content !== null
+          ) {
+            // 如果 content 是对象，递归查找
+            const nestedContent = extractContent(obj.content);
+            if (nestedContent) return nestedContent;
+          }
+        }
+
+        // 如果没有找到 content 字段，尝试其他可能的字段
+        for (const key in obj) {
+          if (
+            key === "text" ||
+            key === "value" ||
+            key === "message"
+          ) {
+            const value = obj[key];
+            if (typeof value === "string") {
+              return value;
+            }
+          }
+        }
+      }
+      return null;
+    };
+
+    const extractedContent = extractContent(parsedContent);
+    if (extractedContent) {
+      // 添加调试日志
+      console.log("Parsed content:", {
+        original: content,
+        extracted: extractedContent,
+      });
+      return extractedContent;
     }
+
+    // 如果没有找到 content 字段，返回原始内容
+    return content;
   } catch {
+    // 如果 JSON 解析失败，返回原始内容
     return content;
   }
 };
