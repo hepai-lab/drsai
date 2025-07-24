@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { InputRequest } from "../../types/datamodel";
 import { debounce } from "lodash";
-import { planAPI } from "../api";
+import { planAPI, fileAPI } from "../api";
 import RelevantPlans from "./relevant_plans";
 import { IPlan } from "../../types/plan";
 import PlanView from "./plan";
@@ -102,6 +102,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       null
     );
     const [isLoading, setIsLoading] = React.useState(false);
+    const [isUploading, setIsUploading] = React.useState(false);
     const userId = user?.email || "default_user";
     const [isRelevantPlansVisible, setIsRelevantPlansVisible] =
       React.useState(false);
@@ -170,7 +171,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     }, [userId]);
 
     // Add paste event listener for images and large text
-    const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
       if (isInputDisabled || !enable_upload) return;
 
       // Handle image paste
@@ -207,11 +208,40 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                 originFileObj: namedFile as RcFile,
               };
 
-              // Add to file list
+              // Add to file list with uploading status
               setFileList((prev) => [...prev, uploadFile]);
 
-              // Show successful paste notification
-              message.success(`Image pasted successfully`);
+              try {
+                // Upload file to server
+                await fileAPI.uploadFiles(userId, [namedFile]);
+
+                // Update file status to done
+                setFileList((prev) =>
+                  prev.map((f) =>
+                    f.uid === uploadFile.uid
+                      ? { ...f, status: "done" as const }
+                      : f
+                  )
+                );
+
+                // Show successful paste notification
+                message.success(
+                  `Image pasted and uploaded successfully`
+                );
+              } catch (error) {
+                console.error("Image upload failed:", error);
+
+                // Update file status to error
+                setFileList((prev) =>
+                  prev.map((f) =>
+                    f.uid === uploadFile.uid
+                      ? { ...f, status: "error" as const }
+                      : f
+                  )
+                );
+
+                message.error(`Failed to upload pasted image`);
+              }
             } else if (file && file.size > MAX_FILE_SIZE) {
               message.error(
                 `Pasted image is too large. Maximum size is 5MB.`
@@ -221,7 +251,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
 
           // Handle text items - only if there's a large amount of text
           if (item.type === "text/plain" && !hasImageItem) {
-            item.getAsString((text) => {
+            item.getAsString(async (text) => {
               // Only process for large text
               if (text.length > LARGE_TEXT_THRESHOLD) {
                 // We need to prevent the default paste behavior
@@ -268,11 +298,11 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                   { type: "text/plain" }
                 );
 
-                // Add to file list
+                // Add to file list with uploading status
                 const uploadFile: UploadFile = {
                   uid: `paste-${Date.now()}`,
                   name: file.name,
-                  status: "done",
+                  status: "uploading",
                   size: file.size,
                   type: file.type,
                   originFileObj: file as RcFile,
@@ -280,21 +310,69 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
 
                 setFileList((prev) => [...prev, uploadFile]);
 
-                // Notify user about the conversion
-                notificationApi.info({
-                  message: (
-                    <span className="text-sm">
-                      Large Text Converted to File
-                    </span>
-                  ),
-                  description: (
-                    <span className="text-sm text-secondary">
-                      Your pasted text has been attached
-                      as a file.
-                    </span>
-                  ),
-                  duration: 3,
-                });
+                try {
+                  // Upload file to server
+                  await fileAPI.uploadFiles(userId, [file]);
+
+                  // Update file status to done
+                  setFileList((prev) =>
+                    prev.map((f) =>
+                      f.uid === uploadFile.uid
+                        ? {
+                          ...f,
+                          status: "done" as const,
+                        }
+                        : f
+                    )
+                  );
+
+                  // Notify user about the conversion
+                  notificationApi.info({
+                    message: (
+                      <span className="text-sm">
+                        Large Text Converted to File
+                      </span>
+                    ),
+                    description: (
+                      <span className="text-sm text-secondary">
+                        Your pasted text has been
+                        uploaded as a file.
+                      </span>
+                    ),
+                    duration: 3,
+                  });
+                } catch (error) {
+                  console.error(
+                    "Text file upload failed:",
+                    error
+                  );
+
+                  // Update file status to error
+                  setFileList((prev) =>
+                    prev.map((f) =>
+                      f.uid === uploadFile.uid
+                        ? {
+                          ...f,
+                          status: "error" as const,
+                        }
+                        : f
+                    )
+                  );
+
+                  notificationApi.error({
+                    message: (
+                      <span className="text-sm">
+                        Upload Failed
+                      </span>
+                    ),
+                    description: (
+                      <span className="text-sm text-secondary">
+                        Failed to upload text file.
+                      </span>
+                    ),
+                    duration: 5,
+                  });
+                }
               }
             });
           }
@@ -466,7 +544,9 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     }));
 
     // Add helper function for file validation and addition
-    const handleFileValidationAndAdd = (file: File): boolean => {
+    const handleFileValidationAndAdd = async (
+      file: File
+    ): Promise<boolean> => {
       // Check file size
       if (file.size > MAX_FILE_SIZE) {
         message.error(
@@ -500,11 +580,11 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
         return false;
       }
 
-      // Add valid file to fileList
+      // Add file to fileList with uploading status
       const uploadFile: UploadFile = {
         uid: `file-${Date.now()}-${file.name}`,
         name: file.name,
-        status: "done",
+        status: "uploading",
         size: file.size,
         type: file.type,
         originFileObj: file as RcFile,
@@ -512,18 +592,60 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
 
       setFileList((prev) => [...prev, uploadFile]);
 
-      // Show success notification
-      notificationApi.success({
-        message: <span className="text-sm">File Added</span>,
-        description: (
-          <span className="text-sm text-secondary">
-            {file.name} has been attached.
-          </span>
-        ),
-        duration: 3,
-      });
+      try {
+        setIsUploading(true);
 
-      return true;
+        // Upload file to server
+        const uploadResult = await fileAPI.uploadFiles(userId, [file]);
+
+        // Update file status to done
+        setFileList((prev) =>
+          prev.map((f) =>
+            f.uid === uploadFile.uid
+              ? { ...f, status: "done" as const }
+              : f
+          )
+        );
+
+        // Show success notification
+        notificationApi.success({
+          message: <span className="text-sm">File Uploaded</span>,
+          description: (
+            <span className="text-sm text-secondary">
+              {file.name} has been uploaded successfully.
+            </span>
+          ),
+          duration: 3,
+        });
+
+        return true;
+      } catch (error) {
+        console.error("File upload failed:", error);
+
+        // Update file status to error
+        setFileList((prev) =>
+          prev.map((f) =>
+            f.uid === uploadFile.uid
+              ? { ...f, status: "error" as const }
+              : f
+          )
+        );
+
+        // Show error notification
+        notificationApi.error({
+          message: <span className="text-sm">Upload Failed</span>,
+          description: (
+            <span className="text-sm text-secondary">
+              Failed to upload {file.name}. Please try again.
+            </span>
+          ),
+          duration: 5,
+        });
+
+        return false;
+      } finally {
+        setIsUploading(false);
+      }
     };
 
     // Update the upload props to use the new helper function
@@ -531,9 +653,10 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       name: "file",
       multiple: true,
       fileList,
-      beforeUpload: (file: RcFile) => {
-        if (handleFileValidationAndAdd(file)) {
-          return false; // Prevent automatic upload
+      beforeUpload: async (file: RcFile) => {
+        const result = await handleFileValidationAndAdd(file);
+        if (result) {
+          return false; // Prevent automatic upload since we handle it manually
         }
         return Upload.LIST_IGNORE;
       },
@@ -542,7 +665,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       },
       showUploadList: false, // We'll handle our own custom file preview
       customRequest: (options: any) => {
-        // Mock successful upload since we're not actually uploading anywhere yet
+        // This is not used since we handle upload manually
         if (options.onSuccess) {
           options.onSuccess("ok", options.file);
         }
@@ -552,6 +675,17 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     const getFileIcon = (file: UploadFile) => {
       const fileType = file.type || "";
       const fileName = file.name || "";
+
+      // Show upload status
+      if (file.status === "uploading") {
+        return <Progress type="circle" size={16} percent={50} />;
+      }
+
+      if (file.status === "error") {
+        return (
+          <ExclamationTriangleIcon className="w-4 h-4 text-red-500" />
+        );
+      }
 
       if (fileType.startsWith("image/")) {
         return <ImageIcon className="w-4 h-4 text-blue-500" />;
@@ -613,7 +747,9 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       if (isInputDisabled || !enable_upload) return;
 
       const droppedFiles = Array.from(e.dataTransfer.files);
-      droppedFiles.forEach(handleFileValidationAndAdd);
+      for (const file of droppedFiles) {
+        await handleFileValidationAndAdd(file);
+      }
     };
 
     const handleUsePlan = (plan: IPlan) => {
@@ -740,7 +876,10 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                 className={`flex items-center gap-2 ${darkMode === "dark"
                   ? "bg-[#444444] text-white border border-gray-600"
                   : "bg-white text-black border border-gray-200"
-                  } rounded-lg px-3 py-2 text-xs shadow-sm hover:shadow-md transition-shadow`}
+                  } rounded-lg px-3 py-2 text-xs shadow-sm hover:shadow-md transition-shadow ${file.status === "error"
+                    ? "border-red-500"
+                    : ""
+                  }`}
               >
                 {getFileIcon(file)}
                 <div className="flex flex-col min-w-0 flex-1">
@@ -749,6 +888,10 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                   </span>
                   <span className="text-xs opacity-70">
                     {formatFileSize(file.size || 0)}
+                    {file.status === "uploading" &&
+                      " - Uploading..."}
+                    {file.status === "error" &&
+                      " - Upload failed"}
                   </span>
                 </div>
                 <Button
