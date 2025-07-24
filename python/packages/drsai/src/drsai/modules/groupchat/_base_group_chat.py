@@ -1,8 +1,14 @@
 
 import asyncio
-import logging
 
-from typing import Any, AsyncGenerator, List, Sequence, Callable
+from typing import (
+    Any, 
+    List, 
+    Callable, 
+    Mapping,
+    Dict,
+    cast,
+    )
 
 from autogen_core import (
     AgentId,
@@ -29,14 +35,20 @@ from autogen_agentchat.teams._group_chat._events import (
 from autogen_agentchat.teams._group_chat._sequential_routed_agent import SequentialRoutedAgent
 from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
 from autogen_agentchat.teams import BaseGroupChat
+from autogen_agentchat.state import BaseState, TeamState
 
 from drsai.modules.managers.base_thread import Thread
 from drsai.modules.managers.threads_manager import ThreadsManager
 from drsai.modules.managers.base_thread_message import ThreadMessage, Content, Text
 
-event_logger = logging.getLogger(__name__)
 
 
+class BaseManagerState(BaseState):
+    """The state of the RoundRobinGroupChatManager."""
+
+    message_thread: List[Dict[str, Any]] = []
+    current_turn: int = 0
+    is_paused: bool = False
 
 class DrSaiGroupChatManager(BaseGroupChatManager):
 
@@ -71,10 +83,53 @@ class DrSaiGroupChatManager(BaseGroupChatManager):
             message_factory=message_factory,
             emit_team_events=emit_team_events,
         )
-        self._theard: Thread = thread
+        self._thread: Thread = thread
         self._thread_mgr: ThreadsManager = thread_mgr
+        
+        self._is_paused = False
 
+    async def pause(self) -> None:
+        """Pause the group chat manager."""
+        self._is_paused = True
 
+    async def resume(self) -> None:
+        """Resume the group chat manager."""
+        self._is_paused = False
+
+    async def close(self) -> None:
+        """Close any resources."""
+        pass
+
+    async def reset(self) -> None:
+        self._current_turn = 0
+        self._message_thread.clear()
+        if self._termination_condition is not None:
+            await self._termination_condition.reset()
+        self._is_paused = False
+
+    async def save_state(self) -> Mapping[str, Any]:
+        state = BaseManagerState(
+            message_thread=[
+                cast(Dict[str, Any], message.dump()) for message in self._message_thread
+            ],
+            current_turn=0,
+            is_paused=False,
+        )
+        return state.model_dump()
+    
+    async def load_state(self, state: Mapping[str, Any]) -> None:
+        base_state = BaseManagerState.model_validate(state)
+        self._message_thread = [
+            self._message_factory.create(message)
+            for message in base_state.message_thread
+        ]
+        self._current_turn = base_state.current_turn
+        self._is_paused = base_state.is_paused
+    
+    async def validate_group_state(
+        self, messages: List[BaseChatMessage] | None
+    ) -> None:
+        pass
 
 class DrSaiGroupChat(BaseGroupChat):
 
@@ -108,7 +163,7 @@ class DrSaiGroupChat(BaseGroupChat):
         self._thread_mgr: ThreadsManager = thread_mgr
 
     def _create_group_chat_manager_factory(
-       self,
+        self,
         name: str,
         group_topic_type: str,
         output_topic_type: str,
@@ -140,3 +195,49 @@ class DrSaiGroupChat(BaseGroupChat):
 
         return _factory
     
+    async def pause(self) -> None:
+        """Pause the group chat."""
+        orchestrator = await self._runtime.try_get_underlying_agent_instance(
+            AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
+            type=DrSaiGroupChatManager,
+        )
+        await orchestrator.pause()
+        for agent in self._participants:
+            if hasattr(agent, "pause"):
+                await agent.pause()  # type: ignore
+
+    async def resume(self) -> None:
+        """Resume the group chat."""
+        orchestrator = await self._runtime.try_get_underlying_agent_instance(
+            AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
+            type=DrSaiGroupChatManager,
+        )
+        await orchestrator.resume()
+        for agent in self._participants:
+            if hasattr(agent, "resume"):
+                await agent.resume()  # type: ignore
+
+    async def lazy_init(self) -> None:
+        """Initialize any lazy-loaded components."""
+        for agent in self._participants:
+            if hasattr(agent, "lazy_init"):
+                await agent.lazy_init()  # type: ignore
+
+    async def close(self) -> None:
+        """Close all resources."""
+        # Prepare a list of closable agents
+        closable_agents: List[DrSaiGroupChatManager | ChatAgent] = [
+            agent for agent in self._participants if hasattr(agent, "close")
+        ]
+        # Check if we can close the orchestrator
+        orchestrator = await self._runtime.try_get_underlying_agent_instance(
+            AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
+            type=DrSaiGroupChatManager,
+        )
+        if hasattr(orchestrator, "close"):
+            closable_agents.append(orchestrator)
+
+        # Close all closable agents concurrently
+        await asyncio.gather(
+            *(agent.close() for agent in closable_agents), return_exceptions=True
+        )

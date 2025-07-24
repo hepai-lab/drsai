@@ -1,7 +1,15 @@
 from .app_worker import DrSaiAPP
+from ..dr_sai import DrSai
 
 import os
-from typing import Union
+from typing import (
+    Union, 
+    List, 
+    Dict, 
+    Any,
+    AsyncGenerator
+    )
+from dataclasses import dataclass, field
 from fastapi import FastAPI
 import uvicorn, asyncio
 from autogen_agentchat.base import TaskResult
@@ -10,6 +18,11 @@ from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.ui import Console
 from pathlib import Path
 
+from hepai import HRModel, HModelConfig, HWorkerConfig, HWorkerAPP
+import hepai
+
+from drsai.modules.groupchat import DrSaiGroupChat
+from drsai.modules.baseagent import DrSaiAgent
 
 here = Path(__file__).parent.resolve()
 
@@ -134,5 +147,187 @@ async def run_backend(agent_factory: callable, **kwargs):
         await server.serve()
     except asyncio.CancelledError:
         await server.shutdown()
+
+
+@dataclass
+class DrSaiModelConfig(HModelConfig):
+    name: str = field(default="hepai/drsai", metadata={"help": "Model's name"})
+    permission: Union[str, Dict] = field(default=None, metadata={"help": "Model's permission, separated by ;, e.g., 'groups: all; users: a, b; owner: c', will inherit from worker permissions if not setted"})
+    version: str = field(default="2.0", metadata={"help": "Model's version"})
+
+@dataclass
+class DrSaiWorkerConfig(HWorkerConfig):
+    host: str = field(default="0.0.0.0", metadata={"help": "Worker's address, enable to access from outside if set to `0.0.0.0`, otherwise only localhost can access"})
+    port: int = field(default=42801, metadata={"help": "Worker's port, default is None, which means auto start from `auto_start_port`"})
+    auto_start_port: int = field(default=42801, metadata={"help": "Worker's start port, only used when port is set to `auto`"})
+    route_prefix: str = field(default="/apiv2", metadata={"help": "Route prefix for worker"})
+    # controller_address: str = field(default="https://aiapi001.ihep.ac.cn", metadata={"help": "The address of controller"})
+    controller_address: str = field(default="http://localhost:42601", metadata={"help": "The address of controller"})
+    
+    controller_prefix: str = field(default="/apiv2", metadata={"help": "Controller's route prefix"})
+    no_register: bool = field(default=True, metadata={"help": "Do not register to controller"})
+    
+
+    permissions: str = field(default='groups: default; users: admin, xiongdb@ihep.ac.cn, ddf_free; owner: xiongdb@ihep.ac.cn', metadata={"help": "Model's permissions, separated by ;, e.g., 'groups: default; users: a, b; owner: c'"})
+    description: str = field(default='This is Dr.Sai multi agents system', metadata={"help": "Model's description"})
+    author: str = field(default=None, metadata={"help": "Model's author"})
+    daemon: bool = field(default=False, metadata={"help": "Run as daemon"})
+    type: str = field(default="drsai", metadata={"help": "Worker's type"})
+    debug: bool = field(default=True, metadata={"help": "Debug mode"})
+
+
+class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from HRModel.
+    def __init__(
+            self, 
+            config: HModelConfig,
+            drsaiapp: DrSaiAPP = None # 传入DrSaiAPP实例
+            ):
+        super().__init__(config=config)
+
+        # if drsaiapp is not None and isinstance(drsaiapp, type):
+        #     self.drsai = drsaiapp()  # Instantiate the DrSaiAPP instance.
+        # else:
+        #     self.drsai = drsaiapp or DrSaiAPP()  # Instantiate the DrSaiAPP instance.
+        # pass
+        self.drsai: DrSaiAPP = drsaiapp
+        
+
+    @HRModel.remote_callable
+    async def a_get_agents_info(self,) -> List[Dict[str, Any]]:
+        return await self.drsai.a_get_agents_info()
+    
+    @HRModel.remote_callable
+    async def lazy_init(self, chat_id: str) -> Dict[str, Any]:
+        try:
+            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
+            await agent.lazy_init()
+            return {"status": True, "message": ""}
+        except Exception as e:
+            return {"status": False, "message": f"Lazy init error: {e}"}
+    
+    @HRModel.remote_callable
+    async def pause(self, chat_id: str) -> Dict[str, Any]:
+        try:
+            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
+            await agent.pause()
+            return {"status": True, "message": ""}
+        except Exception as e:
+            return {"status": False, "message": f"Pause error: {e}"}
+    
+    @HRModel.remote_callable
+    async def resume(self, chat_id: str) -> Dict[str, Any]:
+        try:
+            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
+            await agent.resume()
+            return {"status": True, "message": ""}
+        except Exception as e:
+            return {"status": False, "message": f"Resume error: {e}"}
+    
+    @HRModel.remote_callable
+    async def close(self, chat_id: str) -> Dict[str, Any]:
+        try:
+            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
+            await agent.close()
+            return {"status": True, "message": ""}
+        except Exception as e:
+            return {"status": False, "message": f"Close error: {e}"}
+        
+    @HRModel.remote_callable
+    async def a_chat_completions(self, *args, **kwargs) -> AsyncGenerator:
+        return await self.drsai.a_start_chat_completions(*args, **kwargs)
+
+
+async def run_worker(agent_factory: callable, **kwargs):
+    '''
+    启动HepAI-Worker-Style-API后端服务
+    args:
+        agent_factory: 工厂函数，用于创建AssistantAgent/BaseGroupChat实例
+        agent_name: str = , "Dr.Sai" ,  # 智能体的名称
+        host: str = , "0.0.0.0" ,  # 后端服务host
+        port: int = 42801,  # 后端服务port
+        no_register: bool = False,  # 是否注册到控制器
+        controller_address: str = "https://aiapi001.ihep.ac.cn",  # 控制器地址
+        history_mode: str = "backend",  # 历史消息的加载模式，可选值：backend、frontend 默认backend
+        use_api_key_mode: str = "frontend",  # api key的使用模式，可选值：frontend、backend 默认frontend， 调试模式下建议设置为backend
+        enable_pipeline: bool = False,  # 是否启动openwebui pipelines
+    '''
+    model_args_obj: HModelConfig = DrSaiModelConfig
+    worker_args_obj: HWorkerConfig = DrSaiWorkerConfig
+    model_args, worker_args = hepai.parse_args((model_args_obj, worker_args_obj))
+
+    agent_name: str = kwargs.pop("agent_name", None)
+    if agent_name is not None:
+        model_args.name = agent_name
+        os.environ['AGNET_NAME'] = agent_name
+    
+    host: str =  kwargs.pop("host", None)
+    if host is not None:
+        worker_args.host = host
+
+    port: int =  kwargs.pop("port", None)
+    if port is not None:
+        worker_args.port = port
+        os.environ['BACKEND_PORT'] = str(port)
+
+    no_register: bool =  kwargs.pop("no_register", False)
+    if no_register:
+        worker_args.no_register = no_register
+
+    controller_address: str =  kwargs.pop("controller_address", "https://aiapi.ihep.ac.cn")
+    worker_args.controller_address = controller_address
+
+    print(model_args)
+    print()
+    print(worker_args)
+    print()
+
+    drsaiapp = DrSaiAPP(
+        agent_factory = agent_factory,
+        **kwargs
+        )
+    
+    model = DrSaiWorkerModel(config=model_args, drsaiapp=drsaiapp)
+
+    enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
+    if enable_pipeline:
+        pipelines_dir = kwargs.pop("pipelines_dir", None)
+        if pipelines_dir is not None:
+            os.environ['PIPELINES_DIR'] = pipelines_dir
+            pipelines_dir = os.getenv('PIPELINES_DIR')
+            if not os.path.exists(pipelines_dir):
+                print(f"PIPELINES_DIR {pipelines_dir} not exists!")
+            else:
+                print(f"Set PIPELINES_DIR to {pipelines_dir}")
+        # 通过Pipeline适配OpenWebUI
+        from .owebui_pipeline.api import app as owebui_pipeline_app
+        from .owebui_pipeline.api import lifespan as owebui_lifespan
+        # 实例化HWorkerAPP
+        app: FastAPI = HWorkerAPP(
+            model, worker_config=worker_args,
+            lifespan=owebui_lifespan,
+            )  # Instantiate the APP, which is a FastAPI application.
+        app.mount("/pipelines", app=owebui_pipeline_app)
+        
+    else:
+        app: FastAPI = HWorkerAPP(
+            model, worker_config=worker_args
+            )
+    
+    app.include_router(model.drsai.router)
+    
+    print(app.worker.get_worker_info(), flush=True)
+    # # 启动服务
+    # uvicorn.run(self.app, host=self.app.host, port=self.app.port)
+    # 创建uvicorn配置和服务实例
+    config = uvicorn.Config(
+        app, 
+        host=worker_args.host,  # 确保这里使用的是正确的host参数
+        port=worker_args.port   # 确保这里使用的是正确的port参数
+    )
+    server = uvicorn.Server(config)
+    # 在现有事件循环中启动服务
+    if enable_pipeline:
+        print(f"Enable OpenWebUI pipelines: `http://{worker_args.host}:{worker_args.port}/pipelines` with API-KEY: `{owebui_pipeline_app.api_key}`")
+    await server.serve()
 
 

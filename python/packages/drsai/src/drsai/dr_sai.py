@@ -65,7 +65,12 @@ class DrSai:
     def __init__(self, **kwargs):
         self.username = "anonymous"
         self.threads_mgr = ThreadsManager()
+
+        # 智能体管理
         self.agent_factory: callable = kwargs.pop('agent_factory', None)
+        self.agent_instance: Dict[str, AssistantAgent | BaseGroupChat] = {}
+
+        # 额外设置
         self.history_mode = kwargs.pop('history_mode', 'backend') # backend or frontend
         self.use_api_key_mode = kwargs.pop('use_api_key_mode', "frontend") # frontend or backend
 
@@ -76,41 +81,8 @@ class DrSai:
             load_test_api_key = "DrSai_" + str(uuid.uuid4())
             with open("drsai_test.env", "w") as f:
                 f.write(f"LOAD_TEST_API_KEY={load_test_api_key}\n")
-            # load_dotenv(dotenv_path = "drsai_test.env")
-            # load_test_api_key = os.environ.get("LOAD_TEST_API_KEY", None)
         self.drsai_test_api_key = load_test_api_key
         print(f"\nDrSai_test_api_key: {self.drsai_test_api_key}\n")
-
-
-    # #### --- 关于AutoGen --- ####
-    # async def start_console(
-    #         self,
-    #         task: str,
-    #         agent: AssistantAgent|BaseGroupChat = None, 
-    #         **kwargs) -> Union[None, TaskResult]:
-    #     """
-    #     启动aotugen原生多智能体运行方式和多智能体逻辑
-    #     """
-
-    #     # agent: AssistantAgent|BaseGroupChat = self.agent_factory() if agent is None else agent
-    #     agent: AssistantAgent | BaseGroupChat = (
-    #         await self.agent_factory() 
-    #         if agent is None and asyncio.iscoroutinefunction(self.agent_factory)
-    #         else (
-    #             self.agent_factory() 
-    #             if agent is None 
-    #             else agent
-    #         )
-    #     )
-
-    #     stream = agent._model_client_stream if not isinstance(agent, BaseGroupChat) else agent._participants[0]._model_client_stream
-    #     if stream:
-    #         await Console(agent.run_stream(task=task))
-    #         return 
-    #     else:
-    #         result:TaskResult = await agent.run(task=task)
-    #         print(result)
-    #         # return result
 
     #### --- 关于OpenAI Chat/Completions --- ####
     async def a_start_chat_completions(self, **kwargs) -> AsyncGenerator:
@@ -171,6 +143,8 @@ class DrSai:
                 history_mode = kwargs.pop('history_mode', None) or self.history_mode # backend or frontend
                     
             # 创建/加载thread后端，来绑定指定前端的chat_id
+            if not chat_id:
+                chat_id = str(uuid.uuid4())
             thread: Thread = self.threads_mgr.create_threads(username=username, chat_id=chat_id) # TODO: 这里需要改成异步加载
             thread.metadata["extra_requests"] = extra_requests
 
@@ -206,6 +180,9 @@ class DrSai:
                 #     history.append(SystemMessage(content=history_aoi_message["content"]))
                 # elif history_aoi_message["role"] == "function":
                 #     history.append(FunctionExecutionResultMessage(content=history_aoi_message["content"]))
+
+            # 将智能体实例放入agent_instance字典
+            self.agent_instance[chat_id] = agent
 
             # 启动聊天任务
             async def add_history_to_model_context(model_context: ChatCompletionContext, history: List[LLMMessage]) -> str:

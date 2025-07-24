@@ -36,7 +36,9 @@ from drsai.utils.oai_stream_event import (
 # backend
 from drsai.backend.run import (
     run_backend, 
-    run_console,)
+    run_console,
+    run_worker
+    )
 from drsai.backend.app_worker import DrSaiAPP
 
 ###########

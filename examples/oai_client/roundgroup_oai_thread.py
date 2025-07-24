@@ -9,13 +9,15 @@ except ImportError:
     sys.path.append(drsai_path)
 
 
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiRoundRobinGroupChat, DrSaiAPP, TextMentionTermination
-from drsai import run_backend, run_console
+from drsai import  HepAIChatCompletionClient, DrSaiAPP, TextMentionTermination
+from drsai import run_backend, run_console, run_worker
+from drsai.modules.baseagent import DrSaiAgent
+from drsai.modules.groupchat import RoundRobinGroupChat
 import json
 import asyncio
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
-def create_team() -> DrSaiRoundRobinGroupChat:
+def create_team() -> RoundRobinGroupChat:
     # Create an OpenAI model client.
     model_client = HepAIChatCompletionClient(
         # model="deepseek-ai/deepseek-r1:671b",
@@ -26,7 +28,7 @@ def create_team() -> DrSaiRoundRobinGroupChat:
     )
 
     # Create the primary agent.
-    primary_agent = AssistantAgent(
+    primary_agent = DrSaiAgent(
         "primary",
         model_client=model_client,
         system_message="You are a helpful AI assistant.",
@@ -34,7 +36,7 @@ def create_team() -> DrSaiRoundRobinGroupChat:
     )
 
     # Create the critic agent.
-    critic_agent = AssistantAgent(
+    critic_agent = DrSaiAgent(
         "critic",
         model_client=model_client,
         system_message="Provide constructive feedback. Respond with 'APPROVE' to when your feedbacks are addressed.",
@@ -45,7 +47,7 @@ def create_team() -> DrSaiRoundRobinGroupChat:
     text_termination = TextMentionTermination("APPROVE")
 
     # Create a team with the primary and critic agents.
-    return DrSaiRoundRobinGroupChat(
+    return RoundRobinGroupChat(
         participants=[primary_agent, critic_agent], 
         termination_condition=text_termination)
 
@@ -83,7 +85,7 @@ async def main():
 
 if __name__ == "__main__":
     # asyncio.run(main())
-    asyncio.run(run_console(agent_factory=create_team, task="What is the weather in New York?"))
+    # asyncio.run(run_console(agent_factory=create_team, task="What is the weather in New York?"))
     # asyncio.run(run_backend(
     #     agent_factory=create_agent, 
     #     port = 42805, 
@@ -91,3 +93,12 @@ if __name__ == "__main__":
     #     history_mode = "backend",
     #     use_api_key_mode = "backend")
     #     )
+    asyncio.run(
+        run_worker(
+            agent_factory=create_team, 
+            port = 42805, 
+            enable_openwebui_pipeline=True, 
+            history_mode = "backend",
+            use_api_key_mode = "backend",
+        )
+    )
