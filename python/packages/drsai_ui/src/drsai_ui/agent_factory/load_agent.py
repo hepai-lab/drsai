@@ -5,8 +5,8 @@ from autogen_core.models import ChatCompletionClient, LLMMessage
 from autogen_core import ComponentModel, CancellationToken
 
 from autogen_core.tools._function_tool import FunctionTool, FunctionToolConfig
-from autogen_agentchat.agents._assistant_agent import AssistantAgentConfig
-from autogen_agentchat.agents import UserProxyAgent, BaseChatAgent
+# from autogen_agentchat.agents._assistant_agent import AssistantAgentConfig
+# from autogen_agentchat.agents import UserProxyAgent, BaseChatAgent
 from autogen_agentchat.teams import BaseGroupChat
 from autogen_ext.tools.mcp import (
     SseServerParams, 
@@ -196,24 +196,14 @@ async def a_load_agent_factory_from_config(
                 memory_function = None
                 if knowledge_cofig:
                     memory_function = await load_memory_function(knowledge_cofig)
-                if mode == "ui":
-                    assistant_list.append(MagenticAgent(
-                        name=name,
-                        system_message=system_message,
-                        description=description,
-                        model_client=model_client,
-                        tools=mcp_tools+hepai_tools+source_tools if len(mcp_tools+hepai_tools+source_tools) > 0 else None,
-                        memory_function=memory_function,
-                    ))
-                else:
-                    assistant_list.append(AssistantAgent(
-                        name=name,
-                        system_message=system_message,
-                        description=description,
-                        model_client=model_client,
-                        tools=mcp_tools+hepai_tools if len(mcp_tools+hepai_tools) > 0 else None,
-                        memory_function=memory_function,
-                    ))
+                assistant_list.append(AssistantAgent(
+                    name=name,
+                    system_message=system_message,
+                    description=description,
+                    model_client=model_client,
+                    tools=mcp_tools+hepai_tools if len(mcp_tools+hepai_tools) > 0 else None,
+                    memory_function=memory_function,
+                ))
                 
     # TODO: 完善GroupChat的加载, UI模式下的Groupchat需要MagenticGroupChat
 

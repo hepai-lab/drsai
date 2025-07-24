@@ -271,6 +271,7 @@ class UserFiles(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
     )  # pylint: disable=not-callable
     user_id: Optional[str] = None
+    session_id: Optional[int] = None
     version: Optional[str] = "0.0.1"
     files: Optional[dict[str, Any]] = Field(
         default_factory=dict, sa_column=Column(JSON)

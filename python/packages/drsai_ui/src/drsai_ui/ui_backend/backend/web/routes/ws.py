@@ -21,7 +21,12 @@ async def run_websocket(
     ws_manager: WebSocketManager = Depends(get_websocket_manager),
     db=Depends(get_db),
 ):
-    """WebSocket endpoint for run communication"""
+    """
+    WebSocket endpoint for run communication
+    settings_config：相比原来需要额外加的参数：
+    - agent_mode_config:  用于指定agent的模式，如：agent_mode_config={"mode": "drsai", config: {...}}
+    - file_info: 用户在当前聊天界面上传的信息，post后直接返回
+    """
     # Verify run exists and is in valid state
     run_response = db.get(Run, filters={"id": run_id}, return_json=False)
     if not run_response.status or not run_response.data:

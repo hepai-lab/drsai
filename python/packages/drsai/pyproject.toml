@@ -35,6 +35,10 @@ dependencies = [
     "aiohttp",
     "python-multipart",
     "json_schema_to_pydantic",
+
+    # hepai
+    "hepai",
+
 ]
 
 [project.optional-dependencies]
@@ -52,9 +56,6 @@ ollama = [
     "autogen-ext[ollama]==0.5.7"
 ]
 
-hepai = [
-    "hepai",
-]
 
 [tool.uv]
 dev-dependencies = [

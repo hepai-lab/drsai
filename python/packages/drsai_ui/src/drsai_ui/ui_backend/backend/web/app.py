@@ -82,7 +82,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 # Create FastAPI application
 app = FastAPI(lifespan=lifespan, debug=True)
-app.state.initializer = initializer
 
 # CORS middleware configuration
 app.add_middleware(
@@ -169,6 +168,7 @@ api.include_router(
     responses={404: {"description": "Not found"}},
 )
 
+files.initializer=initializer
 api.include_router(
     files.router,
     prefix="/files",

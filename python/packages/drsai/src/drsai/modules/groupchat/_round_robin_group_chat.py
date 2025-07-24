@@ -235,7 +235,13 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
         )
 
     @classmethod
-    def _from_config(cls, config: RoundRobinGroupChatConfig) -> Self:
+    def _from_config(
+        cls, 
+        config: RoundRobinGroupChatConfig,
+        thread: Thread = None, 
+        thread_mgr: ThreadsManager = None,
+        **kwargs: Any
+        ) -> Self:
         participants = [ChatAgent.load_component(participant) for participant in config.participants]
         termination_condition = (
             TerminationCondition.load_component(config.termination_condition) if config.termination_condition else None
@@ -245,5 +251,8 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
             termination_condition=termination_condition,
             max_turns=config.max_turns,
             emit_team_events=config.emit_team_events,
+            thread=thread,
+            thread_mgr=thread_mgr,
+            **kwargs
         )
 
