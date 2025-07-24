@@ -7,14 +7,20 @@ import CustomAgentForm, { CustomAgentData } from "./agent-form/CustomAgentForm";
 import DrsaiAgentForm, { DrsaiAgentData } from "./agent-form/DrsaiAgentForm";
 import { ToolConfig } from "./agent-form/ToolConfigurationForm";
 import { useModeConfigStore } from "../../store/modeConfig";
+
 export interface Agent {
     mode: string;
     name: string;
-    type?: "custom" | "drsai-besiii" | "drsai-agent" | "magentic-one" | "remote";
+    type?:
+    | "custom"
+    | "drsai-besiii"
+    | "drsai-agent"
+    | "magentic-one"
+    | "remote";
     description?: string;
     icon?: React.ReactNode;
     tags?: string[];
-    config?: CustomAgentData
+    config?: CustomAgentData;
 }
 
 interface AgentSelectorAdvancedProps {
@@ -55,9 +61,91 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         { id: "3", type: "OpenAPI", url: "", token: "", workerName: "" },
     ]);
     const { config } = useSettingsStore();
-    const { mode, setMode, setConfig } = useModeConfigStore();
+    const {
+        mode,
+        setMode,
+        setConfig,
+        selectedAgent: persistedSelectedAgent,
+        setSelectedAgent: setPersistedSelectedAgent,
+        lastSelectedAgentMode,
+        setLastSelectedAgentMode,
+    } = useModeConfigStore();
 
-    // const settingsConfig = useSettingsStore((state) => state.config);
+    // 初始化时恢复持久化的智能体选择
+    useEffect(() => {
+        const initializeAgentSelection = async () => {
+            // 如果有持久化的智能体选择，优先使用
+            if (persistedSelectedAgent && agents.length > 0) {
+                // 检查持久化的智能体是否仍然在可用列表中
+                const isStillAvailable = agents.some(
+                    (agent) => agent.mode === persistedSelectedAgent.mode
+                );
+
+                if (isStillAvailable) {
+                    // 恢复智能体配置
+                    try {
+                        const agentConfig = await agentAPI.getAgentConfig(
+                            user?.email || "yqsun@ihep.ac.cn",
+                            persistedSelectedAgent.mode
+                        );
+
+                        if (agentConfig) {
+                            setConfig(agentConfig.config);
+                            setMode(agentConfig.mode);
+                        }
+
+                        // 通知父组件
+                        onAgentSelect(persistedSelectedAgent);
+                    } catch (error) {
+                        console.warn("Failed to restore agent config:", error);
+                        // 即使配置恢复失败，也要恢复选中的智能体
+                        onAgentSelect(persistedSelectedAgent);
+                    }
+                }
+            }
+            // 如果没有持久化的智能体，但有 lastSelectedAgentMode，尝试恢复
+            else if (lastSelectedAgentMode && agents.length > 0) {
+                // 尝试从可用智能体列表中找到之前选中的智能体
+                const previouslySelectedAgent = agents.find(
+                    (agent) => agent.mode === lastSelectedAgentMode
+                );
+
+                if (previouslySelectedAgent) {
+                    // 恢复智能体配置
+                    try {
+                        const agentConfig = await agentAPI.getAgentConfig(
+                            user?.email || "yqsun@ihep.ac.cn",
+                            lastSelectedAgentMode
+                        );
+
+                        if (agentConfig) {
+                            setConfig(agentConfig.config);
+                            setMode(agentConfig.mode);
+                            setPersistedSelectedAgent(previouslySelectedAgent);
+                            onAgentSelect(previouslySelectedAgent);
+                        }
+                    } catch (error) {
+                        console.warn("Failed to restore agent config:", error);
+                        // 即使配置恢复失败，也要恢复选中的智能体
+                        setPersistedSelectedAgent(previouslySelectedAgent);
+                        onAgentSelect(previouslySelectedAgent);
+                    }
+                }
+            }
+        };
+
+        initializeAgentSelection();
+    }, [
+        agents,
+        persistedSelectedAgent,
+        lastSelectedAgentMode,
+        user?.email,
+        setConfig,
+        setMode,
+        setPersistedSelectedAgent,
+        onAgentSelect,
+    ]);
+
     // Filter agents based on search term
     const filteredAgents = useMemo(() => {
         if (!searchable || !searchTerm.trim()) {
@@ -148,44 +236,33 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             user_id: user?.email || "yqsun@ihep.ac.cn",
         };
 
-        // let currentSettings = settingsConfig;
-        // const sessionSettingsConfig = {
-        //     ...currentSettings,
-        //     model_configs: yaml.stringify(modelConfig),
-        // };
-        // useSettingsStore.getState().updateConfig(sessionSettingsConfig);
+        try {
+            const res = await agentAPI.saveAgentConfig(newCustomAgent);
+            const res2 = await agentAPI.getAgentConfig(
+                "yqsun@ihep.ac.cn",
+                agent.mode
+            );
+            console.log("Agent Config Response:", res2);
 
-        const res = await agentAPI.saveAgentConfig(newCustomAgent);
-        const res2 = await agentAPI.getAgentConfig("yqsun@ihep.ac.cn", agent.mode);
-        console.log("Agent Config Response:", res2);
-        if (res2) {
-            setConfig(res2.config)
-            setMode(res2.mode);
+            if (res2) {
+                setConfig(res2.config);
+                setMode(res2.mode);
+            }
+
+            // 持久化选中的智能体
+            setPersistedSelectedAgent(agent);
+            setLastSelectedAgentMode(agent.mode);
+
+            onAgentSelect(newCustomAgent);
+            setIsOpen(false);
+        } catch (error) {
+            console.error("Failed to save agent config:", error);
+            // 即使保存失败，也要更新本地状态
+            setPersistedSelectedAgent(agent);
+            setLastSelectedAgentMode(agent.mode);
+            onAgentSelect(newCustomAgent);
+            setIsOpen(false);
         }
-        onAgentSelect(newCustomAgent);
-        setIsOpen(false);
-
-        // // 如果选择的是Custom Agent，显示配置表单
-        // if (agent.name === "Custom Agent") {
-        //     setShowCustomForm(true);
-        //     onAgentSelect(agent);
-        //     setIsOpen(false);
-        //     setSearchTerm("");
-        //     setFocusedIndex(-1);
-        // } else if (agent.name === "Dr.Sai Agent") {
-        //     setShowDrsaiForm(true);
-        //     onAgentSelect(agent);
-        //     setIsOpen(false);
-        //     setSearchTerm("");
-        //     setFocusedIndex(-1);
-        // } else {
-        //     onAgentSelect(agent);
-        //     setIsOpen(false);
-        //     setSearchTerm("");
-        //     setFocusedIndex(-1);
-        // }
-
-
     };
 
     const handleCustomFormSubmit = async (data: CustomAgentData) => {
@@ -217,42 +294,48 @@ custom_agent_config:
   tools: ${JSON.stringify(data.toolConfigs)}
   knowledge: ${JSON.stringify(data.knowledge)}
 `;
-        // let currentSettings = settingsConfig;
-        // const sessionSettingsConfig = {
-        //     ...currentSettings,
-        //     model_configs: yaml.stringify(modelConfig),
-        // };
-        // useSettingsStore.getState().updateConfig(sessionSettingsConfig);
 
-        const res = await agentAPI.saveAgentConfig(newCustomAgent);
+        try {
+            const res = await agentAPI.saveAgentConfig(newCustomAgent);
+            console.log("Model Config YAML:", modelConfigYaml);
 
+            // 更新 settings store
+            const currentSettings = useSettingsStore.getState().config;
+            const sessionSettingsConfig = {
+                ...currentSettings,
+                model_configs: modelConfigYaml,
+            };
+            useSettingsStore.getState().updateConfig(sessionSettingsConfig);
 
-        console.log("Model Config YAML:", modelConfigYaml);
-
-
-        // 更新 settings store
-        const currentSettings = useSettingsStore.getState().config;
-        const sessionSettingsConfig = {
-            ...currentSettings,
-            model_configs: modelConfigYaml,
-        };
-        useSettingsStore.getState().updateConfig(sessionSettingsConfig);
-        if (user?.email) {
-            try {
-                await settingsAPI.updateSettings(
-                    user.email,
-                    sessionSettingsConfig
-                );
-                console.log("Custom agent configuration saved to database");
-            } catch (error) {
-                console.error(
-                    "Failed to save custom agent configuration:",
-                    error
-                );
+            if (user?.email) {
+                try {
+                    await settingsAPI.updateSettings(
+                        user.email,
+                        sessionSettingsConfig
+                    );
+                    console.log("Custom agent configuration saved to database");
+                } catch (error) {
+                    console.error(
+                        "Failed to save custom agent configuration:",
+                        error
+                    );
+                }
             }
+
+            // 持久化选中的智能体
+            setPersistedSelectedAgent(newCustomAgent);
+            setLastSelectedAgentMode(newCustomAgent.mode);
+
+            onAgentSelect(newCustomAgent);
+            setShowCustomForm(false);
+        } catch (error) {
+            console.error("Failed to save custom agent:", error);
+            // 即使保存失败，也要更新本地状态
+            setPersistedSelectedAgent(newCustomAgent);
+            setLastSelectedAgentMode(newCustomAgent.mode);
+            onAgentSelect(newCustomAgent);
+            setShowCustomForm(false);
         }
-        onAgentSelect(newCustomAgent);
-        setShowCustomForm(false);
     };
 
     const handleCustomFormCancel = () => {
@@ -268,7 +351,10 @@ custom_agent_config:
             description: `Planer: ${data.planer.llmModel}, Coder: ${data.coder.llmModel}, Tester: ${data.tester.type}`,
         };
 
-        // const res = await agentAPI.saveAgentConfig(user?.email || "", newDrsaiAgent);
+        // 持久化选中的智能体
+        setPersistedSelectedAgent(newDrsaiAgent);
+        setLastSelectedAgentMode(newDrsaiAgent.mode);
+
         onAgentSelect(newDrsaiAgent);
         setShowDrsaiForm(false);
     };
@@ -325,11 +411,8 @@ custom_agent_config:
         ]);
     };
 
-    useEffect(() => {
-        const res = agentAPI.getAgentConfig("yqsun@ihep.ac.cn", "custom");
-        console.log(res, 'ss');
-    }, []);
-
+    // 使用持久化的选中智能体或传入的 selectedAgent
+    const currentSelectedAgent = selectedAgent || persistedSelectedAgent;
 
     return (
         <>
@@ -355,9 +438,11 @@ custom_agent_config:
                     aria-expanded={isOpen}
                 >
                     <div className="flex items-center gap-3">
-                        {selectedAgent && <RobotIcon />}
+                        {currentSelectedAgent && <RobotIcon />}
                         <span className="text-sm font-medium">
-                            {selectedAgent ? selectedAgent.name : placeholder}
+                            {currentSelectedAgent
+                                ? currentSelectedAgent.name
+                                : placeholder}
                         </span>
                     </div>
                     <ChevronDown
@@ -442,7 +527,8 @@ custom_agent_config:
                                 {filteredAgents.map((agent, index) => {
                                     const isFocused = index === focusedIndex;
                                     const isSelected =
-                                        selectedAgent?.mode === agent.mode;
+                                        currentSelectedAgent?.mode ===
+                                        agent.mode;
 
                                     return (
                                         <button

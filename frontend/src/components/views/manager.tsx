@@ -47,65 +47,39 @@ export const SessionManager: React.FC = () => {
     [sessionId: number]: RunStatus;
   }>({});
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [activeSubMenuItem, setActiveSubMenuItem] = useState("current_session");
+  const [activeSubMenuItem, setActiveSubMenuItem] =
+    useState("current_session");
 
   const { user } = useContext(appContext);
   const { session, setSession, sessions, setSessions } = useConfigStore();
   const [secretKey, setSecretKey] = React.useState<string | undefined>();
   const [baseUrl, setBaseUrl] = React.useState<string | undefined>();
-  const [selectedAgent, setSelectedAgent] = React.useState<Agent | undefined>();
+  const { selectedAgent, setSelectedAgent } = useModeConfigStore();
   const [models, setModels] = React.useState<{ id: string }[]>([]);
   const [agents, setAgents] = React.useState<Agent[]>([
-    {
-      mode: "custom",
-      name: "Custom Agent",
-      type: "custom",
-      description: "自定义智能体，可根据需求进行个性化配置",
-    },
-    {
-      mode: "besiii",
-      name: "Dr.Sai-BESIII",
-      type: "drsai-besiii",
-      description: "BESIII实验专用智能体，专为高能物理实验优化",
-    },
-    {
-      mode: "drsai",
-      name: "Dr.Sai Agent",
-      type: "drsai-agent",
-      description: "Dr.Sai通用智能体，适用于多种科学计算任务",
-    },
-    {
-      mode: "magentic",
-      name: "Magentic-one",
-      type: "magentic-one",
-      description: "Magentic-one智能体，支持高级AI协作功能",
-    },
-    {
-      mode: "remote",
-      name: "Remote Agent",
-      type: "remote",
-      description: "远程智能体，可连接到外部AI服务",
-    },
+
   ]);
   const handleAgentList = async (agents: Agent[]) => {
     console.log("Fetching agent list for user:", user?.email);
     try {
-      const res = await agentAPI.getAgentList(user?.email || "yqsun@ihep.ac.cn");
+      const res = await agentAPI.getAgentList(
+        user?.email || "yqsun@ihep.ac.cn"
+      );
       setAgents(res.config.agent_modes);
     } catch (error) {
       console.error("Error fetching agent list:", error);
-
     }
-  }
+  };
 
   React.useEffect(() => {
-    setTimeout(() => {
-      handleAgentList(agents);
-    }, 2000)
-  }, [])
+    handleAgentList(agents);
+  }, []);
   useEffect(() => {
     if (typeof window !== "undefined") {
-      localStorage.setItem("sessionSidebar", JSON.stringify(isSidebarOpen));
+      localStorage.setItem(
+        "sessionSidebar",
+        JSON.stringify(isSidebarOpen)
+      );
     }
   }, [isSidebarOpen]);
 
@@ -136,12 +110,12 @@ export const SessionManager: React.FC = () => {
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${secretKey}`,
-          }
-        })
+          },
+        });
         const data = (await response.json()).data;
         setModels(data);
       }
-    }
+    };
     loadModels();
   }, [secretKey]);
 
@@ -160,7 +134,9 @@ export const SessionManager: React.FC = () => {
         setSession(data[0]);
       } else {
         if (data.length === 0) {
-          console.log("No sessions found, creating default session...");
+          console.log(
+            "No sessions found, creating default session..."
+          );
           createDefaultSession();
         }
       }
@@ -194,7 +170,8 @@ export const SessionManager: React.FC = () => {
     };
 
     window.addEventListener("popstate", handleLocationChange);
-    return () => window.removeEventListener("popstate", handleLocationChange);
+    return () =>
+      window.removeEventListener("popstate", handleLocationChange);
   }, [session]);
 
   const handleSaveSession = async (sessionData: Partial<Session>) => {
@@ -208,7 +185,9 @@ export const SessionManager: React.FC = () => {
           sessionData,
           user.email
         );
-        setSessions(sessions.map((s) => (s.id === updated.id ? updated : s)));
+        setSessions(
+          sessions.map((s) => (s.id === updated.id ? updated : s))
+        );
         if (session?.id === updated.id) {
           setSession(updated);
         }
@@ -272,7 +251,7 @@ export const SessionManager: React.FC = () => {
       await sessionAPI.deleteSession(sessionId, user.email);
       setSessions(sessions.filter((s) => s.id !== sessionId));
       if (session?.id === sessionId || sessions.length === 0) {
-        console.log('session:', session, 'sessions:', sessions);
+        console.log("session:", session, "sessions:", sessions);
         setSession(sessions[0] || null);
         window.history.pushState({}, "", window.location.pathname); // Clear URL params
       }
@@ -291,7 +270,10 @@ export const SessionManager: React.FC = () => {
     try {
       setActiveSubMenuItem("current_session");
       setIsLoading(true);
-      const data = await sessionAPI.getSession(selectedSession.id, user.email);
+      const data = await sessionAPI.getSession(
+        selectedSession.id,
+        user.email
+      );
       if (!data) {
         // Session not found
         messageApi.error("Session not found");
@@ -304,7 +286,11 @@ export const SessionManager: React.FC = () => {
         return;
       }
       setSession(data);
-      window.history.pushState({}, "", `?sessionId=${selectedSession.id}`);
+      window.history.pushState(
+        {},
+        "",
+        `?sessionId=${selectedSession.id}`
+      );
     } catch (error) {
       console.error("Error loading session:", error);
       messageApi.error("Error loading session");
@@ -334,7 +320,9 @@ export const SessionManager: React.FC = () => {
           sessionData,
           user.email
         );
-        setSessions(sessions.map((s) => (s.id === updated.id ? updated : s)));
+        setSessions(
+          sessions.map((s) => (s.id === updated.id ? updated : s))
+        );
         if (session?.id === updated.id) {
           setSession(updated);
         }
@@ -370,7 +358,8 @@ export const SessionManager: React.FC = () => {
 
     const serverUrl = getServerUrl();
     const baseUrl = getBaseUrl(serverUrl);
-    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsProtocol =
+      window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${wsProtocol}//${baseUrl}/api/ws/runs/${runId}`;
 
     const socket = new WebSocket(wsUrl);
@@ -463,12 +452,14 @@ export const SessionManager: React.FC = () => {
         "paused",
       ].includes(status);
 
-      if (!isSessionPotentiallyActive && session?.id !== s.id) return null;
+      if (!isSessionPotentiallyActive && session?.id !== s.id)
+        return null;
 
       return (
         <div
           key={s.id}
-          className={`${session?.id === s.id ? "block" : "hidden"} relative`}
+          className={`${session?.id === s.id ? "block" : "hidden"
+            } relative`}
         >
           {isLoading && session?.id === s.id && (
             <div className="absolute inset-0 z-10 flex items-center justify-center">
@@ -548,7 +539,9 @@ export const SessionManager: React.FC = () => {
 
       <ContentHeader
         isMobileMenuOpen={isMobileMenuOpen}
-        onMobileMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        onMobileMenuToggle={() =>
+          setIsMobileMenuOpen(!isMobileMenuOpen)
+        }
         isSidebarOpen={isSidebarOpen}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         onNewSession={() => handleEditSession()}
@@ -572,7 +565,8 @@ export const SessionManager: React.FC = () => {
             activeSubMenuItem={activeSubMenuItem}
             onSubMenuChange={setActiveSubMenuItem}
             onStopSession={(sessionId: number) => {
-              if (sessionId === undefined || sessionId === null) return;
+              if (sessionId === undefined || sessionId === null)
+                return;
               const id = Number(sessionId);
               // Find the session's socket and close it, update status
               const ws = sessionSockets[id]?.socket;
@@ -618,7 +612,9 @@ export const SessionManager: React.FC = () => {
               <PlanList
                 onTabChange={setActiveSubMenuItem}
                 onSelectSession={handleSelectSession}
-                onCreateSessionFromPlan={handleCreateSessionFromPlan}
+                onCreateSessionFromPlan={
+                  handleCreateSessionFromPlan
+                }
               />
             </div>
           )}

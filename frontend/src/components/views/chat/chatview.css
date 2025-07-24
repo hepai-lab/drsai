@@ -1,98 +1,143 @@
 /* RunView component styles */
 .group-message {
-  border-left: 2px solid #3b82f6;
-  padding-left: 8px;
-  margin-top: 2px;
+    border-left: 2px solid #3b82f6;
+    padding-left: 8px;
+    margin-top: 2px;
 }
 
 .overflow-x-hidden {
-  overflow-x: hidden;
+    overflow-x: hidden;
 }
 
 /* Chat view styles */
 .conversation-thread {
-  padding: 0 8px;
+    padding: 0 8px;
+}
+
+/* Two-column layout for orchestrator messages */
+.orchestrator-message {
+    display: flex;
+    gap: 1rem;
+    width: 100%;
+}
+
+.orchestrator-left-column {
+    width: 33.333%;
+    flex-shrink: 0;
+    border-right: 1px solid var(--color-border-secondary);
+    padding-right: 1rem;
+}
+
+.orchestrator-right-column {
+    width: 66.667%;
+    flex-shrink: 0;
+    padding-left: 1rem;
+}
+
+/* Content styling for right column */
+.content-container {
+    background-color: var(--color-bg-secondary);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    border: 1px solid var(--color-border-secondary);
+}
+
+/* Metadata styling for left column */
+.metadata-container {
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+}
+
+.metadata-item {
+    margin-bottom: 0.5rem;
+    padding: 0.25rem 0;
+    border-bottom: 1px solid var(--color-border-secondary);
+}
+
+.metadata-key {
+    font-weight: 500;
+    color: var(--color-text-primary);
 }
 
 /* Step styling */
 .step-group {
-  position: relative;
+    position: relative;
 }
 
 .step-content {
-  border-color: var(--color-border-secondary);
-  padding-top: 8px;
-  padding-bottom: 8px;
+    border-color: var(--color-border-secondary);
+    padding-top: 8px;
+    padding-bottom: 8px;
 }
 
 /* User message styling within steps */
 .step-message {
-  margin-bottom: 12px;
+    margin-bottom: 12px;
 }
 
 .step-message:last-child {
-  margin-bottom: 0;
+    margin-bottom: 0;
 }
 
 /* User message indicator in steps */
 .user-message-indicator {
-  width: 16px;
-  height: 16px;
-  background-color: var(--color-accent);
-  border-radius: 50%;
-  position: absolute;
-  right: 12px;
-  top: 12px;
+    width: 16px;
+    height: 16px;
+    background-color: var(--color-accent);
+    border-radius: 50%;
+    position: absolute;
+    right: 12px;
+    top: 12px;
 }
 
 /* Status styling */
 .step-status-completed {
-  border-left-color: #4caf50;
+    border-left-color: #4caf50;
 }
 
 .step-status-current {
-  border-left-color: #2196f3;
+    border-left-color: #2196f3;
 }
 
 .step-status-failed {
-  border-left-color: #ff5722;
+    border-left-color: #ff5722;
 }
 
 .step-status-upcoming {
-  border-left-color: #9e9e9e;
-  opacity: 0.7;
+    border-left-color: #9e9e9e;
+    opacity: 0.7;
 }
 
 /* Enhanced step content */
 .enhanced-step-content {
-  transition: all 0.3s ease;
+    transition: all 0.3s ease;
 }
 
 /* Version controls */
 .version-controls {
-  display: flex;
-  align-items: center;
+    display: flex;
+    align-items: center;
 }
 
 .version-pill {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background-color: var(--color-bg-secondary);
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background-color: var(--color-bg-secondary);
 }
 
 /* User message within step */
 .step-user-message {
-  position: relative;
-  margin-left: 16px;
+    position: relative;
+    margin-left: 16px;
 }
 
 .step-user-message::before {
-  content: "";
-  position: absolute;
-  left: -16px;
-  top: 50%;
-  height: 1px;
-  width: 10px;
-  background-color: var(--color-border-secondary);
+    content: "";
+    position: absolute;
+    left: -16px;
+    top: 50%;
+    height: 1px;
+    width: 10px;
+    background-color: var(--color-border-secondary);
 }
