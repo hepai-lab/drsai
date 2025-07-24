@@ -12,6 +12,7 @@ interface MarkdownRendererProps {
   truncate?: boolean;
   maxLength?: number;
   indented?: boolean;
+  allowHtml?: boolean;
 }
 
 // Map file extensions to syntax highlighting languages
@@ -75,7 +76,10 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
         }}
       >
         <span
-          style={{ color: "var(--color-text-secondary)", fontSize: "0.9rem" }}
+          style={{
+            color: "var(--color-text-secondary)",
+            fontSize: "0.9rem",
+          }}
         >
           {language || "text"}
         </span>
@@ -91,10 +95,12 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
             transition: "color 0.2s",
           }}
           onMouseEnter={(e) =>
-            (e.currentTarget.style.color = "var(--color-text-primary)")
+          (e.currentTarget.style.color =
+            "var(--color-text-primary)")
           }
           onMouseLeave={(e) =>
-            (e.currentTarget.style.color = "var(--color-text-secondary)")
+          (e.currentTarget.style.color =
+            "var(--color-text-secondary)")
           }
         >
           {copied ? "Copied!" : "Copy"}
@@ -129,13 +135,17 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
                 transition: "color 0.2s",
               }}
               onMouseEnter={(e) =>
-                (e.currentTarget.style.color = "var(--color-text-primary)")
+              (e.currentTarget.style.color =
+                "var(--color-text-primary)")
               }
               onMouseLeave={(e) =>
-                (e.currentTarget.style.color = "var(--color-text-secondary)")
+              (e.currentTarget.style.color =
+                "var(--color-text-secondary)")
               }
             >
-              {expanded ? "Show less" : `Show ${lines.length - 20} more lines`}
+              {expanded
+                ? "Show less"
+                : `Show ${lines.length - 20} more lines`}
             </button>
           </div>
         )}
@@ -150,6 +160,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   truncate,
   maxLength,
   indented = false,
+  allowHtml = false,
 }) => {
   // Determine if we should render as a file preview
   const isFilePreview = !!fileExtension;
@@ -159,9 +170,8 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
   // If this is a file preview, wrap the content in a code block
   const processedContent = isFilePreview
-    ? `\`\`\`${
-        extensionToLanguage[fileExtension?.toLowerCase() || ""] || "text"
-      }\n${content}\n\`\`\``
+    ? `\`\`\`${extensionToLanguage[fileExtension?.toLowerCase() || ""] || "text"
+    }\n${content}\n\`\`\``
     : content;
 
   // Truncate content if needed
@@ -169,6 +179,26 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     truncate && maxLength && content.length > maxLength
       ? content.slice(0, maxLength) + "..."
       : content;
+
+  // If allowHtml is true and content contains HTML, render it directly
+  if (allowHtml && (content.includes("<div") || content.includes("<span"))) {
+    return (
+      <div
+        className="prose w-full"
+        style={{
+          color,
+          fontSize: "0.85rem",
+          overflowWrap: "break-word",
+          wordWrap: "break-word",
+          wordBreak: "break-word",
+          overflowX: "auto",
+          maxWidth: "100%",
+          position: "relative",
+        }}
+        dangerouslySetInnerHTML={{ __html: content }}
+      />
+    );
+  }
 
   return (
     <div
@@ -197,6 +227,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       )}
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[]}
         components={{
           h1: ({ children }) => <h1 style={{ color }}>{children}</h1>,
           h2: ({ children }) => <h2 style={{ color }}>{children}</h2>,
@@ -204,11 +235,39 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           h4: ({ children }) => <h4 style={{ color }}>{children}</h4>,
           h5: ({ children }) => <h5 style={{ color }}>{children}</h5>,
           h6: ({ children }) => <h6 style={{ color }}>{children}</h6>,
-          p: ({ children }) => (
-            <p className="" style={{ color }}>
-              {children}
-            </p>
-          ),
+          p: ({ children }) => {
+            const text = String(children);
+            // Check if this paragraph contains think bubble markers
+            if (
+              text.includes("**THINK_BUBBLE_START**") &&
+              text.includes("**THINK_BUBBLE_END**")
+            ) {
+              const startIndex = text.indexOf(
+                "**THINK_BUBBLE_START**"
+              );
+              const endIndex = text.indexOf(
+                "**THINK_BUBBLE_END**"
+              );
+              const bubbleContent = text
+                .substring(startIndex + 20, endIndex)
+                .trim();
+
+              return (
+                <div
+                  className="think-bubble"
+                  style={{ margin: "8px 0" }}
+                >
+                  💭 {bubbleContent}
+                </div>
+              );
+            }
+
+            return (
+              <p className="" style={{ color }}>
+                {children}
+              </p>
+            );
+          },
           strong: ({ children }) => (
             <strong style={{ color }}>{children}</strong>
           ),
@@ -232,7 +291,8 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                   style={{
                     whiteSpace: "pre-wrap",
                     color: "var(--color-text-primary)",
-                    backgroundColor: "var(--color-bg-primary)",
+                    backgroundColor:
+                      "var(--color-bg-primary)",
                     display: "inline",
                     padding: "0.2em 0.4em",
                     borderRadius: "0.375rem",
@@ -257,7 +317,8 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                 backgroundColor: "var(--color-bg-primary)",
                 color: "var(--color-text-primary)",
                 padding: "10px",
-                borderLeft: "5px solid var(--color-border-secondary)",
+                borderLeft:
+                  "5px solid var(--color-border-secondary)",
               }}
             >
               {children}

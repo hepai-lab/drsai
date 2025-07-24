@@ -15,12 +15,19 @@ import {
   Modal,
   Dropdown,
   Menu,
+  Progress,
 } from "antd";
 import type { UploadFile, UploadProps, RcFile } from "antd/es/upload/interface";
-import { FileTextIcon, ImageIcon, XIcon, UploadIcon } from "lucide-react";
+import {
+  FileTextIcon,
+  ImageIcon,
+  XIcon,
+  UploadIcon,
+  PaperclipIcon,
+} from "lucide-react";
 import { InputRequest } from "../../types/datamodel";
 import { debounce } from "lodash";
-import { planAPI } from "../api";
+import { planAPI, fileAPI } from "../api";
 import RelevantPlans from "./relevant_plans";
 import { IPlan } from "../../types/plan";
 import PlanView from "./plan";
@@ -34,6 +41,9 @@ const ALLOWED_FILE_TYPES = [
   "image/png",
   "image/gif",
   "image/svg+xml",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ];
 
 // Threshold for large text files (in characters)
@@ -78,6 +88,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     const [text, setText] = React.useState("");
     const [fileList, setFileList] = React.useState<UploadFile[]>([]);
     const [dragOver, setDragOver] = React.useState(false);
+    const [isDragActive, setIsDragActive] = React.useState(false);
     const { darkMode, user } = React.useContext(appContext) as {
       darkMode: string;
       user: { email: string };
@@ -87,12 +98,16 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     const [isSearching, setIsSearching] = React.useState(false);
     const [relevantPlans, setRelevantPlans] = React.useState<any[]>([]);
     const [allPlans, setAllPlans] = React.useState<any[]>([]);
-    const [attachedPlan, setAttachedPlan] = React.useState<IPlan | null>(null);
+    const [attachedPlan, setAttachedPlan] = React.useState<IPlan | null>(
+      null
+    );
     const [isLoading, setIsLoading] = React.useState(false);
+    const [isUploading, setIsUploading] = React.useState(false);
     const userId = user?.email || "default_user";
     const [isRelevantPlansVisible, setIsRelevantPlansVisible] =
       React.useState(false);
-    const [isPlanModalVisible, setIsPlanModalVisible] = React.useState(false);
+    const [isPlanModalVisible, setIsPlanModalVisible] =
+      React.useState(false);
     const textAreaDefaultHeight = "64px";
     const isInputDisabled =
       disabled ||
@@ -137,7 +152,10 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
             if (Array.isArray(response)) {
               setAllPlans(response);
             } else {
-              console.warn("Unexpected response format:", response);
+              console.warn(
+                "Unexpected response format:",
+                response
+              );
             }
           } else {
             console.warn("Empty response received");
@@ -153,119 +171,121 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     }, [userId]);
 
     // Add paste event listener for images and large text
-    const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const handlePaste = async (
+      e: React.ClipboardEvent<HTMLTextAreaElement>
+    ) => {
       if (isInputDisabled || !enable_upload) return;
 
       // Handle image paste
       if (e.clipboardData?.items) {
-        let hasImageItem = false;
+        const filesToUpload: File[] = [];
+        let hasProcessedItems = false;
 
         for (let i = 0; i < e.clipboardData.items.length; i++) {
           const item = e.clipboardData.items[i];
 
           // Handle image items
           if (item.type.indexOf("image/") === 0) {
-            hasImageItem = true;
             const file = item.getAsFile();
 
             if (file && file.size <= MAX_FILE_SIZE) {
-              // Prevent the default paste behavior for images
-              e.preventDefault();
-
+              hasProcessedItems = true;
               // Create a unique file name
-              const fileName = `pasted-image-${new Date().getTime()}.png`;
+              const fileName = `pasted-image-${new Date().getTime()}-${i}.png`;
 
               // Create a new File with a proper name
               const namedFile = new File([file], fileName, {
                 type: file.type,
               });
 
-              // Convert to the expected UploadFile format
-              const uploadFile: UploadFile = {
-                uid: `paste-${Date.now()}`,
-                name: fileName,
-                status: "done",
-                size: namedFile.size,
-                type: namedFile.type,
-                originFileObj: namedFile as RcFile,
-              };
-
-              // Add to file list
-              setFileList((prev) => [...prev, uploadFile]);
-
-              // Show successful paste notification
-              message.success(`Image pasted successfully`);
+              filesToUpload.push(namedFile);
             } else if (file && file.size > MAX_FILE_SIZE) {
-              message.error(`Pasted image is too large. Maximum size is 5MB.`);
+              message.error(
+                `Pasted image is too large. Maximum size is 5MB.`
+              );
             }
           }
 
           // Handle text items - only if there's a large amount of text
-          if (item.type === "text/plain" && !hasImageItem) {
-            item.getAsString((text) => {
-              // Only process for large text
-              if (text.length > LARGE_TEXT_THRESHOLD) {
-                // We need to prevent the default paste behavior
-                // But since we're in an async callback, we need to
-                // manually clear the textarea's selection value
-                setTimeout(() => {
-                  if (textAreaRef.current) {
-                    const currentValue = textAreaRef.current.value;
-                    const selectionStart =
-                      textAreaRef.current.selectionStart || 0;
-                    const selectionEnd = textAreaRef.current.selectionEnd || 0;
+          if (item.type === "text/plain") {
+            const text = item.getAsString();
+            // Only process for large text
+            if (text && text.length > LARGE_TEXT_THRESHOLD) {
+              hasProcessedItems = true;
+              // Create a text file from the pasted content
+              const blob = new Blob([text], {
+                type: "text/plain",
+              });
+              const file = new File(
+                [blob],
+                `pasted-text-${new Date().getTime()}-${i}.txt`,
+                { type: "text/plain" }
+              );
 
-                    // Remove the pasted text from the textarea
-                    const newValue =
-                      currentValue.substring(0, selectionStart - text.length) +
-                      currentValue.substring(selectionEnd);
+              filesToUpload.push(file);
+            }
+          }
+        }
 
-                    // Update the textarea
-                    textAreaRef.current.value = newValue;
-                    // Trigger the onChange event manually
-                    setText(newValue);
-                  }
-                }, 0);
+        // If we have files to upload, prevent default paste and upload them
+        if (hasProcessedItems) {
+          e.preventDefault();
 
-                // Prevent default paste for large text
-                e.preventDefault();
+          // Add all files to file list with uploading status
+          const uploadFiles: UploadFile[] = filesToUpload.map(
+            (file, index) => ({
+              uid: `paste-${Date.now()}-${index}`,
+              name: file.name,
+              status: "uploading" as const,
+              size: file.size,
+              type: file.type,
+              originFileObj: file as RcFile,
+            })
+          );
 
-                // Create a text file from the pasted content
-                const blob = new Blob([text], { type: "text/plain" });
-                const file = new File(
-                  [blob],
-                  `pasted-text-${new Date().getTime()}.txt`,
-                  { type: "text/plain" }
+          setFileList((prev) => [...prev, ...uploadFiles]);
+
+          try {
+            // Upload all files to server
+            await fileAPI.uploadFiles(userId, filesToUpload);
+
+            // Update all file statuses to done
+            setFileList((prev) =>
+              prev.map((f) => {
+                const uploadedFile = uploadFiles.find(
+                  (uf) => uf.uid === f.uid
                 );
+                if (uploadedFile) {
+                  return { ...f, status: "done" as const };
+                }
+                return f;
+              })
+            );
 
-                // Add to file list
-                const uploadFile: UploadFile = {
-                  uid: `paste-${Date.now()}`,
-                  name: file.name,
-                  status: "done",
-                  size: file.size,
-                  type: file.type,
-                  originFileObj: file as RcFile,
-                };
+            // Show successful paste notification
+            const fileCount = filesToUpload.length;
+            const fileType =
+              filesToUpload.length === 1 ? "file" : "files";
+            message.success(
+              `${fileCount} ${fileType} pasted and uploaded successfully`
+            );
+          } catch (error) {
+            console.error("File upload failed:", error);
 
-                setFileList((prev) => [...prev, uploadFile]);
+            // Update all file statuses to error
+            setFileList((prev) =>
+              prev.map((f) => {
+                const uploadedFile = uploadFiles.find(
+                  (uf) => uf.uid === f.uid
+                );
+                if (uploadedFile) {
+                  return { ...f, status: "error" as const };
+                }
+                return f;
+              })
+            );
 
-                // Notify user about the conversion
-                notificationApi.info({
-                  message: (
-                    <span className="text-sm">
-                      Large Text Converted to File
-                    </span>
-                  ),
-                  description: (
-                    <span className="text-sm text-secondary">
-                      Your pasted text has been attached as a file.
-                    </span>
-                  ),
-                  duration: 3,
-                });
-              }
-            });
+            message.error(`Failed to upload pasted files`);
           }
         }
       }
@@ -318,7 +338,9 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
           const searchTerms = query.toLowerCase().split(" ");
           const matchingPlans = searchableData.filter((plan) => {
             if (query.length <= 2) {
-              if (plan.taskLower.startsWith(query.toLowerCase())) {
+              if (
+                plan.taskLower.startsWith(query.toLowerCase())
+              ) {
                 return true;
               }
             }
@@ -329,8 +351,11 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
               return true;
             }
 
-            return plan.stepTexts.some((stepText: string | string[]) =>
-              searchTerms.every((term) => stepText.includes(term))
+            return plan.stepTexts.some(
+              (stepText: string | string[]) =>
+                searchTerms.every((term) =>
+                  stepText.includes(term)
+                )
             );
           });
 
@@ -413,7 +438,9 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       }
     };
 
-    const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const handleKeyDown = (
+      event: React.KeyboardEvent<HTMLTextAreaElement>
+    ) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         handleSubmit();
@@ -428,21 +455,28 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     }));
 
     // Add helper function for file validation and addition
-    const handleFileValidationAndAdd = (file: File): boolean => {
+    const handleFileValidationAndAdd = async (
+      file: File
+    ): Promise<boolean> => {
       // Check file size
       if (file.size > MAX_FILE_SIZE) {
-        message.error(`${file.name} is too large. Maximum size is 5MB.`);
+        message.error(
+          `${file.name} is too large. Maximum size is 5MB.`
+        );
         return false;
       }
 
       // Check file type
       if (!ALLOWED_FILE_TYPES.includes(file.type)) {
         notificationApi.warning({
-          message: <span className="text-sm">Unsupported File Type</span>,
+          message: (
+            <span className="text-sm">Unsupported File Type</span>
+          ),
           description: (
             <span className="text-sm text-secondary">
-              Please upload only text (.txt) or images (.jpg, .png, .gif, .svg)
-              files.
+              Please upload only text (.txt), images (.jpg, .png,
+              .gif, .svg), PDF (.pdf), or Word documents (.doc,
+              .docx) files.
             </span>
           ),
           duration: 8.5,
@@ -450,18 +484,79 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
         return false;
       }
 
-      // Add valid file to fileList
+      // Check if file already exists
+      const existingFile = fileList.find((f) => f.name === file.name);
+      if (existingFile) {
+        message.warning(`${file.name} is already attached.`);
+        return false;
+      }
+
+      // Add file to fileList with uploading status
       const uploadFile: UploadFile = {
         uid: `file-${Date.now()}-${file.name}`,
         name: file.name,
-        status: "done",
+        status: "uploading",
         size: file.size,
         type: file.type,
         originFileObj: file as RcFile,
       };
 
       setFileList((prev) => [...prev, uploadFile]);
-      return true;
+
+      try {
+        setIsUploading(true);
+
+        // Upload file to server
+        const uploadResult = await fileAPI.uploadFiles(userId, [file]);
+
+        // Update file status to done
+        setFileList((prev) =>
+          prev.map((f) =>
+            f.uid === uploadFile.uid
+              ? { ...f, status: "done" as const }
+              : f
+          )
+        );
+
+        // Show success notification
+        notificationApi.success({
+          message: <span className="text-sm">File Uploaded</span>,
+          description: (
+            <span className="text-sm text-secondary">
+              {file.name} has been uploaded successfully.
+            </span>
+          ),
+          duration: 3,
+        });
+
+        return true;
+      } catch (error) {
+        console.error("File upload failed:", error);
+
+        // Update file status to error
+        setFileList((prev) =>
+          prev.map((f) =>
+            f.uid === uploadFile.uid
+              ? { ...f, status: "error" as const }
+              : f
+          )
+        );
+
+        // Show error notification
+        notificationApi.error({
+          message: <span className="text-sm">Upload Failed</span>,
+          description: (
+            <span className="text-sm text-secondary">
+              Failed to upload {file.name}. Please try again.
+            </span>
+          ),
+          duration: 5,
+        });
+
+        return false;
+      } finally {
+        setIsUploading(false);
+      }
     };
 
     // Update the upload props to use the new helper function
@@ -469,9 +564,10 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       name: "file",
       multiple: true,
       fileList,
-      beforeUpload: (file: RcFile) => {
-        if (handleFileValidationAndAdd(file)) {
-          return false; // Prevent automatic upload
+      beforeUpload: async (file: RcFile) => {
+        const result = await handleFileValidationAndAdd(file);
+        if (result) {
+          return false; // Prevent automatic upload since we handle it manually
         }
         return Upload.LIST_IGNORE;
       },
@@ -480,7 +576,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       },
       showUploadList: false, // We'll handle our own custom file preview
       customRequest: (options: any) => {
-        // Mock successful upload since we're not actually uploading anywhere yet
+        // This is not used since we handle upload manually
         if (options.onSuccess) {
           options.onSuccess("ok", options.file);
         }
@@ -489,10 +585,50 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
 
     const getFileIcon = (file: UploadFile) => {
       const fileType = file.type || "";
-      if (fileType.startsWith("image/")) {
-        return <ImageIcon className="w-4 h-4" />;
+      const fileName = file.name || "";
+
+      // Show upload status
+      if (file.status === "uploading") {
+        return <Progress type="circle" size={16} percent={50} />;
       }
-      return <FileTextIcon className="w-4 h-4" />;
+
+      if (file.status === "error") {
+        return (
+          <ExclamationTriangleIcon className="w-4 h-4 text-red-500" />
+        );
+      }
+
+      if (fileType.startsWith("image/")) {
+        return <ImageIcon className="w-4 h-4 text-blue-500" />;
+      }
+
+      if (fileType === "application/pdf") {
+        return <FileTextIcon className="w-4 h-4 text-red-500" />;
+      }
+
+      if (
+        fileType.includes("word") ||
+        fileName.endsWith(".doc") ||
+        fileName.endsWith(".docx")
+      ) {
+        return <FileTextIcon className="w-4 h-4 text-blue-600" />;
+      }
+
+      if (fileType === "text/plain" || fileName.endsWith(".txt")) {
+        return <FileTextIcon className="w-4 h-4 text-green-500" />;
+      }
+
+      return <FileTextIcon className="w-4 h-4 text-gray-500" />;
+    };
+
+    const formatFileSize = (bytes: number) => {
+      if (bytes === 0) return "0 Bytes";
+      const k = 1024;
+      const sizes = ["Bytes", "KB", "MB", "GB"];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return (
+        parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
+      );
     };
 
     // Add drag and drop handlers
@@ -501,6 +637,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       e.stopPropagation();
       if (!isInputDisabled && enable_upload) {
         setDragOver(true);
+        setIsDragActive(true);
       }
     };
 
@@ -508,6 +645,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       e.preventDefault();
       e.stopPropagation();
       setDragOver(false);
+      setIsDragActive(false);
     };
 
     // Update the drop handler to use the new helper function
@@ -515,11 +653,14 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       e.preventDefault();
       e.stopPropagation();
       setDragOver(false);
+      setIsDragActive(false);
 
       if (isInputDisabled || !enable_upload) return;
 
       const droppedFiles = Array.from(e.dataTransfer.files);
-      droppedFiles.forEach(handleFileValidationAndAdd);
+      for (const file of droppedFiles) {
+        await handleFileValidationAndAdd(file);
+      }
     };
 
     const handleUsePlan = (plan: IPlan) => {
@@ -551,7 +692,8 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
 
         const isClickInsideTextArea =
           textAreaElement && textAreaElement.contains(target);
-        const isClickInsidePlans = planElement && planElement.contains(target);
+        const isClickInsidePlans =
+          planElement && planElement.contains(target);
 
         // Hide dropdown if click is outside both elements
         if (!isClickInsideTextArea && !isClickInsidePlans) {
@@ -590,21 +732,34 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
           />
         )}
 
+        {/* Drag Drop Overlay */}
+        {isDragActive && enable_upload && (
+          <div className="absolute inset-0 bg-blue-500 bg-opacity-10 border-2 border-dashed border-blue-500 rounded-lg flex items-center justify-center z-10">
+            <div className="text-center">
+              <UploadIcon className="w-12 h-12 text-blue-500 mx-auto mb-2" />
+              <p className="text-blue-600 font-medium">
+                Drop files here to upload
+              </p>
+              <p className="text-blue-500 text-sm">
+                Supported: Images, PDF, Word, Text files
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Attached Items Preview */}
         {(attachedPlan || fileList.length > 0) && (
           <div
-            className={`-mb-2 mx-1 ${
-              darkMode === "dark" ? "bg-[#333333]" : "bg-gray-100"
-            } rounded-t border-b-0 p-2 flex border flex-wrap gap-2`}
+            className={`-mb-2 mx-1 ${darkMode === "dark" ? "bg-[#333333]" : "bg-gray-100"
+              } rounded-t border-b-0 p-2 flex border flex-wrap gap-2`}
           >
             {/* Attached Plan */}
             {attachedPlan && (
               <div
-                className={`flex items-center gap-1 ${
-                  darkMode === "dark"
-                    ? "bg-[#444444] text-white"
-                    : "bg-white text-black"
-                } rounded px-2 py-1 text-xs cursor-pointer hover:opacity-80 transition-opacity`}
+                className={`flex items-center gap-1 ${darkMode === "dark"
+                  ? "bg-[#444444] text-white"
+                  : "bg-white text-black"
+                  } rounded px-2 py-1 text-xs cursor-pointer hover:opacity-80 transition-opacity`}
                 onClick={handlePlanClick}
               >
                 <span className="truncate max-w-[150px]">
@@ -614,7 +769,9 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                   type="text"
                   size="small"
                   className="p-0 ml-1 flex items-center justify-center"
-                  onClick={(e: { stopPropagation: () => void }) => {
+                  onClick={(e: {
+                    stopPropagation: () => void;
+                  }) => {
                     e.stopPropagation();
                     setAttachedPlan(null);
                   }}
@@ -627,21 +784,36 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
             {fileList.map((file) => (
               <div
                 key={file.uid}
-                className={`flex items-center gap-1 ${
-                  darkMode === "dark"
-                    ? "bg-[#444444] text-white"
-                    : "bg-white text-black"
-                } rounded px-2 py-1 text-xs`}
+                className={`flex items-center gap-2 ${darkMode === "dark"
+                  ? "bg-[#444444] text-white border border-gray-600"
+                  : "bg-white text-black border border-gray-200"
+                  } rounded-lg px-3 py-2 text-xs shadow-sm hover:shadow-md transition-shadow ${file.status === "error"
+                    ? "border-red-500"
+                    : ""
+                  }`}
               >
                 {getFileIcon(file)}
-                <span className="truncate max-w-[150px]">{file.name}</span>
+                <div className="flex flex-col min-w-0 flex-1">
+                  <span className="truncate font-medium">
+                    {file.name}
+                  </span>
+                  <span className="text-xs opacity-70">
+                    {formatFileSize(file.size || 0)}
+                    {file.status === "uploading" &&
+                      " - Uploading..."}
+                    {file.status === "error" &&
+                      " - Upload failed"}
+                  </span>
+                </div>
                 <Button
                   type="text"
                   size="small"
-                  className="p-0 ml-1 flex items-center justify-center"
+                  className="p-0 ml-1 flex items-center justify-center hover:bg-red-100 hover:text-red-600 rounded-full"
                   onClick={() =>
                     setFileList((prev) =>
-                      prev.filter((f) => f.uid !== file.uid)
+                      prev.filter(
+                        (f) => f.uid !== file.uid
+                      )
                     )
                   }
                   icon={<XIcon className="w-3 h-3" />}
@@ -665,14 +837,17 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
               task={attachedPlan.task || ""}
               plan={attachedPlan.steps || []}
               viewOnly={true}
-              setPlan={() => {}}
+              setPlan={() => { }}
             />
           )}
         </Modal>
 
         <div className="mt-2 rounded shadow-sm flex">
           <div
-            className={`flex w-full ${dragOver ? "opacity-50" : ""}`}
+            className={`flex w-full transition-all duration-200 ${isDragActive
+              ? "ring-2 ring-blue-500 ring-opacity-50 bg-blue-50 dark:bg-blue-900/20"
+              : ""
+              }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -693,13 +868,13 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     defaultValue={""}
                     onChange={handleTextChange}
                     onKeyDown={handleKeyDown}
-                    className={`flex items-center w-full resize-none border-l border-t border-b border-accent p-2 pl-5 rounded-l-lg ${
-                      darkMode === "dark"
-                        ? "bg-[#444444] text-white"
-                        : "bg-white text-black"
-                    } ${
-                      isInputDisabled ? "cursor-not-allowed" : ""
-                    } focus:outline-none`}
+                    className={`flex items-center w-full resize-none border-l border-t border-b border-accent p-2 pl-5 rounded-l-lg ${darkMode === "dark"
+                      ? "bg-[#444444] text-white"
+                      : "bg-white text-black"
+                      } ${isInputDisabled
+                        ? "cursor-not-allowed"
+                        : ""
+                      } focus:outline-none`}
                     style={{
                       maxHeight: "120px",
                       overflowY: "auto",
@@ -709,10 +884,10 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                       runStatus === "awaiting_input"
                         ? "Type your response here and let Dr. Sai know of any changes in the browser."
                         : enable_upload
-                        ? dragOver
-                          ? "Drop files here..."
+                          ? dragOver
+                            ? "Drop files here..."
+                            : "Type your message here..."
                           : "Type your message here..."
-                        : "Type your message here..."
                     }
                     disabled={isInputDisabled}
                   />
@@ -720,41 +895,75 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
               </div>
 
               <div
-                className={`flex items-center justify-center gap-2 border-t border-r border-b border-accent px-2 rounded-r-lg ${
-                  darkMode === "dark"
-                    ? "bg-[#444444] text-white"
-                    : "bg-white text-black"
-                }`}
+                className={`flex items-center justify-center gap-2 border-t border-r border-b border-accent px-2 rounded-r-lg ${darkMode === "dark"
+                  ? "bg-[#444444] text-white"
+                  : "bg-white text-black"
+                  }`}
               >
                 {/* File upload button replaced with Dropdown */}
                 {enable_upload && (
                   <div
-                    className={`$${
-                      isInputDisabled ? "pointer-events-none opacity-50" : ""
-                    }`}
+                    className={`${isInputDisabled
+                      ? "pointer-events-none opacity-50"
+                      : ""
+                      }`}
                   >
                     <Dropdown
                       overlay={
                         <Menu>
-                          <Menu.Item key="attach-file">
-                            <Upload {...uploadProps} showUploadList={false}>
-                              <span>Attach File</span>
+                          <Menu.Item
+                            key="attach-file"
+                            icon={
+                              <PaperclipIcon className="w-4 h-4" />
+                            }
+                          >
+                            <Upload
+                              {...uploadProps}
+                              showUploadList={
+                                false
+                              }
+                            >
+                              <span>
+                                Attach File
+                              </span>
                             </Upload>
                           </Menu.Item>
-                          <Menu.SubMenu key="attach-plan" title="Attach Plan">
-                            {allPlans.length === 0 ? (
-                              <Menu.Item disabled key="no-plans">
-                                No plans available
+                          <Menu.SubMenu
+                            key="attach-plan"
+                            title="Attach Plan"
+                            icon={
+                              <FileTextIcon className="w-4 h-4" />
+                            }
+                          >
+                            {allPlans.length ===
+                              0 ? (
+                              <Menu.Item
+                                disabled
+                                key="no-plans"
+                              >
+                                No plans
+                                available
                               </Menu.Item>
                             ) : (
-                              allPlans.map((plan: any) => (
-                                <Menu.Item
-                                  key={plan.id || plan.task}
-                                  onClick={() => handleUsePlan(plan)}
-                                >
-                                  {plan.task}
-                                </Menu.Item>
-                              ))
+                              allPlans.map(
+                                (plan: any) => (
+                                  <Menu.Item
+                                    key={
+                                      plan.id ||
+                                      plan.task
+                                    }
+                                    onClick={() =>
+                                      handleUsePlan(
+                                        plan
+                                      )
+                                    }
+                                  >
+                                    {
+                                      plan.task
+                                    }
+                                  </Menu.Item>
+                                )
+                              )
                             )}
                           </Menu.SubMenu>
                         </Menu>
@@ -763,16 +972,28 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     >
                       <Tooltip
                         title={
-                          <span className="text-sm">Attach File or Plan</span>
+                          <span className="text-sm">
+                            {fileList.length > 0
+                              ? `${fileList.length} file(s) attached`
+                              : "Attach File or Plan"}
+                          </span>
                         }
                         placement="top"
                       >
                         <button
                           type="button"
                           disabled={isInputDisabled}
-                          className="flex justify-center items-center transition duration-300"
+                          className={`flex justify-center items-center transition duration-300 relative ${fileList.length > 0
+                            ? "text-blue-500"
+                            : "text-accent"
+                            }`}
                         >
-                          <UploadIcon className="h-6 -mt-1 w-6 text-accent" />
+                          <PaperclipIcon className="h-5 w-5" />
+                          {fileList.length > 0 && (
+                            <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
+                              {fileList.length}
+                            </span>
+                          )}
                         </button>
                       </Tooltip>
                     </Dropdown>
@@ -793,11 +1014,10 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     type="button"
                     onClick={handleSubmit}
                     disabled={isInputDisabled}
-                    className={`bg-magenta-800 transition duration-300 rounded flex justify-center items-center w-11 h-9 ${
-                      isInputDisabled
-                        ? "cursor-not-allowed"
-                        : "hover:bg-magenta-900"
-                    }`}
+                    className={`bg-magenta-800 transition duration-300 rounded flex justify-center items-center w-11 h-9 ${isInputDisabled
+                      ? "cursor-not-allowed"
+                      : "hover:bg-magenta-900"
+                      }`}
                   >
                     <PaperAirplaneIcon className="h-6 w-6 text-white" />
                   </button>

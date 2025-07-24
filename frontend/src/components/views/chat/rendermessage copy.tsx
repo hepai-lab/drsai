@@ -204,35 +204,42 @@ const parseContent = (content: any): string => {
 
   // Handle TaskManager content formatting
   cleanedContent = cleanedContent.replace(
-    /\*\*TaskManager发言：\*\*\s*([\s\S]*?)(?=\*\*Host发言：\*\*|$)/g,
+    /\*\*TaskManager发言：\*\*\n\n([\s\S]*?)(?=\*\*Host发言：\*\*|$)/g,
     (match, taskManagerContent) => {
       // Format the numbered list with proper markdown
-      let formattedContent = taskManagerContent;
-
-      // Try different patterns to match the content
-      // Pattern 1: 1. "text" ✓ status
-      formattedContent = formattedContent.replace(
-        /(\d+)\.\s*"([^"]+)"\s*([✓●])\s*([^0-9]*?)(?=\d+\.|$)/g,
-        "$1. **$2** $3 $4"
-      );
-
-      // Pattern 2: 1. {"content":"text"} ✓ status
-      formattedContent = formattedContent.replace(
-        /(\d+)\.\s*\{[^}]*"content"\s*:\s*"([^"]+)"[^}]*\}\s*([✓●])\s*([^0-9]*?)(?=\d+\.|$)/g,
-        "$1. **$2** $3 $4"
-      );
-
-      // Pattern 3: 1. text ✓ status (without quotes)
-      formattedContent = formattedContent.replace(
-        /(\d+)\.\s*([^✓●]+?)\s*([✓●])\s*([^0-9]*?)(?=\d+\.|$)/g,
-        "$1. **$2** $3 $4"
-      );
-
-      formattedContent = formattedContent.trim();
+      const formattedContent = taskManagerContent
+        .replace(
+          /(\d+)\.\s*\{([^}]+)\}\s*([✓●])\s*([^\n]+)/g,
+          "$1. **$2** $3 $4"
+        )
+        .replace(
+          /(\d+)\.\s*\{([^}]+)\}\s*([✓●])\s*([^\n]+)/g,
+          "$1. **$2** $3 $4"
+        );
 
       return `**TaskManager发言：**\n\n${formattedContent}`;
     }
   );
+
+  // Handle content after </think> tags - convert them to bubble-style formatting
+  // Only process if not already processed
+  if (!cleanedContent.includes("**THINK_BUBBLE_START**")) {
+    cleanedContent = cleanedContent.replace(
+      /<\/think>([\s\S]*?)(?=<think>|$)/g,
+      (match, afterThinkContent) => {
+        // Clean up the content after think tag and format it as a bubble
+        const cleanAfterThinkContent = afterThinkContent.trim();
+        if (cleanAfterThinkContent) {
+          console.log(
+            "Found content after </think>:",
+            cleanAfterThinkContent
+          );
+          return `</think>\n\n**THINK_BUBBLE_START**\n${cleanAfterThinkContent}\n**THINK_BUBBLE_END**\n\n`;
+        }
+        return match;
+      }
+    );
+  }
 
   // Process the content to replace think bubble markers with actual HTML
   if (
@@ -303,12 +310,6 @@ const parseContent = (content: any): string => {
     // 如果 JSON 解析失败，返回清理后的内容
     return cleanedContent;
   }
-};
-
-// 移除 <think> 和 </think> 标签，保留内容
-const filterThinkTags = (content: string): string => {
-  // 移除 <think> 和 </think> 标签，保留标签内的内容
-  return content.replace(/<\/?think>/g, "").trim();
 };
 
 const parseorchestratorContent = (
