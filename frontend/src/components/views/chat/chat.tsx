@@ -394,7 +394,7 @@ export default function ChatView({
           };
 
         case "message_chunk":
-          console.log("Received message_chunk:", message.data);
+          // console.log("Received message_chunk:", message.data);
           if (!message.data) return current;
 
           // Handle streaming chunks for typewriter effect
