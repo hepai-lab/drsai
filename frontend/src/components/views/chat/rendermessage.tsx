@@ -177,8 +177,46 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
 const parseContent = (content: any): string => {
   if (typeof content !== "string") return String(content);
 
+  // First, try to clean up JSON-like content patterns in the text
+  let cleanedContent = content;
+
+  // Replace {"content":"text"} patterns with just "text"
+  cleanedContent = cleanedContent.replace(
+    /\{\s*"content"\s*:\s*"([^"]*)"\s*\}/g,
+    '"$1"'
+  );
+
+  // Remove "accepted":false patterns
+  cleanedContent = cleanedContent.replace(
+    /"accepted"\s*:\s*false\s*,?\s*/g,
+    ""
+  );
+
+  // Clean up any remaining JSON artifacts
+  cleanedContent = cleanedContent.replace(
+    /\{\s*"([^"]*)"\s*:\s*"([^"]*)"\s*\}/g,
+    '"$2"'
+  );
+
+  // Remove any trailing commas and clean up formatting
+  cleanedContent = cleanedContent.replace(/,\s*}/g, "}");
+  cleanedContent = cleanedContent.replace(/,\s*]/g, "]");
+
+  // Handle content after </think> tags - convert them to bubble-style formatting
+  cleanedContent = cleanedContent.replace(
+    /<\/think>([\s\S]*?)(?=<think>|$)/g,
+    (match, afterThinkContent) => {
+      // Clean up the content after think tag and format it as a bubble
+      const cleanAfterThinkContent = afterThinkContent.trim();
+      if (cleanAfterThinkContent) {
+        return `</think><div class="think-bubble">💭 ${cleanAfterThinkContent}</div>`;
+      }
+      return match;
+    }
+  );
+
   try {
-    const parsedContent = JSON.parse(content);
+    const parsedContent = JSON.parse(cleanedContent);
 
     // 递归查找 content 字段
     const extractContent = (obj: any): string | null => {
@@ -220,16 +258,17 @@ const parseContent = (content: any): string => {
       // 添加调试日志
       console.log("Parsed content:", {
         original: content,
+        cleaned: cleanedContent,
         extracted: extractedContent,
       });
       return extractedContent;
     }
 
-    // 如果没有找到 content 字段，返回原始内容
-    return content;
+    // 如果没有找到 content 字段，返回清理后的内容
+    return cleanedContent;
   } catch {
-    // 如果 JSON 解析失败，返回原始内容
-    return content;
+    // 如果 JSON 解析失败，返回清理后的内容
+    return cleanedContent;
   }
 };
 
