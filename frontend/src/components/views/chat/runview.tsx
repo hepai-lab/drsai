@@ -66,12 +66,11 @@ const RunView: React.FC<RunViewProps> = ({
   const [detailViewerTab, setDetailViewerTab] = useState<
     "screenshots" | "live"
   >("live");
-  const [hiddenMessageIndices, setHiddenMessageIndices] = useState<Set<number>>(
-    new Set()
-  );
-  const [hiddenStepExecutionIndices, setHiddenStepExecutionIndices] = useState<
+  const [hiddenMessageIndices, setHiddenMessageIndices] = useState<
     Set<number>
   >(new Set());
+  const [hiddenStepExecutionIndices, setHiddenStepExecutionIndices] =
+    useState<Set<number>>(new Set());
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
 
   const isTogglingRef = useRef(false);
@@ -165,7 +164,10 @@ const RunView: React.FC<RunViewProps> = ({
         msg.config.metadata?.type === "browser_screenshot"
       ) {
         msg.config.content.forEach((item: any, itemIndex: number) => {
-          if (typeof item === "object" && ("url" in item || "data" in item)) {
+          if (
+            typeof item === "object" &&
+            ("url" in item || "data" in item)
+          ) {
             const imageUrl =
               ("url" in item && item.url) ||
               ("data" in item && item.data
@@ -216,7 +218,10 @@ const RunView: React.FC<RunViewProps> = ({
     }
   };
 
-  const handleToggleHide = async (messageIndex: number, expanded: boolean) => {
+  const handleToggleHide = async (
+    messageIndex: number,
+    expanded: boolean
+  ) => {
     // If a toggle operation is already in progress, ignore this request
     if (isTogglingRef.current) {
       console.log(
@@ -257,15 +262,20 @@ const RunView: React.FC<RunViewProps> = ({
               const earlierMessages = run.messages.slice(0, i);
               const isDuplicate = earlierMessages.some(
                 (earlierMsg: Message) => {
-                  if (typeof earlierMsg.config.content !== "string")
+                  if (
+                    typeof earlierMsg.config.content !==
+                    "string"
+                  )
                     return false;
                   try {
                     const earlierContent = JSON.parse(
                       earlierMsg.config.content
                     );
                     return (
-                      earlierContent.title === currentStep.title &&
-                      earlierContent.details === currentStep.details
+                      earlierContent.title ===
+                      currentStep.title &&
+                      earlierContent.details ===
+                      currentStep.details
                     );
                   } catch {
                     return false;
@@ -292,13 +302,17 @@ const RunView: React.FC<RunViewProps> = ({
       if (!expanded) {
         setHiddenMessageIndices((prevSet) => {
           const updatedSet = new Set(prevSet);
-          newIndicesToHide.forEach((index: any) => updatedSet.add(index));
+          newIndicesToHide.forEach((index: any) =>
+            updatedSet.add(index)
+          );
           return updatedSet;
         });
       } else {
         setHiddenMessageIndices((prevSet) => {
           const updatedSet = new Set(prevSet);
-          newIndicesToHide.forEach((index: any) => updatedSet.delete(index));
+          newIndicesToHide.forEach((index: any) =>
+            updatedSet.delete(index)
+          );
           return updatedSet;
         });
       }
@@ -334,7 +348,9 @@ const RunView: React.FC<RunViewProps> = ({
         earlierMessages.forEach((earlierMsg: Message, idx: number) => {
           if (typeof earlierMsg.config.content !== "string") return;
           try {
-            const earlierContent = JSON.parse(earlierMsg.config.content);
+            const earlierContent = JSON.parse(
+              earlierMsg.config.content
+            );
             if (
               earlierContent.index === content.index &&
               earlierContent.title === content.title &&
@@ -350,17 +366,23 @@ const RunView: React.FC<RunViewProps> = ({
         // If we found identical steps, check for Final Answer or Plan after the last one
         if (identicalStepIndices.length > 0) {
           const messagesBetween = run.messages.slice(
-            identicalStepIndices[identicalStepIndices.length - 1] + 1,
+            identicalStepIndices[identicalStepIndices.length - 1] +
+            1,
             msgIndex
           );
 
-          const hasSeparator = messagesBetween.some((msg: Message) => {
-            if (typeof msg.config.content !== "string") return false;
-            return (
-              messageUtils.isPlanMessage(msg.config.metadata) ||
-              messageUtils.isFinalAnswer(msg.config.metadata)
-            );
-          });
+          const hasSeparator = messagesBetween.some(
+            (msg: Message) => {
+              if (typeof msg.config.content !== "string")
+                return false;
+              return (
+                messageUtils.isPlanMessage(
+                  msg.config.metadata
+                ) ||
+                messageUtils.isFinalAnswer(msg.config.metadata)
+              );
+            }
+          );
 
           // Only mark as repeated if there's no separator
           if (!hasSeparator) {
@@ -376,14 +398,21 @@ const RunView: React.FC<RunViewProps> = ({
 
           // If we find a step execution, plan, or final answer before finding "Replanning...", break
           try {
-            if (messageUtils.isStepExecution(nextMsg.config.metadata)) break;
-            if (messageUtils.isPlanMessage(nextMsg.config.metadata)) break;
+            if (
+              messageUtils.isStepExecution(
+                nextMsg.config.metadata
+              )
+            )
+              break;
+            if (messageUtils.isPlanMessage(nextMsg.config.metadata))
+              break;
             if (nextMsg.config.metadata?.type === "replanning") {
               newFailedIndices.add(msgIndex);
               break;
             }
           } catch {
-            if (messageUtils.isFinalAnswer(nextMsg.config.metadata)) break;
+            if (messageUtils.isFinalAnswer(nextMsg.config.metadata))
+              break;
           }
         }
       } catch {
@@ -394,7 +423,9 @@ const RunView: React.FC<RunViewProps> = ({
     setFailedStepIndices(newFailedIndices);
 
     // handle auto-hiding of previous step execution messages
-    const newHiddenStepExecutionIndices = new Set(hiddenStepExecutionIndices);
+    const newHiddenStepExecutionIndices = new Set(
+      hiddenStepExecutionIndices
+    );
     // Process messages in order
     (async () => {
       for (let i = 0; i < run.messages.length; i++) {
@@ -408,13 +439,19 @@ const RunView: React.FC<RunViewProps> = ({
               const prevMsg: Message = run.messages[j];
               if (typeof prevMsg.config.content === "string") {
                 try {
-                  if (messageUtils.isStepExecution(prevMsg.config.metadata)) {
+                  if (
+                    messageUtils.isStepExecution(
+                      prevMsg.config.metadata
+                    )
+                  ) {
                     newHiddenStepExecutionIndices.add(j);
                     handleToggleHide(j, false);
                     // delay for 100ms
-                    await new Promise((resolve) => setTimeout(resolve, 100));
+                    await new Promise((resolve) =>
+                      setTimeout(resolve, 100)
+                    );
                   }
-                } catch {}
+                } catch { }
               }
             }
             continue;
@@ -431,19 +468,27 @@ const RunView: React.FC<RunViewProps> = ({
               const prevMsg: Message = run.messages[j];
               if (typeof prevMsg.config.content === "string") {
                 try {
-                  if (messageUtils.isStepExecution(prevMsg.config.metadata)) {
+                  if (
+                    messageUtils.isStepExecution(
+                      prevMsg.config.metadata
+                    )
+                  ) {
                     if (!newRepeatedIndices.has(j)) {
                       handleToggleHide(j, false);
-                      newHiddenStepExecutionIndices.add(j);
+                      newHiddenStepExecutionIndices.add(
+                        j
+                      );
                       // delay for 100ms
-                      await new Promise((resolve) => setTimeout(resolve, 100));
+                      await new Promise((resolve) =>
+                        setTimeout(resolve, 100)
+                      );
                     }
                   }
-                } catch {}
+                } catch { }
               }
             }
           }
-        } catch {}
+        } catch { }
       }
 
       if (
@@ -472,12 +517,18 @@ const RunView: React.FC<RunViewProps> = ({
       const userPlans = messageUtils.findUserPlan(msg.config.content);
 
       // Check if this is a user message with a plan
-      if (messageUtils.isUser(msg.config.source) && userPlans.length > 0) {
+      if (
+        messageUtils.isUser(msg.config.source) &&
+        userPlans.length > 0
+      ) {
         const prevIdx = idx - 1;
         const prevMsg = updatedMessages[prevIdx];
 
         // Check if previous message is a plan
-        if (prevMsg && messageUtils.isPlanMessage(prevMsg.config.metadata)) {
+        if (
+          prevMsg &&
+          messageUtils.isPlanMessage(prevMsg.config.metadata)
+        ) {
           try {
             // Create a new message object with updated content
             const updatedContent = messageUtils.updatePlan(
@@ -554,15 +605,14 @@ const RunView: React.FC<RunViewProps> = ({
     >
       {/* Messages section */}
       <div
-        className={`items-start relative flex flex-col h-full ${
-          showDetailViewer &&
+        className={`items-start relative flex flex-col h-full ${showDetailViewer &&
           novncPort !== undefined &&
           !isDetailViewerMinimized
-            ? detailViewerExpanded
-              ? "w-0"
-              : "w-[40%]"
-            : "w-full"
-        } transition-all duration-300`}
+          ? detailViewerExpanded
+            ? "w-0"
+            : "w-[40%]"
+          : "w-full"
+          } transition-all duration-300`}
       >
         {/* Thread Section - use flex-1 for height, but remove overflow-y-auto */}
         <div className="w-full flex-1">
@@ -573,7 +623,8 @@ const RunView: React.FC<RunViewProps> = ({
                 messageUtils.isPlanMessage(msg.config.metadata);
 
               const isLatestPlan =
-                isCurrentMessagePlan && idx === localMessages.length - 1;
+                isCurrentMessagePlan &&
+                idx === localMessages.length - 1;
 
               const shouldForceCollapse =
                 isCurrentMessagePlan && idx !== lastPlanIndex;
@@ -589,26 +640,40 @@ const RunView: React.FC<RunViewProps> = ({
                   }
                 >
                   <RenderMessage
-                    key={`render-${idx}-${msg.config.version || 0}`}
+                    key={`render-${idx}-${msg.config.version || 0
+                      }`}
                     message={msg.config}
                     sessionId={msg.session_id}
                     messageIdx={idx}
-                    isLast={idx === localMessages.length - 1}
-                    isEditable={isEditable && idx === localMessages.length - 1}
+                    isLast={
+                      idx === localMessages.length - 1
+                    }
+                    isEditable={
+                      isEditable &&
+                      idx === localMessages.length - 1
+                    }
                     hidden={
                       hiddenMessageIndices.has(idx) ||
                       hiddenStepExecutionIndices.has(idx)
                     }
-                    is_step_repeated={repeatedStepIndices.has(idx)}
-                    is_step_failed={failedStepIndices.has(idx)}
+                    is_step_repeated={repeatedStepIndices.has(
+                      idx
+                    )}
+                    is_step_failed={failedStepIndices.has(
+                      idx
+                    )}
                     onSavePlan={onSavePlan}
-                    onImageClick={() => handleImageClick(idx)}
+                    onImageClick={() =>
+                      handleImageClick(idx)
+                    }
                     onToggleHide={(expanded: boolean) =>
                       handleToggleHide(idx, expanded)
                     }
                     runStatus={run.status}
                     onRegeneratePlan={
-                      isLatestPlan ? handleRegeneratePlan : undefined
+                      isLatestPlan
+                        ? handleRegeneratePlan
+                        : undefined
                     }
                     forceCollapsed={shouldForceCollapse}
                   />
@@ -658,7 +723,10 @@ const RunView: React.FC<RunViewProps> = ({
               accepted = false,
               plan?: IPlan
             ) => {
-              if (run.status === "awaiting_input" || run.status === "paused") {
+              if (
+                run.status === "awaiting_input" ||
+                run.status === "paused"
+              ) {
                 onInputResponse?.(query, accepted, plan);
               } else {
                 onRunTask?.(query, files, plan, true);
@@ -672,6 +740,7 @@ const RunView: React.FC<RunViewProps> = ({
             enable_upload={enable_upload}
             inputRequest={run.input_request}
             onExecutePlan={onExecutePlan}
+            sessionId={run.session_id}
           />
         </div>
       </div>
@@ -691,17 +760,20 @@ const RunView: React.FC<RunViewProps> = ({
         novncPort !== undefined &&
         !isDetailViewerMinimized && (
           <div
-            className={`${
-              detailViewerExpanded ? "w-full" : "w-[60%]"
-            } self-start sticky top-0 h-full`}
+            className={`${detailViewerExpanded ? "w-full" : "w-[60%]"
+              } self-start sticky top-0 h-full`}
           >
             <div className="h-full flex-1">
               <DetailViewer
                 images={messageImages.urls}
                 imageTitles={messageImages.titles}
-                onMinimize={() => setIsDetailViewerMinimized(true)}
+                onMinimize={() =>
+                  setIsDetailViewerMinimized(true)
+                }
                 onToggleExpand={() =>
-                  setDetailViewerExpanded(!detailViewerExpanded)
+                  setDetailViewerExpanded(
+                    !detailViewerExpanded
+                  )
                 }
                 isExpanded={detailViewerExpanded}
                 currentIndex={messageImages.currentIndex || 0}
@@ -716,7 +788,9 @@ const RunView: React.FC<RunViewProps> = ({
                 runStatus={run.status}
                 activeTab={detailViewerTab}
                 onTabChange={setDetailViewerTab}
-                detailViewerContainerId={DETAIL_VIEWER_CONTAINER_ID}
+                detailViewerContainerId={
+                  DETAIL_VIEWER_CONTAINER_ID
+                }
                 onInputResponse={onInputResponse}
               />
             </div>
