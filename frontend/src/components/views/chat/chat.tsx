@@ -1175,7 +1175,7 @@ export default function ChatView({
                     error={error}
                     chatInputRef={chatInputRef}
                     onExecutePlan={handleExecutePlan}
-                    enable_upload={false} // Or true if needed
+                    enable_upload={true} // Enable file upload functionality
                   />
                 )}
               </>
