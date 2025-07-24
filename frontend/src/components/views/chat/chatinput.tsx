@@ -65,6 +65,7 @@ interface ChatInputProps {
   onPause?: () => void;
   enable_upload?: boolean;
   onExecutePlan?: (plan: IPlan) => void;
+  sessionId: number;
 }
 
 const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
@@ -80,6 +81,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       onPause,
       enable_upload = false,
       onExecutePlan,
+      sessionId,
     },
     ref
   ) => {
@@ -174,31 +176,80 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     const handlePaste = async (
       e: React.ClipboardEvent<HTMLTextAreaElement>
     ) => {
-      if (isInputDisabled || !enable_upload) return;
+      if (isInputDisabled || !enable_upload || !sessionId) return;
 
       // Handle image paste
       if (e.clipboardData?.items) {
-        const filesToUpload: File[] = [];
-        let hasProcessedItems = false;
+        let hasImageItem = false;
 
         for (let i = 0; i < e.clipboardData.items.length; i++) {
           const item = e.clipboardData.items[i];
 
           // Handle image items
           if (item.type.indexOf("image/") === 0) {
+            hasImageItem = true;
             const file = item.getAsFile();
 
             if (file && file.size <= MAX_FILE_SIZE) {
-              hasProcessedItems = true;
+              // Prevent the default paste behavior for images
+              e.preventDefault();
+
               // Create a unique file name
-              const fileName = `pasted-image-${new Date().getTime()}-${i}.png`;
+              const fileName = `pasted-image-${new Date().getTime()}.png`;
 
               // Create a new File with a proper name
               const namedFile = new File([file], fileName, {
                 type: file.type,
               });
 
-              filesToUpload.push(namedFile);
+              // Convert to the expected UploadFile format
+              const uploadFile: UploadFile = {
+                uid: `paste-${Date.now()}`,
+                name: fileName,
+                status: "done",
+                size: namedFile.size,
+                type: namedFile.type,
+                originFileObj: namedFile as RcFile,
+              };
+
+              // Add to file list with uploading status
+              setFileList((prev) => [...prev, uploadFile]);
+
+              try {
+                // Upload file to server
+                await fileAPI.uploadFiles(
+                  userId,
+                  [namedFile],
+                  sessionId
+                );
+
+                // Update file status to done
+                setFileList((prev) =>
+                  prev.map((f) =>
+                    f.uid === uploadFile.uid
+                      ? { ...f, status: "done" as const }
+                      : f
+                  )
+                );
+
+                // Show successful paste notification
+                message.success(
+                  `Image pasted and uploaded successfully`
+                );
+              } catch (error) {
+                console.error("Image upload failed:", error);
+
+                // Update file status to error
+                setFileList((prev) =>
+                  prev.map((f) =>
+                    f.uid === uploadFile.uid
+                      ? { ...f, status: "error" as const }
+                      : f
+                  )
+                );
+
+                message.error(`Failed to upload pasted image`);
+              }
             } else if (file && file.size > MAX_FILE_SIZE) {
               message.error(
                 `Pasted image is too large. Maximum size is 5MB.`
@@ -207,85 +258,135 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
           }
 
           // Handle text items - only if there's a large amount of text
-          if (item.type === "text/plain") {
-            const text = item.getAsString();
-            // Only process for large text
-            if (text && text.length > LARGE_TEXT_THRESHOLD) {
-              hasProcessedItems = true;
-              // Create a text file from the pasted content
-              const blob = new Blob([text], {
-                type: "text/plain",
-              });
-              const file = new File(
-                [blob],
-                `pasted-text-${new Date().getTime()}-${i}.txt`,
-                { type: "text/plain" }
-              );
+          if (item.type === "text/plain" && !hasImageItem) {
+            item.getAsString(async (text) => {
+              // Only process for large text
+              if (text.length > LARGE_TEXT_THRESHOLD) {
+                // We need to prevent the default paste behavior
+                // But since we're in an async callback, we need to
+                // manually clear the textarea's selection value
+                setTimeout(() => {
+                  if (textAreaRef.current) {
+                    const currentValue =
+                      textAreaRef.current.value;
+                    const selectionStart =
+                      textAreaRef.current
+                        .selectionStart || 0;
+                    const selectionEnd =
+                      textAreaRef.current.selectionEnd ||
+                      0;
 
-              filesToUpload.push(file);
-            }
-          }
-        }
+                    // Remove the pasted text from the textarea
+                    const newValue =
+                      currentValue.substring(
+                        0,
+                        selectionStart - text.length
+                      ) +
+                      currentValue.substring(
+                        selectionEnd
+                      );
 
-        // If we have files to upload, prevent default paste and upload them
-        if (hasProcessedItems) {
-          e.preventDefault();
+                    // Update the textarea
+                    textAreaRef.current.value = newValue;
+                    // Trigger the onChange event manually
+                    setText(newValue);
+                  }
+                }, 0);
 
-          // Add all files to file list with uploading status
-          const uploadFiles: UploadFile[] = filesToUpload.map(
-            (file, index) => ({
-              uid: `paste-${Date.now()}-${index}`,
-              name: file.name,
-              status: "uploading" as const,
-              size: file.size,
-              type: file.type,
-              originFileObj: file as RcFile,
-            })
-          );
+                // Prevent default paste for large text
+                e.preventDefault();
 
-          setFileList((prev) => [...prev, ...uploadFiles]);
-
-          try {
-            // Upload all files to server
-            await fileAPI.uploadFiles(userId, filesToUpload);
-
-            // Update all file statuses to done
-            setFileList((prev) =>
-              prev.map((f) => {
-                const uploadedFile = uploadFiles.find(
-                  (uf) => uf.uid === f.uid
+                // Create a text file from the pasted content
+                const blob = new Blob([text], {
+                  type: "text/plain",
+                });
+                const file = new File(
+                  [blob],
+                  `pasted-text-${new Date().getTime()}.txt`,
+                  { type: "text/plain" }
                 );
-                if (uploadedFile) {
-                  return { ...f, status: "done" as const };
+
+                // Add to file list with uploading status
+                const uploadFile: UploadFile = {
+                  uid: `paste-${Date.now()}`,
+                  name: file.name,
+                  status: "uploading",
+                  size: file.size,
+                  type: file.type,
+                  originFileObj: file as RcFile,
+                };
+
+                setFileList((prev) => [...prev, uploadFile]);
+
+                try {
+                  // Upload file to server
+                  await fileAPI.uploadFiles(
+                    userId,
+                    [file],
+                    sessionId
+                  );
+
+                  // Update file status to done
+                  setFileList((prev) =>
+                    prev.map((f) =>
+                      f.uid === uploadFile.uid
+                        ? {
+                          ...f,
+                          status: "done" as const,
+                        }
+                        : f
+                    )
+                  );
+
+                  // Notify user about the conversion
+                  notificationApi.info({
+                    message: (
+                      <span className="text-sm">
+                        Large Text Converted to File
+                      </span>
+                    ),
+                    description: (
+                      <span className="text-sm text-secondary">
+                        Your pasted text has been
+                        uploaded as a file.
+                      </span>
+                    ),
+                    duration: 3,
+                  });
+                } catch (error) {
+                  console.error(
+                    "Text file upload failed:",
+                    error
+                  );
+
+                  // Update file status to error
+                  setFileList((prev) =>
+                    prev.map((f) =>
+                      f.uid === uploadFile.uid
+                        ? {
+                          ...f,
+                          status: "error" as const,
+                        }
+                        : f
+                    )
+                  );
+
+                  notificationApi.error({
+                    message: (
+                      <span className="text-sm">
+                        Upload Failed
+                      </span>
+                    ),
+                    description: (
+                      <span className="text-sm text-secondary">
+                        Failed to upload text file.
+                      </span>
+                    ),
+                    duration: 5,
+                  });
                 }
-                return f;
-              })
-            );
-
-            // Show successful paste notification
-            const fileCount = filesToUpload.length;
-            const fileType =
-              filesToUpload.length === 1 ? "file" : "files";
-            message.success(
-              `${fileCount} ${fileType} pasted and uploaded successfully`
-            );
-          } catch (error) {
-            console.error("File upload failed:", error);
-
-            // Update all file statuses to error
-            setFileList((prev) =>
-              prev.map((f) => {
-                const uploadedFile = uploadFiles.find(
-                  (uf) => uf.uid === f.uid
-                );
-                if (uploadedFile) {
-                  return { ...f, status: "error" as const };
-                }
-                return f;
-              })
-            );
-
-            message.error(`Failed to upload pasted files`);
+              }
+            });
           }
         }
       }
@@ -458,6 +559,20 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     const handleFileValidationAndAdd = async (
       file: File
     ): Promise<boolean> => {
+      // Check if sessionId is available
+      if (!sessionId) {
+        notificationApi.error({
+          message: <span className="text-sm">No Session</span>,
+          description: (
+            <span className="text-sm text-secondary">
+              Cannot upload files without an active session.
+            </span>
+          ),
+          duration: 5,
+        });
+        return false;
+      }
+
       // Check file size
       if (file.size > MAX_FILE_SIZE) {
         message.error(
@@ -507,7 +622,11 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
         setIsUploading(true);
 
         // Upload file to server
-        const uploadResult = await fileAPI.uploadFiles(userId, [file]);
+        const uploadResult = await fileAPI.uploadFiles(
+          userId,
+          [file],
+          sessionId
+        );
 
         // Update file status to done
         setFileList((prev) =>
@@ -655,7 +774,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       setDragOver(false);
       setIsDragActive(false);
 
-      if (isInputDisabled || !enable_upload) return;
+      if (isInputDisabled || !enable_upload || !sessionId) return;
 
       const droppedFiles = Array.from(e.dataTransfer.files);
       for (const file of droppedFiles) {

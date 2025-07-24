@@ -534,13 +534,17 @@ export class FileAPI {
         };
     }
 
-    async uploadFiles(userId: string, files: File[]): Promise<any> {
+     async uploadFiles(
+        userId: string,
+        files: File[],
+        sessionId: number
+    ): Promise<any> {
         const formData = new FormData();
 
-        // Add user_id as a query parameter
+        // Add user_id and session_id as query parameters
         const url = `${this.getBaseUrl()}/files/?user_id=${encodeURIComponent(
             userId
-        )}`;
+        )}&session_id=${sessionId}`;
 
         // Add files to form data
         files.forEach((file) => {
