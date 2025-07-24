@@ -154,6 +154,128 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
   );
 };
 
+// ThinkBubble component for collapsible think content
+const ThinkBubble: React.FC<{ content: string }> = ({ content }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div className="think-bubble-container" style={{ margin: "8px 0" }}>
+      <div
+        className="think-bubble-header"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          padding: "8px 12px",
+          backgroundColor: "var(--color-bg-secondary)",
+          border: "1px solid var(--color-border-secondary)",
+          borderRadius: "6px",
+          cursor: "pointer",
+          userSelect: "none",
+        }}
+        onClick={() => setIsExpanded(!isExpanded)}
+      >
+        <span style={{ fontSize: "16px" }}>💭</span>
+        <span
+          style={{
+            color: "var(--color-text-secondary)",
+            fontSize: "0.9rem",
+            fontWeight: "500",
+          }}
+        >
+          Thinking Process
+        </span>
+        {isExpanded ? (
+          <span
+            style={{
+              color: "var(--color-text-secondary)",
+              fontSize: "14px",
+            }}
+          >
+            ▼
+          </span>
+        ) : (
+          <span
+            style={{
+              color: "var(--color-text-secondary)",
+              fontSize: "14px",
+            }}
+          >
+            ▶
+          </span>
+        )}
+      </div>
+      {isExpanded && (
+        <div
+          className="think-bubble-content"
+          style={{
+            padding: "12px",
+            backgroundColor: "var(--color-bg-primary)",
+            border: "1px solid var(--color-border-secondary)",
+            borderTop: "none",
+            borderTopLeftRadius: "0",
+            borderTopRightRadius: "0",
+            borderBottomLeftRadius: "6px",
+            borderBottomRightRadius: "6px",
+            marginTop: "-1px",
+          }}
+        >
+          <div
+            style={{
+              color: "var(--color-text-primary)",
+              fontSize: "0.85rem",
+              lineHeight: "1.5",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {content}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Function to parse content and extract think tags
+const parseThinkTags = (
+  content: string
+): { parts: Array<{ type: "text" | "think"; content: string }> } => {
+  const parts: Array<{ type: "text" | "think"; content: string }> = [];
+  let currentIndex = 0;
+
+  // Regular expression to match <think>...</think> tags
+  const thinkRegex = /<think>(.*?)<\/think>/gs;
+  let match;
+
+  while ((match = thinkRegex.exec(content)) !== null) {
+    // Add text before the think tag
+    if (match.index > currentIndex) {
+      parts.push({
+        type: "text",
+        content: content.substring(currentIndex, match.index),
+      });
+    }
+
+    // Add the think content
+    parts.push({
+      type: "think",
+      content: match[1].trim(),
+    });
+
+    currentIndex = match.index + match[0].length;
+  }
+
+  // Add remaining text after the last think tag
+  if (currentIndex < content.length) {
+    parts.push({
+      type: "text",
+      content: content.substring(currentIndex),
+    });
+  }
+
+  return { parts };
+};
+
 const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   content,
   fileExtension,
@@ -180,6 +302,10 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       ? content.slice(0, maxLength) + "..."
       : content;
 
+  // Check if content contains think tags
+  const hasThinkTags =
+    content.includes("<think>") && content.includes("</think>");
+
   // If allowHtml is true and content contains HTML, render it directly
   if (allowHtml && (content.includes("<div") || content.includes("<span"))) {
     return (
@@ -197,6 +323,152 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         }}
         dangerouslySetInnerHTML={{ __html: content }}
       />
+    );
+  }
+
+  // If content has think tags, parse and render them specially
+  if (hasThinkTags) {
+    const { parts } = parseThinkTags(content);
+
+    return (
+      <div
+        className="prose w-full"
+        style={{
+          color,
+          fontSize: "0.85rem",
+          overflowWrap: "break-word",
+          wordWrap: "break-word",
+          wordBreak: "break-word",
+          overflowX: "auto",
+          maxWidth: "100%",
+          position: "relative",
+        }}
+      >
+        {indented && (
+          <div
+            style={{
+              position: "absolute",
+              left: "1.2rem",
+              top: 0,
+              bottom: 0,
+              width: "2px",
+            }}
+          />
+        )}
+        {parts.map((part, index) => {
+          if (part.type === "think") {
+            return (
+              <ThinkBubble key={index} content={part.content} />
+            );
+          } else {
+            // Render regular text content with markdown
+            return (
+              <ReactMarkdown
+                key={index}
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[]}
+                components={{
+                  h1: ({ children }) => (
+                    <h1 style={{ color }}>{children}</h1>
+                  ),
+                  h2: ({ children }) => (
+                    <h2 style={{ color }}>{children}</h2>
+                  ),
+                  h3: ({ children }) => (
+                    <h3 style={{ color }}>{children}</h3>
+                  ),
+                  h4: ({ children }) => (
+                    <h4 style={{ color }}>{children}</h4>
+                  ),
+                  h5: ({ children }) => (
+                    <h5 style={{ color }}>{children}</h5>
+                  ),
+                  h6: ({ children }) => (
+                    <h6 style={{ color }}>{children}</h6>
+                  ),
+                  p: ({ children }) => (
+                    <p className="" style={{ color }}>
+                      {children}
+                    </p>
+                  ),
+                  strong: ({ children }) => (
+                    <strong style={{ color }}>
+                      {children}
+                    </strong>
+                  ),
+                  a: ({ href, children }) => (
+                    <a
+                      href={href}
+                      style={{ color }}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {children}
+                    </a>
+                  ),
+                  code: ({
+                    node,
+                    className,
+                    children,
+                    ...props
+                  }) => {
+                    const match = /language-(\w+)/.exec(
+                      className || ""
+                    );
+                    const language = match ? match[1] : "";
+                    const inline = !language;
+                    if (inline) {
+                      return (
+                        <code
+                          style={{
+                            whiteSpace: "pre-wrap",
+                            color: "var(--color-text-primary)",
+                            backgroundColor:
+                              "var(--color-bg-primary)",
+                            display: "inline",
+                            padding: "0.2em 0.4em",
+                            borderRadius:
+                              "0.375rem",
+                          }}
+                          {...props}
+                        >
+                          {children}
+                        </code>
+                      );
+                    }
+
+                    return (
+                      <CodeBlock
+                        language={language}
+                        value={String(children).replace(
+                          /\n$/,
+                          ""
+                        )}
+                      />
+                    );
+                  },
+                  blockquote: ({ children }) => (
+                    <blockquote
+                      style={{
+                        backgroundColor:
+                          "var(--color-bg-primary)",
+                        color: "var(--color-text-primary)",
+                        padding: "10px",
+                        borderLeft:
+                          "5px solid var(--color-border-secondary)",
+                      }}
+                    >
+                      {children}
+                    </blockquote>
+                  ),
+                }}
+              >
+                {part.content}
+              </ReactMarkdown>
+            );
+          }
+        })}
+      </div>
     );
   }
 
@@ -323,6 +595,9 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             >
               {children}
             </blockquote>
+          ),
+          think: ({ children }) => (
+            <ThinkBubble content={String(children)} />
           ),
         }}
       >
