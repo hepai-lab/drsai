@@ -62,7 +62,7 @@ export const SessionManager: React.FC = () => {
   const handleAgentList = async (agents: Agent[]) => {
     try {
       const res = await agentAPI.getAgentList(
-        user?.email || "yqsun@ihep.ac.cn"
+        user?.email || ""
       );
       setAgents(res.config.agent_modes);
     } catch (error) {
