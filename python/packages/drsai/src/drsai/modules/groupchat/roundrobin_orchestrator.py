@@ -31,7 +31,10 @@ from autogen_agentchat.messages import (
     BaseChatMessage,
     MessageFactory,
     StopMessage,
+    TextMessage,
+    ModelClientStreamingChunkEvent,
 )
+
 from autogen_agentchat.state import BaseState, TeamState
 # from autogen_agentchat.teams._group_chat._base_group_chat import BaseGroupChat
 # from autogen_agentchat.teams._group_chat._base_group_chat_manager import (
@@ -160,7 +163,8 @@ class RoundRobinGroupChatManager(DrSaiGroupChatManager):
 
     async def close(self) -> None:
         """Close any resources."""
-        pass
+        self._is_paused = True
+        logger.info(f"Closing RoundRobinGroupChatManager...")
 
     @rpc
     async def handle_start(self, message: GroupChatStart, ctx: MessageContext) -> None:  # type: ignore
@@ -293,6 +297,8 @@ class RoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
             **kwargs
         )
 
+        self._is_paused = False
+
     def _create_group_chat_manager_factory(
         self,
         name: str,
@@ -376,6 +382,9 @@ class RoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
         for agent in self._participants:
             if hasattr(agent, "pause"):
                 await agent.pause()  # type: ignore
+        
+        self._is_running = False
+        self._is_paused = True
 
     async def resume(self) -> None:
         """Resume the group chat."""
@@ -387,6 +396,8 @@ class RoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
         for agent in self._participants:
             if hasattr(agent, "resume"):
                 await agent.resume()  # type: ignore
+        
+        self._is_paused = False
 
     async def lazy_init(self) -> None:
         """Initialize any lazy-loaded components."""
@@ -429,6 +440,21 @@ class RoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
         task: str | BaseChatMessage | Sequence[BaseChatMessage] | None = None,
         cancellation_token: CancellationToken | None = None,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | TaskResult, None]:
+        
+        if self._is_running:
+            yield ModelClientStreamingChunkEvent(content="The team is already running, it cannot run again until it is stopped.", source="Manager")
+            textmessage=TextMessage(content="The team is already running, it cannot run again until it is stopped.", source="Manager")
+            yield textmessage
+            yield TaskResult(messages = [textmessage], stop_reason="stop")
+            return
+        
+        if self._is_paused:
+            yield ModelClientStreamingChunkEvent(content="The team is paused, please resume it before running again.", source="Manager")
+            textmessage=TextMessage(content="The team is paused, please resume it before running again.", source="Manager")
+            yield textmessage
+            yield TaskResult(messages = [textmessage], stop_reason="stop")
+            return
+        
         async for message in super().run_stream(
             task=task, cancellation_token=cancellation_token
         ):
