@@ -58,6 +58,8 @@ from autogen_agentchat.messages import (
     UserInputRequestedEvent,
     ThoughtEvent,
     StructuredMessageFactory,
+    # MultiModalMessage,
+    Image,
 )
 from drsai import HepAIChatCompletionClient
 from drsai.modules.managers.base_thread import Thread
@@ -159,6 +161,28 @@ class DrSaiAgent(AssistantAgent):
 
     async def llm_messages2oai_messages(self, llm_messages: List[LLMMessage]) -> List[Dict[str, str]]:
         """Convert a list of LLM messages to a list of OAI chat messages."""
+
+        def handle_mulyimodal(content: list[Union[str, Image]])->list:
+            """
+            处理多模态消息
+            """
+            base64_images: str = ""
+            text: str = ""
+            for item in content:
+                if isinstance(item, Image):
+                    base64_images = item._convert_base64_to_data_uri()
+                else:
+                    text = item
+            handle_content = [
+                {"type": "text", "text": text},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": base64_images,
+                    }
+                }]
+            return handle_content
+        
         messages = []
         for llm_message in llm_messages:
             if isinstance(llm_message, SystemMessage):
@@ -168,7 +192,11 @@ class DrSaiAgent(AssistantAgent):
             if isinstance(llm_message, AssistantMessage):
                 messages.append({"role": "assistant", "content": llm_message.content, "name": llm_message.source})
             if isinstance(llm_message, FunctionExecutionResultMessage):
-                messages.append({"role": "function", "content": llm_message.content})
+                messages.append({"role": "function", "content": llm_message.content}) 
+        
+        for message in messages:
+            if isinstance(message["content"], list):
+                message["content"] = handle_mulyimodal(message["content"])
         return messages
     
     async def oai_messages2llm_messages(self, oai_messages: List[Dict[str, str]]) -> List[LLMMessage]:

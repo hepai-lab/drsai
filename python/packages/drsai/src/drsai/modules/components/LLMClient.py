@@ -71,33 +71,114 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient):
                 "family": ModelFamily.UNKNOWN,
             }
             kwargs["model_info"] = model_info
+        r1_series = [
+            "aliyun/qwen-turbo-latest",
+            "aliyun/qwen3-30b-a3b",
+            "aliyun/qwen3-235b-a22b",
+            "aliyun/qwq-plus-latest",
+            "anthropic/claude-sonnet-4-thinking",
+            "anthropic/claude-opus-4-thinking",
+            "deepseek-ai/deepseek-r1:671b",
+            "deepseek-ai/deepseek-r1:32b",
+            "deepseek-ai/deepseek-r1:7b",
+
+        ]
+        v3_series = [
+            "aliyun/qwen-max-latest",
+            "aliyun/qwen-coder-plus-latest",
+            "aliyun/qwen-long-latest",
+            "openai/o1-mini",
+            "openai/computer-use-preview",
+            "anthropic/claude-sonnet-4",
+            "anthropic/claude-3-5-haiku",
+            "anthropic/claude-opus-4",
+            "deepseek-ai/deepseek-v3:671b"
+
+        ]
+
+        vsion_series = [
+            "aliyun/qwen-vl-max-latest",
+            "aliyun/qwen-vl-ocr-latest",
+            "aliyun/qvq-max-latest",
+            "aliyun/qwen2.5-vl-32b-instruct",
+            "aliyun/qwen2.5-vl-72b-instruct",
+            "openai/o3",
+            "openai/o4-mini-deep-research",
+            "openai/gpt-4.1-nano",
+            "openai/o4-mini",
+            "openai/o1",
+            "openai/gpt-4o-mini",
+            "openai/codex-mini-latest",
+            "openai/gpt-4o-audio-preview",
+            "openai/gpt-4.1-mini",
+            "openai/gpt-image-1",
+            "openai/gpt-4o",
+            "openai/gpt-4.1",
+            "anthropic/claude-sonnet-4",
+            "anthropic/claude-sonnet-4-thinking",
+            "anthropic/claude-opus-4-thinking",
+            "anthropic/claude-3-5-haiku",
+            "anthropic/claude-opus-4",
+            "ark/doubao-vision-pro",
+
+
+        ]
+
         allowed_models = [
+        # openai_models
+        "gpt-41",
+        "gpt-45",
         "gpt-4o",
         "o1",
         "o3",
+        "o4",
         "gpt-4",
         "gpt-35",
         "r1",
-        "v3",
+        # google_models
         "gemini-1.5-flash",
         "gemini-1.5-pro",
         "gemini-2.0-flash",
+        "gemini-2.5-pro",
+        # anthropic_models
         "claude-3-haiku",
         "claude-3-sonnet",
         "claude-3-opus",
-        "claude-3.5-haiku",
-        "claude-3.5-sonnet",
-        "qwen3-235b-a22b",
-        "qwen3-30b-a3b"
+        "claude-3-5-haiku",
+        "claude-3-5-sonnet",
+        "claude-3-7-sonnet",
+        # mistral_models
+        "codestral",
+        "open-codestral-mamba",
+        "mistral",
+        "ministral",
+        "pixtral",
+        # unknown
+        "unknown"
+        ]
+
+        hepai_allowed_models = [
+            "aliyun",
+            "openai",
+            "anthropic",
+            "ark",
+            "deepseek-ai",
         ]
         model = kwargs.get("model", "")
-        for allowed_model in allowed_models:
+        all_allowed_models = allowed_models+hepai_allowed_models
+        for allowed_model in all_allowed_models:
             if allowed_model in model.lower():
-                if allowed_model == "v3":
-                    allowed_model = "gpt-4o"
-                elif allowed_model in ["qwen3-235b-a22b", "qwen3-30b-a3b"]:
-                    allowed_model = "r1"
-                kwargs["model_info"]["family"] = allowed_model
+                if allowed_model in hepai_allowed_models:
+                    if model in r1_series:
+                        kwargs["model_info"]["family"] = ModelFamily.R1
+                    elif model in v3_series:
+                        kwargs["model_info"]["family"] = ModelFamily.GPT_4O
+                else:
+                    kwargs["model_info"]["family"] = allowed_model
+                
+                if model in vsion_series:
+                    kwargs["model_info"]["vision"] = True
+                
                 kwargs["model_info"]["function_calling"] = True
                 kwargs["model_info"]["json_output"] = True
                 kwargs["model_info"]["structured_output"] = True

@@ -52,7 +52,8 @@ async def create_team() -> RoundRobinGroupChat:
     # Create a team with the primary and critic agents.
     return RoundRobinGroupChat(
         participants=[primary_agent, critic_agent], 
-        termination_condition=text_termination)
+        termination_condition=text_termination,
+        max_turns = 5)
 
 async def run_status_agent():
 
@@ -76,7 +77,7 @@ if __name__ == '__main__':
     asyncio.run(
         run_worker(
             agent_factory=create_team, 
-            port = 42805, 
+            port = 42806, 
             no_register=False,
             enable_openwebui_pipeline=True, 
             history_mode = "backend",

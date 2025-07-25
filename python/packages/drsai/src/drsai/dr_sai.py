@@ -350,7 +350,7 @@ class DrSai:
 
                 elif isinstance(message, TaskResult):
                     # 判断最后一条消息是否是转移给user的HandoffMessage
-                    last_message = message.messages[-1]
+                    last_message = message.messages[-1] if message.messages else {}
                     if isinstance(last_message, HandoffMessage) and last_message.target.lower() == "user":
                         thread.metadata["handoff_target"] = "user"
                         thread.metadata["handoff_source"] = last_message.source
