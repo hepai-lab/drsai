@@ -178,10 +178,15 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     ) => {
       if (isInputDisabled || !enable_upload || !sessionId) return;
 
-      // Handle image paste
+      // Handle multiple files paste
       if (e.clipboardData?.items) {
+        const filesToUpload: File[] = [];
+        const uploadFiles: UploadFile[] = [];
         let hasImageItem = false;
+        let hasLargeText = false;
+        let largeTextContent = "";
 
+        // First pass: collect all files and check for large text
         for (let i = 0; i < e.clipboardData.items.length; i++) {
           const item = e.clipboardData.items[i];
 
@@ -191,202 +196,154 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
             const file = item.getAsFile();
 
             if (file && file.size <= MAX_FILE_SIZE) {
-              // Prevent the default paste behavior for images
-              e.preventDefault();
-
               // Create a unique file name
-              const fileName = `pasted-image-${new Date().getTime()}.png`;
+              const fileName = `pasted-image-${new Date().getTime()}-${i}.png`;
 
               // Create a new File with a proper name
               const namedFile = new File([file], fileName, {
                 type: file.type,
               });
 
+              filesToUpload.push(namedFile);
+
               // Convert to the expected UploadFile format
               const uploadFile: UploadFile = {
-                uid: `paste-${Date.now()}`,
+                uid: `paste-${Date.now()}-${i}`,
                 name: fileName,
-                status: "done",
+                status: "uploading",
                 size: namedFile.size,
                 type: namedFile.type,
                 originFileObj: namedFile as RcFile,
               };
 
-              // Add to file list with uploading status
-              setFileList((prev) => [...prev, uploadFile]);
-
-              try {
-                // Upload file to server
-                await fileAPI.uploadFiles(
-                  userId,
-                  [namedFile],
-                  sessionId
-                );
-
-                // Update file status to done
-                setFileList((prev) =>
-                  prev.map((f) =>
-                    f.uid === uploadFile.uid
-                      ? { ...f, status: "done" as const }
-                      : f
-                  )
-                );
-
-                // Show successful paste notification
-                message.success(
-                  `Image pasted and uploaded successfully`
-                );
-              } catch (error) {
-                console.error("Image upload failed:", error);
-
-                // Update file status to error
-                setFileList((prev) =>
-                  prev.map((f) =>
-                    f.uid === uploadFile.uid
-                      ? { ...f, status: "error" as const }
-                      : f
-                  )
-                );
-
-                message.error(`Failed to upload pasted image`);
-              }
+              uploadFiles.push(uploadFile);
             } else if (file && file.size > MAX_FILE_SIZE) {
               message.error(
-                `Pasted image is too large. Maximum size is 5MB.`
+                `Pasted image ${file.name || "image"
+                } is too large. Maximum size is 5MB.`
               );
             }
           }
 
           // Handle text items - only if there's a large amount of text
           if (item.type === "text/plain" && !hasImageItem) {
-            item.getAsString(async (text) => {
+            item.getAsString((text) => {
               // Only process for large text
               if (text.length > LARGE_TEXT_THRESHOLD) {
-                // We need to prevent the default paste behavior
-                // But since we're in an async callback, we need to
-                // manually clear the textarea's selection value
-                setTimeout(() => {
-                  if (textAreaRef.current) {
-                    const currentValue =
-                      textAreaRef.current.value;
-                    const selectionStart =
-                      textAreaRef.current
-                        .selectionStart || 0;
-                    const selectionEnd =
-                      textAreaRef.current.selectionEnd ||
-                      0;
-
-                    // Remove the pasted text from the textarea
-                    const newValue =
-                      currentValue.substring(
-                        0,
-                        selectionStart - text.length
-                      ) +
-                      currentValue.substring(
-                        selectionEnd
-                      );
-
-                    // Update the textarea
-                    textAreaRef.current.value = newValue;
-                    // Trigger the onChange event manually
-                    setText(newValue);
-                  }
-                }, 0);
-
-                // Prevent default paste for large text
-                e.preventDefault();
-
-                // Create a text file from the pasted content
-                const blob = new Blob([text], {
-                  type: "text/plain",
-                });
-                const file = new File(
-                  [blob],
-                  `pasted-text-${new Date().getTime()}.txt`,
-                  { type: "text/plain" }
-                );
-
-                // Add to file list with uploading status
-                const uploadFile: UploadFile = {
-                  uid: `paste-${Date.now()}`,
-                  name: file.name,
-                  status: "uploading",
-                  size: file.size,
-                  type: file.type,
-                  originFileObj: file as RcFile,
-                };
-
-                setFileList((prev) => [...prev, uploadFile]);
-
-                try {
-                  // Upload file to server
-                  await fileAPI.uploadFiles(
-                    userId,
-                    [file],
-                    sessionId
-                  );
-
-                  // Update file status to done
-                  setFileList((prev) =>
-                    prev.map((f) =>
-                      f.uid === uploadFile.uid
-                        ? {
-                          ...f,
-                          status: "done" as const,
-                        }
-                        : f
-                    )
-                  );
-
-                  // Notify user about the conversion
-                  notificationApi.info({
-                    message: (
-                      <span className="text-sm">
-                        Large Text Converted to File
-                      </span>
-                    ),
-                    description: (
-                      <span className="text-sm text-secondary">
-                        Your pasted text has been
-                        uploaded as a file.
-                      </span>
-                    ),
-                    duration: 3,
-                  });
-                } catch (error) {
-                  console.error(
-                    "Text file upload failed:",
-                    error
-                  );
-
-                  // Update file status to error
-                  setFileList((prev) =>
-                    prev.map((f) =>
-                      f.uid === uploadFile.uid
-                        ? {
-                          ...f,
-                          status: "error" as const,
-                        }
-                        : f
-                    )
-                  );
-
-                  notificationApi.error({
-                    message: (
-                      <span className="text-sm">
-                        Upload Failed
-                      </span>
-                    ),
-                    description: (
-                      <span className="text-sm text-secondary">
-                        Failed to upload text file.
-                      </span>
-                    ),
-                    duration: 5,
-                  });
-                }
+                hasLargeText = true;
+                largeTextContent = text;
               }
             });
+          }
+        }
+
+        // If we have files to upload, prevent default paste and process them
+        if (filesToUpload.length > 0 || hasLargeText) {
+          e.preventDefault();
+
+          // Add all files to file list with uploading status
+          setFileList((prev) => [...prev, ...uploadFiles]);
+
+          // Handle large text conversion
+          if (hasLargeText) {
+            // We need to manually clear the textarea's selection value
+            setTimeout(() => {
+              if (textAreaRef.current) {
+                const currentValue = textAreaRef.current.value;
+                const selectionStart =
+                  textAreaRef.current.selectionStart || 0;
+                const selectionEnd =
+                  textAreaRef.current.selectionEnd || 0;
+
+                // Remove the pasted text from the textarea
+                const newValue =
+                  currentValue.substring(
+                    0,
+                    selectionStart - largeTextContent.length
+                  ) + currentValue.substring(selectionEnd);
+
+                // Update the textarea
+                textAreaRef.current.value = newValue;
+                // Trigger the onChange event manually
+                setText(newValue);
+              }
+            }, 0);
+
+            // Create a text file from the pasted content
+            const blob = new Blob([largeTextContent], {
+              type: "text/plain",
+            });
+            const textFile = new File(
+              [blob],
+              `pasted-text-${new Date().getTime()}.txt`,
+              { type: "text/plain" }
+            );
+
+            filesToUpload.push(textFile);
+
+            // Add text file to upload list
+            const textUploadFile: UploadFile = {
+              uid: `paste-text-${Date.now()}`,
+              name: textFile.name,
+              status: "uploading",
+              size: textFile.size,
+              type: textFile.type,
+              originFileObj: textFile as RcFile,
+            };
+
+            uploadFiles.push(textUploadFile);
+            setFileList((prev) => [...prev, textUploadFile]);
+          }
+
+          // Upload all files in batch
+          if (filesToUpload.length > 0) {
+            try {
+              // Upload files to server
+              await fileAPI.uploadFiles(
+                userId,
+                filesToUpload,
+                sessionId
+              );
+
+              // Update all file statuses to done
+              setFileList((prev) =>
+                prev.map((f) => {
+                  const isUploadedFile = uploadFiles.some(
+                    (uf) => uf.uid === f.uid
+                  );
+                  return isUploadedFile
+                    ? { ...f, status: "done" as const }
+                    : f;
+                })
+              );
+
+              // Show successful paste notification
+              const fileCount = filesToUpload.length;
+              const fileType = fileCount === 1 ? "file" : "files";
+              message.success(
+                `${fileCount} ${fileType} pasted and uploaded successfully`
+              );
+            } catch (error) {
+              console.error("Files upload failed:", error);
+
+              // Update all file statuses to error
+              setFileList((prev) =>
+                prev.map((f) => {
+                  const isUploadedFile = uploadFiles.some(
+                    (uf) => uf.uid === f.uid
+                  );
+                  return isUploadedFile
+                    ? { ...f, status: "error" as const }
+                    : f;
+                })
+              );
+
+              const fileCount = filesToUpload.length;
+              const fileType = fileCount === 1 ? "file" : "files";
+              message.error(
+                `Failed to upload ${fileCount} pasted ${fileType}`
+              );
+            }
           }
         }
       }
@@ -776,7 +733,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
 
       if (isInputDisabled || !enable_upload || !sessionId) return;
 
-      const droppedFiles = Array.from(e.dataTransfer.files);
+      const droppedFiles = Array.from(e.dataTransfer.files) as File[];
       for (const file of droppedFiles) {
         await handleFileValidationAndAdd(file);
       }
