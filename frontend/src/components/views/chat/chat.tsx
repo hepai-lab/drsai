@@ -552,7 +552,8 @@ export default function ChatView({
   const handleInputResponse = async (
     response: string,
     accepted = false,
-    plan?: IPlan
+    plan?: IPlan,
+    uploadedFileData?: Record<string, any>
   ) => {
     if (!currentRun || !activeSocketRef.current) {
       handleError(new Error("WebSocket connection not available"));
@@ -581,7 +582,17 @@ export default function ChatView({
         accepted: accepted,
         content: response,
         ...(planString !== "" && { plan: planString }),
+        ...(uploadedFileData &&
+          Object.keys(uploadedFileData).length > 0 && {
+          uploadedFileData,
+        }),
       };
+
+      console.log(
+        "handleInputResponse - uploadedFileData:",
+        uploadedFileData
+      );
+      console.log("handleInputResponse - responseJson:", responseJson);
       const responseString = JSON.stringify(responseJson);
 
       activeSocketRef.current.send(
@@ -710,7 +721,8 @@ export default function ChatView({
     query: string,
     files: RcFile[] = [],
     plan?: IPlan,
-    fresh_socket: boolean = false
+    fresh_socket: boolean = false,
+    uploadedFileData?: Record<string, any>
   ) => {
     setError(null);
     setNoMessagesYet(false);
@@ -777,22 +789,26 @@ export default function ChatView({
         ...(planString !== "" && { plan: planString }),
       };
 
-      console.log("Sending task:", currentSettings);
-      socket.send(
-        JSON.stringify({
-          type: "start",
-          task: JSON.stringify(taskJson),
-          files: processedFiles,
-          team_config: teamConfig,
-          settings_config: {
-            ...currentSettings,
-            agent_mode_config: {
-              mode,
-              config: newConfig,
-            },
+      console.log("runTask - uploadedFileData:", uploadedFileData);
+      const messageToSend = {
+        type: "start",
+        task: JSON.stringify(taskJson),
+        files: processedFiles,
+        ...(uploadedFileData &&
+          Object.keys(uploadedFileData).length > 0 && {
+          uploadedFileData,
+        }),
+        team_config: teamConfig,
+        settings_config: {
+          ...currentSettings,
+          agent_mode_config: {
+            mode,
+            config: newConfig,
           },
-        })
-      );
+        },
+      };
+      console.log("runTask - messageToSend:", messageToSend);
+      socket.send(JSON.stringify(messageToSend));
       const sessionData = {
         id: session?.id,
         name: query.slice(0, 50),
@@ -1208,7 +1224,11 @@ export default function ChatView({
                       query: string,
                       files: RcFile[],
                       accepted = false,
-                      plan?: IPlan
+                      plan?: IPlan,
+                      uploadedFileData?: Record<
+                        string,
+                        any
+                      >
                     ) => {
                       if (
                         currentRun?.status ===
@@ -1225,7 +1245,8 @@ export default function ChatView({
                           query,
                           files,
                           plan,
-                          true
+                          true,
+                          uploadedFileData
                         );
                       }
                     }}

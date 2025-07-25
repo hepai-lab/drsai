@@ -287,8 +287,10 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   // Determine if we should render as a file preview
   const isFilePreview = !!fileExtension;
   const color = indented
-    ? "var(--color-text-secondary)"
+    ? "var(--color-text-primary)"
     : "var(--color-text-primary)";
+  // ? "var(--color-text-secondary)"
+  // : "var(--color-text-primary)";
 
   // If this is a file preview, wrap the content in a code block
   const processedContent = isFilePreview

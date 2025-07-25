@@ -2,8 +2,11 @@
 
 import * as React from "react";
 import { navigate } from "gatsby";
+import { appContext } from "../hooks/provider";
+
 
 const AuthPage = () => {
+  const { setUser } = React.useContext(appContext);
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
@@ -13,6 +16,12 @@ const AuthPage = () => {
       localStorage.setItem("username", username);
       localStorage.setItem("user_email", username); // 假设username就是email
       localStorage.setItem("user_name", username);
+      // 更新用户状态
+      setUser({
+        name: username,
+        email: username,
+        username: username,
+      });
       // 跳转到主页
       navigate("/");
     } else {
