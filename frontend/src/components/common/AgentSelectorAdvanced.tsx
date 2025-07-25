@@ -85,7 +85,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                     // 恢复智能体配置
                     try {
                         const agentConfig = await agentAPI.getAgentConfig(
-                            user?.email || "yqsun@ihep.ac.cn",
+                            user?.email || "",
                             persistedSelectedAgent.mode
                         );
 
@@ -114,7 +114,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                     // 恢复智能体配置
                     try {
                         const agentConfig = await agentAPI.getAgentConfig(
-                            user?.email || "yqsun@ihep.ac.cn",
+                            user?.email || "",
                             lastSelectedAgentMode
                         );
 
@@ -233,13 +233,13 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             mode: agent.mode,
             name: agent.name,
             config: {},
-            user_id: user?.email || "yqsun@ihep.ac.cn",
+            user_id: user?.email || "",
         };
 
         try {
             const res = await agentAPI.saveAgentConfig(newCustomAgent);
             const res2 = await agentAPI.getAgentConfig(
-                "yqsun@ihep.ac.cn",
+                "",
                 agent.mode
             );
             console.log("Agent Config Response:", res2);

@@ -181,6 +181,9 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     const handlePaste = async (
       e: React.ClipboardEvent<HTMLTextAreaElement>
     ) => {
+
+      console.log("Paste event triggered");
+      console.log("Pasted sessionId:", sessionId);
       if (isInputDisabled || !enable_upload || !sessionId) return;
 
       // Handle multiple files paste
@@ -303,6 +306,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
           // Upload all files in batch
           if (filesToUpload.length > 0) {
             try {
+
               // Upload files to server
               const uploadResult = await fileAPI.uploadFiles(
                 userId,
