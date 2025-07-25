@@ -234,7 +234,11 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         
     @HRModel.remote_callable
     async def a_chat_completions(self, *args, **kwargs) -> AsyncGenerator:
-        return await self.drsai.a_start_chat_completions(*args, **kwargs)
+        chat_id = kwargs.get("chat_id", None)
+        if chat_id is not None and chat_id in self.drsai.agent_instance:
+            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
+            kwargs["agent"] = agent
+        return self.drsai.a_start_chat_completions(*args, **kwargs)
 
 
 async def run_worker(agent_factory: callable, **kwargs):

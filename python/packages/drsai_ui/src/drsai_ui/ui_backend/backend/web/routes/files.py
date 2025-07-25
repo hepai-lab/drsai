@@ -78,36 +78,57 @@ async def upload_files(
         # 保存文件到数据库
         response = db.get(UserFiles, filters={"user_id": user_id, "session_id": session_id})
         if not response.status or not response.data:
-            pass
+            userfiles = UserFiles(
+                user_id=user_id, 
+                session_id=session_id,
+                files=file_info,
+                )
         else:
-            file_info_org: dict[str, Any] = response.data[0]["files"]
-            file_info_org.update(file_info)
-            file_info = file_info_org
+            # file_info_org: dict[str, Any] = response.data[0]["files"]
+            # file_info_org.update(file_info)
+            # file_info = file_info_org
+            userfiles: UserFiles = response.data[0]
+            if userfiles.files:
+                userfiles.files.update(file_info)
+            else:
+                userfiles.files = file_info
+
         
-        userfiles = UserFiles(
-            user_id=user_id, 
-            session_id=session_id,
-            files=file_info,
-            )
+        
         db.upsert(userfiles)
         return {"status": True, "data": file_info}
     except Exception as e:
         # Clean up session if run creation failed
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-@router.get("/")
-async def get_user_files(user_id: str, db=Depends(get_db)) -> Dict:
+# @router.get("/")
+# async def get_user_files(user_id: str, db=Depends(get_db)) -> Dict:
+#     """
+#     检索用户上传的文件列表
+#     """
+#     response = db.get(UserFiles, filters={"user_id": user_id})
+#     if not response.status or not response.data:
+#         return {"status": False, "data": {}}
+#     else:
+#         # 处理多个session
+#         user_files = {}
+#         for files_i in response.data:
+#             if "files" in files_i:
+#                 user_files.update(files_i["files"])
+
+#         return {"status": True, "data": response.data[0]["files"]}
+
+@router.get("/{session_id}")
+async def get_user_session_files(session_id: str, user_id: str, db=Depends(get_db)) -> Dict:
     """
     检索用户上传的文件列表
     """
-    response = db.get(UserFiles, filters={"user_id": user_id})
+    response = db.get(UserFiles, filters={"user_id": user_id, "session_id": session_id})
     if not response.status or not response.data:
         return {"status": False, "data": {}}
     else:
-        # 处理多个session
-        user_files = {}
-        for files_i in response.data:
-            if "files" in files_i:
-                user_files.update(files_i["files"])
+        userfiles: UserFiles = response.data[0]
+        if not userfiles.files:
+            return {"status": False, "data": userfiles.files}
 
-        return {"status": True, "data": response.data[0]["files"]}
+        return {"status": False, "data": {}}

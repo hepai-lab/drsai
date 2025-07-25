@@ -10,7 +10,7 @@ from typing import (
     AsyncGenerator,
     Sequence,
 )
-
+from loguru import logger
 from autogen_core import (
     AgentId,
     AgentRuntime,
@@ -151,6 +151,7 @@ class RoundRobinGroupChatManager(DrSaiGroupChatManager):
 
     async def pause(self) -> None:
         """Pause the group chat manager."""
+        logger.info(f"Pausing RoundRobinGroupCha...")
         self._is_paused = True
 
     async def resume(self) -> None:
@@ -165,6 +166,10 @@ class RoundRobinGroupChatManager(DrSaiGroupChatManager):
     async def handle_start(self, message: GroupChatStart, ctx: MessageContext) -> None:  # type: ignore
         """Handle the start of a group chat."""
         # Check if the conversation has already terminated.
+
+        if self._is_paused:
+            return
+        
         if (
             self._termination_condition is not None
             and self._termination_condition.terminated
@@ -204,6 +209,10 @@ class RoundRobinGroupChatManager(DrSaiGroupChatManager):
     ) -> None:  # type: ignore
         """Handle an agent's response in the group chat."""
         # Add any inner messages to the thread
+
+        if self._is_paused:
+            return
+        
         delta: List[BaseChatMessage] = []
         if message.agent_response.inner_messages is not None:
             for inner_message in message.agent_response.inner_messages:

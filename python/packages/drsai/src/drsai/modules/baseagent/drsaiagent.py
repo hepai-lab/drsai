@@ -147,6 +147,8 @@ class DrSaiAgent(AssistantAgent):
 
     async def pause(self) -> None:
         """Pause the agent by setting the paused state."""
+        logger.info(f"Pausing {self.name}...")
+
         self.is_paused = True
         self._paused.set()
 
@@ -241,6 +243,7 @@ class DrSaiAgent(AssistantAgent):
             # Stream the reply_function.
             response = ""
             async for chunk in self._reply_function(
+                self,
                 oai_messages, 
                 agent_name = agent_name,
                 llm_messages = llm_messages, 
