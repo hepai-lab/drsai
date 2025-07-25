@@ -307,6 +307,7 @@ export interface Run {
   team_result: TeamResult | null;
   messages: Message[]; // Change to Message[]
   error_message?: string;
+   session_id: number;
 }
 
 export interface InputRequest {

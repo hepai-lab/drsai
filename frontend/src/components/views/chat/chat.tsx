@@ -1183,95 +1183,107 @@ export default function ChatView({
           </div>
 
           {/* No existing messages in run - centered content */}
-          {currentRun && noMessagesYet && teamConfig && (
-            <div
-              className={`text-center ${showDetailViewer && !isDetailViewerMinimized
-                ? "w-full"
-                : "w-full max-w-full md:max-w-4xl lg:max-w-5xl xl:max-w-6xl"
-                } mx-auto px-4 sm:px-6 md:px-8`}
-            >
-              <div>{config.model_name}</div>
+          {currentRun &&
+            noMessagesYet &&
+            teamConfig &&
+            session?.id && (
+              <div
+                className={`text-center ${showDetailViewer && !isDetailViewerMinimized
+                  ? "w-full"
+                  : "w-full max-w-full md:max-w-4xl lg:max-w-5xl xl:max-w-6xl"
+                  } mx-auto px-4 sm:px-6 md:px-8`}
+              >
+                <div>{config.model_name}</div>
 
-              <div className="text-secondary text-lg mb-6">
-                Welcome to Dr.Sai, Enter a message to get
-                started
-                {/* 欢迎使用Dr.Sai智能体，输入消息开始对话 */}
-              </div>
+                <div className="text-secondary text-lg mb-6">
+                  Welcome to Dr.Sai, Enter a message to get
+                  started
+                  {/* 欢迎使用Dr.Sai智能体，输入消息开始对话 */}
+                </div>
 
-              <div className="w-full">
-                <ChatInput
-                  ref={chatInputRef}
-                  onSubmit={(
-                    query: string,
-                    files: RcFile[],
-                    accepted = false,
-                    plan?: IPlan
-                  ) => {
-                    if (
-                      currentRun?.status ===
-                      "awaiting_input" ||
-                      currentRun?.status === "paused"
-                    ) {
-                      handleInputResponse(
-                        query,
-                        accepted,
-                        plan
-                      );
-                    } else {
-                      runTask(query, files, plan, true);
-                    }
-                  }}
-                  error={error}
-                  onCancel={handleCancel}
-                  runStatus={currentRun?.status}
-                  inputRequest={currentRun?.input_request}
-                  isPlanMessage={isPlanMessage}
-                  onPause={handlePause}
-                  enable_upload={true}
-                  onExecutePlan={handleExecutePlan}
-                />
-              </div>
-              <SampleTasks
-                onSelect={(task: string) => {
-                  if (chatInputRef.current) {
-                    // Set the input value and trigger submit
-                    chatInputRef.current.focus();
-                    // Set value in textarea
-                    const textarea =
-                      document.getElementById(
-                        "queryInput"
-                      ) as HTMLTextAreaElement;
-                    if (textarea) {
-                      textarea.value = task;
-                      // Trigger input event for React state
-                      const event = new Event("input", {
-                        bubbles: true,
-                      });
-                      textarea.dispatchEvent(event);
-                    }
-                    // Submit the task
-                    setTimeout(() => {
-                      if (chatInputRef.current) {
-                        chatInputRef.current.focus();
-                        // Simulate pressing Enter
-                        const enterEvent =
-                          new KeyboardEvent(
-                            "keydown",
-                            {
-                              key: "Enter",
-                              bubbles: true,
-                            }
-                          );
-                        textarea?.dispatchEvent(
-                          enterEvent
+                <div className="w-full">
+                  <ChatInput
+                    ref={chatInputRef}
+                    onSubmit={(
+                      query: string,
+                      files: RcFile[],
+                      accepted = false,
+                      plan?: IPlan
+                    ) => {
+                      if (
+                        currentRun?.status ===
+                        "awaiting_input" ||
+                        currentRun?.status === "paused"
+                      ) {
+                        handleInputResponse(
+                          query,
+                          accepted,
+                          plan
+                        );
+                      } else {
+                        runTask(
+                          query,
+                          files,
+                          plan,
+                          true
                         );
                       }
-                    }, 100);
-                  }
-                }}
-              />
-            </div>
-          )}
+                    }}
+                    error={error}
+                    onCancel={handleCancel}
+                    runStatus={currentRun?.status}
+                    inputRequest={currentRun?.input_request}
+                    isPlanMessage={isPlanMessage}
+                    onPause={handlePause}
+                    enable_upload={true}
+                    onExecutePlan={handleExecutePlan}
+                    sessionId={session!.id}
+                  />
+                </div>
+                <SampleTasks
+                  onSelect={(task: string) => {
+                    if (chatInputRef.current) {
+                      // Set the input value and trigger submit
+                      chatInputRef.current.focus();
+                      // Set value in textarea
+                      const textarea =
+                        document.getElementById(
+                          "queryInput"
+                        ) as HTMLTextAreaElement;
+                      if (textarea) {
+                        textarea.value = task;
+                        // Trigger input event for React state
+                        const event = new Event(
+                          "input",
+                          {
+                            bubbles: true,
+                          }
+                        );
+                        textarea.dispatchEvent(event);
+                      }
+                      // Submit the task
+                      setTimeout(() => {
+                        if (chatInputRef.current) {
+                          chatInputRef.current.focus();
+                          // Simulate pressing Enter
+                          const enterEvent =
+                            new KeyboardEvent(
+                              "keydown",
+                              {
+                                key: "Enter",
+                                bubbles: true,
+                              }
+                            );
+                          textarea?.dispatchEvent(
+                            enterEvent
+                          );
+                        }
+                      }, 100);
+                    }
+                  }}
+                />
+              </div>
+            )}
         </div>
       </div>
     </div>
