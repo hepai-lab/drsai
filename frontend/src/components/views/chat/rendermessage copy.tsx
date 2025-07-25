@@ -230,10 +230,6 @@ const parseContent = (content: any): string => {
         // Clean up the content after think tag and format it as a bubble
         const cleanAfterThinkContent = afterThinkContent.trim();
         if (cleanAfterThinkContent) {
-          console.log(
-            "Found content after </think>:",
-            cleanAfterThinkContent
-          );
           return `</think>\n\n**THINK_BUBBLE_START**\n${cleanAfterThinkContent}\n**THINK_BUBBLE_END**\n\n`;
         }
         return match;
@@ -295,12 +291,6 @@ const parseContent = (content: any): string => {
 
     const extractedContent = extractContent(parsedContent);
     if (extractedContent) {
-      // 添加调试日志
-      console.log("Parsed content:", {
-        original: content,
-        cleaned: cleanedContent,
-        extracted: extractedContent,
-      });
       return extractedContent;
     }
 

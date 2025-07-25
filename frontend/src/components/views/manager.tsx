@@ -60,10 +60,9 @@ export const SessionManager: React.FC = () => {
 
   ]);
   const handleAgentList = async (agents: Agent[]) => {
-    console.log("Fetching agent list for user:", user?.email);
     try {
       const res = await agentAPI.getAgentList(
-        user?.email || "yqsun@ihep.ac.cn"
+        user?.email || ""
       );
       setAgents(res.config.agent_modes);
     } catch (error) {
@@ -134,9 +133,6 @@ export const SessionManager: React.FC = () => {
         setSession(data[0]);
       } else {
         if (data.length === 0) {
-          console.log(
-            "No sessions found, creating default session..."
-          );
           createDefaultSession();
         }
       }
@@ -251,7 +247,6 @@ export const SessionManager: React.FC = () => {
       await sessionAPI.deleteSession(sessionId, user.email);
       setSessions(sessions.filter((s) => s.id !== sessionId));
       if (session?.id === sessionId || sessions.length === 0) {
-        console.log("session:", session, "sessions:", sessions);
         setSession(sessions[0] || null);
         window.history.pushState({}, "", window.location.pathname); // Clear URL params
       }
