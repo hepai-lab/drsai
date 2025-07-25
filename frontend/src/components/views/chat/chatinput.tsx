@@ -54,7 +54,8 @@ interface ChatInputProps {
     text: string,
     files: RcFile[],
     accepted?: boolean,
-    plan?: IPlan
+    plan?: IPlan,
+    uploadedFileData?: Record<string, any>
   ) => void;
   error: IStatus | null;
   disabled?: boolean;
@@ -105,6 +106,10 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     );
     const [isLoading, setIsLoading] = React.useState(false);
     const [isUploading, setIsUploading] = React.useState(false);
+    // 新增：存储上传文件时后端返回的数据
+    const [uploadedFileData, setUploadedFileData] = React.useState<
+      Record<string, any>
+    >({});
     const userId = user?.email || "default_user";
     const [isRelevantPlansVisible, setIsRelevantPlansVisible] =
       React.useState(false);
@@ -299,11 +304,33 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
           if (filesToUpload.length > 0) {
             try {
               // Upload files to server
-              await fileAPI.uploadFiles(
+              const uploadResult = await fileAPI.uploadFiles(
                 userId,
                 filesToUpload,
                 sessionId
               );
+
+              // 保存后端返回的文件数据
+              if (
+                uploadResult &&
+                typeof uploadResult === "object"
+              ) {
+                console.log(
+                  "Paste upload result:",
+                  uploadResult
+                );
+                setUploadedFileData((prev) => {
+                  const newData = {
+                    ...prev,
+                    ...uploadResult,
+                  };
+                  console.log(
+                    "Updated uploadedFileData (paste):",
+                    newData
+                  );
+                  return newData;
+                });
+              }
 
               // Update all file statuses to done
               setFileList((prev) =>
@@ -357,6 +384,8 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
         setFileList([]);
         setRelevantPlans([]);
         setAttachedPlan(null);
+        // 清空上传文件的数据
+        setUploadedFileData({});
       }
       if (textAreaDivRef.current) {
         textAreaDivRef.current.style.height = textAreaDefaultHeight;
@@ -462,10 +491,21 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       accepted: boolean,
       doResetInput: boolean = true
     ) => {
+      console.log(
+        "ChatInput submitInternal - uploadedFileData:",
+        uploadedFileData
+      );
+
       if (attachedPlan) {
-        onSubmit(query, files, accepted, attachedPlan);
+        onSubmit(
+          query,
+          files,
+          accepted,
+          attachedPlan,
+          uploadedFileData
+        );
       } else {
-        onSubmit(query, files, accepted);
+        onSubmit(query, files, accepted, undefined, uploadedFileData);
       }
 
       if (doResetInput) {
@@ -584,6 +624,19 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
           [file],
           sessionId
         );
+
+        // 保存后端返回的文件数据
+        if (uploadResult && typeof uploadResult === "object") {
+          console.log("File upload result:", uploadResult);
+          setUploadedFileData((prev) => {
+            const newData = {
+              ...prev,
+              ...uploadResult,
+            };
+            console.log("Updated uploadedFileData:", newData);
+            return newData;
+          });
+        }
 
         // Update file status to done
         setFileList((prev) =>

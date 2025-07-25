@@ -44,8 +44,6 @@ const MagenticUILayout = ({
       const name = localStorage.getItem("user_name") || email;
       if (email) {
         setUser({ ...user, email, name });
-        // 打印日志
-        console.log("User email found in local storage:", email);
       } else {
         // 没有本地用户信息，跳转到sso-login
         if (typeof window !== "undefined") {
@@ -54,7 +52,7 @@ const MagenticUILayout = ({
         }
       }
     }
-    
+
   }, [user, setUser]);
 
   // Close mobile menu on route change
@@ -63,9 +61,8 @@ const MagenticUILayout = ({
   }, [link]);
 
   React.useEffect(() => {
-    document.getElementsByTagName("html")[0].className = `${
-      darkMode === "dark" ? "dark bg-primary" : "light bg-primary"
-    }`;
+    document.getElementsByTagName("html")[0].className = `${darkMode === "dark" ? "dark bg-primary" : "light bg-primary"
+      }`;
   }, [darkMode]);
 
   const layoutContent = (

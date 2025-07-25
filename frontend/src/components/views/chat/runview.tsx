@@ -25,12 +25,18 @@ interface RunViewProps {
   onDeny?: () => void;
   onAcceptPlan?: (text: string) => void;
   // Add new props needed for ChatInput
-  onInputResponse?: (query: string, accepted?: boolean, plan?: IPlan) => void;
+  onInputResponse?: (
+    query: string,
+    accepted?: boolean,
+    plan?: IPlan,
+    uploadedFileData?: Record<string, any>
+  ) => void;
   onRunTask?: (
     query: string,
     files: RcFile[],
     plan?: IPlan,
-    fresh_socket?: boolean
+    fresh_socket?: boolean,
+    uploadedFileData?: Record<string, any>
   ) => void;
   onCancel?: () => void;
   error?: IStatus | null;
@@ -112,7 +118,6 @@ const RunView: React.FC<RunViewProps> = ({
     );
     const lastBrowserAddressMsg =
       browserAddressMessages[browserAddressMessages.length - 1];
-    console.log("Last browserAddressMsg", lastBrowserAddressMsg);
     // only update if novncPort is it is different from the current novncPort
     if (
       lastBrowserAddressMsg &&
@@ -721,15 +726,27 @@ const RunView: React.FC<RunViewProps> = ({
               query: string,
               files: RcFile[],
               accepted = false,
-              plan?: IPlan
+              plan?: IPlan,
+              uploadedFileData?: Record<string, any>
             ) => {
               if (
                 run.status === "awaiting_input" ||
                 run.status === "paused"
               ) {
-                onInputResponse?.(query, accepted, plan);
+                onInputResponse?.(
+                  query,
+                  accepted,
+                  plan,
+                  uploadedFileData
+                );
               } else {
-                onRunTask?.(query, files, plan, true);
+                onRunTask?.(
+                  query,
+                  files,
+                  plan,
+                  true,
+                  uploadedFileData
+                );
               }
             }}
             error={error ?? null}
