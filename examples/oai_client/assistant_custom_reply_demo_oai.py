@@ -43,6 +43,7 @@ def create_agent() -> AssistantAgent:
     # model_client._client.api_key = os.environ.get("HEPAI_API_KEY")
     # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
     async def interface( 
+        agent: AssistantAgent,  # DrSai assistant agent
         oai_messages: List[str],  # OAI messages
         agent_name: str,  # Agent name
         llm_messages: List[LLMMessage],  # AutoGen LLM messages
