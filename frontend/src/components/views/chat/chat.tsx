@@ -553,7 +553,8 @@ export default function ChatView({
     response: string,
     accepted = false,
     plan?: IPlan,
-    uploadedFileData?: Record<string, any>
+    uploadedFileData?: Record<string, any>,
+    files?: RcFile[] = []  // 添加files参数
   ) => {
     if (!currentRun || !activeSocketRef.current) {
       handleError(new Error("WebSocket connection not available"));
@@ -578,6 +579,18 @@ export default function ChatView({
         planString = convertPlanStepsToJsonString(updatedPlan);
       }
 
+      // const responseJson = {
+      //   accepted: accepted,
+      //   content: response,
+      //   ...(planString !== "" && { plan: planString }),
+      //   ...(uploadedFileData &&
+      //     Object.keys(uploadedFileData).length > 0 && {
+      //     uploadedFileData,
+      //   }),
+      // };
+      // 处理文件上传
+      const processedFiles = await convertFilesToBase64(files);
+
       const responseJson = {
         accepted: accepted,
         content: response,
@@ -587,14 +600,7 @@ export default function ChatView({
           uploadedFileData,
         }),
       };
-
-      console.log(
-        "handleInputResponse - uploadedFileData:",
-        uploadedFileData
-      );
-      console.log("handleInputResponse - responseJson:", responseJson);
       const responseString = JSON.stringify(responseJson);
-
       activeSocketRef.current.send(
         JSON.stringify({
           type: "input_response",

@@ -242,8 +242,6 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                 "",
                 agent.mode
             );
-            console.log("Agent Config Response:", res2);
-
             if (res2) {
                 setConfig(res2.config);
                 setMode(res2.mode);

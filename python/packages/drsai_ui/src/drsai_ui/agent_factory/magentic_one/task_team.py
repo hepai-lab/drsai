@@ -414,7 +414,20 @@ async def create_magentic_round_team(
     
     if agent_mode == "besiii":
         # raise NotImplementedError("BesIII mode not implemented yet")
-        agent = StatusAgent(
+        # agent = StatusAgent(
+        #     name='besiii',
+        #     chat_id=chat_id,
+        #     run_info=run_info,
+        #     model_remote_configs={
+        #         # "url": "http://202.122.37.163:42887/apiv2/chat/completions",
+        #         # "model_name": "hepai/drsai",
+        #         # "api_key": api_key
+        #         "url": "http://0.0.0.0:42806/apiv2/",
+        #         "model_name": "drsai/ImageExplainier",
+        #         "api_key": api_key
+        #     },
+        # )
+        agent = RemoteAgent(
             name='besiii',
             chat_id=chat_id,
             run_info=run_info,
@@ -439,7 +452,7 @@ async def create_magentic_round_team(
         agent: AssistantAgent|BaseGroupChat = await agent_factory()
 
     elif agent_mode == "remote":
-        agent = RemoteAgent(
+        agent = StatusAgent(
             name=agent_config.pop("name", "RemoteAgent"),
             model_remote_configs = agent_config,
             chat_id=chat_id,
