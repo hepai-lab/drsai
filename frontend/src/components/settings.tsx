@@ -143,31 +143,15 @@ action_guard_client: *client
   const HEPAI_FOUNDRY_YAML = `model_config: &client
   provider: drsai.HepAIChatCompletionClient
   config:
-    model: "deepseek-ai/deepseek-v3:671b"
+    model: "openai/gpt-4.1"
     base_url: "https://aiapi.ihep.ac.cn/apiv2"
     api_key: "{{AUTO_PERSONAL_KEY_FOR_DR_SAI}}"
     max_retries: 1
-   
-
-r1_config: &r1_client
-  provider: drsai.HepAIChatCompletionClient
-  config:
-    model: "deepseek-ai/deepseek-r1:671b"
-    base_url: "https://aiapi.ihep.ac.cn/apiv2"
-    api_key: "{{AUTO_PERSONAL_KEY_FOR_DR_SAI}}"
-    max_retries: 1
-
-mode: drsai_besiii
 
 orchestrator_client: *client
 web_surfer_client: *client
 file_surfer_client: *client
 action_guard_client: *client
-planner_client: *client
-coder_client: *r1_client
-tester_client: *r1_client
-host_client: *r1_client
-parser_client: *client
 `;
 
  const DRSAI_FOUNDRY_YAML = `model_config: &client

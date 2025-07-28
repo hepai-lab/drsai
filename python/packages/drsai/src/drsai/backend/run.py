@@ -193,13 +193,17 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         
 
     @HRModel.remote_callable
-    async def a_get_agents_info(self,) -> List[Dict[str, Any]]:
-        return await self.drsai.a_get_agents_info()
+    async def a_get_agents_info(self, chat_id: str) -> List[Dict[str, Any]]:
+        agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance.get(chat_id, None)
+        return await self.drsai.get_agents_info(agent=agent)
     
     @HRModel.remote_callable
     async def lazy_init(self, chat_id: str) -> Dict[str, Any]:
         try:
-            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
+            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance.get(chat_id, None)
+            if agent is None:
+                agent = await self.drsai._create_agent_instance()
+                self.drsai.agent_instance[chat_id] = agent
             await agent.lazy_init()
             return {"status": True, "message": ""}
         except Exception as e:
@@ -215,6 +219,16 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             return {"status": False, "message": f"Pause error: {e}"}
     
     @HRModel.remote_callable
+    async def pause_long_task(self, chat_id: str) -> Dict[str, Any]:
+        try:
+            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
+            if hasattr(agent, "long_task_pause"):
+                await agent.long_task_pause()  # type: ignore
+            return {"status": True, "message": ""}
+        except Exception as e:
+            return {"status": False, "message": f"Pause long task error: {e}"}
+    
+    @HRModel.remote_callable
     async def resume(self, chat_id: str) -> Dict[str, Any]:
         try:
             agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
@@ -228,16 +242,13 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         try:
             agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
             await agent.close()
+            self.drsai.agent_instance.pop(chat_id, None)
             return {"status": True, "message": ""}
         except Exception as e:
             return {"status": False, "message": f"Close error: {e}"}
         
     @HRModel.remote_callable
     async def a_chat_completions(self, *args, **kwargs) -> AsyncGenerator:
-        chat_id = kwargs.get("chat_id", None)
-        if chat_id is not None and chat_id in self.drsai.agent_instance:
-            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
-            kwargs["agent"] = agent
         return self.drsai.a_start_chat_completions(*args, **kwargs)
 
 

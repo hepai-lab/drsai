@@ -20,7 +20,7 @@ def create_agent() -> AssistantAgent:
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
     model_client = HepAIChatCompletionClient(
-        model="deepseek-ai/deepseek-r1:671b",
+        model="openai/o3",
         api_key=os.environ.get("HEPAI_API_KEY"),
         base_url="https://aiapi.ihep.ac.cn/apiv2",
     )
@@ -60,12 +60,12 @@ async def main():
 
 if __name__ == "__main__":
     # asyncio.run(main())
-    # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
-    asyncio.run(run_backend(
-        agent_factory=create_agent, 
-        port = 42805, 
-        enable_openwebui_pipeline=True, 
-        agnet_name = "R1agent",
-        history_mode = "backend",
-        use_api_key_mode = "backend")
-        )
+    asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
+    # asyncio.run(run_backend(
+    #     agent_factory=create_agent, 
+    #     port = 42805, 
+    #     enable_openwebui_pipeline=True, 
+    #     agnet_name = "R1agent",
+    #     history_mode = "backend",
+    #     use_api_key_mode = "backend")
+    #     )

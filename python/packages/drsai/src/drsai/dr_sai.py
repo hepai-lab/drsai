@@ -23,6 +23,7 @@ from autogen_agentchat.messages import (
     # ChatMessage,
     LLMMessage,
     TextMessage,
+    BaseChatMessage,
     UserMessage,
     HandoffMessage,
     ToolCallSummaryMessage,
@@ -71,7 +72,7 @@ class DrSai:
         self.agent_instance: Dict[str, AssistantAgent | BaseGroupChat] = {}
 
         # 额外设置
-        self.history_mode = kwargs.pop('history_mode', 'backend') # backend or frontend
+        # self.history_mode = kwargs.pop('history_mode', 'backend') # backend or frontend
         self.use_api_key_mode = kwargs.pop('use_api_key_mode', "frontend") # frontend or backend
 
         # 后端测试接口
@@ -83,6 +84,14 @@ class DrSai:
                 f.write(f"LOAD_TEST_API_KEY={load_test_api_key}\n")
         self.drsai_test_api_key = load_test_api_key
         print(f"\nDrSai_test_api_key: {self.drsai_test_api_key}\n")
+
+    async def _create_agent_instance(self) -> AssistantAgent | BaseGroupChat:
+        agent: AssistantAgent | BaseGroupChat = (
+            await self.agent_factory() 
+            if asyncio.iscoroutinefunction(self.agent_factory)
+            else (self.agent_factory())
+        )
+        return agent
 
     #### --- 关于OpenAI Chat/Completions --- ####
     async def a_start_chat_completions(self, **kwargs) -> AsyncGenerator:
@@ -99,36 +108,18 @@ class DrSai:
         **kwargs: 其他参数
         """
         try:
-            # 从函数工厂中获取定义的Agents
-            agent = kwargs.pop('agent', None) 
-            if agent is None:
-                agent: AssistantAgent | BaseGroupChat = (
-                    await self.agent_factory() 
-                    if asyncio.iscoroutinefunction(self.agent_factory)
-                    else (self.agent_factory())
-                )
+            # 处理用户的kwargs参数
 
-            # 是否使用流式模式
-            agent_stream = agent._model_client_stream if not isinstance(agent, BaseGroupChat) else agent._participants[0]._model_client_stream
-            stream = kwargs.pop('stream', agent_stream)
-            if isinstance(agent, BaseGroupChat) and stream:
-                for participant in agent._participants:
-                    if not participant._model_client_stream:
-                        raise ValueError("Streaming mode is not supported when participant._model_client_stream is False")
-            
-            # 传入的消息列表
+            ## 传入的消息列表
             messages: List[Dict[str, str]] = kwargs.pop('messages', [])
-            usermessage = messages[-1]["content"]
-
-            # 保存用户的extra_requests
+            ## 保存用户的extra_requests
             extra_requests: Dict = copy.deepcopy(kwargs)
-
-            # 大模型配置
+            ## 大模型配置
             api_key = kwargs.pop('apikey', None)
-            temperature = kwargs.pop('temperature', 0.6)
-            top_p = kwargs.pop('top_p', 1)
-            cache_seed = kwargs.pop('cache_seed', None)
-            # 额外的请求参数
+            # temperature = kwargs.pop('temperature', 0.6)
+            # top_p = kwargs.pop('top_p', 1)
+            # cache_seed = kwargs.pop('cache_seed', None)
+            ## 额外的请求参数处理
             extra_body: Union[Dict, None] = kwargs.pop('extra_body', None)
             if extra_body is not None:
                 ## 用户信息 从DDF2传入的
@@ -140,91 +131,68 @@ class DrSai:
                 user_info = kwargs.pop('user', {})
                 username = user_info.get('email', None) or user_info.get('name', "anonymous")
                 chat_id = kwargs.pop('chat_id', None) # 获取前端聊天端口的chat_id
-                history_mode = kwargs.pop('history_mode', None) or self.history_mode # backend or frontend
-            
-            # 判断是否已经有chat_id对应的智能体实例，如果有，则直接使用
-            if chat_id in self.agent_instance and agent==self.agent_instance[chat_id]:
+                # history_mode = kwargs.pop('history_mode', None) or self.history_mode # backend or frontend
+
+            # 创建/获取智能体实例
+
+            if chat_id in self.agent_instance:
+                agent = self.agent_instance[chat_id]
                 thread: Thread = agent._thread
-                res = agent.run_stream(task=usermessage)
+                
             else:
-                # 创建/加载thread后端，来绑定指定前端的chat_id
+                agent = await self._create_agent_instance()
+                ## 是否使用流式模式
+                agent_stream = agent._model_client_stream if not isinstance(agent, BaseGroupChat) else agent._participants[0]._model_client_stream
+                stream = kwargs.pop('stream', agent_stream)
+                if isinstance(agent, BaseGroupChat) and stream:
+                    for participant in agent._participants:
+                        if not participant._model_client_stream:
+                            raise ValueError("Streaming mode is not supported when participant._model_client_stream is False")
+                ## 创建thread
                 if not chat_id:
                     chat_id = str(uuid.uuid4())
                 thread: Thread = self.threads_mgr.create_threads(username=username, chat_id=chat_id) # TODO: 这里需要改成异步加载
-                thread.metadata["extra_requests"] = extra_requests
-
-                # 判断agent是否有self._thread和self._thread_mgr属性，没有直接保存，说明drsai仅支持带有self._thread和self._thread_mgr属性的agent
                 assert hasattr(agent, "_thread") and hasattr(agent, "_thread_mgr"), "Agent must have _thread and _thread_mgr attributes, please check your agent factory while from drsai."
                 agent._thread = thread
                 agent._thread_mgr = self.threads_mgr
-
-                # 如果前端没有给定chat_id，则将当前历史消息记录加入到新的thread中/或者使用前端历史消息
-                if not chat_id or history_mode == "frontend":
-                    thread.messages = [] # 清空历史消息
-                    for message in messages[:-1]: # 除了最后一个用户消息，都作为历史消息
-                        thread_content = [Content(type="text", text=Text(value=message["content"],annotations=[]))]
-                        self.threads_mgr.create_message(
-                            thread=thread,
-                            role = message["role"],
-                            content=thread_content,
-                            sender=message["role"],
-                            metadata={},
-                            )
-                        
-                # 提取历史消息
-                history_oai_messages = [ {"role": x.role, "content": x.content_str(), "name": x.sender} for x in thread.messages] # 不将usermessage加入到历史消息中，在智能体会重复发送
-                thread.metadata["history_oai_messages"] = history_oai_messages
-                history: List[LLMMessage] = []
-                for history_aoi_message in history_oai_messages:
-                    if  history_aoi_message["role"] == "user":
-                        history.append(UserMessage(content=history_aoi_message["content"], source=history_aoi_message["name"]))
-                    elif history_aoi_message["role"] == "assistant":
-                        history.append(UserMessage(content=history_aoi_message["content"], source=history_aoi_message["name"]))
-                    # 暂时不加载系统消息和工具消息
-                    # elif history_aoi_message["role"] == "system":
-                    #     history.append(SystemMessage(content=history_aoi_message["content"]))
-                    # elif history_aoi_message["role"] == "function":
-                    #     history.append(FunctionExecutionResultMessage(content=history_aoi_message["content"]))
-
-                # 将智能体实例放入agent_instance字典
-                if chat_id not in self.agent_instance:
-                    self.agent_instance[chat_id] = agent
-
-                # 启动聊天任务
-                async def add_history_to_model_context(model_context: ChatCompletionContext, history: List[LLMMessage]) -> str:
-                    if history:
-                        for message in history:
-                            await model_context.add_message(message)
-                    else:
-                        pass
-                ## 将api_key(可选的)/thread/self.threads_mgr/history加入每个智能体
                 if isinstance(agent, BaseGroupChat):
-                    ## 传入前端的api_key
-                    if self.use_api_key_mode == "frontend":
-                        if hasattr(agent, "_model_client"):
-                            agent._model_client._client.api_key = api_key
+                    for participant in agent._participants:
+                        participant._thread = thread
+                        participant._thread_mgr = self.threads_mgr
+                ## 判断是否为智能体添加前端的API_KEY
+                if self.use_api_key_mode == "frontend":
+                    if hasattr(agent, "_model_client"):
+                        agent._model_client._client.api_key = api_key
+                    if hasattr(agent, "_participants"):
                         for participant in agent._participants:
                             if hasattr(participant, "_model_client"):
                                 participant._model_client._client.api_key = api_key
+                ## 注册agent实例到agent_instance字典
+                self.agent_instance[chat_id] = agent
 
-                    for participant in agent._participants:
-                        await add_history_to_model_context(participant._model_context, history)
-                        participant._thread = thread
-                        participant._thread_mgr = self.threads_mgr
+            # 处理额外的请求参数
 
-                    ## 先判断handoff_target是否为user，如果是，则使用HandoffMessage传入
-                    if (HandoffMessage in agent._participants[0].produced_message_types) and thread.metadata.get("handoff_target") == "user":
-                        res = agent.run_stream(task=HandoffMessage(source="user", target=thread.metadata.get("handoff_source"), content=usermessage))
-                    else:
-                        res = agent.run_stream(task=usermessage)
+            thread.metadata["extra_requests"] = extra_requests
+
+            # 历史消息处理
+            
+            ## 将前端消息整理为autogen BaseChatMessage格式
+            task: list[BaseChatMessage] = []
+            for message in messages[:-1]:
+                task.append(TextMessage(content=message["content"], source=message["role"], metadata={"internal": "no"}))  
+            ## 最后一条处理Handoff
+            last_message = messages[-1]
+            if isinstance(agent, BaseGroupChat):
+                if (HandoffMessage in agent._participants[0].produced_message_types) and thread.metadata.get("handoff_target") == "user":
+                    task.append(HandoffMessage(source="user", target=thread.metadata.get("handoff_source"), content=last_message["content"], metadata={"internal": "no"}))
                 else:
-                    await add_history_to_model_context(agent._model_context, history)
-                    ## 传入前端的api_key
-                    if self.use_api_key_mode == "frontend":
-                        if hasattr(agent, "_model_client"):
-                            agent._model_client._client.api_key = api_key
-                    res = agent.run_stream(task=usermessage)
-                
+                    task.append(TextMessage(content=last_message["content"], source=last_message["role"], metadata={"internal": "no"})) 
+            else:
+                task.append(TextMessage(content=last_message["content"], source=last_message["role"], metadata={"internal": "no"})) 
+            
+            # 开始聊天
+
+            res = agent.run_stream(task=task)
             tool_flag = 0
             ThoughtContent = None
             role = ""
@@ -384,16 +352,17 @@ class DrSai:
         #         await agent._model_client.close()
     
     #### --- 关于get agent/groupchat infomation --- ####
-    async def get_agents_info(self) -> List[Dict[str, Any]]:
+    async def get_agents_info(self, agent: AssistantAgent | BaseGroupChat=None) -> List[Dict[str, Any]]:
         """
         获取当前运行的Agents信息
         """
         # 从函数工厂中获取定义的Agents
-        agent: AssistantAgent | BaseGroupChat = (
-            await self.agent_factory() 
-            if asyncio.iscoroutinefunction(self.agent_factory)
-            else (self.agent_factory())
-        )
+        if agent is None:
+            agent: AssistantAgent | BaseGroupChat = (
+                await self.agent_factory() 
+                if asyncio.iscoroutinefunction(self.agent_factory)
+                else (self.agent_factory())
+            )
         agent_info = []
         if isinstance(agent, AssistantAgent):
             agent_info.append(agent._to_config().model_dump())

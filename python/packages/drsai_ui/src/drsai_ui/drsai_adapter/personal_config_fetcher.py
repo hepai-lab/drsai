@@ -40,17 +40,15 @@ class PersonalKeyConfigFetcher:
         default_model_configs = f"""model_config: &client
   provider: drsai.HepAIChatCompletionClient
   config:
-    model: "deepseek-ai/deepseek-v3:671b"
+    model: "openai/gpt-4.1"
     base_url: "https://aiapi.ihep.ac.cn/apiv2"
     api_key: "{personal_key}"
     max_retries: 10
    
-myassistant:
-  type: AssistantAgent
-  name: myassistant
-  system_message: You are a helpful assistant who responds to user requests based on your tools and knowledge.
-  description: An agent that provides assistance with ability to use tools.
-  model_client: *client
+orchestrator_client: *client
+web_surfer_client: *client
+file_surfer_client: *client
+action_guard_client: *client
 """
 
         return {

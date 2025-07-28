@@ -420,6 +420,7 @@ async def create_magentic_round_team(
             run_info=run_info,
             model_remote_configs={
                 "url": "http://202.122.37.163:42887/apiv2/chat/completions",
+                "model_name": "hepai/drsai",
                 "api_key": api_key
             },
         )
@@ -433,7 +434,6 @@ async def create_magentic_round_team(
             model_client=get_model_client(model_client_config = model_config)
         )
         
-    
     elif agent_mode == "custom":
         agent_factory: Callable[[], Union[AssistantAgent, BaseGroupChat]] = await a_load_agent_factory_from_config(agent_config, mode = "ui")
         agent: AssistantAgent|BaseGroupChat = await agent_factory()

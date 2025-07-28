@@ -55,24 +55,29 @@ async def upload_files(
 
         # 保存文件到本地
         for file in files:
+            
+            # 首先判断文件大小是否超过了10MB
+            if file.size > 10485760:
+                raise HTTPException(status_code=413, detail="单个文件大小不能超过10MB，需要使用知识库进行上传：https://aiweb01.ihep.ac.cn:886/knowledge(Size limit exceeded 10MB)")
+            
             file_path = os.path.join(userfiles_path, file.filename)
             file_id = str(uuid.uuid4())
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
             
             # 顺便上传到文件系统
-            SERVICE_MODE = os.getenv("SERVICE_MODE", None)
-            if SERVICE_MODE == "PROD":
-                file_obj = upload_to_filesystem(file_path, user_id)
-            else:
-                file_obj = None
+            # SERVICE_MODE = os.getenv("SERVICE_MODE", None)
+            # if SERVICE_MODE == "PROD":
+            #     file_obj = upload_to_filesystem(file_path, user_id)
+            # else:
+            #     file_obj = None
 
             file_info[file_id] = {
                 "name": file.filename,
                 "path": file_path,
                 "suffix": os.path.splitext(file.filename)[1],
                 "size": os.path.getsize(file_path),
-                "hepai_file_obj": file_obj
+                # "hepai_file_obj": file_obj
             }
         
         # 保存文件到数据库

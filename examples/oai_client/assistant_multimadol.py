@@ -1,4 +1,4 @@
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_console, run_backend
+from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_console, run_backend, run_worker
 from drsai.modules.managers.base_thread import Thread
 from drsai.modules.managers.threads_manager import ThreadsManager
 import os, json
@@ -9,57 +9,66 @@ from openai import OpenAI
 import base64
 
 from autogen_core import CancellationToken
-from autogen_core.tools import BaseTool, FunctionTool, StaticWorkbench, Workbench, ToolResult, TextResultContent, ToolSchema
-from autogen_core.models import LLMMessage, ChatCompletionClient
-from autogen_agentchat.messages import MultiModalMessage, Image
+from autogen_core.tools import (
+    BaseTool, 
+    FunctionTool, 
+    StaticWorkbench, 
+    Workbench, 
+    ToolResult, 
+    TextResultContent, 
+    ToolSchema)
+from autogen_core.models import (
+    LLMMessage, 
+    CreateResult,
+)
 
-# async def explain_image(prompt: str, image_path: str, api_key: str = "") -> AsyncGenerator[str, None]:
-#     try:
-#         # 创建OpenAI客户端实例
-#         client = OpenAI(api_key=api_key, base_url="https://aiapi.ihep.ac.cn/apiv2")
+from autogen_agentchat.messages import (
+    MultiModalMessage, 
+    Image,
+    ModelClientStreamingChunkEvent,
+    )
 
-#         # 调用Qwen-VL-Max-Latest模型解释图片
-#         response = await client.chat.completions.create(
-#             model="aliyun/qwen-vl-max-latest",
-#             messages=[
-#                 {"role": "system", "content": "You are a helpful assistant."},
-#                 {
-#                     "role": "user",
-#                     "content": [
-#                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_image}"}},
-#                         {"type": "text", "text": prompt}
-#                     ]
-#                 }
-#             ],
-#             stream=True
-#         )
+async def explain_image(oai_messages: List[Dict], api_key: str = "") -> AsyncGenerator[str, None]:
+    try:
+        # 创建OpenAI客户端实例
+        client = OpenAI(api_key=api_key, base_url="https://aiapi.ihep.ac.cn/apiv2")
 
-#         # 流式返回结果
-#         async for chunk in response:
-#             if chunk.choices and chunk.choices[0].delta.content:
-#                 yield chunk.choices[0].delta.content
+        # 调用Qwen-VL-Max-Latest模型解释图片
+        response = await client.chat.completions.create(
+            model="aliyun/qwen-vl-max-latest",
+            messages=oai_messages,
+            stream=True
+        )
 
-#     except Exception as e:
-#         # 捕获并返回异常信息
-#         yield f"图片解释失败: {str(e)}"
+        # 流式返回结果
+        async for chunk in response:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
 
-# async def interface(
-#     oai_messages: List[Dict],  # OAI messages
-#     agent_name: str,  # Agent name
-#     llm_messages: List[LLMMessage],  # AutoGen LLM messages
-#     model_client: HepAIChatCompletionClient,  # AutoGen LLM Model client
-#     workbench: Workbench,
-#     handoff_tools: List[BaseTool[Any, Any]],
-#     tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
-#     cancellation_token: CancellationToken,  # AutoGen cancellation token
-#     thread: Thread,  # DrSai thread
-#     thread_mgr: ThreadsManager,  # DrSai thread manager
-#     **kwargs) -> AsyncGenerator:
-#     """Address the messages and return the response."""
+    except Exception as e:
+        # 捕获并返回异常信息
+        yield f"图片解释失败: {str(e)}"
 
-#     HEPAI_API_KEY = model_client._client.api_key
-#     prompt = llm_messages[-1].content
-#     image_path = kwargs.get("image_path", "")
+async def interface(
+    oai_messages: List[Dict],  # OAI messages
+    agent_name: str,  # Agent name
+    llm_messages: List[LLMMessage],  # AutoGen LLM messages
+    model_client: HepAIChatCompletionClient,  # AutoGen LLM Model client
+    workbench: Workbench,
+    handoff_tools: List[BaseTool[Any, Any]],
+    tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
+    cancellation_token: CancellationToken,  # AutoGen cancellation token
+    thread: Thread,  # DrSai thread
+    thread_mgr: ThreadsManager,  # DrSai thread manager
+    **kwargs)  -> AsyncGenerator[Union[CreateResult, ModelClientStreamingChunkEvent], None]:
+    """Address the messages and return the response."""
+
+    # HEPAI_API_KEY = model_client._client.api_key
+
+    # 
+    
+    
+
 
 async def create_agent() -> AssistantAgent:
     # 创建模型客户端实例

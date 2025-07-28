@@ -1,4 +1,4 @@
-from drsai_ui.agent_factory.remote_agent import StatusAgent
+from drsai_ui.agent_factory.remote_agent import RemoteAgent
 from drsai.modules.baseagent import DrSaiAgent
 from drsai.modules.groupchat import RoundRobinGroupChat
 from drsai import  HepAIChatCompletionClient, TextMentionTermination
@@ -6,8 +6,8 @@ import os
 from drsai import run_backend, run_console, Console, run_worker
 import asyncio
 
-async def create_remote_agent() -> StatusAgent:
-    besiii = StatusAgent(
+async def create_remote_agent() -> RemoteAgent:
+    besiii = RemoteAgent(
         name='besiii',
         chat_id='8f19aa1e-df12-4a4f-bed0-b4525371b9d73',
         run_info={
