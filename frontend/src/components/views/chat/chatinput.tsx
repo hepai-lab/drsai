@@ -31,6 +31,7 @@ import { planAPI, fileAPI } from "../api";
 import RelevantPlans from "./relevant_plans";
 import { IPlan } from "../../types/plan";
 import PlanView from "./plan";
+import { useConfigStore } from "../../../hooks/store";
 
 // Maximum file size in bytes (5MB)
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
@@ -122,6 +123,45 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       runStatus === "pausing" ||
       inputRequest?.input_type === "approval";
 
+    // 从store获取session信息
+    const { session: storeSession } = useConfigStore();
+
+    // 获取有效的sessionId
+    const getValidSessionId = (): number | null => {
+      // 1. 首先检查传入的sessionId
+      if (sessionId && typeof sessionId === "number" && sessionId > 0) {
+        return sessionId;
+      }
+
+      // 2. 如果传入的sessionId无效，从store获取
+      if (
+        storeSession?.id &&
+        typeof storeSession.id === "number" &&
+        storeSession.id > 0
+      ) {
+        console.log("Using sessionId from store:", storeSession.id);
+        return storeSession.id;
+      }
+
+      // 3. 如果store中也没有，尝试从localStorage获取
+      if (typeof window !== "undefined") {
+        const stored = localStorage.getItem("current_session_id");
+        if (stored) {
+          const parsedId = parseInt(stored, 10);
+          if (!isNaN(parsedId) && parsedId > 0) {
+            console.log(
+              "Using sessionId from localStorage:",
+              parsedId
+            );
+            return parsedId;
+          }
+        }
+      }
+
+      console.warn("No valid sessionId found");
+      return null;
+    };
+
     // Handle textarea auto-resize
     React.useEffect(() => {
       if (textAreaRef.current) {
@@ -181,10 +221,27 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     const handlePaste = async (
       e: React.ClipboardEvent<HTMLTextAreaElement>
     ) => {
-
       console.log("Paste event triggered");
-      console.log("Pasted sessionId:", sessionId);
-      if (isInputDisabled || !enable_upload || !sessionId) return;
+      if (isInputDisabled || !enable_upload) return;
+
+      // 检查是否有有效的sessionId
+      const validSessionId = getValidSessionId();
+      if (!validSessionId) {
+        console.warn("No valid sessionId for paste upload");
+        notificationApi.error({
+          message: <span className="text-sm">No Session</span>,
+          description: (
+            <span className="text-sm text-secondary">
+              Cannot upload files without an active session.
+              Please select a session first.
+            </span>
+          ),
+          duration: 5,
+        });
+        return;
+      }
+
+      console.log("Using sessionId for paste upload:", validSessionId);
 
       // Handle multiple files paste
       if (e.clipboardData?.items) {
@@ -306,7 +363,6 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
           // Upload all files in batch
           if (filesToUpload.length > 0) {
             try {
-
               // Upload files to server
               const uploadResult = await fileAPI.uploadFiles(
                 userId,
@@ -560,19 +616,26 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     const handleFileValidationAndAdd = async (
       file: File
     ): Promise<boolean> => {
+      // 获取有效的sessionId
+      const validSessionId = getValidSessionId();
+
       // Check if sessionId is available
-      if (!sessionId) {
+      if (!validSessionId) {
+        console.error("No valid sessionId available for file upload");
         notificationApi.error({
           message: <span className="text-sm">No Session</span>,
           description: (
             <span className="text-sm text-secondary">
               Cannot upload files without an active session.
+              Please select a session first.
             </span>
           ),
           duration: 5,
         });
         return false;
       }
+
+      console.log("Using sessionId for file upload:", validSessionId);
 
       // Check file size
       if (file.size > MAX_FILE_SIZE) {
@@ -626,7 +689,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
         const uploadResult = await fileAPI.uploadFiles(
           userId,
           [file],
-          sessionId
+          validSessionId
         );
 
         // 保存后端返回的文件数据
@@ -788,7 +851,23 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       setDragOver(false);
       setIsDragActive(false);
 
-      if (isInputDisabled || !enable_upload || !sessionId) return;
+      if (isInputDisabled || !enable_upload) return;
+
+      // 检查是否有有效的sessionId
+      const validSessionId = getValidSessionId();
+      if (!validSessionId) {
+        notificationApi.error({
+          message: <span className="text-sm">No Session</span>,
+          description: (
+            <span className="text-sm text-secondary">
+              Cannot upload files without an active session.
+              Please select a session first.
+            </span>
+          ),
+          duration: 5,
+        });
+        return;
+      }
 
       const droppedFiles = Array.from(e.dataTransfer.files) as File[];
       for (const file of droppedFiles) {

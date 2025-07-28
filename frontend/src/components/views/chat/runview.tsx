@@ -29,7 +29,8 @@ interface RunViewProps {
     query: string,
     accepted?: boolean,
     plan?: IPlan,
-    uploadedFileData?: Record<string, any>
+    uploadedFileData?: Record<string, any>,
+    files?: RcFile[] // 添加files参数
   ) => void;
   onRunTask?: (
     query: string,
@@ -737,7 +738,8 @@ const RunView: React.FC<RunViewProps> = ({
                   query,
                   accepted,
                   plan,
-                  uploadedFileData
+                  uploadedFileData,
+                  files // 添加files参数
                 );
               } else {
                 onRunTask?.(

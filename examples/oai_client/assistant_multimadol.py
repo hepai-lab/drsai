@@ -88,17 +88,29 @@ async def create_agent() -> AssistantAgent:
     )
 
 if __name__ == "__main__":
-    import asyncio  # 导入asyncio模块，用于异步编程
+    
     # from autogen_core import Image
     # 运行控制台，启动代理并与用户交互
 
-    image = Image.from_file(file_path="/home/xiongdb/VSproject/drsai/assets/1-2.OpenDrSai_backend.png")
-    multimodal_message = MultiModalMessage(
-        source="user",
-        content=[
-            "解释这张图片的内容。",
-            image
+    # image = Image.from_file(file_path="/home/xiongdb/VSproject/drsai/assets/1-2.OpenDrSai_backend.png")
+    # multimodal_message = MultiModalMessage(
+    #     source="user",
+    #     content=[
+    #         "解释这张图片的内容。",
+    #         image
             
-        ]
+    #     ]
+    # )
+    # asyncio.run(run_console(agent_factory=create_agent, task=multimodal_message))
+
+    asyncio.run(
+        run_worker(
+            agent_name="drsai/ImageExplainier",
+            agent_factory=create_agent, 
+            port = 42806, 
+            no_register=False,
+            enable_openwebui_pipeline=True, 
+            history_mode = "backend",
+            use_api_key_mode = "backend",
+        )
     )
-    asyncio.run(run_console(agent_factory=create_agent, task=multimodal_message))

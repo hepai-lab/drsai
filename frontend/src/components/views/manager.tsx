@@ -56,14 +56,33 @@ export const SessionManager: React.FC = () => {
   const [baseUrl, setBaseUrl] = React.useState<string | undefined>();
   const { selectedAgent, setSelectedAgent } = useModeConfigStore();
   const [models, setModels] = React.useState<{ id: string }[]>([]);
-  const [agents, setAgents] = React.useState<Agent[]>([
+  const [agents, setAgents] = React.useState<Agent[]>([]);
 
-  ]);
+  // 添加sessionId持久化存储函数
+  const saveSessionIdToStorage = (sessionId: number | null) => {
+    if (typeof window !== "undefined") {
+      if (sessionId) {
+        localStorage.setItem(
+          "current_session_id",
+          sessionId.toString()
+        );
+      } else {
+        localStorage.removeItem("current_session_id");
+      }
+    }
+  };
+
+  const getSessionIdFromStorage = (): number | null => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("current_session_id");
+      return stored ? parseInt(stored, 10) : null;
+    }
+    return null;
+  };
+
   const handleAgentList = async (agents: Agent[]) => {
     try {
-      const res = await agentAPI.getAgentList(
-        user?.email || ""
-      );
+      const res = await agentAPI.getAgentList(user?.email || "");
       setAgents(res.config.agent_modes);
     } catch (error) {
       console.error("Error fetching agent list:", error);
@@ -144,15 +163,79 @@ export const SessionManager: React.FC = () => {
     }
   }, [user?.email, setSessions, session, setSession]);
 
-  // Handle initial URL params
+  // 在session变化时保存到localStorage
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const sessionId = params.get("sessionId");
+    if (session?.id) {
+      saveSessionIdToStorage(session.id);
+    } else {
+      saveSessionIdToStorage(null);
+    }
+  }, [session?.id]);
 
-    if (sessionId && !session) {
-      handleSelectSession({ id: parseInt(sessionId) } as Session);
+  // 在组件初始化时恢复sessionId
+  useEffect(() => {
+    const storedSessionId = getSessionIdFromStorage();
+    if (storedSessionId && !session) {
+      // 如果有存储的sessionId但没有当前session，尝试恢复
+      handleSelectSession({ id: storedSessionId } as Session);
     }
   }, []);
+
+  // 添加刷新时自动获取当前会话的id
+  useEffect(() => {
+    const initializeSessionOnRefresh = async () => {
+      // 1. 首先尝试从localStorage获取sessionId
+      const storedSessionId = getSessionIdFromStorage();
+
+      // 2. 如果localStorage中有sessionId，但当前没有session，则恢复session
+      if (storedSessionId && !session) {
+        console.log(
+          "Restoring session from localStorage:",
+          storedSessionId
+        );
+        try {
+          await handleSelectSession({
+            id: storedSessionId,
+          } as Session);
+        } catch (error) {
+          console.error("Failed to restore session:", error);
+          // 如果恢复失败，清除localStorage中的无效sessionId
+          saveSessionIdToStorage(null);
+        }
+      }
+
+      // 3. 如果localStorage中没有sessionId，但URL中有sessionId参数
+      if (!storedSessionId) {
+        const params = new URLSearchParams(window.location.search);
+        const urlSessionId = params.get("sessionId");
+        if (urlSessionId && !session) {
+          console.log("Restoring session from URL:", urlSessionId);
+          try {
+            await handleSelectSession({
+              id: parseInt(urlSessionId),
+            } as Session);
+          } catch (error) {
+            console.error(
+              "Failed to restore session from URL:",
+              error
+            );
+          }
+        }
+      }
+
+      // 4. 如果都没有，但有sessions列表，选择第一个session
+      if (!session && sessions.length > 0) {
+        console.log(
+          "No stored session, selecting first available session"
+        );
+        setSession(sessions[0]);
+        saveSessionIdToStorage(sessions[0].id);
+      }
+    };
+
+    // 在组件挂载和sessions变化时执行
+    initializeSessionOnRefresh();
+  }, [sessions]); // 依赖sessions，确保sessions加载完成后执行
 
   // Handle browser back/forward
   useEffect(() => {

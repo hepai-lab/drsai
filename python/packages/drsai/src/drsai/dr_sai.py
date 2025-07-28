@@ -137,17 +137,18 @@ class DrSai:
 
             if chat_id in self.agent_instance:
                 agent = self.agent_instance[chat_id]
-                thread: Thread = agent._thread
-                
             else:
                 agent = await self._create_agent_instance()
-                ## 是否使用流式模式
-                agent_stream = agent._model_client_stream if not isinstance(agent, BaseGroupChat) else agent._participants[0]._model_client_stream
-                stream = kwargs.pop('stream', agent_stream)
-                if isinstance(agent, BaseGroupChat) and stream:
-                    for participant in agent._participants:
-                        if not participant._model_client_stream:
-                            raise ValueError("Streaming mode is not supported when participant._model_client_stream is False")
+
+            ## 是否使用流式模式
+            agent_stream = agent._model_client_stream if not isinstance(agent, BaseGroupChat) else agent._participants[0]._model_client_stream
+            stream = kwargs.pop('stream', agent_stream)
+            if isinstance(agent, BaseGroupChat) and stream:
+                for participant in agent._participants:
+                    if not participant._model_client_stream:
+                        raise ValueError("Streaming mode is not supported when participant._model_client_stream is False")
+            thread: Thread|None = agent._thread
+            if thread is None:
                 ## 创建thread
                 if not chat_id:
                     chat_id = str(uuid.uuid4())

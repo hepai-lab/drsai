@@ -168,7 +168,7 @@ class DrSaiWorkerConfig(HWorkerConfig):
     no_register: bool = field(default=True, metadata={"help": "Do not register to controller"})
     
 
-    permissions: str = field(default='groups: default; users: admin, xiongdb@ihep.ac.cn, ddf_free; owner: xiongdb@ihep.ac.cn', metadata={"help": "Model's permissions, separated by ;, e.g., 'groups: default; users: a, b; owner: c'"})
+    permissions: str = field(default='groups: drsai; users: admin, xiongdb@ihep.ac.cn, ddf_free; owner: xiongdb@ihep.ac.cn', metadata={"help": "Model's permissions, separated by ;, e.g., 'groups: default; users: a, b; owner: c'"})
     description: str = field(default='This is Dr.Sai multi agents system', metadata={"help": "Model's description"})
     author: str = field(default=None, metadata={"help": "Model's author"})
     daemon: bool = field(default=False, metadata={"help": "Run as daemon"})
@@ -284,8 +284,8 @@ async def run_worker(agent_factory: callable, **kwargs):
         worker_args.port = port
         os.environ['BACKEND_PORT'] = str(port)
 
-    no_register: bool =  kwargs.pop("no_register", False)
-    if no_register:
+    no_register: bool =  kwargs.pop("no_register", None)
+    if no_register is not None:
         worker_args.no_register = no_register
 
     controller_address: str =  kwargs.pop("controller_address", "https://aiapi.ihep.ac.cn")
