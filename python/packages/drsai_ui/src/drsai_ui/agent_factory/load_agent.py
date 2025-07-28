@@ -201,7 +201,7 @@ async def a_load_agent_factory_from_config(
                     system_message=system_message,
                     description=description,
                     model_client=model_client,
-                    tools=mcp_tools+hepai_tools if len(mcp_tools+hepai_tools) > 0 else None,
+                    tools=mcp_tools+hepai_tools if len(mcp_tools+hepai_tools+source_tools) > 0 else None,
                     memory_function=memory_function,
                 ))
                 

@@ -239,7 +239,7 @@ class WebSocketManager:
                     continue
 
                 formatted_message = self._format_message(message)
-                print(f"Send formatted_message to client: {formatted_message}" )
+                # print(f"Send formatted_message to client: {formatted_message}" )
                 if formatted_message:
                     await self._send_message(run_id, formatted_message)
 

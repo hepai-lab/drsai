@@ -53,6 +53,7 @@ class DrSaiAPP(DrSai):
 
         # chat/completion路由
         DrSaiAPP.router.post("/chat/completions")(self.a_chat_completions)
+        # TODO: 增加支持pause/resume/close会话的接口
 
         # agents/groupchat测试路由
         DrSaiAPP.router.get("/agents/get_info")(self.a_get_agents_info)
@@ -106,6 +107,7 @@ class DrSaiAPP(DrSai):
             self.a_start_chat_completions, **params
             )
     
+     ### --- 关于agents/groupchat的测试路由 --- ###
     async def a_get_agents_info(self, request: Request) -> list[dict[str, Any]]:
         """
         获取agents/groupchat的相关信息

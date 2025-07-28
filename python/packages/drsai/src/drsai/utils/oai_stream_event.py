@@ -12,10 +12,20 @@ chatcompletionchunk = {
                 "model":"DrSai", 
                 "system_fingerprint": "fp_44709d6fcb", 
                 "usage": None,
-                "choices":[{"index":0,
-                            "delta":{"content":"", "function_call": None, "role": None, "tool_calls": None},
+                "choices":[
+                    {
+                        "index":0,
+                            "delta":
+                                {
+                                    "content":"", 
+                                    "function_call": None, 
+                                    "role": None, 
+                                    "tool_calls": None
+                                    },
                             "logprobs":None,
-                            "finish_reason":None}] # 非None或者stop字段会触发前端askuser
+                            "finish_reason":None
+                            }
+                            ] # 非None或者stop字段会触发前端askuser
                 } 
 chatcompletionchunkend = {
     "id":"chatcmpl-123",

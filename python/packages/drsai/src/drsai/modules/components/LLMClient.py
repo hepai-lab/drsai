@@ -158,11 +158,12 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient):
         ]
 
         hepai_allowed_models = [
-            "aliyun",
-            "openai",
-            "anthropic",
-            "ark",
-            "deepseek-ai",
+            "aliyun/",
+            "openai/",
+            "anthropic/",
+            "ark/",
+            "deepseek-ai/",
+            "hepai/",
         ]
         model = kwargs.get("model", "")
         all_allowed_models = allowed_models+hepai_allowed_models
