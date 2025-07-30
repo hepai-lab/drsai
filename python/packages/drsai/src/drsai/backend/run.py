@@ -168,7 +168,7 @@ class DrSaiWorkerConfig(HWorkerConfig):
     no_register: bool = field(default=True, metadata={"help": "Do not register to controller"})
     
 
-    permissions: str = field(default='groups: drsai; users: admin, xiongdb@ihep.ac.cn, ddf_free; owner: xiongdb@ihep.ac.cn', metadata={"help": "Model's permissions, separated by ;, e.g., 'groups: default; users: a, b; owner: c'"})
+    permissions: str = field(default='groups: pagy; users: admin, xiongdb@ihep.ac.cn, ddf_free; owner: xiongdb@ihep.ac.cn', metadata={"help": "Model's permissions, separated by ;, e.g., 'groups: default; users: a, b; owner: c'"})
     description: str = field(default='This is Dr.Sai multi agents system', metadata={"help": "Model's description"})
     author: str = field(default=None, metadata={"help": "Model's author"})
     daemon: bool = field(default=False, metadata={"help": "Run as daemon"})
@@ -198,14 +198,14 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         return await self.drsai.get_agents_info(agent=agent)
     
     @HRModel.remote_callable
-    async def lazy_init(self, chat_id: str) -> Dict[str, Any]:
+    async def lazy_init(self, chat_id: str, api_key: str) -> Dict[str, Any]:
         try:
             agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance.get(chat_id, None)
             if agent is None:
                 agent = await self.drsai._create_agent_instance()
                 self.drsai.agent_instance[chat_id] = agent
-            await agent.lazy_init()
-            return {"status": True, "message": ""}
+            message = await agent.lazy_init(api_key=api_key)
+            return {"status": True, "message": message}
         except Exception as e:
             return {"status": False, "message": f"Lazy init error: {e}"}
     
@@ -213,8 +213,10 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
     async def pause(self, chat_id: str) -> Dict[str, Any]:
         try:
             agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
-            await agent.pause()
-            return {"status": True, "message": ""}
+            message = await agent.pause()
+            if message is None:
+                message = ""
+            return {"status": True, "message": message}
         except Exception as e:
             return {"status": False, "message": f"Pause error: {e}"}
     

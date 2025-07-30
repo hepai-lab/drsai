@@ -217,7 +217,7 @@ class DrSaiGroupChat(BaseGroupChat):
             if hasattr(agent, "resume"):
                 await agent.resume()  # type: ignore
 
-    async def lazy_init(self) -> None:
+    async def lazy_init(self, **kwargs: Any) -> None:
         """Initialize any lazy-loaded components."""
         for agent in self._participants:
             if hasattr(agent, "lazy_init"):

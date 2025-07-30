@@ -105,7 +105,7 @@ class RemoteAgent(AssistantAgent):
         self._session = None
         self._connection_timeout = 60
 
-    async def lazy_init(self) -> None:
+    async def lazy_init(self, **kwargs: Any) -> None:
         """Initialize the tools and models needed by the agent."""
         if self._session is None:
             self._session = aiohttp.ClientSession(

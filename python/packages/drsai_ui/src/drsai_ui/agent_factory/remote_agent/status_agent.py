@@ -103,7 +103,9 @@ class StatusAgent(AssistantAgent):
         # worker函数
         self._funcs_map = {}
 
-    async def lazy_init(self) -> None:
+        self._init_message: str|dict = ""
+
+    async def lazy_init(self, **kwargs) -> None:
         """Initialize the tools and models needed by the agent."""
         try:
             funcs = get_worker_sync_functions(
@@ -113,9 +115,11 @@ class StatusAgent(AssistantAgent):
             )
             # print([f.__name__ for f in funcs])
             self._funcs_map = {f.__name__: f for f in funcs}
-            result: Dict[str, Any] = self._funcs_map['lazy_init'](chat_id=self._chat_id)
+            result: Dict[str, Any] = self._funcs_map['lazy_init'](chat_id=self._chat_id, api_key=self.api_key)
             status = result.get("status", False)
             message = result.get("message", "")
+            if message:
+                self._init_message = message
             if not status:
                 raise Exception(message)
             else:
@@ -189,7 +193,53 @@ class StatusAgent(AssistantAgent):
             raise Exception(message)
         else:
             logger.info(f"Closed {self.name} successfully.")
-        
+
+    async def async_stream_generator(self, stream, timeout: float = 30.0) -> AsyncGenerator[dict, None]:
+        loop = asyncio.get_event_loop()
+        queue = asyncio.Queue()
+
+        def sync_consumer():
+            try:
+                for chunk in stream:
+                    # # 检查暂停状态
+                    # if self.is_paused:
+                    #     loop.call_soon_threadsafe(queue.put_nowait, asyncio.CancelledError())
+                    #     return
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, e)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)  # 结束信号
+
+        executor_task = loop.run_in_executor(None, sync_consumer)
+
+        try:
+            while True:
+                item = await asyncio.wait_for(queue.get(), timeout=timeout)
+                if item is None:  # 正常结束
+                    break
+                elif isinstance(item, type) and issubclass(item, Exception):
+                    # 如果是异常类型，实例化并抛出
+                    # if issubclass(item, asyncio.CancelledError):
+                    #     raise asyncio.CancelledError("Stream cancelled")
+                    # else:
+                    #     raise item()
+                    raise item()
+                elif isinstance(item, Exception):
+                    raise item
+                else:
+                    yield item
+        except asyncio.TimeoutError:
+            logger.warning(f"Stream timeout after {timeout} seconds")
+            raise asyncio.TimeoutError("Model streaming timed out")
+        finally:
+            if not executor_task.done():
+                executor_task.cancel()
+            try:
+                await executor_task
+            except asyncio.CancelledError:
+                pass
+
     async def on_messages_stream(
         self, messages: Sequence[BaseChatMessage], cancellation_token: CancellationToken
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
@@ -269,6 +319,7 @@ class StatusAgent(AssistantAgent):
             oai_massages = await self.llm_messages2oai_messages(llm_messages)
             
             # NOTE: 请注意，这是一个同步的迭代器，会堵塞当前线程，直到模型返回结果
+
             stream: Stream = self._funcs_map['a_chat_completions'](
                 messages = oai_massages,
                 apikey = self.api_key,
@@ -278,31 +329,34 @@ class StatusAgent(AssistantAgent):
                 user = self._run_info,
             )
             full_response = ""
-            for chunk in stream:
-                if self.is_paused:
-                    raise asyncio.CancelledError()
-                textchunck = chunk["choices"][0]["delta"]["content"]
-                if textchunck:
-                    yield ModelClientStreamingChunkEvent(content=textchunck, source=agent_name)
-                    full_response += textchunck
-                else:
-                    if chunk["choices"][0]["finish_reason"]:
-                        if chunk["choices"][0]["finish_reason"] == "stop": 
+            try:
+                async for chunk in self.async_stream_generator(stream):
+                    if self.is_paused:
+                        raise asyncio.CancelledError("Agent paused during streaming")
+                    textchunk = chunk["choices"][0]["delta"].get("content", "")
+                    if textchunk:
+                        yield ModelClientStreamingChunkEvent(content=textchunk, source=agent_name)
+                        full_response += textchunk
+                    else:
+                        if chunk["choices"][0].get("finish_reason") == "stop":
                             break
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Error during streaming: {e}")
+                raise
+            # for chunk in stream:
+            #     if self.is_paused:
+            #         raise asyncio.CancelledError()
+            #     textchunck = chunk["choices"][0]["delta"]["content"]
+            #     if textchunck:
+            #         yield ModelClientStreamingChunkEvent(content=textchunck, source=agent_name)
+            #         full_response += textchunck
+            #     else:
+            #         if chunk["choices"][0]["finish_reason"]:
+            #             if chunk["choices"][0]["finish_reason"] == "stop": 
+            #                 break
             
-            # TODO: 改成异步的迭代器，不堵塞当前线程
-            # loop = asyncio.get_running_loop()
-            # queue = asyncio.Queue()
-            # stream_task = None
-            # def consume():
-            #     nonlocal stream_task
-            #     for chunk in stream:
-            #         if self.is_paused:
-            #             raise asyncio.CancelledError()
-            #         textchunck = chunk["choices"][0]["delta"]["content"]
-            #         if textchunck:
-            #            loop.call_soon_threadsafe(queue.put_nowait, ModelClientStreamingChunkEvent(content=textchunck, source=agent_name))
-            # await loop.run_in_executor(None, consume)
 
             model_result = CreateResult(
                 content=full_response, 
@@ -371,7 +425,16 @@ class StatusAgent(AssistantAgent):
                 ),
                 inner_messages=inner_messages,
             )
-        
+        except asyncio.TimeoutError:
+            # If the task times out, we respond with a message.
+            yield Response(
+                chat_message=TextMessage(
+                    content="The task timed out.",
+                    source=self.name,
+                    metadata={"internal": "yes"},
+                ),
+                inner_messages=inner_messages,
+            )
         except Exception as e:
             logger.error(f"Error in {self.name}: {e}")
             # add to chat history
