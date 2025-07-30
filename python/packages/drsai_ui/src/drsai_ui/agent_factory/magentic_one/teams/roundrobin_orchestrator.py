@@ -31,6 +31,7 @@ from autogen_agentchat.messages import (
     BaseChatMessage,
     MessageFactory,
     StopMessage,
+    TextMessage,
 )
 from autogen_agentchat.state import BaseState, TeamState
 from autogen_agentchat.teams._group_chat._base_group_chat import BaseGroupChat
@@ -269,6 +270,8 @@ class RoundRobinGroupChat(BaseGroupChat, Component[RoundRobinGroupChatConfig]):
             custom_message_types=custom_message_types,
         )
 
+        self._init_messages = []
+
     def _create_group_chat_manager_factory(
         self,
         name: str,
@@ -330,6 +333,10 @@ class RoundRobinGroupChat(BaseGroupChat, Component[RoundRobinGroupChatConfig]):
             termination_condition=termination_condition,
             max_turns=config.max_turns,
         )
+    async def get_init_messages(self) -> None:
+        for agent in self._participants:
+            if hasattr(agent, "_init_message"):
+                self._init_messages.append(agent._init_message)  # type: ignore
 
     async def pause(self) -> None:
         """Pause the group chat."""
@@ -394,6 +401,29 @@ class RoundRobinGroupChat(BaseGroupChat, Component[RoundRobinGroupChatConfig]):
         task: str | BaseChatMessage | Sequence[BaseChatMessage] | None = None,
         cancellation_token: CancellationToken | None = None,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | TaskResult, None]:
+        
+        # 获取初始化的消息
+        await self.get_init_messages()
+        for message in self._init_messages:
+            if isinstance(message, str):
+                yield TextMessage(
+                        source="system",
+                        content=message,
+                        metadata={
+                            "internal": "no",
+                        },
+                    )
+            elif isinstance(message, dict):
+                content = message.get("content", "")
+                metadata = message.get("metadata", {})
+                yield TextMessage(
+                    source="system",
+                    content=content,
+                    metadata=metadata,
+                )
+            else:
+                pass
+
         async for message in super().run_stream(
             task=task, cancellation_token=cancellation_token
         ):

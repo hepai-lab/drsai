@@ -132,7 +132,7 @@ class DrSaiAgent(AssistantAgent):
         self.is_paused = False
         self._paused = asyncio.Event()
     
-    async def lazy_init(self) -> None:
+    async def lazy_init(self, **kwargs: Any) -> None:
         """Initialize the tools and models needed by the agent."""
         pass
 
