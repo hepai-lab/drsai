@@ -8,7 +8,8 @@ import {
   Plus,
   RefreshCcw,
   StopCircle,
-  Trash2
+  Trash2,
+  Sailboat
 } from "lucide-react";
 import React, { useMemo } from "react";
 import { Button } from "../common/Button";
@@ -222,6 +223,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 label: "Saved Plans",
                 icon: <Archive className="w-4 h-4" />,
               },
+              {
+                id:"agent_square",
+                label:"Agent Square",
+                icon:<Sailboat className="w-4 h-4"/>
+              }
             ]}
             activeItem={activeSubMenuItem}
             onClick={onSubMenuChange}
