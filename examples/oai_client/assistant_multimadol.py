@@ -105,12 +105,19 @@ if __name__ == "__main__":
 
     asyncio.run(
         run_worker(
-            agent_name="drsai/ImageExplainier",
+            # 智能体注册信息
+            agent_name="ImageExplainier",
+            permission='groups: payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
+            description = "An agent that explains images based on user prompts.",
+            version = "0.1.0",
+            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            # 智能体实体
             agent_factory=create_agent, 
-            port = 42806, 
+            # 后端服务配置
+            port = 42812, 
             no_register=False,
             enable_openwebui_pipeline=True, 
             history_mode = "backend",
-            use_api_key_mode = "backend",
+            # use_api_key_mode = "backend",
         )
     )
