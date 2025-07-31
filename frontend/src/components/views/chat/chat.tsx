@@ -1224,6 +1224,9 @@ export default function ChatView({
                 </div>
 
                 <div className="w-full">
+                  {/* <iframe src="http://192.168.60.170:8060/wetty" frameborder="0"></iframe> */}
+                  {/* <iframe src="https://ink.ihep.ac.cn/" frameborder="0"></iframe> */}
+
                   <ChatInput
                     ref={chatInputRef}
                     onSubmit={(
