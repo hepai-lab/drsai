@@ -44,7 +44,8 @@ class PersonalKeyConfigFetcher:
     base_url: "https://aiapi.ihep.ac.cn/apiv2"
     api_key: "{personal_key}"
     max_retries: 10
-   
+
+coder_client: *client
 orchestrator_client: *client
 web_surfer_client: *client
 file_surfer_client: *client

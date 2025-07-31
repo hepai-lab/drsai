@@ -148,6 +148,7 @@ action_guard_client: *client
     api_key: "{{AUTO_PERSONAL_KEY_FOR_DR_SAI}}"
     max_retries: 1
 
+coder_client: *client
 orchestrator_client: *client
 web_surfer_client: *client
 file_surfer_client: *client
