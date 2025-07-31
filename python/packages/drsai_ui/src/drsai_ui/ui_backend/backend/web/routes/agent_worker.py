@@ -1,6 +1,7 @@
 from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, Header
-from openai import OpenAI 
+# from openai import OpenAI 
+from hepai import HepAI
 from hepai import HRModel
 # from ...datamodel.db import UserAgents
 
@@ -24,22 +25,25 @@ async def get_remote_agent(user_id: str, authorization: str = Header(...), db=De
         
         apikey = authorization[7:]  # Remove "Bearer " prefix
 
-        client = OpenAI(
+        client = HepAI(
             api_key=apikey,
             base_url="https://aiapi.ihep.ac.cn/apiv2"
         )
-        models = client.models.list()
+        models = client.agents.list()
         agents = {}
-        for model in models:
-            if model.id.startswith("drsai/"):
-                worker = HRModel.connect(
-                    name=model.id, 
-                    api_key=apikey,
-                    base_url="https://aiapi.ihep.ac.cn/apiv2",
-                )
-                agent_info: dict = worker.get_info()
-                agent_info.update({"owner": model.owned_by})
-                agents[model.id] = agent_info
+        for model in models.data:
+            if model.id != "hepai/custom-model":
+                try:
+                    worker = HRModel.connect(
+                        name=model.id, 
+                        api_key=apikey,
+                        base_url="https://aiapi.ihep.ac.cn/apiv2",
+                    )
+                    agent_info: dict = worker.get_info()
+                    agent_info.update({"owner": model.owner})
+                    agents[model.id] = agent_info
+                except Exception as e:
+                    pass
         return {"status": True, "data": agents}
     
     except Exception as e:

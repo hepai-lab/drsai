@@ -392,6 +392,7 @@ async def create_magentic_round_team(
     inside_docker: bool = True,
     run_info: dict[str, Any] = {},
     agent_mode_config: dict[str, Any] = {},
+    files: List[Dict[str, Any]] | None = None,
 ) -> tuple[Team, int, int]:
     
     model_configs: Dict[str, Any] = settings_config.get("model_configs")
@@ -423,6 +424,7 @@ async def create_magentic_round_team(
                 "model_name": "drsai/besiii",
                 "api_key": api_key
             },
+            files = files,
         )
         # agent = RemoteAgent(
         #     name='besiii',
