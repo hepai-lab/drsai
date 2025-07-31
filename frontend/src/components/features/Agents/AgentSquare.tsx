@@ -1,5 +1,8 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { Button } from "../../common/Button";
+import { appContext } from "../../../hooks/provider";
+import { agentAPI, agentWorkerAPI, settingsAPI } from "../../views/api";
+import { parse } from "yaml";
 
 interface AgentCardProps {
   logo: string;
@@ -24,20 +27,22 @@ const AgentCard: React.FC<AgentCardProps> = ({
     const urlWithParams = new URL(url);
     urlWithParams.searchParams.set('mode', 'remote-mode');
     urlWithParams.searchParams.set('config', JSON.stringify(config));
-    
+
     window.open(urlWithParams.toString(), '_blank');
-    
+
     if (onClick) {
       onClick();
     }
   };
 
+
+
   return (
     <div className="bg-primary border border-secondary rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-200 hover:border-magenta-800 group">
       {/* Logo */}
       <div className="flex items-center justify-center w-16 h-16 mx-auto mb-4 bg-secondary rounded-lg overflow-hidden">
-        <img 
-          src={logo} 
+        <img
+          src={logo}
           alt={`${name} logo`}
           className="w-full h-full object-cover"
           onError={(e) => {
@@ -46,24 +51,24 @@ const AgentCard: React.FC<AgentCardProps> = ({
           }}
         />
       </div>
-      
+
       {/* Name */}
       <h3 className="text-lg font-semibold text-primary text-center mb-2 truncate">
         {name}
       </h3>
-      
+
       {/* Description */}
       <p className="text-sm text-secondary text-center mb-4 line-clamp-3 min-h-[3rem]">
         {description}
       </p>
-      
+
       {/* Owner */}
       <div className="flex items-center justify-center mb-4">
         <span className="text-xs text-secondary bg-secondary px-2 py-1 rounded-full">
           by {owner}
         </span>
       </div>
-      
+
       {/* Try Button */}
       <div className="flex justify-center">
         <Button
@@ -85,6 +90,23 @@ interface AgentSquareProps {
 }
 
 const AgentSquare: React.FC<AgentSquareProps> = ({ agents, className = "" }) => {
+  const { darkMode, setDarkMode, user } = React.useContext(appContext);
+
+  useEffect(() => {
+    const loadAgentList = async () => {
+      if (user) {
+        // 获取用户设置以获取apiKey
+        const settings = await settingsAPI.getSettings(user?.email || "");
+        const parsed = parse(settings.model_configs);
+        const apiKey = parsed.model_config.config.api_key;
+        if (!apiKey) {
+          throw new Error("API key not found in settings");
+        }
+        const res = await agentWorkerAPI.getAgentList(user?.email || "", apiKey);
+      }
+    }
+    loadAgentList();
+  }, []);
   return (
     <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 ${className}`}>
       {mockAgents.map((agent, index) => (

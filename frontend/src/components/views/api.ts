@@ -517,11 +517,41 @@ export class Agent {
     }
 }
 
+export class AgentWorkerAPI {
+    private getBaseUrl(): string {
+        return getServerUrl();
+    }
+
+    private getHeaders(apiKey: string): HeadersInit {
+        return {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+        };
+    }
+
+    async getAgentList(userId: string, apiKey: string): Promise<any[]> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/agentworker?user_id=${userId}`,
+            {
+                headers: this.getHeaders(apiKey),
+            }
+        );
+        const data = await response.json();
+        console.log("Agent worker list response:", data);
+        if (!data.status)
+            throw new Error(data.message || "Failed to fetch agent workers");
+        return data.data;
+    }
+}
+
+export const agentWorkerAPI = new AgentWorkerAPI();
 export const teamAPI = new TeamAPI();
 export const sessionAPI = new SessionAPI();
 export const planAPI = new PlanAPI();
 export const settingsAPI = new SettingsAPI();
 export const agentAPI = new Agent();
+
+
 
 export class FileAPI {
     private getBaseUrl(): string {
