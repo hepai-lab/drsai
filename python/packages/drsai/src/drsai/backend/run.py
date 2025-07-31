@@ -151,10 +151,10 @@ async def run_backend(agent_factory: callable, **kwargs):
 
 @dataclass
 class DrSaiModelConfig(HModelConfig):
-    name: str = field(default="hepai/drsai", metadata={"help": "Model's name"})
+    name: str = field(default="drsai/besiii", metadata={"help": "Model's name"})
     permission: Union[str, Dict] = field(default=None, metadata={"help": "Model's permission, separated by ;, e.g., 'groups: all; users: a, b; owner: c', will inherit from worker permissions if not setted"})
     version: str = field(default="2.0", metadata={"help": "Model's version"})
-
+    
 @dataclass
 class DrSaiWorkerConfig(HWorkerConfig):
     host: str = field(default="0.0.0.0", metadata={"help": "Worker's address, enable to access from outside if set to `0.0.0.0`, otherwise only localhost can access"})
@@ -179,7 +179,9 @@ class DrSaiWorkerConfig(HWorkerConfig):
 class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from HRModel.
     def __init__(
             self, 
-            config: HModelConfig,
+            config: DrSaiModelConfig,
+            description: str = "A Dr.Sai multi agents system",
+            logo: str = "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
             drsaiapp: DrSaiAPP = None # 传入DrSaiAPP实例
             ):
         super().__init__(config=config)
@@ -190,8 +192,18 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         #     self.drsai = drsaiapp or DrSaiAPP()  # Instantiate the DrSaiAPP instance.
         # pass
         self.drsai: DrSaiAPP = drsaiapp
-        
+        self._info = {
+            "name": config.name, 
+            "description": description, 
+            "version": config.version, 
+            "logo": logo,
+            } 
 
+        
+    @HRModel.remote_callable
+    async def get_info(self) -> Dict[str, str]:
+       return self._info
+    
     @HRModel.remote_callable
     async def a_get_agents_info(self, chat_id: str) -> List[Dict[str, Any]]:
         agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance.get(chat_id, None)
@@ -268,8 +280,8 @@ async def run_worker(agent_factory: callable, **kwargs):
         use_api_key_mode: str = "frontend",  # api key的使用模式，可选值：frontend、backend 默认frontend， 调试模式下建议设置为backend
         enable_pipeline: bool = False,  # 是否启动openwebui pipelines
     '''
-    model_args_obj: HModelConfig = DrSaiModelConfig
-    worker_args_obj: HWorkerConfig = DrSaiWorkerConfig
+    model_args_obj: DrSaiModelConfig = DrSaiModelConfig
+    worker_args_obj: DrSaiWorkerConfig = DrSaiWorkerConfig
     model_args, worker_args = hepai.parse_args((model_args_obj, worker_args_obj))
 
     agent_name: str = kwargs.pop("agent_name", None)
@@ -277,6 +289,19 @@ async def run_worker(agent_factory: callable, **kwargs):
         model_args.name = agent_name
         os.environ['AGNET_NAME'] = agent_name
     
+    permission: str = kwargs.pop("agent_name", None)
+    if permission is not None:
+        model_args.permission = permission
+        worker_args.permission = permission
+    
+    description: str = kwargs.pop("description", "A Dr.Sai multi agents system")
+    
+    version: str = kwargs.pop("version", None)
+    if version is not None:
+        model_args.version = version
+    
+    logo: str = kwargs.pop("logo", 'https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview')
+
     host: str =  kwargs.pop("host", None)
     if host is not None:
         worker_args.host = host
@@ -303,7 +328,11 @@ async def run_worker(agent_factory: callable, **kwargs):
         **kwargs
         )
     
-    model = DrSaiWorkerModel(config=model_args, drsaiapp=drsaiapp)
+    model = DrSaiWorkerModel(
+        config=model_args, 
+        description=description, 
+        logo=logo, 
+        drsaiapp=drsaiapp)
 
     enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
     if enable_pipeline:
