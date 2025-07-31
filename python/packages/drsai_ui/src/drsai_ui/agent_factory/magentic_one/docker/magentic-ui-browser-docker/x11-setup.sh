@@ -5,6 +5,20 @@ if [ -z "$DISPLAY" ]; then
   export DISPLAY=:99
 fi
 
+# Wait for X server to be ready
+echo "Waiting for X server to start..."
+timeout=30
+counter=0
+while ! xdpyinfo -display $DISPLAY >/dev/null 2>&1; do
+    sleep 1
+    counter=$((counter + 1))
+    if [ $counter -ge $timeout ]; then
+        echo "Timeout waiting for X server"
+        exit 1
+    fi
+done
+echo "X server is ready"
+
 # Set background to black to make black bars less obvious
 xsetroot -solid "#000000"
 
