@@ -65,7 +65,7 @@ async def run_websocket(
                         # await ws_manager.start_stream(run_id, task, team_config)
                         asyncio.create_task(
                             ws_manager.start_stream(
-                                run_id, task, team_config, settings_config
+                                run_id, task, team_config, settings_config, files=message.get("files")
                             )
                         )
                     else:

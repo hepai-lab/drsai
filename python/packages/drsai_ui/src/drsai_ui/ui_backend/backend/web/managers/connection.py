@@ -2,7 +2,7 @@ import asyncio
 import logging
 import traceback
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Dict, Optional, Sequence, Union, List
 import json
 
 from autogen_agentchat.base._task import TaskResult
@@ -117,6 +117,7 @@ class WebSocketManager:
         task: str | ChatMessage | Sequence[ChatMessage] | None,
         team_config: Dict[str, Any],
         settings_config: Dict[str, Any],
+        files: List[Dict[str, Any]] | None = None,
         user_settings: Settings | None = None,
     ) -> None:
         """
@@ -211,6 +212,7 @@ class WebSocketManager:
                 env_vars=env_vars,
                 settings_config=settings_config,
                 run=run,
+                files=files,
             ):
                 if (
                     cancellation_token.is_cancelled()

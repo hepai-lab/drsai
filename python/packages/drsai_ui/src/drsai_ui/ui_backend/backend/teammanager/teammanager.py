@@ -147,6 +147,7 @@ class TeamManager:
         *,
         paths: RunPaths,
         run: Optional[Run] = None,
+        files: List[Dict[str, Any]] | None = None,
     ) -> None:
         """Create team instance from config"""
 
@@ -196,6 +197,7 @@ class TeamManager:
                         inside_docker = self.inside_docker,
                         run_info = run.model_dump() if run else {},
                         agent_mode_config = agent_mode_config,
+                        files = files
                     )
                     self.novnc_port = novnc_port
                     self.playwright_port = playwright_port
@@ -329,6 +331,7 @@ class TeamManager:
         env_vars: Optional[List[EnvironmentVariable]] = None,
         settings_config: Optional[Dict[str, Any]] = None,
         run: Optional[Run] = None,
+        files: List[Dict[str, Any]] | None = None,
     ) -> AsyncGenerator[
         Union[AgentEvent, ChatMessage, LLMCallEventMessage, TeamResult], None
     ]:
@@ -364,6 +367,7 @@ class TeamManager:
                     settings_config or {},
                     paths=paths,
                     run=run,
+                    files=files,
                 )
 
                 # Initialize known files by name for tracking

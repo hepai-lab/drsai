@@ -168,11 +168,11 @@ class DrSaiWorkerConfig(HWorkerConfig):
     no_register: bool = field(default=True, metadata={"help": "Do not register to controller"})
     
 
-    permissions: str = field(default='groups: pagy; users: admin, xiongdb@ihep.ac.cn, ddf_free; owner: xiongdb@ihep.ac.cn', metadata={"help": "Model's permissions, separated by ;, e.g., 'groups: default; users: a, b; owner: c'"})
+    permissions: str = field(default='groups: payg; users: admin, xiongdb@ihep.ac.cn, ddf_free; owner: xiongdb@ihep.ac.cn', metadata={"help": "Model's permissions, separated by ;, e.g., 'groups: default; users: a, b; owner: c'"})
     description: str = field(default='This is Dr.Sai multi agents system', metadata={"help": "Model's description"})
     author: str = field(default=None, metadata={"help": "Model's author"})
     daemon: bool = field(default=False, metadata={"help": "Run as daemon"})
-    type: str = field(default="drsai", metadata={"help": "Worker's type"})
+    type: str = field(default="agent", metadata={"help": "Worker's type"})
     debug: bool = field(default=True, metadata={"help": "Debug mode"})
 
 
@@ -289,10 +289,10 @@ async def run_worker(agent_factory: callable, **kwargs):
         model_args.name = agent_name
         os.environ['AGNET_NAME'] = agent_name
     
-    permission: str = kwargs.pop("agent_name", None)
+    permission: str = kwargs.pop("permission", None)
     if permission is not None:
-        model_args.permission = permission
-        worker_args.permission = permission
+        # model_args.permission = permission
+        worker_args.permissions = permission
     
     description: str = kwargs.pop("description", "A Dr.Sai multi agents system")
     
