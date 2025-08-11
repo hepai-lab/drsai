@@ -10,7 +10,7 @@ import { appContext } from "../../hooks/provider";
 import { useConfigStore } from "../../hooks/store";
 import ContentHeader from "../contentheader";
 import PlanList from "../features/Plans/PlanList";
-import {AgentSquare} from "../features/Agents/AgentSquare"
+import { AgentSquare } from "../features/Agents/AgentSquare"
 import type { Session } from "../types/datamodel";
 import { RunStatus } from "../types/datamodel";
 import { getServerUrl } from "../utils";
@@ -670,35 +670,37 @@ export const SessionManager: React.FC = () => {
           className={`flex-1 transition-all -mr-4 duration-200 w-[200px] ${isSidebarOpen ? "ml-64" : "ml-0"
             }`}
         >
-          <AgentSelectorAdvanced
-            agents={agents}
-            models={models}
-            selectedAgent={selectedAgent}
-            onAgentSelect={setSelectedAgent}
-            placeholder="Select Your Agent"
-            className="w-96"
-          />
+
           {activeSubMenuItem === "current_session" ? (
-  session && sessions.length > 0 ? (
-    <div className="pl-4">{chatViews}</div>
-  ) : (
-    <div className="flex items-center justify-center h-full text-secondary">
-      <Spin size="large" tip={"Loading..."} />
-    </div>
-  )
-) : activeSubMenuItem === "agent_square" ? (
-  <div className="h-full overflow-hidden pl-4">
-    <AgentSquare />
-  </div>
-) : (
-  <div className="h-full overflow-hidden pl-4">
-    <PlanList
-      onTabChange={setActiveSubMenuItem}
-      onSelectSession={handleSelectSession}
-      onCreateSessionFromPlan={handleCreateSessionFromPlan}
-    />
-  </div>
-)}
+            session && sessions.length > 0 ? (
+              <div className="pl-4">
+                <AgentSelectorAdvanced
+                  agents={agents}
+                  models={models}
+                  selectedAgent={selectedAgent}
+                  onAgentSelect={setSelectedAgent}
+                  placeholder="Select Your Agent"
+                  className="w-96"
+                />
+                {chatViews}</div>
+            ) : (
+              <div className="flex items-center justify-center h-full text-secondary">
+                <Spin size="large" tip={"Loading..."} />
+              </div>
+            )
+          ) : activeSubMenuItem === "agent_square" ? (
+            <div className="h-full overflow-hidden pl-4">
+              <AgentSquare />
+            </div>
+          ) : (
+            <div className="h-full overflow-hidden pl-4">
+              <PlanList
+                onTabChange={setActiveSubMenuItem}
+                onSelectSession={handleSelectSession}
+                onCreateSessionFromPlan={handleCreateSessionFromPlan}
+              />
+            </div>
+          )}
         </div>
         <SessionEditor
           session={editingSession}
