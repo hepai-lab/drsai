@@ -20,7 +20,7 @@ def create_agent() -> AssistantAgent:
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
     model_client = HepAIChatCompletionClient(
-        model="openai/o3",
+        model="deepseek-ai/deepseek-r1:671b",
         api_key=os.environ.get("HEPAI_API_KEY"),
         base_url="https://aiapi.ihep.ac.cn/apiv2",
     )
@@ -80,7 +80,7 @@ if __name__ == "__main__":
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务配置
-            port = 42813, 
+            port = 42812, 
             no_register=False,
             enable_openwebui_pipeline=True, 
             history_mode = "backend",
