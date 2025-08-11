@@ -10,7 +10,7 @@ except ImportError:
 
 
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
-from drsai import run_backend, run_console
+from drsai import run_backend, run_console, run_worker
 import os, json
 import asyncio
 
@@ -60,7 +60,7 @@ async def main():
 
 if __name__ == "__main__":
     # asyncio.run(main())
-    asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
+    # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
     # asyncio.run(run_backend(
     #     agent_factory=create_agent, 
     #     port = 42805, 
@@ -69,3 +69,21 @@ if __name__ == "__main__":
     #     history_mode = "backend",
     #     use_api_key_mode = "backend")
     #     )
+    asyncio.run(
+        run_worker(
+            # 智能体注册信息
+            agent_name="DeepSeek_R1",
+            permission='groups: payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
+            description = "An agent that generates images based on user prompts.",
+            version = "0.1.0",
+            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            # 智能体实体
+            agent_factory=create_agent, 
+            # 后端服务配置
+            port = 42813, 
+            no_register=False,
+            enable_openwebui_pipeline=True, 
+            history_mode = "backend",
+            # use_api_key_mode = "backend",
+        )
+    )
