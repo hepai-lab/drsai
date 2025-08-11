@@ -3,6 +3,7 @@ import { Button } from "../../common/Button";
 import { appContext } from "../../../hooks/provider";
 import { agentAPI, agentWorkerAPI, settingsAPI } from "../../views/api";
 import { parse } from "yaml";
+import { useModeConfigStore } from "../../../store/modeConfig";
 
 interface AgentCardProps {
   logo: string;
@@ -39,13 +40,29 @@ const AgentCard: React.FC<AgentCardProps> = ({
   config,
   onClick,
 }) => {
+  const { setSelectedAgent } = useModeConfigStore();
+
   const handleTryClick = () => {
-    const urlWithParams = new URL(url);
-    urlWithParams.searchParams.set("mode", "remote-mode");
-    urlWithParams.searchParams.set("config", JSON.stringify(config));
+    // 创建agent对象
+    const agent = {
+      mode: config.model || `agent-${Date.now()}`,
+      name: name,
+      type: "remote" as const,
+      description: description,
+      config: config,
+    };
 
-    window.open(urlWithParams.toString(), "_blank");
+    // 设置选中的agent
+    setSelectedAgent(agent);
 
+    // 触发自定义事件，通知切换到 Current Session tab
+    window.dispatchEvent(
+      new CustomEvent("switchToCurrentSession", {
+        detail: { agent },
+      })
+    );
+
+    // 保留原有的onClick回调
     if (onClick) {
       onClick();
     }
@@ -53,44 +70,43 @@ const AgentCard: React.FC<AgentCardProps> = ({
 
   return (
     <div className="bg-primary border border-secondary rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-200 hover:border-magenta-800 group">
-      {/* Logo */}
-      <div className="flex items-center justify-center w-16 h-16 mx-auto mb-4 bg-secondary rounded-lg overflow-hidden">
-        <img
-          src={logo}
-          alt={`${name} logo`}
-          className="w-full h-full object-cover"
-          onError={(e) => {
-            const target = e.target as HTMLImageElement;
-            target.src =
-              "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRkM2RjMyIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyNCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPkE8L3RleHQ+Cjwvc3ZnPgo=";
-          }}
-        />
+      {/* Logo, Name and Owner Section */}
+      <div className="flex items-start mb-4">
+        {/* Logo */}
+        <div className="flex-shrink-0 w-16 h-16 bg-secondary rounded-lg overflow-hidden mr-3">
+          <img
+            src={logo}
+            alt={`${name} logo`}
+            className="w-full h-full object-cover"
+            onError={(e) => {
+              const target = e.target as HTMLImageElement;
+              target.src =
+                "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRkM2RjMyIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyNCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPkE8L3RleHQ+Cjwvc3ZnPgo=";
+            }}
+          />
+        </div>
+
+        {/* Name and Owner */}
+        <div className="flex-1 min-w-0">
+          <h3 className="text-lg font-semibold text-primary mb-1 truncate">
+            {name}
+          </h3>
+          <div className="text-xs text-secondary">by {owner}</div>
+        </div>
       </div>
 
-      {/* Name */}
-      <h3 className="text-lg font-semibold text-primary text-center mb-2 truncate">
-        {name}
-      </h3>
-
       {/* Description */}
-      <p className="text-sm text-secondary text-center mb-4 line-clamp-3 min-h-[3rem]">
+      <p className="text-sm text-secondary text-left mb-4 line-clamp-3 min-h-[3rem]">
         {description}
       </p>
 
-      {/* Owner */}
-      <div className="flex items-center justify-center mb-4">
-        <span className="text-xs text-secondary bg-secondary px-2 py-1 rounded-full">
-          by {owner}
-        </span>
-      </div>
-
       {/* Try Button */}
-      <div className="flex justify-center">
+      <div className="w-full">
         <Button
           variant="primary"
           size="sm"
           onClick={handleTryClick}
-          className="px-6 group-hover:bg-magenta-900 transition-colors"
+          className="w-full group-hover:bg-magenta-900 transition-colors"
         >
           点击试用
         </Button>
