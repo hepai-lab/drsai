@@ -67,10 +67,13 @@ async def async_generate_image(
         image_url = f"https://aiapi.ihep.ac.cn/apiv2/files/{file_id}/preview"
         yield f"图片已保存，预览地址：{image_url}\n\n"
         file_name = f"output_{uuid.uuid4().hex}.png"
-        yield f"![{file_name}]({image_url}) \n\n"
+        # yield f"![{file_name}]({image_url}) \n\n"
+        # yield f"![{file_name}]({image_url}?width=480&height=320) \n\n"
+        yield f'<img src="{image_url}" width="180">'
+
         
-        with open(f"{here}/files/{file_name}", "wb") as f:
-            f.write(image_bytes)
+        # with open(f"{here}/files/{file_name}", "wb") as f:
+        #     f.write(image_bytes)
 
     except Exception as e:
         yield f"图片生成失败:{str(e)}"

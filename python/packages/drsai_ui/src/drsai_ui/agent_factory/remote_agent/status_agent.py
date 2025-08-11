@@ -194,7 +194,7 @@ class StatusAgent(AssistantAgent):
         else:
             logger.info(f"Closed {self.name} successfully.")
 
-    async def async_stream_generator(self, stream, timeout: float = 30.0) -> AsyncGenerator[dict, None]:
+    async def async_stream_generator(self, stream, timeout: float = 180.0) -> AsyncGenerator[dict, None]:
         loop = asyncio.get_event_loop()
         queue = asyncio.Queue()
 
