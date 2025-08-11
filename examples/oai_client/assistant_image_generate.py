@@ -4,6 +4,7 @@ from drsai.modules.managers.threads_manager import ThreadsManager
 import os, json
 import asyncio
 from typing import List, Dict, Union, AsyncGenerator, Tuple, Any
+import io
 
 from openai import OpenAI
 import base64
@@ -29,11 +30,11 @@ here = os.path.dirname(os.path.abspath(__file__))
 
 def update_image(
         client: OpenAI,
-        file_bytes: bytes,
+        file_buffer: io.BytesIO,
 ) -> str:
 
     file_obj = client.files.create(
-        file=file_bytes,
+        file=file_buffer,
         purpose="user_data"
         )
     return file_obj.id
@@ -63,10 +64,12 @@ async def async_generate_image(
         await asyncio.sleep(0.1)
 
         image_bytes = base64.b64decode(img.data[0].b64_json)
-        file_id = update_image(client, image_bytes)
+        image_buffer = io.BytesIO(image_bytes)
+        
+        file_id = update_image(client, image_buffer)
         image_url = f"https://aiapi.ihep.ac.cn/apiv2/files/{file_id}/preview"
         yield f"图片已保存，预览地址：{image_url}\n\n"
-        file_name = f"output_{uuid.uuid4().hex}.png"
+        # file_name = f"output_{uuid.uuid4().hex}.png"
         # yield f"![{file_name}]({image_url}) \n\n"
         # yield f"![{file_name}]({image_url}?width=480&height=320) \n\n"
         yield f'<img src="{image_url}" width="180">'
