@@ -10,7 +10,7 @@ import { appContext } from "../../hooks/provider";
 import { useConfigStore } from "../../hooks/store";
 import ContentHeader from "../contentheader";
 import PlanList from "../features/Plans/PlanList";
-import {AgentSquare} from "../features/Agents/AgentSquare"
+import { AgentSquare } from "../features/Agents/AgentSquare";
 import type { Session } from "../types/datamodel";
 import { RunStatus } from "../types/datamodel";
 import { getServerUrl } from "../utils";
@@ -588,7 +588,32 @@ export const SessionManager: React.FC = () => {
       window.removeEventListener("offline", closeAllSockets);
       closeAllSockets(); // Clean up on component unmount too
     };
-  }, []); // Empty dependency array since we want this to run once on mount
+  }, []);
+
+  // 监听切换到 Current Session tab 的事件
+  useEffect(() => {
+    const handleSwitchToCurrentSession = (event: CustomEvent) => {
+      const { agent } = event.detail;
+
+      // 切换到 Current Session tab
+      setActiveSubMenuItem("current_session");
+
+      // 设置选中的agent
+      setSelectedAgent(agent);
+    };
+
+    window.addEventListener(
+      "switchToCurrentSession",
+      handleSwitchToCurrentSession as EventListener
+    );
+
+    return () => {
+      window.removeEventListener(
+        "switchToCurrentSession",
+        handleSwitchToCurrentSession as EventListener
+      );
+    };
+  }, [setSelectedAgent]); // Empty dependency array since we want this to run once on mount
 
   const handleCreateSessionFromPlan = (
     sessionId: number,
@@ -610,6 +635,23 @@ export const SessionManager: React.FC = () => {
         })
       );
     }, 2000); // Give time for session selection to complete
+  };
+
+  const handleTryAgent = (agentConfig: any) => {
+    // 切换到 Current Session tab
+    setActiveSubMenuItem("current_session");
+
+    // 创建agent对象并设置选中的agent
+    const agent = {
+      mode: agentConfig.model || `agent-${Date.now()}`,
+      name: agentConfig.name || "Remote Agent",
+      type: "remote" as const,
+      description:
+        agentConfig.description || "Remote agent from Agent Square",
+      config: agentConfig,
+    };
+
+    setSelectedAgent(agent);
   };
 
   return (
@@ -670,35 +712,39 @@ export const SessionManager: React.FC = () => {
           className={`flex-1 transition-all -mr-4 duration-200 w-[200px] ${isSidebarOpen ? "ml-64" : "ml-0"
             }`}
         >
-          <AgentSelectorAdvanced
-            agents={agents}
-            models={models}
-            selectedAgent={selectedAgent}
-            onAgentSelect={setSelectedAgent}
-            placeholder="Select Your Agent"
-            className="w-96"
-          />
           {activeSubMenuItem === "current_session" ? (
-  session && sessions.length > 0 ? (
-    <div className="pl-4">{chatViews}</div>
-  ) : (
-    <div className="flex items-center justify-center h-full text-secondary">
-      <Spin size="large" tip={"Loading..."} />
-    </div>
-  )
-) : activeSubMenuItem === "agent_square" ? (
-  <div className="h-full overflow-hidden pl-4">
-    <AgentSquare />
-  </div>
-) : (
-  <div className="h-full overflow-hidden pl-4">
-    <PlanList
-      onTabChange={setActiveSubMenuItem}
-      onSelectSession={handleSelectSession}
-      onCreateSessionFromPlan={handleCreateSessionFromPlan}
-    />
-  </div>
-)}
+            session && sessions.length > 0 ? (
+              <div className="pl-4">
+                <AgentSelectorAdvanced
+                  agents={agents}
+                  models={models}
+                  selectedAgent={selectedAgent}
+                  onAgentSelect={setSelectedAgent}
+                  placeholder="Select Your Agent"
+                  className="w-96"
+                />
+                {chatViews}
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-full text-secondary">
+                <Spin size="large" tip={"Loading..."} />
+              </div>
+            )
+          ) : activeSubMenuItem === "agent_square" ? (
+            <div className="h-full overflow-hidden pl-4">
+              <AgentSquare />
+            </div>
+          ) : (
+            <div className="h-full overflow-hidden pl-4">
+              <PlanList
+                onTabChange={setActiveSubMenuItem}
+                onSelectSession={handleSelectSession}
+                onCreateSessionFromPlan={
+                  handleCreateSessionFromPlan
+                }
+              />
+            </div>
+          )}
         </div>
         <SessionEditor
           session={editingSession}
