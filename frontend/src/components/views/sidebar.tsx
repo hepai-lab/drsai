@@ -85,12 +85,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Sort sessions by date in descending order (most recent first)
   const sortedSessions = useMemo(
     () =>
-      [...sessions].sort((a, b) => {
-        return (
-          new Date(b.created_at || "").getTime() -
-          new Date(a.created_at || "").getTime()
-        );
-      }),
+      Array.isArray(sessions) && sessions
+        ? [...sessions].sort((a, b) => {
+          return (
+            new Date(b.created_at || "").getTime() -
+            new Date(a.created_at || "").getTime()
+          );
+        })
+        : [],
     [sessions]
   );
 
@@ -114,15 +116,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return (
           <div key={s.id} className="relative">
             <div
-              className={`group flex items-center justify-between p-2 py-1 text-sm ${
-                isLoading
-                  ? "pointer-events-none opacity-50"
-                  : "cursor-pointer hover:bg-tertiary"
-              } ${
-                currentSession?.id === s.id
+              className={`group flex items-center justify-between p-2 py-1 text-sm ${isLoading
+                ? "pointer-events-none opacity-50"
+                : "cursor-pointer hover:bg-tertiary"
+                } ${currentSession?.id === s.id
                   ? " border-l-2 border-magenta-800 bg-secondary"
                   : ""
-              }`}
+                }`}
               onClick={() => !isLoading && onSelectSession(s)}
             >
               <div className="flex items-center gap-2 flex-1">
@@ -224,9 +224,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 icon: <Archive className="w-4 h-4" />,
               },
               {
-                id:"agent_square",
-                label:"Agent Square",
-                icon:<Sailboat className="w-4 h-4"/>
+                id: "agent_square",
+                label: "Agent Square",
+                icon: <Sailboat className="w-4 h-4" />
               }
             ]}
             activeItem={activeSubMenuItem}

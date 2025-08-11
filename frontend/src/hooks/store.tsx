@@ -76,7 +76,8 @@ export const useConfigStore = create<IConfigState>()(
       session: null,
       setSession: (session) => set({ session }),
       sessions: [],
-      setSessions: (sessions) => set({ sessions }),
+      setSessions: (sessions) =>
+        set({ sessions: Array.isArray(sessions) ? sessions : [] }),
       version: null,
       setVersion: (version) => set({ version }),
       connectionId: uuidv4(),
@@ -120,7 +121,10 @@ export const useConfigStore = create<IConfigState>()(
         })),
       toggleSidebar: () =>
         set((state) => ({
-          sidebar: { ...state.sidebar, isExpanded: !state.sidebar.isExpanded },
+          sidebar: {
+            ...state.sidebar,
+            isExpanded: !state.sidebar.isExpanded,
+          },
         })),
     }),
     {
