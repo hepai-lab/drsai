@@ -1,5 +1,5 @@
 
-
+examples/docker/browser/docker_test_dir*
 drsai/backend/owebui_pipeline/pipelines/pipelines/drsai_pipeline/*.json
 drsai/backend/owebui_pipeline/pipelines/pipelines/failed/
 drsai/backend/owebui_pipeline/pipelines/pipelines/__init__/
