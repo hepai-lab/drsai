@@ -220,7 +220,12 @@ if __name__ == "__main__":
         run_worker(
             # 智能体注册信息
             agent_name="ImageGenerator",
-            permission='groups: payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: 11192333767@qq.com',
+            # permission='groups: payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: 11192333767@qq.com',
+            permission={
+                "groups": "payg", 
+                "users": ["admin", "ddf_free", "xiongdb@ihep.ac.cn", "yqsun@ihep.ac.cn"], 
+                "owner": "11192333767@qq.com"
+                },
             description = "An agent that generates images based on user prompts.",
             version = "0.1.0",
             logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",

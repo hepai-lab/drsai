@@ -98,7 +98,7 @@ class StatusAgent(AssistantAgent):
         # initialize the sync model client
         self.api_key = model_remote_configs.pop("api_key", "")
         self.url = model_remote_configs.pop("url", "https://aiapi.ihep.ac.cn/apiv2")
-        self.model_name = model_remote_configs.pop("model_name", "hepai/drsai")
+        self.model_name = model_remote_configs.pop("model", "hepai/drsai")
 
         # worker函数
         self._funcs_map = {}
