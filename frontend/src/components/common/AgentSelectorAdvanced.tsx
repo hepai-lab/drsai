@@ -238,10 +238,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
 
         try {
             const res = await agentAPI.saveAgentConfig(newCustomAgent);
-            const res2 = await agentAPI.getAgentConfig(
-                "",
-                agent.mode
-            );
+            const res2 = await agentAPI.getAgentConfig("", agent.mode);
             if (res2) {
                 setConfig(res2.config);
                 setMode(res2.mode);
@@ -421,7 +418,7 @@ custom_agent_config:
                     onClick={toggleDropdown}
                     disabled={disabled}
                     className={`
-          w-full flex items-center justify-between px-4 py-3 rounded-lg
+          w-[296px] flex items-center justify-between px-3 py-2 rounded-lg
           transition-all duration-200 ease-in-out
           ${darkMode === "dark"
                             ? "bg-[#3a3a3a] text-[#e5e5e5] border border-[#e5e5e530] hover:border-[#e5e5e560]"
@@ -453,7 +450,7 @@ custom_agent_config:
                 {isOpen && (
                     <div
                         className={`
-            absolute top-full left-0 right-0 mt-1 z-50 rounded-lg shadow-lg
+            absolute top-full left-0 w-[296px] mt-1 z-50 rounded-lg shadow-lg
             border transition-all duration-200 ease-in-out
             ${darkMode === "dark"
                                 ? "bg-[#3a3a3a] border-[#e5e5e530] shadow-black/20"
