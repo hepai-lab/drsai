@@ -289,10 +289,15 @@ async def run_worker(agent_factory: callable, **kwargs):
         model_args.name = agent_name
         os.environ['AGNET_NAME'] = agent_name
     
-    permission: str = kwargs.pop("permission", None)
+    permission: str|dict = kwargs.pop("permission", None)
     if permission is not None:
-        # model_args.permission = permission
-        worker_args.permissions = permission
+        if isinstance(permission, dict):
+            groups = "groups: " + permission.get('groups', "default")
+            users = "users: " + ", ".join(permission.get('users', []))
+            owner = "owner: " + permission.get('owner', "")
+            worker_args.permissions = "; ".join([groups, users, owner])
+        else:
+            worker_args.permissions = permission
     
     description: str = kwargs.pop("description", "A Dr.Sai multi agents system")
     

@@ -451,8 +451,9 @@ async def create_magentic_round_team(
         agent: AssistantAgent|BaseGroupChat = await agent_factory()
 
     elif agent_mode == "remote":
+        agent_config["api_key"] = agent_config.get("api_key", api_key)
         agent = StatusAgent(
-            name=agent_config.pop("name", "RemoteAgent"),
+            name="RemoteAgent",
             model_remote_configs = agent_config,
             chat_id=chat_id,
             run_info=run_info
