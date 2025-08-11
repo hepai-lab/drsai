@@ -225,7 +225,7 @@ export const SessionManager: React.FC = () => {
       }
 
       // 4. 如果都没有，但有sessions列表，选择第一个session
-      if (!session && sessions.length > 0) {
+      if (!session && Array.isArray(sessions) && sessions.length > 0) {
         console.log(
           "No stored session, selecting first available session"
         );
@@ -266,7 +266,11 @@ export const SessionManager: React.FC = () => {
           user.email
         );
         setSessions(
-          sessions.map((s) => (s.id === updated.id ? updated : s))
+          Array.isArray(sessions)
+            ? sessions.map((s) =>
+              s.id === updated.id ? updated : s
+            )
+            : [updated]
         );
         if (session?.id === updated.id) {
           setSession(updated);
@@ -287,7 +291,10 @@ export const SessionManager: React.FC = () => {
           },
           user.email
         );
-        setSessions([created, ...sessions]);
+        setSessions([
+          created,
+          ...(Array.isArray(sessions) && sessions ? sessions : []),
+        ]);
         setSession(created);
       }
       setIsEditorOpen(false);
@@ -329,9 +336,20 @@ export const SessionManager: React.FC = () => {
       }
 
       await sessionAPI.deleteSession(sessionId, user.email);
-      setSessions(sessions.filter((s) => s.id !== sessionId));
-      if (session?.id === sessionId || sessions.length === 0) {
-        setSession(sessions[0] || null);
+      setSessions(
+        Array.isArray(sessions)
+          ? sessions.filter((s) => s.id !== sessionId)
+          : []
+      );
+      if (
+        session?.id === sessionId ||
+        (Array.isArray(sessions) && sessions.length === 0)
+      ) {
+        setSession(
+          Array.isArray(sessions) && sessions.length > 0
+            ? sessions[0]
+            : null
+        );
         window.history.pushState({}, "", window.location.pathname); // Clear URL params
       }
       messageApi.success("Session deleted");
@@ -357,7 +375,7 @@ export const SessionManager: React.FC = () => {
         // Session not found
         messageApi.error("Session not found");
         window.history.pushState({}, "", window.location.pathname); // Clear URL
-        if (sessions.length > 0) {
+        if (Array.isArray(sessions) && sessions.length > 0) {
           setSession(sessions[0]); // Fall back to first session
         } else {
           setSession(null);
@@ -374,7 +392,7 @@ export const SessionManager: React.FC = () => {
       console.error("Error loading session:", error);
       messageApi.error("Error loading session");
       window.history.pushState({}, "", window.location.pathname); // Clear invalid URL
-      if (sessions.length > 0) {
+      if (Array.isArray(sessions) && sessions.length > 0) {
         setSession(sessions[0]); // Fall back to first session
       } else {
         setSession(null);
@@ -400,7 +418,11 @@ export const SessionManager: React.FC = () => {
           user.email
         );
         setSessions(
-          sessions.map((s) => (s.id === updated.id ? updated : s))
+          Array.isArray(sessions)
+            ? sessions.map((s) =>
+              s.id === updated.id ? updated : s
+            )
+            : [updated]
         );
         if (session?.id === updated.id) {
           setSession(updated);
@@ -510,7 +532,10 @@ export const SessionManager: React.FC = () => {
         user.email
       );
 
-      setSessions([created, ...sessions]);
+      setSessions([
+        created,
+        ...(Array.isArray(sessions) && sessions ? sessions : []),
+      ]);
       setSession(created);
       window.history.pushState({}, "", `?sessionId=${created.id}`);
     } catch (error) {
@@ -522,6 +547,12 @@ export const SessionManager: React.FC = () => {
   };
 
   const chatViews = useMemo(() => {
+    // 确保sessions是数组
+    if (!Array.isArray(sessions)) {
+      console.warn("sessions is not an array:", sessions);
+      return [];
+    }
+
     return sessions.map((s: Session) => {
       const status = sessionRunStatuses[s.id] as RunStatus;
       const isSessionPotentiallyActive = [
@@ -592,14 +623,45 @@ export const SessionManager: React.FC = () => {
 
   // 监听切换到 Current Session tab 的事件
   useEffect(() => {
-    const handleSwitchToCurrentSession = (event: CustomEvent) => {
-      const { agent } = event.detail;
+    const handleSwitchToCurrentSession = async (event: CustomEvent) => {
+      const { agent, newSession } = event.detail;
 
       // 切换到 Current Session tab
       setActiveSubMenuItem("current_session");
 
       // 设置选中的agent
       setSelectedAgent(agent);
+
+      // 如果有新创建的Session，设置为当前Session
+      if (newSession) {
+        try {
+          // 将新Session添加到sessions列表中
+          setSessions((prevSessions) => [
+            newSession,
+            ...(Array.isArray(prevSessions) && prevSessions ? prevSessions : []),
+          ]);
+
+          // 设置为当前Session
+          setSession(newSession);
+
+          // 更新URL
+          window.history.pushState(
+            {},
+            "",
+            `?sessionId=${newSession.id}`
+          );
+
+          // 保存到localStorage
+          saveSessionIdToStorage(newSession.id);
+
+          console.log(
+            "New session created and set as current:",
+            newSession
+          );
+        } catch (error) {
+          console.error("Error setting new session:", error);
+        }
+      }
     };
 
     window.addEventListener(
@@ -613,7 +675,7 @@ export const SessionManager: React.FC = () => {
         handleSwitchToCurrentSession as EventListener
       );
     };
-  }, [setSelectedAgent]); // Empty dependency array since we want this to run once on mount
+  }, [setSelectedAgent, setSessions, setSession]); // 添加依赖项
 
   const handleCreateSessionFromPlan = (
     sessionId: number,
@@ -708,21 +770,37 @@ export const SessionManager: React.FC = () => {
           />
         </div>
 
+        {/* Agent Selector positioned absolutely to the right of Sidebar */}
+        {activeSubMenuItem === "current_session" && (
+          <div
+            className={`absolute top-0 z-10 p-4 transition-all duration-200 ${isSidebarOpen ? "left-64" : "left-0"
+              }`}
+            style={{ width: "400px" }}
+          >
+            <AgentSelectorAdvanced
+              agents={agents}
+              models={models}
+              selectedAgent={selectedAgent}
+              onAgentSelect={setSelectedAgent}
+              placeholder="Select Your Agent"
+              className="w-full"
+            />
+          </div>
+        )}
+
         <div
-          className={`flex-1 transition-all -mr-4 duration-200 w-[200px] ${isSidebarOpen ? "ml-64" : "ml-0"
+          className={`flex-1 transition-all duration-200 ${isSidebarOpen
+            ? "ml-64"
+            : activeSubMenuItem === "current_session"
+              ? "ml-96"
+              : "ml-0"
             }`}
         >
           {activeSubMenuItem === "current_session" ? (
-            session && sessions.length > 0 ? (
-              <div className="pl-4">
-                <AgentSelectorAdvanced
-                  agents={agents}
-                  models={models}
-                  selectedAgent={selectedAgent}
-                  onAgentSelect={setSelectedAgent}
-                  placeholder="Select Your Agent"
-                  className="w-96"
-                />
+            session &&
+              Array.isArray(sessions) &&
+              sessions.length > 0 ? (
+              <div className={`${isSidebarOpen ? "pl-4" : ""}`}>
                 {chatViews}
               </div>
             ) : (
