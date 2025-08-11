@@ -40,20 +40,28 @@ const AgentCard: React.FC<AgentCardProps> = ({
   config,
   onClick,
 }) => {
-  const { setSelectedAgent } = useModeConfigStore();
+  const { setSelectedAgent, setMode, setConfig } = useModeConfigStore();
 
   const handleTryClick = () => {
-    // 创建agent对象
+    // 创建agent对象，按照新的格式
     const agent = {
-      mode: config.model || `agent-${Date.now()}`,
+      mode: "remote",
       name: name,
       type: "remote" as const,
       description: description,
-      config: config,
+      config: {
+        model: config.model, // 传递当前的Model信息
+      },
     };
 
     // 设置选中的agent
     setSelectedAgent(agent);
+
+    // 同时更新mode和config，这样WebSocket消息就会使用正确的参数
+    setMode("remote");
+    setConfig({
+      model: config.model, // 传递当前的Model信息
+    });
 
     // 触发自定义事件，通知切换到 Current Session tab
     window.dispatchEvent(
