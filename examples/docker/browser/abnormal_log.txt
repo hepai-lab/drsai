@@ -1,0 +1,39 @@
+2025-08-11 14:35:48,250 WARN exited: x11vnc (exit status 1; not expected)
+172.17.0.1 - - [11/Aug/2025 14:35:49] 172.17.0.1: Plain non-SSL (ws://) WebSocket connection
+172.17.0.1 - - [11/Aug/2025 14:35:49] 172.17.0.1: Path: '/websockify'
+172.17.0.1 - - [11/Aug/2025 14:35:49] connecting to: localhost:5900
+172.17.0.1 - - [11/Aug/2025 14:35:49] Failed to connect to localhost:5900: [Errno 111] Connection refused
+172.17.0.1 - - [11/Aug/2025 14:35:51] 172.17.0.1: Plain non-SSL (ws://) WebSocket connection
+2025-08-11 14:35:51,340 INFO spawned: 'x11vnc' with pid 2011
+172.17.0.1 - - [11/Aug/2025 14:35:51] 172.17.0.1: Path: '/websockify'
+172.17.0.1 - - [11/Aug/2025 14:35:51] connecting to: localhost:5900
+172.17.0.1 - - [11/Aug/2025 14:35:51] Failed to connect to localhost:5900: [Errno 111] Connection refused
+11/08/2025 14:35:51 x11vnc version: 0.9.16 lastmod: 2019-01-05  pid: 2011
+/tmp/fd.qTzGtt: 1: xauth: not found
+11/08/2025 14:35:51 -auth guess: failed for display=':99'
+11/08/2025 14:35:51 -auth guess: since we are root, retrying with FD_XDM=1
+11/08/2025 14:35:51 -auth guess: failed for display=':99'
+2025-08-11 14:35:52,642 INFO success: x11vnc entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 14:35:52,642 WARN exited: x11vnc (exit status 1; not expected)
+2025-08-11 14:35:53,644 INFO spawned: 'x11vnc' with pid 2127
+11/08/2025 14:35:53 x11vnc version: 0.9.16 lastmod: 2019-01-05  pid: 2127
+/tmp/fd.wuCHCo: 1: xauth: not found
+11/08/2025 14:35:53 -auth guess: failed for display=':99'
+11/08/2025 14:35:53 -auth guess: since we are root, retrying with FD_XDM=1
+11/08/2025 14:35:53 -auth guess: failed for display=':99'
+2025-08-11 14:35:54,960 INFO success: x11vnc entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 14:35:54,961 WARN exited: x11vnc (exit status 1; not expected)
+172.17.0.1 - - [11/Aug/2025 14:35:55] 172.17.0.1: Plain non-SSL (ws://) WebSocket connection
+2025-08-11 14:35:55,624 INFO spawned: 'x11vnc' with pid 2244
+172.17.0.1 - - [11/Aug/2025 14:35:55] 172.17.0.1: Path: '/websockify'
+172.17.0.1 - - [11/Aug/2025 14:35:55] connecting to: localhost:5900
+172.17.0.1 - - [11/Aug/2025 14:35:55] Failed to connect to localhost:5900: [Errno 111] Connection refused
+11/08/2025 14:35:55 x11vnc version: 0.9.16 lastmod: 2019-01-05  pid: 2244
+/tmp/fd.UteakQ: 1: xauth: not found
+11/08/2025 14:35:55 -auth guess: failed for display=':99'
+11/08/2025 14:35:55 -auth guess: since we are root, retrying with FD_XDM=1
+11/08/2025 14:35:55 -auth guess: failed for display=':99'
+2025-08-11 14:35:55,940 WARN exited: x11vnc (exit status 1; not expected)
+2025-08-11 14:35:56,945 INFO spawned: 'x11vnc' with pid 2360
+11/08/2025 14:35:56 x11vnc version: 0.9.16 lastmod: 2019-01-05  pid: 2360
+/tmp/fd.Bdgpd9: 1: xauth: not found

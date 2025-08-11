@@ -1,0 +1,203 @@
+(base) ➜  ~ docker logs -f c833b3d25bd9
+Starting services...
+DISPLAY=:99
+2025-08-11 07:31:39,625 CRIT Supervisor is running as root.  Privileges were not dropped because no user is specified in the config file.  If you intend to run as root, you can set user=root in the config file to avoid this message.
+2025-08-11 07:31:39,627 INFO supervisord started with pid 1
+2025-08-11 07:31:40,628 INFO spawned: 'x11setup' with pid 6
+2025-08-11 07:31:40,629 INFO spawned: 'x11vnc' with pid 7
+2025-08-11 07:31:40,629 INFO spawned: 'playwright-server' with pid 8
+2025-08-11 07:31:40,632 INFO spawned: 'novnc' with pid 10
+2025-08-11 07:31:40,633 INFO spawned: 'openbox' with pid 11
+2025-08-11 07:31:40,633 INFO spawned: 'xvfb' with pid 12
+Warning: could not find self.pem
+Using local websockify at /usr/local/novnc/utils/websockify/run
+2025-08-11 07:31:40,645 INFO success: x11setup entered RUNNING state, process has stayed up for > than 0 seconds (startsecs)
+Starting webserver and WebSockets proxy on port 57996
+xsetroot:  unable to open display ':99'
+Can't open display :99
+xrdb: Cannot assign requested address
+xrdb: Can't open display ':99'
+xrdb: Cannot assign requested address
+xrdb: Can't open display ':99'
+xrdb: Cannot assign requested address
+xrdb: Can't open display ':99'
+xrdb: Cannot assign requested address
+xrdb: Can't open display ':99'
+xrdb: Cannot assign requested address
+xrdb: Can't open display ':99'
+xset:  unable to open display ":99"
+xset:  unable to open display ":99"
+xset:  unable to open display ":99"
+Can't open display :99
+X11 environment configured for optimal display
+2025-08-11 07:31:40,670 INFO exited: x11setup (exit status 0; expected)
+11/08/2025 07:31:40 x11vnc version: 0.9.16 lastmod: 2019-01-05  pid: 7
+WebSocket server settings:
+  - Listen on :57996
+  - Web server. Web root: /usr/local/novnc
+  - No SSL/TLS support (no cert file)
+  - proxying from :57996 to localhost:5900
+11/08/2025 07:31:41 Using X display :99
+11/08/2025 07:31:41 rootwin: 0x50d reswin: 0x200001 dpy: 0xa4336c90
+11/08/2025 07:31:41 
+11/08/2025 07:31:41 ------------------ USEFUL INFORMATION ------------------
+11/08/2025 07:31:41 X DAMAGE available on display, using it for polling hints.
+11/08/2025 07:31:41   To disable this behavior use: '-noxdamage'
+11/08/2025 07:31:41 
+11/08/2025 07:31:41   Most compositing window managers like 'compiz' or 'beryl'
+11/08/2025 07:31:41   cause X DAMAGE to fail, and so you may not see any screen
+11/08/2025 07:31:41   updates via VNC.  Either disable 'compiz' (recommended) or
+11/08/2025 07:31:41   supply the x11vnc '-noxdamage' command line option.
+11/08/2025 07:31:41 
+11/08/2025 07:31:41 Wireframing: -wireframe mode is in effect for window moves.
+11/08/2025 07:31:41   If this yields undesired behavior (poor response, painting
+11/08/2025 07:31:41   errors, etc) it may be disabled:
+11/08/2025 07:31:41    - use '-nowf' to disable wireframing completely.
+11/08/2025 07:31:41    - use '-nowcr' to disable the Copy Rectangle after the
+11/08/2025 07:31:41      moved window is released in the new position.
+11/08/2025 07:31:41   Also see the -help entry for tuning parameters.
+11/08/2025 07:31:41   You can press 3 Alt_L's (Left "Alt" key) in a row to 
+11/08/2025 07:31:41   repaint the screen, also see the -fixscreen option for
+11/08/2025 07:31:41   periodic repaints.
+11/08/2025 07:31:41   Note: '-scale' is on and this can cause more problems.
+11/08/2025 07:31:41 
+11/08/2025 07:31:41 XFIXES available on display, resetting cursor mode
+11/08/2025 07:31:41   to: '-cursor most'.
+11/08/2025 07:31:41   to disable this behavior use: '-cursor arrow'
+11/08/2025 07:31:41   or '-noxfixes'.
+11/08/2025 07:31:41 using XFIXES for cursor drawing.
+11/08/2025 07:31:41 GrabServer control via XTEST.
+11/08/2025 07:31:41 
+11/08/2025 07:31:41 Scroll Detection: -scrollcopyrect mode is in effect to
+11/08/2025 07:31:41   use RECORD extension to try to detect scrolling windows
+11/08/2025 07:31:41   (induced by either user keystroke or mouse input).
+11/08/2025 07:31:41   If this yields undesired behavior (poor response, painting
+11/08/2025 07:31:41   errors, etc) it may be disabled via: '-noscr'
+11/08/2025 07:31:41   Also see the -help entry for tuning parameters.
+11/08/2025 07:31:41   You can press 3 Alt_L's (Left "Alt" key) in a row to 
+11/08/2025 07:31:41   repaint the screen, also see the -fixscreen option for
+11/08/2025 07:31:41   periodic repaints.
+11/08/2025 07:31:41   Note: '-scale' is on and this can cause more problems.
+11/08/2025 07:31:41 X FBPM extension not supported.
+Xlib:  extension "DPMS" missing on display ":99".
+11/08/2025 07:31:41 X display is not capable of DPMS.
+11/08/2025 07:31:41 --------------------------------------------------------
+11/08/2025 07:31:41 
+11/08/2025 07:31:41 Default visual ID: 0x21
+11/08/2025 07:31:41 Read initial data from X display into framebuffer.
+11/08/2025 07:31:41 initialize_screen: fb_depth/fb_bpp/fb_Bpl 24/32/5760
+11/08/2025 07:31:41 scaling disabled for factor 1.000000 1.000000
+11/08/2025 07:31:41 
+11/08/2025 07:31:41 X display :99 is 32bpp depth=24 true color
+11/08/2025 07:31:41 
+11/08/2025 07:31:41 Autoprobing TCP port 
+11/08/2025 07:31:41 Autoprobing selected TCP port 5900
+11/08/2025 07:31:41 Autoprobing TCP6 port 
+11/08/2025 07:31:41 Autoprobing selected TCP6 port 5900
+11/08/2025 07:31:41 listen6: bind: Address already in use
+11/08/2025 07:31:41 Not listening on IPv6 interface.
+11/08/2025 07:31:41 
+11/08/2025 07:31:41 Xinerama is present and active (e.g. multi-head).
+11/08/2025 07:31:41 Xinerama: number of sub-screens: 1
+11/08/2025 07:31:41 Xinerama: no blackouts needed (only one sub-screen)
+11/08/2025 07:31:41 
+11/08/2025 07:31:41 fb read rate: 2202 MB/sec
+11/08/2025 07:31:41 fast read: reset -wait  ms to: 10
+11/08/2025 07:31:41 fast read: reset -defer ms to: 10
+11/08/2025 07:31:41 The X server says there are 10 mouse buttons.
+11/08/2025 07:31:41 screen setup finished.
+11/08/2025 07:31:41 
+
+The VNC desktop is:      c833b3d25bd9:0
+
+******************************************************************************
+Have you tried the x11vnc '-ncache' VNC client-side pixel caching feature yet?
+
+The scheme stores pixel data offscreen on the VNC viewer side for faster
+retrieval.  It should work with any VNC viewer.  Try it by running:
+
+PORT=5900
+    x11vnc -ncache 10 ...
+
+One can also add -ncache_cr for smooth 'copyrect' window motion.
+More info: http://www.karlrunge.com/x11vnc/faq.html#faq-client-caching
+
+Starting Playwright server...
+
+
+Navigate to this URL:
+
+    http://c833b3d25bd9:57996/vnc.html?host=c833b3d25bd9&port=57996
+
+Press Ctrl-C to exit
+
+
+2025-08-11 07:31:41,659 INFO success: x11vnc entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 07:31:41,659 INFO success: playwright-server entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 07:31:41,659 INFO success: novnc entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 07:31:41,659 INFO success: openbox entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 07:31:41,659 INFO success: xvfb entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+Playwright server running: ws://localhost:40257/b751745a107abf7676b69479acec0282
+172.17.0.1 - - [11/Aug/2025 07:31:47] 172.17.0.1: Plain non-SSL (ws://) WebSocket connection
+172.17.0.1 - - [11/Aug/2025 07:31:47] 172.17.0.1: Path: '/websockify'
+172.17.0.1 - - [11/Aug/2025 07:31:47] connecting to: localhost:5900
+11/08/2025 07:31:47 Got connection from client 127.0.0.1
+11/08/2025 07:31:47   0 other clients
+11/08/2025 07:31:47 Normal socket connection
+11/08/2025 07:31:47 Disabled X server key autorepeat.
+11/08/2025 07:31:47   to force back on run: 'xset r on' (3 times)
+11/08/2025 07:31:47 incr accepted_client=1 for 127.0.0.1:47852  sock=10
+11/08/2025 07:31:47 Client Protocol Version 3.8
+11/08/2025 07:31:47 Protocol version sent 3.8, using 3.8
+11/08/2025 07:31:47 rfbProcessClientSecurityType: executing handler for type 1
+11/08/2025 07:31:47 rfbProcessClientSecurityType: returning securityResult for client rfb version >= 3.8
+11/08/2025 07:31:47 Pixel format for client 127.0.0.1:
+11/08/2025 07:31:47   32 bpp, depth 24, little endian
+11/08/2025 07:31:47   true colour: max r 255 g 255 b 255, shift r 0 g 8 b 16
+11/08/2025 07:31:47 rfbProcessClientNormalMessage: ignoring unsupported encoding type tightPng
+11/08/2025 07:31:47 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0x00000015)
+11/08/2025 07:31:47 Using image quality level 6 for client 127.0.0.1
+11/08/2025 07:31:47 Using JPEG subsampling 0, Q79 for client 127.0.0.1
+11/08/2025 07:31:47 Using compression level 2 for client 127.0.0.1
+11/08/2025 07:31:47 Enabling NewFBSize protocol extension for client 127.0.0.1
+11/08/2025 07:31:47 Enabling LastRect protocol extension for client 127.0.0.1
+11/08/2025 07:31:47 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0xFFFFFEFE)
+11/08/2025 07:31:47 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0xFFFFFEFB)
+11/08/2025 07:31:47 Enabling ExtDesktopSize protocol extension for client 127.0.0.1
+11/08/2025 07:31:47 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0xFFFFFEC8)
+11/08/2025 07:31:47 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0xFFFFFEC7)
+11/08/2025 07:31:47 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0xFFFFFECD)
+11/08/2025 07:31:47 Enabling ExtendedClipboard extension for client 127.0.0.1
+11/08/2025 07:31:47 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0xFFFFFEC4)
+11/08/2025 07:31:47 rfbProcessClientNormalMessage: ignoring unsupported encoding type Enc(0x574D5664)
+11/08/2025 07:31:47 Enabling full-color cursor updates for client 127.0.0.1
+11/08/2025 07:31:47 Using tight encoding for client 127.0.0.1
+11/08/2025 07:31:47 Sending rfbEncodingExtDesktopSize for size (1440x1440) 
+11/08/2025 07:31:47 client 1 network rate 224.5 KB/sec (158577.1 eff KB/sec)
+11/08/2025 07:31:47 client 1 latency:  2.9 ms
+11/08/2025 07:31:47 dt1: 0.0035, dt2: 0.0502 dt3: 0.0029 bytes: 11747
+11/08/2025 07:31:47 link_rate: LR_UNKNOWN - 2 ms, 224 KB/s
+11/08/2025 07:31:47 client_set_net: 127.0.0.1  0.0001
+11/08/2025 07:31:47 created   xdamage object: 0x200031
+11/08/2025 07:31:57 created selwin: 0x200032
+11/08/2025 07:31:57 called initialize_xfixes()
+11/08/2025 07:31:57 copy_tiles: allocating first_line at size 46
+11/08/2025 07:36:51 idle keyboard:   turning X autorepeat back on.
+11/08/2025 08:59:51 client_count: 0
+11/08/2025 08:59:51 Client 127.0.0.1 gone
+11/08/2025 08:59:51 Statistics             events    Transmit/ RawEquiv ( saved)
+11/08/2025 08:59:51  ServerCutText       :      2 |        24/       24 (  0.0%)
+11/08/2025 08:59:51  FramebufferUpdate   :     24 |         0/        0 (  0.0%)
+11/08/2025 08:59:51  LastRect            :      7 |        84/       84 (  0.0%)
+11/08/2025 08:59:51  tight               :     53 |     37480/ 17087384 ( 99.8%)
+11/08/2025 08:59:51  RichCursor          :      8 |      6884/     6884 (  0.0%)
+11/08/2025 08:59:51  ExtendedDesktopSize :      1 |        32/       32 (  0.0%)
+11/08/2025 08:59:51  TOTALS              :     95 |     44504/ 17094408 ( 99.7%)
+11/08/2025 08:59:51 Statistics             events    Received/ RawEquiv ( saved)
+11/08/2025 08:59:51  PointerEvent        :    100 |       600/      600 (  0.0%)
+11/08/2025 08:59:51  ClientCutText       :      1 |        16/       16 (  0.0%)
+11/08/2025 08:59:51  FramebufferUpdate   :     26 |       260/      260 (  0.0%)
+11/08/2025 08:59:51  SetEncodings        :      1 |       100/      100 (  0.0%)
+11/08/2025 08:59:51  SetPixelFormat      :      1 |        20/       20 (  0.0%)
+11/08/2025 08:59:51  TOTALS              :    129 |       996/      996 (  0.0%)
+11/08/2025 08:59:53 destroyed xdamage object: 0x200031

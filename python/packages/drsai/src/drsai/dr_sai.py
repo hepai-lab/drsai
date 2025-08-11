@@ -115,7 +115,7 @@ class DrSai:
             ## 保存用户的extra_requests
             extra_requests: Dict = copy.deepcopy(kwargs)
             ## 大模型配置
-            api_key = kwargs.pop('apikey', None)
+            api_key = kwargs.pop('apikey', None) or kwargs.pop('api_key', None)
             # temperature = kwargs.pop('temperature', 0.6)
             # top_p = kwargs.pop('top_p', 1)
             # cache_seed = kwargs.pop('cache_seed', None)

@@ -31,6 +31,8 @@ async def test_browser_docker():
         logger.info(
             f"WebSurfer started with browser at `http://localhost:{browser._novnc_port}/vnc.html?autoconnect=true&amp;resize=scale&amp;show_dot=true&amp;scaling=local&amp;quality=7&amp;compression=0&amp;view_only=0`"
         )
+    
+    pass
 
 if __name__ == "__main__":
     asyncio.run(test_browser_docker())

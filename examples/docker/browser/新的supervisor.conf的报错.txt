@@ -1,0 +1,105 @@
+172.17.0.1 - - [11/Aug/2025 16:38:54] 172.17.0.1: Plain non-SSL (ws://) WebSocket connection
+172.17.0.1 - - [11/Aug/2025 16:38:54] 172.17.0.1: Path: '/websockify'
+172.17.0.1 - - [11/Aug/2025 16:38:54] connecting to: localhost:5900
+2025-08-11 16:38:59,501 INFO exited: xvfb (exit status 0; expected)
+2025-08-11 16:39:00,505 INFO spawned: 'xvfb' with pid 2868
+(EE) 
+Fatal server error:
+(EE) Server is already active for display 99
+        If this server is no longer running, remove /tmp/.X99-lock
+        and start again.
+(EE) 
+2025-08-11 16:39:01,527 INFO success: xvfb entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 16:39:10,665 INFO exited: xvfb (exit status 0; expected)
+2025-08-11 16:39:11,669 INFO spawned: 'xvfb' with pid 2971
+(EE) 
+Fatal server error:
+(EE) Server is already active for display 99
+        If this server is no longer running, remove /tmp/.X99-lock
+        and start again.
+(EE) 
+2025-08-11 16:39:12,691 INFO success: xvfb entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 16:39:21,828 INFO exited: xvfb (exit status 0; expected)
+2025-08-11 16:39:22,832 INFO spawned: 'xvfb' with pid 3074
+(EE) 
+Fatal server error:
+(EE) Server is already active for display 99
+        If this server is no longer running, remove /tmp/.X99-lock
+        and start again.
+(EE) 
+2025-08-11 16:39:23,854 INFO success: xvfb entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 16:39:32,994 INFO exited: xvfb (exit status 0; expected)
+2025-08-11 16:39:33,998 INFO spawned: 'xvfb' with pid 3177
+(EE) 
+Fatal server error:
+(EE) Server is already active for display 99
+        If this server is no longer running, remove /tmp/.X99-lock
+        and start again.
+(EE) 
+2025-08-11 16:39:35,019 INFO success: xvfb entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 16:39:44,149 INFO exited: xvfb (exit status 0; expected)
+2025-08-11 16:39:45,153 INFO spawned: 'xvfb' with pid 3280
+(EE) 
+Fatal server error:
+(EE) Server is already active for display 99
+        If this server is no longer running, remove /tmp/.X99-lock
+        and start again.
+(EE) 
+2025-08-11 16:39:46,175 INFO success: xvfb entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 16:39:55,319 INFO exited: xvfb (exit status 0; expected)
+2025-08-11 16:39:56,323 INFO spawned: 'xvfb' with pid 3383
+(EE) 
+Fatal server error:
+(EE) Server is already active for display 99
+        If this server is no longer running, remove /tmp/.X99-lock
+        and start again.
+(EE) 
+2025-08-11 16:39:57,345 INFO success: xvfb entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 16:40:06,493 INFO exited: xvfb (exit status 0; expected)
+2025-08-11 16:40:07,497 INFO spawned: 'xvfb' with pid 3486
+(EE) 
+Fatal server error:
+(EE) Server is already active for display 99
+        If this server is no longer running, remove /tmp/.X99-lock
+        and start again.
+(EE) 
+2025-08-11 16:40:08,519 INFO success: xvfb entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 16:40:17,664 INFO exited: xvfb (exit status 0; expected)
+2025-08-11 16:40:18,668 INFO spawned: 'xvfb' with pid 3589
+(EE) 
+Fatal server error:
+(EE) Server is already active for display 99
+        If this server is no longer running, remove /tmp/.X99-lock
+        and start again.
+(EE) 
+2025-08-11 16:40:19,689 INFO success: xvfb entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 16:40:28,825 INFO exited: xvfb (exit status 0; expected)
+2025-08-11 16:40:29,830 INFO spawned: 'xvfb' with pid 3692
+(EE) 
+Fatal server error:
+(EE) Server is already active for display 99
+        If this server is no longer running, remove /tmp/.X99-lock
+        and start again.
+(EE) 
+2025-08-11 16:40:30,851 INFO success: xvfb entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 16:40:39,988 INFO exited: xvfb (exit status 0; expected)
+2025-08-11 16:40:40,992 INFO spawned: 'xvfb' with pid 3795
+(EE) 
+Fatal server error:
+(EE) Server is already active for display 99
+        If this server is no longer running, remove /tmp/.X99-lock
+        and start again.
+(EE) 
+2025-08-11 16:40:42,014 INFO success: xvfb entered RUNNING state, process has stayed up for > than 1 seconds (startsecs)
+2025-08-11 16:40:51,155 INFO exited: xvfb (exit status 0; expected)
+2025-08-11 16:40:52,161 INFO spawned: 'xvfb' with pid 3898
+(EE) 
+Fatal server error:
+(EE) Server is already active for display 99
+        If this server is no longer running, remove /tmp/.X99-lock
+        and start again.
+(EE) 
+11/08/2025 16:40:52 Got connection from client 127.0.0.1
+11/08/2025 16:40:52   0 other clients
+11/08/2025 16:40:52 Normal socket connection
+11/08/2025 16:40:52 Disabled X server key autorepeat.
