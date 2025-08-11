@@ -309,7 +309,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     content.includes("<think>") && content.includes("</think>");
 
   // If allowHtml is true and content contains HTML, render it directly
-  if (allowHtml && (content.includes("<div") || content.includes("<span"))) {
+  if (allowHtml && /<[^>]+>/.test(content)) {
     return (
       <div
         className="prose w-full"
