@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useContext } from "react";
 import { Button } from "../../common/Button";
 import { appContext } from "../../../hooks/provider";
-import { agentAPI, agentWorkerAPI, settingsAPI } from "../../views/api";
+import { agentAPI, agentWorkerAPI, settingsAPI, SessionAPI } from "../../views/api";
 import { parse } from "yaml";
 import { useModeConfigStore } from "../../../store/modeConfig";
 
@@ -41,8 +41,9 @@ const AgentCard: React.FC<AgentCardProps> = ({
   onClick,
 }) => {
   const { setSelectedAgent, setMode, setConfig } = useModeConfigStore();
+  const { user } = useContext(appContext);
 
-  const handleTryClick = () => {
+  const handleTryClick = async () => {
     // 创建agent对象，按照新的格式
     const agent = {
       mode: "remote",
@@ -63,12 +64,46 @@ const AgentCard: React.FC<AgentCardProps> = ({
       model: config.model, // 传递当前的Model信息
     });
 
-    // 触发自定义事件，通知切换到 Current Session tab
-    window.dispatchEvent(
-      new CustomEvent("switchToCurrentSession", {
-        detail: { agent },
-      })
-    );
+    // 创建新Session
+    try {
+      if (user?.email) {
+        const sessionAPI = new SessionAPI();
+        const newSession = await sessionAPI.createSession(
+          {
+            name: `${name} - ${new Date().toLocaleDateString(undefined, {
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}`,
+          },
+          user.email
+        );
+
+        // 触发自定义事件，通知切换到 Current Session tab 并设置新Session
+        window.dispatchEvent(
+          new CustomEvent("switchToCurrentSession", {
+            detail: { agent, newSession },
+          })
+        );
+      } else {
+        // 如果没有用户，只触发原有的事件
+        window.dispatchEvent(
+          new CustomEvent("switchToCurrentSession", {
+            detail: { agent },
+          })
+        );
+      }
+    } catch (error) {
+      console.error("Error creating new session:", error);
+      // 即使创建Session失败，也要触发原有的事件
+      window.dispatchEvent(
+        new CustomEvent("switchToCurrentSession", {
+          detail: { agent },
+        })
+      );
+    }
 
     // 保留原有的onClick回调
     if (onClick) {
