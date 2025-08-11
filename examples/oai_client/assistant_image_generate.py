@@ -30,11 +30,11 @@ here = os.path.dirname(os.path.abspath(__file__))
 
 def update_image(
         client: OpenAI,
-        file_buffer: io.BytesIO,
+        file_obj,
 ) -> str:
 
     file_obj = client.files.create(
-        file=file_buffer,
+        file=file_obj,
         purpose="user_data"
         )
     return file_obj.id
@@ -64,9 +64,18 @@ async def async_generate_image(
         await asyncio.sleep(0.1)
 
         image_bytes = base64.b64decode(img.data[0].b64_json)
-        image_buffer = io.BytesIO(image_bytes)
         
-        file_id = update_image(client, image_buffer)
+        # 创建临时文件
+        temp_file_path = f"{here}/temp_image_{uuid.uuid4().hex}.png"
+        with open(temp_file_path, "wb") as f:
+            f.write(image_bytes)
+        
+        # 使用 open(file_path, "rb") 格式
+        with open(temp_file_path, "rb") as image_file:
+            file_id = update_image(client, image_file)
+        
+        # 删除临时文件
+        os.remove(temp_file_path)
         image_url = f"https://aiapi.ihep.ac.cn/apiv2/files/{file_id}/preview"
         yield f"图片已保存，预览地址：{image_url}\n\n"
         # file_name = f"output_{uuid.uuid4().hex}.png"
