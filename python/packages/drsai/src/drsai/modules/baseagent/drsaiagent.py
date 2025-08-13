@@ -168,19 +168,19 @@ class DrSaiAgent(AssistantAgent):
             """
             base64_images: str = ""
             text: str = ""
+            handle_content = []
             for item in content:
                 if isinstance(item, Image):
-                    base64_images = item._convert_base64_to_data_uri()
-                else:
-                    text = item
-            handle_content = [
-                {"type": "text", "text": text},
-                {
+                    base64_images = item.data_uri
+                    handle_content.append( {
                     "type": "image_url",
                     "image_url": {
                         "url": base64_images,
                     }
-                }]
+                })
+                else:
+                    text = item
+                    handle_content.append({"type": "text", "text": text})
             return handle_content
         
         messages = []
