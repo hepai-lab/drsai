@@ -305,11 +305,6 @@ const parseContent = (content: any): string => {
   }
 };
 
-// 移除 <think> 和 </think> 标签，保留内容
-const filterThinkTags = (content: string): string => {
-  // 移除 <think> 和 </think> 标签，保留标签内的内容
-  return content.replace(/<\/?think>/g, "").trim();
-};
 
 const parseorchestratorContent = (
   content: string,
