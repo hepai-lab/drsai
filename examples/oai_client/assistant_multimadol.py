@@ -108,13 +108,13 @@ if __name__ == "__main__":
             # 智能体注册信息
             agent_name="ImageExplainier",
             permission='groups: payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
-            description = "An agent that explains images based on user prompts.",
+            description = "以qwen-vl-max-latest为基座模型的图像解释智能体。",
             version = "0.1.0",
             logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务配置
-            port = 42812, 
+            port = 42810, 
             no_register=False,
             enable_openwebui_pipeline=True, 
             history_mode = "backend",

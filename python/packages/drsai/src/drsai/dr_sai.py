@@ -30,7 +30,8 @@ from autogen_agentchat.messages import (
     ToolCallRequestEvent,
     ToolCallExecutionEvent,
     ModelClientStreamingChunkEvent,
-    # MultiModalMessage,
+    MultiModalMessage,
+    Image,
     # UserInputRequestedEvent,
 )
 from autogen_agentchat.teams import BaseGroupChat
@@ -180,16 +181,42 @@ class DrSai:
             ## 将前端消息整理为autogen BaseChatMessage格式
             task: list[BaseChatMessage] = []
             for message in messages[:-1]:
-                task.append(TextMessage(content=message["content"], source=message["role"], metadata={"internal": "no"}))  
+                if isinstance(message["content"], list):
+                    content = []
+                    for sub_message in message["content"]:
+                        if sub_message["type"] == "text":
+                            content.append(sub_message["text"])
+                        elif sub_message["type"] == "image_url":
+                            content.append(Image.from_uri(sub_message["image_url"]["url"]))
+                    task.append(MultiModalMessage(content=content, source=message["role"], metadata={"internal": "no"}))
+                else:
+                    task.append(TextMessage(content=message["content"], source=message["role"], metadata={"internal": "no"}))  
             ## 最后一条处理Handoff
             last_message = messages[-1]
             if isinstance(agent, BaseGroupChat):
                 if (HandoffMessage in agent._participants[0].produced_message_types) and thread.metadata.get("handoff_target") == "user":
                     task.append(HandoffMessage(source="user", target=thread.metadata.get("handoff_source"), content=last_message["content"], metadata={"internal": "no"}))
+                elif isinstance(last_message["content"], list):
+                    content = []
+                    for sub_message in last_message["content"]:
+                        if sub_message["type"] == "text":
+                            content.append(sub_message["text"])
+                        elif sub_message["type"] == "image_url":
+                            content.append(Image.from_uri(sub_message["image_url"]["url"]))
+                    task.append(MultiModalMessage(content=content, source=message["role"], metadata={"internal": "no"}))
                 else:
                     task.append(TextMessage(content=last_message["content"], source=last_message["role"], metadata={"internal": "no"})) 
             else:
-                task.append(TextMessage(content=last_message["content"], source=last_message["role"], metadata={"internal": "no"})) 
+                if isinstance(last_message["content"], list):
+                    content = []
+                    for sub_message in last_message["content"]:
+                        if sub_message["type"] == "text":
+                            content.append(sub_message["text"])
+                        elif sub_message["type"] == "image_url":
+                            content.append(Image.from_uri(sub_message["image_url"]["url"]))
+                    task.append(MultiModalMessage(content=content, source=message["role"], metadata={"internal": "no"}))
+                else:
+                    task.append(TextMessage(content=last_message["content"], source=last_message["role"], metadata={"internal": "no"}))  
             
             # 开始聊天
 
