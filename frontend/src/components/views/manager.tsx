@@ -699,23 +699,6 @@ export const SessionManager: React.FC = () => {
     }, 2000); // Give time for session selection to complete
   };
 
-  const handleTryAgent = (agentConfig: any) => {
-    // 切换到 Current Session tab
-    setActiveSubMenuItem("current_session");
-
-    // 创建agent对象并设置选中的agent
-    const agent = {
-      mode: agentConfig.model || `agent-${Date.now()}`,
-      name: agentConfig.name || "Remote Agent",
-      type: "remote" as const,
-      description:
-        agentConfig.description || "Remote agent from Agent Square",
-      config: agentConfig,
-    };
-
-    setSelectedAgent(agent);
-  };
-
   return (
     <div className="relative flex flex-col h-full w-full">
       {contextHolder}
@@ -732,7 +715,7 @@ export const SessionManager: React.FC = () => {
 
       <div className="flex flex-1 relative">
         <div
-          className={`absolute left-0 top-0 h-full transition-all duration-200 ease-in-out ${isSidebarOpen ? "w-77" : "w-0"
+          className={`absolute left-0 top-0 h-full transition-all duration-200 ease-in-out ${isSidebarOpen ? "w-56" : "w-0"
             }`}
         >
           <Sidebar
@@ -773,9 +756,8 @@ export const SessionManager: React.FC = () => {
         {/* Agent Selector positioned absolutely to the right of Sidebar */}
         {activeSubMenuItem === "current_session" && (
           <div
-            className={`absolute top-0 z-10 p-4 transition-all duration-200 ${isSidebarOpen ? "left-64" : "left-0"
+            className={`absolute z-10 transition-all duration-200 top-[-52px] ${isSidebarOpen ? "left-60" : "left-0"
               }`}
-            style={{ width: "400px" }}
           >
             <AgentSelectorAdvanced
               agents={agents}

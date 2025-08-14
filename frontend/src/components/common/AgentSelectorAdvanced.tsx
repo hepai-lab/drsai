@@ -60,7 +60,6 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         { id: "2", type: "HepAI", url: "", token: "", workerName: "" },
         { id: "3", type: "OpenAPI", url: "", token: "", workerName: "" },
     ]);
-    const { config } = useSettingsStore();
     const {
         mode,
         setMode,
@@ -374,38 +373,6 @@ custom_agent_config:
         searchInputRef.current?.focus();
     };
 
-    // Robot icon component
-    const RobotIcon = () => (
-        <Bot
-            className="w-4 h-4"
-            style={{ color: "var(--color-magenta-800)" }}
-        />
-    );
-
-    const handleConfigChange = (
-        id: string,
-        field: keyof ToolConfig,
-        value: string
-    ) => {
-        setToolConfigs((prev) =>
-            prev.map((config) =>
-                config.id === id ? { ...config, [field]: value } : config
-            )
-        );
-    };
-
-    const handleRemove = (id: string) => {
-        setToolConfigs((prev) => prev.filter((config) => config.id !== id));
-    };
-
-    const addConfig = () => {
-        const newId = (toolConfigs.length + 1).toString();
-        setToolConfigs((prev) => [
-            ...prev,
-            { id: newId, type: "", url: "", token: "", workerName: "" },
-        ]);
-    };
-
     // 使用持久化的选中智能体或传入的 selectedAgent
     const currentSelectedAgent = selectedAgent || persistedSelectedAgent;
 
@@ -418,11 +385,13 @@ custom_agent_config:
                     onClick={toggleDropdown}
                     disabled={disabled}
                     className={`
-          w-[296px] flex items-center justify-between px-3 py-2 rounded-lg
+           flex items-center justify-between px-3 py-2 rounded-lg
           transition-all duration-200 ease-in-out
+          hover:text-[#acabe6]
+        
           ${darkMode === "dark"
-                            ? "bg-[#3a3a3a] text-[#e5e5e5] border border-[#e5e5e530] hover:border-[#e5e5e560]"
-                            : "bg-white text-[#4a5568] border border-[#e2e8f0] hover:border-[#4d3dc3]"
+                            ? " text-[#e5e5e5] hover:border-[#e5e5e560]"
+                            : " text-[#4a5568]  hover:border-[#4d3dc3]"
                         }
           ${disabled
                             ? "opacity-50 cursor-not-allowed"
@@ -432,16 +401,24 @@ custom_agent_config:
                     aria-haspopup="listbox"
                     aria-expanded={isOpen}
                 >
-                    <div className="flex items-center gap-3">
-                        {currentSelectedAgent && <RobotIcon />}
-                        <span className="text-sm font-medium">
+                    <div className="flex items-center gap-3 ">
+                        {currentSelectedAgent && (
+                            <Bot
+                                className="w-8 h-8 transition-colors duration-200 "
+                                style={{
+                                    borderRadius: "4px",
+                                    padding: "2px",
+                                }}
+                            />
+                        )}
+                        <span className="text-xl font-medium ">
                             {currentSelectedAgent
                                 ? currentSelectedAgent.name
                                 : placeholder}
                         </span>
                     </div>
                     <ChevronDown
-                        className={`w-4 h-4 transition-transform duration-200 ${isOpen ? "rotate-180" : ""
+                        className={`w-8 h-8 transition-transform duration-200 ${isOpen ? "rotate-180" : ""
                             }`}
                     />
                 </button>
@@ -535,15 +512,13 @@ custom_agent_config:
                                             className={`
                       w-full flex items-center gap-3 px-3 py-2 rounded-md
                       text-sm transition-colors duration-150
-                      ${darkMode === "dark"
-                                                    ? "text-[#e5e5e5] hover:bg-[#444444]"
-                                                    : "text-[#4a5568] hover:bg-[#f9fafb]"
-                                                }
                       ${isSelected
                                                     ? darkMode === "dark"
-                                                        ? "bg-[#4d3dc3] text-white"
-                                                        : "bg-[#e7e5f2] text-[#4d3dc3]"
-                                                    : ""
+                                                        ? "bg-[#4d3dc3] text-white hover:bg-[#4d3dc3]"
+                                                        : "bg-[#e7e5f2] text-[#4d3dc3] hover:bg-[#e7e5f2]"
+                                                    : darkMode === "dark"
+                                                        ? "text-[#e5e5e5] hover:bg-[#444444]"
+                                                        : "text-[#4a5568] hover:bg-[#f9fafb]"
                                                 }
                       ${isFocused && !isSelected
                                                     ? darkMode === "dark"
@@ -553,7 +528,23 @@ custom_agent_config:
                                                 }
                     `}
                                         >
-                                            <RobotIcon />
+                                            {isSelected ? (
+                                                <Bot
+                                                    className="w-8 h-8 transition-colors duration-200 text-white"
+                                                    style={{
+                                                        borderRadius: "4px",
+                                                        padding: "2px",
+                                                    }}
+                                                />
+                                            ) : (
+                                                <Bot
+                                                    className="w-8 h-8 transition-colors duration-200 text-[var(--color-magenta-800)]"
+                                                    style={{
+                                                        borderRadius: "4px",
+                                                        padding: "2px",
+                                                    }}
+                                                />
+                                            )}
                                             <div className="flex-1 text-left">
                                                 <div className="truncate">
                                                     {agent.name}

@@ -18,14 +18,14 @@ function SubMenu<T extends string>({
   items,
 }: SubMenuProps<T>) {
   return (
-    <div className="w-full border-b border-secondary">
+    <div className="w-full border-b border-secondary pr-4">
       {items.map((item) => (
         <button
           key={item.id}
-          className={` text-left py-1 pl-1 px-2 text-lg font-semibold  flex items-center rounded-md mx-2 
+          className={` text-left py-1 pl-4 text-lg font-semibold  flex items-center rounded-md mx-2 w-full
             ${activeItem === item.id
               ? "font-bold text-white bg-magenta-800"
-              : "font-semibold text-gray-700 hover:text-magenta-700 "
+              : "font-semibold text-gray-700 hover:text-magenta-700 hover:bg-[#444444]"
             }`}
           onClick={() => onClick(item.id)}
         >
