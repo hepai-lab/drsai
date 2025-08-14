@@ -21,6 +21,9 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
     const [recognition, setRecognition] = useState<any>(null);
     const [interimTranscript, setInterimTranscript] = useState("");
 
+    // 检测当前主题模式
+    const isDarkMode = document.documentElement.classList.contains("dark");
+
     useEffect(() => {
         // 检查浏览器是否支持语音识别
         const SpeechRecognition =
@@ -45,7 +48,6 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
                     const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
                         finalTranscript += transcript;
-                        console.log("Final transcript:", finalTranscript);
                     } else {
                         interimTranscript += transcript;
                     }
@@ -107,7 +109,10 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
         return (
             <button
                 disabled
-                className={`p-2 rounded bg-gray-300 text-gray-500 cursor-not-allowed ${className}`}
+                className={`p-2 rounded-lg ${isDarkMode
+                    ? "bg-gray-600 text-gray-400"
+                    : "bg-gray-300 text-gray-500"
+                    } cursor-not-allowed ${className}`}
                 title="浏览器不支持语音识别"
             >
                 <Mic className="h-5 w-5" />
@@ -120,9 +125,13 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
             <button
                 onClick={toggleListening}
                 disabled={disabled}
-                className={`p-2 rounded-full transition-all duration-200 ${isListening
-                    ? "bg-red-500 hover:bg-red-600 text-white"
-                    : "hover:bg-gray-600 text-white"
+                className={`w-8 h-8 rounded-xl flex items-center justify-center transition-smooth ${isListening
+                    ? isDarkMode
+                        ? "bg-error-primary/20 hover:bg-error-primary/30 text-error-primary pulse-glow"
+                        : "bg-error-primary/20 hover:bg-error-primary/30 text-error-primary pulse-glow"
+                    : isDarkMode
+                        ? "bg-accent/20 hover:bg-accent/30 text-accent hover-lift"
+                        : "bg-accent/20 hover:bg-accent/30 text-accent hover-lift"
                     } ${disabled
                         ? "opacity-50 cursor-not-allowed"
                         : "cursor-pointer"
@@ -130,14 +139,19 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
                 title={isListening ? "停止语音输入" : "开始语音输入"}
             >
                 {isListening ? (
-                    <MicOff className="h-5 w-5 animate-pulse" />
+                    <MicOff className="h-6 w-6" />
                 ) : (
-                    <Mic className="h-5 w-5" />
+                    <Mic className="h-6 w-6" />
                 )}
             </button>
 
             {interimTranscript && (
-                <div className="absolute bottom-full mb-2 left-0 right-0 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-2 text-sm text-gray-600 dark:text-gray-300 max-w-xs">
+                <div
+                    className={`absolute bottom-full mb-2 left-0 right-0 rounded-xl p-3 text-sm max-w-xs backdrop-blur-sm animate-slide-up ${isDarkMode
+                        ? "bg-tertiary/80 border border-border-primary text-primary"
+                        : "bg-white/80 border border-border-primary text-primary shadow-modern"
+                        }`}
+                >
                     {interimTranscript}
                 </div>
             )}

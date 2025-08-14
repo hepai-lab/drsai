@@ -114,19 +114,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
           "paused",
         ].includes(status as string);
         return (
-          <div key={s.id} className="relative">
+          <div key={s.id} className="relative mb-1">
             <div
-              className={`group flex items-center justify-between p-2 py-1 text-sm ${isLoading
+              className={`group flex items-center justify-between p-3 rounded-xl text-sm transition-smooth ${isLoading
                 ? "pointer-events-none opacity-50"
-                : "cursor-pointer hover:bg-tertiary"
+                : "cursor-pointer hover:bg-tertiary/50 hover-lift"
                 } ${currentSession?.id === s.id
-                  ? " border-l-2 border-magenta-800 bg-secondary"
-                  : ""
+                  ? "bg-accent/10 border border-accent/30 shadow-modern"
+                  : "border border-transparent hover:border-border-primary"
                 }`}
               onClick={() => !isLoading && onSelectSession(s)}
             >
-              <div className="flex items-center gap-2 flex-1">
-                <span className="truncate text-sm">
+              <div className="flex items-center gap-3 flex-1">
+                <div className={`w-2 h-2 rounded-full ${currentSession?.id === s.id
+                  ? "bg-accent animate-pulse-glow"
+                  : "bg-secondary"
+                  }`} />
+                <span className="truncate text-sm font-medium text-primary">
                   {s.name.slice(0, 20)}
                   {s.name.length > 20 ? "..." : ""}
                 </span>
@@ -136,7 +140,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   />
                 )}
               </div>
-              <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-smooth">
                 <Dropdown
                   trigger={["click"]}
                   overlay={
@@ -209,116 +213,124 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     return (
-      <div className="h-full border-r border-secondary">
-        <div className="mb-4">
-          <SubMenu
-            items={[
-              {
-                id: "current_session",
-                label: "Current Session",
-                icon: <FileText className="w-4 h-4" />,
-              },
-              {
-                id: "saved_plan",
-                label: "Saved Plans",
-                icon: <Archive className="w-4 h-4" />,
-              },
-              {
-                id: "agent_square",
-                label: "Agent Square",
-                icon: <Sailboat className="w-4 h-4" />
-              }
-            ]}
-            activeItem={activeSubMenuItem}
-            onClick={onSubMenuChange}
-          />
+      <div className="h-full border-r border-border-primary/50 bg-primary/50 backdrop-blur-sm">
+        <div className="p-4 border-b border-border-primary/50">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-primary flex items-center justify-center animate-float">
+              <FileText className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-primary">Workspace</h2>
+              <p className="text-xs text-secondary/60">Manage your sessions and plans</p>
+            </div>
+          </div>
+          <div className="animate-fade-in">
+            <SubMenu
+              items={[
+                {
+                  id: "current_session",
+                  label: "Current Session",
+                  icon: <FileText className="w-4 h-4" />,
+                },
+                {
+                  id: "saved_plan",
+                  label: "Saved Plans",
+                  icon: <Archive className="w-4 h-4" />,
+                },
+                {
+                  id: "agent_square",
+                  label: "Agent Square",
+                  icon: <Sailboat className="w-4 h-4" />
+                }
+              ]}
+              activeItem={activeSubMenuItem}
+              onClick={onSubMenuChange}
+            />
+          </div>
         </div>
 
-        {
-          <>
-            <div className="flex items-center justify-between py-2 border-secondary">
-              <div className="flex items-center gap-2">
-                <span className="text-primary font-medium">Sessions</span>
-
-                {isLoading ? (
-                  <div className="py-2 flex text-sm text-secondary">
-                    Loading...{" "}
-                    <RefreshCcw className="w-4 h-4 inline-block ml-2 animate-spin" />
-                  </div>
-                ) : (
-                  <span className="py-2 bg-accent/10 text-sm text-secondary rounded">
-                    {sortedSessions.length}
-                  </span>
-                )}
-              </div>
+        <div className="px-4">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <span className="text-primary font-semibold">Sessions</span>
+              <span className="text-xs text-secondary bg-tertiary/50 px-2 py-1 rounded-full">
+                {sortedSessions.length}
+              </span>
             </div>
 
-            <div className="my-4 flex text-sm">
-              <div className="mr-2 w-full">
-                <Tooltip title="Create new session">
-                  <Button
-                    className="w-full"
-                    variant="primary"
-                    size="md"
-                    icon={<Plus className="w-4 h-4" />}
-                    onClick={() => onEditSession()}
-                    disabled={isLoading}
-                  >
-                    New Session
-                  </Button>
-                </Tooltip>
+            {isLoading && (
+              <div className="flex items-center text-sm text-secondary">
+                <RefreshCcw className="w-4 h-4 animate-spin" />
               </div>
-            </div>
+            )}
+          </div>
 
-            <div className="overflow-y-auto h-[calc(100%-200px)] scroll">
-              {sortedSessions.length === 0 ? (
-                <div className="p-2 mr-2 text-center text-secondary text-sm border border-dashed rounded">
-                  <InfoIcon className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
-                  No recent sessions found
+          <div className="mb-4">
+            <Tooltip title="Create new session">
+              <Button
+                className="w-full bg-gradient-primary hover:shadow-modern-lg transition-smooth"
+                variant="primary"
+                size="md"
+                icon={<Plus className="w-4 h-4" />}
+                onClick={() => onEditSession()}
+                disabled={isLoading}
+              >
+                New Session
+              </Button>
+            </Tooltip>
+          </div>
+
+          <div className="overflow-y-auto h-[calc(100%-200px)] scroll">
+            {sortedSessions.length === 0 ? (
+              <div className="p-6 text-center">
+                <div className="w-12 h-12 rounded-2xl bg-tertiary/30 flex items-center justify-center mx-auto mb-3">
+                  <InfoIcon className="w-6 h-6 text-secondary" />
                 </div>
-              ) : (
-                <>
-                  {groupedSessions.today.length > 0 && (
-                    <div>
-                      <div className="py-2 text-sm text-secondary">Today</div>
-                      {renderSessionGroup(groupedSessions.today)}
+                <p className="text-secondary text-sm">No recent sessions found</p>
+                <p className="text-secondary/60 text-xs mt-1">Create a new session to get started</p>
+              </div>
+            ) : (
+              <>
+                {groupedSessions.today.length > 0 && (
+                  <div>
+                    <div className="py-2 text-sm text-secondary">Today</div>
+                    {renderSessionGroup(groupedSessions.today)}
+                  </div>
+                )}
+                {groupedSessions.yesterday.length > 0 && (
+                  <div>
+                    <div className="py-2 text-sm text-secondary">
+                      Yesterday
                     </div>
-                  )}
-                  {groupedSessions.yesterday.length > 0 && (
-                    <div>
-                      <div className="py-2 text-sm text-secondary">
-                        Yesterday
-                      </div>
-                      {renderSessionGroup(groupedSessions.yesterday)}
+                    {renderSessionGroup(groupedSessions.yesterday)}
+                  </div>
+                )}
+                {groupedSessions.last7Days.length > 0 && (
+                  <div>
+                    <div className="py-2 text-sm text-secondary">
+                      Last 7 Days
                     </div>
-                  )}
-                  {groupedSessions.last7Days.length > 0 && (
-                    <div>
-                      <div className="py-2 text-sm text-secondary">
-                        Last 7 Days
-                      </div>
-                      {renderSessionGroup(groupedSessions.last7Days)}
+                    {renderSessionGroup(groupedSessions.last7Days)}
+                  </div>
+                )}
+                {groupedSessions.last30Days.length > 0 && (
+                  <div>
+                    <div className="py-2 text-sm text-secondary">
+                      Last 30 Days
                     </div>
-                  )}
-                  {groupedSessions.last30Days.length > 0 && (
-                    <div>
-                      <div className="py-2 text-sm text-secondary">
-                        Last 30 Days
-                      </div>
-                      {renderSessionGroup(groupedSessions.last30Days)}
-                    </div>
-                  )}
-                  {groupedSessions.older.length > 0 && (
-                    <div>
-                      <div className="py-2 text-sm text-secondary">Older</div>
-                      {renderSessionGroup(groupedSessions.older)}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </>
-        }
+                    {renderSessionGroup(groupedSessions.last30Days)}
+                  </div>
+                )}
+                {groupedSessions.older.length > 0 && (
+                  <div>
+                    <div className="py-2 text-sm text-secondary">Older</div>
+                    {renderSessionGroup(groupedSessions.older)}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       </div>
     );
   }, [

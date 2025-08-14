@@ -7,7 +7,9 @@ export type ButtonVariant =
   | "tertiary"
   | "success"
   | "warning"
-  | "danger";
+  | "danger"
+  | "ghost"
+  | "gradient";
 export type ButtonSize = "xs" | "sm" | "md" | "lg";
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -35,38 +37,39 @@ export const Button: React.FC<ButtonProps> = ({
 }) => {
   // Base classes shared by all buttons
   const baseClasses =
-    "inline-flex items-center justify-center rounded-md transition-colors focus:outline-none";
+    "inline-flex items-center justify-center rounded-xl transition-smooth focus:outline-none focus:ring-2 focus:ring-accent/20 hover-lift";
 
   // Size variations
   const sizeClasses = {
-    xs: "px-2 py-1 text-xs",
-    sm: "px-2.5 py-1.5 text-sm",
-    md: "px-4 py-2 text-base",
-    lg: "px-6 py-3 text-lg",
+    xs: "px-3 py-1.5 text-xs font-medium",
+    sm: "px-4 py-2 text-sm font-medium",
+    md: "px-6 py-3 text-base font-semibold",
+    lg: "px-8 py-4 text-lg font-semibold",
   };
 
-  // Variant classes - these would use your color variables
+  // Variant classes - using modern design tokens
   const variantClasses = {
     primary:
-      "bg-magenta-800 text-white hover:bg-magenta-900 focus:ring-2 focus:ring-magenta-900",
-    // primary:
-    //  "bg-blue-600 text-white hover:bg-blue-700 focus:ring-2 focus:ring-blue-400",
+      "bg-accent text-white hover:bg-accent/90 shadow-modern hover:shadow-modern-lg",
     secondary:
-      "bg-transparent border border-magenta-800 text-magenta-800 hover:bg-magenta-900/50",
-    // secondary:
-    //   "bg-transparent border border-blue-600 text-blue-600 hover:bg-blue-700/50",
-    tertiary: "bg-transparent text-gray-800 hover:text-primary",
+      "bg-tertiary/50 border-2 border-border-primary text-primary hover:bg-tertiary/70 hover:border-accent/50 backdrop-blur-sm",
+    tertiary:
+      "bg-transparent text-secondary hover:text-accent hover:bg-tertiary/30",
     success:
-      "bg-green-600 text-white hover:bg-green-700 focus:ring-2 focus:ring-green-400",
+      "bg-success-primary text-white hover:bg-success-primary/90 shadow-modern hover:shadow-modern-lg",
     warning:
-      "bg-warning-primary text-white hover:bg-amber-600 focus:ring-2 focus:ring-amber-400",
+      "bg-warning-primary text-white hover:bg-warning-primary/90 shadow-modern hover:shadow-modern-lg",
     danger:
-      "bg-red-600 text-white hover:bg-red-700 focus:ring-2 focus:ring-red-400",
+      "bg-error-primary text-white hover:bg-error-primary/90 shadow-modern hover:shadow-modern-lg",
+    ghost:
+      "bg-transparent text-secondary hover:text-accent hover:bg-accent/10",
+    gradient:
+      "bg-gradient-primary text-white hover:shadow-modern-lg pulse-glow",
   };
 
   // States
   const stateClasses =
-    disabled || isLoading ? "opacity-60 cursor-not-allowed" : "cursor-pointer";
+    disabled || isLoading ? "opacity-50 cursor-not-allowed transform-none" : "cursor-pointer";
 
   // Width
   const widthClass = fullWidth ? "w-full" : "";
@@ -84,7 +87,9 @@ export const Button: React.FC<ButtonProps> = ({
       `}
       {...props}
     >
-      {isLoading && <Spin size="small" className={children ? "mr-2" : ""} />}
+      {isLoading && (
+        <div className={`animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full ${children ? "mr-2" : ""}`} />
+      )}
 
       {!isLoading && icon && iconPosition === "left" && (
         <span className={`${children ? "mr-2" : ""}`}>{icon}</span>

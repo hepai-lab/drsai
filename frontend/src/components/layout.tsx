@@ -66,21 +66,21 @@ const MagenticUILayout = ({
   }, [darkMode]);
 
   const layoutContent = (
-    <div className="h-screen flex">
+    <div className="h-screen flex bg-primary">
       {/* Content area */}
       <div
         className={classNames(
           "flex-1 flex flex-col min-h-screen",
-          "transition-all duration-300 ease-in-out",
-          "md:pl-1",
+          "transition-smooth",
+          "px-2 sm:px-4 md:px-6 lg:px-8",
           isExpanded ? "md:pl-1" : "md:pl-1"
         )}
       >
         <ConfigProvider
           theme={{
             token: {
-              borderRadius: 4,
-              colorBgBase: darkMode === "dark" ? "#2a2a2a" : "#ffffff",
+              borderRadius: 12,
+              colorBgBase: darkMode === "dark" ? "#0f0f0f" : "#ffffff",
             },
             algorithm:
               darkMode === "dark"
@@ -88,11 +88,11 @@ const MagenticUILayout = ({
                 : theme.defaultAlgorithm,
           }}
         >
-          <main className="flex-1 p-1 text-primary" style={{ height: "100%" }}>
+          <main className="flex-1 p-2 sm:p-4 text-primary" style={{ height: "100%" }}>
             <SessionManager />
           </main>
         </ConfigProvider>
-        <div className="text-sm text-primary mt-2 mb-2 text-center">
+        <div className="text-xs sm:text-sm text-secondary/60 mt-2 mb-4 text-center px-4">
           Dr. Sai can make mistakes. Please monitor its work and intervene if
           necessary. (Powered by Magentic UI)
         </div>

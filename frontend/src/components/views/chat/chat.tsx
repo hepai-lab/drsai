@@ -1215,13 +1215,20 @@ export default function ChatView({
                   : "w-full max-w-full md:max-w-4xl lg:max-w-5xl xl:max-w-6xl"
                   } mx-auto px-4 sm:px-6 md:px-8`}
               >
-                <div>{config.model_name}</div>
-
-                <div className="text-secondary text-lg mb-6">
-                  Welcome to Dr.Sai, Enter a message to get
-                  started
-                  {/* 欢迎使用Dr.Sai智能体，输入消息开始对话 */}
+                <div className="animate-fade-in">
+                  <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-primary mb-6 animate-float">
+                    <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                    </svg>
+                  </div>
+                  <h1 className="text-3xl font-bold mb-6 text-gradient">
+                    Welcome to Dr.Sai, Enter a message to get started
+                  </h1>
                 </div>
+
+                {/* <div className="text-secondary text-xl mb-8 animate-slide-up" style={{ animationDelay: '0.2s' }}>
+                  Welcome to Dr.Sai, Enter a message to get started
+                </div> */}
 
                 <div className="w-full">
                   {/* <iframe src="http://192.168.60.170:8060/wetty" frameborder="0"></iframe> */}

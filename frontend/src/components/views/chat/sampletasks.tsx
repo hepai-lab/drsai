@@ -31,34 +31,35 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
   const maxVisibleTasks = isLargeScreen
     ? SAMPLE_TASKS.length
     : isExpanded
-    ? SAMPLE_TASKS.length
-    : defaultVisibleTasks;
+      ? SAMPLE_TASKS.length
+      : defaultVisibleTasks;
   const visibleTasks = SAMPLE_TASKS.slice(0, maxVisibleTasks);
   const shouldShowToggle =
     !isLargeScreen && SAMPLE_TASKS.length > defaultVisibleTasks;
 
   return (
-    <div className="mb-6">
-      <div className="mt-4 mb-2 text-sm opacity-70 text-secondary">
+    <div className="mb-8">
+      <div className="mt-6 mb-4 text-sm text-secondary/80 text-center">
         or try a sample task from below{" "}
         {/* 或者尝试下面的示例任务 */}
       </div>
-      <div className="flex flex-col gap-2 w-full">
-        <div className="inline-flex flex-wrap justify-center gap-2 w-full">
+      <div className="flex flex-col gap-3 w-full">
+        <div className="inline-flex flex-wrap justify-center gap-3 w-full">
           {visibleTasks.map((task, idx) => (
             <button
               key={idx}
-              className="max-w-80 rounded px-4 py-2 text-left transition-colors text-primary hover:bg-secondary bg-tertiary"
+              className="max-w-80 rounded-2xl px-6 py-4 text-left transition-smooth text-primary hover:text-accent bg-tertiary/50 hover:bg-tertiary/70 backdrop-blur-sm border border-border-primary hover:border-accent/50 shadow-modern hover:shadow-modern-lg hover-lift animate-fade-in"
+              style={{ animationDelay: `${idx * 0.1}s` }}
               onClick={() => onSelect(task)}
               type="button"
             >
-              {task}
+              <div className="text-sm leading-relaxed">{task}</div>
             </button>
           ))}
         </div>
         {shouldShowToggle && (
           <button
-            className="text-primary hover:text-secondary transition-colors text-sm font-medium mt-1"
+            className="text-secondary hover:text-accent transition-smooth text-sm font-medium mt-2 px-4 py-2 rounded-xl hover:bg-tertiary/30 mx-auto"
             onClick={() => setIsExpanded(!isExpanded)}
             type="button"
           >
