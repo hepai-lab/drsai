@@ -22,6 +22,8 @@ import PlanView from "./plan";
 import { IPlanStep, convertToIPlanSteps } from "../../types/plan";
 import RenderFile from "../../common/filerenderer";
 import LearnPlanButton from "../../features/Plans/LearnPlanButton";
+import VoiceOutput from "../../common/VoiceOutput";
+import { useVoiceSettingsStore } from "../../../store/voiceSettings";
 
 // Types
 interface MessageProps {
@@ -304,7 +306,6 @@ const parseContent = (content: any): string => {
     return cleanedContent;
   }
 };
-
 
 const parseorchestratorContent = (
   content: string,
@@ -807,6 +808,25 @@ const RenderUserMessage: React.FC<{
 
 RenderUserMessage.displayName = "RenderUserMessage";
 
+// Voice Output Wrapper Component
+const VoiceOutputWrapper: React.FC<{ text: string }> = ({ text }) => {
+  const { settings } = useVoiceSettingsStore();
+
+  return (
+    <div className="absolute top-2 right-2">
+      <VoiceOutput
+        text={text}
+        language={settings.outputLanguage}
+        voice={settings.outputVoice}
+        rate={settings.outputRate}
+        pitch={settings.outputPitch}
+        autoPlay={settings.autoPlay}
+        className="opacity-0 group-hover:opacity-100 transition-opacity"
+      />
+    </div>
+  );
+};
+
 // Main component
 export const RenderMessage: React.FC<MessageProps> = memo(
   ({
@@ -936,21 +956,33 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                   content={parsedContent.text}
                 />
               ) : (
-                <div className="break-words">
+                <div className="break-words relative">
                   {message.metadata?.type === "file" ? (
                     <RenderFile message={message} />
                   ) : (
-                    <MarkdownRenderer
-                      content={parseContent(
-                        parsedContent.text
-                      )}
-                      indented={
-                        !orchestratorContent ||
-                        orchestratorContent.type !==
-                        "default"
-                      }
-                      allowHtml={true}
-                    />
+                    <>
+                      <MarkdownRenderer
+                        content={parseContent(
+                          parsedContent.text
+                        )}
+                        indented={
+                          !orchestratorContent ||
+                          orchestratorContent.type !==
+                          "default"
+                        }
+                        allowHtml={true}
+                      />
+                      {/* 语音输出按钮 */}
+                      {typeof parsedContent.text ===
+                        "string" &&
+                        parsedContent.text.trim() && (
+                          <VoiceOutputWrapper
+                            text={parseContent(
+                              parsedContent.text
+                            )}
+                          />
+                        )}
+                    </>
                   )}
                 </div>
               ))}

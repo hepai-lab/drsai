@@ -32,6 +32,9 @@ import RelevantPlans from "./relevant_plans";
 import { IPlan } from "../../types/plan";
 import PlanView from "./plan";
 import { useConfigStore } from "../../../hooks/store";
+import VoiceInput from "../../common/VoiceInput";
+import VoiceSettings from "../../common/VoiceSettings";
+import { useVoiceSettingsStore } from "../../../store/voiceSettings";
 
 // Maximum file size in bytes (5MB)
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
@@ -116,6 +119,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       React.useState(false);
     const [isPlanModalVisible, setIsPlanModalVisible] =
       React.useState(false);
+    const { settings: voiceSettings } = useVoiceSettingsStore();
     const textAreaDefaultHeight = "64px";
     const isInputDisabled =
       disabled ||
@@ -588,6 +592,27 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
 
         submitInternal(query, files, false);
       }
+    };
+
+    const handleVoiceTranscript = (transcript: string) => {
+      setText(transcript);
+      if (textAreaRef.current) {
+        textAreaRef.current.value = transcript;
+        // 调整文本框高度
+        const scrollHeight = textAreaRef.current.scrollHeight;
+        const newHeight = Math.min(scrollHeight, 120);
+        textAreaRef.current.style.height = `${newHeight}px`;
+      }
+    };
+
+    const handleVoiceError = (error: string) => {
+      notificationApi.error({
+        message: <span className="text-sm">语音识别错误</span>,
+        description: (
+          <span className="text-sm text-secondary">{error}</span>
+        ),
+        duration: 5,
+      });
     };
 
     const handlePause = () => {
@@ -1071,7 +1096,106 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     e.preventDefault();
                     handleSubmit();
                   }}
+                  className="flex items-center  w-full resize-none border-l border-t border-b border-accent  px-5 rounded-full bg-[#444444] text-white"
                 >
+                  {enable_upload && (
+                    <div
+                      className={`${isInputDisabled
+                        ? "pointer-events-none opacity-50"
+                        : ""
+                        }`}
+                    >
+                      <Dropdown
+                        overlay={
+                          <Menu>
+                            <Menu.Item
+                              key="attach-file"
+                              icon={
+                                <PaperclipIcon className="w-4 h-4" />
+                              }
+                            >
+                              <Upload
+                                {...uploadProps}
+                                showUploadList={
+                                  false
+                                }
+                              >
+                                <span>
+                                  Attach File
+                                </span>
+                              </Upload>
+                            </Menu.Item>
+                            <Menu.SubMenu
+                              key="attach-plan"
+                              title="Attach Plan"
+                              icon={
+                                <FileTextIcon className="w-4 h-4" />
+                              }
+                            >
+                              {allPlans.length ===
+                                0 ? (
+                                <Menu.Item
+                                  disabled
+                                  key="no-plans"
+                                >
+                                  No plans
+                                  available
+                                </Menu.Item>
+                              ) : (
+                                allPlans.map(
+                                  (plan: any) => (
+                                    <Menu.Item
+                                      key={
+                                        plan.id ||
+                                        plan.task
+                                      }
+                                      onClick={() =>
+                                        handleUsePlan(
+                                          plan
+                                        )
+                                      }
+                                    >
+                                      {
+                                        plan.task
+                                      }
+                                    </Menu.Item>
+                                  )
+                                )
+                              )}
+                            </Menu.SubMenu>
+                          </Menu>
+                        }
+                        trigger={["click"]}
+                      >
+                        <Tooltip
+                          title={
+                            <span className="text-sm">
+                              {fileList.length > 0
+                                ? `${fileList.length} file(s) attached`
+                                : "Attach File or Plan"}
+                            </span>
+                          }
+                          placement="top"
+                        >
+                          <button
+                            type="button"
+                            disabled={isInputDisabled}
+                            className={`flex justify-center items-center transition duration-300 relative ${fileList.length > 0
+                              ? "text-blue-500"
+                              : "text-accent"
+                              }`}
+                          >
+                            <PaperclipIcon className="h-5 w-5" />
+                            {fileList.length > 0 && (
+                              <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
+                                {fileList.length}
+                              </span>
+                            )}
+                          </button>
+                        </Tooltip>
+                      </Dropdown>
+                    </div>
+                  )}
                   <textarea
                     id="queryInput"
                     name="queryInput"
@@ -1080,7 +1204,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     defaultValue={""}
                     onChange={handleTextChange}
                     onKeyDown={handleKeyDown}
-                    className={`flex items-center w-full resize-none border-l border-t border-b border-accent p-2 pl-5 rounded-l-lg ${darkMode === "dark"
+                    className={`flex items-center w-full resize-none border-accent p-2 pl-5 rounded-full ${darkMode === "dark"
                       ? "bg-[#444444] text-white"
                       : "bg-white text-black"
                       } ${isInputDisabled
@@ -1103,138 +1227,55 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     }
                     disabled={isInputDisabled}
                   />
-                </form>
-              </div>
-
-              <div
-                className={`flex items-center justify-center gap-2 border-t border-r border-b border-accent px-2 rounded-r-lg ${darkMode === "dark"
-                  ? "bg-[#444444] text-white"
-                  : "bg-white text-black"
-                  }`}
-              >
-                {/* File upload button replaced with Dropdown */}
-                {enable_upload && (
-                  <div
-                    className={`${isInputDisabled
-                      ? "pointer-events-none opacity-50"
-                      : ""
-                      }`}
-                  >
-                    <Dropdown
-                      overlay={
-                        <Menu>
-                          <Menu.Item
-                            key="attach-file"
-                            icon={
-                              <PaperclipIcon className="w-4 h-4" />
-                            }
-                          >
-                            <Upload
-                              {...uploadProps}
-                              showUploadList={
-                                false
-                              }
-                            >
-                              <span>
-                                Attach File
-                              </span>
-                            </Upload>
-                          </Menu.Item>
-                          <Menu.SubMenu
-                            key="attach-plan"
-                            title="Attach Plan"
-                            icon={
-                              <FileTextIcon className="w-4 h-4" />
-                            }
-                          >
-                            {allPlans.length ===
-                              0 ? (
-                              <Menu.Item
-                                disabled
-                                key="no-plans"
-                              >
-                                No plans
-                                available
-                              </Menu.Item>
-                            ) : (
-                              allPlans.map(
-                                (plan: any) => (
-                                  <Menu.Item
-                                    key={
-                                      plan.id ||
-                                      plan.task
-                                    }
-                                    onClick={() =>
-                                      handleUsePlan(
-                                        plan
-                                      )
-                                    }
-                                  >
-                                    {
-                                      plan.task
-                                    }
-                                  </Menu.Item>
-                                )
-                              )
-                            )}
-                          </Menu.SubMenu>
-                        </Menu>
-                      }
-                      trigger={["click"]}
-                    >
-                      <Tooltip
-                        title={
-                          <span className="text-sm">
-                            {fileList.length > 0
-                              ? `${fileList.length} file(s) attached`
-                              : "Attach File or Plan"}
-                          </span>
-                        }
-                        placement="top"
-                      >
-                        <button
-                          type="button"
-                          disabled={isInputDisabled}
-                          className={`flex justify-center items-center transition duration-300 relative ${fileList.length > 0
-                            ? "text-blue-500"
-                            : "text-accent"
-                            }`}
-                        >
-                          <PaperclipIcon className="h-5 w-5" />
-                          {fileList.length > 0 && (
-                            <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
-                              {fileList.length}
-                            </span>
-                          )}
-                        </button>
-                      </Tooltip>
-                    </Dropdown>
-                  </div>
-                )}
-
-                {runStatus === "active" && (
-                  <button
-                    type="button"
-                    onClick={handlePause}
-                    className="bg-magenta-800 hover:bg-magenta-900 text-white rounded flex justify-center items-center w-11 h-9 transition duration-300"
-                  >
-                    <PauseCircleIcon className="h-6 w-6" />
-                  </button>
-                )}
-                {
-                  <button
-                    type="button"
-                    onClick={handleSubmit}
+                  {/* 语音输入按钮 */}
+                  <VoiceInput
+                    onTranscript={handleVoiceTranscript}
+                    onError={handleVoiceError}
                     disabled={isInputDisabled}
-                    className={`bg-magenta-800 transition duration-300 rounded flex justify-center items-center w-11 h-9 ${isInputDisabled
-                      ? "cursor-not-allowed"
-                      : "hover:bg-magenta-900"
+                    language={voiceSettings.inputLanguage}
+                    className="mr-1"
+                  />
+                  <div
+                    className={`flex items-center justify-center  border-accent  rounded-r-lg ${darkMode === "dark"
+                      ? "bg-[#444444] text-white"
+                      : "bg-white text-black"
                       }`}
                   >
-                    <PaperAirplaneIcon className="h-6 w-6 text-white" />
-                  </button>
-                }
+
+
+                    {/* 语音设置按钮 */}
+                    {/* <VoiceSettings className="mr-1" /> */}
+                    {/* File upload button replaced with Dropdown */}
+
+
+                    {runStatus === "active" && (
+                      <button
+                        type="button"
+                        onClick={handlePause}
+                        className="bg-magenta-800 hover:bg-magenta-900 text-white rounded flex justify-center items-center h-9 transition duration-300"
+                      >
+                        <PauseCircleIcon className="h-6 w-6" />
+                      </button>
+                    )}
+                    {
+                      <button
+                        type="button"
+                        onClick={handleSubmit}
+                        disabled={isInputDisabled}
+                        className={` transition duration-300 rounded flex justify-center items-center w-11 h-9 ${isInputDisabled
+                          ? "cursor-not-allowed"
+                          : ""
+                          }`}
+                      >
+                        <PaperAirplaneIcon className="h-6 w-6 text-white" />
+                      </button>
+                    }
+                  </div>
+                </form>
+
               </div>
+
+
             </div>
           </div>
         </div>
