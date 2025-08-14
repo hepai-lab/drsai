@@ -16,6 +16,7 @@ type ContentHeaderProps = {
   isSidebarOpen: boolean;
   onToggleSidebar: () => void;
   onNewSession: () => void;
+  agentSelector?: React.ReactNode;
 };
 
 
@@ -23,6 +24,7 @@ const ContentHeader = ({
   isSidebarOpen,
   onToggleSidebar,
   onNewSession,
+  agentSelector,
 }: ContentHeaderProps) => {
   const { user } = React.useContext(appContext);
   useConfigStore();
@@ -32,7 +34,7 @@ const ContentHeader = ({
 
 
   return (
-    <div className="sticky top-0 bg-primary">
+    <div className="sticky top-0 bg-primary z-40">
       <div className="flex h-16 items-center justify-between">
         {/* Left side: Text and Sidebar Controls */}
         <div className="flex items-center">
@@ -69,9 +71,15 @@ const ContentHeader = ({
           </div>
           <div className="flex items-center space-x-2">
             <img src={logo} alt="Dr.Sai Logo" className="h-10 w-10" />
-            {/* <div className="text-primary text-2xl font-bold">Dr.Sai</div> */}
             <div className="text-primary text-2xl font-bold">Dr.Sai</div>
           </div>
+
+          {/* Agent Selector on the left side */}
+          {agentSelector && (
+            <div className="ml-12 relative z-50">
+              {agentSelector}
+            </div>
+          )}
         </div>
 
         {/* User Profile and Settings */}

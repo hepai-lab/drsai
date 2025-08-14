@@ -810,7 +810,14 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
 
       // Show upload status
       if (file.status === "uploading") {
-        return <Progress type="circle" size={16} percent={50} />;
+        return (
+          <Progress
+            type="circle"
+            size={16}
+            percent={50}
+            strokeColor={darkMode === "dark" ? "#a855f7" : "#7c3aed"}
+          />
+        );
       }
 
       if (file.status === "error") {
@@ -820,7 +827,8 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       }
 
       if (fileType.startsWith("image/")) {
-        return <ImageIcon className="w-4 h-4 text-blue-500" />;
+        return <ImageIcon className={`w-4 h-4 ${darkMode === "dark" ? "text-magenta-400" : "text-magenta-600"
+          }`} />;
       }
 
       if (fileType === "application/pdf") {
@@ -832,14 +840,16 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
         fileName.endsWith(".doc") ||
         fileName.endsWith(".docx")
       ) {
-        return <FileTextIcon className="w-4 h-4 text-blue-600" />;
+        return <FileTextIcon className={`w-4 h-4 ${darkMode === "dark" ? "text-magenta-400" : "text-magenta-600"
+          }`} />;
       }
 
       if (fileType === "text/plain" || fileName.endsWith(".txt")) {
         return <FileTextIcon className="w-4 h-4 text-green-500" />;
       }
 
-      return <FileTextIcon className="w-4 h-4 text-gray-500" />;
+      return <FileTextIcon className={`w-4 h-4 ${darkMode === "dark" ? "text-gray-400" : "text-gray-500"
+        }`} />;
     };
 
     const formatFileSize = (bytes: number) => {
@@ -971,13 +981,19 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
 
         {/* Drag Drop Overlay */}
         {isDragActive && enable_upload && (
-          <div className="absolute inset-0 bg-blue-500 bg-opacity-10 border-2 border-dashed border-blue-500 rounded-lg flex items-center justify-center z-10">
+          <div className={`absolute inset-0 border-2 border-dashed rounded-lg flex items-center justify-center z-10 ${darkMode === "dark"
+            ? "bg-magenta-500 bg-opacity-10 border-magenta-500"
+            : "bg-magenta-500 bg-opacity-5 border-magenta-500"
+            }`}>
             <div className="text-center">
-              <UploadIcon className="w-12 h-12 text-blue-500 mx-auto mb-2" />
-              <p className="text-blue-600 font-medium">
+              <UploadIcon className={`w-12 h-12 mx-auto mb-2 ${darkMode === "dark" ? "text-magenta-400" : "text-magenta-600"
+                }`} />
+              <p className={`font-medium ${darkMode === "dark" ? "text-magenta-300" : "text-magenta-700"
+                }`}>
                 Drop files here to upload
               </p>
-              <p className="text-blue-500 text-sm">
+              <p className={`text-sm ${darkMode === "dark" ? "text-magenta-400" : "text-magenta-600"
+                }`}>
                 Supported: Images, PDF, Word, Text files
               </p>
             </div>
@@ -987,7 +1003,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
         {/* Attached Items Preview */}
         {(attachedPlan || fileList.length > 0) && (
           <div
-            className={`-mb-2 mx-1 ${darkMode === "dark" ? "bg-[#333333]" : "bg-gray-100"
+            className={`-mb-2 mx-1 ${darkMode === "dark" ? "bg-[#333333]" : "bg-magenta-50"
               } rounded-t border-b-0 p-2 flex border flex-wrap gap-2`}
           >
             {/* Attached Plan */}
@@ -995,11 +1011,12 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
               <div
                 className={`flex items-center gap-1 ${darkMode === "dark"
                   ? "bg-[#444444] text-white"
-                  : "bg-white text-black"
-                  } rounded px-2 py-1 text-xs cursor-pointer hover:opacity-80 transition-opacity`}
+                  : "bg-white text-magenta-800 border border-magenta-200"
+                  } rounded px-2 py-1 text-xs cursor-pointer hover:opacity-80 transition-opacity shadow-sm`}
                 onClick={handlePlanClick}
               >
-                <span className="truncate max-w-[150px]">
+                <span className={`truncate max-w-[150px] ${darkMode === "dark" ? "text-white" : "text-magenta-800"
+                  }`}>
                   📋 {attachedPlan.task}
                 </span>
                 <Button
@@ -1012,7 +1029,8 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     e.stopPropagation();
                     setAttachedPlan(null);
                   }}
-                  icon={<XIcon className="w-3 h-3" />}
+                  icon={<XIcon className={`w-3 h-3 ${darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
+                    }`} />}
                 />
               </div>
             )}
@@ -1023,7 +1041,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                 key={file.uid}
                 className={`flex items-center gap-2 ${darkMode === "dark"
                   ? "bg-[#444444] text-white border border-gray-600"
-                  : "bg-white text-black border border-gray-200"
+                  : "bg-white text-magenta-800 border border-magenta-200"
                   } rounded-lg px-3 py-2 text-xs shadow-sm hover:shadow-md transition-shadow ${file.status === "error"
                     ? "border-red-500"
                     : ""
@@ -1031,10 +1049,12 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
               >
                 {getFileIcon(file)}
                 <div className="flex flex-col min-w-0 flex-1">
-                  <span className="truncate font-medium">
+                  <span className={`truncate font-medium ${darkMode === "dark" ? "text-white" : "text-magenta-800"
+                    }`}>
                     {file.name}
                   </span>
-                  <span className="text-xs opacity-70">
+                  <span className={`text-xs ${darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
+                    }`}>
                     {formatFileSize(file.size || 0)}
                     {file.status === "uploading" &&
                       " - Uploading..."}
@@ -1045,7 +1065,10 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                 <Button
                   type="text"
                   size="small"
-                  className="p-0 ml-1 flex items-center justify-center hover:bg-red-100 hover:text-red-600 rounded-full"
+                  className={`p-0 ml-1 flex items-center justify-center rounded-full ${darkMode === "dark"
+                    ? "hover:bg-red-500/20 hover:text-red-400"
+                    : "hover:bg-red-100 hover:text-red-600"
+                    }`}
                   onClick={() =>
                     setFileList((prev) =>
                       prev.filter(
@@ -1053,7 +1076,8 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                       )
                     )
                   }
-                  icon={<XIcon className="w-3 h-3" />}
+                  icon={<XIcon className={`w-3 h-3 ${darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
+                    }`} />}
                 />
               </div>
             ))}
@@ -1079,28 +1103,31 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
           )}
         </Modal>
 
-        <div className="mt-2 rounded shadow-sm flex">
+        <div className="mt-4 p-1">
           <div
-            className={`flex w-full transition-all duration-200 ${isDragActive
-              ? "ring-2 ring-blue-500 ring-opacity-50 bg-blue-50 dark:bg-blue-900/20"
+            className={`relative w-full transition-smooth rounded-3xl ${isDragActive
+              ? "ring-2 ring-accent ring-opacity-50 bg-accent/5"
               : ""
+              } ${darkMode === "dark"
+                ? "bg-tertiary/30 backdrop-blur-sm"
+                : "bg-white/80 backdrop-blur-sm shadow-modern"
               }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
             <div className="flex w-full">
-              <div className="flex-1">
+              <div className="flex-1 relative">
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
                     handleSubmit();
                   }}
-                  className="flex items-center  w-full resize-none border-l border-t border-b border-accent  px-5 rounded-full bg-[#444444] text-white"
+                  className="relative w-full"
                 >
                   {enable_upload && (
                     <div
-                      className={`${isInputDisabled
+                      className={`absolute left-4 top-1/2 transform -translate-y-1/2 z-10 ${isInputDisabled
                         ? "pointer-events-none opacity-50"
                         : ""
                         }`}
@@ -1111,7 +1138,8 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                             <Menu.Item
                               key="attach-file"
                               icon={
-                                <PaperclipIcon className="w-4 h-4" />
+                                <PaperclipIcon className={`w-4 h-4 ${darkMode === "dark" ? "text-gray-300" : "text-magenta-600"
+                                  }`} />
                               }
                             >
                               <Upload
@@ -1129,7 +1157,8 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                               key="attach-plan"
                               title="Attach Plan"
                               icon={
-                                <FileTextIcon className="w-4 h-4" />
+                                <FileTextIcon className={`w-4 h-4 ${darkMode === "dark" ? "text-gray-300" : "text-magenta-600"
+                                  }`} />
                               }
                             >
                               {allPlans.length ===
@@ -1143,7 +1172,9 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                                 </Menu.Item>
                               ) : (
                                 allPlans.map(
-                                  (plan: any) => (
+                                  (
+                                    plan: any
+                                  ) => (
                                     <Menu.Item
                                       key={
                                         plan.id ||
@@ -1179,18 +1210,25 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                         >
                           <button
                             type="button"
-                            disabled={isInputDisabled}
-                            className={`flex justify-center items-center transition duration-300 relative ${fileList.length > 0
-                              ? "text-blue-500"
-                              : "text-accent"
+                            disabled={
+                              isInputDisabled
+                            }
+                            className={`flex justify-center items-center w-8 h-8 rounded-xl transition-smooth hover-lift relative ${fileList.length > 0
+                              ? "text-accent bg-accent/10"
+                              : darkMode === "dark"
+                                ? "text-secondary hover:text-accent hover:bg-accent/10"
+                                : "text-secondary hover:text-accent hover:bg-accent/10"
                               }`}
                           >
-                            <PaperclipIcon className="h-5 w-5" />
-                            {fileList.length > 0 && (
-                              <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
-                                {fileList.length}
-                              </span>
-                            )}
+                            <PaperclipIcon className="h-4 w-4" />
+                            {fileList.length >
+                              0 && (
+                                <span className="absolute -top-1 -right-1 bg-accent text-white text-xs rounded-full w-4 h-4 flex items-center justify-center animate-bounce-in">
+                                  {
+                                    fileList.length
+                                  }
+                                </span>
+                              )}
                           </button>
                         </Tooltip>
                       </Dropdown>
@@ -1204,17 +1242,17 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     defaultValue={""}
                     onChange={handleTextChange}
                     onKeyDown={handleKeyDown}
-                    className={`flex items-center w-full resize-none border-accent p-2 pl-5 rounded-full ${darkMode === "dark"
-                      ? "bg-[#444444] text-white"
-                      : "bg-white text-black"
+                    className={`input-enhanced flex items-center w-full resize-none p-4 ${enable_upload ? 'pl-14' : 'pl-6'} pr-16 rounded-2xl transition-smooth border-2 ${darkMode === "dark"
+                      ? "bg-tertiary/50 border-border-primary backdrop-blur-sm hover:bg-tertiary/70 focus:bg-tertiary/80 focus:border-accent"
+                      : "bg-white/80 border-border-primary backdrop-blur-sm hover:bg-white/90 focus:bg-white focus:border-accent shadow-modern"
                       } ${isInputDisabled
-                        ? "cursor-not-allowed"
-                        : ""
-                      } focus:outline-none`}
+                        ? "cursor-not-allowed opacity-50"
+                        : "hover-lift"
+                      } focus:outline-none focus:ring-2 focus:ring-accent/20`}
                     style={{
                       maxHeight: "120px",
                       overflowY: "auto",
-                      minHeight: "50px",
+                      minHeight: "56px",
                     }}
                     placeholder={
                       runStatus === "awaiting_input"
@@ -1228,61 +1266,55 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     disabled={isInputDisabled}
                   />
                   {/* 语音输入按钮 */}
-                  <VoiceInput
-                    onTranscript={handleVoiceTranscript}
-                    onError={handleVoiceError}
-                    disabled={isInputDisabled}
-                    language={voiceSettings.inputLanguage}
-                    className="mr-1"
-                  />
-                  <div
-                    className={`flex items-center justify-center  border-accent  rounded-r-lg ${darkMode === "dark"
-                      ? "bg-[#444444] text-white"
-                      : "bg-white text-black"
-                      }`}
-                  >
-
-
-                    {/* 语音设置按钮 */}
-                    {/* <VoiceSettings className="mr-1" /> */}
-                    {/* File upload button replaced with Dropdown */}
-
-
+                  <div className="absolute right-14 top-1/2 transform -translate-y-1/2">
+                    <VoiceInput
+                      onTranscript={handleVoiceTranscript}
+                      onError={handleVoiceError}
+                      disabled={isInputDisabled}
+                      language={voiceSettings.inputLanguage}
+                      className="transition-smooth hover-lift"
+                    />
+                  </div>
+                  <div className="absolute right-2 top-1/2 transform -translate-y-1/2 flex items-center space-x-2">
                     {runStatus === "active" && (
                       <button
                         type="button"
                         onClick={handlePause}
-                        className="bg-magenta-800 hover:bg-magenta-900 text-white rounded flex justify-center items-center h-9 transition duration-300"
+                        className={`rounded-xl flex justify-center items-center w-10 h-10 transition-smooth hover-lift ${darkMode === "dark"
+                          ? "bg-warning-primary/20 hover:bg-warning-primary/30 text-warning-primary"
+                          : "bg-warning-primary/10 hover:bg-warning-primary/20 text-warning-primary"
+                          } shadow-modern`}
                       >
-                        <PauseCircleIcon className="h-6 w-6" />
+                        <PauseCircleIcon className="h-5 w-5" />
                       </button>
                     )}
-                    {
-                      <button
-                        type="button"
-                        onClick={handleSubmit}
-                        disabled={isInputDisabled}
-                        className={` transition duration-300 rounded flex justify-center items-center w-11 h-9 ${isInputDisabled
-                          ? "cursor-not-allowed"
-                          : ""
-                          }`}
-                      >
-                        <PaperAirplaneIcon className="h-6 w-6 text-white" />
-                      </button>
-                    }
+                    <button
+                      type="button"
+                      onClick={handleSubmit}
+                      disabled={isInputDisabled}
+                      className={`transition-smooth rounded-xl flex justify-center items-center w-10 h-10 ${isInputDisabled
+                        ? "cursor-not-allowed opacity-50 bg-gray-400"
+                        : darkMode === "dark"
+                          ? "bg-gradient-primary hover:shadow-modern-lg text-white hover-lift pulse-glow"
+                          : "bg-gradient-primary hover:shadow-modern-lg text-white hover-lift pulse-glow"
+                        }`}
+                    >
+                      <PaperAirplaneIcon className="h-5 w-5 transform rotate-45" />
+                    </button>
                   </div>
                 </form>
-
               </div>
-
-
             </div>
           </div>
         </div>
 
         {error && !error.status && (
-          <div className="p-2 border rounded mt-4 text-orange-500 text-sm">
-            <ExclamationTriangleIcon className="h-5 text-orange-500 inline-block mr-2" />
+          <div className={`p-2 border rounded mt-4 text-sm ${darkMode === "dark"
+            ? "border-orange-500/30 text-orange-400 bg-orange-500/10"
+            : "border-orange-300 text-orange-600 bg-orange-50"
+            }`}>
+            <ExclamationTriangleIcon className={`h-5 inline-block mr-2 ${darkMode === "dark" ? "text-orange-400" : "text-orange-600"
+              }`} />
             {error.message}
           </div>
         )}

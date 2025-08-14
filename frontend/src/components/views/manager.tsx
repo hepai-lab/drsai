@@ -711,11 +711,34 @@ export const SessionManager: React.FC = () => {
         isSidebarOpen={isSidebarOpen}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         onNewSession={() => handleEditSession()}
+        agentSelector={
+          activeSubMenuItem === "current_session" ? (
+            <AgentSelectorAdvanced
+              agents={agents}
+              models={models}
+              selectedAgent={selectedAgent}
+              onAgentSelect={setSelectedAgent}
+              placeholder="Select Your Agent"
+              className="w-64"
+            />
+          ) : null
+        }
       />
 
       <div className="flex flex-1 relative">
+        {/* Mobile overlay */}
+        {isSidebarOpen && (
+          <div
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden"
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        )}
+
+        {/* Sidebar */}
         <div
-          className={`absolute left-0 top-0 h-full transition-all duration-200 ease-in-out ${isSidebarOpen ? "w-56" : "w-0"
+          className={`fixed lg:absolute left-0 top-0 h-full transition-smooth z-50 lg:z-auto ${isSidebarOpen
+            ? "w-80 lg:w-64 translate-x-0"
+            : "w-80 lg:w-0 -translate-x-full lg:translate-x-0"
             }`}
         >
           <Sidebar
@@ -753,28 +776,13 @@ export const SessionManager: React.FC = () => {
           />
         </div>
 
-        {/* Agent Selector positioned absolutely to the right of Sidebar */}
-        {activeSubMenuItem === "current_session" && (
-          <div
-            className={`absolute z-10 transition-all duration-200 top-[-52px] ${isSidebarOpen ? "left-60" : "left-0"
-              }`}
-          >
-            <AgentSelectorAdvanced
-              agents={agents}
-              models={models}
-              selectedAgent={selectedAgent}
-              onAgentSelect={setSelectedAgent}
-              placeholder="Select Your Agent"
-              className="w-full"
-            />
-          </div>
-        )}
+
 
         <div
-          className={`flex-1 transition-all duration-200 ${isSidebarOpen
-            ? "ml-64"
+          className={`flex-1 transition-smooth ${isSidebarOpen
+            ? "ml-0 lg:ml-64"
             : activeSubMenuItem === "current_session"
-              ? "ml-96"
+              ? "ml-0"
               : "ml-0"
             }`}
         >
@@ -782,20 +790,23 @@ export const SessionManager: React.FC = () => {
             session &&
               Array.isArray(sessions) &&
               sessions.length > 0 ? (
-              <div className={`${isSidebarOpen ? "pl-4" : ""}`}>
+              <div className={`${isSidebarOpen ? "pl-0 lg:pl-4" : ""} h-full`}>
                 {chatViews}
               </div>
             ) : (
               <div className="flex items-center justify-center h-full text-secondary">
-                <Spin size="large" tip={"Loading..."} />
+                <div className="text-center">
+                  <Spin size="large" />
+                  <p className="mt-4 text-sm">Loading...</p>
+                </div>
               </div>
             )
           ) : activeSubMenuItem === "agent_square" ? (
-            <div className="h-full overflow-hidden pl-4">
+            <div className="h-full overflow-hidden pl-0 lg:pl-4">
               <AgentSquare />
             </div>
           ) : (
-            <div className="h-full overflow-hidden pl-4">
+            <div className="h-full overflow-hidden pl-0 lg:pl-4">
               <PlanList
                 onTabChange={setActiveSubMenuItem}
                 onSelectSession={handleSelectSession}

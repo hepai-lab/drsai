@@ -1,109 +1,315 @@
 .dark {
-    --color-bg-primary: #1a1a1a;
-    --color-bg-secondary: #a88da841;
-    --color-bg-light: #3a3a3a;
-    --color-bg-tertiary: #444444;
+    /* 主要背景色 - 更深邃的黑色系 */
+    --color-bg-primary: #0f0f0f;
+    --color-bg-secondary: rgba(168, 141, 168, 0.08);
+    --color-bg-light: #1e1e1e;
+    --color-bg-tertiary: #2a2a2a;
     --color-bg-opposite: #edf2f7;
     --color-bg-white: #ffffff;
-    --color-bg-dark: #1a1a1a;
-    --color-bg-accent: #777777;
-    --color-text-primary: #ffffff;
-    --color-text-secondary: #e5e5e58f;
-    --color-text-accent: #e5e5e5;
-    --color-border-primary: #ffffff30;
-    --color-border-secondary: #e5e5e530;
-    --color-border-accent: #1a1a1a;
-    --color-warning-primary: #f6a147;
+    --color-bg-dark: #0f0f0f;
+    --color-bg-accent: #6366f1;
+
+    /* 文字颜色 - 更好的对比度 */
+    --color-text-primary: #f8fafc;
+    --color-text-secondary: rgba(148, 163, 184, 0.8);
+    --color-text-accent: #a78bfa;
     --color-text-message: #000000;
 
-    /* --color-magenta-400: #F2E5F2;
-  --color-magenta-700: #EECBEE;
-  --color-magenta-800: #BF3AC3;
-  --color-magenta-900: #953CA3; */
+    /* 边框颜色 - 更细腻的分割线 */
+    --color-border-primary: rgba(255, 255, 255, 0.1);
+    --color-border-secondary: rgba(255, 255, 255, 0.05);
+    --color-border-accent: #6366f1;
 
-    --color-magenta-400: #e7e5f2;
-    --color-magenta-700: #acabe6;
-    --color-magenta-800: #4d3dc3;
-    --color-magenta-900: #3e3ba5;
+    /* 状态颜色 */
+    --color-warning-primary: #f59e0b;
+    --color-success-primary: #10b981;
+    --color-error-primary: #ef4444;
 
-    --color-blue-400: #edf4fb;
-    --color-blue-700: #a0d6ff;
-    --color-blue-800: #0078d4;
-    --color-blue-900: #0062ad;
+    /* 品牌色彩 - 现代紫色系 */
+    --color-magenta-400: #e9d5ff;
+    --color-magenta-700: #a78bfa;
+    --color-magenta-800: #7c3aed;
+    --color-magenta-900: #5b21b6;
 
-    --color-gary-700: #e1e1e1;
-    --color-gray-800: #5f5f5f;
+    /* 蓝色系 - 更现代的配色 */
+    --color-blue-400: #dbeafe;
+    --color-blue-700: #60a5fa;
+    --color-blue-800: #2563eb;
+    --color-blue-900: #1d4ed8;
+
+    /* 灰色系 */
+    --color-gray-700: #374151;
+    --color-gray-800: #1f2937;
+
+    /* 渐变色 */
+    --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --gradient-secondary: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    --gradient-accent: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    --gradient-text: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+
+    /* 阴影 */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
 }
 
 .light {
+    /* 主要背景色 - 更纯净的白色系 */
     --color-bg-primary: #ffffff;
-    --color-bg-secondary: #f1e9f1;
-    --color-bg-light: #f9fafb;
-    --color-bg-tertiary: #f3f6f9;
-    --color-bg-opposite: #2a2a2a;
+    --color-bg-secondary: rgba(99, 102, 241, 0.03);
+    --color-bg-light: #f8fafc;
+    --color-bg-tertiary: #f1f5f9;
+    --color-bg-opposite: #0f0f0f;
     --color-bg-white: #ffffff;
-    --color-bg-dark: #1a1a1a;
-    --color-bg-accent: #444444;
-    --color-text-primary: #000000;
-    --color-text-secondary: #4a5568;
-    --color-text-accent: #444444;
-    --color-border-primary: #e2e8f0;
-    --color-border-secondary: #edf2f7;
-    --color-border-accent: #444444;
-    --color-warning-primary: #f6a147;
+    --color-bg-dark: #0f0f0f;
+    --color-bg-accent: #6366f1;
+
+    /* 文字颜色 - 更好的层次感 */
+    --color-text-primary: #0f172a;
+    --color-text-secondary: #64748b;
+    --color-text-accent: #7c3aed;
     --color-text-message: #000000;
 
-    /* --color-magenta-400: #F2E5F2;
-  --color-magenta-700: #EECBEE;
-  --color-magenta-800: #BF3AC3;
-  --color-magenta-900: #953CA3; */
+    /* 边框颜色 - 更细腻的分割线 */
+    --color-border-primary: #e2e8f0;
+    --color-border-secondary: #f1f5f9;
+    --color-border-accent: #6366f1;
 
-    --color-magenta-400: #e7e5f2;
-    --color-magenta-700: #acabe6;
-    --color-magenta-800: #4d3dc3;
-    --color-magenta-900: #3e3ba5;
+    /* 状态颜色 */
+    --color-warning-primary: #f59e0b;
+    --color-success-primary: #10b981;
+    --color-error-primary: #ef4444;
 
-    --color-blue-400: #edf4fb;
-    --color-blue-700: #a0d6ff;
-    --color-blue-800: #0078d4;
-    --color-blue-900: #0062ad;
+    /* 品牌色彩 - 现代紫色系 */
+    --color-magenta-400: #e9d5ff;
+    --color-magenta-700: #a78bfa;
+    --color-magenta-800: #7c3aed;
+    --color-magenta-900: #5b21b6;
 
-    --color-gary-700: #e1e1e1;
-    --color-gray-800: #5f5f5f;
+    /* 蓝色系 - 更现代的配色 */
+    --color-blue-400: #dbeafe;
+    --color-blue-700: #60a5fa;
+    --color-blue-800: #2563eb;
+    --color-blue-900: #1d4ed8;
+
+    /* 灰色系 */
+    --color-gray-700: #374151;
+    --color-gray-800: #1f2937;
+
+    /* 渐变色 */
+    --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --gradient-secondary: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    --gradient-accent: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+
+    /* 阴影 */
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
 }
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* 现代化工具类 */
+@layer utilities {
+    /* 毛玻璃效果 */
+    .glass {
+        background: rgba(255, 255, 255, 0.1);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .glass-dark {
+        background: rgba(0, 0, 0, 0.2);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    /* 渐变背景 */
+    .bg-gradient-primary {
+        background: var(--gradient-primary);
+    }
+
+    .bg-gradient-secondary {
+        background: var(--gradient-secondary);
+    }
+
+    .bg-gradient-accent {
+        background: var(--gradient-accent);
+    }
+
+    /* 文字渐变 */
+    .text-gradient {
+        background: var(--gradient-text);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-size: 200% 200%;
+        animation: gradient-shift 3s ease-in-out infinite;
+    }
+
+    @keyframes gradient-shift {
+        0%, 100% {
+            background-position: 0% 50%;
+        }
+        50% {
+            background-position: 100% 50%;
+        }
+    }
+
+    /* 现代阴影 */
+    .shadow-modern {
+        box-shadow: var(--shadow-md);
+    }
+
+    .shadow-modern-lg {
+        box-shadow: var(--shadow-lg);
+    }
+
+    .shadow-modern-xl {
+        box-shadow: var(--shadow-xl);
+    }
+
+    /* 平滑过渡 */
+    .transition-smooth {
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .transition-bounce {
+        transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    }
+
+    /* 悬停效果 */
+    .hover-lift {
+        transition: transform 0.2s ease-in-out;
+    }
+
+    .hover-lift:hover {
+        transform: translateY(-2px);
+    }
+
+    /* 脉冲动画 */
+    .pulse-glow {
+        animation: pulse-glow 2s infinite;
+    }
+
+    @keyframes pulse-glow {
+        0%, 100% {
+            box-shadow: 0 0 5px rgba(99, 102, 241, 0.5);
+        }
+        50% {
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.8);
+        }
+    }
+
+    /* 现代化滚动条 */
+    .scroll {
+        scrollbar-width: thin;
+        scrollbar-color: var(--color-accent) transparent;
+    }
+
+    .scroll::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    .scroll::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    .scroll::-webkit-scrollbar-thumb {
+        background: var(--color-accent);
+        border-radius: 3px;
+    }
+
+    .scroll::-webkit-scrollbar-thumb:hover {
+        background: var(--color-text-accent);
+    }
+
+    /* 文本选择样式 */
+    ::selection {
+        background: var(--color-accent);
+        color: white;
+    }
+
+    ::-moz-selection {
+        background: var(--color-accent);
+        color: white;
+    }
+
+    /* 输入框优化 - 使用!important确保穿透 */
+    .input-enhanced::placeholder {
+        transition: opacity 0.3s ease !important;
+    }
+
+    .input-enhanced:focus::placeholder {
+        opacity: 0 !important;
+    }
+
+    /* 强制设置文字颜色和光标 */
+    .input-enhanced {
+        caret-color: var(--color-accent) !important;
+    }
+
+    /* 深色主题文字颜色 */
+    .dark .input-enhanced {
+        color: #444 !important;
+        caret-color: #6366f1 !important;
+    }
+
+    /* 浅色主题文字颜色 */
+    .light .input-enhanced {
+        color: #1f2937 !important;
+        caret-color: #6366f1 !important;
+    }
+
+    /* 确保选中文字时光标可见 */
+    .input-enhanced::selection {
+        background: var(--color-accent) !important;
+        color: white !important;
+    }
+
+    .input-enhanced::-moz-selection {
+        background: var(--color-accent) !important;
+        color: white !important;
+    }
+}
+
 /* Import chat view styles */
 @import "../components/views/chat/chatview.css";
 
 /* Think bubble styles */
 .think-bubble {
-    background: linear-gradient(135deg, #f0f8ff 0%, #e6f3ff 100%);
-    border: 2px solid #b3d9ff;
-    border-radius: 20px;
-    padding: 12px 16px;
-    margin: 8px 0;
+    background: var(--gradient-accent);
+    border: 2px solid var(--color-accent);
+    border-radius: 1.5rem;
+    padding: 1rem 1.5rem;
+    margin: 1rem 0;
     position: relative;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-lg);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     font-style: italic;
-    color: #2c5aa0;
+    color: white;
     font-size: 0.9em;
-    line-height: 1.4;
+    line-height: 1.5;
+    animation: slide-up 0.3s ease-out;
 }
 
 .think-bubble::before {
-    content: "";
+    content: "💭";
     position: absolute;
-    top: -8px;
-    left: 20px;
-    width: 0;
-    height: 0;
-    border-left: 8px solid transparent;
-    border-right: 8px solid transparent;
-    border-bottom: 8px solid #b3d9ff;
+    top: -0.5rem;
+    left: 1rem;
+    font-size: 1.2rem;
+    background: var(--color-bg-primary);
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.5rem;
+    border: 2px solid var(--color-accent);
 }
 
 .think-bubble::after {
