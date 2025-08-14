@@ -417,6 +417,7 @@ async def create_magentic_round_team(
         # raise NotImplementedError("BesIII mode not implemented yet")
         agent = StatusAgent(
             name='besiii',
+            model_client=get_model_client(model_client_config = model_config),
             chat_id=chat_id,
             run_info=run_info,
             model_remote_configs={
@@ -454,6 +455,7 @@ async def create_magentic_round_team(
         agent_config["api_key"] = agent_config.get("api_key", api_key)
         agent = StatusAgent(
             name="RemoteAgent",
+            model_client=get_model_client(model_client_config = model_config),
             model_remote_configs = agent_config,
             chat_id=chat_id,
             run_info=run_info
