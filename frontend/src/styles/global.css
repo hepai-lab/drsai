@@ -324,6 +324,140 @@
         -ms-user-select: text !important;
     }
 
+    /* 美化滚动条样式 */
+    .scroll::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+    }
+
+    .scroll::-webkit-scrollbar-track {
+        background: transparent;
+        border-radius: 3px;
+    }
+
+    .scroll::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 3px;
+        transition: all 0.2s ease;
+    }
+
+    .scroll::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.2);
+    }
+
+    .scroll::-webkit-scrollbar-thumb:active {
+        background: rgba(255, 255, 255, 0.3);
+    }
+
+    /* Firefox 滚动条样式 */
+    .scroll {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+    }
+
+    /* 侧边栏专用滚动条 - 更细更优雅 */
+    .sidebar-scroll::-webkit-scrollbar {
+        width: 4px;
+    }
+
+    .sidebar-scroll::-webkit-scrollbar-track {
+        background: transparent;
+        margin: 8px 0;
+    }
+
+    .sidebar-scroll::-webkit-scrollbar-thumb {
+        background: rgba(99, 102, 241, 0.2);
+        border-radius: 2px;
+        transition: all 0.3s ease;
+    }
+
+    .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+        background: rgba(99, 102, 241, 0.4);
+    }
+
+    .sidebar-scroll::-webkit-scrollbar-thumb:active {
+        background: rgba(99, 102, 241, 0.6);
+    }
+
+    .sidebar-scroll {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(99, 102, 241, 0.2) transparent;
+    }
+
+    /* 浅色主题滚动条样式 */
+    .light .scroll::-webkit-scrollbar-thumb {
+        background: rgba(0, 0, 0, 0.1);
+    }
+
+    .light .scroll::-webkit-scrollbar-thumb:hover {
+        background: rgba(0, 0, 0, 0.2);
+    }
+
+    .light .scroll::-webkit-scrollbar-thumb:active {
+        background: rgba(0, 0, 0, 0.3);
+    }
+
+    .light .scroll {
+        scrollbar-color: rgba(0, 0, 0, 0.1) transparent;
+    }
+
+    .light .sidebar-scroll::-webkit-scrollbar-thumb {
+        background: rgba(99, 102, 241, 0.15);
+    }
+
+    .light .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+        background: rgba(99, 102, 241, 0.3);
+    }
+
+    .light .sidebar-scroll::-webkit-scrollbar-thumb:active {
+        background: rgba(99, 102, 241, 0.5);
+    }
+
+    .light .sidebar-scroll {
+        scrollbar-color: rgba(99, 102, 241, 0.15) transparent;
+    }
+
+    /* 滚动条淡入淡出效果 */
+    .sidebar-scroll::-webkit-scrollbar-thumb {
+        background: rgba(99, 102, 241, 0.1) !important;
+        transition: all 0.3s ease;
+    }
+
+    .sidebar-scroll:hover::-webkit-scrollbar-thumb {
+        background: rgba(99, 102, 241, 0.3) !important;
+    }
+
+    .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+        background: rgba(99, 102, 241, 0.5) !important;
+    }
+
+    /* 平滑滚动 */
+    .sidebar-scroll {
+        scroll-behavior: smooth;
+    }
+
+    /* 滚动时显示滚动条 */
+    .sidebar-scroll.scrolling::-webkit-scrollbar-thumb {
+        background: rgba(99, 102, 241, 0.4) !important;
+    }
+
+    /* 浅色主题的滚动条淡入淡出效果 */
+    .light .sidebar-scroll::-webkit-scrollbar-thumb {
+        background: rgba(99, 102, 241, 0.08) !important;
+    }
+
+    .light .sidebar-scroll:hover::-webkit-scrollbar-thumb {
+        background: rgba(99, 102, 241, 0.2) !important;
+    }
+
+    .light .sidebar-scroll::-webkit-scrollbar-thumb:hover {
+        background: rgba(99, 102, 241, 0.4) !important;
+    }
+
+    .light .sidebar-scroll.scrolling::-webkit-scrollbar-thumb {
+        background: rgba(99, 102, 241, 0.3) !important;
+    }
+
     /* 消息内容的选择样式 - 更明显的高亮 */
     .message-content::selection,
     .message-content *::selection,
@@ -452,8 +586,8 @@ html {
 }
 
 body {
-    padding: 0px 64px 0px 64px;
-    @apply px-4 md:px-8 lg:px-16 w-full !important;
+    padding: 0px 16px 0px 16px;
+    @apply px-2 md:px-4 lg:px-6 w-full !important;
     margin: 0px auto;
     background: transparent;
     /* border: 2px solid green; */

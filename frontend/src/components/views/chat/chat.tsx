@@ -1164,8 +1164,8 @@ export default function ChatView({
           <div
             className={`${showDetailViewer && !isDetailViewerMinimized
               ? "w-full"
-              : "max-w-full md:max-w-5xl lg:max-w-6xl xl:max-w-7xl"
-              } mx-auto px-4 sm:px-6 md:px-8 h-full ${noMessagesYet && currentRun ? "hidden" : ""
+              : "w-full"
+              } mx-auto px-2 sm:px-3 md:px-4 h-full ${noMessagesYet && currentRun ? "hidden" : ""
               }`}
           >
             {
@@ -1212,8 +1212,8 @@ export default function ChatView({
               <div
                 className={`text-center ${showDetailViewer && !isDetailViewerMinimized
                   ? "w-full"
-                  : "w-full max-w-full md:max-w-4xl lg:max-w-5xl xl:max-w-6xl"
-                  } mx-auto px-4 sm:px-6 md:px-8`}
+                  : "w-full"
+                  } mx-auto px-2 sm:px-3 md:px-4`}
               >
                 <div className="animate-fade-in">
                   <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-primary mb-6 animate-float">
