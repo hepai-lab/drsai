@@ -11,7 +11,7 @@ import {
   Trash2,
   Sailboat
 } from "lucide-react";
-import React, { useMemo } from "react";
+import React, { useMemo, useRef, useEffect } from "react";
 import { Button } from "../common/Button";
 import SubMenu from "../common/SubMenu";
 import LearnPlanButton from "../features/Plans/LearnPlanButton";
@@ -220,14 +220,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </>
   );
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 处理滚动事件，添加滚动时的样式
+  useEffect(() => {
+    const scrollElement = scrollRef.current;
+    if (!scrollElement) return;
+
+    let scrollTimeout: NodeJS.Timeout;
+
+    const handleScroll = () => {
+      scrollElement.classList.add('scrolling');
+
+      clearTimeout(scrollTimeout);
+      scrollTimeout = setTimeout(() => {
+        scrollElement.classList.remove('scrolling');
+      }, 1000);
+    };
+
+    scrollElement.addEventListener('scroll', handleScroll);
+
+    return () => {
+      scrollElement.removeEventListener('scroll', handleScroll);
+      clearTimeout(scrollTimeout);
+    };
+  }, [isOpen]);
+
   const sidebarContent = useMemo(() => {
     if (!isOpen) {
       return null;
     }
 
     return (
-      <div className="h-full border-r border-border-primary/50 bg-primary/50 backdrop-blur-sm">
-        <div className="p-4 border-b border-border-primary/50">
+      <div className="h-full flex flex-col border-r border-border-primary/50 bg-primary/50 backdrop-blur-sm">
+        {/* 固定头部 */}
+        <div className="flex-shrink-0 p-4 border-b border-border-primary/50">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-10 h-10 rounded-2xl bg-gradient-primary flex items-center justify-center animate-float">
               <FileText className="w-4 h-4 text-white" />
@@ -262,38 +289,45 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
 
-        <div className="px-4">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <span className="text-primary font-semibold">Sessions</span>
-              <span className="text-xs text-secondary bg-tertiary/50 px-2 py-1 rounded-full">
-                {sortedSessions.length}
-              </span>
+        {/* 可滚动内容区域 */}
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex-shrink-0 px-4 pt-4">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-primary font-semibold">Sessions</span>
+                <span className="text-xs text-secondary bg-tertiary/50 px-2 py-1 rounded-full">
+                  {sortedSessions.length}
+                </span>
+              </div>
+
+              {isLoading && (
+                <div className="flex items-center text-sm text-secondary">
+                  <RefreshCcw className="w-4 h-4 animate-spin" />
+                </div>
+              )}
             </div>
 
-            {isLoading && (
-              <div className="flex items-center text-sm text-secondary">
-                <RefreshCcw className="w-4 h-4 animate-spin" />
-              </div>
-            )}
+            <div className="mb-4">
+              <Tooltip title="Create new session">
+                <Button
+                  className="w-full bg-gradient-primary hover:shadow-modern-lg transition-smooth"
+                  variant="primary"
+                  size="md"
+                  icon={<Plus className="w-4 h-4" />}
+                  onClick={() => onEditSession()}
+                  disabled={isLoading}
+                >
+                  New Session
+                </Button>
+              </Tooltip>
+            </div>
           </div>
 
-          <div className="mb-4">
-            <Tooltip title="Create new session">
-              <Button
-                className="w-full bg-gradient-primary hover:shadow-modern-lg transition-smooth"
-                variant="primary"
-                size="md"
-                icon={<Plus className="w-4 h-4" />}
-                onClick={() => onEditSession()}
-                disabled={isLoading}
-              >
-                New Session
-              </Button>
-            </Tooltip>
-          </div>
-
-          <div className="overflow-y-auto h-[calc(100%-200px)] scroll">
+          {/* 会话列表 - 可滚动区域 */}
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto px-4 pb-4 sidebar-scroll"
+          >
             {sortedSessions.length === 0 ? (
               <div className="p-6 text-center">
                 <div className="w-12 h-12 rounded-2xl bg-tertiary/30 flex items-center justify-center mx-auto mb-3">

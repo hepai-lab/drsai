@@ -725,7 +725,7 @@ export const SessionManager: React.FC = () => {
         }
       />
 
-      <div className="flex flex-1 relative">
+      <div className="flex flex-1 relative min-h-0">
         {/* Mobile overlay */}
         {isSidebarOpen && (
           <div
@@ -736,7 +736,7 @@ export const SessionManager: React.FC = () => {
 
         {/* Sidebar */}
         <div
-          className={`fixed lg:absolute left-0 top-0 h-full transition-smooth z-50 lg:z-auto ${isSidebarOpen
+          className={`fixed lg:absolute left-0 top-0 h-full transition-smooth z-50 lg:z-auto overflow-hidden ${isSidebarOpen
             ? "w-80 lg:w-64 translate-x-0"
             : "w-80 lg:w-0 -translate-x-full lg:translate-x-0"
             }`}
@@ -790,7 +790,7 @@ export const SessionManager: React.FC = () => {
             session &&
               Array.isArray(sessions) &&
               sessions.length > 0 ? (
-              <div className={`${isSidebarOpen ? "pl-0 lg:pl-4" : ""} h-full`}>
+              <div className={`${isSidebarOpen ? "pl-0 lg:pl-2" : ""} h-full`}>
                 {chatViews}
               </div>
             ) : (
@@ -802,11 +802,11 @@ export const SessionManager: React.FC = () => {
               </div>
             )
           ) : activeSubMenuItem === "agent_square" ? (
-            <div className="h-full overflow-hidden pl-0 lg:pl-4">
+            <div className="h-full overflow-hidden pl-0 lg:pl-2">
               <AgentSquare />
             </div>
           ) : (
-            <div className="h-full overflow-hidden pl-0 lg:pl-4">
+            <div className="h-full overflow-hidden pl-0 lg:pl-2">
               <PlanList
                 onTabChange={setActiveSubMenuItem}
                 onSelectSession={handleSelectSession}

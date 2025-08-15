@@ -66,13 +66,13 @@ const MagenticUILayout = ({
   }, [darkMode]);
 
   const layoutContent = (
-    <div className="h-screen flex bg-primary">
+    <div className="h-screen flex bg-primary overflow-hidden">
       {/* Content area */}
       <div
         className={classNames(
-          "flex-1 flex flex-col min-h-screen",
+          "flex-1 flex flex-col h-full",
           "transition-smooth",
-          "px-2 sm:px-4 md:px-6 lg:px-8",
+          "px-1 sm:px-2 md:px-3 lg:px-4",
           isExpanded ? "md:pl-1" : "md:pl-1"
         )}
       >
