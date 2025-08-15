@@ -230,15 +230,17 @@
         background: var(--color-text-accent);
     }
 
-    /* 文本选择样式 */
+    /* 文本选择样式 - 更明显的高亮 */
     ::selection {
-        background: var(--color-accent);
-        color: white;
+        background: #6366f1 !important;
+        color: white !important;
+        text-shadow: none !important;
     }
 
     ::-moz-selection {
-        background: var(--color-accent);
-        color: white;
+        background: #6366f1 !important;
+        color: white !important;
+        text-shadow: none !important;
     }
 
     /* 输入框优化 - 使用!important确保穿透 */
@@ -276,6 +278,84 @@
     .input-enhanced::-moz-selection {
         background: var(--color-accent) !important;
         color: white !important;
+    }
+
+    /* 确保消息内容可以被选择 */
+    .message-content,
+    .prose,
+    .prose *,
+    .markdown-content,
+    .markdown-content *,
+    .break-words,
+    .break-words * {
+        user-select: text !important;
+        -webkit-user-select: text !important;
+        -moz-user-select: text !important;
+        -ms-user-select: text !important;
+    }
+
+    /* 确保消息容器不阻止文本选择 */
+    .group,
+    .relative,
+    .w-full {
+        user-select: text;
+        -webkit-user-select: text;
+        -moz-user-select: text;
+        -ms-user-select: text;
+    }
+
+    /* 按钮和交互元素应该不可选择 */
+    button,
+    .cursor-pointer,
+    .hover\\:bg-secondary,
+    .transition-colors,
+    .hover-lift {
+        user-select: none !important;
+        -webkit-user-select: none !important;
+        -moz-user-select: none !important;
+        -ms-user-select: none !important;
+    }
+
+    /* 强制确保文本内容可选择 */
+    p, span, div.message-content, div.prose {
+        user-select: text !important;
+        -webkit-user-select: text !important;
+        -moz-user-select: text !important;
+        -ms-user-select: text !important;
+    }
+
+    /* 消息内容的选择样式 - 更明显的高亮 */
+    .message-content::selection,
+    .message-content *::selection,
+    .prose::selection,
+    .prose *::selection {
+        background: rgba(99, 102, 241, 0.8) !important;
+        color: white !important;
+        text-shadow: none !important;
+    }
+
+    .message-content::-moz-selection,
+    .message-content *::-moz-selection,
+    .prose::-moz-selection,
+    .prose *::-moz-selection {
+        background: rgba(99, 102, 241, 0.8) !important;
+        color: white !important;
+        text-shadow: none !important;
+    }
+
+    /* 用户消息气泡的选择样式 */
+    .bg-tertiary::selection,
+    .bg-tertiary *::selection {
+        background: rgba(255, 255, 255, 0.3) !important;
+        color: #6366f1 !important;
+        text-shadow: none !important;
+    }
+
+    .bg-tertiary::-moz-selection,
+    .bg-tertiary *::-moz-selection {
+        background: rgba(255, 255, 255, 0.3) !important;
+        color: #6366f1 !important;
+        text-shadow: none !important;
     }
 }
 

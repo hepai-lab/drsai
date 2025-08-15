@@ -747,7 +747,7 @@ const RenderUserMessage: React.FC<{
   }, [parsedContent.metadata?.attached_files]);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 message-content">
       {/* Show attached file icons if present */}
       {attachedFiles.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -772,11 +772,11 @@ const RenderUserMessage: React.FC<{
 
       {/* Existing content rendering */}
       {messageUtils.isMultiModalContent(parsedContent.text) ? (
-        <div className="space-y-2">
+        <div className="space-y-2 message-content">
           {parsedContent.text.map((item, index) => (
-            <div key={index}>
+            <div key={index} className="message-content">
               {typeof item === "string" ? (
-                <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
+                <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere message-content">
                   {parseContent(item)}
                 </div>
               ) : (
@@ -786,7 +786,7 @@ const RenderUserMessage: React.FC<{
           ))}
         </div>
       ) : (
-        <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
+        <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere message-content">
           {parseContent(parsedContent.text)}
         </div>
       )}
@@ -895,7 +895,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                 : "max-w-[80%]"
               }`
               : "w-full text-primary"
-              } break-words overflow-hidden`}
+              } break-words overflow-hidden message-content`}
           >
             {/* Show user message content first */}
             {(isUser || isUserProxy) && (
@@ -956,7 +956,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                   content={parsedContent.text}
                 />
               ) : (
-                <div className="break-words relative">
+                <div className="break-words relative message-content">
                   {message.metadata?.type === "file" ? (
                     <RenderFile message={message} />
                   ) : (
