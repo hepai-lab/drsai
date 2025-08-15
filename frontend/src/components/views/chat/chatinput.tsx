@@ -1242,7 +1242,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     defaultValue={""}
                     onChange={handleTextChange}
                     onKeyDown={handleKeyDown}
-                    className={`input-enhanced flex items-center w-full resize-none p-4 ${enable_upload ? 'pl-14' : 'pl-6'} pr-16 rounded-2xl transition-smooth border-2 ${darkMode === "dark"
+                    className={`input-enhanced flex items-center w-full resize-none p-4 ${enable_upload ? 'pl-14' : 'pl-6'} ${runStatus === "active" ? 'pr-32' : 'pr-24'} rounded-2xl transition-smooth border-2 ${darkMode === "dark"
                       ? "bg-tertiary/50 border-border-primary backdrop-blur-sm hover:bg-tertiary/70 focus:bg-tertiary/80 focus:border-accent"
                       : "bg-white/80 border-border-primary backdrop-blur-sm hover:bg-white/90 focus:bg-white focus:border-accent shadow-modern"
                       } ${isInputDisabled
@@ -1265,8 +1265,9 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     }
                     disabled={isInputDisabled}
                   />
-                  {/* 语音输入按钮 */}
-                  <div className="absolute right-14 top-1/2 transform -translate-y-1/2">
+                  {/* 右侧按钮组 */}
+                  <div className="absolute right-2 top-1/2 transform -translate-y-1/2 flex items-center space-x-2">
+                    {/* 语音输入按钮 */}
                     <VoiceInput
                       onTranscript={handleVoiceTranscript}
                       onError={handleVoiceError}
@@ -1274,8 +1275,8 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                       language={voiceSettings.inputLanguage}
                       className="transition-smooth hover-lift"
                     />
-                  </div>
-                  <div className="absolute right-2 top-1/2 transform -translate-y-1/2 flex items-center space-x-2">
+
+                    {/* 暂停按钮 - 仅在active状态显示 */}
                     {runStatus === "active" && (
                       <button
                         type="button"
@@ -1288,6 +1289,8 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                         <PauseCircleIcon className="h-5 w-5" />
                       </button>
                     )}
+
+                    {/* 发送按钮 */}
                     <button
                       type="button"
                       onClick={handleSubmit}

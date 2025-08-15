@@ -125,22 +125,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 }`}
               onClick={() => !isLoading && onSelectSession(s)}
             >
-              <div className="flex items-center gap-3 flex-1">
-                <div className={`w-2 h-2 rounded-full ${currentSession?.id === s.id
+              <div className="flex items-center gap-3 flex-1 min-w-0 transition-all group-hover:pr-10">
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${currentSession?.id === s.id
                   ? "bg-accent animate-pulse-glow"
                   : "bg-secondary"
                   }`} />
-                <span className="truncate text-sm font-medium text-primary">
-                  {s.name.slice(0, 20)}
-                  {s.name.length > 20 ? "..." : ""}
-                </span>
+                <Tooltip
+                  title={s.name}
+                  placement="top"
+                  mouseEnterDelay={0.5}
+                >
+                  <span className="text-sm font-medium text-primary flex-1 min-w-0 transition-all truncate">
+                    <span className="group-hover:hidden">
+                      {s.name}
+                    </span>
+                    <span className="hidden group-hover:inline">
+                      {s.name.slice(0, 8)}
+                      {s.name.length > 8 ? "..." : ""}
+                    </span>
+                  </span>
+                </Tooltip>
                 {s.id && (
-                  <SessionRunStatusIndicator
-                    status={sessionRunStatuses[s.id]}
-                  />
+                  <div className="flex-shrink-0 transition-all">
+                    <SessionRunStatusIndicator
+                      status={sessionRunStatuses[s.id]}
+                    />
+                  </div>
                 )}
               </div>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-smooth">
+              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-smooth absolute right-1 top-1/2 transform -translate-y-1/2">
                 <Dropdown
                   trigger={["click"]}
                   overlay={
@@ -239,7 +252,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 },
                 {
                   id: "agent_square",
-                  label: "Agent Square",
+                  label: "Dr.Sai Hub",
                   icon: <Sailboat className="w-4 h-4" />
                 }
               ]}
