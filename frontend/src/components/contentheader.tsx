@@ -16,6 +16,7 @@ type ContentHeaderProps = {
   isSidebarOpen: boolean;
   onToggleSidebar: () => void;
   onNewSession: () => void;
+  onLogoClick?: () => void;
   agentSelector?: React.ReactNode;
 };
 
@@ -24,6 +25,7 @@ const ContentHeader = ({
   isSidebarOpen,
   onToggleSidebar,
   onNewSession,
+  onLogoClick,
   agentSelector,
 }: ContentHeaderProps) => {
   const { user } = React.useContext(appContext);
@@ -69,7 +71,10 @@ const ContentHeader = ({
               </Tooltip>
             )}
           </div>
-          <div className="flex items-center space-x-2">
+          <div
+            className="flex items-center space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
+            onClick={onLogoClick}
+          >
             <img src={logo} alt="Dr.Sai Logo" className="h-10 w-10" />
             <div className="text-primary text-2xl font-bold">Dr.Sai</div>
           </div>

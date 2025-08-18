@@ -4,6 +4,8 @@ import remarkGfm from "remark-gfm";
 import { Prism, SyntaxHighlighterProps } from "react-syntax-highlighter";
 import { tomorrow } from "react-syntax-highlighter/dist/esm/styles/prism";
 
+
+
 const SyntaxHighlighter = Prism as any as React.FC<SyntaxHighlighterProps>;
 
 interface MarkdownRendererProps {
@@ -284,6 +286,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   indented = false,
   allowHtml = false,
 }) => {
+
   // Determine if we should render as a file preview
   const isFilePreview = !!fileExtension;
   const color = indented
@@ -308,24 +311,61 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   const hasThinkTags =
     content.includes("<think>") && content.includes("</think>");
 
+
+
   // If allowHtml is true and content contains HTML, render it directly
+  // But first check for think tags and process them
   if (allowHtml && (content.includes("<div") || content.includes("<span")) || content.includes("<img")) {
-    return (
-      <div
-        className="prose w-full"
-        style={{
-          color,
-          fontSize: "0.85rem",
-          overflowWrap: "break-word",
-          wordWrap: "break-word",
-          wordBreak: "break-word",
-          overflowX: "auto",
-          maxWidth: "100%",
-          position: "relative",
-        }}
-        dangerouslySetInnerHTML={{ __html: content }}
-      />
-    );
+    if (hasThinkTags) {
+      const { parts } = parseThinkTags(content);
+      return (
+        <div
+          className="prose w-full"
+          style={{
+            color,
+            fontSize: "0.85rem",
+            overflowWrap: "break-word",
+            wordWrap: "break-word",
+            wordBreak: "break-word",
+            overflowX: "auto",
+            maxWidth: "100%",
+            position: "relative",
+          }}
+        >
+          {parts.map((part, index) => {
+            if (part.type === "think") {
+              return (
+                <ThinkBubble key={index} content={part.content} />
+              );
+            } else {
+              return (
+                <div
+                  key={index}
+                  dangerouslySetInnerHTML={{ __html: part.content.replace(/<think>(.*?)<\/think>/gs, '') }}
+                />
+              );
+            }
+          })}
+        </div>
+      );
+    } else {
+      return (
+        <div
+          className="prose w-full"
+          style={{
+            color,
+            fontSize: "0.85rem",
+            overflowWrap: "break-word",
+            wordWrap: "break-word",
+            wordBreak: "break-word",
+            overflowX: "auto",
+            maxWidth: "100%",
+            position: "relative",
+          }}
+          dangerouslySetInnerHTML={{ __html: content.replace(/<think>(.*?)<\/think>/gs, '') }}
+        />
+      );
+    }
   }
 
   // If content has think tags, parse and render them specially
@@ -346,6 +386,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           position: "relative",
         }}
       >
+
         {indented && (
           <div
             style={{
@@ -465,7 +506,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                   ),
                 }}
               >
-                {part.content}
+                {part.content.replace(/<think>(.*?)<\/think>/gs, '')}
               </ReactMarkdown>
             );
           }
@@ -509,39 +550,11 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           h4: ({ children }) => <h4 style={{ color }}>{children}</h4>,
           h5: ({ children }) => <h5 style={{ color }}>{children}</h5>,
           h6: ({ children }) => <h6 style={{ color }}>{children}</h6>,
-          p: ({ children }) => {
-            const text = String(children);
-            // Check if this paragraph contains think bubble markers
-            if (
-              text.includes("**THINK_BUBBLE_START**") &&
-              text.includes("**THINK_BUBBLE_END**")
-            ) {
-              const startIndex = text.indexOf(
-                "**THINK_BUBBLE_START**"
-              );
-              const endIndex = text.indexOf(
-                "**THINK_BUBBLE_END**"
-              );
-              const bubbleContent = text
-                .substring(startIndex + 20, endIndex)
-                .trim();
-
-              return (
-                <div
-                  className="think-bubble"
-                  style={{ margin: "8px 0" }}
-                >
-                  💭 {bubbleContent}
-                </div>
-              );
-            }
-
-            return (
-              <p className="" style={{ color }}>
-                {children}
-              </p>
-            );
-          },
+          p: ({ children }) => (
+            <p className="" style={{ color }}>
+              {children}
+            </p>
+          ),
           strong: ({ children }) => (
             <strong style={{ color }}>{children}</strong>
           ),
@@ -598,12 +611,10 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
               {children}
             </blockquote>
           ),
-          think: ({ children }) => (
-            <ThinkBubble content={String(children)} />
-          ),
+
         }}
       >
-        {truncate ? truncatedContent : processedContent}
+        {(truncate ? truncatedContent : processedContent).replace(/<think>(.*?)<\/think>/gs, '')}
       </ReactMarkdown>
     </div>
   );

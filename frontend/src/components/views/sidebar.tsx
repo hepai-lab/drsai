@@ -18,6 +18,8 @@ import LearnPlanButton from "../features/Plans/LearnPlanButton";
 import type { RunStatus, Session } from "../types/datamodel";
 import { SessionRunStatusIndicator } from "./statusicon";
 
+
+
 interface SidebarProps {
   isOpen: boolean;
   sessions: Session[];
@@ -125,35 +127,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 }`}
               onClick={() => !isLoading && onSelectSession(s)}
             >
-              <div className="flex items-center gap-3 flex-1 min-w-0 transition-all group-hover:pr-10">
+              <div className="flex items-center gap-3 flex-1 min-w-0 transition-all relative">
                 <div className={`w-2 h-2 rounded-full flex-shrink-0 ${currentSession?.id === s.id
                   ? "bg-accent animate-pulse-glow"
                   : "bg-secondary"
                   }`} />
-                <Tooltip
-                  title={s.name}
-                  placement="top"
-                  mouseEnterDelay={0.5}
-                >
-                  <span className="text-sm font-medium text-primary flex-1 min-w-0 transition-all truncate">
-                    <span className="group-hover:hidden">
+                <div className="session-title-container">
+                  <Tooltip
+                    title={s.name}
+                    placement="top"
+                    mouseEnterDelay={0.5}
+                  >
+                    <span
+                      className={`text-sm font-medium text-primary session-title ${s.id && sessionRunStatuses[s.id] ? 'session-title-with-status' : ''
+                        }`}
+                    >
                       {s.name}
                     </span>
-                    <span className="hidden group-hover:inline">
-                      {s.name.slice(0, 8)}
-                      {s.name.length > 8 ? "..." : ""}
-                    </span>
-                  </span>
-                </Tooltip>
+                  </Tooltip>
+                </div>
                 {s.id && (
-                  <div className="flex-shrink-0 transition-all">
+                  <div className="flex-shrink-0 transition-all session-status-indicator">
                     <SessionRunStatusIndicator
                       status={sessionRunStatuses[s.id]}
                     />
                   </div>
                 )}
               </div>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-smooth absolute right-1 top-1/2 transform -translate-y-1/2">
+              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-smooth flex-shrink-0 ml-2">
                 <Dropdown
                   trigger={["click"]}
                   overlay={
@@ -209,7 +210,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     size="sm"
                     icon={<MoreVertical className="w-4 h-4" />}
                     onClick={(e) => e.stopPropagation()}
-                    className="!p-0 min-w-[24px] h-6"
+                    onFocus={(e) => e.target.blur()}
+                    className="!p-0 min-w-[24px] h-6 sidebar-dropdown-button"
+                    style={{
+                      outline: 'none',
+                      border: 'none',
+                      boxShadow: 'none',
+                      '--tw-ring-shadow': '0 0 #0000',
+                      '--tw-ring-offset-shadow': '0 0 #0000'
+                    } as React.CSSProperties}
                   />
                 </Dropdown>
               </div>

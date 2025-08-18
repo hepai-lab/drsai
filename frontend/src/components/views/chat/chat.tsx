@@ -394,7 +394,7 @@ export default function ChatView({
           };
 
         case "message_chunk":
-          // console.log("Received message_chunk:", message.data);
+          // console.log("Received message_chunk:", message.data);yo
           if (!message.data) return current;
 
           // Handle streaming chunks for typewriter effect
@@ -1163,8 +1163,8 @@ export default function ChatView({
         >
           <div
             className={`${showDetailViewer && !isDetailViewerMinimized
-              ? "w-full"
-              : "w-full"
+              ? "w-full max-w-6xl"
+              : "w-full max-w-4xl"
               } mx-auto px-2 sm:px-3 md:px-4 h-full ${noMessagesYet && currentRun ? "hidden" : ""
               }`}
           >
@@ -1215,25 +1215,20 @@ export default function ChatView({
                   : "w-full"
                   } mx-auto px-2 sm:px-3 md:px-4`}
               >
-                <div className="animate-fade-in">
-                  <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-primary mb-6 animate-float">
-                    <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-                    </svg>
+                <div className="animate-fade-in text-center mb-8">
+                  {/* Welcome Message */}
+                  <div className="space-y-4">
+                    <h1 className="text-5xl font-bold">
+                      <span className="text-6xl bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent font-extrabold">Welcome to Dr.Sai</span>
+                    </h1>
+                    <p className="text-xl text-secondary animate-slide-up" style={{ animationDelay: '0.2s' }}>
+                      Enter a message to get started or try a sample task below
+                    </p>
                   </div>
-                  <h1 className="text-3xl font-bold mb-6 text-gradient">
-                    Welcome to Dr.Sai, Enter a message to get started
-                  </h1>
                 </div>
 
-                {/* <div className="text-secondary text-xl mb-8 animate-slide-up" style={{ animationDelay: '0.2s' }}>
-                  Welcome to Dr.Sai, Enter a message to get started
-                </div> */}
 
-                <div className="w-full">
-                  {/* <iframe src="http://192.168.60.170:8060/wetty" frameborder="0"></iframe> */}
-                  {/* <iframe src="https://ink.ihep.ac.cn/" frameborder="0"></iframe> */}
-
+                <div className="w-full space-y-6">
                   <ChatInput
                     ref={chatInputRef}
                     onSubmit={(
