@@ -427,7 +427,7 @@ custom_agent_config:
                 {isOpen && (
                     <div
                         className={`
-            absolute top-full left-0 w-[296px] mt-1 z-[9999] rounded-lg shadow-lg
+            absolute top-full left-0 w-[340px] mt-1 z-[9999] rounded-lg shadow-lg
             border transition-all duration-200 ease-in-out
             ${darkMode === "dark"
                                 ? "bg-[#3a3a3a] border-[#e5e5e530] shadow-black/20"

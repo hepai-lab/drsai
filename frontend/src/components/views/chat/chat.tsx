@@ -112,7 +112,10 @@ export default function ChatView({
   const activeSocketRef = React.useRef<WebSocket | null>(null);
 
   // Add ref for ChatInput component
-  const chatInputRef = React.useRef<any>(null);
+  const chatInputRef = React.useRef<{
+    focus: () => void;
+    setValue: (value: string) => void;
+  }>(null);
 
   // Add state for progress tracking
   const [progress, setProgress] = React.useState<StepProgress>({
@@ -349,8 +352,14 @@ export default function ChatView({
           const messageData = message.data as AgentMessageConfig;
 
           // Process content to replace <think> tags with "thinking..."
-          if (typeof messageData.content === "string" && messageData.content.includes("<think>")) {
-            messageData.content = messageData.content.replace(/<think>/g, "thinking...");
+          if (
+            typeof messageData.content === "string" &&
+            messageData.content.includes("<think>")
+          ) {
+            messageData.content = messageData.content.replace(
+              /<think>/g,
+              "thinking..."
+            );
           }
 
           const lastMessageIndex = current.messages.length - 1;
@@ -412,7 +421,10 @@ export default function ChatView({
             // Process content to replace <think> tags with "thinking..."
             let processedContent = chunkData.content;
             if (processedContent.includes("<think>")) {
-              processedContent = processedContent.replace(/<think>/g, "thinking...");
+              processedContent = processedContent.replace(
+                /<think>/g,
+                "thinking..."
+              );
             }
 
             // Find the last message to append the chunk
@@ -566,7 +578,7 @@ export default function ChatView({
     accepted = false,
     plan?: IPlan,
     uploadedFileData?: Record<string, any>,
-    files?: RcFile[] = []  // 添加files参数
+    files?: RcFile[] = [] // 添加files参数
   ) => {
     if (!currentRun || !activeSocketRef.current) {
       handleError(new Error("WebSocket connection not available"));
@@ -1231,14 +1243,33 @@ export default function ChatView({
                   {/* Welcome Message */}
                   <div className="space-y-4">
                     <h1 className="text-5xl font-bold">
-                      <span className="text-6xl bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent font-extrabold">Welcome to Dr.Sai</span>
+                      <span className="text-6xl bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent font-extrabold">
+                        Welcome to Dr.Sai
+                      </span>
                     </h1>
-                    <p className="text-xl text-secondary animate-slide-up" style={{ animationDelay: '0.2s' }}>
-                      Enter a message to get started or try a sample task below
+                    <p
+                      className="text-xl text-secondary animate-slide-up"
+                      style={{ animationDelay: "0.2s" }}
+                    >
+                      Enter a message to get started or
+                      try a sample task below
                     </p>
+                    {/* Current Model Indicator */}
+                    {newConfig?.name && (
+                      <div
+                        className="text-sm text-secondary animate-slide-up"
+                        style={{
+                          animationDelay: "0.4s",
+                        }}
+                      >
+                        <span className="inline-flex items-center px-3 py-1 rounded-full bg-accent/10 text-accent border border-accent/20">
+                          <span className="w-2 h-2 bg-accent rounded-full mr-2"></span>
+                          {newConfig.name}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
-
 
                 <div className="w-full space-y-6">
                   <ChatInput
@@ -1286,44 +1317,15 @@ export default function ChatView({
                 </div>
                 <SampleTasks
                   onSelect={(task: string) => {
-                    if (chatInputRef.current) {
-                      // Set the input value and trigger submit
-                      chatInputRef.current.focus();
-                      // Set value in textarea
-                      const textarea =
-                        document.getElementById(
-                          "queryInput"
-                        ) as HTMLTextAreaElement;
-                      if (textarea) {
-                        textarea.value = task;
-                        // Trigger input event for React state
-                        const event = new Event(
-                          "input",
-                          {
-                            bubbles: true,
-                          }
+                    // 延迟执行以确保模型切换完成
+                    setTimeout(() => {
+                      if (chatInputRef.current) {
+                        // 使用新的setValue方法
+                        chatInputRef.current.setValue(
+                          task
                         );
-                        textarea.dispatchEvent(event);
                       }
-                      // Submit the task
-                      setTimeout(() => {
-                        if (chatInputRef.current) {
-                          chatInputRef.current.focus();
-                          // Simulate pressing Enter
-                          const enterEvent =
-                            new KeyboardEvent(
-                              "keydown",
-                              {
-                                key: "Enter",
-                                bubbles: true,
-                              }
-                            );
-                          textarea?.dispatchEvent(
-                            enterEvent
-                          );
-                        }
-                      }, 100);
-                    }
+                    }, 200); // 增加延迟以确保模型切换完成
                   }}
                 />
               </div>
