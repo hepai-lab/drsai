@@ -351,14 +351,13 @@ export default function ChatView({
           // Check if we already have a message with the same content from chunks
           const messageData = message.data as AgentMessageConfig;
 
-          // Process content to replace <think> tags with "thinking..."
           if (
             typeof messageData.content === "string" &&
             messageData.content.includes("<think>")
           ) {
             messageData.content = messageData.content.replace(
               /<think>/g,
-              "thinking..."
+              "🤔"
             );
           }
 
@@ -418,12 +417,11 @@ export default function ChatView({
             chunkData.content &&
             typeof chunkData.content === "string"
           ) {
-            // Process content to replace <think> tags with "thinking..."
             let processedContent = chunkData.content;
             if (processedContent.includes("<think>")) {
               processedContent = processedContent.replace(
                 /<think>/g,
-                "thinking..."
+                "🤔"
               );
             }
 

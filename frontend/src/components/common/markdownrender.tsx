@@ -246,7 +246,7 @@ const parseThinkTags = (
   let currentIndex = 0;
 
   // Regular expression to match <think>...</think> tags
-  const thinkRegex = /thinking...(.*?)<\/think>/gs;
+  const thinkRegex = /🤔(.*?)<\/think>/gs;
   let match;
 
   while ((match = thinkRegex.exec(content)) !== null) {
@@ -309,12 +309,8 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
   // Check if content contains think tags
   const hasThinkTags =
-    content.includes("thinking...") && content.includes("</think>");
-
-  console.log("hasThinkTags：：", hasThinkTags);
-
-
-
+    content.includes("🤔") && content.includes("</think>");
+  console.log("hasThinkTags:", hasThinkTags);
   // If allowHtml is true and content contains HTML, render it directly
   // But first check for think tags and process them
   if (allowHtml && (content.includes("<div") || content.includes("<span")) || content.includes("<img")) {
