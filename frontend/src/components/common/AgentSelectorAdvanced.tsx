@@ -131,6 +131,34 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                     }
                 }
             }
+            // 如果没有任何持久化的智能体选择，设置默认agent为BESIII
+            else if (agents.length > 0 && user?.email) {
+                const besiiiAgent = agents.find(agent => agent.mode === "besiii");
+                if (besiiiAgent) {
+                    // 设置默认agent为BESIII
+                    try {
+                        const agentConfig = await agentAPI.getAgentConfig(
+                            user.email,
+                            "besiii"
+                        );
+
+                        if (agentConfig) {
+                            setConfig(agentConfig.config);
+                            setMode("besiii");
+                            setPersistedSelectedAgent(besiiiAgent);
+                            setLastSelectedAgentMode("besiii");
+                            onAgentSelect(besiiiAgent);
+                        }
+                    } catch (error) {
+                        console.warn("Failed to load BESIII agent config:", error);
+                        // 即使配置加载失败，也要设置选中的智能体
+                        setMode("besiii");
+                        setPersistedSelectedAgent(besiiiAgent);
+                        setLastSelectedAgentMode("besiii");
+                        onAgentSelect(besiiiAgent);
+                    }
+                }
+            }
         };
 
         initializeAgentSelection();

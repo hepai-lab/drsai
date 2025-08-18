@@ -44,6 +44,12 @@ const MagenticUILayout = ({
       const name = localStorage.getItem("user_name") || email;
       if (email) {
         setUser({ ...user, email, name });
+
+        // 如果是新用户登录（没有持久化的agent选择），清除之前的agent选择
+        const hasPersistedAgent = localStorage.getItem("drsai-mode-config");
+        if (!hasPersistedAgent) {
+          localStorage.removeItem("drsai-mode-config");
+        }
       } else {
         // 没有本地用户信息，跳转到sso-login
         if (typeof window !== "undefined") {

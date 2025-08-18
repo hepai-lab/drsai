@@ -85,14 +85,41 @@ export const SessionManager: React.FC = () => {
     try {
       const res = await agentAPI.getAgentList(user?.email || "");
       setAgents(res.config.agent_modes);
+
+      // 如果用户刚登录且没有持久化的agent选择，设置默认agent为BESIII
+      if (user?.email && res.config.agent_modes.length > 0) {
+        const { selectedAgent, setSelectedAgent, setMode, setConfig } = useModeConfigStore.getState();
+
+        // 如果没有选中的agent，设置默认agent为BESIII
+        if (!selectedAgent) {
+          const besiiiAgent = res.config.agent_modes.find(agent => agent.mode === "besiii");
+          if (besiiiAgent) {
+            // 设置默认agent为BESIII
+            setSelectedAgent(besiiiAgent);
+            setMode("besiii");
+
+            // 获取BESIII agent的配置
+            try {
+              const agentConfig = await agentAPI.getAgentConfig(user.email, "besiii");
+              if (agentConfig) {
+                setConfig(agentConfig.config);
+              }
+            } catch (error) {
+              console.warn("Failed to load BESIII agent config:", error);
+            }
+          }
+        }
+      }
     } catch (error) {
       console.error("Error fetching agent list:", error);
     }
   };
 
   React.useEffect(() => {
-    handleAgentList(agents);
-  }, []);
+    if (user?.email) {
+      handleAgentList(agents);
+    }
+  }, [user?.email]);
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem(
