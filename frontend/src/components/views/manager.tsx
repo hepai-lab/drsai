@@ -92,15 +92,15 @@ export const SessionManager: React.FC = () => {
 
         // 如果没有选中的agent，设置默认agent为BESIII
         if (!selectedAgent) {
-          const besiiiAgent = res.config.agent_modes.find(agent => agent.mode === "besiii");
+          const besiiiAgent = res.config.agent_modes.find(agent => agent.mode === "magentic-one");
           if (besiiiAgent) {
             // 设置默认agent为BESIII
             setSelectedAgent(besiiiAgent);
-            setMode("besiii");
+            setMode("magentic-one");
 
             // 获取BESIII agent的配置
             try {
-              const agentConfig = await agentAPI.getAgentConfig(user.email, "besiii");
+              const agentConfig = await agentAPI.getAgentConfig(user.email, "magentic-one");
               if (agentConfig) {
                 setConfig(agentConfig.config);
               }

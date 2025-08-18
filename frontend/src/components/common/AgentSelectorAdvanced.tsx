@@ -55,11 +55,6 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
     const searchInputRef = useRef<HTMLInputElement>(null);
     const { darkMode } = React.useContext(appContext);
     const { user } = React.useContext(appContext);
-    const [toolConfigs, setToolConfigs] = useState<ToolConfig[]>([
-        { id: "1", type: "MCP", url: "", token: "", workerName: "" },
-        { id: "2", type: "HepAI", url: "", token: "", workerName: "" },
-        { id: "3", type: "OpenAPI", url: "", token: "", workerName: "" },
-    ]);
     const {
         mode,
         setMode,
@@ -133,28 +128,28 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             }
             // 如果没有任何持久化的智能体选择，设置默认agent为BESIII
             else if (agents.length > 0 && user?.email) {
-                const besiiiAgent = agents.find(agent => agent.mode === "besiii");
+                const besiiiAgent = agents.find(agent => agent.mode === "magentic-one");
                 if (besiiiAgent) {
                     // 设置默认agent为BESIII
                     try {
                         const agentConfig = await agentAPI.getAgentConfig(
                             user.email,
-                            "besiii"
+                            "magentic-one"
                         );
 
                         if (agentConfig) {
                             setConfig(agentConfig.config);
-                            setMode("besiii");
+                            setMode("magentic-one");
                             setPersistedSelectedAgent(besiiiAgent);
-                            setLastSelectedAgentMode("besiii");
+                            setLastSelectedAgentMode("magentic-one");
                             onAgentSelect(besiiiAgent);
                         }
                     } catch (error) {
                         console.warn("Failed to load BESIII agent config:", error);
                         // 即使配置加载失败，也要设置选中的智能体
-                        setMode("besiii");
+                        setMode("magentic-one");
                         setPersistedSelectedAgent(besiiiAgent);
-                        setLastSelectedAgentMode("besiii");
+                        setLastSelectedAgentMode("magentic-one");
                         onAgentSelect(besiiiAgent);
                     }
                 }
