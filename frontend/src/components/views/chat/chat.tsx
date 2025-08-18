@@ -347,6 +347,12 @@ export default function ChatView({
 
           // Check if we already have a message with the same content from chunks
           const messageData = message.data as AgentMessageConfig;
+
+          // Process content to replace <think> tags with "thinking..."
+          if (typeof messageData.content === "string" && messageData.content.includes("<think>")) {
+            messageData.content = messageData.content.replace(/<think>/g, "thinking...");
+          }
+
           const lastMessageIndex = current.messages.length - 1;
 
           if (lastMessageIndex >= 0) {
@@ -403,6 +409,12 @@ export default function ChatView({
             chunkData.content &&
             typeof chunkData.content === "string"
           ) {
+            // Process content to replace <think> tags with "thinking..."
+            let processedContent = chunkData.content;
+            if (processedContent.includes("<think>")) {
+              processedContent = processedContent.replace(/<think>/g, "thinking...");
+            }
+
             // Find the last message to append the chunk
             const lastMessageIndex = current.messages.length - 1;
             if (lastMessageIndex >= 0) {
@@ -425,7 +437,7 @@ export default function ChatView({
                     content:
                       (lastMessage.config
                         .content as string) +
-                      chunkData.content,
+                      processedContent,
                   },
                 };
 
@@ -440,7 +452,7 @@ export default function ChatView({
             const newChunkMessage = createMessage(
               {
                 source: "assistant", // Force assistant source for message_chunk
-                content: chunkData.content,
+                content: processedContent,
                 metadata: chunkData.metadata || {},
               } as AgentMessageConfig,
               current.id,

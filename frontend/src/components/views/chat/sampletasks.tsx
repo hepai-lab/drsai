@@ -6,11 +6,6 @@ interface SampleTasksProps {
 
 const SAMPLE_TASKS = [
   "帮我测量psi(4260) -> pi+ pi- [J/psi -> mu+ mu-]过程在4.26 GeV能量点上的截面，并且绘制Jpsi（mumu）的不变质量。先规划后执行。",
-  // "When does the post office near me close today?",
-  // "Find the latest publications from the the Microsoft Research AI Frontiers Lab on Human-Agent interaction",
-  // "Which commit of Microsoft/markitdown repo introduced MCP support?",
-  // "Can you make a Markdown file with python that summarizes the Microsoft AutoGen repo?",
-  // "Order me a custom pizza from Tangle Town Pub with sausage, pineapple, and black olives",
   "Search arXiv for the latest papers on computer use agents",
 ];
 

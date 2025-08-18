@@ -251,6 +251,11 @@ const parseContent = (content: any): string => {
     );
   }
 
+  // Replace <think> tags with "thinking..."
+  if (cleanedContent.includes("<think>")) {
+    cleanedContent = cleanedContent.replace(/<think>/g, "thinking...");
+  }
+
   try {
     const parsedContent = JSON.parse(cleanedContent);
 
