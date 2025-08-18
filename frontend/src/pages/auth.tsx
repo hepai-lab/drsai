@@ -16,6 +16,10 @@ const AuthPage = () => {
       localStorage.setItem("username", username);
       localStorage.setItem("user_email", username); // 假设username就是email
       localStorage.setItem("user_name", username);
+
+      // 清除之前的agent选择，确保新用户登录后使用默认agent
+      localStorage.removeItem("drsai-mode-config");
+
       // 更新用户状态
       setUser({
         name: username,
