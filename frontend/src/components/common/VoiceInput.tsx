@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from "react";
-import { Mic, MicOff, Volume2, VolumeX } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Mic, MicOff } from "lucide-react";
 
 interface VoiceInputProps {
     onTranscript: (text: string) => void;
@@ -33,7 +33,8 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
             const recognitionInstance = new SpeechRecognition();
             recognitionInstance.continuous = true;
             recognitionInstance.interimResults = true;
-            recognitionInstance.lang = language;
+            // 设置多语言支持，优先中文，如果没有指定语言则使用中文
+            recognitionInstance.lang = language || "zh-CN";
 
             recognitionInstance.onstart = () => {
                 setIsListening(true);
@@ -125,32 +126,38 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
             <button
                 onClick={toggleListening}
                 disabled={disabled}
-                className={`w-8 h-8 rounded-xl flex items-center justify-center transition-smooth ${isListening
+                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${isListening
                     ? isDarkMode
-                        ? "bg-error-primary/20 hover:bg-error-primary/30 text-error-primary pulse-glow"
-                        : "bg-error-primary/20 hover:bg-error-primary/30 text-error-primary pulse-glow"
+                        ? "bg-red-500/90 hover:bg-red-500 text-white shadow-lg shadow-red-500/30 scale-110"
+                        : "bg-red-500/90 hover:bg-red-500 text-white shadow-lg shadow-red-500/30 scale-110"
                     : isDarkMode
-                        ? "bg-accent/20 hover:bg-accent/30 text-accent hover-lift"
-                        : "bg-accent/20 hover:bg-accent/30 text-accent hover-lift"
+                        ? "bg-accent/20 hover:bg-accent/30 text-accent hover-lift hover:scale-105"
+                        : "bg-accent/20 hover:bg-accent/30 text-accent hover-lift hover:scale-105"
                     } ${disabled
                         ? "opacity-50 cursor-not-allowed"
                         : "cursor-pointer"
                     } ${className}`}
-                title={isListening ? "停止语音输入" : "开始语音输入"}
+                title={isListening ? "点击停止录音" : "点击开始录音"}
             >
                 {isListening ? (
-                    <MicOff className="h-6 w-6" />
+                    <MicOff className="h-5 w-5" />
                 ) : (
-                    <Mic className="h-6 w-6" />
+                    <Mic className="h-5 w-5" />
                 )}
             </button>
 
             {interimTranscript && (
                 <div
-                    className={`absolute bottom-full mb-2 left-0 right-0 rounded-xl p-3 text-sm max-w-xs backdrop-blur-sm animate-slide-up ${isDarkMode
+                    className={`absolute bottom-full mb-2 left-1/2 transform -translate-x-1/2 rounded-xl p-3 text-sm backdrop-blur-sm animate-slide-up ${isDarkMode
                         ? "bg-tertiary/80 border border-border-primary text-primary"
                         : "bg-white/80 border border-border-primary text-primary shadow-modern"
                         }`}
+                    style={{
+                        minWidth: '200px',
+                        maxWidth: 'min(400px, calc(100vw - 2rem))', // 自适应宽度，但不超出屏幕
+                        wordWrap: 'break-word',
+                        whiteSpace: 'pre-wrap'
+                    }}
                 >
                     {interimTranscript}
                 </div>

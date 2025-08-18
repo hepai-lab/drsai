@@ -39,9 +39,7 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
 
   return (
     <div className="mb-8">
-      <div className="mt-6 mb-4 text-sm text-secondary/80 text-center">
-        or try a sample task from below{" "}
-        {/* 或者尝试下面的示例任务 */}
+      <div className="mb-4 text-center">
       </div>
       <div className="flex flex-col gap-3 w-full">
         <div className="inline-flex flex-wrap justify-center gap-3 w-full">

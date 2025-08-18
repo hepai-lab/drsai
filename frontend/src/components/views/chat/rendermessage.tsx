@@ -1,4 +1,5 @@
 import React, { useState, memo, useEffect } from "react";
+import { message as antdMessage } from "antd";
 import {
   Globe2,
   ChevronDown,
@@ -846,6 +847,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     onRegeneratePlan,
     forceCollapsed = false,
   }) => {
+    const { settings: voiceSettings } = useVoiceSettingsStore();
     if (!message) return null;
     if (message.metadata?.type === "browser_address") return null;
 
@@ -875,121 +877,213 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     }
 
     return (
-      <div
-        className={`relative group mb-3 ${className} w-full break-words ${hidden &&
-          (!orchestratorContent ||
-            orchestratorContent.type !== "step-execution")
-          ? "hidden"
-          : ""
-          }`}
-      >
+      // if message.content is  empty, don't render
+      !message.content ? null : (
         <div
-          className={`flex ${isUser || isUserProxy ? "justify-end" : "justify-start"
-            } items-start w-full transition-all duration-200`}
+          className={`relative group mb-3 ${className} w-full break-words ${hidden &&
+            (!orchestratorContent ||
+              orchestratorContent.type !== "step-execution")
+            ? "hidden"
+            : ""
+            }`}
         >
           <div
-            className={`${isUser || isUserProxy
-              ? `text-primary rounded-2xl bg-tertiary rounded-tr-sm px-4 py-2 ${parsedContent.plan &&
-                parsedContent.plan.length > 0
-                ? "w-[80%]"
-                : "max-w-[80%]"
-              }`
-              : "w-full text-primary"
-              } break-words overflow-hidden message-content`}
+            className={`flex ${isUser || isUserProxy ? "justify-end" : "justify-start"
+              } items-start w-full transition-all duration-200`}
           >
-            {/* Show user message content first */}
-            {(isUser || isUserProxy) && (
-              <RenderUserMessage
-                parsedContent={parsedContent}
-                isUserProxy={isUserProxy}
-              />
+            {/* AI Avatar - only show for non-user messages */}
+            {!isUser && !isUserProxy && (
+              <div className="flex-shrink-0 mr-3 mt-1">
+                <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="url(#lightbulbGradient)" strokeWidth="1.5">
+                  <defs>
+                    <linearGradient id="lightbulbGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#8b5cf6" />
+                      <stop offset="50%" stopColor="#a855f7" />
+                      <stop offset="100%" stopColor="#c084fc" />
+                    </linearGradient>
+                  </defs>
+                  {/* Lightbulb */}
+                  <path d="M9 21h6" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M12 3c-3.866 0-7 3.134-7 7 0 2.38 1.19 4.49 3 5.74V18a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.25 3-3.36 3-5.74 0-3.866-3.134-7-7-7z" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M12 7v4" strokeLinecap="round" strokeLinejoin="round" stroke="url(#lightbulbGradient)" strokeWidth="2" />
+                </svg>
+              </div>
             )}
-            {/* Handle other content types */}
-            {!isUser &&
-              !isUserProxy &&
-              (isPlanMsg ? (
-                <RenderPlan
-                  content={orchestratorContent?.content || {}}
-                  isEditable={isEditable}
-                  onSavePlan={onSavePlan}
-                  onRegeneratePlan={onRegeneratePlan}
-                  forceCollapsed={forceCollapsed}
+
+            {/* Think Process部分 - 在消息气泡外面 */}
+            {!isUser && !isUserProxy && (() => {
+              const content = parseContent(parsedContent.text);
+              const thinkBubbleMatch = content.match(/<div class="think-bubble">(.*?)<\/div>/s);
+              const thinkingProcessMatch = content.match(/💭\s*Thinking Process[^💭]*💭([\s\S]*?)(?=\n\n|$)/);
+              const generalThinkMatch = content.match(/💭([\s\S]*?)(?=\n[^💭]|$)/);
+
+              let thinkContent = '';
+              if (thinkBubbleMatch) {
+                thinkContent = thinkBubbleMatch[1];
+              } else if (thinkingProcessMatch) {
+                thinkContent = thinkingProcessMatch[1];
+              } else if (generalThinkMatch) {
+                thinkContent = generalThinkMatch[1];
+              }
+
+              return thinkContent ? (
+                <div className="mb-3 ml-11 text-secondary/70 italic text-sm">
+                  💭 {thinkContent.trim()}
+                </div>
+              ) : null;
+            })()}
+
+            <div
+              className={`${isUser || isUserProxy
+                ? `text-primary text-lg rounded-2xl bg-tertiary rounded-tr-sm px-4 py-2 ${parsedContent.plan &&
+                  parsedContent.plan.length > 0
+                  ? "w-[80%]"
+                  : "max-w-[80%]"
+                }`
+                : "max-w-[85%] text-primary text-lg bg-slate-600/25 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm"
+                } break-words overflow-hidden message-content`}
+            >
+              {/* Show user message content first */}
+              {(isUser || isUserProxy) && (
+                <RenderUserMessage
+                  parsedContent={parsedContent}
+                  isUserProxy={isUserProxy}
                 />
-              ) : orchestratorContent?.type ===
-                "step-execution" ? (
-                <RenderStepExecution
-                  content={orchestratorContent.content}
-                  hidden={hidden}
-                  is_step_repeated={is_step_repeated}
-                  is_step_failed={is_step_failed}
-                  runStatus={runStatus || ""}
-                  onToggleHide={onToggleHide}
-                />
-              ) : orchestratorContent?.type === "final-answer" ? (
-                <RenderFinalAnswer
-                  content={orchestratorContent.content}
-                  sessionId={sessionId}
-                  messageIdx={messageIdx}
-                />
-              ) : messageUtils.isToolCallContent(
-                parsedContent.text
-              ) ? (
-                <RenderToolCall content={parsedContent.text} />
-              ) : messageUtils.isMultiModalContent(
-                parsedContent.text
-              ) ? (
-                message.metadata?.type ===
-                  "browser_screenshot" ? (
-                  <RenderMultiModalBrowserStep
+              )}
+              {/* Handle other content types */}
+              {!isUser &&
+                !isUserProxy &&
+                (isPlanMsg ? (
+                  <RenderPlan
+                    content={orchestratorContent?.content || {}}
+                    isEditable={isEditable}
+                    onSavePlan={onSavePlan}
+                    onRegeneratePlan={onRegeneratePlan}
+                    forceCollapsed={forceCollapsed}
+                  />
+                ) : orchestratorContent?.type ===
+                  "step-execution" ? (
+                  <RenderStepExecution
+                    content={orchestratorContent.content}
+                    hidden={hidden}
+                    is_step_repeated={is_step_repeated}
+                    is_step_failed={is_step_failed}
+                    runStatus={runStatus || ""}
+                    onToggleHide={onToggleHide}
+                  />
+                ) : orchestratorContent?.type === "final-answer" ? (
+                  <RenderFinalAnswer
+                    content={orchestratorContent.content}
+                    sessionId={sessionId}
+                    messageIdx={messageIdx}
+                  />
+                ) : messageUtils.isToolCallContent(
+                  parsedContent.text
+                ) ? (
+                  <RenderToolCall content={parsedContent.text} />
+                ) : messageUtils.isMultiModalContent(
+                  parsedContent.text
+                ) ? (
+                  message.metadata?.type ===
+                    "browser_screenshot" ? (
+                    <RenderMultiModalBrowserStep
+                      content={parsedContent.text}
+                      onImageClick={onImageClick}
+                    />
+                  ) : (
+                    <RenderMultiModal
+                      content={parsedContent.text}
+                    />
+                  )
+                ) : messageUtils.isFunctionExecutionResult(
+                  parsedContent.text
+                ) ? (
+                  <RenderToolResult
                     content={parsedContent.text}
-                    onImageClick={onImageClick}
                   />
                 ) : (
-                  <RenderMultiModal
-                    content={parsedContent.text}
+                  <div className="break-words relative message-content">
+                    {message.metadata?.type === "file" ? (
+                      <RenderFile message={message} />
+                    ) : (
+                      <>
+                        {/* 只显示真实内容，think部分已在外面显示 */}
+                        {(() => {
+                          const content = parseContent(parsedContent.text);
+                          // 如果content是个空字符串或空数组，直接返回null
+                          if (!content || (Array.isArray(content) && content.length === 0)) {
+                            return null;
+                          }
+                          // 移除think部分，只保留真实内容
+                          let realContent = content;
+                          const thinkBubbleMatch = content.match(/<div class="think-bubble">(.*?)<\/div>/s);
+                          const thinkingProcessMatch = content.match(/💭\s*Thinking Process[^💭]*💭([\s\S]*?)(?=\n\n|$)/);
+                          const generalThinkMatch = content.match(/💭([\s\S]*?)(?=\n[^💭]|$)/);
+
+                          if (thinkBubbleMatch) {
+                            realContent = content.replace(/<div class="think-bubble">.*?<\/div>/s, '').trim();
+                          } else if (thinkingProcessMatch) {
+                            realContent = content.replace(/💭\s*Thinking Process[^💭]*💭[\s\S]*?(?=\n\n|$)/, '').trim();
+                          } else if (generalThinkMatch) {
+                            realContent = content.replace(/💭[\s\S]*?(?=\n[^💭]|$)/, '').trim();
+                          }
+
+                          return (
+                            <MarkdownRenderer
+                              content={realContent}
+                              indented={
+                                !orchestratorContent ||
+                                orchestratorContent.type !== "default"
+                              }
+                              allowHtml={true}
+                            />
+                          );
+                        })()}
+                      </>
+                    )}
+                  </div>
+                ))}
+
+              {/* Copy and Voice buttons for AI messages */}
+              {!isUser && !isUserProxy && typeof parsedContent.text === "string" && parsedContent.text.trim() && (
+                <div className="flex items-center gap-1 mt-2">
+                  {/* Copy button */}
+                  <button
+                    onClick={() => {
+                      try {
+                        navigator.clipboard.writeText(parseContent(parsedContent.text)).then(() => {
+                          antdMessage.success('Message copied to clipboard');
+                        }).catch(() => {
+                          antdMessage.error('Failed to copy message');
+                        });
+                      } catch (err) {
+                        antdMessage.error('Failed to copy message');
+                      }
+                    }}
+                    className="p-1 text-secondary hover:text-primary transition-colors"
+                    title="Copy message"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  </button>
+
+                  {/* Voice output button */}
+                  <VoiceOutput
+                    text={parseContent(parsedContent.text)}
+                    language={voiceSettings.outputLanguage}
+                    voice={voiceSettings.outputVoice}
+                    rate={voiceSettings.outputRate}
+                    pitch={voiceSettings.outputPitch}
+                    autoPlay={false}
+                    className="text-xs"
                   />
-                )
-              ) : messageUtils.isFunctionExecutionResult(
-                parsedContent.text
-              ) ? (
-                <RenderToolResult
-                  content={parsedContent.text}
-                />
-              ) : (
-                <div className="break-words relative message-content">
-                  {message.metadata?.type === "file" ? (
-                    <RenderFile message={message} />
-                  ) : (
-                    <>
-                      <MarkdownRenderer
-                        content={parseContent(
-                          parsedContent.text
-                        )}
-                        indented={
-                          !orchestratorContent ||
-                          orchestratorContent.type !==
-                          "default"
-                        }
-                        allowHtml={true}
-                      />
-                      {/* 语音输出按钮 */}
-                      {typeof parsedContent.text ===
-                        "string" &&
-                        parsedContent.text.trim() && (
-                          <VoiceOutputWrapper
-                            text={parseContent(
-                              parsedContent.text
-                            )}
-                          />
-                        )}
-                    </>
-                  )}
                 </div>
-              ))}
+              )}
+            </div>
           </div>
         </div>
-      </div>
-    );
+      ));
   }
 );
 

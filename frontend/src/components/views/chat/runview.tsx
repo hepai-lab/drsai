@@ -621,7 +621,7 @@ const RunView: React.FC<RunViewProps> = ({
           } transition-all duration-300`}
       >
         {/* Thread Section - use flex-1 for height, but remove overflow-y-auto */}
-        <div className="w-full flex-1">
+        <div className="w-full max-w-4xl mx-auto flex-1">
           {localMessages.length > 0 &&
             localMessages.map((msg: Message, idx: number) => {
               const isCurrentMessagePlan =

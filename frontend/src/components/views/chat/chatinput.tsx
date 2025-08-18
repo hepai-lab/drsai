@@ -120,7 +120,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     const [isPlanModalVisible, setIsPlanModalVisible] =
       React.useState(false);
     const { settings: voiceSettings } = useVoiceSettingsStore();
-    const textAreaDefaultHeight = "64px";
+    const textAreaDefaultHeight = "52px";
     const isInputDisabled =
       disabled ||
       runStatus === "active" ||
@@ -966,7 +966,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
     }, [isRelevantPlansVisible]);
 
     return (
-      <div className="mt-2 w-full relative">
+      <div className="mt-2 w-full max-w-4xl mx-auto relative">
         {notificationContextHolder}
 
         {/* Relevant Plans Indicator and Dropdown */}
@@ -1105,7 +1105,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
 
         <div className="mt-4 p-1">
           <div
-            className={`relative w-full transition-smooth rounded-3xl ${isDragActive
+            className={`relative w-full transition-smooth rounded-full ${isDragActive
               ? "ring-2 ring-accent ring-opacity-50 bg-accent/5"
               : ""
               } ${darkMode === "dark"
@@ -1242,7 +1242,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     defaultValue={""}
                     onChange={handleTextChange}
                     onKeyDown={handleKeyDown}
-                    className={`input-enhanced flex items-center w-full resize-none p-4 ${enable_upload ? 'pl-14' : 'pl-6'} ${runStatus === "active" ? 'pr-32' : 'pr-24'} rounded-2xl transition-smooth border-2 ${darkMode === "dark"
+                    className={`input-enhanced flex items-center w-full resize-none p-4 ${enable_upload ? 'pl-14' : 'pl-6'} ${runStatus === "active" ? 'pr-32' : 'pr-24'} rounded-full transition-smooth border-2 ${darkMode === "dark"
                       ? "bg-tertiary/50 border-border-primary backdrop-blur-sm hover:bg-tertiary/70 focus:bg-tertiary/80 focus:border-accent"
                       : "bg-white/80 border-border-primary backdrop-blur-sm hover:bg-white/90 focus:bg-white focus:border-accent shadow-modern"
                       } ${isInputDisabled
@@ -1252,7 +1252,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     style={{
                       maxHeight: "120px",
                       overflowY: "auto",
-                      minHeight: "56px",
+                      minHeight: "52px",
                     }}
                     placeholder={
                       runStatus === "awaiting_input"
@@ -1281,7 +1281,7 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                       <button
                         type="button"
                         onClick={handlePause}
-                        className={`rounded-xl flex justify-center items-center w-10 h-10 transition-smooth hover-lift ${darkMode === "dark"
+                        className={`rounded-full flex justify-center items-center w-10 h-10 transition-smooth hover-lift ${darkMode === "dark"
                           ? "bg-warning-primary/20 hover:bg-warning-primary/30 text-warning-primary"
                           : "bg-warning-primary/10 hover:bg-warning-primary/20 text-warning-primary"
                           } shadow-modern`}
@@ -1295,14 +1295,14 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                       type="button"
                       onClick={handleSubmit}
                       disabled={isInputDisabled}
-                      className={`transition-smooth rounded-xl flex justify-center items-center w-10 h-10 ${isInputDisabled
+                      className={`transition-smooth rounded-full flex justify-center items-center w-10 h-10 ${isInputDisabled
                         ? "cursor-not-allowed opacity-50 bg-gray-400"
                         : darkMode === "dark"
                           ? "bg-gradient-primary hover:shadow-modern-lg text-white hover-lift pulse-glow"
                           : "bg-gradient-primary hover:shadow-modern-lg text-white hover-lift pulse-glow"
                         }`}
                     >
-                      <PaperAirplaneIcon className="h-5 w-5 transform rotate-45" />
+                      <PaperAirplaneIcon className="h-5 w-5 transform -rotate-45" />
                     </button>
                   </div>
                 </form>

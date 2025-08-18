@@ -458,6 +458,143 @@
         background: rgba(99, 102, 241, 0.3) !important;
     }
 
+    /* 智能会话标题样式 */
+    .session-title-container {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        margin-right: 8px;
+    }
+
+    .session-title {
+        display: block;
+        width: 100%;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        transition: all 0.2s ease;
+    }
+
+    /* 智能标题宽度调整 */
+    .session-title {
+        max-width: 100%;
+    }
+
+    /* 当有状态指示器时调整宽度 */
+    .session-title-with-status {
+        max-width: calc(100% - 8px);
+    }
+
+    /* 悬停时为下拉菜单预留空间 */
+    .group:hover .session-title {
+        max-width: calc(100% - 8px);
+    }
+
+    .group:hover .session-title-with-status {
+        max-width: calc(100% - 16px);
+    }
+
+    /* 移除下拉菜单按钮的focus边框 */
+    .ant-dropdown-trigger,
+    .ant-dropdown-trigger:focus,
+    .ant-dropdown-trigger:active,
+    .ant-dropdown-trigger:hover {
+        outline: none !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+
+    /* 移除所有按钮的默认focus样式 */
+    button:focus,
+    button:focus-visible,
+    .ant-btn:focus,
+    .ant-btn:focus-visible {
+        outline: none !important;
+        box-shadow: none !important;
+        border-color: transparent !important;
+    }
+
+    /* 移除Antd组件的focus样式 */
+    .ant-dropdown-menu-item:focus,
+    .ant-dropdown-menu-item:active {
+        outline: none !important;
+        box-shadow: none !important;
+    }
+
+    /* 移除侧边栏按钮的所有focus样式 */
+    .sidebar-dropdown-button,
+    .sidebar-dropdown-button:focus,
+    .sidebar-dropdown-button:focus-visible,
+    .sidebar-dropdown-button:active {
+        outline: none !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+
+    /* 通用focus样式移除 */
+    *:focus,
+    *:focus-visible {
+        outline: none !important;
+    }
+
+    /* 保持可访问性，但使用自定义focus样式 */
+    button:focus-visible,
+    .ant-btn:focus-visible {
+        outline: 2px solid transparent !important;
+        box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2) !important;
+        border-radius: 6px;
+    }
+
+    /* 侧边栏下拉按钮特殊处理 */
+    .sidebar-dropdown-button:focus,
+    .sidebar-dropdown-button:focus-visible,
+    .sidebar-dropdown-button:active {
+        outline: none !important;
+        border: none !important;
+        box-shadow: none !important;
+
+        --tw-ring-shadow: none !important;
+        --tw-ring-offset-shadow: none !important;
+    }
+
+    .group .ant-btn:focus-visible {
+        box-shadow: none !important;
+    }
+
+    /* AI消息气泡样式 */
+    .ai-message-bubble {
+        background: linear-gradient(135deg, var(--color-bg-secondary) 0%, var(--color-bg-tertiary) 100%);
+        backdrop-filter: blur(10px);
+        border: 1px solid var(--color-border-primary);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        transition: all 0.2s ease;
+    }
+
+    .ai-message-bubble:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        transform: translateY(-1px);
+    }
+
+    /* AI头像样式 */
+    .ai-avatar {
+        background: linear-gradient(135deg, #8b5cf6 0%, #a855f7 50%, #c084fc 100%);
+        box-shadow: 0 2px 8px rgba(139, 92, 246, 0.3);
+        transition: all 0.2s ease;
+    }
+
+    .ai-avatar:hover {
+        transform: scale(1.05);
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+    }
+
+    /* 强制移除Tailwind的ring样式 */
+    .sidebar-dropdown-button {
+        --tw-ring-shadow: 0 0 #0000 !important;
+        --tw-ring-offset-shadow: 0 0 #0000 !important;
+    }
+
+
+
     /* 消息内容的选择样式 - 更明显的高亮 */
     .message-content::selection,
     .message-content *::selection,
@@ -480,16 +617,26 @@
     /* 用户消息气泡的选择样式 */
     .bg-tertiary::selection,
     .bg-tertiary *::selection {
-        background: rgba(255, 255, 255, 0.3) !important;
-        color: #6366f1 !important;
+        background: rgba(255, 255, 255, 0.4) !important;
+        color: white !important;
         text-shadow: none !important;
     }
 
     .bg-tertiary::-moz-selection,
     .bg-tertiary *::-moz-selection {
-        background: rgba(255, 255, 255, 0.3) !important;
-        color: #6366f1 !important;
+        background: rgba(255, 255, 255, 0.4) !important;
+        color: white !important;
         text-shadow: none !important;
+    }
+
+    /* 强制设置消息内容的字体大小 */
+    .message-content,
+    .message-content *,
+    .message-content p,
+    .message-content div,
+    .message-content span {
+        font-size: 16px !important;
+        line-height: 1.6 !important;
     }
 }
 
@@ -597,9 +744,10 @@ body {
     font-family: "Segoe UI", "Open Sans", sans-serif;
 }
 
-* {
+/* 移除全局字体大小限制，让组件自己控制字体大小 */
+/* * {
     font-size: 0.9rem;
-}
+} */
 
 /* @import "antd/dist/antd.css"; */
 

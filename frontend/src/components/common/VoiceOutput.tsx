@@ -190,23 +190,21 @@ const VoiceOutput: React.FC<VoiceOutputProps> = ({
             <button
                 onClick={toggleSpeaking}
                 disabled={disabled || !text.trim()}
-                className={`p-2 rounded-lg transition-all duration-200 ${
-                    isPlaying
-                        ? "bg-green-500 hover:bg-green-600 text-white"
-                        : "bg-blue-500 hover:bg-blue-600 text-white"
-                } ${
-                    disabled || !text.trim()
+                className={`p-1 transition-all duration-200 ${isPlaying
+                    ? "text-green-600 hover:text-green-700"
+                    : "text-secondary hover:text-primary"
+                    } ${disabled || !text.trim()
                         ? "opacity-50 cursor-not-allowed"
                         : "cursor-pointer"
-                } ${className}`}
+                    } ${className}`}
                 title={
                     !text.trim()
                         ? "没有文本内容"
                         : isPlaying
-                        ? isPaused
-                            ? "继续播放"
-                            : "暂停播放"
-                        : "播放语音"
+                            ? isPaused
+                                ? "继续播放"
+                                : "暂停播放"
+                            : "播放语音"
                 }
             >
                 {isPlaying ? (
@@ -223,10 +221,10 @@ const VoiceOutput: React.FC<VoiceOutputProps> = ({
             {isPlaying && (
                 <button
                     onClick={stopSpeaking}
-                    className="p-1 rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors"
+                    className="p-1 text-red-600 hover:text-red-700 transition-colors"
                     title="停止播放"
                 >
-                    <VolumeX className="h-4 w-4" />
+                    <VolumeX className="h-5 w-5" />
                 </button>
             )}
         </div>

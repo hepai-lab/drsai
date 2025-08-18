@@ -36,8 +36,10 @@ export const Button: React.FC<ButtonProps> = ({
   ...props
 }) => {
   // Base classes shared by all buttons
-  const baseClasses =
-    "inline-flex items-center justify-center rounded-xl transition-smooth focus:outline-none focus:ring-2 focus:ring-accent/20 hover-lift";
+  const hasNoFocus = className.includes('sidebar-dropdown-button');
+  const baseClasses = hasNoFocus
+    ? "inline-flex items-center justify-center rounded-xl transition-smooth focus:outline-none hover-lift"
+    : "inline-flex items-center justify-center rounded-xl transition-smooth focus:outline-none focus:ring-2 focus:ring-accent/20 hover-lift";
 
   // Size variations
   const sizeClasses = {

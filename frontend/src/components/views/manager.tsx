@@ -320,6 +320,20 @@ export const SessionManager: React.FC = () => {
     setIsLoading(false);
   };
 
+  const handleLogoClick = () => {
+    // 切换到 Current Session tab
+    setActiveSubMenuItem("current_session");
+
+    // 设置默认agent为 Dr.Sai General (magentic-one)
+    const defaultAgent = agents.find(agent => agent.mode === "magentic-one");
+    if (defaultAgent) {
+      setSelectedAgent(defaultAgent);
+    }
+
+    // 创建新会话
+    handleEditSession();
+  };
+
   const handleDeleteSession = async (sessionId: number) => {
     if (!user?.email) return;
 
@@ -711,6 +725,7 @@ export const SessionManager: React.FC = () => {
         isSidebarOpen={isSidebarOpen}
         onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         onNewSession={() => handleEditSession()}
+        onLogoClick={handleLogoClick}
         agentSelector={
           activeSubMenuItem === "current_session" ? (
             <AgentSelectorAdvanced
