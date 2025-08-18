@@ -73,7 +73,10 @@ interface ChatInputProps {
   sessionId: number;
 }
 
-const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
+const ChatInput = React.forwardRef<
+  { focus: () => void; setValue: (value: string) => void },
+  ChatInputProps
+>(
   (
     {
       onSubmit,
@@ -630,10 +633,26 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       }
     };
 
-    // Expose focus method via ref
+    // Expose focus and setValue methods via ref
     React.useImperativeHandle(ref, () => ({
       focus: () => {
         textAreaRef.current?.focus();
+      },
+      setValue: (value: string) => {
+        setText(value);
+        if (textAreaRef.current) {
+          textAreaRef.current.value = value;
+          // 调整文本框高度
+          const scrollHeight = textAreaRef.current.scrollHeight;
+          const newHeight = Math.min(scrollHeight, 120);
+          textAreaRef.current.style.height = `${newHeight}px`;
+          // 聚焦并设置光标位置
+          textAreaRef.current.focus();
+          textAreaRef.current.setSelectionRange(
+            value.length,
+            value.length
+          );
+        }
       },
     }));
 
@@ -815,7 +834,9 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
             type="circle"
             size={16}
             percent={50}
-            strokeColor={darkMode === "dark" ? "#a855f7" : "#7c3aed"}
+            strokeColor={
+              darkMode === "dark" ? "#a855f7" : "#7c3aed"
+            }
           />
         );
       }
@@ -827,8 +848,14 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
       }
 
       if (fileType.startsWith("image/")) {
-        return <ImageIcon className={`w-4 h-4 ${darkMode === "dark" ? "text-magenta-400" : "text-magenta-600"
-          }`} />;
+        return (
+          <ImageIcon
+            className={`w-4 h-4 ${darkMode === "dark"
+              ? "text-magenta-400"
+              : "text-magenta-600"
+              }`}
+          />
+        );
       }
 
       if (fileType === "application/pdf") {
@@ -840,16 +867,26 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
         fileName.endsWith(".doc") ||
         fileName.endsWith(".docx")
       ) {
-        return <FileTextIcon className={`w-4 h-4 ${darkMode === "dark" ? "text-magenta-400" : "text-magenta-600"
-          }`} />;
+        return (
+          <FileTextIcon
+            className={`w-4 h-4 ${darkMode === "dark"
+              ? "text-magenta-400"
+              : "text-magenta-600"
+              }`}
+          />
+        );
       }
 
       if (fileType === "text/plain" || fileName.endsWith(".txt")) {
         return <FileTextIcon className="w-4 h-4 text-green-500" />;
       }
 
-      return <FileTextIcon className={`w-4 h-4 ${darkMode === "dark" ? "text-gray-400" : "text-gray-500"
-        }`} />;
+      return (
+        <FileTextIcon
+          className={`w-4 h-4 ${darkMode === "dark" ? "text-gray-400" : "text-gray-500"
+            }`}
+        />
+      );
     };
 
     const formatFileSize = (bytes: number) => {
@@ -981,19 +1018,33 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
 
         {/* Drag Drop Overlay */}
         {isDragActive && enable_upload && (
-          <div className={`absolute inset-0 border-2 border-dashed rounded-lg flex items-center justify-center z-10 ${darkMode === "dark"
-            ? "bg-magenta-500 bg-opacity-10 border-magenta-500"
-            : "bg-magenta-500 bg-opacity-5 border-magenta-500"
-            }`}>
+          <div
+            className={`absolute inset-0 border-2 border-dashed rounded-lg flex items-center justify-center z-10 ${darkMode === "dark"
+              ? "bg-magenta-500 bg-opacity-10 border-magenta-500"
+              : "bg-magenta-500 bg-opacity-5 border-magenta-500"
+              }`}
+          >
             <div className="text-center">
-              <UploadIcon className={`w-12 h-12 mx-auto mb-2 ${darkMode === "dark" ? "text-magenta-400" : "text-magenta-600"
-                }`} />
-              <p className={`font-medium ${darkMode === "dark" ? "text-magenta-300" : "text-magenta-700"
-                }`}>
+              <UploadIcon
+                className={`w-12 h-12 mx-auto mb-2 ${darkMode === "dark"
+                  ? "text-magenta-400"
+                  : "text-magenta-600"
+                  }`}
+              />
+              <p
+                className={`font-medium ${darkMode === "dark"
+                  ? "text-magenta-300"
+                  : "text-magenta-700"
+                  }`}
+              >
                 Drop files here to upload
               </p>
-              <p className={`text-sm ${darkMode === "dark" ? "text-magenta-400" : "text-magenta-600"
-                }`}>
+              <p
+                className={`text-sm ${darkMode === "dark"
+                  ? "text-magenta-400"
+                  : "text-magenta-600"
+                  }`}
+              >
                 Supported: Images, PDF, Word, Text files
               </p>
             </div>
@@ -1003,7 +1054,9 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
         {/* Attached Items Preview */}
         {(attachedPlan || fileList.length > 0) && (
           <div
-            className={`-mb-2 mx-1 ${darkMode === "dark" ? "bg-[#333333]" : "bg-magenta-50"
+            className={`-mb-2 mx-1 ${darkMode === "dark"
+              ? "bg-[#333333]"
+              : "bg-magenta-50"
               } rounded-t border-b-0 p-2 flex border flex-wrap gap-2`}
           >
             {/* Attached Plan */}
@@ -1015,8 +1068,12 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                   } rounded px-2 py-1 text-xs cursor-pointer hover:opacity-80 transition-opacity shadow-sm`}
                 onClick={handlePlanClick}
               >
-                <span className={`truncate max-w-[150px] ${darkMode === "dark" ? "text-white" : "text-magenta-800"
-                  }`}>
+                <span
+                  className={`truncate max-w-[150px] ${darkMode === "dark"
+                    ? "text-white"
+                    : "text-magenta-800"
+                    }`}
+                >
                   📋 {attachedPlan.task}
                 </span>
                 <Button
@@ -1029,8 +1086,14 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     e.stopPropagation();
                     setAttachedPlan(null);
                   }}
-                  icon={<XIcon className={`w-3 h-3 ${darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
-                    }`} />}
+                  icon={
+                    <XIcon
+                      className={`w-3 h-3 ${darkMode === "dark"
+                        ? "text-gray-400"
+                        : "text-magenta-600"
+                        }`}
+                    />
+                  }
                 />
               </div>
             )}
@@ -1049,12 +1112,20 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
               >
                 {getFileIcon(file)}
                 <div className="flex flex-col min-w-0 flex-1">
-                  <span className={`truncate font-medium ${darkMode === "dark" ? "text-white" : "text-magenta-800"
-                    }`}>
+                  <span
+                    className={`truncate font-medium ${darkMode === "dark"
+                      ? "text-white"
+                      : "text-magenta-800"
+                      }`}
+                  >
                     {file.name}
                   </span>
-                  <span className={`text-xs ${darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
-                    }`}>
+                  <span
+                    className={`text-xs ${darkMode === "dark"
+                      ? "text-gray-400"
+                      : "text-magenta-600"
+                      }`}
+                  >
                     {formatFileSize(file.size || 0)}
                     {file.status === "uploading" &&
                       " - Uploading..."}
@@ -1076,8 +1147,14 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                       )
                     )
                   }
-                  icon={<XIcon className={`w-3 h-3 ${darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
-                    }`} />}
+                  icon={
+                    <XIcon
+                      className={`w-3 h-3 ${darkMode === "dark"
+                        ? "text-gray-400"
+                        : "text-magenta-600"
+                        }`}
+                    />
+                  }
                 />
               </div>
             ))}
@@ -1138,8 +1215,13 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                             <Menu.Item
                               key="attach-file"
                               icon={
-                                <PaperclipIcon className={`w-4 h-4 ${darkMode === "dark" ? "text-gray-300" : "text-magenta-600"
-                                  }`} />
+                                <PaperclipIcon
+                                  className={`w-4 h-4 ${darkMode ===
+                                    "dark"
+                                    ? "text-gray-300"
+                                    : "text-magenta-600"
+                                    }`}
+                                />
                               }
                             >
                               <Upload
@@ -1157,8 +1239,13 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                               key="attach-plan"
                               title="Attach Plan"
                               icon={
-                                <FileTextIcon className={`w-4 h-4 ${darkMode === "dark" ? "text-gray-300" : "text-magenta-600"
-                                  }`} />
+                                <FileTextIcon
+                                  className={`w-4 h-4 ${darkMode ===
+                                    "dark"
+                                    ? "text-gray-300"
+                                    : "text-magenta-600"
+                                    }`}
+                                />
                               }
                             >
                               {allPlans.length ===
@@ -1215,7 +1302,8 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                             }
                             className={`flex justify-center items-center w-8 h-8 rounded-xl transition-smooth hover-lift relative ${fileList.length > 0
                               ? "text-accent bg-accent/10"
-                              : darkMode === "dark"
+                              : darkMode ===
+                                "dark"
                                 ? "text-secondary hover:text-accent hover:bg-accent/10"
                                 : "text-secondary hover:text-accent hover:bg-accent/10"
                               }`}
@@ -1242,9 +1330,13 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                     defaultValue={""}
                     onChange={handleTextChange}
                     onKeyDown={handleKeyDown}
-                    className={`input-enhanced flex items-center w-full resize-none p-4 ${enable_upload ? 'pl-14' : 'pl-6'} ${runStatus === "active" ? 'pr-32' : 'pr-24'} rounded-full transition-smooth border-2 ${darkMode === "dark"
-                      ? "bg-tertiary/50 border-border-primary backdrop-blur-sm hover:bg-tertiary/70 focus:bg-tertiary/80 focus:border-accent"
-                      : "bg-white/80 border-border-primary backdrop-blur-sm hover:bg-white/90 focus:bg-white focus:border-accent shadow-modern"
+                    className={`input-enhanced flex items-center w-full resize-none p-4 ${enable_upload ? "pl-14" : "pl-6"
+                      } ${runStatus === "active"
+                        ? "pr-32"
+                        : "pr-24"
+                      } rounded-full transition-smooth border-2 ${darkMode === "dark"
+                        ? "bg-tertiary/50 border-border-primary backdrop-blur-sm hover:bg-tertiary/70 focus:bg-tertiary/80 focus:border-accent"
+                        : "bg-white/80 border-border-primary backdrop-blur-sm hover:bg-white/90 focus:bg-white focus:border-accent shadow-modern"
                       } ${isInputDisabled
                         ? "cursor-not-allowed opacity-50"
                         : "hover-lift"
@@ -1272,7 +1364,9 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
                       onTranscript={handleVoiceTranscript}
                       onError={handleVoiceError}
                       disabled={isInputDisabled}
-                      language={voiceSettings.inputLanguage}
+                      language={
+                        voiceSettings.inputLanguage
+                      }
                       className="transition-smooth hover-lift"
                     />
 
@@ -1312,12 +1406,18 @@ const ChatInput = React.forwardRef<{ focus: () => void }, ChatInputProps>(
         </div>
 
         {error && !error.status && (
-          <div className={`p-2 border rounded mt-4 text-sm ${darkMode === "dark"
-            ? "border-orange-500/30 text-orange-400 bg-orange-500/10"
-            : "border-orange-300 text-orange-600 bg-orange-50"
-            }`}>
-            <ExclamationTriangleIcon className={`h-5 inline-block mr-2 ${darkMode === "dark" ? "text-orange-400" : "text-orange-600"
-              }`} />
+          <div
+            className={`p-2 border rounded mt-4 text-sm ${darkMode === "dark"
+              ? "border-orange-500/30 text-orange-400 bg-orange-500/10"
+              : "border-orange-300 text-orange-600 bg-orange-50"
+              }`}
+          >
+            <ExclamationTriangleIcon
+              className={`h-5 inline-block mr-2 ${darkMode === "dark"
+                ? "text-orange-400"
+                : "text-orange-600"
+                }`}
+            />
             {error.message}
           </div>
         )}
