@@ -23,7 +23,7 @@ import {
 } from "../../types/plan";
 import { convertFilesToBase64, getServerUrl } from "../../utils";
 import { sessionAPI, settingsAPI } from "../api";
-import ChatInput from "./chatinput";
+import ChatInput from "./chat/chatinput";
 import ProgressBar from "./progressbar";
 import { messageUtils } from "./rendermessage";
 import RunView from "./runview";

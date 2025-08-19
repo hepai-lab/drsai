@@ -5,6 +5,7 @@ import {
   FileText,
   InfoIcon,
   MoreVertical,
+  PanelLeftClose,
   Plus,
   RefreshCcw,
   StopCircle,
@@ -16,7 +17,6 @@ import { Button } from "../common/Button";
 import SubMenu from "../common/SubMenu";
 import LearnPlanButton from "../features/Plans/LearnPlanButton";
 import type { RunStatus, Session } from "../types/datamodel";
-import { SessionRunStatusIndicator } from "./statusicon";
 
 
 
@@ -33,6 +33,7 @@ interface SidebarProps {
   activeSubMenuItem: string;
   onSubMenuChange: (tabId: string) => void;
   onStopSession: (sessionId: number) => void;
+  onLogoClick?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -48,6 +49,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeSubMenuItem,
   onSubMenuChange,
   onStopSession,
+  onLogoClick,
 }) => {
   // Group sessions by time period
   const groupSessions = (sessions: Session[]) => {
@@ -116,21 +118,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
           "paused",
         ].includes(status as string);
         return (
-          <div key={s.id} className="relative mb-1">
+          <div key={s.id} className="relative mb-0.5">
             <div
-              className={`group flex items-center justify-between p-3 rounded-xl text-sm transition-smooth ${isLoading
+              className={`group flex items-center justify-between px-3 py-1.5 rounded-md transition-all duration-200 ${isLoading
                 ? "pointer-events-none opacity-50"
-                : "cursor-pointer hover:bg-tertiary/50 hover-lift"
+                : "cursor-pointer hover:bg-tertiary/20"
                 } ${currentSession?.id === s.id
-                  ? "bg-accent/10 border border-accent/30 shadow-modern"
-                  : "border border-transparent hover:border-border-primary"
+                  ? "bg-purple-100/50"
+                  : ""
                 }`}
               onClick={() => !isLoading && onSelectSession(s)}
             >
-              <div className="flex items-center gap-3 flex-1 min-w-0 transition-all relative">
-                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${currentSession?.id === s.id
-                  ? "bg-accent animate-pulse-glow"
-                  : "bg-secondary"
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <div className={`rounded-full flex-shrink-0 ${currentSession?.id === s.id
+                  ? "bg-accent"
+                  : "bg-secondary/50"
                   }`} />
                 <div className="session-title-container">
                   <Tooltip
@@ -139,22 +141,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     mouseEnterDelay={0.5}
                   >
                     <span
-                      className={`text-sm font-medium text-primary session-title ${s.id && sessionRunStatuses[s.id] ? 'session-title-with-status' : ''
+                      className={`text-sm font-medium session-title ${currentSession?.id === s.id
+                        ? "text-primary font-semibold"
+                        : "text-primary"
+                        } ${s.id && sessionRunStatuses[s.id] ? 'session-title-with-status' : ''
                         }`}
                     >
                       {s.name}
                     </span>
                   </Tooltip>
                 </div>
-                {s.id && (
+                {/* {s.id && (
                   <div className="flex-shrink-0 transition-all session-status-indicator">
                     <SessionRunStatusIndicator
                       status={sessionRunStatuses[s.id]}
                     />
                   </div>
-                )}
+                )} */}
               </div>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-smooth flex-shrink-0 ml-2">
+              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-2">
                 <Dropdown
                   trigger={["click"]}
                   overlay={
@@ -208,10 +213,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <Button
                     variant="tertiary"
                     size="sm"
-                    icon={<MoreVertical className="w-4 h-4" />}
+                    icon={<MoreVertical className="w-3.5 h-3.5 text-secondary" />}
                     onClick={(e) => e.stopPropagation()}
                     onFocus={(e) => e.target.blur()}
-                    className="!p-0 min-w-[24px] h-6 sidebar-dropdown-button"
+                    className="!p-0 min-w-[20px] h-5 sidebar-dropdown-button hover:bg-tertiary/30"
                     style={{
                       outline: 'none',
                       border: 'none',
@@ -261,17 +266,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     return (
-      <div className="h-full flex flex-col border-r border-border-primary/50 bg-primary/50 backdrop-blur-sm">
+      <div className="h-full flex flex-col bg-secondary/80 dark:bg-secondary/80 light:bg-gray-50/90">
         {/* 固定头部 */}
-        <div className="flex-shrink-0 p-4 border-b border-border-primary/50">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-primary flex items-center justify-center animate-float">
-              <FileText className="w-4 h-4 text-white" />
+        <div className="flex-shrink-0 p-3">
+          <div className="flex items-center justify-between mb-4">
+            {/* Logo */}
+            <div
+              className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+              onClick={onLogoClick}
+            >
+              <img
+                src="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview"
+                alt="Dr.Sai Logo"
+                className="w-6 h-6 rounded-md object-cover"
+              />
+
             </div>
-            <div>
-              <h2 className="text-lg font-bold text-primary">Workspace</h2>
-              <p className="text-xs text-secondary/60">Manage your sessions and plans</p>
-            </div>
+
+            {/* 侧边栏切换按钮 */}
+            <Tooltip title="Close Sidebar">
+              <Button
+                variant="tertiary"
+                size="sm"
+                icon={<PanelLeftClose strokeWidth={1.5} className="h-4 w-4" />}
+                onClick={onToggle}
+                className="!px-1 transition-colors hover:text-accent"
+              />
+            </Tooltip>
           </div>
           <div className="animate-fade-in">
             <SubMenu
@@ -300,11 +321,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* 可滚动内容区域 */}
         <div className="flex-1 flex flex-col min-h-0">
-          <div className="flex-shrink-0 px-4 pt-4">
-            <div className="flex items-center justify-between mb-4">
+          <div className="flex-shrink-0 px-3 pt-2">
+            <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <span className="text-primary font-semibold">Sessions</span>
-                <span className="text-xs text-secondary bg-tertiary/50 px-2 py-1 rounded-full">
+                <span className="text-primary font-medium">Sessions</span>
+                <span className="text-xs text-secondary bg-tertiary/30 px-2 py-0.5 rounded">
                   {sortedSessions.length}
                 </span>
               </div>
@@ -316,12 +337,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               )}
             </div>
 
-            <div className="mb-4">
+            <div className="mb-3">
               <Tooltip title="Create new session">
                 <Button
-                  className="w-full bg-gradient-primary hover:shadow-modern-lg transition-smooth"
+                  className="w-full bg-accent hover:bg-accent/90"
                   variant="primary"
-                  size="md"
+                  size="sm"
                   icon={<Plus className="w-4 h-4" />}
                   onClick={() => onEditSession()}
                   disabled={isLoading}
@@ -335,7 +356,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {/* 会话列表 - 可滚动区域 */}
           <div
             ref={scrollRef}
-            className="flex-1 overflow-y-auto px-4 pb-4 sidebar-scroll"
+            className="flex-1 overflow-y-auto px-3 pb-3 sidebar-scroll"
           >
             {sortedSessions.length === 0 ? (
               <div className="p-6 text-center">
@@ -349,13 +370,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <>
                 {groupedSessions.today.length > 0 && (
                   <div>
-                    <div className="py-2 text-sm text-secondary">Today</div>
+                    <div className="py-1 text-xs text-secondary">Today</div>
                     {renderSessionGroup(groupedSessions.today)}
                   </div>
                 )}
                 {groupedSessions.yesterday.length > 0 && (
                   <div>
-                    <div className="py-2 text-sm text-secondary">
+                    <div className="py-1 text-xs text-secondary">
                       Yesterday
                     </div>
                     {renderSessionGroup(groupedSessions.yesterday)}
@@ -363,7 +384,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 )}
                 {groupedSessions.last7Days.length > 0 && (
                   <div>
-                    <div className="py-2 text-sm text-secondary">
+                    <div className="py-1 text-xs text-secondary">
                       Last 7 Days
                     </div>
                     {renderSessionGroup(groupedSessions.last7Days)}
@@ -371,7 +392,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 )}
                 {groupedSessions.last30Days.length > 0 && (
                   <div>
-                    <div className="py-2 text-sm text-secondary">
+                    <div className="py-1 text-xs text-secondary">
                       Last 30 Days
                     </div>
                     {renderSessionGroup(groupedSessions.last30Days)}
@@ -379,7 +400,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 )}
                 {groupedSessions.older.length > 0 && (
                   <div>
-                    <div className="py-2 text-sm text-secondary">Older</div>
+                    <div className="py-1 text-xs text-secondary">Older</div>
                     {renderSessionGroup(groupedSessions.older)}
                   </div>
                 )}

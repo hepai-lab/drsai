@@ -1,12 +1,12 @@
 import React from "react";
-import { PanelLeftClose, PanelLeftOpen, Plus } from "lucide-react";
+import { Plus, PanelLeftOpen } from "lucide-react";
 import { Tooltip } from "antd";
 import { appContext } from "../hooks/provider";
 import { useConfigStore } from "../hooks/store";
 import { Settings } from "lucide-react";
 import SignInModal from "./signin";
 import SettingsMenu from "./settings";
-import logo from "../assets/logo.svg";
+
 import { Button } from "./common/Button";
 import UserProfileModal from "./userProfile";
 
@@ -16,7 +16,7 @@ type ContentHeaderProps = {
   isSidebarOpen: boolean;
   onToggleSidebar: () => void;
   onNewSession: () => void;
-  onLogoClick?: () => void;
+
   agentSelector?: React.ReactNode;
 };
 
@@ -25,7 +25,6 @@ const ContentHeader = ({
   isSidebarOpen,
   onToggleSidebar,
   onNewSession,
-  onLogoClick,
   agentSelector,
 }: ContentHeaderProps) => {
   const { user } = React.useContext(appContext);
@@ -36,52 +35,39 @@ const ContentHeader = ({
 
 
   return (
-    <div className="sticky top-0 bg-primary z-40">
+    <div className="bg-primary z-[70] pr-4">
       <div className="flex h-16 items-center justify-between">
-        {/* Left side: Text and Sidebar Controls */}
+        {/* Left side: Sidebar Toggle, Agent Selector and New Session */}
         <div className="flex items-center">
-          {/* Sidebar Toggle */}
-          <Tooltip title={isSidebarOpen ? "Close Sidebar" : "Open Sidebar"}>
-            <Button
-              variant="tertiary"
-              size="sm"
-              icon={
-                isSidebarOpen ? (
-                  <PanelLeftClose strokeWidth={1.5} className="h-6 w-6" />
-                ) : (
-                  <PanelLeftOpen strokeWidth={1.5} className="h-6 w-6" />
-                )
-              }
-              onClick={onToggleSidebar}
-              className="!px-0 transition-colors hover:text-accent"
-            />
-          </Tooltip>
+          {/* Sidebar Toggle - only show when sidebar is closed */}
+          {!isSidebarOpen && (
+            <Tooltip title="Open Sidebar">
+              <Button
+                variant="tertiary"
+                size="sm"
+                icon={<PanelLeftOpen strokeWidth={1.5} className="h-5 w-5" />}
+                onClick={onToggleSidebar}
+                className="!px-1 transition-colors hover:text-accent mr-3"
+              />
+            </Tooltip>
+          )}
 
           {/* New Session Button */}
-          <div className="w-[40px]">
-            {!isSidebarOpen && (
-              <Tooltip title="Create new session">
-                <Button
-                  variant="tertiary"
-                  size="sm"
-                  icon={<Plus className="w-6 h-6" />}
-                  onClick={onNewSession}
-                  className="transition-colors hover:text-accent"
-                />
-              </Tooltip>
-            )}
-          </div>
-          <div
-            className="flex items-center space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
-            onClick={onLogoClick}
-          >
-            <img src={logo} alt="Dr.Sai Logo" className="h-10 w-10" />
-            <div className="text-primary text-2xl font-bold">Dr.Sai</div>
-          </div>
+          {!isSidebarOpen && (
+            <Tooltip title="Create new session">
+              <Button
+                variant="tertiary"
+                size="sm"
+                icon={<Plus className="w-6 h-6" />}
+                onClick={onNewSession}
+                className="transition-colors hover:text-accent mr-4"
+              />
+            </Tooltip>
+          )}
 
-          {/* Agent Selector on the left side */}
+          {/* Agent Selector */}
           {agentSelector && (
-            <div className="ml-12 relative z-50">
+            <div className="relative z-[9999]">
               {agentSelector}
             </div>
           )}
@@ -135,7 +121,7 @@ const ContentHeader = ({
       <UserProfileModal
         isVisible={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
-        user={user}
+        user={user || { name: '', email: '' }}
       />
       <SettingsMenu
         isOpen={isSettingsOpen}

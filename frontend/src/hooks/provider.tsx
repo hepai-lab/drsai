@@ -27,7 +27,7 @@ export const appContext = React.createContext<AppContextType>(
 const Provider = ({ children }: any) => {
   const storedValue = getLocalStorage("darkmode", false);
   const [darkMode, setDarkMode] = useState(
-    storedValue === null ? "dark" : storedValue === "dark" ? "dark" : "light"
+    storedValue === null ? "light" : storedValue === "dark" ? "dark" : "light"
   );
 
   const logout = () => {

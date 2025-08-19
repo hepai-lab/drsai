@@ -895,24 +895,6 @@ export const RenderMessage: React.FC<MessageProps> = memo(
             className={`flex ${isUser || isUserProxy ? "justify-end" : "justify-start"
               } items-start w-full transition-all duration-200`}
           >
-            {/* AI Avatar - only show for non-user messages */}
-            {!isUser && !isUserProxy && (
-              <div className="flex-shrink-0 mr-3 mt-1">
-                <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="url(#lightbulbGradient)" strokeWidth="1.5">
-                  <defs>
-                    <linearGradient id="lightbulbGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#8b5cf6" />
-                      <stop offset="50%" stopColor="#a855f7" />
-                      <stop offset="100%" stopColor="#c084fc" />
-                    </linearGradient>
-                  </defs>
-                  {/* Lightbulb */}
-                  <path d="M9 21h6" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M12 3c-3.866 0-7 3.134-7 7 0 2.38 1.19 4.49 3 5.74V18a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.25 3-3.36 3-5.74 0-3.866-3.134-7-7-7z" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M12 7v4" strokeLinecap="round" strokeLinejoin="round" stroke="url(#lightbulbGradient)" strokeWidth="2" />
-                </svg>
-              </div>
-            )}
 
             {/* Think Process部分 - 在消息气泡外面 */}
             {!isUser && !isUserProxy && (() => {
@@ -944,7 +926,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                   ? "w-[80%]"
                   : "max-w-[80%]"
                 }`
-                : "max-w-[85%] text-primary text-lg bg-slate-600/25 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm"
+                : "max-w-[85%] text-primary text-lg  rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm"
                 } break-words overflow-hidden message-content`}
             >
               {/* Show user message content first */}
