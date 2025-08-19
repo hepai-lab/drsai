@@ -23,6 +23,7 @@ import {
 } from "../../types/plan";
 import { convertFilesToBase64, getServerUrl } from "../../utils";
 import { sessionAPI, settingsAPI } from "../api";
+import { useMessageCacheStore } from "../../../store/messageCache";
 import ChatInput from "./chat/chatinput";
 import ProgressBar from "./progressbar";
 import { messageUtils } from "./rendermessage";
@@ -90,6 +91,15 @@ export default function ChatView({
   const settingsConfig = useSettingsStore((state) => state.config);
   const { user } = React.useContext(appContext);
 
+  // 使用消息缓存 store
+  const {
+    getSessionRun,
+    setSessionRun,
+    addMessageToSession,
+    updateMessageInSession,
+    updateSessionMessages,
+  } = useMessageCacheStore();
+
   // Core state
   const [currentRun, setCurrentRun] = React.useState<Run | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
@@ -153,12 +163,27 @@ export default function ChatView({
   const loadSessionRun = async () => {
     if (!session?.id || !user?.email) return null;
 
+    // 首先尝试从缓存加载
+    const cachedRun = getSessionRun(session.id);
+    if (cachedRun) {
+      console.log("Loading session run from cache:", session.id);
+      return cachedRun;
+    }
+
+    // 如果缓存中没有，则从数据库加载
     try {
+      console.log("Loading session run from database:", session.id);
       const response = await sessionAPI.getSessionRuns(
         session.id,
         user?.email
       );
       const latestRun = response.runs[response.runs.length - 1];
+
+      // 将从数据库加载的数据存入缓存
+      if (latestRun) {
+        setSessionRun(session.id, latestRun);
+      }
+
       return latestRun;
     } catch (error) {
       console.error("Error loading session runs:", error);
@@ -334,6 +359,8 @@ export default function ChatView({
     setCurrentRun((current: Run | null) => {
       if (!current || !session?.id) return null;
 
+      let updatedRun: Run | null = null;
+
       switch (message.type) {
         case "error":
           if (inputTimeoutRef.current) {
@@ -402,10 +429,15 @@ export default function ChatView({
             session.id
           );
 
-          return {
+          updatedRun = {
             ...current,
             messages: [...current.messages, newMessage],
           };
+
+          // 同步到缓存
+          setSessionRun(session.id, updatedRun);
+
+          return updatedRun;
 
         case "message_chunk":
           // console.log("Received message_chunk:", message.data);yo
@@ -451,10 +483,15 @@ export default function ChatView({
                   },
                 };
 
-                return {
+                updatedRun = {
                   ...current,
                   messages: updatedMessages,
                 };
+
+                // 同步到缓存
+                setSessionRun(session.id, updatedRun);
+
+                return updatedRun;
               }
             }
 
@@ -469,10 +506,15 @@ export default function ChatView({
               session.id
             );
 
-            return {
+            updatedRun = {
               ...current,
               messages: [...current.messages, newChunkMessage],
             };
+
+            // 同步到缓存
+            setSessionRun(session.id, updatedRun);
+
+            return updatedRun;
           }
           return current;
 
@@ -500,23 +542,34 @@ export default function ChatView({
           setUpdatedPlan([]);
           // Create new Message object from websocket data only if its for URL approval
           if (input_request.input_type === "approval") {
-            return {
+            updatedRun = {
+              ...current,
+              status: "awaiting_input",
+              input_request: input_request,
+            };
+          } else {
+            updatedRun = {
               ...current,
               status: "awaiting_input",
               input_request: input_request,
             };
           }
-          return {
-            ...current,
-            status: "awaiting_input",
-            input_request: input_request,
-          };
+
+          // 同步到缓存
+          setSessionRun(session.id, updatedRun);
+
+          return updatedRun;
         case "system":
           // update run status
-          return {
+          updatedRun = {
             ...current,
             status: message.status as BaseRunStatus,
           };
+
+          // 同步到缓存
+          setSessionRun(session.id, updatedRun);
+
+          return updatedRun;
 
         case "result":
         case "completion":
@@ -543,7 +596,7 @@ export default function ChatView({
             activeSocketRef.current = null;
           }
 
-          return {
+          updatedRun = {
             ...current,
             status,
             team_result:
@@ -551,6 +604,11 @@ export default function ChatView({
                 ? message.data
                 : null,
           };
+
+          // 同步到缓存
+          setSessionRun(session.id, updatedRun);
+
+          return updatedRun;
 
         default:
           return current;
