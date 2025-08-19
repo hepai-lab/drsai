@@ -18,7 +18,7 @@ from drsai.modules.managers.threads_manager import ThreadsManager
 from drsai.modules.managers.base_thread_message import ThreadMessage, Content, Text
 
 # reply functions
-from drsai.modules.baseagent.toolagent import tools_reply_function, tools_recycle_reply_function
+from drsai.modules.baseagent.tool_reply_functions import tools_reply_function, tools_recycle_reply_function
 
 # tools
 from drsai.modules.components.tools.mcps_std import web_fetch
