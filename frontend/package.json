@@ -11,7 +11,7 @@
     "develop": "gatsby clean && gatsby develop",
     "dev": "npm run develop",
     "start": "gatsby clean && gatsby develop",
-    "build": "gatsby clean && rm -rf ../src/magentic_ui/backend/web/ui && PREFIX_PATH_VALUE='' gatsby build --prefix-paths && rsync -a --delete public/ ../src/magentic_ui/backend/web/ui/",
+    "build": "gatsby clean && rm -rf ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ && PREFIX_PATH_VALUE='' gatsby build --prefix-paths && rsync -a --delete public/ ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/",
     "serve": "gatsby serve",
     "clean": "gatsby clean",
     "typecheck": "tsc --noEmit"
