@@ -73,7 +73,7 @@ if __name__ == "__main__":
         run_worker(
             # 智能体注册信息
             agent_name="DeepSeek_R1",
-            permission='groups: payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
+            permission='groups: drsai; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             description = "DeepSeek_R1 聊天助手.",
             version = "0.1.0",
             logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",

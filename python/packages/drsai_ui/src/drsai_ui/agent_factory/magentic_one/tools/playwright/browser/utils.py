@@ -6,7 +6,11 @@ from .vnc_docker_playwright_browser import VncDockerPlaywrightBrowser
 
 import random
 
-def get_available_port(min_port: int = 40000, max_port: int = 65000) -> tuple[int, socket.socket]:
+from dotenv import load_dotenv
+load_dotenv()
+import os
+
+def get_available_port(min_port: int = int(os.getenv("MIN_PORT", 40000)), max_port: int = int(os.getenv("MAX_PORT", 65000))) -> tuple[int, socket.socket]:
     """
     Get an available port on the local machine.
     """
