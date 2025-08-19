@@ -120,7 +120,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return (
           <div key={s.id} className="relative mb-0.5">
             <div
-              className={`group flex items-center justify-between px-3 py-1.5 rounded-md transition-all duration-200 ${isLoading
+              className={`group flex items-center justify-between px-3 py-1.5 rounded-lg transition-all duration-200 ${isLoading
                 ? "pointer-events-none opacity-50"
                 : "cursor-pointer hover:bg-tertiary/20"
                 } ${currentSession?.id === s.id
