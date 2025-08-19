@@ -66,14 +66,13 @@ const BrowserIframe: React.FC<BrowserIframeProps> = ({
   }
 
   // Build VNC URL with parameters
-  const vncUrl = `http://localhost:${novncPort}/vnc.html?autoconnect=true&resize=${
-
-    // const vncUrl = `${process.env.VITE_NOVNC_URL}:${novncPort}/vnc.html?autoconnect=true&resize=${
-    // const vncUrl = `https://aitest.ihep.ac.cn:${novncPort}/vnc.html?autoconnect=true&resize=${
-    // const vncUrl = `https://drsai.ihep.ac.cn:42800/api/novnc?port=${novncPort}`;
-    // const vncUrl = `http://202.122.37.162:${novncPort}/vnc.html?autoconnect=true&resize=${
-    // const vncUrl = `https://drsai.ihep.ac.cn:42800/api/vncapi/${novncPort}/vnc.html?autoconnect=true&resize=${
-    scaling === "remote" ? "remote" : "scale"
+  // const vncUrl = `http://localhost:${novncPort}/vnc.html?autoconnect=true&resize=${
+  // const vncUrl = `http://aitest.ihep.ac.cn:${novncPort}/vnc.html?autoconnect=true&resize=${
+  // const vncUrl = `https://drsai.ihep.ac.cn:42800/api/novnc?port=${novncPort}`;
+  // const vncUrl = `http://202.122.37.162:${novncPort}/vnc.html?autoconnect=true&resize=${
+  // const vncUrl = `https://drsai.ihep.ac.cn:42800/api/vncapi/${novncPort}/vnc.html?autoconnect=true&resize=${
+  const vncServiceUrl = process.env.GATSBY_VNC_SERVICE_URL || "https://aitest.ihep.ac.cn/api/vncapi";
+  const vncUrl = `${vncServiceUrl}/${novncPort}/vnc.html?autoconnect=true&resize=${scaling === "remote" ? "remote" : "scale"
     }&show_dot=true&scaling=${scaling}&quality=${quality}&compression=0&view_only=${viewOnly ? 1 : 0
     }`;
 

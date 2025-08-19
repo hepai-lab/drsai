@@ -34,6 +34,10 @@ from ..utils.utils import get_modified_files
 
 from ....agent_factory.magentic_one.task_team import create_magentic_one_team, create_magentic_round_team
 
+from dotenv import load_dotenv
+load_dotenv()
+
+
 class RunEventLogger(logging.Handler):
     """Event logger that queues LLMCallEvents for streaming"""
 
@@ -379,9 +383,10 @@ class TeamManager:
                
                 if self.mode in ["magentic-one"]:
                     # 前端启动noVNC，在drsai模式下不需要启动noVNC
+                    SERVICE_URL = os.getenv("SERVICE_URL", "localhost")
                     yield TextMessage(
                         source="system",
-                        content=f"Browser noVNC address can be found at http://localhost:{self.novnc_port}/vnc.html",
+                        content=f"Browser noVNC address can be found at {SERVICE_URL}:{self.novnc_port}/vnc.html",
                         metadata={
                             "internal": "no",
                             "type": "browser_address",
