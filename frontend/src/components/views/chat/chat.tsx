@@ -434,8 +434,16 @@ export default function ChatView({
             messages: [...current.messages, newMessage],
           };
 
-          // 同步到缓存
-          setSessionRun(session.id, updatedRun);
+          // 同步到缓存，添加错误处理
+          try {
+            setSessionRun(session.id, updatedRun);
+          } catch (error) {
+            console.warn('Failed to cache message, storage may be full:', error);
+            // 可以选择显示用户提示
+            if (error instanceof Error && error.message.includes('quota')) {
+              messageApi.warning('存储空间不足，消息缓存已清理');
+            }
+          }
 
           return updatedRun;
 
@@ -1243,8 +1251,8 @@ export default function ChatView({
         >
           <div
             className={`${showDetailViewer && !isDetailViewerMinimized
-              ? "w-full max-w-6xl"
-              : "w-full max-w-4xl"
+              ? "w-full max-w-sm sm:max-w-md md:max-w-4xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-7xl [&>*]:max-w-none [@media(min-width:1920px)]:max-w-[1600px] [@media(min-width:2560px)]:max-w-[2000px]"
+              : "w-full max-w-sm sm:max-w-md md:max-w-2xl lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl [@media(min-width:1920px)]:max-w-[1200px] [@media(min-width:2560px)]:max-w-[1400px]"
               } mx-auto px-2 sm:px-3 md:px-4 h-full ${noMessagesYet && currentRun ? "hidden" : ""
               }`}
           >

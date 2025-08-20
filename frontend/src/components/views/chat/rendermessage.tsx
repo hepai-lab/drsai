@@ -358,11 +358,7 @@ const RenderMultiModalBrowserStep: React.FC<{
 
       return (
         <div key={index} className="relative pl-4">
-          {/* Full-height connector line */}
-          <div
-            className="absolute top-0 bottom-0 left-0 w-2 border-l-[2px] border-b-[2px] rounded-bl-lg"
-            style={{ borderColor: "var(--color-border-secondary)" }}
-          />
+
 
           {/* Content container */}
           <div className="flex items-center h-full">
@@ -501,6 +497,11 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
     onToggleHide,
   }) => {
     const [isExpanded, setIsExpanded] = useState(true);
+
+    useEffect(() => {
+      console.log("content", content);
+    }, [content]);
+
 
     useEffect(() => {
       if (hidden && isExpanded) {
@@ -926,7 +927,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                   ? "w-[80%]"
                   : "max-w-[80%]"
                 }`
-                : "max-w-[85%] text-primary text-lg  rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm"
+                : "max-w-[85%] text-primary text-lg  rounded-2xl rounded-tl-sm px-4 py-3"
                 } break-words overflow-hidden message-content`}
             >
               {/* Show user message content first */}

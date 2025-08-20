@@ -621,15 +621,23 @@
 
     /* 用户消息气泡的选择样式 */
     .bg-tertiary::selection,
-    .bg-tertiary *::selection {
-        background: rgba(255, 255, 255, 0.4) !important;
+    .bg-tertiary *::selection,
+    .bg-tertiary .message-content::selection,
+    .bg-tertiary .message-content *::selection,
+    div.bg-tertiary::selection,
+    div.bg-tertiary *::selection {
+        background: rgba(139, 92, 246, 0.8) !important;
         color: white !important;
         text-shadow: none !important;
     }
 
     .bg-tertiary::-moz-selection,
-    .bg-tertiary *::-moz-selection {
-        background: rgba(255, 255, 255, 0.4) !important;
+    .bg-tertiary *::-moz-selection,
+    .bg-tertiary .message-content::-moz-selection,
+    .bg-tertiary .message-content *::-moz-selection,
+    div.bg-tertiary::-moz-selection,
+    div.bg-tertiary *::-moz-selection {
+        background: rgba(139, 92, 246, 0.8) !important;
         color: white !important;
         text-shadow: none !important;
     }
