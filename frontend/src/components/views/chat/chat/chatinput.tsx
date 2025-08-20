@@ -1348,7 +1348,7 @@ const ChatInput = React.forwardRef<
                     }}
                     placeholder={
                       runStatus === "awaiting_input"
-                        ? "Type your response here and let Dr. Sai know of any changes in the browser."
+                        ? "Type your response here..."
                         : enable_upload
                           ? dragOver
                             ? "Drop files here..."

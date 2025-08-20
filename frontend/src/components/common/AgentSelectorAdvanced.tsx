@@ -247,7 +247,6 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                     break;
             }
         };
-        console.log("isOpen, filteredAgents, focusedIndex", filteredAgents);
         document.addEventListener("keydown", handleKeyDown);
         return () => {
             document.removeEventListener("keydown", handleKeyDown);
@@ -289,7 +288,6 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             onAgentSelect(newCustomAgent);
             setIsOpen(false);
         } catch (error) {
-            console.error("Failed to save agent config:", error);
             // 即使保存失败，也要更新本地状态
             setPersistedSelectedAgent(agent);
             setLastSelectedAgentMode(agent.mode);
@@ -330,7 +328,6 @@ custom_agent_config:
 
         try {
             const res = await agentAPI.saveAgentConfig(newCustomAgent);
-            console.log("Model Config YAML:", modelConfigYaml);
 
             // 更新 settings store
             const currentSettings = useSettingsStore.getState().config;

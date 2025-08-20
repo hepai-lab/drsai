@@ -310,13 +310,11 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   // Check if content contains think tags
   const hasThinkTags =
     content.includes("🤔") && content.includes("</think>");
-  console.log("hasThinkTags:", hasThinkTags);
   // If allowHtml is true and content contains HTML, render it directly
   // But first check for think tags and process them
   if (allowHtml && (content.includes("<div") || content.includes("<span")) || content.includes("<img")) {
     if (hasThinkTags) {
       const { parts } = parseThinkTags(content);
-      console.log("parts:", parts);
       return (
         <div
           className="prose w-full"

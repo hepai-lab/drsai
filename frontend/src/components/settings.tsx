@@ -22,6 +22,12 @@ import {
 } from "antd";
 import { InfoCircleOutlined, UploadOutlined } from "@ant-design/icons";
 import { Plus } from "lucide-react";
+import {
+  getStorageInfo,
+  clearMessageCache,
+  clearDrSaiStorage,
+  getStorageUsageString
+} from "../utils/storageUtils";
 
 
 export const MODEL_OPTIONS = [
@@ -59,7 +65,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ isOpen, onClose }) => {
   const [allowedlistEnabled, setAllowedlistEnabled] = React.useState(false);
   const [modelLabel, setModelLabel] = React.useState<string>()
 
- 
+
 
   const AZURE_AI_FOUNDRY_YAML = `model_config: &client
   provider: AzureOpenAIChatCompletionClient
@@ -155,7 +161,7 @@ file_surfer_client: *client
 action_guard_client: *client
 `;
 
- const DRSAI_FOUNDRY_YAML = `model_config: &client
+  const DRSAI_FOUNDRY_YAML = `model_config: &client
   provider: drsai.HepAIChatCompletionClient
   config:
     model: deepseek-v3-250324
@@ -216,9 +222,9 @@ parser_client: *client
     if (user?.email) {
       try {
         const updatedConfig = { ...config, ...changes };
-       const res = await settingsAPI.updateSettings(user.email, updatedConfig);
-       
-        updateConfig( { model_configs: res.config.model_configs ,model_name:res.config.model_name});
+        const res = await settingsAPI.updateSettings(user.email, updatedConfig);
+
+        updateConfig({ model_configs: res.config.model_configs, model_name: res.config.model_name });
       } catch (error) {
         console.error("Failed to save settings:", error);
       }
@@ -282,7 +288,7 @@ parser_client: *client
     if (!hasAllClients) {
       message.error(
         "YAML must include all required model clients: " +
-          requiredClients.join(", ")
+        requiredClients.join(", ")
       );
       return false;
     }
@@ -295,7 +301,7 @@ parser_client: *client
       reader.onload = (e) => {
         const content = e.target?.result as string;
         if (validateYamlConfig(content)) {
-          handleUpdateConfig({ model_configs: content ,model_name: modelLabel});
+          handleUpdateConfig({ model_configs: content, model_name: modelLabel });
           message.success("YAML configuration imported successfully");
         }
       };
@@ -315,34 +321,34 @@ parser_client: *client
       value: modelName,
       label: modelLabel,
     }: {
-        value: string;
-        label: string;
-  }
-  ) => {   
+      value: string;
+      label: string;
+    }
+  ) => {
     setModelLabel(modelLabel)
     try {
       if (modelName === "azure-ai-foundry") {
-        handleUpdateConfig({ model_configs: AZURE_AI_FOUNDRY_YAML ,model_name:modelLabel});
+        handleUpdateConfig({ model_configs: AZURE_AI_FOUNDRY_YAML, model_name: modelLabel });
         message.success("Azure AI Foundry configuration applied");
         return;
       }
       if (modelName === "openrouter") {
-        handleUpdateConfig({ model_configs: OPENROUTER_YAML ,model_name:modelLabel});
+        handleUpdateConfig({ model_configs: OPENROUTER_YAML, model_name: modelLabel });
         message.success("OpenRouter configuration applied");
         return;
       }
       if (modelName === "hepai-foundry") {
-        handleUpdateConfig({ model_configs: HEPAI_FOUNDRY_YAML,model_name:modelLabel });
+        handleUpdateConfig({ model_configs: HEPAI_FOUNDRY_YAML, model_name: modelLabel });
         message.success("HepAI configuration applied");
         return;
       }
       if (modelName === "drsai-foundry") {
-        handleUpdateConfig({ model_configs: DRSAI_FOUNDRY_YAML,model_name:modelLabel });
+        handleUpdateConfig({ model_configs: DRSAI_FOUNDRY_YAML, model_name: modelLabel });
         message.success("Dr.Sai configuration applied");
         return;
       }
       if (modelName === "ollama") {
-        handleUpdateConfig({ model_configs: OLLAMA_YAML,model_name:modelLabel });
+        handleUpdateConfig({ model_configs: OLLAMA_YAML, model_name: modelLabel });
         message.success("Ollama configuration applied");
         return;
       }
@@ -597,6 +603,57 @@ parser_client: *client
                           },
                         ]}
                       />
+                    </div>
+
+                    <Divider />
+
+                    {/* Storage Management */}
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-2">
+                          Storage Management
+                          <Tooltip title="Manage browser storage used by DrSai">
+                            <InfoCircleOutlined className="text-secondary hover:text-primary cursor-help" />
+                          </Tooltip>
+                        </span>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="text-sm text-secondary">
+                          Current usage: {getStorageUsageString()}
+                        </div>
+
+                        <div className="flex gap-2">
+                          <Button
+                            size="small"
+                            onClick={() => {
+                              clearMessageCache();
+                              message.success('Message cache cleared');
+                            }}
+                          >
+                            Clear Message Cache
+                          </Button>
+
+                          <Button
+                            size="small"
+                            danger
+                            onClick={() => {
+                              Modal.confirm({
+                                title: 'Clear All DrSai Storage',
+                                content: 'This will clear all DrSai data including settings, message cache, and other stored data. Are you sure?',
+                                onOk: () => {
+                                  clearDrSaiStorage();
+                                  message.success('All DrSai storage cleared');
+                                  // Reload page to reset state
+                                  setTimeout(() => window.location.reload(), 1000);
+                                },
+                              });
+                            }}
+                          >
+                            Clear All Storage
+                          </Button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ),
