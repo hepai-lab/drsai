@@ -37,9 +37,9 @@ const cleanMessageForStorage = (message: Message): Message => {
   const cleanedMessage = { ...message };
 
   // 如果消息内容过长，截断保留前1000字符
-  if (typeof cleanedMessage.config.content === 'string' && cleanedMessage.config.content.length > 1000) {
-    cleanedMessage.config.content = cleanedMessage.config.content.substring(0, 1000) + '...[truncated]';
-  }
+  // if (typeof cleanedMessage.config.content === 'string' && cleanedMessage.config.content.length > 1000) {
+  //   cleanedMessage.config.content = cleanedMessage.config.content.substring(0, 1000) + '...[truncated]';
+  // }
 
   // 清理不必要的metadata
   if (cleanedMessage.config.metadata) {
