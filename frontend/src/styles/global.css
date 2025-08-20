@@ -246,6 +246,7 @@
     /* 输入框优化 - 使用!important确保穿透 */
     .input-enhanced::placeholder {
         transition: opacity 0.3s ease !important;
+        color: var(--color-text-secondary) !important;
     }
 
     .input-enhanced:focus::placeholder {
@@ -259,7 +260,7 @@
 
     /* 深色主题文字颜色 */
     .dark .input-enhanced {
-        color: #444 !important;
+        color: #f8fafc !important;
         caret-color: #8b5cf6 !important;
     }
 
