@@ -36,11 +36,12 @@ class PersonalKeyConfigFetcher:
     def get_default_config(self, username: str) -> Dict[str, Any]:
         """获取默认配置"""
         
+        # "openai/gpt-4.1"
         personal_key = self.get_personal_key(username=username)
         default_model_configs = f"""model_config: &client
   provider: drsai.HepAIChatCompletionClient
   config:
-    model: "openai/gpt-4.1"
+    model: "deepseek-ai/deepseek-v3:671b"
     base_url: "https://aiapi.ihep.ac.cn/apiv2"
     api_key: "{personal_key}"
     max_retries: 10

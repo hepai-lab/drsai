@@ -383,10 +383,10 @@ class TeamManager:
                
                 if self.mode in ["magentic-one"]:
                     # 前端启动noVNC，在drsai模式下不需要启动noVNC
-                    SERVICE_URL = os.getenv("SERVICE_URL", "localhost")
+                    VNC_SERVICE_URL = os.getenv("VNC_SERVICE_URL", "localhost")
                     yield TextMessage(
                         source="system",
-                        content=f"Browser noVNC address can be found at {SERVICE_URL}:{self.novnc_port}/vnc.html",
+                        content=f"Browser noVNC address can be found at {VNC_SERVICE_URL}:{self.novnc_port}/vnc.html",
                         metadata={
                             "internal": "no",
                             "type": "browser_address",
