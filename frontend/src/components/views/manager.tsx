@@ -350,6 +350,14 @@ export const SessionManager: React.FC = () => {
     handleEditSession();
   };
 
+  const handleCreateNewSessionAfterDelete = () => {
+    // 切换到 Current Session tab
+    setActiveSubMenuItem("current_session");
+
+    // 创建新会话（保持当前选中的agent）
+    handleEditSession();
+  };
+
   const handleDeleteSession = async (sessionId: number) => {
     if (!user?.email) return;
 
@@ -383,6 +391,9 @@ export const SessionManager: React.FC = () => {
         window.history.pushState({}, "", window.location.pathname); // Clear URL params
       }
       messageApi.success("Session deleted");
+
+      // 删除成功后调用 handleCreateNewSessionAfterDelete 创建新会话（保持当前agent）
+      handleCreateNewSessionAfterDelete();
     } catch (error) {
       console.error("Error deleting session:", error);
       messageApi.error("Error deleting session");
