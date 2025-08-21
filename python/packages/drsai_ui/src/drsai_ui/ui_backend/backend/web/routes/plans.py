@@ -118,9 +118,9 @@ async def learn_plan(
             # If nothing was provided, use a safe default
             model_client = ChatCompletionClient.load_component(
                 {
-                    "provider": "OpenAIChatCompletionClient",
+                    "provider": "drsai.HepAIChatCompletionClient",
                     "config": {
-                        "model": "gpt-4o-2024-08-06",
+                        "model": "deepseek-ai/deepseek-v3:671b",
                     },
                     "max_retries": 5,
                 }
