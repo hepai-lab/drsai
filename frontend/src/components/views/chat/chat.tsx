@@ -637,24 +637,98 @@ export default function ChatView({
     });
   };
 
+  // 确保WebSocket连接可用的辅助函数
+  const ensureWebSocketConnection = async (runId: string, needsContinue: boolean = false): Promise<WebSocket> => {
+
+    if (activeSocketRef.current?.readyState === WebSocket.OPEN) {
+      console.log("Using existing WebSocket connection");
+      return activeSocketRef.current;
+    }
+
+    console.log("WebSocket not available, attempting to reconnect...");
+    // 显示重连提示
+    message.loading("正在重新连接...", 0.5);
+
+    const socket = setupWebSocket(runId, true, false);
+    if (!socket) {
+      console.error("setupWebSocket returned null");
+      throw new Error("Failed to establish WebSocket connection");
+    }
+
+    console.log("New socket created, readyState:", socket.readyState);
+
+    if (socket.readyState !== WebSocket.OPEN) {
+      console.log("Waiting for socket to open...");
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          console.error("WebSocket connection timeout");
+          reject(new Error("WebSocket connection timeout"));
+        }, 5000);
+
+        const checkState = () => {
+          console.log("Checking socket state:", socket.readyState);
+          if (socket.readyState === WebSocket.OPEN) {
+            clearTimeout(timeout);
+            console.log("WebSocket reconnected successfully");
+            message.success("重新连接成功", 1);
+            resolve();
+          } else if (
+            socket.readyState === WebSocket.CLOSED ||
+            socket.readyState === WebSocket.CLOSING
+          ) {
+            clearTimeout(timeout);
+            console.error("WebSocket connection failed");
+            reject(new Error("WebSocket connection failed"));
+          } else {
+            setTimeout(checkState, 100);
+          }
+        };
+
+        checkState();
+      });
+    }
+
+    // 如果需要发送continue消息来恢复会话
+    if (needsContinue && currentRun) {
+      console.log("Sending continue message to resume session...");
+      const continueMessage = {
+        type: "continue",
+        task: "continue", // 继续当前任务
+        team_config: teamConfig,
+        settings_config: settingsConfig,
+      };
+
+      socket.send(JSON.stringify(continueMessage));
+      console.log("Continue message sent:", continueMessage);
+    }
+
+    console.log("Returning socket with readyState:", socket.readyState);
+    return socket;
+  };
+
   const handleInputResponse = async (
     response: string,
     accepted = false,
     plan?: IPlan,
     uploadedFileData?: Record<string, any>,
-    files?: RcFile[] = [] // 添加files参数
+    files: RcFile[] = [] // 添加files参数
   ) => {
-    if (!currentRun || !activeSocketRef.current) {
-      handleError(new Error("WebSocket connection not available"));
-      return;
-    }
-
-    if (activeSocketRef.current.readyState !== WebSocket.OPEN) {
-      handleError(new Error("WebSocket connection not available"));
+    if (!currentRun) {
+      console.error("No current run available");
+      handleError(new Error("No active run"));
       return;
     }
 
     try {
+      // 检查是否需要重连
+      const needsReconnect = !activeSocketRef.current || activeSocketRef.current.readyState !== WebSocket.OPEN;
+      console.log("Needs reconnect:", needsReconnect);
+
+      // 尝试获取或重新建立WebSocket连接
+      console.log("Attempting to ensure WebSocket connection...");
+      const socket = await ensureWebSocketConnection(currentRun.id, needsReconnect);
+      console.log("WebSocket connection ensured, socket:", socket);
+
       // Check if the last message is a plan
       const lastMessage = currentRun.messages.slice(-1)[0];
       var planString = "";
@@ -667,15 +741,6 @@ export default function ChatView({
         planString = convertPlanStepsToJsonString(updatedPlan);
       }
 
-      // const responseJson = {
-      //   accepted: accepted,
-      //   content: response,
-      //   ...(planString !== "" && { plan: planString }),
-      //   ...(uploadedFileData &&
-      //     Object.keys(uploadedFileData).length > 0 && {
-      //     uploadedFileData,
-      //   }),
-      // };
       // 处理文件上传
       const processedFiles = await convertFilesToBase64(files);
 
@@ -687,40 +752,49 @@ export default function ChatView({
           Object.keys(uploadedFileData).length > 0 && {
           uploadedFileData,
         }),
+        ...(processedFiles.length > 0 && { files: processedFiles }),
       };
       const responseString = JSON.stringify(responseJson);
-      activeSocketRef.current.send(
+      console.log("Sending input response:", { type: "input_response", response: responseString });
+
+      socket.send(
         JSON.stringify({
           type: "input_response",
           response: responseString,
         })
       );
 
+      console.log("Input response sent successfully");
+
       setCurrentRun((current: Run | null) => {
         if (!current) return null;
-        return {
+        const updatedRun = {
           ...current,
-          status: "active",
+          status: "active" as BaseRunStatus,
           input_request: undefined, // Changed null to undefined
         };
+        console.log("Updated run status to active:", updatedRun);
+        return updatedRun;
       });
     } catch (error) {
+      console.error("handleInputResponse error:", error);
       handleError(error);
     }
   };
 
   const handleRegeneratePlan = async () => {
-    if (!currentRun || !activeSocketRef.current) {
-      handleError(new Error("WebSocket connection not available"));
-      return;
-    }
-
-    if (activeSocketRef.current.readyState !== WebSocket.OPEN) {
-      handleError(new Error("WebSocket connection not available"));
+    if (!currentRun) {
+      handleError(new Error("No active run"));
       return;
     }
 
     try {
+      // 检查是否需要重连
+      const needsReconnect = !activeSocketRef.current || activeSocketRef.current.readyState !== WebSocket.OPEN;
+
+      // 尝试获取或重新建立WebSocket连接
+      const socket = await ensureWebSocketConnection(currentRun.id, needsReconnect);
+
       // Check if the last message is a plan
       const lastMessage = currentRun.messages.slice(-1)[0];
       var planString = "";
@@ -737,7 +811,7 @@ export default function ChatView({
       };
       const responseString = JSON.stringify(responseJson);
 
-      activeSocketRef.current.send(
+      socket.send(
         JSON.stringify({
           type: "input_response",
           response: responseString,
@@ -749,7 +823,7 @@ export default function ChatView({
   };
 
   const handleCancel = async () => {
-    if (!activeSocketRef.current || !currentRun) return;
+    if (!currentRun) return;
 
     // Clear timeout when manually cancelled
     if (inputTimeoutRef.current) {
@@ -757,7 +831,13 @@ export default function ChatView({
       inputTimeoutRef.current = null;
     }
     try {
-      activeSocketRef.current.send(
+      // 检查是否需要重连
+      const needsReconnect = !activeSocketRef.current || activeSocketRef.current.readyState !== WebSocket.OPEN;
+
+      // 尝试获取或重新建立WebSocket连接
+      const socket = await ensureWebSocketConnection(currentRun.id, needsReconnect);
+
+      socket.send(
         JSON.stringify({
           type: "stop",
           reason: "Cancelled by user",
@@ -779,13 +859,9 @@ export default function ChatView({
   };
 
   const handlePause = async () => {
-    if (!activeSocketRef.current || !currentRun) return;
+    if (!currentRun) return;
 
     try {
-      if (activeSocketRef.current.readyState !== WebSocket.OPEN) {
-        throw new Error("WebSocket connection not available");
-      }
-
       if (
         currentRun.status == "awaiting_input" ||
         currentRun.status == "connected"
@@ -793,7 +869,13 @@ export default function ChatView({
         return; // Do not pause if awaiting input or connected
       }
 
-      activeSocketRef.current.send(
+      // 检查是否需要重连
+      const needsReconnect = !activeSocketRef.current || activeSocketRef.current.readyState !== WebSocket.OPEN;
+
+      // 尝试获取或重新建立WebSocket连接
+      const socket = await ensureWebSocketConnection(currentRun.id, needsReconnect);
+
+      socket.send(
         JSON.stringify({
           type: "pause",
         })
@@ -1205,7 +1287,13 @@ export default function ChatView({
   const handleAcceptPlan = (text: string) => {
     if (currentRun?.status === "awaiting_input") {
       const query = text || "Plan Accepted";
-      handleInputResponse(query, true);
+      console.log("handleAcceptPlan - query:", query);
+      handleInputResponse(query, true).catch(error => {
+        console.error("handleAcceptPlan error:", error);
+        handleError(error);
+      });
+    } else {
+      console.log("Cannot accept plan - run status is not awaiting_input");
     }
   };
 
