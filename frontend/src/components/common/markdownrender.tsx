@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism, SyntaxHighlighterProps } from "react-syntax-highlighter";
@@ -156,17 +156,118 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
   );
 };
 
-// ThinkBubble component for collapsible think content
-const ThinkBubble: React.FC<{ content: string }> = ({ content }) => {
-  const [isExpanded, setIsExpanded] = useState(false);
+// Spinner component for loading state
+const Spinner: React.FC<{ className?: string }> = ({ className = "size-4" }) => (
+  <svg
+    className={`animate-spin ${className}`}
+    xmlns="http://www.w3.org/2000/svg"
+    fill="none"
+    viewBox="0 0 24 24"
+  >
+    <circle
+      className="opacity-25"
+      cx="12"
+      cy="12"
+      r="10"
+      stroke="currentColor"
+      strokeWidth="4"
+    ></circle>
+    <path
+      className="opacity-75"
+      fill="currentColor"
+      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+    ></path>
+  </svg>
+);
+
+// Enhanced ThinkBubble component with reasoning state management
+interface ThinkBubbleProps {
+  content: string;
+  attributes?: {
+    type?: string;
+    done?: string | boolean;
+    duration?: number;
+    name?: string;
+  };
+  isStreaming?: boolean;
+}
+
+const ThinkBubble: React.FC<ThinkBubbleProps> = ({
+  content,
+  attributes = {},
+  isStreaming = false
+}) => {
+  // Default to reasoning type if not specified
+  const type = attributes.type || 'reasoning';
+  const isDone = attributes.done === 'true' || attributes.done === true;
+
+  // Think starts expanded, collapses when done
+  const [isExpanded, setIsExpanded] = useState(!isDone);
+  const [startTime] = useState(Date.now());
+  const [currentTime, setCurrentTime] = useState(Date.now());
+  const [userManuallyToggled, setUserManuallyToggled] = useState(false);
+
+  // Auto-collapse when thinking is done, but only if user hasn't manually toggled
+  useEffect(() => {
+    if (isDone && isExpanded && !userManuallyToggled) {
+      // Add a small delay before auto-collapsing
+      const timer = setTimeout(() => {
+        setIsExpanded(false);
+      }, 1500); // Slightly longer delay for better UX
+      return () => clearTimeout(timer);
+    }
+  }, [isDone, isExpanded, userManuallyToggled]);
+
+  // Handle manual toggle
+  const handleToggle = () => {
+    setIsExpanded(!isExpanded);
+    setUserManuallyToggled(true);
+  };
+
+  // Update current time every second when thinking
+  useEffect(() => {
+    if (!isDone) {
+      const interval = setInterval(() => {
+        setCurrentTime(Date.now());
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [isDone]);
+
+  const duration = attributes.duration || Math.floor((currentTime - startTime) / 1000);
+
+  const getTitle = () => {
+    if (type === 'reasoning') {
+      if (isDone && duration) {
+        if (duration < 60) {
+          return `Thought for ${duration} seconds`;
+        } else {
+          const minutes = Math.floor(duration / 60);
+          const seconds = duration % 60;
+          return `Thought for ${minutes}m ${seconds}s`;
+        }
+      } else {
+        return 'Thinking...';
+      }
+    } else if (type === 'code_interpreter') {
+      return isDone ? 'Analyzed' : 'Analyzing...';
+    } else if (type === 'tool_calls') {
+      return isDone ? `View Result from **${attributes.name || 'Tool'}**` : `Executing **${attributes.name || 'Tool'}**...`;
+    }
+    return 'Thinking...';
+  };
+
+  const shouldShowSpinner = !isDone && !isStreaming;
+  const shouldShimmer = !isDone;
 
   return (
-    <div className="think-bubble-container" style={{ margin: "8px 0" }}>
+    <div className="think-bubble-container" style={{ margin: "8px 0", width: "100%" }}>
       <div
         className="think-bubble-header"
         style={{
           display: "flex",
           alignItems: "center",
+          justifyContent: "space-between",
           gap: "8px",
           padding: "8px 12px",
           backgroundColor: "var(--color-bg-secondary)",
@@ -174,44 +275,81 @@ const ThinkBubble: React.FC<{ content: string }> = ({ content }) => {
           borderRadius: "6px",
           cursor: "pointer",
           userSelect: "none",
+          fontWeight: "500",
+          transition: "all 0.2s ease",
         }}
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={handleToggle}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = "var(--color-bg-tertiary)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = "var(--color-bg-secondary)";
+        }}
       >
-        <span style={{ fontSize: "16px" }}>💭</span>
-        <span
+        <div
           style={{
-            color: "var(--color-text-secondary)",
-            fontSize: "0.9rem",
-            fontWeight: "500",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            width: "100%"
           }}
+          className={shouldShimmer ? "shimmer" : ""}
         >
-          Thinking Process
-        </span>
-        {isExpanded ? (
-          <span
-            style={{
-              color: "var(--color-text-secondary)",
-              fontSize: "14px",
-            }}
-          >
-            ▼
-          </span>
-        ) : (
-          <span
-            style={{
-              color: "var(--color-text-secondary)",
-              fontSize: "14px",
-            }}
-          >
-            ▶
-          </span>
-        )}
+          {shouldShowSpinner && (
+            <Spinner className="size-4" />
+          )}
+
+          <div style={{ flex: 1 }}>
+            <span
+              style={{
+                color: "var(--color-text-secondary)",
+                fontSize: "0.9rem",
+                fontWeight: "500",
+              }}
+            >
+              {getTitle()}
+            </span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center" }}>
+            {isExpanded ? (
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ color: "var(--color-text-secondary)" }}
+              >
+                <path d="m18 15-6-6-6 6" />
+              </svg>
+            ) : (
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ color: "var(--color-text-secondary)" }}
+              >
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+            )}
+          </div>
+        </div>
       </div>
       {isExpanded && (
         <div
           className="think-bubble-content"
           style={{
-            padding: "12px",
+            position: "relative",
+            padding: "12px 12px 12px 20px",
             backgroundColor: "var(--color-bg-primary)",
             border: "1px solid var(--color-border-secondary)",
             borderTop: "none",
@@ -220,17 +358,90 @@ const ThinkBubble: React.FC<{ content: string }> = ({ content }) => {
             borderBottomLeftRadius: "6px",
             borderBottomRightRadius: "6px",
             marginTop: "-1px",
+            overflow: "hidden",
+            willChange: "transform, opacity",
+            transition: "all 0.2s ease-out",
           }}
         >
+          {/* Left border line - DeepSeek style */}
           <div
             style={{
-              color: "var(--color-text-primary)",
-              fontSize: "0.85rem",
-              lineHeight: "1.5",
-              whiteSpace: "pre-wrap",
+              position: "absolute",
+              left: "8px",
+              top: "0",
+              bottom: "0",
+              width: "2px",
+              backgroundColor: isDone
+                ? "var(--color-magenta-600)"
+                : "var(--color-border-secondary)",
+              borderRadius: "1px",
+              transition: "background-color 0.3s ease",
+              opacity: 0.3,
             }}
-          >
-            {content}
+          />
+
+          <div style={{ position: "relative" }}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                p: ({ children }) => (
+                  <p style={{
+                    color: "var(--color-text-secondary)",
+                    fontSize: "0.85rem",
+                    lineHeight: "1.5",
+                    margin: "0 0 8px 0"
+                  }}>
+                    {children}
+                  </p>
+                ),
+                code: ({ children, className }) => {
+                  const match = /language-(\w+)/.exec(className || "");
+                  const language = match ? match[1] : "";
+                  const inline = !language;
+
+                  if (inline) {
+                    return (
+                      <code
+                        style={{
+                          backgroundColor: "var(--color-bg-secondary)",
+                          color: "var(--color-text-secondary)",
+                          padding: "2px 4px",
+                          borderRadius: "3px",
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        {children}
+                      </code>
+                    );
+                  }
+
+                  return (
+                    <CodeBlock
+                      language={language}
+                      value={String(children).replace(/\n$/, "")}
+                    />
+                  );
+                },
+                // 其他元素也使用浅色
+                li: ({ children }) => (
+                  <li style={{ color: "var(--color-text-secondary)" }}>
+                    {children}
+                  </li>
+                ),
+                strong: ({ children }) => (
+                  <strong style={{ color: "var(--color-text-secondary)", fontWeight: "600" }}>
+                    {children}
+                  </strong>
+                ),
+                em: ({ children }) => (
+                  <em style={{ color: "var(--color-text-secondary)" }}>
+                    {children}
+                  </em>
+                ),
+              }}
+            >
+              {content}
+            </ReactMarkdown>
           </div>
         </div>
       )}
@@ -238,18 +449,40 @@ const ThinkBubble: React.FC<{ content: string }> = ({ content }) => {
   );
 };
 
-// Function to parse content and extract think tags
+// Function to parse content and extract think tags with state detection
 const parseThinkTags = (
   content: string
-): { parts: Array<{ type: "text" | "think"; content: string }> } => {
-  const parts: Array<{ type: "text" | "think"; content: string }> = [];
+): {
+  parts: Array<{
+    type: "text" | "think";
+    content: string;
+    attributes?: {
+      type: string;
+      done: boolean;
+      duration?: number;
+    };
+  }>
+} => {
+  const parts: Array<{
+    type: "text" | "think";
+    content: string;
+    attributes?: {
+      type: string;
+      done: boolean;
+      duration?: number;
+    };
+  }> = [];
   let currentIndex = 0;
 
-  // Regular expression to match <think>...</think> tags
-  const thinkRegex = /🤔(.*?)<\/think>/gs;
+  // Regular expression to match complete <think>...</think> tags
+  const completeThinkRegex = /(?:🤔|<think>)(.*?)<\/think>/gs;
+  // Regular expression to match incomplete <think> tags (without closing tag)
+  const incompleteThinkRegex = /(?:🤔|<think>)(.*)$/s;
+
   let match;
 
-  while ((match = thinkRegex.exec(content)) !== null) {
+  // First, find all complete think tags
+  while ((match = completeThinkRegex.exec(content)) !== null) {
     // Add text before the think tag
     if (match.index > currentIndex) {
       parts.push({
@@ -258,20 +491,47 @@ const parseThinkTags = (
       });
     }
 
-    // Add the think content
+    // Add the complete think content
     parts.push({
       type: "think",
       content: match[1].trim(),
+      attributes: {
+        type: "reasoning",
+        done: true,
+      }
     });
 
     currentIndex = match.index + match[0].length;
   }
 
-  // Add remaining text after the last think tag
-  if (currentIndex < content.length) {
+  // Check for incomplete think tag at the end
+  const remainingContent = content.substring(currentIndex);
+  const incompleteMatch = incompleteThinkRegex.exec(remainingContent);
+
+  if (incompleteMatch) {
+    // Add text before the incomplete think tag
+    const beforeIncomplete = remainingContent.substring(0, incompleteMatch.index);
+    if (beforeIncomplete) {
+      parts.push({
+        type: "text",
+        content: beforeIncomplete,
+      });
+    }
+
+    // Add the incomplete think content
+    parts.push({
+      type: "think",
+      content: incompleteMatch[1].trim(),
+      attributes: {
+        type: "reasoning",
+        done: false,
+      }
+    });
+  } else if (currentIndex < content.length) {
+    // Add remaining text after the last complete think tag
     parts.push({
       type: "text",
-      content: content.substring(currentIndex),
+      content: remainingContent,
     });
   }
 
@@ -309,7 +569,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
   // Check if content contains think tags
   const hasThinkTags =
-    content.includes("🤔") && content.includes("</think>");
+    (content.includes("🤔") || content.includes("<think>")) && content.includes("</think>");
   // If allowHtml is true and content contains HTML, render it directly
   // But first check for think tags and process them
   if (allowHtml && (content.includes("<div") || content.includes("<span")) || content.includes("<img")) {
@@ -332,13 +592,17 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           {parts.map((part, index) => {
             if (part.type === "think") {
               return (
-                <ThinkBubble key={index} content={part.content} />
+                <ThinkBubble
+                  key={index}
+                  content={part.content}
+                  attributes={part.attributes}
+                />
               );
             } else {
               return (
                 <div
                   key={index}
-                  dangerouslySetInnerHTML={{ __html: part.content.replace(/<think>(.*?)<\/think>/gs, '') }}
+                  dangerouslySetInnerHTML={{ __html: part.content.replace(/(?:🤔|<think>)(.*?)<\/think>/gs, '') }}
                 />
               );
             }
@@ -359,7 +623,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             maxWidth: "100%",
             position: "relative",
           }}
-          dangerouslySetInnerHTML={{ __html: content.replace(/<think>(.*?)<\/think>/gs, '') }}
+          dangerouslySetInnerHTML={{ __html: content.replace(/(?:🤔|<think>)(.*?)<\/think>/gs, '') }}
         />
       );
     }
@@ -398,7 +662,11 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         {parts.map((part, index) => {
           if (part.type === "think") {
             return (
-              <ThinkBubble key={index} content={part.content} />
+              <ThinkBubble
+                key={index}
+                content={part.content}
+                attributes={part.attributes}
+              />
             );
           } else {
             // Render regular text content with markdown
@@ -503,7 +771,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                   ),
                 }}
               >
-                {part.content.replace(/<think>(.*?)<\/think>/gs, '')}
+                {part.content.replace(/(?:🤔|<think>)(.*?)<\/think>/gs, '')}
               </ReactMarkdown>
             );
           }
@@ -611,7 +879,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
         }}
       >
-        {(truncate ? truncatedContent : processedContent).replace(/<think>(.*?)<\/think>/gs, '')}
+        {(truncate ? truncatedContent : processedContent).replace(/(?:🤔|<think>)(.*?)<\/think>/gs, '')}
       </ReactMarkdown>
     </div>
   );

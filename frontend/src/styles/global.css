@@ -1094,3 +1094,60 @@ div#gatsby-focus-wrapper {
     height: 100%;
     /* border: 1px solid green; */
 }
+
+/* Think bubble animations */
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+}
+
+.think-bubble-content {
+    overflow: hidden;
+}
+
+/* Smooth transitions for think bubble */
+.think-bubble-header {
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.think-bubble-header:hover {
+    border-color: var(--color-border-primary);
+}
+
+/* Shimmer animation for thinking state */
+@keyframes shimmer {
+    0% {
+        background-position: -200px 0;
+    }
+    100% {
+        background-position: calc(200px + 100%) 0;
+    }
+}
+
+.shimmer {
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.1),
+        transparent
+    );
+    background-size: 200px 100%;
+    animation: shimmer 2s infinite;
+}
