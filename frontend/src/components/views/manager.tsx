@@ -423,6 +423,9 @@ export const SessionManager: React.FC = () => {
         }
         return;
       }
+
+
+
       setSession(data);
       window.history.pushState(
         {},
