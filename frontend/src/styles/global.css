@@ -7,7 +7,7 @@
     --color-bg-opposite: #edf2f7;
     --color-bg-white: #ffffff;
     --color-bg-dark: #0f0f0f;
-    --color-bg-accent: #6366f1;
+    --color-bg-accent: #8b5cf6;
 
     /* 文字颜色 - 更好的对比度 */
     --color-text-primary: #f8fafc;
@@ -18,7 +18,7 @@
     /* 边框颜色 - 更细腻的分割线 */
     --color-border-primary: rgba(255, 255, 255, 0.1);
     --color-border-secondary: rgba(255, 255, 255, 0.05);
-    --color-border-accent: #6366f1;
+    --color-border-accent: #8b5cf6;
 
     /* 状态颜色 */
     --color-warning-primary: #f59e0b;
@@ -57,13 +57,13 @@
 .light {
     /* 主要背景色 - 更纯净的白色系 */
     --color-bg-primary: #ffffff;
-    --color-bg-secondary: rgba(99, 102, 241, 0.03);
+    --color-bg-secondary: rgba(168, 85, 247, 0.03);
     --color-bg-light: #f8fafc;
     --color-bg-tertiary: #f1f5f9;
     --color-bg-opposite: #0f0f0f;
     --color-bg-white: #ffffff;
     --color-bg-dark: #0f0f0f;
-    --color-bg-accent: #6366f1;
+    --color-bg-accent: #a855f7;
 
     /* 文字颜色 - 更好的层次感 */
     --color-text-primary: #0f172a;
@@ -74,7 +74,7 @@
     /* 边框颜色 - 更细腻的分割线 */
     --color-border-primary: #e2e8f0;
     --color-border-secondary: #f1f5f9;
-    --color-border-accent: #6366f1;
+    --color-border-accent: #a855f7;
 
     /* 状态颜色 */
     --color-warning-primary: #f59e0b;
@@ -200,10 +200,10 @@
 
     @keyframes pulse-glow {
         0%, 100% {
-            box-shadow: 0 0 5px rgba(99, 102, 241, 0.5);
+            box-shadow: 0 0 5px rgba(168, 85, 247, 0.5);
         }
         50% {
-            box-shadow: 0 0 20px rgba(99, 102, 241, 0.8);
+            box-shadow: 0 0 20px rgba(168, 85, 247, 0.8);
         }
     }
 
@@ -232,13 +232,13 @@
 
     /* 文本选择样式 - 更明显的高亮 */
     ::selection {
-        background: #6366f1 !important;
+        background: #8b5cf6 !important;
         color: white !important;
         text-shadow: none !important;
     }
 
     ::-moz-selection {
-        background: #6366f1 !important;
+        background: #8b5cf6 !important;
         color: white !important;
         text-shadow: none !important;
     }
@@ -246,6 +246,7 @@
     /* 输入框优化 - 使用!important确保穿透 */
     .input-enhanced::placeholder {
         transition: opacity 0.3s ease !important;
+        color: var(--color-text-secondary) !important;
     }
 
     .input-enhanced:focus::placeholder {
@@ -259,14 +260,14 @@
 
     /* 深色主题文字颜色 */
     .dark .input-enhanced {
-        color: #444 !important;
-        caret-color: #6366f1 !important;
+        color: #f8fafc !important;
+        caret-color: #8b5cf6 !important;
     }
 
     /* 浅色主题文字颜色 */
     .light .input-enhanced {
         color: #1f2937 !important;
-        caret-color: #6366f1 !important;
+        caret-color: #8b5cf6 !important;
     }
 
     /* 确保选中文字时光标可见 */
@@ -366,22 +367,22 @@
     }
 
     .sidebar-scroll::-webkit-scrollbar-thumb {
-        background: rgba(99, 102, 241, 0.2);
+        background: rgba(139, 92, 246, 0.2);
         border-radius: 2px;
         transition: all 0.3s ease;
     }
 
     .sidebar-scroll::-webkit-scrollbar-thumb:hover {
-        background: rgba(99, 102, 241, 0.4);
+        background: rgba(139, 92, 246, 0.4);
     }
 
     .sidebar-scroll::-webkit-scrollbar-thumb:active {
-        background: rgba(99, 102, 241, 0.6);
+        background: rgba(139, 92, 246, 0.6);
     }
 
     .sidebar-scroll {
         scrollbar-width: thin;
-        scrollbar-color: rgba(99, 102, 241, 0.2) transparent;
+        scrollbar-color: rgba(139, 92, 246, 0.2) transparent;
     }
 
     /* 浅色主题滚动条样式 */
@@ -402,33 +403,33 @@
     }
 
     .light .sidebar-scroll::-webkit-scrollbar-thumb {
-        background: rgba(99, 102, 241, 0.15);
+        background: rgba(139, 92, 246, 0.15);
     }
 
     .light .sidebar-scroll::-webkit-scrollbar-thumb:hover {
-        background: rgba(99, 102, 241, 0.3);
+        background: rgba(139, 92, 246, 0.3);
     }
 
     .light .sidebar-scroll::-webkit-scrollbar-thumb:active {
-        background: rgba(99, 102, 241, 0.5);
+        background: rgba(139, 92, 246, 0.5);
     }
 
     .light .sidebar-scroll {
-        scrollbar-color: rgba(99, 102, 241, 0.15) transparent;
+        scrollbar-color: rgba(139, 92, 246, 0.15) transparent;
     }
 
     /* 滚动条淡入淡出效果 */
     .sidebar-scroll::-webkit-scrollbar-thumb {
-        background: rgba(99, 102, 241, 0.1) !important;
+        background: rgba(139, 92, 246, 0.1) !important;
         transition: all 0.3s ease;
     }
 
     .sidebar-scroll:hover::-webkit-scrollbar-thumb {
-        background: rgba(99, 102, 241, 0.3) !important;
+        background: rgba(139, 92, 246, 0.3) !important;
     }
 
     .sidebar-scroll::-webkit-scrollbar-thumb:hover {
-        background: rgba(99, 102, 241, 0.5) !important;
+        background: rgba(139, 92, 246, 0.5) !important;
     }
 
     /* 平滑滚动 */
@@ -438,24 +439,29 @@
 
     /* 滚动时显示滚动条 */
     .sidebar-scroll.scrolling::-webkit-scrollbar-thumb {
-        background: rgba(99, 102, 241, 0.4) !important;
+        background: rgba(139, 92, 246, 0.4) !important;
     }
 
     /* 浅色主题的滚动条淡入淡出效果 */
     .light .sidebar-scroll::-webkit-scrollbar-thumb {
-        background: rgba(99, 102, 241, 0.08) !important;
+        background: rgba(139, 92, 246, 0.08) !important;
     }
 
     .light .sidebar-scroll:hover::-webkit-scrollbar-thumb {
-        background: rgba(99, 102, 241, 0.2) !important;
+        background: rgba(139, 92, 246, 0.2) !important;
     }
 
     .light .sidebar-scroll::-webkit-scrollbar-thumb:hover {
-        background: rgba(99, 102, 241, 0.4) !important;
+        background: rgba(139, 92, 246, 0.4) !important;
     }
 
     .light .sidebar-scroll.scrolling::-webkit-scrollbar-thumb {
-        background: rgba(99, 102, 241, 0.3) !important;
+        background: rgba(139, 92, 246, 0.3) !important;
+    }
+
+    /* 修复 Ant Design Upload 组件的对齐问题 */
+    .ant-upload {
+        padding-left: 0 !important;
     }
 
     /* 智能会话标题样式 */
@@ -541,7 +547,7 @@
     button:focus-visible,
     .ant-btn:focus-visible {
         outline: 2px solid transparent !important;
-        box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2) !important;
+        box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2) !important;
         border-radius: 6px;
     }
 
@@ -600,7 +606,7 @@
     .message-content *::selection,
     .prose::selection,
     .prose *::selection {
-        background: rgba(99, 102, 241, 0.8) !important;
+        background: rgba(139, 92, 246, 0.8) !important;
         color: white !important;
         text-shadow: none !important;
     }
@@ -609,22 +615,30 @@
     .message-content *::-moz-selection,
     .prose::-moz-selection,
     .prose *::-moz-selection {
-        background: rgba(99, 102, 241, 0.8) !important;
+        background: rgba(139, 92, 246, 0.8) !important;
         color: white !important;
         text-shadow: none !important;
     }
 
     /* 用户消息气泡的选择样式 */
     .bg-tertiary::selection,
-    .bg-tertiary *::selection {
-        background: rgba(255, 255, 255, 0.4) !important;
+    .bg-tertiary *::selection,
+    .bg-tertiary .message-content::selection,
+    .bg-tertiary .message-content *::selection,
+    div.bg-tertiary::selection,
+    div.bg-tertiary *::selection {
+        background: rgba(139, 92, 246, 0.8) !important;
         color: white !important;
         text-shadow: none !important;
     }
 
     .bg-tertiary::-moz-selection,
-    .bg-tertiary *::-moz-selection {
-        background: rgba(255, 255, 255, 0.4) !important;
+    .bg-tertiary *::-moz-selection,
+    .bg-tertiary .message-content::-moz-selection,
+    .bg-tertiary .message-content *::-moz-selection,
+    div.bg-tertiary::-moz-selection,
+    div.bg-tertiary *::-moz-selection {
+        background: rgba(139, 92, 246, 0.8) !important;
         color: white !important;
         text-shadow: none !important;
     }
@@ -733,9 +747,8 @@ html {
 }
 
 body {
-    padding: 0px 16px 0px 16px;
-    @apply px-2 md:px-4 lg:px-6 w-full !important;
-    margin: 0px auto;
+    padding: 0;
+    margin: 0;
     background: transparent;
     /* border: 2px solid green; */
     width: 100%;
@@ -1080,4 +1093,61 @@ div#___gatsby,
 div#gatsby-focus-wrapper {
     height: 100%;
     /* border: 1px solid green; */
+}
+
+/* Think bubble animations */
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+}
+
+.think-bubble-content {
+    overflow: hidden;
+}
+
+/* Smooth transitions for think bubble */
+.think-bubble-header {
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.think-bubble-header:hover {
+    border-color: var(--color-border-primary);
+}
+
+/* Shimmer animation for thinking state */
+@keyframes shimmer {
+    0% {
+        background-position: -200px 0;
+    }
+    100% {
+        background-position: calc(200px + 100%) 0;
+    }
+}
+
+.shimmer {
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(255, 255, 255, 0.1),
+        transparent
+    );
+    background-size: 200px 100%;
+    animation: shimmer 2s infinite;
 }

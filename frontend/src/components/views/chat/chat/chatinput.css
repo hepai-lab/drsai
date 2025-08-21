@@ -1,0 +1,30 @@
+/* 聊天输入框容器 */
+.chat-input-wrapper {
+    position: relative;
+}
+
+/* 修复 Ant Design Upload 组件的对齐问题 - 使用更高优先级的选择器 */
+.chat-input-wrapper .ant-dropdown .ant-dropdown-menu .ant-dropdown-menu-item .ant-upload,
+.chat-input-wrapper .ant-upload.ant-upload,
+.chat-input-wrapper .ant-upload {
+    padding-left: 0 !important;
+    margin-left: 0 !important;
+}
+
+/* 确保Upload组件内的span也没有额外的padding */
+.chat-input-wrapper .ant-upload span {
+    padding-left: 0 !important;
+    margin-left: 0 !important;
+}
+
+/* 针对菜单项内的Upload组件 */
+.ant-dropdown-menu-item .ant-upload {
+    padding-left: 0 !important;
+    margin-left: 0 !important;
+}
+
+/* 针对菜单项内的span */
+.ant-dropdown-menu-item .ant-upload span {
+    padding-left: 0 !important;
+    margin-left: 0 !important;
+}
