@@ -35,13 +35,7 @@ export const SessionManager: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | undefined>();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("sessionSidebar");
-      return stored !== null ? JSON.parse(stored) : true;
-    }
-    return true;
-  });
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [messageApi, contextHolder] = message.useMessage();
   const [sessionSockets, setSessionSockets] = useState<SessionWebSockets>({});
   const [sessionRunStatuses, setSessionRunStatuses] = useState<{
@@ -84,15 +78,15 @@ export const SessionManager: React.FC = () => {
   const handleAgentList = async (agents: Agent[]) => {
     try {
       const res = await agentAPI.getAgentList(user?.email || "");
-      setAgents(res.config.agent_modes);
+      setAgents(res);
 
       // 如果用户刚登录且没有持久化的agent选择，设置默认agent为BESIII
-      if (user?.email && res.config.agent_modes.length > 0) {
+      if (user?.email && res.length > 0) {
         const { selectedAgent, setSelectedAgent, setMode, setConfig } = useModeConfigStore.getState();
 
         // 如果没有选中的agent，设置默认agent为BESIII
         if (!selectedAgent) {
-          const besiiiAgent = res.config.agent_modes.find(agent => agent.mode === "magentic-one");
+          const besiiiAgent = res.find(agent => agent.mode === "magentic-one");
           if (besiiiAgent) {
             // 设置默认agent为BESIII
             setSelectedAgent(besiiiAgent);
@@ -120,14 +114,7 @@ export const SessionManager: React.FC = () => {
       handleAgentList(agents);
     }
   }, [user?.email]);
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem(
-        "sessionSidebar",
-        JSON.stringify(isSidebarOpen)
-      );
-    }
-  }, [isSidebarOpen]);
+
 
   React.useEffect(() => {
     const loadSettings = async () => {
@@ -352,12 +339,22 @@ export const SessionManager: React.FC = () => {
     setActiveSubMenuItem("current_session");
 
     // 设置默认agent为 Dr.Sai General (magentic-one)
-    const defaultAgent = agents.find(agent => agent.mode === "magentic-one");
-    if (defaultAgent) {
-      setSelectedAgent(defaultAgent);
+    if (Array.isArray(agents) && agents.length > 0) {
+      const defaultAgent = agents.find(agent => agent.mode === "magentic-one");
+      if (defaultAgent) {
+        setSelectedAgent(defaultAgent);
+      }
     }
 
     // 创建新会话
+    handleEditSession();
+  };
+
+  const handleCreateNewSessionAfterDelete = () => {
+    // 切换到 Current Session tab
+    setActiveSubMenuItem("current_session");
+
+    // 创建新会话（保持当前选中的agent）
     handleEditSession();
   };
 
@@ -394,6 +391,9 @@ export const SessionManager: React.FC = () => {
         window.history.pushState({}, "", window.location.pathname); // Clear URL params
       }
       messageApi.success("Session deleted");
+
+      // 删除成功后调用 handleCreateNewSessionAfterDelete 创建新会话（保持当前agent）
+      handleCreateNewSessionAfterDelete();
     } catch (error) {
       console.error("Error deleting session:", error);
       messageApi.error("Error deleting session");
@@ -741,124 +741,115 @@ export const SessionManager: React.FC = () => {
   };
 
   return (
-    <div className="relative flex flex-col h-full w-full">
+    <div className="relative flex flex-1 w-full h-full">
       {contextHolder}
 
-      <ContentHeader
-        isMobileMenuOpen={isMobileMenuOpen}
-        onMobileMenuToggle={() =>
-          setIsMobileMenuOpen(!isMobileMenuOpen)
-        }
-        isSidebarOpen={isSidebarOpen}
-        onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-        onNewSession={() => handleEditSession()}
-        onLogoClick={handleLogoClick}
-        agentSelector={
-          activeSubMenuItem === "current_session" ? (
-            <AgentSelectorAdvanced
-              agents={agents}
-              models={models}
-              selectedAgent={selectedAgent}
-              onAgentSelect={setSelectedAgent}
-              placeholder="Select Your Agent"
-              className="w-64"
-            />
-          ) : null
-        }
-      />
-
-      <div className="flex flex-1 relative min-h-0">
-        {/* Mobile overlay */}
-        {isSidebarOpen && (
-          <div
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden"
-            onClick={() => setIsSidebarOpen(false)}
-          />
-        )}
-
-        {/* Sidebar */}
+      {/* Mobile overlay */}
+      {isSidebarOpen && (
         <div
-          className={`fixed lg:absolute left-0 top-0 h-full transition-smooth z-50 lg:z-auto overflow-hidden ${isSidebarOpen
-            ? "w-80 lg:w-64 translate-x-0"
-            : "w-80 lg:w-0 -translate-x-full lg:translate-x-0"
-            }`}
-        >
-          <Sidebar
-            isOpen={isSidebarOpen}
-            sessions={sessions}
-            currentSession={session}
-            onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
-            onSelectSession={handleSelectSession}
-            onEditSession={handleEditSession}
-            onDeleteSession={handleDeleteSession}
-            isLoading={isLoading}
-            sessionRunStatuses={sessionRunStatuses}
-            activeSubMenuItem={activeSubMenuItem}
-            onSubMenuChange={setActiveSubMenuItem}
-            onStopSession={(sessionId: number) => {
-              if (sessionId === undefined || sessionId === null)
-                return;
-              const id = Number(sessionId);
-              // Find the session's socket and close it, update status
-              const ws = sessionSockets[id]?.socket;
-              if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(
-                  JSON.stringify({
-                    type: "stop",
-                    reason: "Cancelled by user (sidebar)",
-                  })
-                );
-                ws.close();
-              }
-              setSessionRunStatuses((prev) => ({
-                ...prev,
-                [id]: "stopped",
-              }));
-            }}
-          />
-        </div>
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
 
+      {/* Sidebar - Full height */}
+      <div
+        className={`fixed lg:relative left-0 top-0 h-full transition-smooth z-50 lg:z-auto overflow-hidden bg-gray-50/95 dark:bg-secondary/80 border-r border-gray-200/50 dark:border-border-primary/50 ${isSidebarOpen
+          ? "w-72 lg:w-56 translate-x-0"
+          : "w-72 lg:w-0 -translate-x-full lg:translate-x-0"
+          }`}
+      >
+        <Sidebar
+          isOpen={isSidebarOpen}
+          sessions={sessions}
+          currentSession={session}
+          onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
+          onSelectSession={handleSelectSession}
+          onEditSession={handleEditSession}
+          onDeleteSession={handleDeleteSession}
+          isLoading={isLoading}
+          sessionRunStatuses={sessionRunStatuses}
+          activeSubMenuItem={activeSubMenuItem}
+          onSubMenuChange={setActiveSubMenuItem}
+          onLogoClick={handleLogoClick}
+          onStopSession={(sessionId: number) => {
+            if (sessionId === undefined || sessionId === null)
+              return;
+            const id = Number(sessionId);
+            // Find the session's socket and close it, update status
+            const ws = sessionSockets[id]?.socket;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(
+                JSON.stringify({
+                  type: "stop",
+                  reason: "Cancelled by user (sidebar)",
+                })
+              );
+              ws.close();
+            }
+            setSessionRunStatuses((prev) => ({
+              ...prev,
+              [id]: "stopped",
+            }));
+          }}
+        />
+      </div>
 
+      {/* Main content area - starts from sidebar right edge */}
+      <div className={`flex flex-col flex-1 min-h-0 transition-smooth ${isSidebarOpen ? "ml-0 lg:ml-0" : "ml-0"}`}>
+        <ContentHeader
+          isMobileMenuOpen={isMobileMenuOpen}
+          onMobileMenuToggle={() =>
+            setIsMobileMenuOpen(!isMobileMenuOpen)
+          }
+          isSidebarOpen={isSidebarOpen}
+          onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+          onNewSession={() => handleEditSession()}
+          agentSelector={
+            activeSubMenuItem === "current_session" ? (
+              <AgentSelectorAdvanced
+                agents={agents}
+                models={models}
+                selectedAgent={selectedAgent}
+                onAgentSelect={setSelectedAgent}
+                placeholder="Select Your Agent"
+                className="w-64"
+              />
+            ) : null
+          }
+        />
 
-        <div
-          className={`flex-1 transition-smooth ${isSidebarOpen
-            ? "ml-0 lg:ml-64"
-            : activeSubMenuItem === "current_session"
-              ? "ml-0"
-              : "ml-0"
-            }`}
-        >
-          {activeSubMenuItem === "current_session" ? (
-            session &&
-              Array.isArray(sessions) &&
-              sessions.length > 0 ? (
-              <div className={`${isSidebarOpen ? "pl-0 lg:pl-2" : ""} h-full`}>
-                {chatViews}
-              </div>
-            ) : (
-              <div className="flex items-center justify-center h-full text-secondary">
-                <div className="text-center">
-                  <Spin size="large" />
-                  <p className="mt-4 text-sm">Loading...</p>
-                </div>
-              </div>
-            )
-          ) : activeSubMenuItem === "agent_square" ? (
-            <div className="h-full overflow-hidden pl-0 lg:pl-2">
-              <AgentSquare />
+        {activeSubMenuItem === "current_session" ? (
+          session &&
+            Array.isArray(sessions) &&
+            sessions.length > 0 ? (
+            <div className="h-full">
+              {chatViews}
             </div>
           ) : (
-            <div className="h-full overflow-hidden pl-0 lg:pl-2">
-              <PlanList
-                onTabChange={setActiveSubMenuItem}
-                onSelectSession={handleSelectSession}
-                onCreateSessionFromPlan={
-                  handleCreateSessionFromPlan
-                }
-              />
+            <div className="flex items-center justify-center h-full text-secondary">
+              <div className="text-center">
+                <Spin size="large" />
+                <p className="mt-4 text-sm">Loading...</p>
+              </div>
             </div>
-          )}
-        </div>
+          )
+        ) : activeSubMenuItem === "agent_square" ? (
+          <div className="h-full overflow-hidden">
+            <AgentSquare agents={[]} />
+          </div>
+        ) : (
+          <div className="h-full overflow-hidden">
+            <PlanList
+              onTabChange={setActiveSubMenuItem}
+              onSelectSession={handleSelectSession}
+              onCreateSessionFromPlan={
+                handleCreateSessionFromPlan
+              }
+            />
+          </div>
+        )}
+
         <SessionEditor
           session={editingSession}
           isOpen={isEditorOpen}

@@ -1,204 +1,386 @@
-# -*- coding: utf-8 -*-
+from typing import (
+    AsyncGenerator, 
+    List, 
+    Sequence, 
+    Dict, 
+    Any, 
+    Callable, 
+    Awaitable, 
+    Union, 
+    Optional, 
+    Tuple,
+    Self,
+    )
+
+import asyncio
+from loguru import logger
+import inspect
 import json
-from typing import List, Dict, Union, AsyncGenerator, Tuple, Any
+import os
 
-# Model client
-from drsai import HepAIChatCompletionClient 
+from pydantic import BaseModel
 
-# backend thread 
-from drsai import Thread, ThreadsManager
-
-# AutoGen imports
 from autogen_core import CancellationToken, FunctionCall
 from autogen_core.tools import (
     BaseTool, 
-    FunctionTool, 
-    StaticWorkbench, 
     Workbench, 
-    ToolResult, 
-    TextResultContent, 
     ToolSchema)
-
+from autogen_core.memory import Memory
+from autogen_core.model_context import ChatCompletionContext
 from autogen_core.models import (
-    LLMMessage,
-    SystemMessage,
-    AssistantMessage,
-    UserMessage,
     ChatCompletionClient,
     CreateResult,
-    FunctionExecutionResultMessage
+    FunctionExecutionResultMessage,
+    FunctionExecutionResult,
+    LLMMessage,
+    UserMessage,
+    AssistantMessage,
+    SystemMessage,
+    RequestUsage,
 )
+
+from .drsaiagent import DrSaiAgent
+from autogen_agentchat.agents._assistant_agent import AssistantAgentConfig
+from autogen_agentchat.base import Handoff as HandoffBase
 from autogen_agentchat.base import Response
 from autogen_agentchat.messages import (
     BaseAgentEvent,
     BaseChatMessage,
-    ToolCallSummaryMessage,
-    ModelClientStreamingChunkEvent,
-    TextMessage,
-    UserInputRequestedEvent,
-    ThoughtEvent,
-    HandoffMessage,
     AgentEvent,
     ChatMessage,
+    HandoffMessage,
     MemoryQueryEvent,
+    ModelClientStreamingChunkEvent,
+    TextMessage,
     ToolCallExecutionEvent,
     ToolCallRequestEvent,
+    ToolCallSummaryMessage,
+    UserInputRequestedEvent,
+    ThoughtEvent,
+    StructuredMessageFactory,
+    # MultiModalMessage,
+    Image,
 )
+from drsai import HepAIChatCompletionClient
+from drsai.modules.managers.base_thread import Thread
+from drsai.modules.managers.threads_manager import ThreadsManager
 
-async def tools_reply_function( 
-    oai_messages: List[str],  # OAI messages
-    agent_name: str,  # Agent name
-    llm_messages: List[LLMMessage],  # AutoGen LLM messages
-    model_client: HepAIChatCompletionClient,  # AutoGen LLM Model client
-    workbench: Workbench,  # AutoGen Workbench
-    handoff_tools: List[BaseTool[Any, Any]],  # AutoGen handoff tools
-    tools: Union[ToolSchema, List[BaseTool[Any, Any]]],  # AutoGen Workbench + handoff tools
-    cancellation_token: CancellationToken,  # AutoGen cancellation token,
-    thread: Thread,  # DrSai thread
-    thread_mgr: ThreadsManager,  # DrSai thread manager
-    **kwargs) -> Union[str, AsyncGenerator[str, None]]:
-    """
-    自定义回复函数：能够智能地调用工具，然后通过工具的执行结果进行回复。
-    """
 
-    # 使用AutoGen Workbench获取工具信息
-    if isinstance(workbench, StaticWorkbench):
-        tools_name = [i.name for i in workbench._tools]
-    
-    # 进行工具执行
-    model_result = None
-    async for chunk in model_client.create_stream(
-            messages=llm_messages,
-            cancellation_token=cancellation_token,
-            tools = tools,
-        ):
-        if isinstance(chunk, CreateResult):
-            model_result = chunk
-        else:
-            yield chunk
+
+class ToolAgent(DrSaiAgent):
+    """通过多工具进行优化"""
+    def __init__(
+        self,
+        name: str,
+        model_client: ChatCompletionClient = None,
+        tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
+        workbench: Workbench | None = None,
+        handoffs: List[HandoffBase | str] | None = None,
+        model_context: ChatCompletionContext | None = None,
+        description: str = "An agent that provides assistance with ability to use tools.",
+        system_message: (
+            str | None
+        ) = "You are a helpful AI assistant. Solve tasks using your tools. Reply with TERMINATE when the task has been completed.",
+        model_client_stream: bool = True,
+        reflect_on_tool_use: bool | None = None,
+        tool_call_summary_format: str = "{result}",
+        output_content_type: type[BaseModel] | None = None,
+        output_content_type_format: str | None = None,
+        memory: Sequence[Memory] | None = None,
+        metadata: Dict[str, str] | None = None,
+        memory_function: Callable = None,
+        # allow_reply_function: bool = False,
+        reply_function: Callable = None,
+        thread: Thread = None,
+        thread_mgr: ThreadsManager = None,
+        **kwargs,
+            ):
         
-    # 进一步解析模型返回的结果
-    if isinstance(model_result.content, list):
-        # 模型返回的结果必须是FunctionCall列表
-        assert isinstance(model_result.content, list) and all(
-            isinstance(item, FunctionCall) for item in model_result.content
-        )
-        function_calls_new = [] # 储存不在mp_structure_reply_function中处理的函数，如handoff_function等
-        function_calls: List[FunctionCall] = model_result.content
-        function_call_contents: str = ""
-        for function_call in function_calls:
-            if function_call.name in tools_name:
-                tool_result: ToolResult = await workbench.call_tool(name=function_call.name, arguments=json.loads(function_call.arguments), cancellation_token=cancellation_token)
-                name = tool_result.name
-                content: str = "\n".join([str(i.content) for i  in tool_result.result])
-                function_call_contents += f"{name}:\n{content}\n\n"
-            else:
-                function_calls_new.append(function_call)
-        if function_calls_new:
-            model_result.content = function_calls_new
-            yield model_result
-        else:
-            prompt = f"""以下是对应工具的执行结果：
-    ```
-    {function_call_contents}
-    ```
-    请根据执行结果进一步回复上面用户的问题。
-    """
-            llm_messages.append(UserMessage(content=prompt, source="user"))
-            async for chunk in model_client.create_stream(
-                messages=llm_messages,
-                cancellation_token=cancellation_token,
-            ):
-                yield chunk
-    else:
-        yield model_result
+        super().__init__(
+            name, 
+            model_client,
+            tools=tools,
+            workbench=workbench,
+            handoffs=handoffs,
+            model_context=model_context,
+            description=description,
+            system_message=system_message,
+            model_client_stream=model_client_stream,
+            reflect_on_tool_use=reflect_on_tool_use,
+            tool_call_summary_format=tool_call_summary_format,
+            output_content_type=output_content_type,
+            output_content_type_format=output_content_type_format,
+            memory=memory,
+            metadata=metadata,
+            memory_function=memory_function,
+            reply_function=reply_function,
+            thread=thread,
+            thread_mgr=thread_mgr,
+            **kwargs,
+            )
+    
+    async def lazy_init(self, **kwargs: Any) -> None:
+        """Initialize the tools and models needed by the agent."""
+        pass
 
+    async def close(self) -> None:
+        """Clean up resources used by the agent.
 
-async def tools_recycle_reply_function( 
-    oai_messages: List[str],  # OAI messages
-    agent_name: str,  # Agent name
-    llm_messages: List[LLMMessage],  # AutoGen LLM messages
-    model_client: HepAIChatCompletionClient,  # AutoGen LLM Model client
-    workbench: Workbench,
-    handoff_tools: List[BaseTool[Any, Any]],
-    tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
-    cancellation_token: CancellationToken,  # AutoGen cancellation token,
-    thread: Thread,  # DrSai thread
-    thread_mgr: ThreadsManager,  # DrSai thread manager
-    **kwargs) -> Union[str, AsyncGenerator[str, None]]:
-    """
-    自定义回复函数：能够智能地循环调用工具自有的工具集进行规划完成任务。
-    """
+        This method:
+          ...
+        """
+        logger.info(f"Closing {self.name}...")
+        
+        # Close the model client.
+        await self._model_client.close()
 
-     # 使用AutoGen Workbench获取工具信息
-    if isinstance(workbench, StaticWorkbench):
-        tools_name = [i.name for i in workbench._tools]
+    async def pause(self) -> None:
+        """Pause the agent by setting the paused state."""
+        logger.info(f"Pausing {self.name}...")
 
-        # 将循环调用的提示词以UserMessage的形式放入
-        llm_messages.insert(0, SystemMessage(content=f"""你需要回复我上面的任务，回复要求如下：
-1. 如果不需要使用工具集：{tools_name}，或者工具集中的工具无法完成任务，则进行转换或者直接使用你的知识回复；
-2. 如果我上面的任务适合使用工具集：{tools_name}，你需要根据每个工具的功能，进行任务和对应的使用工具规划，然后按照规划依次调用对应工具执行
-3. 在所有任务执行结束后，你需要进行总结，并回复'TERMINATE'。
-"""))
+        self.is_paused = True
+        self._paused.set()
 
-        # 获取最大循环次数
-        max_turns = kwargs.get("max_turns", 3)
-        for i in range(max_turns):
-            # 进行工具执行
-            model_result = None
-            async for chunk in model_client.create_stream(
-                    messages=llm_messages,
-                    cancellation_token=cancellation_token,
-                    tools = tools,
-                ):
-                if isinstance(chunk, CreateResult):
-                    model_result = chunk
-                else:
-                    yield chunk
-            
-            # 进一步解析模型返回的结果
-            if isinstance(model_result.content, list):
-                # 模型返回的结果必须是FunctionCall列表
-                assert isinstance(model_result.content, list) and all(
-                    isinstance(item, FunctionCall) for item in model_result.content
+    async def resume(self) -> None:
+        """Resume the agent by clearing the paused state."""
+        self.is_paused = False
+        self._paused.clear()
+
+    async def on_messages_stream(
+        self, messages: Sequence[BaseChatMessage], cancellation_token: CancellationToken
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
+        """
+        Process the incoming messages with the assistant agent and yield events/responses as they happen.
+        """
+
+        # monitor the pause event
+        if self.is_paused:
+            yield Response(
+                chat_message=TextMessage(
+                    content=f"The {self.name} is paused.",
+                    source=self.name,
+                    metadata={"internal": "yes"},
                 )
-                function_calls_new = [] # 储存不在mp_structure_reply_function中处理的函数，如handoff_function等
-                function_calls: List[FunctionCall] = model_result.content
-                function_call_contents: str = ""
-                for function_call in function_calls:
-                    if function_call.name in tools_name:
-                        tool_result: ToolResult = await workbench.call_tool(name=function_call.name, arguments=json.loads(function_call.arguments), cancellation_token=cancellation_token)
-                        name = tool_result.name
-                        content: str = "\n".join([str(i.content) for i  in tool_result.result])
-                        yield f"工具{name}的执行结果如下:\n"
-                        yield "<think>\n"
-                        yield f"{content}\n\n"
-                        yield "</think>\n"
-                        function_call_contents += f"工具{name}的执行结果如下:\n{content}\n\n"
-                    else:
-                        function_calls_new.append(function_call)
+            )
+            return
 
-                # 将执行结果以AssistMessage的形式放入
-                llm_messages.append(UserMessage(content=function_call_contents, source=agent_name))
-                                                  
-            # 循环调用结束，则结束对话
-            elif 'TERMINATE' in model_result.content:
-                yield model_result
-                return
-            elif function_calls_new:
-                # handoff_function函数，则进行转移
-                model_result.content = function_calls_new
-                yield model_result
-                return
-            else:
-                yield model_result
-                continue
-    else:
-        # 无工具集，则直接使用大模型进行回复
-        async for chunk in model_client.create_stream(
-                messages=llm_messages,
-                cancellation_token=cancellation_token,
-                tools = tools,
+        # Set up background task to monitor the pause event and cancel the task if paused.
+        async def monitor_pause() -> None:
+            await self._paused.wait()
+            self.is_paused = True
+
+        monitor_pause_task = asyncio.create_task(monitor_pause())
+
+        try:
+            # Gather all relevant state here
+            agent_name = self.name
+            model_context = self._model_context
+            memory = self._memory
+            system_messages = self._system_messages
+            workbench = self._workbench
+            handoff_tools = self._handoff_tools
+            handoffs = self._handoffs
+            model_client = self._model_client
+            model_client_stream = self._model_client_stream
+            reflect_on_tool_use = self._reflect_on_tool_use
+            tool_call_summary_format = self._tool_call_summary_format
+            output_content_type = self._output_content_type
+            format_string = self._output_content_type_format
+
+            # STEP 1: Add new user/handoff messages to the model context
+            await self._add_messages_to_context(
+                model_context=model_context,
+                messages=messages,
+            )
+
+            # STEP 2: Update model context with any relevant memory
+            inner_messages: List[BaseAgentEvent | BaseChatMessage] = []
+            for event_msg in await self._update_model_context_with_memory(
+                memory=memory,
+                model_context=model_context,
+                agent_name=agent_name,
             ):
-            yield chunk
+                inner_messages.append(event_msg)
+                yield event_msg
 
+            # STEP 3: Run the first inference
+            model_result = None
+            async for inference_output in self._call_llm(
+                model_client=model_client,
+                model_client_stream=model_client_stream,
+                system_messages=system_messages,
+                model_context=model_context,
+                workbench=workbench,
+                handoff_tools=handoff_tools,
+                agent_name=agent_name,
+                cancellation_token=cancellation_token,
+                output_content_type=output_content_type,
+            ):
+                if self.is_paused:
+                    raise asyncio.CancelledError()
+                
+                if isinstance(inference_output, CreateResult):
+                    model_result = inference_output
+                else:
+                    # Streaming chunk event
+                    yield inference_output
+
+            assert model_result is not None, "No model result was produced."
+
+            # --- NEW: If the model produced a hidden "thought," yield it as an event ---
+            if model_result.thought:
+                thought_event = ThoughtEvent(content=model_result.thought, source=agent_name)
+                yield thought_event
+                inner_messages.append(thought_event)
+
+            # Add the assistant message to the model context (including thought if present)
+            await model_context.add_message(
+                AssistantMessage(
+                    content=model_result.content,
+                    source=agent_name,
+                    thought=getattr(model_result, "thought", None),
+                )
+            )
+
+            # STEP 4: Process the model output
+            async for output_event in self._process_model_result(
+                model_result=model_result,
+                inner_messages=inner_messages,
+                cancellation_token=cancellation_token,
+                agent_name=agent_name,
+                system_messages=system_messages,
+                model_context=model_context,
+                workbench=workbench,
+                handoff_tools=handoff_tools,
+                handoffs=handoffs,
+                model_client=model_client,
+                model_client_stream=model_client_stream,
+                reflect_on_tool_use=reflect_on_tool_use,
+                tool_call_summary_format=tool_call_summary_format,
+                output_content_type=output_content_type,
+                format_string=format_string,
+            ):
+                if self.is_paused:
+                    raise asyncio.CancelledError()
+                
+                yield output_event
+
+        except asyncio.CancelledError:
+            # If the task is cancelled, we respond with a message.
+            yield Response(
+                chat_message=TextMessage(
+                    content="The task was cancelled by the user.",
+                    source=self.name,
+                    metadata={"internal": "yes"},
+                ),
+                inner_messages=inner_messages,
+            )
+        except Exception as e:
+            logger.error(f"Error in {self.name}: {e}")
+            # add to chat history
+            await model_context.add_message(
+                AssistantMessage(
+                    content=f"An error occurred while executing the task: {e}",
+                    source=self.name
+                )
+            )
+            yield Response(
+                chat_message=TextMessage(
+                    content=f"An error occurred while executing the task: {e}",
+                    source=self.name,
+                    metadata={"internal": "no"},
+                ),
+                inner_messages=inner_messages,
+            )
+        finally:
+            # Cancel the monitor task.
+            try:
+                monitor_pause_task.cancel()
+                await monitor_pause_task
+            except asyncio.CancelledError:
+                pass
+
+    @staticmethod
+    def _summarize_tool_use(
+        executed_calls_and_results: List[Tuple[FunctionCall, FunctionExecutionResult]],
+        inner_messages: List[BaseAgentEvent | BaseChatMessage],
+        handoffs: Dict[str, HandoffBase],
+        tool_call_summary_format: str,
+        agent_name: str,
+    ) -> Response:
+        """
+        If reflect_on_tool_use=False, create a summary message of all tool calls.
+        """
+        # Filter out calls which were actually handoffs
+        normal_tool_calls = [(call, result) for call, result in executed_calls_and_results if call.name not in handoffs]
+        tool_call_summaries: List[str] = []
+        for tool_call, tool_call_result in normal_tool_calls:
+            # 对MCP的结果进行处理
+            try:
+                json_results = json.loads(tool_call_result.content)
+                if isinstance(json_results, list):
+                    json_result = json_results[0]
+                    if isinstance(json_result, dict) and 'type' in json_result:
+                        if json_result['type'] == 'text':
+                            tool_call_result.content = json_result['text']
+            except:
+                pass
+            # 其他的tool的结果直接用content
+            tool_call_summaries.append(
+                tool_call_summary_format.format(
+                    tool_name=tool_call.name,
+                    arguments=tool_call.arguments,
+                    result=tool_call_result.content,
+                )
+            )
+        tool_call_summary = "\n".join(tool_call_summaries)
+        return Response(
+            chat_message=ToolCallSummaryMessage(
+                content=tool_call_summary,
+                source=agent_name,
+            ),
+            inner_messages=inner_messages,
+        )
+    
+    @classmethod
+    def _from_config(
+        cls, config: AssistantAgentConfig, 
+        thread: Thread = None, 
+        thread_mgr: ThreadsManager = None,
+        memory_function: Callable = None,
+        reply_function: Callable = None,
+        **kwargs,
+        ) -> Self:
+        """Create an assistant agent from a declarative config."""
+        if config.structured_message_factory:
+            structured_message_factory = StructuredMessageFactory.load_component(config.structured_message_factory)
+            format_string = structured_message_factory.format_string
+            output_content_type = structured_message_factory.ContentModel
+
+        else:
+            format_string = None
+            output_content_type = None
+
+        return cls(
+            name=config.name,
+            model_client=ChatCompletionClient.load_component(config.model_client),
+            workbench=Workbench.load_component(config.workbench) if config.workbench else None,
+            handoffs=config.handoffs,
+            model_context=ChatCompletionContext.load_component(config.model_context) if config.model_context else None,
+            tools=[BaseTool.load_component(tool) for tool in config.tools] if config.tools else None,
+            memory=[Memory.load_component(memory) for memory in config.memory] if config.memory else None,
+            description=config.description,
+            system_message=config.system_message,
+            model_client_stream=config.model_client_stream,
+            reflect_on_tool_use=config.reflect_on_tool_use,
+            tool_call_summary_format=config.tool_call_summary_format,
+            output_content_type=output_content_type,
+            output_content_type_format=format_string,
+            metadata=config.metadata,
+            memory_function=memory_function,
+            reply_function=reply_function,
+            thread=thread,
+            thread_mgr=thread_mgr,
+            **kwargs,
+        
+        )

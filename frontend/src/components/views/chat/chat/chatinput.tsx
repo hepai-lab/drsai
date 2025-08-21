@@ -4,8 +4,8 @@ import {
   PauseCircleIcon,
 } from "@heroicons/react/24/outline";
 import * as React from "react";
-import { appContext } from "../../../hooks/provider";
-import { IStatus } from "../../types/app";
+import { appContext } from "../../../../hooks/provider";
+import { IStatus } from "../../../types/app";
 import {
   Upload,
   message,
@@ -25,16 +25,16 @@ import {
   UploadIcon,
   PaperclipIcon,
 } from "lucide-react";
-import { InputRequest } from "../../types/datamodel";
+import { InputRequest } from "../../../types/datamodel";
 import { debounce } from "lodash";
-import { planAPI, fileAPI } from "../api";
-import RelevantPlans from "./relevant_plans";
-import { IPlan } from "../../types/plan";
-import PlanView from "./plan";
-import { useConfigStore } from "../../../hooks/store";
-import VoiceInput from "../../common/VoiceInput";
-import VoiceSettings from "../../common/VoiceSettings";
-import { useVoiceSettingsStore } from "../../../store/voiceSettings";
+import { planAPI, fileAPI } from "../../api";
+import RelevantPlans from "../relevant_plans";
+import { IPlan } from "../../../types/plan";
+import PlanView from "../plan";
+import { useConfigStore } from "../../../../hooks/store";
+import VoiceInput from "../../../common/VoiceInput";
+import { useVoiceSettingsStore } from "../../../../store/voiceSettings";
+import "./chatinput.css";
 
 // Maximum file size in bytes (5MB)
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
@@ -1180,7 +1180,7 @@ const ChatInput = React.forwardRef<
           )}
         </Modal>
 
-        <div className="mt-4 p-1">
+        <div className="chat-input-wrapper mt-4 p-1">
           <div
             className={`relative w-full transition-smooth rounded-full ${isDragActive
               ? "ring-2 ring-accent ring-opacity-50 bg-accent/5"
@@ -1216,7 +1216,7 @@ const ChatInput = React.forwardRef<
                               key="attach-file"
                               icon={
                                 <PaperclipIcon
-                                  className={`w-4 h-4 ${darkMode ===
+                                  className={`w-4 h-4 flex-shrink-0 ${darkMode ===
                                     "dark"
                                     ? "text-gray-300"
                                     : "text-magenta-600"
@@ -1240,7 +1240,7 @@ const ChatInput = React.forwardRef<
                               title="Attach Plan"
                               icon={
                                 <FileTextIcon
-                                  className={`w-4 h-4 ${darkMode ===
+                                  className={`w-4 h-4 flex-shrink-0 ${darkMode ===
                                     "dark"
                                     ? "text-gray-300"
                                     : "text-magenta-600"
@@ -1348,7 +1348,7 @@ const ChatInput = React.forwardRef<
                     }}
                     placeholder={
                       runStatus === "awaiting_input"
-                        ? "Type your response here and let Dr. Sai know of any changes in the browser."
+                        ? "Type your response here..."
                         : enable_upload
                           ? dragOver
                             ? "Drop files here..."
@@ -1405,23 +1405,25 @@ const ChatInput = React.forwardRef<
           </div>
         </div>
 
-        {error && !error.status && (
-          <div
-            className={`p-2 border rounded mt-4 text-sm ${darkMode === "dark"
-              ? "border-orange-500/30 text-orange-400 bg-orange-500/10"
-              : "border-orange-300 text-orange-600 bg-orange-50"
-              }`}
-          >
-            <ExclamationTriangleIcon
-              className={`h-5 inline-block mr-2 ${darkMode === "dark"
-                ? "text-orange-400"
-                : "text-orange-600"
+        {
+          error && !error.status && (
+            <div
+              className={`p-2 border rounded mt-4 text-sm ${darkMode === "dark"
+                ? "border-orange-500/30 text-orange-400 bg-orange-500/10"
+                : "border-orange-300 text-orange-600 bg-orange-50"
                 }`}
-            />
-            {error.message}
-          </div>
-        )}
-      </div>
+            >
+              <ExclamationTriangleIcon
+                className={`h-5 inline-block mr-2 ${darkMode === "dark"
+                  ? "text-orange-400"
+                  : "text-orange-600"
+                  }`}
+              />
+              {error.message}
+            </div>
+          )
+        }
+      </div >
     );
   }
 );

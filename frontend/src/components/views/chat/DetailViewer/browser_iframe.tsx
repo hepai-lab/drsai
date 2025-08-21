@@ -60,7 +60,7 @@ const BrowserIframe: React.FC<BrowserIframeProps> = ({
   if (!novncPort) {
     return (
       <div className="flex items-center justify-center h-full">
-        <p>Waiting for browser session to start...</p>
+        <p className="text-sm text-gray-600">Waiting for browser session to start...</p>
       </div>
     );
   }
@@ -71,11 +71,10 @@ const BrowserIframe: React.FC<BrowserIframeProps> = ({
   // const vncUrl = `https://drsai.ihep.ac.cn:42800/api/novnc?port=${novncPort}`;
   // const vncUrl = `http://202.122.37.162:${novncPort}/vnc.html?autoconnect=true&resize=${
   // const vncUrl = `https://drsai.ihep.ac.cn:42800/api/vncapi/${novncPort}/vnc.html?autoconnect=true&resize=${
-  const vncUrl = `https://aitest.ihep.ac.cn/api/vncapi/${novncPort}/vnc.html?autoconnect=true&resize=${
-    scaling === "remote" ? "remote" : "scale"
-  }&show_dot=true&scaling=${scaling}&quality=${quality}&compression=0&view_only=${
-    viewOnly ? 1 : 0
-  }`;
+  const vncServiceUrl = process.env.GATSBY_VNC_SERVICE_URL || "https://aitest.ihep.ac.cn/api/vncapi";
+  const vncUrl = `${vncServiceUrl}/${novncPort}/vnc.html?autoconnect=true&resize=${scaling === "remote" ? "remote" : "scale"
+    }&show_dot=true&scaling=${scaling}&quality=${quality}&compression=0&view_only=${viewOnly ? 1 : 0
+    }`;
 
   // const vncUrl = `https://drsai.ihep.ac.cn:42800/api/novnc?port=${novncPort}`;
 
@@ -90,7 +89,7 @@ const BrowserIframe: React.FC<BrowserIframeProps> = ({
       )}
 
       {showDimensions && (
-        <div className="absolute top-2 right-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-sm z-10">
+        <div className="absolute top-1 right-1 bg-gray-800 bg-opacity-75 text-white px-2 py-1 rounded text-xs z-10">
           {iframeDimensions.width} × {iframeDimensions.height}
         </div>
       )}
@@ -120,10 +119,12 @@ const BrowserIframe: React.FC<BrowserIframeProps> = ({
         runStatus === "active" &&
         !isControlMode && (
           <div
-            className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center cursor-pointer transition-opacity duration-300 ease-in-out"
+            className="absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center cursor-pointer transition-opacity duration-200"
             onClick={handleOverlayClick}
           >
-            <div className="text-white text-xl font-semibold">Take Control</div>
+            <div className="text-white text-base font-medium px-4 py-2 bg-blue-600 rounded-md hover:bg-blue-700 transition-colors">
+              Take Control
+            </div>
           </div>
         )}
     </div>

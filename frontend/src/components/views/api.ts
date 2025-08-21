@@ -484,7 +484,17 @@ export class Agent {
         const data = await response.json();
         if (!data.status)
             throw new Error(data.message || "Failed to fetch agents");
-        return data.data;
+
+        // 后端返回的数据结构是 { config: { agent_modes: [...] } }
+        // 需要提取 config.agent_modes 数组
+        const agentSettings = data.data;
+        if (agentSettings && agentSettings.config && agentSettings.config.agent_modes) {
+            return agentSettings.config.agent_modes;
+        }
+
+        // 如果数据结构不符合预期，返回空数组
+        console.warn("Unexpected agent list data structure:", agentSettings);
+        return [];
     }
 
     // save agent config

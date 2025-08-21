@@ -6,7 +6,7 @@ import { getStatusIcon } from "../statusicon";
 import DetailViewer from "./detail_viewer";
 import { IPlanStep, IPlan } from "../../types/plan";
 import ApprovalButtons from "./approval_buttons";
-import ChatInput from "./chatinput";
+import ChatInput from "./chat/chatinput";
 import { IStatus } from "../../types/app";
 import { RcFile } from "antd/es/upload";
 

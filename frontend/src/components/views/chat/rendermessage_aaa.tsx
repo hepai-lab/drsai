@@ -1,4 +1,5 @@
 import React, { useState, memo, useEffect } from "react";
+import { message as antdMessage } from "antd";
 import {
   Globe2,
   ChevronDown,
@@ -22,6 +23,8 @@ import PlanView from "./plan";
 import { IPlanStep, convertToIPlanSteps } from "../../types/plan";
 import RenderFile from "../../common/filerenderer";
 import LearnPlanButton from "../../features/Plans/LearnPlanButton";
+import VoiceOutput from "../../common/VoiceOutput";
+import { useVoiceSettingsStore } from "../../../store/voiceSettings";
 
 // Types
 interface MessageProps {
@@ -102,7 +105,9 @@ const getStepIcon = (
   if (status === "completed")
     return <CheckCircle size={16} className="text-magenta-800" />;
   if (status === "current" && runStatus === "active")
-    return <RefreshCw size={16} className="text-magenta-800 animate-spin" />;
+    return (
+      <RefreshCw size={16} className="text-magenta-800 animate-spin" />
+    );
   if (status === "upcoming")
     return <Clock size={16} className="text-gray-400" />;
   if (status === "failed")
@@ -127,7 +132,8 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
 
     // Handle case where content is in content field
     if (parsedContent.content) {
-      const text = parsedContent.content?.content || parsedContent.content;
+      const text =
+        parsedContent.content?.content || parsedContent.content;
       // If text is an array, it might contain images
       if (Array.isArray(text)) {
         return { text, metadata: content.metadata };
@@ -147,8 +153,21 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
     }
 
     // Return both the content and plan if they exist
+    // 如果 parsedContent.content 是字符串，尝试进一步解析
+    let finalText = parsedContent.content || content;
+    if (typeof finalText === "string") {
+      try {
+        const nestedParsed = JSON.parse(finalText);
+        if (nestedParsed.content) {
+          finalText = nestedParsed.content;
+        }
+      } catch {
+        // 如果嵌套解析失败，保持原样
+      }
+    }
+
     return {
-      text: parsedContent.content || content,
+      text: finalText,
       plan: planSteps.length > 0 ? planSteps : undefined,
       metadata: content.metadata,
     };
@@ -161,11 +180,135 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
 const parseContent = (content: any): string => {
   if (typeof content !== "string") return String(content);
 
+  // First, try to clean up JSON-like content patterns in the text
+  let cleanedContent = content;
+
+  // Replace {"content":"text"} patterns with just "text"
+  cleanedContent = cleanedContent.replace(
+    /\{\s*"content"\s*:\s*"([^"]*)"\s*\}/g,
+    '"$1"'
+  );
+
+  // Remove "accepted":false patterns
+  cleanedContent = cleanedContent.replace(
+    /"accepted"\s*:\s*false\s*,?\s*/g,
+    ""
+  );
+
+  // Clean up any remaining JSON artifacts
+  cleanedContent = cleanedContent.replace(
+    /\{\s*"([^"]*)"\s*:\s*"([^"]*)"\s*\}/g,
+    '"$2"'
+  );
+
+  // Remove any trailing commas and clean up formatting
+  cleanedContent = cleanedContent.replace(/,\s*}/g, "}");
+  cleanedContent = cleanedContent.replace(/,\s*]/g, "]");
+
+  // Handle TaskManager content formatting
+  cleanedContent = cleanedContent.replace(
+    /\*\*TaskManager发言：\*\*\s*([\s\S]*?)(?=\*\*Host发言：\*\*|$)/g,
+    (match, taskManagerContent) => {
+      // Format the numbered list with proper markdown
+      let formattedContent = taskManagerContent;
+
+      // Try different patterns to match the content
+      // Pattern 1: 1. "text" ✓ status
+      formattedContent = formattedContent.replace(
+        /(\d+)\.\s*"([^"]+)"\s*([✓●])\s*([^0-9]*?)(?=\d+\.|$)/g,
+        "$1. **$2** $3 $4"
+      );
+
+      // Pattern 2: 1. {"content":"text"} ✓ status
+      formattedContent = formattedContent.replace(
+        /(\d+)\.\s*\{[^}]*"content"\s*:\s*"([^"]+)"[^}]*\}\s*([✓●])\s*([^0-9]*?)(?=\d+\.|$)/g,
+        "$1. **$2** $3 $4"
+      );
+
+      // Pattern 3: 1. text ✓ status (without quotes)
+      formattedContent = formattedContent.replace(
+        /(\d+)\.\s*([^✓●]+?)\s*([✓●])\s*([^0-9]*?)(?=\d+\.|$)/g,
+        "$1. **$2** $3 $4"
+      );
+
+      formattedContent = formattedContent.trim();
+
+      return `**TaskManager发言：**\n\n${formattedContent}`;
+    }
+  );
+
+  // Process the content to replace think bubble markers with actual HTML
+  if (
+    cleanedContent.includes("**THINK_BUBBLE_START**") &&
+    cleanedContent.includes("**THINK_BUBBLE_END**")
+  ) {
+    cleanedContent = cleanedContent.replace(
+      /\*\*THINK_BUBBLE_START\*\*([\s\S]*?)\*\*THINK_BUBBLE_END\*\*/g,
+      (match, bubbleContent) => {
+        const cleanBubbleContent = bubbleContent.trim();
+        return `<div class="think-bubble">💭 ${cleanBubbleContent}</div>`;
+      }
+    );
+  }
+
+  if (cleanedContent.includes("<think>")) {
+    cleanedContent = cleanedContent.replace(/<think>/g, "🤔");
+  }
+
   try {
-    const parsedContent = JSON.parse(content);
-    return parsedContent.content?.content || parsedContent.content || content;
+    const parsedContent = JSON.parse(cleanedContent);
+
+    // 递归查找 content 字段
+    const extractContent = (obj: any): string | null => {
+      if (typeof obj === "string") return obj;
+      if (typeof obj === "object" && obj !== null) {
+        // 优先查找 content 字段
+        if (obj.content !== undefined) {
+          if (typeof obj.content === "string") {
+            return obj.content;
+          } else if (
+            typeof obj.content === "object" &&
+            obj.content !== null
+          ) {
+            // 如果 content 是对象，递归查找
+            const nestedContent = extractContent(obj.content);
+            if (nestedContent) return nestedContent;
+          }
+        }
+
+        // 如果没有找到 content 字段，尝试其他可能的字段
+        for (const key in obj) {
+          if (
+            key === "text" ||
+            key === "value" ||
+            key === "message"
+          ) {
+            const value = obj[key];
+            if (typeof value === "string") {
+              return value;
+            }
+          }
+        }
+      }
+      return null;
+    };
+
+    const extractedContent = extractContent(parsedContent);
+    if (extractedContent) {
+      // 添加调试日志
+      console.log("Parsed content:", {
+        original: content,
+        cleaned: cleanedContent,
+        extracted: extractedContent,
+      });
+      return extractedContent;
+    }
+
+    // 如果没有找到 content 字段，返回清理后的内容
+    return cleanedContent;
   } catch {
-    return content;
+    // 如果 JSON 解析失败，返回清理后的内容
+    return cleanedContent;
   }
 };
 
@@ -190,6 +333,14 @@ const parseorchestratorContent = (
     }
   } catch { }
 
+  // 对于默认类型，尝试解析JSON内容
+  try {
+    const parsedContent = JSON.parse(content);
+    if (parsedContent.content) {
+      return { type: "default" as const, content: parsedContent.content };
+    }
+  } catch { }
+
   return { type: "default" as const, content };
 };
 
@@ -202,15 +353,12 @@ const RenderMultiModalBrowserStep: React.FC<{
       if (typeof item !== "string") return null;
 
       const hasNextImage =
-        index < content.length - 1 && typeof content[index + 1] === "object";
+        index < content.length - 1 &&
+        typeof content[index + 1] === "object";
 
       return (
         <div key={index} className="relative pl-4">
-          {/* Full-height connector line */}
-          <div
-            className="absolute top-0 bottom-0 left-0 w-2 border-l-[2px] border-b-[2px] rounded-bl-lg"
-            style={{ borderColor: "var(--color-border-secondary)" }}
-          />
+
 
           {/* Content container */}
           <div className="flex items-center h-full">
@@ -229,7 +377,10 @@ const RenderMultiModalBrowserStep: React.FC<{
               className="flex-1 cursor-pointer mt-2"
               onClick={() => onImageClick?.(index)}
             >
-              <MarkdownRenderer content={item} indented={true} />
+              <MarkdownRenderer
+                content={parseContent(item)}
+                indented={true}
+              />
             </div>
           </div>
         </div>
@@ -245,7 +396,10 @@ const RenderMultiModal: React.FC<{
     {content.map((item, index) => (
       <div key={index}>
         {typeof item === "string" ? (
-          <MarkdownRenderer content={item} indented={true} />
+          <MarkdownRenderer
+            content={parseContent(item)}
+            indented={true}
+          />
         ) : (
           <ClickableImage
             src={getImageSource(item)}
@@ -262,10 +416,17 @@ const RenderToolCall: React.FC<{ content: FunctionCall[] }> = memo(
   ({ content }) => (
     <div className="space-y-2 text-sm">
       {content.map((call) => (
-        <div key={call.id} className="border border-secondary rounded p-2">
+        <div
+          key={call.id}
+          className="border border-secondary rounded p-2"
+        >
           <div className="font-medium">Function: {call.name}</div>
           <MarkdownRenderer
-            content={JSON.stringify(JSON.parse(call.arguments), null, 2)}
+            content={JSON.stringify(
+              JSON.parse(call.arguments),
+              null,
+              2
+            )}
             indented={true}
           />
         </div>
@@ -275,42 +436,21 @@ const RenderToolCall: React.FC<{ content: FunctionCall[] }> = memo(
 );
 
 const RenderToolResult: React.FC<{ content: FunctionExecutionResult[] }> = memo(
-  ({ content }) => {
-    const [expandedResults, setExpandedResults] = useState<{ [key: string]: boolean }>({});
-
-    const toggleExpand = (callId: string) => {
-      setExpandedResults(prev => ({
-        ...prev,
-        [callId]: !prev[callId]
-      }));
-    };
-
-    return (
-      <div className="space-y-2 text-sm">
-        {content.map((result) => {
-          const isExpanded = expandedResults[result.call_id];
-          const displayContent = isExpanded ? result.content : result.content.slice(0, 100) + (result.content.length > 100 ? "..." : "");
-
-          return (
-            <div key={result.call_id} className="rounded p-2">
-              <div className="font-medium">Result ID: {result.call_id}</div>
-              <div
-                className="cursor-pointer hover:bg-secondary/50 rounded p-1"
-                onClick={() => toggleExpand(result.call_id)}
-              >
-                <MarkdownRenderer content={displayContent} indented={true} />
-                {result.content.length > 100 && (
-                  <div className="text-xs text-gray-500 mt-1">
-                    {isExpanded ? "Click to minimize" : "Click to expand"}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
+  ({ content }) => (
+    <div className="space-y-2 text-sm">
+      {content.map((result) => (
+        <div key={result.call_id} className="rounded p-2">
+          <div className="font-medium">
+            Result ID: {result.call_id}
+          </div>
+          <MarkdownRenderer
+            content={result.content}
+            indented={true}
+          />
+        </div>
+      ))}
+    </div>
+  )
 );
 
 const RenderPlan: React.FC<RenderPlanProps> = memo(
@@ -327,7 +467,8 @@ const RenderPlan: React.FC<RenderPlanProps> = memo(
       agent_name: step.agent_name || "",
     }));
 
-    const [planSteps, setPlanSteps] = useState<IPlanStep[]>(initialPlanSteps);
+    const [planSteps, setPlanSteps] =
+      useState<IPlanStep[]>(initialPlanSteps);
 
     return (
       <div className="space-y-2 text-sm">
@@ -356,6 +497,11 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
     onToggleHide,
   }) => {
     const [isExpanded, setIsExpanded] = useState(true);
+
+    useEffect(() => {
+      console.log("content", content);
+    }, [content]);
+
 
     useEffect(() => {
       if (hidden && isExpanded) {
@@ -426,9 +572,15 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
               }
             >
               {isExpanded ? (
-                <ChevronDown size={16} className="text-primary" />
+                <ChevronDown
+                  size={16}
+                  className="text-primary"
+                />
               ) : (
-                <ChevronRight size={16} className="text-primary" />
+                <ChevronRight
+                  size={16}
+                  className="text-primary"
+                />
               )}
             </button>
             <div className="flex-1 mx-2">
@@ -447,11 +599,15 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
           </div>
         </div>
         <div>
-          {isUserProxyInstruction && content.instruction && isExpanded && (
-            <div className="flex items-start">
-              <MarkdownRenderer content={content.instruction} />
-            </div>
-          )}
+          {isUserProxyInstruction &&
+            content.instruction &&
+            isExpanded && (
+              <div className="flex items-start">
+                <MarkdownRenderer
+                  content={content.instruction}
+                />
+              </div>
+            )}
         </div>
       </div>
     );
@@ -469,11 +625,14 @@ const RenderFinalAnswer: React.FC<RenderFinalAnswerProps> = memo(
     return (
       <div className="border-2 border-secondary rounded-lg p-4">
         <div className="flex justify-between items-center">
-          <div className="font-semibold text-primary">Final Answer</div>
+          <div className="font-semibold text-primary">
+            Final Answer
+          </div>
           <LearnPlanButton
             sessionId={sessionId}
             messageId={messageIdx}
             onSuccess={(planId: string) => {
+              console.log("Plan created with ID:", planId);
             }}
           />
         </div>
@@ -501,7 +660,9 @@ export const messageUtils = {
     );
   },
 
-  isMultiModalContent(content: unknown): content is (string | ImageContent)[] {
+  isMultiModalContent(
+    content: unknown
+  ): content is (string | ImageContent)[] {
     if (!Array.isArray(content)) return false;
     return content.every(
       (item) =>
@@ -564,6 +725,7 @@ export const messageUtils = {
 
       return "";
     } catch (error) {
+      console.error("Failed to update plan:", error);
       return "";
     }
   },
@@ -583,6 +745,7 @@ const RenderUserMessage: React.FC<{
       try {
         return JSON.parse(parsedContent.metadata.attached_files);
       } catch (e) {
+        console.error("Failed to parse attached_files:", e);
         return [];
       }
     }
@@ -590,7 +753,7 @@ const RenderUserMessage: React.FC<{
   }, [parsedContent.metadata?.attached_files]);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2 message-content">
       {/* Show attached file icons if present */}
       {attachedFiles.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -605,7 +768,9 @@ const RenderUserMessage: React.FC<{
               ) : (
                 <FileTextIcon className="w-3 h-3" />
               )}
-              <span className="truncate max-w-[150px]">{file.name}</span>
+              <span className="truncate max-w-[150px]">
+                {file.name}
+              </span>
             </div>
           ))}
         </div>
@@ -613,11 +778,11 @@ const RenderUserMessage: React.FC<{
 
       {/* Existing content rendering */}
       {messageUtils.isMultiModalContent(parsedContent.text) ? (
-        <div className="space-y-2">
+        <div className="space-y-2 message-content">
           {parsedContent.text.map((item, index) => (
-            <div key={index}>
+            <div key={index} className="message-content">
               {typeof item === "string" ? (
-                <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
+                <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere message-content">
                   {parseContent(item)}
                 </div>
               ) : (
@@ -627,8 +792,8 @@ const RenderUserMessage: React.FC<{
           ))}
         </div>
       ) : (
-        <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
-          {String(parsedContent.text)}
+        <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere message-content">
+          {parseContent(parsedContent.text)}
         </div>
       )}
 
@@ -649,6 +814,25 @@ const RenderUserMessage: React.FC<{
 
 RenderUserMessage.displayName = "RenderUserMessage";
 
+// Voice Output Wrapper Component
+const VoiceOutputWrapper: React.FC<{ text: string }> = ({ text }) => {
+  const { settings } = useVoiceSettingsStore();
+
+  return (
+    <div className="absolute top-2 right-2">
+      <VoiceOutput
+        text={text}
+        language={settings.outputLanguage}
+        voice={settings.outputVoice}
+        rate={settings.outputRate}
+        pitch={settings.outputPitch}
+        autoPlay={settings.autoPlay}
+        className="opacity-0 group-hover:opacity-100 transition-opacity"
+      />
+    </div>
+  );
+};
+
 // Main component
 export const RenderMessage: React.FC<MessageProps> = memo(
   ({
@@ -668,6 +852,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     onRegeneratePlan,
     forceCollapsed = false,
   }) => {
+    const { settings: voiceSettings } = useVoiceSettingsStore();
     if (!message) return null;
     if (message.metadata?.type === "browser_address") return null;
 
@@ -679,7 +864,6 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       isUser || isUserProxy
         ? parseUserContent(message)
         : { text: message.content, metadata: message.metadata };
-
 
     // Use new plan message check
     const isPlanMsg = messageUtils.isPlanMessage(message.metadata);
@@ -698,92 +882,195 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     }
 
     return (
-      <div
-        className={`relative group mb-3 ${className} w-full break-words ${hidden &&
-          (!orchestratorContent ||
-            orchestratorContent.type !== "step-execution")
-          ? "hidden"
-          : ""
-          }`}
-      >
+      // if message.content is  empty, don't render
+      !message.content ? null : (
         <div
-          className={`flex ${isUser || isUserProxy ? "justify-end" : "justify-start"
-            } items-start w-full transition-all duration-200`}
+          className={`relative group mb-3 ${className} w-full break-words ${hidden &&
+            (!orchestratorContent ||
+              orchestratorContent.type !== "step-execution")
+            ? "hidden"
+            : ""
+            }`}
         >
           <div
-            className={`${isUser || isUserProxy
-              ? `text-primary rounded-2xl bg-tertiary rounded-tr-sm px-4 py-2 ${parsedContent.plan && parsedContent.plan.length > 0
-                ? "w-[80%]"
-                : "max-w-[80%]"
-              }`
-              : "w-full text-primary"
-              } break-words overflow-hidden`}
+            className={`flex ${isUser || isUserProxy ? "justify-end" : "justify-start"
+              } items-start w-full transition-all duration-200`}
           >
-            {/* Show user message content first */}
-            {(isUser || isUserProxy) && (
-              <RenderUserMessage
-                parsedContent={parsedContent}
-                isUserProxy={isUserProxy}
-              />
-            )}
-            {/* Handle other content types */}
-            {!isUser &&
-              !isUserProxy &&
-              (isPlanMsg ? (
-                <RenderPlan
-                  content={orchestratorContent?.content || {}}
-                  isEditable={isEditable}
-                  onSavePlan={onSavePlan}
-                  onRegeneratePlan={onRegeneratePlan}
-                  forceCollapsed={forceCollapsed}
+
+            {/* Think Process部分 - 在消息气泡外面 */}
+            {!isUser && !isUserProxy && (() => {
+              const content = parseContent(parsedContent.text);
+              const thinkBubbleMatch = content.match(/<div class="think-bubble">(.*?)<\/div>/s);
+              const thinkingProcessMatch = content.match(/💭\s*Thinking Process[^💭]*💭([\s\S]*?)(?=\n\n|$)/);
+              const generalThinkMatch = content.match(/💭([\s\S]*?)(?=\n[^💭]|$)/);
+
+              let thinkContent = '';
+              if (thinkBubbleMatch) {
+                thinkContent = thinkBubbleMatch[1];
+              } else if (thinkingProcessMatch) {
+                thinkContent = thinkingProcessMatch[1];
+              } else if (generalThinkMatch) {
+                thinkContent = generalThinkMatch[1];
+              }
+
+              return thinkContent ? (
+                <div className="mb-3 ml-11 text-secondary/70 italic text-sm">
+                  💭 {thinkContent.trim()}
+                </div>
+              ) : null;
+            })()}
+
+            <div
+              className={`${isUser || isUserProxy
+                ? `text-primary text-lg rounded-2xl bg-tertiary rounded-tr-sm px-4 py-2 ${parsedContent.plan &&
+                  parsedContent.plan.length > 0
+                  ? "w-[80%]"
+                  : "max-w-[80%]"
+                }`
+                : "max-w-[85%] text-primary text-lg  rounded-2xl rounded-tl-sm px-4 py-3"
+                } break-words overflow-hidden message-content`}
+            >
+              {/* Show user message content first */}
+              {(isUser || isUserProxy) && (
+                <RenderUserMessage
+                  parsedContent={parsedContent}
+                  isUserProxy={isUserProxy}
                 />
-              ) : orchestratorContent?.type === "step-execution" ? (
-                <RenderStepExecution
-                  content={orchestratorContent.content}
-                  hidden={hidden}
-                  is_step_repeated={is_step_repeated}
-                  is_step_failed={is_step_failed}
-                  runStatus={runStatus || ""}
-                  onToggleHide={onToggleHide}
-                />
-              ) : orchestratorContent?.type === "final-answer" ? (
-                <RenderFinalAnswer
-                  content={orchestratorContent.content}
-                  sessionId={sessionId}
-                  messageIdx={messageIdx}
-                />
-              ) : messageUtils.isToolCallContent(parsedContent.text) ? (
-                <RenderToolCall content={parsedContent.text} />
-              ) : messageUtils.isMultiModalContent(parsedContent.text) ? (
-                message.metadata?.type === "browser_screenshot" ? (
-                  <RenderMultiModalBrowserStep
+              )}
+              {/* Handle other content types */}
+              {!isUser &&
+                !isUserProxy &&
+                (isPlanMsg ? (
+                  <RenderPlan
+                    content={orchestratorContent?.content || {}}
+                    isEditable={isEditable}
+                    onSavePlan={onSavePlan}
+                    onRegeneratePlan={onRegeneratePlan}
+                    forceCollapsed={forceCollapsed}
+                  />
+                ) : orchestratorContent?.type ===
+                  "step-execution" ? (
+                  <RenderStepExecution
+                    content={orchestratorContent.content}
+                    hidden={hidden}
+                    is_step_repeated={is_step_repeated}
+                    is_step_failed={is_step_failed}
+                    runStatus={runStatus || ""}
+                    onToggleHide={onToggleHide}
+                  />
+                ) : orchestratorContent?.type === "final-answer" ? (
+                  <RenderFinalAnswer
+                    content={orchestratorContent.content}
+                    sessionId={sessionId}
+                    messageIdx={messageIdx}
+                  />
+                ) : messageUtils.isToolCallContent(
+                  parsedContent.text
+                ) ? (
+                  <RenderToolCall content={parsedContent.text} />
+                ) : messageUtils.isMultiModalContent(
+                  parsedContent.text
+                ) ? (
+                  message.metadata?.type ===
+                    "browser_screenshot" ? (
+                    <RenderMultiModalBrowserStep
+                      content={parsedContent.text}
+                      onImageClick={onImageClick}
+                    />
+                  ) : (
+                    <RenderMultiModal
+                      content={parsedContent.text}
+                    />
+                  )
+                ) : messageUtils.isFunctionExecutionResult(
+                  parsedContent.text
+                ) ? (
+                  <RenderToolResult
                     content={parsedContent.text}
-                    onImageClick={onImageClick}
                   />
                 ) : (
-                  <RenderMultiModal content={parsedContent.text} />
-                )
-              ) : messageUtils.isFunctionExecutionResult(parsedContent.text) ? (
-                <RenderToolResult content={parsedContent.text} />
-              ) : (
-                <div className="break-words">
-                  {message.metadata?.type === "file" ? (
-                    <RenderFile message={message} />
-                  ) : (
-                    <MarkdownRenderer
-                      content={String(parsedContent.text)}
-                      indented={
-                        !orchestratorContent ||
-                        orchestratorContent.type !== "default"
+                  <div className="break-words relative message-content">
+                    {message.metadata?.type === "file" ? (
+                      <RenderFile message={message} />
+                    ) : (
+                      <>
+                        {/* 只显示真实内容，think部分已在外面显示 */}
+                        {(() => {
+                          const content = parseContent(parsedContent.text);
+                          // 如果content是个空字符串或空数组，直接返回null
+                          if (!content || (Array.isArray(content) && content.length === 0)) {
+                            return null;
+                          }
+                          // 移除think部分，只保留真实内容
+                          let realContent = content;
+                          const thinkBubbleMatch = content.match(/<div class="think-bubble">(.*?)<\/div>/s);
+                          const thinkingProcessMatch = content.match(/💭\s*Thinking Process[^💭]*💭([\s\S]*?)(?=\n\n|$)/);
+                          const generalThinkMatch = content.match(/💭([\s\S]*?)(?=\n[^💭]|$)/);
+
+                          if (thinkBubbleMatch) {
+                            realContent = content.replace(/<div class="think-bubble">.*?<\/div>/s, '').trim();
+                          } else if (thinkingProcessMatch) {
+                            realContent = content.replace(/💭\s*Thinking Process[^💭]*💭[\s\S]*?(?=\n\n|$)/, '').trim();
+                          } else if (generalThinkMatch) {
+                            realContent = content.replace(/💭[\s\S]*?(?=\n[^💭]|$)/, '').trim();
+                          }
+
+                          return (
+                            <MarkdownRenderer
+                              content={realContent}
+                              indented={
+                                !orchestratorContent ||
+                                orchestratorContent.type !== "default"
+                              }
+                              allowHtml={true}
+                            />
+                          );
+                        })()}
+                      </>
+                    )}
+                  </div>
+                ))}
+
+              {/* Copy and Voice buttons for AI messages */}
+              {!isUser && !isUserProxy && typeof parsedContent.text === "string" && parsedContent.text.trim() && (
+                <div className="flex items-center gap-1 mt-2">
+                  {/* Copy button */}
+                  <button
+                    onClick={() => {
+                      try {
+                        navigator.clipboard.writeText(parseContent(parsedContent.text)).then(() => {
+                          antdMessage.success('Message copied to clipboard');
+                        }).catch(() => {
+                          antdMessage.error('Failed to copy message');
+                        });
+                      } catch (err) {
+                        antdMessage.error('Failed to copy message');
                       }
-                    />
-                  )}
+                    }}
+                    className="p-1 text-secondary hover:text-primary transition-colors"
+                    title="Copy message"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  </button>
+
+                  {/* Voice output button */}
+                  <VoiceOutput
+                    text={parseContent(parsedContent.text)}
+                    language={voiceSettings.outputLanguage}
+                    voice={voiceSettings.outputVoice}
+                    rate={voiceSettings.outputRate}
+                    pitch={voiceSettings.outputPitch}
+                    autoPlay={false}
+                    className="text-xs"
+                  />
                 </div>
-              ))}
+              )}
+            </div>
           </div>
         </div>
-      </div>
-    );
+      ));
   }
 );
 

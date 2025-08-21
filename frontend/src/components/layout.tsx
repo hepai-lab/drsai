@@ -78,8 +78,7 @@ const MagenticUILayout = ({
         className={classNames(
           "flex-1 flex flex-col h-full",
           "transition-smooth",
-          "px-1 sm:px-2 md:px-3 lg:px-4",
-          isExpanded ? "md:pl-1" : "md:pl-1"
+
         )}
       >
         <ConfigProvider
@@ -94,14 +93,16 @@ const MagenticUILayout = ({
                 : theme.defaultAlgorithm,
           }}
         >
-          <main className="flex-1 p-2 sm:p-4 text-primary" style={{ height: "100%" }}>
-            <SessionManager />
+          <main className="flex-1 text-primary flex flex-col" style={{ height: "100%" }}>
+            <div className="flex-1 min-h-0">
+              <SessionManager />
+            </div>
+            {/* <div className="text-xs sm:text-sm text-secondary/60 py-2 text-center px-4 flex-shrink-0">
+              Dr. Sai can make mistakes. Please monitor its work and intervene if
+              necessary. (Powered by Magentic UI)
+            </div> */}
           </main>
         </ConfigProvider>
-        <div className="text-xs sm:text-sm text-secondary/60 mt-2 mb-4 text-center px-4">
-          Dr. Sai can make mistakes. Please monitor its work and intervene if
-          necessary. (Powered by Magentic UI)
-        </div>
       </div>
     </div>
   );

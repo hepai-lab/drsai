@@ -1,12 +1,14 @@
-import { Bot, ChevronDown, Search, X } from "lucide-react";
+import { Bot, ChevronDown } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { appContext } from "../../hooks/provider";
+import { useModeConfigStore } from "../../store/modeConfig";
 import { useSettingsStore } from "../store";
 import { agentAPI, settingsAPI } from "../views/api";
 import CustomAgentForm, { CustomAgentData } from "./agent-form/CustomAgentForm";
 import DrsaiAgentForm, { DrsaiAgentData } from "./agent-form/DrsaiAgentForm";
-import { ToolConfig } from "./agent-form/ToolConfigurationForm";
-import { useModeConfigStore } from "../../store/modeConfig";
+// 导入智能体图标
+import magneticOneIcon from "../../assets/magnetic-one.png";
+import magneticTwoIcon from "../../assets/magnetic-two.svg";
 
 export interface Agent {
     mode: string;
@@ -34,6 +36,18 @@ interface AgentSelectorAdvancedProps {
     searchable?: boolean;
     maxHeight?: string;
 }
+
+// 根据智能体模式返回对应的图标
+const getAgentIcon = (mode: string) => {
+    switch (mode) {
+        case "magentic-one":
+            return magneticOneIcon;
+        case "besiii":
+            return magneticTwoIcon;
+        default:
+            return null; // 使用默认的 Bot 图标
+    }
+};
 
 const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
     agents,
@@ -233,11 +247,12 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                     break;
             }
         };
-
         document.addEventListener("keydown", handleKeyDown);
         return () => {
             document.removeEventListener("keydown", handleKeyDown);
         };
+
+
     }, [isOpen, filteredAgents, focusedIndex]);
 
     // Focus search input when dropdown opens
@@ -273,7 +288,6 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             onAgentSelect(newCustomAgent);
             setIsOpen(false);
         } catch (error) {
-            console.error("Failed to save agent config:", error);
             // 即使保存失败，也要更新本地状态
             setPersistedSelectedAgent(agent);
             setLastSelectedAgentMode(agent.mode);
@@ -314,7 +328,6 @@ custom_agent_config:
 
         try {
             const res = await agentAPI.saveAgentConfig(newCustomAgent);
-            console.log("Model Config YAML:", modelConfigYaml);
 
             // 更新 settings store
             const currentSettings = useSettingsStore.getState().config;
@@ -390,12 +403,6 @@ custom_agent_config:
         }
     };
 
-    const clearSearch = () => {
-        setSearchTerm("");
-        setFocusedIndex(-1);
-        searchInputRef.current?.focus();
-    };
-
     // 使用持久化的选中智能体或传入的 selectedAgent
     const currentSelectedAgent = selectedAgent || persistedSelectedAgent;
 
@@ -408,32 +415,22 @@ custom_agent_config:
                     onClick={toggleDropdown}
                     disabled={disabled}
                     className={`
-           flex items-center justify-between px-3 py-2 rounded-lg
+           flex items-center justify-between mx-2 px-2 py-2 rounded-xl
           transition-all duration-200 ease-in-out
-          hover:text-[#acabe6]
-        
           ${darkMode === "dark"
-                            ? " text-[#e5e5e5] hover:border-[#e5e5e560]"
-                            : " text-[#4a5568]  hover:border-[#4d3dc3]"
+                            ? "text-[#e5e5e5] hover:bg-[#444444]"
+                            : "text-[#4a5568] hover:bg-[#f5f5f5]"
                         }
           ${disabled
                             ? "opacity-50 cursor-not-allowed"
-                            : "cursor-pointer hover:shadow-md"
+                            : "cursor-pointer"
                         }
         `}
                     aria-haspopup="listbox"
                     aria-expanded={isOpen}
                 >
                     <div className="flex items-center gap-3 ">
-                        {currentSelectedAgent && (
-                            <Bot
-                                className="w-8 h-8 transition-colors duration-200 "
-                                style={{
-                                    borderRadius: "4px",
-                                    padding: "2px",
-                                }}
-                            />
-                        )}
+
                         <span className="text-xl font-medium ">
                             {currentSelectedAgent
                                 ? currentSelectedAgent.name
@@ -441,7 +438,7 @@ custom_agent_config:
                         </span>
                     </div>
                     <ChevronDown
-                        className={`w-8 h-8 transition-transform duration-200 ${isOpen ? "rotate-180" : ""
+                        className={`w-5 h-5 text-secondary/70 transition-transform duration-200 ${isOpen ? "rotate-180" : ""
                             }`}
                     />
                 </button>
@@ -450,7 +447,7 @@ custom_agent_config:
                 {isOpen && (
                     <div
                         className={`
-            absolute top-full left-0 w-[340px] mt-1 z-[9999] rounded-lg shadow-lg
+            absolute top-full left-3 w-[340px] mt-1 z-[9999] rounded-2xl shadow-lg
             border transition-all duration-200 ease-in-out
             ${darkMode === "dark"
                                 ? "bg-[#3a3a3a] border-[#e5e5e530] shadow-black/20"
@@ -462,47 +459,6 @@ custom_agent_config:
                             overflowY: "auto",
                         }}
                     >
-                        {/* Search Input */}
-                        {searchable && (
-                            <div className="p-3 border-b border-secondary">
-                                <div
-                                    className={`
-                relative flex items-center
-                ${darkMode === "dark"
-                                            ? "bg-[#444444] border-[#e5e5e530]"
-                                            : "bg-[#f9fafb] border-[#e2e8f0]"
-                                        }
-                border rounded-md px-3 py-2
-              `}
-                                >
-                                    <Search className="w-4 h-4 text-secondary mr-2" />
-                                    <input
-                                        ref={searchInputRef}
-                                        type="text"
-                                        value={searchTerm}
-                                        onChange={(e) =>
-                                            setSearchTerm(e.target.value)
-                                        }
-                                        placeholder="Search agents..."
-                                        className={`
-                    flex-1 bg-transparent outline-none text-sm
-                    ${darkMode === "dark" ? "text-[#e5e5e5]" : "text-[#4a5568]"}
-                    placeholder:text-secondary
-                  `}
-                                    />
-                                    {searchTerm && (
-                                        <button
-                                            onClick={clearSearch}
-                                            className="ml-2 p-1 hover:bg-secondary rounded"
-                                        >
-                                            <X className="w-3 h-3 text-secondary" />
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* No results message */}
                         {filteredAgents.length === 0 && (
                             <div
                                 className={`
@@ -533,7 +489,7 @@ custom_agent_config:
                                                 handleAgentSelect(agent)
                                             }
                                             className={`
-                      w-full flex items-center gap-3 px-3 py-2 rounded-md
+                      w-full flex items-center gap-3 px-3 py-2 rounded-xl
                       text-sm transition-colors duration-150
                       ${isSelected
                                                     ? darkMode === "dark"
@@ -551,23 +507,45 @@ custom_agent_config:
                                                 }
                     `}
                                         >
-                                            {isSelected ? (
-                                                <Bot
-                                                    className="w-8 h-8 transition-colors duration-200 text-white"
-                                                    style={{
-                                                        borderRadius: "4px",
-                                                        padding: "2px",
-                                                    }}
-                                                />
-                                            ) : (
-                                                <Bot
-                                                    className="w-8 h-8 transition-colors duration-200 text-[var(--color-magenta-800)]"
-                                                    style={{
-                                                        borderRadius: "4px",
-                                                        padding: "2px",
-                                                    }}
-                                                />
-                                            )}
+                                            {(() => {
+                                                const agentIcon = getAgentIcon(agent.mode);
+                                                if (agentIcon) {
+                                                    return (
+                                                        <img
+                                                            src={agentIcon}
+                                                            alt={agent.name}
+                                                            className="w-6 h-6 transition-colors duration-200"
+                                                            style={{
+                                                                borderRadius: "4px",
+                                                                padding: "2px",
+                                                                // 为 magnetic-one 图标应用黑色滤镜
+                                                                filter: agent.mode === "magentic-one" ?
+                                                                    "brightness(0) saturate(100%)" :
+                                                                    "none"
+                                                            }}
+                                                        />
+                                                    );
+                                                } else {
+                                                    // 使用默认的 Bot 图标
+                                                    return isSelected ? (
+                                                        <Bot
+                                                            className="w-6 h-6 transition-colors duration-200 text-white"
+                                                            style={{
+                                                                borderRadius: "4px",
+                                                                padding: "2px",
+                                                            }}
+                                                        />
+                                                    ) : (
+                                                        <Bot
+                                                            className="w-6 h-6 transition-colors duration-200 text-[var(--color-magenta-800)]"
+                                                            style={{
+                                                                borderRadius: "4px",
+                                                                padding: "2px",
+                                                            }}
+                                                        />
+                                                    );
+                                                }
+                                            })()}
                                             <div className="flex-1 text-left">
                                                 <div className="truncate">
                                                     {agent.name}
