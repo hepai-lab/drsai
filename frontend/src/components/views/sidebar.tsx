@@ -17,6 +17,7 @@ import { Button } from "../common/Button";
 import SubMenu from "../common/SubMenu";
 import LearnPlanButton from "../features/Plans/LearnPlanButton";
 import type { RunStatus, Session } from "../types/datamodel";
+import { SessionRunStatusIndicator } from "./statusicon";
 
 
 
@@ -151,13 +152,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </span>
                   </Tooltip>
                 </div>
-                {/* {s.id && (
+                {s.id && (
                   <div className="flex-shrink-0 transition-all session-status-indicator">
                     <SessionRunStatusIndicator
                       status={sessionRunStatuses[s.id]}
                     />
                   </div>
-                )} */}
+                )}
               </div>
               <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-2">
                 <Dropdown
