@@ -6,6 +6,13 @@ import { useSettingsStore } from "../store";
 import { agentAPI, settingsAPI } from "../views/api";
 import CustomAgentForm, { CustomAgentData } from "./agent-form/CustomAgentForm";
 import DrsaiAgentForm, { DrsaiAgentData } from "./agent-form/DrsaiAgentForm";
+// 之后可能会删掉==========================================
+import { useMessageCacheStore } from "../../store/messageCache";
+import { useConfigStore } from "../../hooks/store";
+import { Modal } from "antd";
+import { sessionAPI } from "../views/api";
+//==================================================
+
 // 导入智能体图标
 import magneticOneIcon from "../../assets/magnetic-one.png";
 import magneticTwoIcon from "../../assets/magnetic-two.svg";
@@ -78,6 +85,35 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         lastSelectedAgentMode,
         setLastSelectedAgentMode,
     } = useModeConfigStore();
+    // 之后可能会删掉==========================================
+    // 获取当前session和消息缓存
+    const { getSessionRun } = useMessageCacheStore();
+    const { session } = useConfigStore();
+
+    // 使用state来存储session消息状态
+    const [sessionMessageStatus, setSessionMessageStatus] = useState<{ [sessionId: number]: boolean }>({});
+
+    // 检查当前session是否已经发送过消息
+    const sessionHasMessages = useMemo(() => {
+        if (!session?.id) {
+            console.log("No session ID");
+            return false;
+        }
+
+        // 首先尝试从缓存获取
+        const sessionRun = getSessionRun(session.id);
+        if (sessionRun && sessionRun.messages && sessionRun.messages.length > 0) {
+            console.log("Found messages in cache for session:", session.id);
+            return true;
+        }
+
+        // 如果缓存中没有，检查我们的状态记录
+        const hasMessages = sessionMessageStatus[session.id];
+        console.log("Session message status from state:", hasMessages);
+        return hasMessages || false;
+    }, [session?.id, getSessionRun, sessionMessageStatus]);
+    //===================================================
+
 
     // 初始化时恢复持久化的智能体选择
     useEffect(() => {
@@ -263,18 +299,89 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             }, 100);
         }
     }, [isOpen, searchable]);
+    // 之后可能会删掉==========================================
+    // 异步检查session是否有消息
+    const checkSessionHasMessages = async (sessionId: number): Promise<boolean> => {
+        if (!user?.email) return false;
+
+        try {
+            const sessionRuns = await sessionAPI.getSessionRuns(sessionId, user.email);
+            const hasMessages = sessionRuns.runs && sessionRuns.runs.length > 0 &&
+                sessionRuns.runs.some(run => run.messages && run.messages.length > 0);
+
+            // 更新状态记录
+            setSessionMessageStatus(prev => ({
+                ...prev,
+                [sessionId]: hasMessages
+            }));
+
+            console.log(`Session ${sessionId} has messages:`, hasMessages);
+            return hasMessages;
+        } catch (error) {
+            console.warn("Failed to check session messages:", error);
+            return false;
+        }
+    };
+    //==================================================
 
     const handleAgentSelect = async (agent: Agent) => {
+        // 之后可能会删掉==========================================
+        console.log("handleAgentSelect called with:", agent);
+        console.log("sessionHasMessages:", sessionHasMessages);
+        console.log("persistedSelectedAgent:", persistedSelectedAgent);
+        console.log("agent.mode:", agent.mode);
+        console.log("persistedSelectedAgent?.mode:", persistedSelectedAgent?.mode);
+
+        // 如果当前session存在，异步检查是否有消息
+        let actualHasMessages = sessionHasMessages;
+        if (session?.id && !sessionHasMessages) {
+            actualHasMessages = await checkSessionHasMessages(session.id);
+        }
+
+        console.log("actualHasMessages:", actualHasMessages);
+
+        // 检查是否需要给出警告提示
+        if (actualHasMessages && persistedSelectedAgent && persistedSelectedAgent.mode !== agent.mode) {
+            console.log("Should show warning dialog");
+            // 显示警告对话框，但允许用户继续切换
+            Modal.confirm({
+                title: '智能体切换警告',
+                content: (
+                    <div>
+                        <p>当前会话已发送消息，切换智能体可能导致程序无法正常响应。</p>
+                        <p>因为后端暂未完全实现此功能，建议创建新会话使用其他智能体。</p>
+                        <p>是否仍要继续切换？</p>
+                    </div>
+                ),
+                okText: '继续切换',
+                cancelText: '取消',
+                onOk: async () => {
+                    // 用户确认后继续执行切换逻辑
+                    await performAgentSwitch(agent);
+                },
+                onCancel() {
+                    // 用户取消，不做任何操作
+                }
+            });
+            return;
+        }
+
+        // 如果没有警告情况，直接执行切换
+        await performAgentSwitch(agent);
+    };
+    //=================================================
+
+    // 提取切换逻辑到单独的函数
+    const performAgentSwitch = async (agent: Agent) => {
         // 创建新的自定义智能体
         const newCustomAgent: Agent = {
             mode: agent.mode,
             name: agent.name,
-            config: {},
-            user_id: user?.email || "",
-        };
+            config: {} as any,
+        } as any;
 
         try {
-            const res = await agentAPI.saveAgentConfig(newCustomAgent);
+            await agentAPI.saveAgentConfig(newCustomAgent);
             const res2 = await agentAPI.getAgentConfig("", agent.mode);
             if (res2) {
                 setConfig(res2.config);
@@ -302,8 +409,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             mode: `custom`,
             name: data.name || "Custom Agent",
             config: data,
-            user_id: user?.email || "",
-        };
+        } as any;
         const modelConfigYaml = `model_config: &client
   provider: ${data.llmProvider || "OpenAIChatCompletionClient"}
   config:
@@ -327,7 +433,7 @@ custom_agent_config:
 `;
 
         try {
-            const res = await agentAPI.saveAgentConfig(newCustomAgent);
+            await agentAPI.saveAgentConfig(newCustomAgent);
 
             // 更新 settings store
             const currentSettings = useSettingsStore.getState().config;
