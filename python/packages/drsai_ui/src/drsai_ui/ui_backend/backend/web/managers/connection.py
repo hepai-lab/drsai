@@ -34,7 +34,7 @@ from ...datamodel import (
     TeamResult,
 )
 from ...teammanager import TeamManager
-from ...utils.utils import compress_state
+from ...utils.utils import compress_state, decompress_state
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +173,16 @@ class WebSocketManager:
                 self.db_manager.upsert(run)
                 await self._update_run_status(run_id, RunStatus.ACTIVE)
 
+                # TODO: 让不同后端都能获取前端之前的记忆
+                if isinstance(state, str):
+                    try:
+                        # Try to decompress if it's compressed
+                        state_dict_decompress = decompress_state(state)
+                    except Exception:
+                        # If decompression fails, assume it's a regular JSON string
+                        state_dict_decompress = json.loads(state)
+
+
             # add task as message
             if isinstance(task, str):
                 await self._send_message(
@@ -206,7 +216,7 @@ class WebSocketManager:
             async for message in team_manager.run_stream(
                 task=task,
                 team_config=team_config,
-                state=state,
+                state=state_dict_decompress,
                 input_func=input_func,
                 cancellation_token=cancellation_token,
                 env_vars=env_vars,
