@@ -145,7 +145,7 @@ asyncio.run(run_console(agent_factory=create_agent, task="Why will humans be des
 支持人机交互前端UI的智能体/多智能体系统具体见：```examples/cli```
 
 ## 3.UI启动案例
-具体见：```examples/cli/run_cli.py```
+具体见：```examples/cli/run_backend.py```
 
 ## 4.代码请求后端案例
 具体见：```examples/requests```
