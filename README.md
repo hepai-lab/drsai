@@ -74,15 +74,21 @@ cd your/path/to/drsai/frontend
 npm install -g gatsby-cli
 npm install --global yarn
 yarn install
+
+# cp .env.default .env.development or .env.production # 复制.env.default文件为.env.development或.env.production
+# 开发环境变量为frontend/
+# 生产环境变量为frontend/.env.production
+
 # yarn build # 打包前端静态资源
 yarn run dev # 启动前端开发环境
 ```
 
-### 2.2.命令行启动OpenDrSai服务
+### 2.3.命令行启动OpenDrSai服务
 
 ```shell
 # pip install drsai_ui -U # 确保安装了drsai_ui
 
+cp .env.example .env # 复制.env.example文件为.env
 drsai ui # 启动Magenti-UI人机交互后端和静态前端
 
 drsai console --agent-config agent_config.yaml # 启动命令行模式的智能体/多智能体服务
