@@ -473,6 +473,7 @@ export class Agent {
 
     async getAgentList(userId: string): Promise<any[]> {
         console.log("Fetching agent list for user:", userId);
+        console.log("Using base URL:", this.getBaseUrl());
         const response = await fetch(
             `${this.getBaseUrl()}/agentmode/?user_id=${userId}`,
             {

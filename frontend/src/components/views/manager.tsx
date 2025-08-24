@@ -110,6 +110,7 @@ export const SessionManager: React.FC = () => {
   };
 
   React.useEffect(() => {
+    // handleAgentList(agents);
     if (user?.email) {
       handleAgentList(agents);
     }
