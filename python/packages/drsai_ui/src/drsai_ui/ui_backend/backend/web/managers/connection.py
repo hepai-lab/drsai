@@ -181,6 +181,8 @@ class WebSocketManager:
                     except Exception:
                         # If decompression fails, assume it's a regular JSON string
                         state_dict_decompress = json.loads(state)
+                else:
+                    state_dict_decompress = state
 
 
             # add task as message
