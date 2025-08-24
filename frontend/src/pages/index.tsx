@@ -1,17 +1,19 @@
-import { graphql } from "gatsby";
+import { graphql, navigate } from "gatsby";
 import * as React from "react";
 import MagenticUILayout from "../components/layout";
 
 // markup
 const IndexPage = ({ data }: any) => {
 
-  // React.useEffect(() => {
-  //   // 没有token则跳转登录
-  //   const localToken = localStorage.getItem("token");
-  //   if (!localToken) {
-  //     navigate("/sso-login");
-  //   }
-  // }, []);
+  React.useEffect(() => {
+    // 没有token则跳转登录
+    const localToken = localStorage.getItem("token");
+    if (process.env.GATSBY_SERVICE_MODE === "DEV") {
+      navigate("/");
+    } else if (!localToken) {
+      navigate("/sso-login");
+    }
+  }, []);
 
   // 读取本地token和username
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : "";
