@@ -1,0 +1,16 @@
+# 定义你的智能体基座模型
+model_config: &client
+  provider: drsai.HepAIChatCompletionClient
+  config:
+    model: openai/gpt-4o
+    api_key: sk-****
+    base_url: "https://aiapi.ihep.ac.cn/apiv2"
+    max_retries: 10
+# 组装你的智能体
+myassistant:
+  # 定义智能体类型，由OpenDrSai提供或者自己代码开发
+  type: AssistantAgent 
+  name: myassistant
+  system_message: "You are a helpful assistant who responds to user requests based on your tools and knowledge."
+  description: "An agent that provides assistance with ability to use tools."
+  model_client: *client
