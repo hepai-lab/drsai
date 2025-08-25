@@ -8,7 +8,7 @@ const IndexPage = ({ data }: any) => {
   React.useEffect(() => {
     // 没有token则跳转登录
     const localToken = localStorage.getItem("token");
-    if (process.env.GATSBY_SERVICE_MODE === "DEV") {
+    if (process.env.GATSBY_SSO === "false") {
       navigate("/");
     } else if (!localToken) {
       navigate("/sso-login");

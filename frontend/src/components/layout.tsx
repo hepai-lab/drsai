@@ -52,7 +52,7 @@ const MagenticUILayout = ({
         }
       } else {
 
-        if (typeof window !== "undefined" && process.env.GATSBY_SERVICE_MODE !== "DEV") {
+        if (typeof window !== "undefined" && process.env.GATSBY_SSO === "true") {
 
           // TODO: 单点登录后续再接入
           window.location.href = "/sso-login";
