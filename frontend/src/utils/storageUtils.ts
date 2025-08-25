@@ -11,6 +11,16 @@ export interface StorageInfo {
  * 获取localStorage使用情况
  */
 export const getStorageInfo = (): StorageInfo => {
+  // 服务器端返回默认值
+  if (typeof window === "undefined") {
+    return {
+      used: 0,
+      usedMB: 0,
+      usagePercent: 0,
+      items: [],
+    };
+  }
+
   const items: { key: string; size: number; sizeMB: number }[] = [];
   let totalUsed = 0;
 
@@ -46,6 +56,8 @@ export const getStorageInfo = (): StorageInfo => {
  * 清理DrSai相关的localStorage数据
  */
 export const clearDrSaiStorage = (): void => {
+  if (typeof window === "undefined") return;
+  
   const keysToRemove: string[] = [];
   
   for (let i = 0; i < localStorage.length; i++) {
@@ -66,6 +78,8 @@ export const clearDrSaiStorage = (): void => {
  * 清理消息缓存
  */
 export const clearMessageCache = (): void => {
+  if (typeof window === "undefined") return;
+  
   localStorage.removeItem('drsai-message-cache');
   console.log('Message cache cleared');
 };
@@ -74,6 +88,8 @@ export const clearMessageCache = (): void => {
  * 检查存储空间并在必要时清理
  */
 export const checkAndCleanStorage = (): boolean => {
+  if (typeof window === "undefined") return false;
+  
   const info = getStorageInfo();
   
   console.log(`localStorage usage: ${info.usedMB.toFixed(2)}MB (${info.usagePercent.toFixed(1)}%)`);
@@ -92,6 +108,8 @@ export const checkAndCleanStorage = (): boolean => {
  * 安全的localStorage设置，带有错误处理
  */
 export const safeSetItem = (key: string, value: string): boolean => {
+  if (typeof window === "undefined") return false;
+  
   try {
     localStorage.setItem(key, value);
     return true;
