@@ -823,6 +823,7 @@ export const SessionManager: React.FC = () => {
           }
         />
 
+
         {activeSubMenuItem === "current_session" ? (
           session &&
             Array.isArray(sessions) &&
