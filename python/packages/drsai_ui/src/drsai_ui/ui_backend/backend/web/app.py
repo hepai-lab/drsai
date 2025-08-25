@@ -94,6 +94,7 @@ app.add_middleware(
         "http://localhost:8081",
         "http://drsai.ihep.ac.cn",
         "https://drsai.ihep.ac.cn",
+        "https://aitest.ihep.ac.cn",
     ],
     allow_credentials=True,
     allow_methods=["*"],
