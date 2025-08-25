@@ -76,7 +76,7 @@ npm install --global yarn
 yarn install
 
 # cp .env.default .env.development or .env.production # 复制.env.default文件为.env.development或.env.production
-# 开发环境变量为frontend/
+# 开发环境变量为frontend/.env.development
 # 生产环境变量为frontend/.env.production
 
 # yarn build # 打包前端静态资源
@@ -115,12 +115,6 @@ myassistant:
   model_client: *client
 ```
 具体的配置项说明见[配置文件说明文档](docs/agent_factory.md)。在我们[AI平台](https://drsai.ihep.ac.cn)上，提供了丰富的智能体的基座模型、MCP/HEPAI Worker工具、RAG记忆插件；多种逻辑的智能体和多智能体框架；一些预设的智能体/多智能体工作模式供你选择。你可以在前后端选择适合你的智能体/多智能体框架和工具、知识库等，快速搭建自己的智能体/多智能体协作系统。通过配置快速构建智能体/多智能体系统详细的说明见：```docs/agent_factory.md```.
-
-### 2.3命令行启动web前端
-```shell
-yarn install #安装前端依赖
-yarn dev #启动web前端
-```
 
 ## 3.详细文档
 详细的教程见tutorials目录（正在开发中，有问题及时联系我们）：
