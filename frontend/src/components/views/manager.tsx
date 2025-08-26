@@ -389,23 +389,32 @@ export const SessionManager: React.FC = () => {
 
       if (isDeletingCurrentSession) {
         // 删除的是当前选中的session
+        console.log("删除的是当前选中的session，剩余sessions:", updatedSessions);
+
         if (updatedSessions.length > 0) {
           // 检查第一个session是否是default session
           const firstSession = updatedSessions[0];
           const isFirstSessionDefault = firstSession.name && firstSession.name.startsWith("Default Session - ");
 
+          console.log("第一个session:", firstSession.name, "是否是default:", isFirstSessionDefault);
+
           if (isFirstSessionDefault) {
             // 如果第一个session是default session，直接选中它
+            console.log("选中现有的default session");
             setSession(firstSession);
             if (firstSession.id) {
               window.history.pushState({}, "", `?sessionId=${firstSession.id}`);
             }
           } else {
             // 如果第一个session不是default session，创建新的default session
+            console.log("创建新的default session");
+            // 先等待sessions状态更新完成
+            await new Promise(resolve => setTimeout(resolve, 0));
             await createDefaultSession();
           }
         } else {
           // 如果没有其他session了，创建新的default session
+          console.log("没有其他session，创建新的default session");
           await createDefaultSession();
         }
         // 清除URL参数
@@ -589,17 +598,7 @@ export const SessionManager: React.FC = () => {
   const createDefaultSession = async () => {
     if (!user?.email) return;
 
-    // 检查是否已经存在default session
-    const existingDefaultSession = Array.isArray(sessions)
-      ? sessions.find(s => s.name && s.name.startsWith("Default Session - "))
-      : null;
-
-    if (existingDefaultSession) {
-      // 如果已经存在default session，直接设置为当前session
-      setSession(existingDefaultSession);
-      window.history.pushState({}, "", `?sessionId=${existingDefaultSession.id}`);
-      return;
-    }
+    console.log("开始创建default session，当前sessions数量:", Array.isArray(sessions) ? sessions.length : 0);
 
     try {
       setIsLoading(true);
@@ -614,6 +613,8 @@ export const SessionManager: React.FC = () => {
         }
       )}`;
 
+      console.log("创建session，名称:", defaultName);
+
       const created = await sessionAPI.createSession(
         {
           name: defaultName,
@@ -621,12 +622,18 @@ export const SessionManager: React.FC = () => {
         user.email
       );
 
+      console.log("session创建成功:", created);
+
       setSessions([
         created,
         ...(Array.isArray(sessions) && sessions ? sessions : []),
       ]);
       setSession(created);
-      window.history.pushState({}, "", `?sessionId=${created.id}`);
+      if (created.id) {
+        window.history.pushState({}, "", `?sessionId=${created.id}`);
+      }
+
+      console.log("default session设置完成");
     } catch (error) {
       console.error("Error creating default session:", error);
       messageApi.error("Error creating default session");
