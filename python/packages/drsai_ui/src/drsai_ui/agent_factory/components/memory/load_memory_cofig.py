@@ -53,7 +53,6 @@ def load_RAGFlow_memory(memory_functions_config: dict) -> Callable:
     '''
     config: dict = memory_functions_config.get("config", {})
     try:
-        from hepai import HRModel
         async def memory_functions(
             memory_messages: List[Dict[str, str]], 
             llm_messages: List[LLMMessage],
