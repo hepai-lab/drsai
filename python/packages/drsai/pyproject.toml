@@ -8,8 +8,12 @@ license = "MIT"
 dynamic = ["version"]
 description = "Developed by Dr. Sai's team at the Institute of High Energy Physics, Chinese Academy of Sciences (IHEP, CAS), this is a development framework designed for both single-agent and multi-agent collaborative systems"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = []
+authors = [
+    { name = "hepai" }
+]
+urls = { "Homepage" = "https://github.com/hepaihub/drsai" }
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
