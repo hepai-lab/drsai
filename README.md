@@ -67,7 +67,7 @@ setx "HEPAI_API_KEY" "your_api_key"
 ```shell
 # install nvm to install node
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-nvm install node
+nvm install node # recommended node version ~ 22
 ```
 
 安装前端依赖

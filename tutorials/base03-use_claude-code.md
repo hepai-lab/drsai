@@ -4,6 +4,9 @@
 - 1. 安装claude-code
 
 ```shell
+# curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+# source ~/.bashrc # or source ~/.zshrc
+# nvm install 24
 npm install -g @anthropic-ai/claude-code
 ```
 
