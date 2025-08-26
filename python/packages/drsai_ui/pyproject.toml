@@ -8,8 +8,12 @@ license = "MIT"
 dynamic = ["version"]
 description = "This is the UI backend for the dr.sai project."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = []
+authors = [
+    { name = "hepai" }
+]
+urls = { "Homepage" = "https://github.com/hepaihub/drsai" }
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
