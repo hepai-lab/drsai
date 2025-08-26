@@ -245,7 +245,9 @@ export const SessionManager: React.FC = () => {
           "No stored session, selecting first available session"
         );
         setSession(sessions[0]);
-        saveSessionIdToStorage(sessions[0].id);
+        if (sessions[0].id) {
+          saveSessionIdToStorage(sessions[0].id);
+        }
       }
     };
 
@@ -375,26 +377,56 @@ export const SessionManager: React.FC = () => {
       }
 
       await sessionAPI.deleteSession(sessionId, user.email);
-      setSessions(
-        Array.isArray(sessions)
-          ? sessions.filter((s) => s.id !== sessionId)
-          : []
-      );
-      if (
-        session?.id === sessionId ||
-        (Array.isArray(sessions) && sessions.length === 0)
-      ) {
-        setSession(
-          Array.isArray(sessions) && sessions.length > 0
-            ? sessions[0]
-            : null
-        );
-        window.history.pushState({}, "", window.location.pathname); // Clear URL params
-      }
-      messageApi.success("Session deleted");
 
-      // 删除成功后调用 handleCreateNewSessionAfterDelete 创建新会话（保持当前agent）
-      handleCreateNewSessionAfterDelete();
+      // 检查是否删除的是当前选中的session
+      const isDeletingCurrentSession = session?.id === sessionId;
+
+      // 更新sessions列表
+      const updatedSessions = Array.isArray(sessions)
+        ? sessions.filter((s) => s.id !== sessionId)
+        : [];
+      setSessions(updatedSessions);
+
+      if (isDeletingCurrentSession) {
+        // 删除的是当前选中的session
+        if (updatedSessions.length > 0) {
+          // 检查第一个session是否是default session
+          const firstSession = updatedSessions[0];
+          const isFirstSessionDefault = firstSession.name && firstSession.name.startsWith("Default Session - ");
+
+          if (isFirstSessionDefault) {
+            // 如果第一个session是default session，直接选中它
+            setSession(firstSession);
+            if (firstSession.id) {
+              window.history.pushState({}, "", `?sessionId=${firstSession.id}`);
+            }
+          } else {
+            // 如果第一个session不是default session，创建新的default session
+            await createDefaultSession();
+          }
+        } else {
+          // 如果没有其他session了，创建新的default session
+          await createDefaultSession();
+        }
+        // 清除URL参数
+        window.history.pushState({}, "", window.location.pathname);
+      } else {
+        // 删除的不是当前选中的session，不需要创建新的default session
+        // 只需要确保当前session仍然有效
+        if (session && !updatedSessions.find(s => s.id === session.id)) {
+          // 如果当前session被删除了，选择第一个可用的session
+          if (updatedSessions.length > 0) {
+            setSession(updatedSessions[0]);
+            if (updatedSessions[0].id) {
+              window.history.pushState({}, "", `?sessionId=${updatedSessions[0].id}`);
+            }
+          } else {
+            setSession(null);
+          }
+        }
+      }
+
+      messageApi.success("Session deleted");
     } catch (error) {
       console.error("Error deleting session:", error);
       messageApi.error("Error deleting session");
@@ -557,6 +589,18 @@ export const SessionManager: React.FC = () => {
   const createDefaultSession = async () => {
     if (!user?.email) return;
 
+    // 检查是否已经存在default session
+    const existingDefaultSession = Array.isArray(sessions)
+      ? sessions.find(s => s.name && s.name.startsWith("Default Session - "))
+      : null;
+
+    if (existingDefaultSession) {
+      // 如果已经存在default session，直接设置为当前session
+      setSession(existingDefaultSession);
+      window.history.pushState({}, "", `?sessionId=${existingDefaultSession.id}`);
+      return;
+    }
+
     try {
       setIsLoading(true);
       const defaultName = `Default Session - ${new Date().toLocaleDateString(
@@ -599,6 +643,8 @@ export const SessionManager: React.FC = () => {
     }
 
     return sessions.map((s: Session) => {
+      if (!s.id) return null; // 跳过没有id的session
+
       const status = sessionRunStatuses[s.id] as RunStatus;
       const isSessionPotentiallyActive = [
         "active",
@@ -681,10 +727,8 @@ export const SessionManager: React.FC = () => {
       if (newSession) {
         try {
           // 将新Session添加到sessions列表中
-          setSessions((prevSessions) => [
-            newSession,
-            ...(Array.isArray(prevSessions) && prevSessions ? prevSessions : []),
-          ]);
+          const currentSessions = Array.isArray(sessions) ? sessions : [];
+          setSessions([newSession, ...currentSessions]);
 
           // 设置为当前Session
           setSession(newSession);
@@ -711,13 +755,13 @@ export const SessionManager: React.FC = () => {
 
     window.addEventListener(
       "switchToCurrentSession",
-      handleSwitchToCurrentSession as EventListener
+      handleSwitchToCurrentSession as unknown as EventListener
     );
 
     return () => {
       window.removeEventListener(
         "switchToCurrentSession",
-        handleSwitchToCurrentSession as EventListener
+        handleSwitchToCurrentSession as unknown as EventListener
       );
     };
   }, [setSelectedAgent, setSessions, setSession]); // 添加依赖项
@@ -814,7 +858,7 @@ export const SessionManager: React.FC = () => {
               <AgentSelectorAdvanced
                 agents={agents}
                 models={models}
-                selectedAgent={selectedAgent}
+                selectedAgent={selectedAgent || undefined}
                 onAgentSelect={setSelectedAgent}
                 placeholder="Select Your Agent"
                 className="w-64"
