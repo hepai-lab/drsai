@@ -37,6 +37,7 @@ cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # for DrSai-U
 conda create -n drsai python=>3.11
 conda activate drsai
 pip install drsai drsai_ui -U
+# NOTE: if you have installed openai>=1.99.0, please keep opneai<= 1.98.0
 ```
 
 #### 配置HepAI平台的API访问密钥
