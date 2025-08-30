@@ -23,6 +23,13 @@ def create_agent() -> AssistantAgent:
         model="deepseek-ai/deepseek-r1:671b",
         api_key=os.environ.get("HEPAI_API_KEY"),
         base_url="https://aiapi.ihep.ac.cn/apiv2",
+        model_info={
+                "vision": False,
+                "function_calling": False,  # You must sure that the model can handle function calling
+                "json_output": False,
+                "structured_output": False,
+                "family": "r1",
+            }
     )
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
