@@ -78,7 +78,10 @@ async def handle_oai_stream(stream: AsyncGenerator):
 
 async def main():
 
-    drsaiapp = DrSaiAPP(agent_factory=create_team)
+    drsaiapp = DrSaiAPP(
+        agent_factory=create_team,
+        use_api_key_mode = "backend", #"frontend"
+        )
     stream =  drsaiapp.a_start_chat_completions(
         messages=[{"content":"I need to refund my flight.", "role":"user"}],
         stream=True,
@@ -96,8 +99,8 @@ async def main():
     await handle_oai_stream(stream)
 
 if __name__ == "__main__":
-    asyncio.run(run_team_stream())
-    # asyncio.run(main())
+    # asyncio.run(run_team_stream())
+    asyncio.run(main())
     # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
     # asyncio.run(run_backend(
     #     agent_factory=create_agent, 

@@ -177,6 +177,16 @@ class DrSaiAPP(DrSai):
             error_mapping = {
                 "ModuleNotFoundError": 404,
                 "NotImplementedError": 501,
+                "ValueError": 400,
+                "TypeError": 400,
+                "KeyError": 400,
+                "AttributeError": 400,
+                "HTTPException": 400,
+                "AssertionError": 400,
+                "PermissionError": 403,
+                "FileNotFoundError": 404,
+                "OSError": 500,
+                "RuntimeError": 500,
                 # 添加更多映射...
             }
             status_code = error_mapping.get(e_class, 400)

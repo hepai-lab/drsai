@@ -60,20 +60,20 @@ async def main():
     # agent_info = await drsaiapp.get_agents_info()
     # print(agent_info)
 
-    # stream =  drsaiapp.a_start_chat_completions(
-    #     messages=[{"content":"Write a short poem about the fall season.", "role":"user"}],
-    #     stream=True,
-    #     chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
-    #     history_mode = "backend", #"frontend",
-    #     )
-
-    stream =  drsaiapp.test_agents(
+    stream =  drsaiapp.a_start_chat_completions(
         messages=[{"content":"Write a short poem about the fall season.", "role":"user"}],
         stream=True,
         chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
-        history_mode = "frontend", #
-        agent_name = "primary",
+        history_mode = "backend", #"frontend",
         )
+
+    # stream =  drsaiapp.test_agents(
+    #     messages=[{"content":"Write a short poem about the fall season.", "role":"user"}],
+    #     stream=True,
+    #     chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4",
+    #     history_mode = "frontend", #
+    #     agent_name = "primary",
+    #     )
 
     async for message in stream:
         oai_json = json.loads(message.split("data: ")[1])
@@ -84,7 +84,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    # asyncio.run(main())
+    asyncio.run(main())
     # asyncio.run(run_console(agent_factory=create_team, task="What is the weather in New York?"))
     # asyncio.run(run_backend(
     #     agent_factory=create_agent, 
@@ -93,12 +93,12 @@ if __name__ == "__main__":
     #     history_mode = "backend",
     #     use_api_key_mode = "backend")
     #     )
-    asyncio.run(
-        run_worker(
-            agent_factory=create_team, 
-            port = 42805, 
-            enable_openwebui_pipeline=True, 
-            history_mode = "backend",
-            use_api_key_mode = "backend",
-        )
-    )
+    # asyncio.run(
+    #     run_worker(
+    #         agent_factory=create_team, 
+    #         port = 42805, 
+    #         enable_openwebui_pipeline=True, 
+    #         history_mode = "backend",
+    #         use_api_key_mode = "backend",
+    #     )
+    # )

@@ -60,33 +60,7 @@ setx "HEPAI_API_KEY" "your_api_key"
 
 以[examples/oai_client/assistant_R1_oai.py](examples/oai_client/assistant_R1_oai.py)为例，展示了如何基于OpenDrSai快速开发一个智能体系统。
 
-### 2.2.人机交互前端启动
-
-#### 配置npm环境
-
-安装node
-```shell
-# install nvm to install node
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-nvm install node # recommended node version ~ 22
-```
-
-安装前端依赖
-```shell
-cd your/path/to/drsai/frontend
-npm install -g gatsby-cli
-npm install --global yarn
-yarn install
-
-# cp .env.default .env.development or .env.production # 复制.env.default文件为.env.development或.env.production
-# 开发环境变量为frontend/.env.development
-# 生产环境变量为frontend/.env.production
-
-# yarn build # 打包前端静态资源
-yarn run dev # 启动前端开发环境
-```
-
-### 2.3.命令行启动OpenDrSai服务
+### 2.2.命令行启动OpenDrSai服务
 
 ```shell
 # pip install drsai_ui -U # 确保安装了drsai_ui
@@ -119,6 +93,36 @@ myassistant:
 ```
 具体的配置项说明见[配置文件说明文档](docs/agent_factory.md)。在我们[AI平台](https://drsai.ihep.ac.cn)上，提供了丰富的智能体的基座模型、MCP/HEPAI Worker工具、RAG记忆插件；多种逻辑的智能体和多智能体框架；一些预设的智能体/多智能体工作模式供你选择。你可以在前后端选择适合你的智能体/多智能体框架和工具、知识库等，快速搭建自己的智能体/多智能体协作系统。通过配置快速构建智能体/多智能体系统详细的说明见：```docs/agent_factory.md```.
 
+**NOTE:**
+- DrSai-General 功能需要编译python执行沙盒和浏览器VNC的Docker镜像，请确保安装了docker环境。具体docker镜像及安装配置见[docker](docker/README.md)
+
+### 2.3.人机交互前端
+
+#### 配置npm环境
+
+安装node
+```shell
+# install nvm to install node
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+nvm install node # recommended node version ~ 22
+```
+
+安装前端依赖
+```shell
+cd your/path/to/drsai/frontend
+npm install -g gatsby-cli
+npm install --global yarn
+yarn install
+
+# cp .env.default .env.development or .env.production # 复制.env.default文件为.env.development或.env.production
+# 开发环境变量为frontend/.env.development
+# 生产环境变量为frontend/.env.production
+
+# yarn build # 打包前端静态资源
+yarn run dev # 启动前端开发环境
+```
+
+
 ## 3.详细文档
 详细的教程见tutorials目录（正在开发中，有问题及时联系我们）：
 ```
@@ -148,7 +152,7 @@ docs/open-webui.md：OpenAI格式的前端访问，以及OpenWebui的Pipeline插
 
 ## 5.联系我们
 
-- 邮箱：hepai@ihep.ac.cn/xiongdb@ihep.ac.cn
+- 邮箱：hepai@ihep.ac.cn/zdzhang@ihep.ac.cn/xiongdb@ihep.ac.cn
 - 微信：xiongdongbo_12138
 - 微信群聊：HepAI大模型技术交流3群：
 ![alt text](assets/微信三群.jpg)

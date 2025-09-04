@@ -6,7 +6,7 @@ from typing import List, Dict, Union, AsyncGenerator, Tuple, Any
 from drsai import HepAIChatCompletionClient, AssistantAgent
 
 # backend thread 
-from drsai import Thread, ThreadsManager
+from drsai.modules.managers.database import DatabaseManager
 
 # AutoGen imports
 from autogen_core import CancellationToken, FunctionCall
@@ -55,8 +55,7 @@ async def tools_reply_function(
     handoff_tools: List[BaseTool[Any, Any]],
     tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
     cancellation_token: CancellationToken,  # AutoGen cancellation token,
-    thread: Thread,  # DrSai thread
-    thread_mgr: ThreadsManager,  # DrSai thread manager
+    db_manager: DatabaseManager,  # DrSai database manager,
     **kwargs) -> Union[str, AsyncGenerator[str, None]]:
     """
     自定义回复函数：能够智能地调用工具，然后通过工具的执行结果进行回复。
@@ -125,8 +124,7 @@ async def tools_recycle_reply_function(
     handoff_tools: List[BaseTool[Any, Any]],
     tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
     cancellation_token: CancellationToken,  # AutoGen cancellation token,
-    thread: Thread,  # DrSai thread
-    thread_mgr: ThreadsManager,  # DrSai thread manager
+    db_manager: DatabaseManager,
     **kwargs) -> Union[str, AsyncGenerator[str, None]]:
     """
     自定义回复函数：能够智能地循环调用工具自有的工具集进行规划完成任务。

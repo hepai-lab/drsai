@@ -1,6 +1,5 @@
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP,TextMentionTermination,SelectorGroupChat, run_console, run_worker,Console
-from drsai.modules.managers.base_thread import Thread
-from drsai.modules.managers.threads_manager import ThreadsManager
+from drsai.modules.managers.database import DatabaseManager
 import os, json
 import asyncio
 from typing import List, Dict, Union, AsyncGenerator, Tuple, Any
@@ -100,8 +99,7 @@ async def interface(
     handoff_tools: List[BaseTool[Any, Any]],
     tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
     cancellation_token: CancellationToken,  # AutoGen cancellation token,
-    thread: Thread,  # DrSai thread
-    thread_mgr: ThreadsManager,  # DrSai thread manager
+    db_manager: DatabaseManager,  # DrSai database manager,
     **kwargs) -> Union[str, AsyncGenerator[str, None]]:
     """Address the messages and return the response."""
 

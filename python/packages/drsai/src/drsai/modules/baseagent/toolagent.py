@@ -62,8 +62,7 @@ from autogen_agentchat.messages import (
     Image,
 )
 from drsai import HepAIChatCompletionClient
-from drsai.modules.managers.base_thread import Thread
-from drsai.modules.managers.threads_manager import ThreadsManager
+from drsai.modules.managers.database import DatabaseManager
 
 
 
@@ -91,8 +90,7 @@ class ToolAgent(DrSaiAgent):
         memory_function: Callable = None,
         # allow_reply_function: bool = False,
         reply_function: Callable = None,
-        thread: Thread = None,
-        thread_mgr: ThreadsManager = None,
+        db_manager: DatabaseManager = None,
         **kwargs,
             ):
         
@@ -114,8 +112,7 @@ class ToolAgent(DrSaiAgent):
             metadata=metadata,
             memory_function=memory_function,
             reply_function=reply_function,
-            thread=thread,
-            thread_mgr=thread_mgr,
+            db_manager=db_manager,
             **kwargs,
             )
     
@@ -345,8 +342,7 @@ class ToolAgent(DrSaiAgent):
     @classmethod
     def _from_config(
         cls, config: AssistantAgentConfig, 
-        thread: Thread = None, 
-        thread_mgr: ThreadsManager = None,
+        db_manager: DatabaseManager,
         memory_function: Callable = None,
         reply_function: Callable = None,
         **kwargs,
@@ -379,8 +375,7 @@ class ToolAgent(DrSaiAgent):
             metadata=config.metadata,
             memory_function=memory_function,
             reply_function=reply_function,
-            thread=thread,
-            thread_mgr=thread_mgr,
+            db_manager=db_manager,
             **kwargs,
         
         )
