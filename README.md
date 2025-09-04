@@ -58,7 +58,7 @@ setx "HEPAI_API_KEY" "your_api_key"
 
 #### 智能体案例测试
 
-以[examples/oai_client/assistant_R1_oai.py](examples/oai_client/assistant_R1_oai.py)为例，展示了如何基于OpenDrSai快速开发一个智能体系统。
+以[examples/agent_groupchat/assistant_R1_oai.py](examples/agent_groupchat/assistant_R1_oai.py)为例，展示了如何基于OpenDrSai快速开发一个智能体系统。
 
 ### 2.2.命令行启动OpenDrSai服务
 
@@ -131,6 +131,7 @@ tutorials/base02-worker.md：HEPAI Worker远程函数的配置和使用
 tutorials/base03-use_claude-code.md：基HepAI平台于Claude-Code的使用
 tutorials/agents：智能体/多智能体系统案例
 tutorials/components：智能体组件开发案例
+tutorials/request: 客户端请求案例
 ```
 
 文档说明见docs目录（正在开发中，有问题及时联系我们）：
