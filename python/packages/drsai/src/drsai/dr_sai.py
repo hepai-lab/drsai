@@ -296,7 +296,7 @@ class DrSai:
         
         return agent, thread
 
-    #### --- 关于OpenAI Chat/Completions --- ####
+    #### --- 关于DrSai的UI接口 --- ####
     async def a_drsai_ui_completions(self, **kwargs) -> AsyncGenerator:
         """
         为drsai ui提供completions接口，yield autogen的BaseChatMessage和BaseAgentEvent
