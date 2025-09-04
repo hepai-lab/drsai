@@ -395,9 +395,9 @@ asyncio.run(run_team_stream())
 
 ### 资源链接：  
 
-- **HepAI 智能体/多智能体开发框架 SDK：**: https://code.ihep.ac.cn/hepai/drsai
+- **HepAI 智能体/多智能体开发框架 SDK：**: https://code.ihep.ac.cn/hepai/drsai / https://github.com/hepai-lab/drsai
 - **HepAI 高能人工智能平台：** https://ai.ihep.ac.cn
-- **HepAI SDK：** https://github.com/hepaihub/hepai
+- **HepAI SDK：** https://github.com/hepai-lab/hepai
 - **安装：** `pip install drsai -U`
 
 

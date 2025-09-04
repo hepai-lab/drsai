@@ -44,11 +44,16 @@ def create_team() -> DrSaiSelectorGroupChat:
     # Create a team with the primary and critic agents.
     return DrSaiSelectorGroupChat(
         participants=[primary_agent, critic_agent], 
-        termination_condition=text_termination)
+        termination_condition=text_termination,
+        model_client = model_client
+        )
 
 async def main():
 
-    drsaiapp = DrSaiAPP(agent_factory=create_team)
+    drsaiapp = DrSaiAPP(
+        agent_factory=create_team,
+        use_api_key_mode = "backend", #"frontend"
+        )
     stream =  drsaiapp.a_start_chat_completions(
         messages=[{"content":"Write a short poem about the fall season.", "role":"user"}],
         stream=True,
@@ -66,8 +71,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    # asyncio.run(main())
-    asyncio.run(run_console(agent_factory=create_team, task="What is the weather in New York?"))
+    asyncio.run(main())
+    # asyncio.run(run_console(agent_factory=create_team, task="What is the weather in New York?"))
     # asyncio.run(run_backend(
     #     agent_factory=create_agent, 
     #     port = 42805, 

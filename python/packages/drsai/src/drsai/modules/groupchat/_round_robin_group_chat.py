@@ -16,8 +16,7 @@ from drsai.modules.groupchat._base_group_chat import DrSaiGroupChat
 from drsai.modules.groupchat._base_group_chat import DrSaiGroupChatManager
 from autogen_agentchat.teams._group_chat._events import GroupChatTermination
 
-from drsai.modules.managers.base_thread import Thread
-from drsai.modules.managers.threads_manager import ThreadsManager
+from drsai.modules.managers.database import DatabaseManager
 
 class DrSaiRoundRobinGroupChatManager(DrSaiGroupChatManager):
     """A group chat manager that selects the next speaker in a round-robin fashion."""
@@ -35,8 +34,7 @@ class DrSaiRoundRobinGroupChatManager(DrSaiGroupChatManager):
         max_turns: int | None,
         message_factory: MessageFactory,
         emit_team_events: bool,
-        thread: Thread = None,
-        thread_mgr: ThreadsManager = None,
+        db_manager: DatabaseManager = None,
         **kwargs: Any
     ) -> None:
        
@@ -52,8 +50,7 @@ class DrSaiRoundRobinGroupChatManager(DrSaiGroupChatManager):
             max_turns=max_turns,
             message_factory=message_factory,
             emit_team_events=emit_team_events,
-            thread=thread,
-            thread_mgr=thread_mgr,
+            db_manager=db_manager,
             **kwargs
         )
         self._next_speaker_index = 0
@@ -173,8 +170,7 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
         runtime: AgentRuntime | None = None,
         custom_message_types: List[type[BaseAgentEvent | BaseChatMessage]] | None = None,
         emit_team_events: bool = False,
-        thread: Thread = None,
-        thread_mgr: ThreadsManager = None,
+        db_manager: DatabaseManager = None,
         **kwargs: Any
     ) -> None:
         super().__init__(
@@ -186,8 +182,7 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
             runtime=runtime,
             custom_message_types=custom_message_types,
             emit_team_events=emit_team_events,
-            thread=thread,
-            thread_mgr=thread_mgr,
+            db_manager=db_manager,
             **kwargs
         )
 
@@ -238,8 +233,7 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
     def _from_config(
         cls, 
         config: RoundRobinGroupChatConfig,
-        thread: Thread = None, 
-        thread_mgr: ThreadsManager = None,
+        db_manager: DatabaseManager = None,
         **kwargs: Any
         ) -> Self:
         participants = [ChatAgent.load_component(participant) for participant in config.participants]
@@ -251,8 +245,7 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
             termination_condition=termination_condition,
             max_turns=config.max_turns,
             emit_team_events=config.emit_team_events,
-            thread=thread,
-            thread_mgr=thread_mgr,
+            db_manager=db_manager,
             **kwargs
         )
 

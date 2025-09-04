@@ -47,10 +47,8 @@ from autogen_agentchat.teams._group_chat._events import (
     GroupChatTermination,
 )
 
-from ._base_group_chat import DrSaiGroupChat
-from ._base_group_chat import DrSaiGroupChatManager
-from drsai.modules.managers.base_thread import Thread
-from drsai.modules.managers.threads_manager import ThreadsManager
+from ._base_group_chat import DrSaiGroupChat, DrSaiGroupChatManager
+from drsai.modules.managers.database import DatabaseManager
 
 class RoundRobinManagerState(BaseState):
     """The state of the RoundRobinGroupChatManager."""
@@ -78,8 +76,7 @@ class RoundRobinGroupChatManager(DrSaiGroupChatManager):
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
         message_factory: MessageFactory,
-        thread: Thread = None,
-        thread_mgr: ThreadsManager = None,
+        db_manager: DatabaseManager = None,
         **kwargs: Any
     ) -> None:
         super().__init__(
@@ -93,8 +90,7 @@ class RoundRobinGroupChatManager(DrSaiGroupChatManager):
             termination_condition=termination_condition,
             max_turns=max_turns,
             message_factory=message_factory,
-            thread=thread,
-            thread_mgr=thread_mgr,
+            db_manager=db_manager,
             **kwargs
         )
         self._next_speaker_index = 0
@@ -134,6 +130,21 @@ class RoundRobinGroupChatManager(DrSaiGroupChatManager):
         self._next_speaker_index = round_robin_state.next_speaker_index
         self._is_paused = round_robin_state.is_paused
 
+    async def pause(self) -> None:
+        """Pause the group chat manager."""
+        logger.info(f"Pausing RoundRobinGroupChatManager...")
+        self._is_paused = True
+
+    async def resume(self) -> None:
+        """Resume the group chat manager."""
+        self._is_paused = False
+
+    async def close(self) -> None:
+        """Close any resources."""
+        self._is_paused = True
+        logger.info(f"Closing RoundRobinGroupChatManager...")
+
+
     async def select_speaker(
         self, thread: List[BaseAgentEvent | BaseChatMessage]
     ) -> str:
@@ -151,20 +162,6 @@ class RoundRobinGroupChatManager(DrSaiGroupChatManager):
         )
         current_speaker = self._participant_names[current_speaker_index]
         return current_speaker
-
-    async def pause(self) -> None:
-        """Pause the group chat manager."""
-        logger.info(f"Pausing RoundRobinGroupCha...")
-        self._is_paused = True
-
-    async def resume(self) -> None:
-        """Resume the group chat manager."""
-        self._is_paused = False
-
-    async def close(self) -> None:
-        """Close any resources."""
-        self._is_paused = True
-        logger.info(f"Closing RoundRobinGroupChatManager...")
 
     @rpc
     async def handle_start(self, message: GroupChatStart, ctx: MessageContext) -> None:  # type: ignore
@@ -280,8 +277,7 @@ class RoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
         runtime: AgentRuntime | None = None,
         custom_message_types: List[type[BaseAgentEvent | BaseChatMessage]]
         | None = None,
-        thread: Thread = None,
-        thread_mgr: ThreadsManager = None,
+        db_manager: DatabaseManager = None,
         **kwargs: Any
     ) -> None:
         super().__init__(
@@ -292,8 +288,7 @@ class RoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
             max_turns=max_turns,
             runtime=runtime,
             custom_message_types=custom_message_types,
-            thread=thread,
-            thread_mgr=thread_mgr,
+            db_manager=db_manager,
             **kwargs
         )
 
@@ -313,6 +308,7 @@ class RoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
         message_factory: MessageFactory,
+        **kwargs: Any
     ) -> Callable[[], RoundRobinGroupChatManager]:
         def _factory() -> RoundRobinGroupChatManager:
             return RoundRobinGroupChatManager(
@@ -326,8 +322,8 @@ class RoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
                 termination_condition,
                 max_turns,
                 message_factory,
-                thread=self._thread,
-                thread_mgr=self._thread_mgr,
+                db_manager=self._db_manager,
+                **kwargs
             )
 
         return _factory
@@ -351,8 +347,7 @@ class RoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
     def _from_config(
         cls, 
         config: RoundRobinGroupChatConfig,
-        thread: Thread = None, 
-        thread_mgr: ThreadsManager = None,
+        db_manager: DatabaseManager = None,
         **kwargs: Any
         ) -> Self:
         participants = [
@@ -367,9 +362,8 @@ class RoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
             participants,
             termination_condition=termination_condition,
             max_turns=config.max_turns,
-            thread = thread,
-            thread_mgr = thread_mgr,
-            **kwargs,
+            db_manager=db_manager,
+            **kwargs
         )
 
     async def pause(self) -> None:
@@ -423,68 +417,3 @@ class RoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
         await asyncio.gather(
             *(agent.close() for agent in closable_agents), return_exceptions=True
         )
-
-    @property
-    def participants(self) -> List[ChatAgent]:
-        """
-        Get the list of participants in the group chat.
-
-        Returns:
-            List[ChatAgent]: The list of participants.
-        """
-        return self._participants
-
-    async def run_stream(
-        self,
-        *,
-        task: str | BaseChatMessage | Sequence[BaseChatMessage] | None = None,
-        cancellation_token: CancellationToken | None = None,
-    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | TaskResult, None]:
-        
-        if self._is_running:
-            yield ModelClientStreamingChunkEvent(content="The team is already running, it cannot run again until it is stopped.", source="Manager")
-            textmessage=TextMessage(content="The team is already running, it cannot run again until it is stopped.", source="Manager")
-            yield textmessage
-            yield TaskResult(messages = [textmessage], stop_reason="stop")
-            return
-        
-        if self._is_paused:
-            yield ModelClientStreamingChunkEvent(content="The team is paused, please resume it before running again.", source="Manager")
-            textmessage=TextMessage(content="The team is paused, please resume it before running again.", source="Manager")
-            yield textmessage
-            yield TaskResult(messages = [textmessage], stop_reason="stop")
-            return
-        
-        async for message in super().run_stream(
-            task=task, cancellation_token=cancellation_token
-        ):
-            yield message
-            # partial_state = await self._get_partial_state()
-            # yield CheckpointEvent(
-            #     source="orchestrator", state=json.dumps(partial_state)
-            # )  # type: ignore
-
-    async def _get_partial_state(self) -> Mapping[str, Any]:
-        """Save the state of the group chat team."""
-        try:
-            # Save the state of the runtime. This will save the state of the participants and the group chat manager.
-            agent_states: Dict[str, Mapping[str, Any]] = {}
-            # Save the state of all participants.
-            for name, agent_type in zip(
-                self._participant_names, self._participant_topic_types, strict=True
-            ):
-                agent_id = AgentId(type=agent_type, key=self._team_id)
-                # NOTE: We are using the runtime's save state method rather than the agent instance's
-                # save_state method because we want to support saving state of remote agents.
-                agent_states[name] = await self._runtime.agent_save_state(agent_id)
-            # Save the state of the group chat manager.
-            agent_id = AgentId(
-                type=self._group_chat_manager_topic_type, key=self._team_id
-            )
-            agent_states[
-                self._group_chat_manager_name
-            ] = await self._runtime.agent_save_state(agent_id)
-            return TeamState(agent_states=agent_states).model_dump()
-        finally:
-            # Indicate that the team is no longer running.
-            self._is_running = False

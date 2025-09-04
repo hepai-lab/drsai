@@ -14,20 +14,27 @@ from autogen_core.model_context import (
 from autogen_agentchat.base import Response, TaskResult
 from autogen_agentchat.base import Handoff as HandoffBase
 from autogen_agentchat.messages import (
-    BaseAgentEvent,
+    StructuredMessageFactory,
     BaseChatMessage,
-    # HandoffMessage,
-    # MemoryQueryEvent,
-    # ModelClientStreamingChunkEvent,
-    # StructuredMessage,
-    # StructuredMessageFactory,
     TextMessage,
-    ThoughtEvent,
-    ModelClientStreamingChunkEvent,
+    HandoffMessage,
+    StopMessage,
+    ToolCallSummaryMessage,
+    StructuredMessage,
+    BaseAgentEvent,
     ToolCallExecutionEvent,
     ToolCallRequestEvent,
-    ToolCallSummaryMessage,
+    CodeGenerationEvent,
+    CodeExecutionEvent,
     UserInputRequestedEvent,
+    MemoryQueryEvent,
+    ModelClientStreamingChunkEvent,
+    ThoughtEvent,
+    SelectSpeakerEvent,
+    SelectorEvent,
+    MessageFactory,
+    MultiModalMessage,
+    Image,
 )
 from autogen_core.models import (
     AssistantMessage,
@@ -104,6 +111,9 @@ class StatusAgent(AssistantAgent):
         self._funcs_map = {}
 
         self._init_message: str|dict = ""
+
+        # 消息类型
+        self._message_factory = MessageFactory()
 
     async def lazy_init(self, **kwargs) -> None:
         """Initialize the tools and models needed by the agent."""
@@ -324,34 +334,51 @@ class StatusAgent(AssistantAgent):
         
             # STEP 3: Run the first inference
             model_result = None
-            all_messages = await model_context.get_messages()
-            # llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
-            # not add system_messages to llm_messages
-            llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=all_messages)
-            oai_massages = await self.llm_messages2oai_messages(llm_messages)
+            # all_messages = await model_context.get_messages()
+            # # llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
+            # # not add system_messages to llm_messages
+            # llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=all_messages)
+            # oai_massages = await self.llm_messages2oai_messages(llm_messages)
             
             # NOTE: 请注意，这是一个同步的迭代器，会堵塞当前线程，直到模型返回结果
 
             stream: Stream = self._funcs_map['a_chat_completions'](
-                messages = oai_massages,
+                messages = [message.model_dump(mode="json") for message in messages],
                 apikey = self.api_key,
                 stream=True,
                 model = agent_name,
                 chat_id = self._chat_id,
                 user = self._run_info,
             )
-            full_response = ""
+            full_response = []
             try:
                 async for chunk in self.async_stream_generator(stream):
                     if self.is_paused:
                         raise asyncio.CancelledError("Agent paused during streaming")
-                    textchunk = chunk["choices"][0]["delta"].get("content", "")
-                    if textchunk:
-                        yield ModelClientStreamingChunkEvent(content=textchunk, source=agent_name)
-                        full_response += textchunk
-                    else:
-                        if chunk["choices"][0].get("finish_reason") == "stop":
-                            break
+                    # textchunk = chunk["choices"][0]["delta"].get("content", "")
+                    # if textchunk:
+                    #     yield ModelClientStreamingChunkEvent(content=textchunk, source=agent_name)
+                    #     full_response += textchunk
+                    # else:
+                    #     if chunk["choices"][0].get("finish_reason") == "stop":
+                    #         break
+                    message_type = chunk.get("type", None)
+                    if message_type in self._message_factory._message_types:
+                        msg: BaseChatMessage|BaseAgentEvent = self._message_factory._message_types[message_type].model_validate(chunk)
+                        
+                        if message_type in [
+                            "TextMessage",
+                            "ToolCallSummaryMessage",
+                            "StructuredMessage",
+                            "HandoffMessage",
+                            "StopMessage"]:
+                            full_response.append({msg.source: msg.content})
+                        else:
+                            yield msg
+                    if "stop_reason" in chunk:
+                        # taskresult = TaskResult.model_validate(chunk)
+                        break
+                    
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -368,12 +395,21 @@ class StatusAgent(AssistantAgent):
             #         if chunk["choices"][0]["finish_reason"]:
             #             if chunk["choices"][0]["finish_reason"] == "stop": 
             #                 break
-            
+
+            full_response_str = ""
+            if len(full_response)>1:
+                for response in full_response:
+                    for key, value in response.items():
+                        full_response_str += f"**{key}:**\n\n{value}\n\n"
+            else:
+                for response in full_response:
+                    for key, value in response.items():
+                        full_response_str += f"{value}"
 
             model_result = CreateResult(
-                content=full_response, 
+                content=full_response_str, 
                 finish_reason="stop",
-                usage = RequestUsage(prompt_tokens = 0, completion_tokens = len(full_response.split())),
+                usage = RequestUsage(prompt_tokens = 0, completion_tokens = len(full_response_str.split())),
                 cached = False
                 )
             

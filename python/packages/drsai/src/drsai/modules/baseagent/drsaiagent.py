@@ -10,6 +10,7 @@ from typing import (
     Optional, 
     Tuple,
     Self,
+    Mapping,
     )
 
 import asyncio
@@ -40,9 +41,10 @@ from autogen_core.models import (
 )
 
 from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.state import AssistantAgentState
 from autogen_agentchat.agents._assistant_agent import AssistantAgentConfig
 from autogen_agentchat.base import Handoff as HandoffBase
-from autogen_agentchat.base import Response
+from autogen_agentchat.base import Response, TaskResult
 from autogen_agentchat.messages import (
     BaseAgentEvent,
     BaseChatMessage,
@@ -62,9 +64,7 @@ from autogen_agentchat.messages import (
     Image,
 )
 from drsai import HepAIChatCompletionClient
-from drsai.modules.managers.base_thread import Thread
-from drsai.modules.managers.threads_manager import ThreadsManager
-
+from drsai.modules.managers.database import DatabaseManager
 
 
 class DrSaiAgent(AssistantAgent):
@@ -91,8 +91,7 @@ class DrSaiAgent(AssistantAgent):
         memory_function: Callable = None,
         # allow_reply_function: bool = False,
         reply_function: Callable = None,
-        thread: Thread = None,
-        thread_mgr: ThreadsManager = None,
+        db_manager: DatabaseManager = None,
         **kwargs,
             ):
         '''
@@ -123,8 +122,7 @@ class DrSaiAgent(AssistantAgent):
         # self._allow_reply_function: bool = allow_reply_function
         self._reply_function: Callable = reply_function
         self._memory_function: Callable = memory_function
-        self._thread: Thread = thread
-        self._thread_mgr: ThreadsManager = thread_mgr
+        self._db_manager: DatabaseManager = db_manager
         self._user_params: Dict[str, Any] = {}
         self._user_params.update(kwargs)
 
@@ -249,8 +247,7 @@ class DrSaiAgent(AssistantAgent):
             tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
             agent_name: str,
             cancellation_token: CancellationToken,
-            thread: Thread = None,
-            thread_mgr: ThreadsManager = None,
+            db_manager: DatabaseManager,
             **kwargs,
             ) -> AsyncGenerator[Union[CreateResult, ModelClientStreamingChunkEvent], None]:
         """使用自定义的reply_function，自定义对话回复的定制, CreateResult被期待在最后一个事件返回"""
@@ -282,8 +279,7 @@ class DrSaiAgent(AssistantAgent):
                 handoff_tools=handoff_tools, 
                 tools=tools, 
                 cancellation_token=cancellation_token, 
-                thread=thread, 
-                thread_mgr=thread_mgr, 
+                db_manager=db_manager,
                 **self._user_params
                 ):
                 if isinstance(chunk, str):
@@ -319,11 +315,16 @@ class DrSaiAgent(AssistantAgent):
             if not asyncio.iscoroutinefunction(self._reply_function) and not inspect.isasyncgenfunction(self._reply_function):
                 raise ValueError("reply_function must be a coroutine function if model_client_stream is False.")
             response = await self._reply_function(
+                self,
                 oai_messages, 
                 agent_name = agent_name,
                 llm_messages = llm_messages, 
+                model_client=model_client, 
+                workbench=workbench, 
+                handoff_tools=handoff_tools, 
                 tools=tools, 
                 cancellation_token=cancellation_token, 
+                db_manager=db_manager,
                 **self._user_params
                 )
             if isinstance(response, str):
@@ -412,8 +413,7 @@ class DrSaiAgent(AssistantAgent):
                 tools = all_tools,
                 agent_name=agent_name, 
                 cancellation_token=cancellation_token,
-                thread = self._thread,
-                thread_mgr = self._thread_mgr,
+                db_manager=self._db_manager,
             ):
                 # if isinstance(chunk, CreateResult):
                 #     model_result = chunk
@@ -580,6 +580,53 @@ class DrSaiAgent(AssistantAgent):
                 await monitor_pause_task
             except asyncio.CancelledError:
                 pass
+    
+    async def run_stream(
+        self,
+        *,
+        task: str | BaseChatMessage | Sequence[BaseChatMessage] | None = None,
+        cancellation_token: CancellationToken | None = None,
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | TaskResult, None]:
+        """Run the agent with the given task and return a stream of messages
+        and the final task result as the last item in the stream."""
+        if cancellation_token is None:
+            cancellation_token = CancellationToken()
+        input_messages: List[BaseChatMessage] = []
+        output_messages: List[BaseAgentEvent | BaseChatMessage] = []
+        if task is None:
+            pass
+        elif isinstance(task, str):
+            text_msg = TextMessage(content=task, source="user", metadata={"internal": "yes"})
+            input_messages.append(text_msg)
+            output_messages.append(text_msg)
+            yield text_msg
+        elif isinstance(task, BaseChatMessage):
+            task.metadata["internal"] = "yes"
+            input_messages.append(task)
+            output_messages.append(task)
+            yield task
+        else:
+            if not task:
+                raise ValueError("Task list cannot be empty.")
+            for msg in task:
+                if isinstance(msg, BaseChatMessage):
+                    msg.metadata["internal"] = "yes"
+                    input_messages.append(msg)
+                    output_messages.append(msg)
+                    yield msg
+                else:
+                    raise ValueError(f"Invalid message type in sequence: {type(msg)}")
+        async for message in self.on_messages_stream(input_messages, cancellation_token):
+            if isinstance(message, Response):
+                yield message.chat_message
+                output_messages.append(message.chat_message)
+                yield TaskResult(messages=output_messages)
+            else:
+                yield message
+                if isinstance(message, ModelClientStreamingChunkEvent):
+                    # Skip the model client streaming chunk events.
+                    continue
+                output_messages.append(message)
 
     @staticmethod
     def _summarize_tool_use(
@@ -623,11 +670,25 @@ class DrSaiAgent(AssistantAgent):
             inner_messages=inner_messages,
         )
     
+    async def on_reset(self, cancellation_token: CancellationToken) -> None:
+        """Reset the assistant agent to its initialization state."""
+        await self._model_context.clear()
+
+    async def save_state(self) -> Mapping[str, Any]:
+        """Save the current state of the assistant agent."""
+        model_context_state = await self._model_context.save_state()
+        return AssistantAgentState(llm_context=model_context_state).model_dump()
+
+    async def load_state(self, state: Mapping[str, Any]) -> None:
+        """Load the state of the assistant agent"""
+        assistant_agent_state = AssistantAgentState.model_validate(state)
+        # Load the model context state.
+        await self._model_context.load_state(assistant_agent_state.llm_context)
+
     @classmethod
     def _from_config(
         cls, config: AssistantAgentConfig, 
-        thread: Thread = None, 
-        thread_mgr: ThreadsManager = None,
+        db_manager: DatabaseManager,
         memory_function: Callable = None,
         reply_function: Callable = None,
         **kwargs,
@@ -660,8 +721,7 @@ class DrSaiAgent(AssistantAgent):
             metadata=config.metadata,
             memory_function=memory_function,
             reply_function=reply_function,
-            thread=thread,
-            thread_mgr=thread_mgr,
+            db_manager=db_manager,
             **kwargs,
         
         )

@@ -1,5 +1,4 @@
 from .app_worker import DrSaiAPP
-from ..dr_sai import DrSai
 
 import os
 from typing import (
@@ -21,8 +20,10 @@ from pathlib import Path
 from hepai import HRModel, HModelConfig, HWorkerConfig, HWorkerAPP
 import hepai
 
+from drsai.modules.managers.database import DatabaseManager
 from drsai.modules.groupchat import DrSaiGroupChat
 from drsai.modules.baseagent import DrSaiAgent
+from drsai.configs import CONST
 
 here = Path(__file__).parent.resolve()
 
@@ -80,6 +81,9 @@ async def run_backend(agent_factory: callable, **kwargs):
         agent_factory: 工厂函数，用于创建AssistantAgent/BaseGroupChat实例
         host: str = , "0.0.0.0" ,  # 后端服务host
         port: int = 42801,  # 后端服务port
+        engine_uri: str = None,  # 数据库uri
+        base_dir: str = None,  # 数据库目录
+        auto_upgrade: bool = False,  # 是否自动升级数据库
         enable_openwebui_pipeline: bool = False,  # 是否启动openwebui pipelines
         agnet_name: str = "Dr.Sai",  # 智能体的名称
         pipelines_dir: str = None,  # openwebui pipelines目录
@@ -88,13 +92,22 @@ async def run_backend(agent_factory: callable, **kwargs):
     '''
     host: str =  kwargs.pop("host", "0.0.0.0")
     port: int =  kwargs.pop("port", 42801)
-    
+    engine_uri = kwargs.pop('engine_uri', None) or f"sqlite:///{CONST.FS_DIR}/drsai.db"
+    base_dir = kwargs.pop('base_dir', None) or CONST.FS_DIR
+    db_manager = DatabaseManager(
+        engine_uri = engine_uri,
+        base_dir = base_dir
+    )
+    auto_upgrade = kwargs.pop('auto_upgrade', False)
+    init_response = db_manager.initialize_database(auto_upgrade=auto_upgrade)
+    assert init_response.status, init_response.message
+    kwargs.update({"db_manager": db_manager})
+
+    enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
     drsaiapp = DrSaiAPP(
         agent_factory = agent_factory,
         **kwargs
         )
-    
-    enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
     if enable_pipeline:
         os.environ['BACKEND_PORT'] = str(port)
         agnet_name = kwargs.pop("agnet_name", "Dr.Sai")
@@ -147,6 +160,9 @@ async def run_backend(agent_factory: callable, **kwargs):
         await server.serve()
     except asyncio.CancelledError:
         await server.shutdown()
+    finally:
+        # 关闭数据库连接
+        await db_manager.close()
 
 
 @dataclass
@@ -263,7 +279,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         
     @HRModel.remote_callable
     async def a_chat_completions(self, *args, **kwargs) -> AsyncGenerator:
-        return self.drsai.a_start_chat_completions(*args, **kwargs)
+        return self.drsai.a_drsai_ui_completions(*args, **kwargs)
 
 
 async def run_worker(agent_factory: callable, **kwargs):
@@ -315,6 +331,17 @@ async def run_worker(agent_factory: callable, **kwargs):
     if port is not None:
         worker_args.port = port
         os.environ['BACKEND_PORT'] = str(port)
+    
+    engine_uri = kwargs.pop('engine_uri', None) or f"sqlite:///{CONST.FS_DIR}/drsai.db"
+    base_dir = kwargs.pop('base_dir', None) or CONST.FS_DIR
+    db_manager = DatabaseManager(
+        engine_uri = engine_uri,
+        base_dir = base_dir
+    )
+    auto_upgrade = kwargs.pop('auto_upgrade', False)
+    init_response = db_manager.initialize_database(auto_upgrade=auto_upgrade)
+    assert init_response.status, init_response.message
+    kwargs.update({"db_manager": db_manager})
 
     no_register: bool =  kwargs.pop("no_register", None)
     if no_register is not None:
@@ -379,6 +406,10 @@ async def run_worker(agent_factory: callable, **kwargs):
     # 在现有事件循环中启动服务
     if enable_pipeline:
         print(f"Enable OpenWebUI pipelines: `http://{worker_args.host}:{worker_args.port}/pipelines` with API-KEY: `{owebui_pipeline_app.api_key}`")
-    await server.serve()
+    try:
+        await server.serve()
+    finally:
+        # 关闭数据库连接
+        await db_manager.close()
 
 
