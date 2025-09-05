@@ -109,10 +109,8 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
 
         // 如果缓存中没有，检查我们的状态记录
         const hasMessages = sessionMessageStatus[session.id];
-        console.log("Session message status from state:", hasMessages);
         return hasMessages || false;
     }, [session?.id, getSessionRun, sessionMessageStatus]);
-    //===================================================
 
 
     // 初始化时恢复持久化的智能体选择
@@ -169,7 +167,6 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                             onAgentSelect(previouslySelectedAgent);
                         }
                     } catch (error) {
-                        console.warn("Failed to restore agent config:", error);
                         // 即使配置恢复失败，也要恢复选中的智能体
                         setPersistedSelectedAgent(previouslySelectedAgent);
                         onAgentSelect(previouslySelectedAgent);
@@ -195,7 +192,6 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
                             onAgentSelect(besiiiAgent);
                         }
                     } catch (error) {
-                        console.warn("Failed to load BESIII agent config:", error);
                         // 即使配置加载失败，也要设置选中的智能体
                         setMode("magentic-one");
                         setPersistedSelectedAgent(besiiiAgent);

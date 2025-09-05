@@ -54,8 +54,6 @@ const cleanMessageForStorage = (message: Message): Message => {
 const cleanRunForStorage = (run: Run): Run => {
   const cleanedRun = { ...run };
 
-  console.log('Cleaning run for storage:', cleanedRun);
-
   // 只保留最近50条消息
   if (cleanedRun.messages.length > 50) {
     cleanedRun.messages = cleanedRun.messages.slice(-50);

@@ -151,5 +151,4 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
     usage: getStorageUsageString,
   };
   
-  console.log('DrSai storage utils available at window.drSaiStorage');
 }
