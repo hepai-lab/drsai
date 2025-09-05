@@ -120,6 +120,8 @@ export default function ChatView({
 
   const inputTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const activeSocketRef = React.useRef<WebSocket | null>(null);
+  // 用于跟踪正在流式输出的消息，避免重复渲染
+  const streamingMessageRef = React.useRef<{ source: string, content: string } | null>(null);
 
   // Add ref for ChatInput component
   const chatInputRef = React.useRef<{
@@ -166,7 +168,6 @@ export default function ChatView({
     // 首先尝试从缓存加载
     const cachedRun = getSessionRun(session.id);
     if (cachedRun) {
-      console.log("Loading session run from cache:", session.id);
       return cachedRun;
     }
 
@@ -378,47 +379,43 @@ export default function ChatView({
           // Check if we already have a message with the same content from chunks
           const messageData = message.data as AgentMessageConfig;
 
-          if (
-            typeof messageData.content === "string" &&
-            messageData.content.includes("<think>")
-          ) {
-            messageData.content = messageData.content.replace(
-              /<think>/g,
-              "🤔"
-            );
-          }
-
           const lastMessageIndex = current.messages.length - 1;
 
           if (lastMessageIndex >= 0) {
             const lastMessage = current.messages[lastMessageIndex];
 
             // If the last message is from the same source and has similar content,
-            // update it instead of creating a new one
+            // update it instead of creating a new one (防止流式消息重复渲染)
             if (
               (lastMessage.config.source === "assistant" ||
-                lastMessage.config.source ===
-                messageData.source) &&
+                lastMessage.config.source === messageData.source) &&
               typeof lastMessage.config.content === "string" &&
-              typeof messageData.content === "string" &&
-              messageData.content.includes(
-                lastMessage.config.content
-              )
+              typeof messageData.content === "string"
             ) {
-              const updatedMessages = [...current.messages];
-              updatedMessages[lastMessageIndex] = {
-                ...lastMessage,
-                config: {
-                  ...lastMessage.config,
-                  content: messageData.content,
-                  metadata: messageData.metadata || {},
-                },
-              };
+              // 检查内容相似度，防止流式消息重复渲染
+              const lastContent = lastMessage.config.content.trim();
+              const newContent = messageData.content.trim();
 
-              return {
-                ...current,
-                messages: updatedMessages,
-              };
+              // 检查是否是流式消息的重复发送
+              const streamingMessage = streamingMessageRef.current;
+              if (streamingMessage &&
+                streamingMessage.source === messageData.source &&
+                (newContent === streamingMessage.content ||
+                  newContent.includes(streamingMessage.content) ||
+                  streamingMessage.content.includes(newContent))) {
+                console.log("Skipping duplicate message rendering - streaming message detected");
+                // 清除流式消息跟踪
+                streamingMessageRef.current = null;
+                return current;
+              }
+
+              // 如果新消息内容与最后一条消息内容相同或包含关系，则跳过重复渲染
+              if (lastContent === newContent ||
+                newContent.includes(lastContent) ||
+                lastContent.includes(newContent)) {
+                console.log("Skipping duplicate message rendering - content similarity detected");
+                return current;
+              }
             }
           }
 
@@ -458,12 +455,6 @@ export default function ChatView({
             typeof chunkData.content === "string"
           ) {
             let processedContent = chunkData.content;
-            if (processedContent.includes("<think>")) {
-              processedContent = processedContent.replace(
-                /<think>/g,
-                "🤔"
-              );
-            }
 
             // Find the last message to append the chunk
             const lastMessageIndex = current.messages.length - 1;
@@ -471,7 +462,6 @@ export default function ChatView({
               const lastMessage =
                 current.messages[lastMessageIndex];
 
-              // Check if the last message is from the same source and is an assistant message
               // This prevents creating duplicate messages when we receive both chunks and full messages
               if (
                 lastMessage.config.source === "assistant" ||
@@ -480,15 +470,19 @@ export default function ChatView({
                 const updatedMessages = [...current.messages];
 
                 // Update the last message with the new chunk
+                const newContent = (lastMessage.config.content as string) + processedContent;
                 updatedMessages[lastMessageIndex] = {
                   ...lastMessage,
                   config: {
                     ...lastMessage.config,
-                    content:
-                      (lastMessage.config
-                        .content as string) +
-                      processedContent,
+                    content: newContent,
                   },
+                };
+
+                // 记录流式消息信息，用于后续去重
+                streamingMessageRef.current = {
+                  source: chunkData.source || "assistant",
+                  content: newContent,
                 };
 
                 updatedRun = {
@@ -513,6 +507,12 @@ export default function ChatView({
               current.id,
               session.id
             );
+
+            // 记录流式消息信息，用于后续去重
+            streamingMessageRef.current = {
+              source: chunkData.source || "assistant",
+              content: processedContent,
+            };
 
             updatedRun = {
               ...current,

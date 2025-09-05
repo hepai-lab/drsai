@@ -250,11 +250,6 @@ const parseContent = (content: any): string => {
       }
     );
   }
-
-  if (cleanedContent.includes("<think>")) {
-    cleanedContent = cleanedContent.replace(/<think>/g, "🤔");
-  }
-
   try {
     const parsedContent = JSON.parse(cleanedContent);
 

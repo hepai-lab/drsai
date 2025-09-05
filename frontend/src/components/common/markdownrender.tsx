@@ -475,9 +475,9 @@ const parseThinkTags = (
   let currentIndex = 0;
 
   // Regular expression to match complete <think>...</think> tags
-  const completeThinkRegex = /(?:🤔|<think>)(.*?)<\/think>/gs;
+  const completeThinkRegex = /<think>(.*?)<\/think>/gs;
   // Regular expression to match incomplete <think> tags (without closing tag)
-  const incompleteThinkRegex = /(?:🤔|<think>)(.*)$/s;
+  const incompleteThinkRegex = /<think>(.*)$/s;
 
   let match;
 
@@ -569,7 +569,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
   // Check if content contains think tags
   const hasThinkTags =
-    (content.includes("🤔") || content.includes("<think>")) && content.includes("</think>");
+    (content.includes("<think>")) && content.includes("</think>");
   // If allowHtml is true and content contains HTML, render it directly
   // But first check for think tags and process them
   if (allowHtml && (content.includes("<div") || content.includes("<span")) || content.includes("<img")) {
@@ -602,7 +602,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
               return (
                 <div
                   key={index}
-                  dangerouslySetInnerHTML={{ __html: part.content.replace(/(?:🤔|<think>)(.*?)<\/think>/gs, '') }}
+                  dangerouslySetInnerHTML={{ __html: part.content.replace(/<think>(.*?)<\/think>/gs, '') }}
                 />
               );
             }
@@ -623,7 +623,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             maxWidth: "100%",
             position: "relative",
           }}
-          dangerouslySetInnerHTML={{ __html: content.replace(/(?:🤔|<think>)(.*?)<\/think>/gs, '') }}
+          dangerouslySetInnerHTML={{ __html: content.replace(/<think>(.*?)<\/think>/gs, '') }}
         />
       );
     }
@@ -771,7 +771,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                   ),
                 }}
               >
-                {part.content.replace(/(?:🤔|<think>)(.*?)<\/think>/gs, '')}
+                {part.content.replace(/<think>(.*?)<\/think>/gs, '')}
               </ReactMarkdown>
             );
           }
@@ -879,7 +879,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
         }}
       >
-        {(truncate ? truncatedContent : processedContent).replace(/(?:🤔|<think>)(.*?)<\/think>/gs, '')}
+        {(truncate ? truncatedContent : processedContent).replace(/<think>(.*?)<\/think>/gs, '')}
       </ReactMarkdown>
     </div>
   );
