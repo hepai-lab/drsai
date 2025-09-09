@@ -60,6 +60,12 @@ setx "HEPAI_API_KEY" "your_api_key"
 
 以[examples/agent_groupchat/assistant_R1_oai.py](examples/agent_groupchat/assistant_R1_oai.py)为例，展示了如何基于OpenDrSai快速开发一个智能体系统。
 
+```shell
+conda activate drsai
+python examples/agent_groupchat/assistant_R1_oai.py
+```
+**NOTE**: 请根据自己的测试需要更改```if __name__ == "__main__":```中的智能体启动方式。
+
 ### 2.2.命令行启动OpenDrSai服务
 
 ```shell

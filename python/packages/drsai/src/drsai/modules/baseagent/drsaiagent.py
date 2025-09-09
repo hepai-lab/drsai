@@ -92,11 +92,16 @@ class DrSaiAgent(AssistantAgent):
         # allow_reply_function: bool = False,
         reply_function: Callable = None,
         db_manager: DatabaseManager = None,
+        thread_id: str = None,
+        user_id: str = None,
         **kwargs,
             ):
         '''
         memory_function: 自定义的memory_function，用于RAG检索等功能，为大模型回复增加最新的知识
         reply_function: 自定义的reply_function，用于自定义对话回复的定制
+        db_manager: 数据库管理器
+        thread_id: 前端当前会话的id
+        user_id: 用户id
         '''
         if not model_client:
             model_client = HepAIChatCompletionClient(model="openai/gpt-4o", api_key=os.environ.get("HEPAI_API_KEY"))
@@ -119,16 +124,25 @@ class DrSaiAgent(AssistantAgent):
             metadata=metadata
             )
         
+        # 自定义回复函数，代替call_llm
         # self._allow_reply_function: bool = allow_reply_function
         self._reply_function: Callable = reply_function
+        
+        # 记忆管理
         self._memory_function: Callable = memory_function
-        self._db_manager: DatabaseManager = db_manager
-        self._user_params: Dict[str, Any] = {}
-        self._user_params.update(kwargs)
-
+       
         # 状态管理
         self.is_paused = False
         self._paused = asyncio.Event()
+
+        # 数据管理
+        self._thread_id: str = thread_id
+        self._user_id: str = user_id
+        self._db_manager: DatabaseManager = db_manager
+
+        # 自定义参数
+        self._user_params: Dict[str, Any] = {}
+        self._user_params.update(kwargs)
     
     async def lazy_init(self, **kwargs: Any) -> None:
         """Initialize the tools and models needed by the agent."""

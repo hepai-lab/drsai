@@ -41,6 +41,7 @@ dependencies = [
     "json_schema_to_pydantic",
 
     # hepai
+    "damei",
     "hepai",
 
     # sql
