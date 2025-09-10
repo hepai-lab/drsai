@@ -5,7 +5,8 @@ import os
 
 client = HepAI(
     api_key=os.environ['HEPAI_API_KEY'],
-    base_url="https://aiapi.ihep.ac.cn/apiv2"
+    # base_url="http://localhost:42812/apiv2"
+    base_url="https://aiapi.ihep.ac.cn/apiv2",
 )
 models = client.agents.list()
 for model in models:
@@ -28,6 +29,7 @@ for model in models.data:
         worker = HRModel.connect(
                 name=model.id, 
                 api_key=os.environ['HEPAI_API_KEY'],
+                # base_url="http://localhost:42812/apiv2",
                 base_url="https://aiapi.ihep.ac.cn/apiv2",
             )
         agent_info: dict = worker.get_info()

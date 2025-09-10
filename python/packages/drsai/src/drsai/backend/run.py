@@ -196,7 +196,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
     def __init__(
             self, 
             config: DrSaiModelConfig,
-            description: str = "A Dr.Sai multi agents system",
+            worker_config: DrSaiWorkerConfig,
             logo: str = "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
             drsaiapp: DrSaiAPP = None # 传入DrSaiAPP实例
             ):
@@ -210,10 +210,12 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         self.drsai: DrSaiAPP = drsaiapp
         self._info = {
             "name": config.name, 
-            "description": description, 
+            "description": worker_config.description, 
             "version": config.version, 
+            "author": worker_config.author, 
             "logo": logo,
             } 
+        self.drsai._info = self._info
 
         
     @HRModel.remote_callable
@@ -305,6 +307,9 @@ async def run_worker(agent_factory: callable, **kwargs):
         model_args.name = agent_name
         os.environ['AGNET_NAME'] = agent_name
     
+    author: str = kwargs.pop("author", "IsYourBaby")
+    worker_args.author = author
+
     permission: str|dict = kwargs.pop("permission", None)
     if permission is not None:
         if isinstance(permission, dict):
@@ -316,7 +321,8 @@ async def run_worker(agent_factory: callable, **kwargs):
             worker_args.permissions = permission
     
     description: str = kwargs.pop("description", "A Dr.Sai multi agents system")
-    
+    worker_args.description = description
+
     version: str = kwargs.pop("version", None)
     if version is not None:
         model_args.version = version
@@ -362,7 +368,7 @@ async def run_worker(agent_factory: callable, **kwargs):
     
     model = DrSaiWorkerModel(
         config=model_args, 
-        description=description, 
+        worker_config=worker_args, 
         logo=logo, 
         drsaiapp=drsaiapp)
 

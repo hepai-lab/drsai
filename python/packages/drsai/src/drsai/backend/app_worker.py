@@ -44,6 +44,8 @@ class DrSaiAPP(DrSai):
 
         self._init_router()
         self.app.include_router(DrSaiAPP.router)
+
+        self._info = {}
     
     def _init_router(self):
 
@@ -58,6 +60,7 @@ class DrSaiAPP(DrSai):
         # agents/groupchat测试路由
         DrSaiAPP.router.get("/agents/get_info")(self.a_get_agents_info)
         DrSaiAPP.router.post("/agents/test_api")(self.a_agents_test_api)
+        DrSaiAPP.router.get("/agents/list_agents")(self.a_list_agents)
 
 
 
@@ -77,6 +80,21 @@ class DrSaiAPP(DrSai):
                 "created": None,
                 "owned_by": None
                 })
+        models = {
+            "object": "list",
+            "data": models_data
+            }
+        return models
+    
+    async def a_list_agents(self, request: Request):
+        models_data = [{
+                "id": self._info["name"],
+                "object": "agent",
+                "owner": self._info["author"],
+                "description": self._info["description"],
+                "version": self._info["version"],
+                }]
+        
         models = {
             "object": "list",
             "data": models_data
