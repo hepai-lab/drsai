@@ -274,7 +274,19 @@ class DrSai:
                         await agent.load_state(state)
             if thread_id is None:
                     thread_id = str(uuid.uuid4())
+            if hasattr(agent, "_thread_id"):
+                agent._thread_id = thread_id
+            if hasattr(agent, "_user_id"):
+                agent._user_id = user_id
             self.agent_instance[thread_id] = agent
+            ## 为智能体添加数据库管理器
+            if hasattr(agent, "_db_manager"):
+                agent._db_manager = self.db_manager
+                if isinstance(agent, BaseGroupChat):
+                    for participant in agent._participants:
+                        participant._db_manager = self.db_manager
+                else:
+                    agent._db_manager = self.db_manager
         
         ## 是否使用流式模式
         if isinstance(agent, BaseGroupChat) and stream:
@@ -342,11 +354,6 @@ class DrSai:
                     status = RunStatus.CREATED,
                     messages = [message.model_dump(mode="json") for message in task],
                 )
-                if hasattr(agent, "_db_manager"):
-                    agent._db_manager = self.db_manager
-                    if isinstance(agent, BaseGroupChat):
-                        for participant in agent._participants:
-                            participant._db_manager = self.db_manager
             else:
                 thread.user_input = user_input.model_dump(mode="json")
                 thread.status = RunStatus.ACTIVE
@@ -354,7 +361,7 @@ class DrSai:
             response: Response = self.db_manager.upsert(thread)
             if not response.status:
                 raise RuntimeError(f"Failed to create thread: {response.message}")
-                
+
             # 开始聊天
 
             rely_messages: List[BaseChatMessage] = []
@@ -491,11 +498,13 @@ class DrSai:
                     status = RunStatus.CREATED,
                     messages = [message.model_dump(mode="json") for message in task],
                 )
-                if hasattr(agent, "_db_manager"):
-                    agent._db_manager = self.db_manager
-                    if isinstance(agent, BaseGroupChat):
-                        for participant in agent._participants:
-                            participant._db_manager = self.db_manager
+                # if hasattr(agent, "_db_manager"):
+                #     agent._db_manager = self.db_manager
+                #     if isinstance(agent, BaseGroupChat):
+                #         for participant in agent._participants:
+                #             participant._db_manager = self.db_manager
+                #     else:
+                #         agent._db_manager = self.db_manager
             else:
                 thread.user_input = user_input.model_dump(mode="json")
                 thread.status = RunStatus.ACTIVE
