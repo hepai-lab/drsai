@@ -20,7 +20,7 @@ def create_agent() -> AssistantAgent:
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
     model_client = HepAIChatCompletionClient(
-        model="deepseek-ai/deepseek-r1:671b",
+        model="deepseek-ai/deepseek-r1",
         api_key=os.environ.get("HEPAI_API_KEY"),
         base_url="https://aiapi.ihep.ac.cn/apiv2",
     )
@@ -80,9 +80,9 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册信息
-            agent_name="DeepSeek_R1_test",
+            agent_name="R1_test",
             author = "xiongdb@ihep.ac.cn",
-            permission='groups: pagy; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
+            permission='groups: drsai; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             description = "DeepSeek_R1 聊天助手.",
             version = "0.1.0",
             logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",

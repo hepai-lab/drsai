@@ -298,4 +298,4 @@ class UserAgents(SQLModel, table=True):
 
 ##
 
-DatabaseModel = Team | Message | Session | Run | Gallery | Settings | Plan | AgentModeSettings | AgentModeConfig
+DatabaseModel = Team | Message | Session | Run | Gallery | Settings | Plan | AgentModeSettings | AgentModeConfig | UserAgents

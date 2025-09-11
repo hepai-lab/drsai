@@ -553,6 +553,86 @@ export class AgentWorkerAPI {
             throw new Error(data.message || "Failed to fetch agent workers");
         return data.data;
     }
+
+    async testRemoteAgent(userId: string, baseUrl: string, modelName: string, apiKey: string): Promise<any> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/agentworker/remote_url/test`,
+            {
+                method: 'POST',
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    user_id: userId,
+                    base_url: baseUrl,
+                    model_name: modelName,
+                    api_key: apiKey
+                })
+            }
+        );
+        const data = await response.json();
+        console.log("Remote agent test response:", data);
+        if (!data.status)
+            throw new Error(data.message || "Failed to test remote agent connection");
+        return data.data;
+    }
+
+    async saveRemoteAgent(userId: string, agentName: string, agentConfig: any): Promise<any> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/agentworker/remote_agent/save`,
+            {
+                method: 'POST',
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    user_id: userId,
+                    agent_name: agentName,
+                    agent_config: agentConfig
+                })
+            }
+        );
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.message || "Failed to save remote agent");
+        return data;
+    }
+
+    async getUserRemoteAgents(userId: string): Promise<any> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/agentworker/remote_agent/list?user_id=${userId}`,
+            {
+                method: 'GET',
+                headers: {
+                    "Content-Type": "application/json",
+                }
+            }
+        );
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.message || "Failed to get user remote agents");
+        return data.data;
+    }
+
+    async removeRemoteAgent(userId: string, agentName: string): Promise<any> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/agentworker/remote_agent/remove`,
+            {
+                method: 'DELETE',
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    user_id: userId,
+                    agent_name: agentName
+                })
+            }
+        );
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.message || "Failed to remove remote agent");
+        return data;
+    }
 }
 
 export const agentWorkerAPI = new AgentWorkerAPI();
