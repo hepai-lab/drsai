@@ -183,6 +183,11 @@ class WebSocketManager:
                         state_dict_decompress = json.loads(state)
                 else:
                     state_dict_decompress = state
+                
+                # TODO: 后面思考换掉
+                if state_dict_decompress:
+                    if 'RemoteAgent' in state_dict_decompress["agent_states"]:
+                        state_dict_decompress = None
 
 
             # add task as message
