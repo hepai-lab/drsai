@@ -501,7 +501,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
           size="sm"
           onClick={() => setIsRemoteModalOpen(true)}
           icon={<Plus className="h-4 w-4" />}
-          className="text-sm opacity-75 hover:opacity-100 transition-opacity"
+          className="text-sm opacity-75 hover:opacity-100 transition-opacity border border-gray-300 dark:border-gray-600"
         >
           连接远程智能体
         </Button>
