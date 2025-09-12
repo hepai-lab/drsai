@@ -120,7 +120,7 @@ async def learn_plan(
                 {
                     "provider": "drsai.HepAIChatCompletionClient",
                     "config": {
-                        "model": "deepseek-ai/deepseek-v3:671b",
+                        "model": "openai/gpt-4o",
                     },
                     "max_retries": 5,
                 }

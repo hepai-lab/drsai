@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useContext } from "react";
 import { Button } from "../../common/Button";
 import { appContext } from "../../../hooks/provider";
-import { agentAPI, agentWorkerAPI, settingsAPI, SessionAPI } from "../../views/api";
+import { agentWorkerAPI, settingsAPI, SessionAPI } from "../../views/api";
 import { parse } from "yaml";
 import { useModeConfigStore } from "../../../store/modeConfig";
+import RemoteAgentModal from "./RemoteAgentModal";
+import { Plus, X, Network } from "lucide-react";
 
 interface AgentCardProps {
   logo: string;
@@ -13,23 +15,14 @@ interface AgentCardProps {
   url: string;
   config: any;
   onClick?: () => void;
+  tags?: string[];
+  isRemovable?: boolean;
+  onRemove?: () => void;
 }
 
-// 后端返回的agent数据结构
-interface BackendAgentData {
-  name: string;
-  owner: string;
-  description?: string;
-  version?: string;
-  type?: string;
-  [key: string]: any; // 其他可能的字段
-}
 
-// 后端API返回的数据结构
-interface AgentWorkerResponse {
-  status: boolean;
-  data: Record<string, BackendAgentData>;
-}
+
+
 
 const AgentCard: React.FC<AgentCardProps> = ({
   logo,
@@ -39,6 +32,9 @@ const AgentCard: React.FC<AgentCardProps> = ({
   url,
   config,
   onClick,
+  tags = [],
+  isRemovable = false,
+  onRemove,
 }) => {
   const { setSelectedAgent, setMode, setConfig } = useModeConfigStore();
   const { user } = useContext(appContext);
@@ -112,11 +108,43 @@ const AgentCard: React.FC<AgentCardProps> = ({
   };
 
   return (
-    <div className="bg-primary border border-secondary rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-200 hover:border-magenta-800 group">
+    <div className="bg-primary border border-secondary rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-200 hover:border-magenta-800 group relative">
+      {/* 标签 - 定位在卡片上方 */}
+      {tags.length > 0 && (
+        <div className="absolute -top-[-0.5px] left-6 flex gap-1 z-20">
+          {tags.map((tag, index) => (
+            <span
+              key={index}
+              className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium shadow-sm ${tag === "远程"
+                ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                : "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
+                }`}
+            >
+              {tag === "远程" && <Network className="w-2.5 h-2.5 mr-0.5" />}
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* 移除按钮 - 右上角 */}
+      {isRemovable && onRemove && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          className="absolute top-2 right-2 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
+          title="移除智能体"
+        >
+          <X className="w-2.5 h-2.5" />
+        </button>
+      )}
+
       {/* Logo, Name and Owner Section */}
       <div className="flex items-start mb-4">
-        {/* Logo */}
-        <div className="flex-shrink-0 w-16 h-16 bg-secondary rounded-lg overflow-hidden mr-3">
+        {/* Logo with Badge */}
+        <div className="flex-shrink-0 w-16 h-16 bg-secondary rounded-lg overflow-hidden mr-3 relative">
           <img
             src={logo}
             alt={`${name} logo`}
@@ -127,6 +155,8 @@ const AgentCard: React.FC<AgentCardProps> = ({
                 "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRkM2RjMyIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyNCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPkE8L3RleHQ+Cjwvc3ZnPgo=";
             }}
           />
+
+
         </div>
 
         {/* Name and Owner */}
@@ -167,10 +197,135 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   agents,
   className = "",
 }) => {
-  const { darkMode, setDarkMode, user } = React.useContext(appContext);
+  const { user } = React.useContext(appContext);
   const [agentList, setAgentList] = useState<AgentCardProps[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isRemoteModalOpen, setIsRemoteModalOpen] = useState(false);
+
+  // 处理移除远程智能体
+  const handleRemoveRemoteAgent = async (agentName: string) => {
+    try {
+      if (user?.email) {
+        // 从后端删除
+        await agentWorkerAPI.removeRemoteAgent(user.email, agentName);
+        console.log("Remote agent removed from backend successfully");
+      }
+
+      // 从前端列表中移除
+      setAgentList(prev => prev.filter(agent =>
+        !(agent.config?.type === "remote" && agent.config?.remoteConfig?.name === agentName)
+      ));
+
+      console.log("Remote agent removed from frontend list");
+    } catch (error) {
+      console.error("Failed to remove remote agent:", error);
+      // 可以添加错误提示
+    }
+  };
+
+  const handleRemoteAgentSave = async (config: { name: string; url: string; apiKey: string }, agentInfo?: any) => {
+    try {
+      // 从测试结果中获取智能体信息，如果没有则使用默认值
+      const agentDetails = agentInfo?.[config.name] || {};
+
+      // 处理 owner 字段 - 可能是数组或字符串
+      let ownerDisplay = "用户";
+      if (agentDetails.owner) {
+        if (Array.isArray(agentDetails.owner)) {
+          ownerDisplay = agentDetails.owner[0] || "用户";
+        } else {
+          ownerDisplay = agentDetails.owner;
+        }
+      } else if (agentDetails.author) {
+        ownerDisplay = agentDetails.author;
+      } else if (user?.email) {
+        ownerDisplay = user.email;
+      }
+
+      // 创建新的远程智能体卡片，参考其他智能体的结构
+      const newRemoteAgent: AgentCardProps = {
+        logo: agentDetails.logo || "/api/placeholder/64/64",
+        name: agentDetails.name || config.name,
+        description: agentDetails.description || "远程智能体 - 自定义连接",
+        owner: ownerDisplay,
+        url: config.url,
+        config: {
+          model: config.name, // 保持与其他智能体一致的结构
+          temperature: 0.7,
+          maxTokens: 2048,
+          specialization: "remote",
+          version: agentDetails.version,
+          type: "remote",
+          // 远程智能体特有的配置
+          remoteConfig: {
+            name: config.name,
+            url: config.url,
+            apiKey: config.apiKey
+          },
+          // 包含从远程智能体获取的其他信息
+          ...agentDetails
+        },
+        // 添加标签和移除功能
+        tags: ["远程"],
+        isRemovable: true,
+        onRemove: () => handleRemoveRemoteAgent(config.name),
+        onClick: () => {
+          // 处理点击事件，可以设置为选中的智能体
+          console.log("Selected remote agent:", config.name);
+        }
+      };
+
+      // 保存到后端 - 移除 createdAt，让数据库自动处理
+      if (user?.email) {
+        await agentWorkerAPI.saveRemoteAgent(
+          user.email,
+          config.name,
+          {
+            name: config.name,
+            url: config.url,
+            apiKey: config.apiKey,
+            agentInfo: agentDetails,
+            type: "remote"
+            // 移除 createdAt，让数据库的 created_at 字段自动处理
+          }
+        );
+        console.log("Remote agent saved to backend successfully");
+      }
+
+      // 添加到智能体列表
+      setAgentList(prev => [...prev, newRemoteAgent]);
+      setIsRemoteModalOpen(false);
+
+    } catch (error) {
+      console.error("Failed to save remote agent:", error);
+      // 即使保存到后端失败，也要添加到前端列表
+      const newRemoteAgent: AgentCardProps = {
+        logo: "/api/placeholder/64/64",
+        name: config.name,
+        description: "远程智能体 - 自定义连接",
+        owner: user?.email || "用户",
+        url: config.url,
+        config: {
+          model: config.name,
+          temperature: 0.7,
+          maxTokens: 2048,
+          specialization: "remote",
+          type: "remote",
+          remoteConfig: {
+            name: config.name,
+            url: config.url,
+            apiKey: config.apiKey
+          }
+        },
+        onClick: () => {
+          console.log("Selected remote agent:", config.name);
+        }
+      };
+      setAgentList(prev => [...prev, newRemoteAgent]);
+      setIsRemoteModalOpen(false);
+    }
+  };
 
   useEffect(() => {
     const loadAgentList = async () => {
@@ -196,6 +351,13 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
             apiKey
           );
           console.log("Agent worker response:", response);
+
+          // 检查响应是否为空
+          if (!response || Object.keys(response).length === 0) {
+            console.log("No agents found for user");
+            setAgentList([]);
+            return;
+          }
 
           // 转换后端数据格式为前端需要的格式
           const convertedAgents: AgentCardProps[] = Object.entries(
@@ -225,7 +387,67 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
           });
 
           console.log("Converted agents:", convertedAgents);
-          setAgentList(convertedAgents);
+
+          // 加载用户保存的远程智能体
+          try {
+            const userRemoteAgents = await agentWorkerAPI.getUserRemoteAgents(user.email || "");
+            console.log("User remote agents:", userRemoteAgents);
+
+            // 转换远程智能体为前端格式，保持与保存时相同的结构
+            const remoteAgentCards: AgentCardProps[] = Object.entries(userRemoteAgents).map(([agentName, agentConfig]: [string, any]) => {
+              const agentInfo = agentConfig.agentInfo || {};
+
+              // 处理 owner 字段 - 可能是数组或字符串
+              let ownerDisplay = "用户";
+              if (agentInfo.owner) {
+                if (Array.isArray(agentInfo.owner)) {
+                  ownerDisplay = agentInfo.owner[0] || "用户";
+                } else {
+                  ownerDisplay = agentInfo.owner;
+                }
+              } else if (agentInfo.author) {
+                ownerDisplay = agentInfo.author;
+              }
+
+              return {
+                logo: agentInfo.logo || "/api/placeholder/64/64",
+                name: agentInfo.name || agentName,
+                description: agentInfo.description || "远程智能体 - 自定义连接",
+                owner: ownerDisplay,
+                url: agentConfig.url,
+                config: {
+                  model: agentName, // 保持与其他智能体一致的结构
+                  temperature: 0.7,
+                  maxTokens: 2048,
+                  specialization: "remote",
+                  version: agentInfo.version,
+                  type: "remote",
+                  // 远程智能体特有的配置
+                  remoteConfig: {
+                    name: agentName,
+                    url: agentConfig.url,
+                    apiKey: agentConfig.apiKey
+                  },
+                  // 包含从远程智能体获取的其他信息
+                  ...agentInfo
+                },
+                // 添加标签和移除功能
+                tags: ["远程"],
+                isRemovable: true,
+                onRemove: () => handleRemoveRemoteAgent(agentName),
+                onClick: () => {
+                  console.log("Selected remote agent:", agentName);
+                }
+              };
+            });
+
+            // 合并远程智能体和普通智能体
+            setAgentList([...convertedAgents, ...remoteAgentCards]);
+          } catch (remoteError) {
+            console.error("Error loading remote agents:", remoteError);
+            // 即使远程智能体加载失败，也要显示普通智能体
+            setAgentList(convertedAgents);
+          }
         } catch (err) {
           console.error("Error loading agent list:", err);
           setError(
@@ -271,22 +493,57 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   }
 
   return (
-    <div
-      className={`pl-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 ${className}`}
-    >
-      {agentList.map((agent, index) => (
-        <AgentCard
-          key={index}
-          logo={agent.logo}
-          name={agent.name}
-          description={agent.description}
-          owner={agent.owner}
-          url={agent.url}
-          config={agent.config}
-          onClick={agent.onClick}
-        />
-      ))}
-    </div>
+    <>
+      {/* 连接远程智能体小按钮 - 放在右上角 */}
+      <div className="flex justify-end items-center mb-4 pr-4">
+        <Button
+          variant="tertiary"
+          size="sm"
+          onClick={() => setIsRemoteModalOpen(true)}
+          icon={<Plus className="h-4 w-4" />}
+          className="text-sm opacity-75 hover:opacity-100 transition-opacity border border-gray-300 dark:border-gray-600"
+        >
+          连接远程智能体
+        </Button>
+      </div>
+
+      {/* 检查是否没有智能体 */}
+      {agentList.length === 0 ? (
+        <div
+          className={`flex flex-col items-center justify-center h-64 ${className}`}
+        >
+          <div className="text-secondary mb-2">当前用户未部署任何智能体</div>
+          <div className="text-secondary text-sm">请联系管理员部署智能体或使用默认智能体</div>
+        </div>
+      ) : (
+        <div
+          className={`pl-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 ${className}`}
+        >
+          {agentList.map((agent, index) => (
+            <AgentCard
+              key={index}
+              logo={agent.logo}
+              name={agent.name}
+              description={agent.description}
+              owner={agent.owner}
+              url={agent.url}
+              config={agent.config}
+              onClick={agent.onClick}
+              tags={agent.tags}
+              isRemovable={agent.isRemovable}
+              onRemove={agent.onRemove}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* 远程智能体连接弹框 */}
+      <RemoteAgentModal
+        isOpen={isRemoteModalOpen}
+        onClose={() => setIsRemoteModalOpen(false)}
+        onSave={handleRemoteAgentSave}
+      />
+    </>
   );
 };
 

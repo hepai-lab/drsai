@@ -1,4 +1,4 @@
-import { Dropdown, Menu, Tooltip } from "antd";
+import { Dropdown, Tooltip } from "antd";
 import {
   Archive,
   Edit,
@@ -10,7 +10,10 @@ import {
   RefreshCcw,
   StopCircle,
   Trash2,
-  Sailboat
+  Sailboat,
+  Settings,
+  User,
+  LogOut
 } from "lucide-react";
 import React, { useMemo, useRef, useEffect } from "react";
 import { Button } from "../common/Button";
@@ -18,6 +21,9 @@ import SubMenu from "../common/SubMenu";
 import LearnPlanButton from "../features/Plans/LearnPlanButton";
 import type { RunStatus, Session } from "../types/datamodel";
 import { SessionRunStatusIndicator } from "./statusicon";
+import { appContext } from "../../hooks/provider";
+import UserProfileModal from "../userProfile";
+import SettingsMenu from "../settings";
 
 
 
@@ -52,6 +58,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onStopSession,
   onLogoClick,
 }) => {
+  const { user } = React.useContext(appContext);
+  const [isProfileModalOpen, setIsProfileModalOpen] = React.useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("username");
+    localStorage.removeItem("user_email");
+    localStorage.removeItem("user_name");
+    window.location.href = "/umt/logout";
+  };
   // Group sessions by time period
   const groupSessions = (sessions: Session[]) => {
     const now = new Date();
@@ -163,52 +180,62 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-2">
                 <Dropdown
                   trigger={["click"]}
-                  overlay={
-                    <Menu>
-                      <Menu.Item
-                        key="edit"
-                        onClick={(e) => {
+                  menu={{
+                    items: [
+                      {
+                        key: "edit",
+                        label: (
+                          <>
+                            <Edit className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />{" "}
+                            Edit
+                          </>
+                        ),
+                        onClick: (e) => {
                           e.domEvent.stopPropagation();
                           onEditSession(s);
-                        }}
-                      >
-                        <Edit className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />{" "}
-                        Edit
-                      </Menu.Item>
-                      <Menu.Item
-                        key="stop"
-                        onClick={(e) => {
+                        },
+                      },
+                      {
+                        key: "stop",
+                        label: (
+                          <>
+                            <StopCircle className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />{" "}
+                            Disconnect
+                          </>
+                        ),
+                        onClick: (e) => {
                           e.domEvent.stopPropagation();
                           if (isActive && s.id) onStopSession(s.id);
-                        }}
-                        disabled={!isActive}
-                        danger
-                      >
-                        <StopCircle className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />{" "}
-                        Disconnect
-                      </Menu.Item>
-                      <Menu.Item
-                        key="delete"
-                        onClick={(e) => {
+                        },
+                        disabled: !isActive,
+                        danger: true,
+                      },
+                      {
+                        key: "delete",
+                        label: (
+                          <>
+                            <Trash2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />{" "}
+                            Delete
+                          </>
+                        ),
+                        onClick: (e) => {
                           e.domEvent.stopPropagation();
                           if (s.id) onDeleteSession(s.id);
-                        }}
-                        danger
-                      >
-                        <Trash2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />{" "}
-                        Delete
-                      </Menu.Item>
-                      <Menu.Item
-                        key="learn-plan"
-                        onClick={(e) => e.domEvent.stopPropagation()}
-                      >
-                        <LearnPlanButton
-                          sessionId={Number(s.id)}
-                          messageId={-1}
-                        />
-                      </Menu.Item>
-                    </Menu>
-                  }
+                        },
+                        danger: true,
+                      },
+                      {
+                        key: "learn-plan",
+                        label: (
+                          <LearnPlanButton
+                            sessionId={Number(s.id)}
+                            messageId={-1}
+                          />
+                        ),
+                        onClick: (e) => e.domEvent.stopPropagation(),
+                      },
+                    ],
+                  }}
                   placement="bottomRight"
                 >
                   <Button
@@ -409,6 +436,66 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
           </div>
         </div>
+
+        {/* 用户菜单 - 固定在底部 */}
+        {user && (
+          <div className="flex-shrink-0 p-3 border-t border-border-primary/20">
+            <Dropdown
+              trigger={["click"]}
+              menu={{
+                items: [
+                  {
+                    key: "profile",
+                    label: "用户信息",
+                    icon: <User className="w-4 h-4" />,
+                    onClick: () => setIsProfileModalOpen(true),
+                  },
+                  {
+                    key: "settings",
+                    label: "设置",
+                    icon: <Settings className="w-4 h-4" />,
+                    onClick: () => setIsSettingsOpen(true),
+                  },
+                  // 只在非开发模式下显示退出登录按钮
+                  ...(process.env.GATSBY_SERVICE_MODE !== "DEV" ? [
+                    {
+                      type: "divider" as const,
+                    },
+                    {
+                      key: "logout",
+                      label: "退出登录",
+                      icon: <LogOut className="w-4 h-4" />,
+                      onClick: handleLogout,
+                      danger: true,
+                    },
+                  ] : []),
+                ],
+              }}
+              placement="topLeft"
+            >
+              <button
+                className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full text-left text-secondary hover:text-accent hover:bg-tertiary/20"
+              >
+                <div className="flex items-center justify-center w-5 h-5">
+                  {user.avatar_url ? (
+                    <img
+                      className="h-5 w-5 rounded-full"
+                      src={user.avatar_url}
+                      alt={user.name}
+                    />
+                  ) : (
+                    <div className="h-5 w-5 rounded-full bg-accent text-white flex items-center justify-center text-xs font-medium">
+                      {(user.name || user.email || '?').charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                </div>
+                <span className="flex-1 truncate">
+                  {user.name || user.email}
+                </span>
+              </button>
+            </Dropdown>
+          </div>
+        )}
       </div>
     );
   }, [
@@ -420,7 +507,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
     isLoading,
     onEditSession,
     renderSessionGroup,
+    user,
+    isProfileModalOpen,
+    isSettingsOpen,
   ]);
 
-  return sidebarContent;
+  return (
+    <>
+      {sidebarContent}
+      <UserProfileModal
+        isVisible={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        user={user || { name: '', email: '' }}
+      />
+      <SettingsMenu
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+      />
+    </>
+  );
 };

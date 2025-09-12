@@ -23,7 +23,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ isVisible, onClose,
           {user?.name || user?.email}
         </div>
         <div style={{ color: "#888", marginBottom: 24 }}>{user?.email}</div>
-        <button
+        {/* <button
           style={{
             width: "100%",
             padding: "8px 0",
@@ -43,7 +43,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ isVisible, onClose,
           }}
         >
           退出登录
-        </button>
+        </button> */}
       </div>
     </Modal>
   );

@@ -8,9 +8,10 @@
     "gatsby"
   ],
   "scripts": {
-    "develop": "gatsby clean && gatsby develop",
+    "develop": "gatsby develop --port 8000 --host 0.0.0.0",
+    "develop-clean": "gatsby clean && gatsby develop --port 8000 --host 0.0.0.0",
     "dev": "npm run develop",
-    "start": "gatsby clean && gatsby develop",
+    "start": "gatsby clean && gatsby develop --port 8000 --host 0.0.0.0",
     "build": "gatsby clean && rm -rf ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ && PREFIX_PATH_VALUE='' gatsby build --prefix-paths && rsync -a --delete public/ ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/",
     "serve": "gatsby serve",
     "clean": "gatsby clean",

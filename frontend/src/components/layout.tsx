@@ -30,8 +30,8 @@ const MagenticUILayout = ({
   onTabChange,
 }: Props) => {
   const { darkMode, user, setUser } = React.useContext(appContext);
-  const { sidebar } = useConfigStore();
-  const { isExpanded } = sidebar;
+  // const { sidebar } = useConfigStore();
+  // const { isExpanded } = sidebar;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
 
 

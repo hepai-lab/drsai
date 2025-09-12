@@ -7,6 +7,7 @@ from .db import (
     Session,
     Settings,
     Team,
+    UserAgents,
     DatabaseModel,
 )
 
@@ -45,5 +46,6 @@ __all__ = [
     "EnvironmentVariable",
     "Gallery",
     "Plan",
+    "UserAgents",
     "DatabaseModel",
 ]

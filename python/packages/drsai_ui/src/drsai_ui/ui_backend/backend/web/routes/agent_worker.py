@@ -1,9 +1,10 @@
 from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException, Header
-# from openai import OpenAI 
+from pydantic import BaseModel
+# from openai import OpenAI
 from hepai import HepAI
 from hepai import HRModel
-# from ...datamodel.db import UserAgents
+from ...datamodel.db import UserAgents
 
 
 from ..deps import get_db
@@ -14,7 +15,7 @@ router = APIRouter()
 
 
 @router.get("/")
-async def get_remote_agent(user_id: str, authorization: str = Header(...), db=Depends(get_db)) -> Dict:
+async def get_remote_agent_by_worker(user_id: str, authorization: str = Header(...), db=Depends(get_db)) -> Dict:
     '''
     获取后端的mode种类设置
     '''
@@ -46,5 +47,134 @@ async def get_remote_agent(user_id: str, authorization: str = Header(...), db=De
                     pass
         return {"status": True, "data": agents}
     
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+class RemoteAgentTestRequest(BaseModel):
+    user_id: str
+    base_url: str
+    model_name: str
+    api_key: str
+
+@router.post("/remote_url/test")
+async def test_remote_agent(
+    request: RemoteAgentTestRequest) -> Dict:
+    '''
+    测试远程智能体连接并获取智能体信息
+    '''
+    try:
+        agents = {}
+
+        # 使用用户提供的远程 API key 连接远程智能体
+        worker = HRModel.connect(
+                name=request.model_name,
+                api_key=request.api_key,
+                base_url=request.base_url,
+            )
+        agent_info: dict = worker.get_info()
+
+        # 安全地处理 owner 字段
+        if "author" in agent_info:
+            agent_info.update({"owner": agent_info["author"]})
+        else:
+            agent_info.update({"owner": "Unknown"})
+
+        agents[request.model_name] = agent_info
+        return {"status": True, "data": agents}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+class SaveRemoteAgentRequest(BaseModel):
+    user_id: str
+    agent_name: str
+    agent_config: dict
+
+class RemoveRemoteAgentRequest(BaseModel):
+    user_id: str
+    agent_name: str
+
+@router.post("/remote_agent/save")
+async def save_remote_agent(
+    request: SaveRemoteAgentRequest,
+    db=Depends(get_db)) -> Dict:
+    '''
+    保存用户的远程智能体配置
+    '''
+    try:
+        # 获取用户现有的远程智能体配置
+        response = db.get(UserAgents, filters={"user_id": request.user_id})
+
+        if response.status and response.data:
+            # 用户已有配置，更新现有配置
+            user_agents = response.data[0]
+            agents_dict = user_agents.agents or {}
+            agents_dict[request.agent_name] = request.agent_config
+            user_agents.agents = agents_dict
+            db.upsert(user_agents)
+        else:
+            # 用户没有配置，创建新配置
+            agents_dict = {request.agent_name: request.agent_config}
+            user_agents = UserAgents(
+                user_id=request.user_id,
+                agents=agents_dict
+            )
+            db.upsert(user_agents)
+
+        return {"status": True, "message": "远程智能体配置保存成功"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+@router.get("/remote_agent/list")
+async def get_user_remote_agents(user_id: str, db=Depends(get_db)) -> Dict:
+    '''
+    获取用户保存的远程智能体列表
+    '''
+    try:
+        response = db.get(UserAgents, filters={"user_id": user_id})
+
+        if response.status and response.data:
+            user_agents = response.data[0]
+            return {"status": True, "data": user_agents.agents or {}}
+        else:
+            return {"status": True, "data": {}}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+@router.delete("/remote_agent/remove")
+async def remove_remote_agent(
+    request: RemoveRemoteAgentRequest,
+    db=Depends(get_db)) -> Dict:
+    '''
+    删除用户的远程智能体
+    '''
+    try:
+        # 获取用户的智能体数据
+        response = db.get(UserAgents, filters={"user_id": request.user_id})
+
+        if response.status and response.data:
+            user_agents = response.data[0]
+            agents_dict = user_agents.agents or {}
+
+            # 检查智能体是否存在
+            if request.agent_name in agents_dict:
+                # 删除指定的智能体
+                del agents_dict[request.agent_name]
+
+                # 更新数据库
+                user_agents.agents = agents_dict
+                update_response = db.upsert(user_agents)
+
+                if update_response.status:
+                    return {"status": True, "message": f"Remote agent '{request.agent_name}' removed successfully"}
+                else:
+                    raise HTTPException(status_code=500, detail="Failed to update database")
+            else:
+                raise HTTPException(status_code=404, detail=f"Remote agent '{request.agent_name}' not found")
+        else:
+            raise HTTPException(status_code=404, detail="User agents not found")
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

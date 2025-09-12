@@ -258,35 +258,36 @@ class DrSai:
             agent = self.agent_instance[thread_id]
         else:
             agent = await self._create_agent_instance()
-            if thread is not None:
-                state = thread.state
-                if state:
-                    if isinstance(state, str):
-                        try:
-                            # Try to decompress if it's compressed
-                            state_dict = decompress_state(state)
-                            await agent.load_state(state_dict)
-                        except Exception:
-                            # If decompression fails, assume it's a regular JSON string
-                            state_dict = json.loads(state)
-                            await agent.load_state(state_dict)
-                    else:
-                        await agent.load_state(state)
-            if thread_id is None:
-                    thread_id = str(uuid.uuid4())
-            if hasattr(agent, "_thread_id"):
-                agent._thread_id = thread_id
-            if hasattr(agent, "_user_id"):
-                agent._user_id = user_id
-            self.agent_instance[thread_id] = agent
-            ## 为智能体添加数据库管理器
-            if hasattr(agent, "_db_manager"):
-                agent._db_manager = self.db_manager
-                if isinstance(agent, BaseGroupChat):
-                    for participant in agent._participants:
-                        participant._db_manager = self.db_manager
+        if thread is not None:
+            state = thread.state
+            if state:
+                if isinstance(state, str):
+                    try:
+                        # Try to decompress if it's compressed
+                        state_dict = decompress_state(state)
+                        await agent.load_state(state_dict)
+                    except Exception:
+                        # If decompression fails, assume it's a regular JSON string
+                        state_dict = json.loads(state)
+                        await agent.load_state(state_dict)
                 else:
-                    agent._db_manager = self.db_manager
+                    await agent.load_state(state)
+        if thread_id is None:
+            thread_id = str(uuid.uuid4())
+            self.agent_instance[thread_id] = agent
+        if hasattr(agent, "_thread_id"):
+            agent._thread_id = thread_id
+        if hasattr(agent, "_user_id"):
+            agent._user_id = user_id
+        
+        ## 为智能体添加数据库管理器
+        if hasattr(agent, "_db_manager"):
+            agent._db_manager = self.db_manager
+            if isinstance(agent, BaseGroupChat):
+                for participant in agent._participants:
+                    participant._db_manager = self.db_manager
+            else:
+                agent._db_manager = self.db_manager
         
         ## 是否使用流式模式
         if isinstance(agent, BaseGroupChat) and stream:
