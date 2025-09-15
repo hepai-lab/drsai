@@ -577,8 +577,6 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     if (hasThinkTags) {
       const { parts } = parseThinkTags(content);
 
-
-      console.log('parts:::', parts);
       return (
         <div
           className="prose w-full"
