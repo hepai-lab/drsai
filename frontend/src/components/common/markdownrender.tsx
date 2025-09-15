@@ -502,6 +502,7 @@ const parseThinkTags = (
     });
 
     currentIndex = match.index + match[0].length;
+
   }
 
   // Check for incomplete think tag at the end
@@ -567,14 +568,17 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       ? content.slice(0, maxLength) + "..."
       : content;
 
-  // Check if content contains think tags
-  const hasThinkTags =
-    (content.includes("<think>")) && content.includes("</think>");
+  // Check if content contains think tags (both complete and incomplete)
+  const hasThinkTags = content.includes("<think>");
   // If allowHtml is true and content contains HTML, render it directly
   // But first check for think tags and process them
   if (allowHtml && (content.includes("<div") || content.includes("<span")) || content.includes("<img")) {
+
     if (hasThinkTags) {
       const { parts } = parseThinkTags(content);
+
+
+      console.log('parts:::', parts);
       return (
         <div
           className="prose w-full"
