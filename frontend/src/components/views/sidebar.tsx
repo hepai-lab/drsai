@@ -26,6 +26,7 @@ import UserProfileModal from "../userProfile";
 import SettingsMenu from "../settings";
 import magneticOneIcon from "../../assets/magnetic-one.png";
 import magneticTwoIcon from "../../assets/magnetic-two.svg";
+import { useModeConfigStore } from "../../store/modeConfig";
 
 
 
@@ -69,6 +70,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { user } = React.useContext(appContext);
   const [isProfileModalOpen, setIsProfileModalOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
+  const { selectedAgent } = useModeConfigStore();
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -316,7 +318,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="h-full flex flex-col bg-secondary/80 dark:bg-secondary/80 light:bg-gray-50/90">
         {/* 固定头部 */}
         <div className="flex-shrink-0 p-3">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-2">
             {/* Logo */}
             <div
               className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
@@ -341,6 +343,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               />
             </Tooltip>
           </div>
+          {/* 当前 Agent 名称已移动到 ContentHeader 显示 */}
           <div className="animate-fade-in">
             <SubMenu
               items={[

@@ -2,6 +2,7 @@ import React from "react";
 import { Plus, PanelLeftOpen } from "lucide-react";
 import { Tooltip } from "antd";
 import { useConfigStore } from "../hooks/store";
+import { useModeConfigStore } from "../store/modeConfig";
 
 import { Button } from "./common/Button";
 
@@ -23,6 +24,7 @@ const ContentHeader = ({
   agentSelector,
 }: ContentHeaderProps) => {
   useConfigStore();
+  const { selectedAgent } = useModeConfigStore();
 
 
   return (
@@ -58,8 +60,14 @@ const ContentHeader = ({
 
           {/* Agent Selector */}
           {agentSelector && (
-            <div className="relative z-[9999]">
+            <div className="relative z-[9999] mr-2">
               {agentSelector}
+            </div>
+          )}
+          {/* Current Agent Name - shown at top-left of main content */}
+          {selectedAgent?.name && (
+            <div className="ml-2 px-2 py-1 rounded-md text-lg text-accent bg-tertiary/30">
+              {selectedAgent.name}
             </div>
           )}
         </div>
