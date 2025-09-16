@@ -847,6 +847,9 @@ export const SessionManager: React.FC = () => {
               [id]: "stopped",
             }));
           }}
+          agents={agents}
+          selectedAgent={selectedAgent || null}
+          onAgentSelect={setSelectedAgent}
         />
       </div>
 
@@ -860,18 +863,7 @@ export const SessionManager: React.FC = () => {
           isSidebarOpen={isSidebarOpen}
           onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
           onNewSession={() => handleEditSession()}
-          agentSelector={
-            activeSubMenuItem === "current_session" ? (
-              <AgentSelectorAdvanced
-                agents={agents}
-                models={models}
-                selectedAgent={selectedAgent || undefined}
-                onAgentSelect={setSelectedAgent}
-                placeholder="Select Your Agent"
-                className="w-64"
-              />
-            ) : null
-          }
+          agentSelector={null}
         />
 
 
