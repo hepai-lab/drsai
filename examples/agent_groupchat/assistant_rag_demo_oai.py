@@ -13,7 +13,8 @@ from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_conso
 import os, json
 import asyncio
 from typing import List, Dict, Union
-
+from autogen_core import CancellationToken
+from autogen_core.models import LLMMessage
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
 def create_agent() -> AssistantAgent:
@@ -27,7 +28,14 @@ def create_agent() -> AssistantAgent:
 
 
     # Define a simple rag-demo for the assistant.
-    async def rag_demo(messages: List[Dict], **kwargs):
+    async def rag_demo(
+            messages: List[Dict], 
+            llm_messages: List[LLMMessage], 
+            model_client: HepAIChatCompletionClient,
+            cancellation_token: CancellationToken,
+            agent_name: str,
+            **kwargs
+            ):
         query = messages[-1]["content"]  # Select the last message of the chat history as the RAG query statement.
         retrieve_txt = "1. Humans will be destroyed by AI in 2050;\n2. Humans are destroyed by AI due to their arrogance and conceit."
         last_txt = f"""The following are some reference materials, and you must refer to these materials to answer the question:\n{retrieve_txt}. My question is: {query}"""

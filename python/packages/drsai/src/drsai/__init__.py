@@ -2,6 +2,7 @@ from drsai.dr_sai import DrSai
 
 # Agent components
 from drsai.modules.components.LLMClient import HepAIChatCompletionClient
+from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory
 
 # Agents
 from drsai.modules.baseagent.drsaiagent import DrSaiAgent as AssistantAgent
@@ -13,21 +14,23 @@ from drsai.modules.groupchat._swarm_group_chat import DrSaiSwarm
 from drsai.modules.groupchat._base_group_chat import DrSaiGroupChatManager, DrSaiGroupChat
 
 # manager
-from drsai.modules.managers.base_thread import Thread
-from drsai.modules.managers.threads_manager import ThreadsManager
-from drsai.modules.managers.base_thread_message import ThreadMessage, Content, Text
+# from drsai.modules.managers.base_thread import Thread
+# from drsai.modules.managers.threads_manager import ThreadsManager
+# from drsai.modules.managers.base_thread_message import ThreadMessage, Content, Text
+from drsai.modules.managers.database import DatabaseManager
+from drsai.modules.managers.datamodel.db import (Thread, UserInput)
 
 # reply functions
 from drsai.modules.baseagent.tool_reply_functions import tools_reply_function, tools_recycle_reply_function
 
 # tools
 from drsai.modules.components.tools.mcps_std import web_fetch
+from drsai.utils.fastapi2tools import get_fastapi_tools
 
 # utils
 from drsai.utils.message_convert import (
     llm_messages2oai_messages, 
     llm_messages2basechatmessages)
-
 from drsai.utils.oai_stream_event import (
     chatcompletionchunk, 
     chatcompletionchunkend, 
