@@ -67,7 +67,12 @@ const ContentHeader = ({
           {/* Current Agent Name - shown at top-left of main content */}
           {selectedAgent?.name && (
             <div className="ml-2 px-2 py-1 rounded-md text-lg text-accent bg-tertiary/30">
-              {selectedAgent.name}
+              <div className="ml-2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-tertiary/30  ">
+
+                <span className="text-lg font-medium">
+                  {selectedAgent.name}
+                </span>
+              </div>
             </div>
           )}
         </div>
