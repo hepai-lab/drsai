@@ -83,6 +83,7 @@ class Session(SQLModel, table=True):
         sa_column=Column(Integer, ForeignKey("team.id", ondelete="CASCADE")),
     )
     name: Optional[str] = None
+    agent: Optional[str] = Field(default="magentic-one")
 
 
 class RunStatus(str, Enum):

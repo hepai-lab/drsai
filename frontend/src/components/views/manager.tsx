@@ -305,6 +305,7 @@ export const SessionManager: React.FC = () => {
                 hour: "2-digit",
                 minute: "2-digit",
               }),
+            agent: selectedAgent?.name,
           },
           user.email
         );
@@ -351,6 +352,7 @@ export const SessionManager: React.FC = () => {
               hour: "2-digit",
               minute: "2-digit",
             }),
+          agent: agent.name,
         },
         user.email
       );
@@ -514,6 +516,31 @@ export const SessionManager: React.FC = () => {
 
 
       setSession(data);
+
+      // 如果后端返回了 agent 名称，则同步更新全局选中智能体，便于 ContentHeader 展示
+      if (data.agent) {
+        // 优先在已加载的 agents 列表中按名称匹配
+        const matched = Array.isArray(agents)
+          ? (agents as Agent[]).find((a) => a.name === data.agent)
+          : undefined;
+        if (matched) {
+          setSelectedAgent(matched);
+          setMode(matched.mode);
+          // 同步加载该智能体的后端配置，避免运行时报 AssistantAgent 配置为空
+          try {
+            const agentConfig = await agentAPI.getAgentConfig(user.email, matched.mode);
+            if (agentConfig) {
+              setConfig(agentConfig.config);
+            }
+          } catch (e) {
+            console.warn("Failed to load agent config for matched agent:", e);
+          }
+        } else {
+          // 回退：仅用名称构造一个占位的 agent，避免 header 为空
+          setSelectedAgent({ name: data.agent, mode: "custom" } as Agent);
+          setMode("custom");
+        }
+      }
       window.history.pushState(
         {},
         "",

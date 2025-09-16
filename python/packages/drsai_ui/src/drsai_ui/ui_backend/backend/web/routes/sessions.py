@@ -29,6 +29,10 @@ async def get_session(session_id: int, user_id: str, db=Depends(get_db)) -> Dict
 @router.post("/")
 async def create_session(session: Session, db=Depends(get_db)) -> Dict:
     """Create a new session with an associated run"""
+    # Set default mode if not provided
+    if not session.agent:
+        session.agent = "magentic-one"
+    
     # Create session
     session_response = db.upsert(session)
     if not session_response.status:
@@ -64,6 +68,9 @@ async def update_session(
     existing = db.get(Session, filters={"id": session_id, "user_id": user_id})
     if not existing.status or not existing.data:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    if session.agent is None:
+        session.agent = existing.data.agent or "magentic-one"
 
     # Update the session
     response = db.upsert(session)

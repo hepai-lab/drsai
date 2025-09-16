@@ -118,6 +118,7 @@ const PlanList: React.FC<PlanListProps> = ({
         {
           name: `Plan: ${plan.task}`,
           team_id: undefined, // TODO: remove team_id if not needed
+          agent: undefined, // plans may not have agent; keep undefined
         },
         userId
       );
