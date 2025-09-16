@@ -1,4 +1,4 @@
-import { Dropdown, Tooltip, Modal } from "antd";
+import { Dropdown, Tooltip } from "antd";
 import {
   Archive,
   Edit,
@@ -15,7 +15,7 @@ import {
   User,
   LogOut
 } from "lucide-react";
-import React, { useMemo, useRef, useEffect, useState } from "react";
+import React, { useMemo, useRef, useEffect } from "react";
 import { Button } from "../common/Button";
 import SubMenu from "../common/SubMenu";
 import LearnPlanButton from "../features/Plans/LearnPlanButton";
@@ -24,12 +24,8 @@ import { SessionRunStatusIndicator } from "./statusicon";
 import { appContext } from "../../hooks/provider";
 import UserProfileModal from "../userProfile";
 import SettingsMenu from "../settings";
-import { agentAPI, sessionAPI } from "./api";
-import { useModeConfigStore } from "../../store/modeConfig";
-import { useMessageCacheStore } from "../../store/messageCache";
 import magneticOneIcon from "../../assets/magnetic-one.png";
 import magneticTwoIcon from "../../assets/magnetic-two.svg";
-import type { Agent as ModeAgent } from "../../store/modeConfig";
 
 
 
@@ -47,9 +43,9 @@ interface SidebarProps {
   onSubMenuChange: (tabId: string) => void;
   onStopSession: (sessionId: number) => void;
   onLogoClick?: () => void;
-  agents?: ModeAgent[];
-  selectedAgent?: ModeAgent | null;
-  onAgentSelect?: (agent: ModeAgent) => void;
+  agents?: { mode: string; name: string; description?: string }[];
+  selectedAgentMode?: string;
+  onAgentClick?: (agent: { mode: string; name: string }) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -67,15 +63,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onStopSession,
   onLogoClick,
   agents = [],
-  selectedAgent = null,
-  onAgentSelect,
+  selectedAgentMode,
+  onAgentClick,
 }) => {
   const { user } = React.useContext(appContext);
   const [isProfileModalOpen, setIsProfileModalOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
-  const { setMode, setConfig, setSelectedAgent: setPersistedSelectedAgent, lastSelectedAgentMode, setLastSelectedAgentMode } = useModeConfigStore();
-  const { getSessionRun } = useMessageCacheStore();
-  const [sessionMessageStatus, setSessionMessageStatus] = useState<{ [sessionId: number]: boolean }>({});
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -85,7 +78,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     window.location.href = "/umt/logout";
   };
 
-  // 根据智能体模式返回对应的图标
   const getAgentIcon = (mode: string) => {
     switch (mode) {
       case "magentic-one":
@@ -95,77 +87,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       default:
         return null;
     }
-  };
-
-  // 检查当前session是否已经发送过消息（带缓存）
-  const computeSessionHasMessages = useMemo(() => {
-    if (!currentSession?.id) return false;
-    const cached = getSessionRun(currentSession.id);
-    if (cached && cached.messages && cached.messages.length > 0) return true;
-    return sessionMessageStatus[currentSession.id] || false;
-  }, [currentSession?.id, getSessionRun, sessionMessageStatus]);
-
-  const checkSessionHasMessages = async (sessionId: number): Promise<boolean> => {
-    if (!user?.email) return false;
-    try {
-      const sessionRuns = await sessionAPI.getSessionRuns(sessionId, user.email);
-      const hasMessages = sessionRuns.runs && sessionRuns.runs.length > 0 && sessionRuns.runs.some((run: any) => run.messages && run.messages.length > 0);
-      setSessionMessageStatus((prev) => ({ ...prev, [sessionId]: hasMessages }));
-      return hasMessages;
-    } catch {
-      return false;
-    }
-  };
-
-  const performAgentSwitch = async (agent: ModeAgent) => {
-    const newCustomAgent: ModeAgent = {
-      mode: agent.mode,
-      name: agent.name,
-      config: {} as any,
-    } as any;
-
-    try {
-      await agentAPI.saveAgentConfig(newCustomAgent as any);
-      const res2 = await agentAPI.getAgentConfig("", agent.mode);
-      if (res2) {
-        setConfig(res2.config);
-        setMode(res2.mode);
-      }
-      setPersistedSelectedAgent(agent as any);
-      setLastSelectedAgentMode(agent.mode);
-      onAgentSelect && onAgentSelect(newCustomAgent as any);
-    } catch (error) {
-      setPersistedSelectedAgent(agent as any);
-      setLastSelectedAgentMode(agent.mode);
-      onAgentSelect && onAgentSelect(newCustomAgent as any);
-    }
-  };
-
-  const handleAgentItemClick = async (agent: ModeAgent) => {
-    let actualHasMessages = computeSessionHasMessages;
-    if (currentSession?.id && !computeSessionHasMessages) {
-      actualHasMessages = await checkSessionHasMessages(currentSession.id);
-    }
-
-    if (actualHasMessages && selectedAgent && selectedAgent.mode !== agent.mode) {
-      Modal.confirm({
-        title: "智能体切换警告",
-        content: (
-          <div>
-            <p>当前会话已发送消息，切换智能体可能导致程序无法正常响应。</p>
-            <p>因为后端暂未完全实现此功能，建议创建新会话使用其他智能体。</p>
-            <p>是否仍要继续切换？</p>
-          </div>
-        ),
-        okText: "继续切换",
-        cancelText: "取消",
-        onOk: async () => {
-          await performAgentSwitch(agent);
-        },
-      });
-      return;
-    }
-    await performAgentSwitch(agent);
   };
   // Group sessions by time period
   const groupSessions = (sessions: Session[]) => {
@@ -456,13 +377,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
               <div className="grid grid-cols-1 gap-1">
                 {agents.map((agent) => {
-                  const isSelected = selectedAgent?.mode === agent.mode;
+                  const isSelected = selectedAgentMode === agent.mode;
                   const icon = getAgentIcon(agent.mode || "");
                   return (
                     <button
                       key={agent.mode}
                       type="button"
-                      onClick={() => handleAgentItemClick(agent)}
+                      onClick={() => onAgentClick && onAgentClick(agent)}
                       className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-colors duration-150 ${isSelected ? "bg-[#e7e5f2] text-[#4d3dc3] hover:bg-[#e7e5f2]" : "text-[#4a5568] hover:bg-[#f9fafb]"}`}
                     >
                       {icon ? (

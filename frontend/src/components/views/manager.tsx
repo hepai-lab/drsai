@@ -18,7 +18,7 @@ import { agentAPI, sessionAPI, settingsAPI } from "./api";
 import ChatView from "./chat/chat";
 import { SessionEditor } from "./session_editor";
 import { Sidebar } from "./sidebar";
-import AgentSelectorAdvanced, { Agent } from "../common/AgentSelectorAdvanced";
+import { Agent } from "../common/AgentSelectorAdvanced";
 import { parse } from "yaml";
 import { useModeConfigStore } from "../../store/modeConfig";
 
@@ -49,7 +49,7 @@ export const SessionManager: React.FC = () => {
   const { session, setSession, sessions, setSessions } = useConfigStore();
   const [secretKey, setSecretKey] = React.useState<string | undefined>();
   const [baseUrl, setBaseUrl] = React.useState<string | undefined>();
-  const { selectedAgent, setSelectedAgent } = useModeConfigStore();
+  const { selectedAgent, setSelectedAgent, setMode, setConfig } = useModeConfigStore();
   const [models, setModels] = React.useState<{ id: string }[]>([]);
   const [agents, setAgents] = React.useState<Agent[]>([]);
 
@@ -319,6 +319,51 @@ export const SessionManager: React.FC = () => {
     } catch (error) {
       messageApi.error("Error saving session");
       console.error(error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 点击 Agent：创建新会话并切换到该会话，设定当前 agent
+  const handleAgentClickCreateSession = async (agent: Agent) => {
+    if (!user?.email) return;
+    try {
+      setIsLoading(true);
+      // 设定前端当前 agent（持久化）
+      setSelectedAgent(agent);
+      setMode(agent.mode);
+      try {
+        const agentConfig = await agentAPI.getAgentConfig(user.email, agent.mode);
+        if (agentConfig) {
+          setConfig(agentConfig.config);
+        }
+      } catch { }
+
+      // 创建新会话
+      const created = await sessionAPI.createSession(
+        {
+          name:
+            `${agent.name} - ` +
+            new Date().toLocaleDateString(undefined, {
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+        },
+        user.email
+      );
+
+      setSessions([
+        created,
+        ...(Array.isArray(sessions) && sessions ? sessions : []),
+      ]);
+      setSession(created);
+      setActiveSubMenuItem("current_session");
+    } catch (e) {
+      messageApi.error("Failed to create session for agent");
+      console.error(e);
     } finally {
       setIsLoading(false);
     }
@@ -848,8 +893,8 @@ export const SessionManager: React.FC = () => {
             }));
           }}
           agents={agents}
-          selectedAgent={selectedAgent || null}
-          onAgentSelect={setSelectedAgent}
+          selectedAgentMode={selectedAgent?.mode}
+          onAgentClick={handleAgentClickCreateSession}
         />
       </div>
 
