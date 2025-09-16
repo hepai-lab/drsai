@@ -91,6 +91,7 @@ export interface Message extends DBModel {
 export interface Session extends DBModel {
   name: string;
   team_id?: number;
+  agent?: string;
 }
 
 export interface SessionRuns {

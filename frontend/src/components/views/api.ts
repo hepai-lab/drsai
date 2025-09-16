@@ -41,7 +41,7 @@ export class SessionAPI {
 
     async createSession(
         sessionData: Partial<Session>,
-        userId: string
+        userId: string,
     ): Promise<Session> {
         const session = {
             ...sessionData,

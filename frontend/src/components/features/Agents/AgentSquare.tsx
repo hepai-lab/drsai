@@ -73,6 +73,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
               hour: "2-digit",
               minute: "2-digit",
             })}`,
+            agent: name,
           },
           user.email
         );
