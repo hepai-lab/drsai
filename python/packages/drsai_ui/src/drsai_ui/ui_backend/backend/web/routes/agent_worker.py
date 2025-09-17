@@ -4,6 +4,7 @@ from pydantic import BaseModel
 # from openai import OpenAI
 from hepai import HepAI
 from hepai import HRModel
+from hepai.components.haiddf.worker._related_class import WorkerInfo
 from ...datamodel.db import UserAgents
 
 
@@ -40,7 +41,9 @@ async def get_remote_agent_by_worker(user_id: str, authorization: str = Header(.
                         api_key=apikey,
                         base_url="https://aiapi.ihep.ac.cn/apiv2",
                     )
-                    agent_info: dict = worker.get_info()
+                    agent_info: dict|WorkerInfo = worker.get_info()
+                    if isinstance(agent_info, WorkerInfo):
+                        agent_info = agent_info.to_dict()
                     agent_info.update({"owner": model.owner})
                     agents[model.id] = agent_info
                 except Exception as e:
