@@ -45,6 +45,7 @@ async def get_remote_agent_by_worker(user_id: str, authorization: str = Header(.
                     if isinstance(agent_info, WorkerInfo):
                         agent_info = agent_info.to_dict()
                     agent_info.update({"owner": model.owner})
+                    agent_info.update({"mode": "ddf"})
                     agents[model.id] = agent_info
                 except Exception as e:
                     pass
