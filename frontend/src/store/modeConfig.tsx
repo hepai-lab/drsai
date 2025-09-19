@@ -5,6 +5,7 @@ export interface Agent {
     mode: string;
     name: string;
     type?:
+    | "ddf"
     | "custom"
     | "drsai-besiii"
     | "drsai-agent"

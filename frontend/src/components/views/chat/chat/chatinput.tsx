@@ -558,10 +558,6 @@ const ChatInput = React.forwardRef<
       accepted: boolean,
       doResetInput: boolean = true
     ) => {
-      console.log(
-        "ChatInput submitInternal - uploadedFileData:",
-        uploadedFileData
-      );
 
       if (attachedPlan) {
         onSubmit(
