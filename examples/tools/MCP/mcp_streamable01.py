@@ -24,6 +24,12 @@ async def main():
             tools = await session.list_tools()
             print(f"Available tools: {[tool.name for tool in tools.tools]}")
 
+            tool_result = await session.call_tool(
+                "add",
+                arguments={"a": 5, "b": 3},
+            )
+            print(f"Tool result: {tool_result.content[0].text}")
+            
             # List available prompts
             prompts = await session.list_prompts()
             print(f"Available prompts: {[p.name for p in prompts.prompts]}")

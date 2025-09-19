@@ -59,7 +59,8 @@ async def main():
     # 获取标准输入工具
     # std_tools=await get_std_tools()
     # 获取SSE工具
-    sse_tools=await get_sse_tool()
+    sse_tools = await get_sse_tool()
+    print(f"Get {len(sse_tools)} tools from sse servers.")
 
 if __name__ == "__main__":
     asyncio.run(main())
