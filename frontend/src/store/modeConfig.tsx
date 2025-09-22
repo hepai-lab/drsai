@@ -37,7 +37,7 @@ export const useModeConfigStore = create<IModeConfig>()(
             config: {},
             setConfig: (config) => set({ config }),
             selectedAgent: null,
-            setSelectedAgent: (agent) => set({ selectedAgent: agent }),
+            setSelectedAgent: (selectedAgent) => set({ selectedAgent }),
             lastSelectedAgentMode: "",
             setLastSelectedAgentMode: (mode) =>
                 set({ lastSelectedAgentMode: mode }),

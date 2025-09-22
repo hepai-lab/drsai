@@ -148,7 +148,7 @@ export default function ChatView({
     setConfig,
   } = useModeConfigStore();
 
-  const [currentSessionConfig, setCurrentSessionConfig] = React.useState({mode: "", config: {}})
+  const [currentSessionConfig, setCurrentSessionConfig] = React.useState({ mode: "", config: {} })
 
   // Create a Message object from AgentMessageConfig
   const createMessage = (
@@ -196,20 +196,20 @@ export default function ChatView({
   };
 
 
-  React.useEffect(()=>{
-    const loadCurrentSession = async() => {
-    if (session?.id && user?.email) {
+  React.useEffect(() => {
+    const loadCurrentSession = async () => {
+      if (session?.id && user?.email) {
 
-    const res =await sessionAPI.getSession(session?.id, user?.email)
+        const res = await sessionAPI.getSession(session?.id, user?.email)
 
-    setCurrentSessionConfig(res.agent_mode_config)
-    console.log('rrr:',res)
+        setCurrentSessionConfig(res.agent_mode_config)
+        console.log('rrr:', res)
+      }
+
     }
 
-    console.log("session id", session?.id)}
-
     loadCurrentSession()
-  },[]);
+  }, []);
 
   React.useEffect(() => {
     const initializeSession = async () => {
@@ -777,17 +777,17 @@ export default function ChatView({
 
       // 尝试获取或重新建立WebSocket连接
       if (needsReconnect) {
-      let currentSettings = settingsConfig;
-      if (user?.email) {
-        try {
-          currentSettings = (await settingsAPI.getSettings(
-            user.email
-          )) as GeneralConfig;
-          useSettingsStore.getState().updateConfig(currentSettings);
-        } catch (error) {
-          console.error("Failed to load settings:", error);
+        let currentSettings = settingsConfig;
+        if (user?.email) {
+          try {
+            currentSettings = (await settingsAPI.getSettings(
+              user.email
+            )) as GeneralConfig;
+            useSettingsStore.getState().updateConfig(currentSettings);
+          } catch (error) {
+            console.error("Failed to load settings:", error);
+          }
         }
-      }
         // 如果需要发送continue消息来恢复会话
         if (currentRun) {
           console.log("Sending continue message to resume session...");
@@ -798,17 +798,17 @@ export default function ChatView({
             //1.！！！！！！！！！！
             // NOTE: 这里需要从SESSIONS表中获取settings_config or Agentmodeconfig
             // settings_config: settingsConfig,
-         settings_config: {
-          ...currentSettings,
-          agent_mode_config:{
-            config:currentSessionConfig,
-            mode:currentSessionConfig.mode
-          }
-          // agent_mode_config: {
-          //   mode: newConfig.mode,
-          //   config: newConfig,
-          // },
-        },
+            settings_config: {
+              ...currentSettings,
+              agent_mode_config: {
+                config: currentSessionConfig,
+                mode: currentSessionConfig.mode
+              }
+              // agent_mode_config: {
+              //   mode: newConfig.mode,
+              //   config: newConfig,
+              // },
+            },
           };
 
           socket.send(JSON.stringify(continueMessage));
@@ -817,17 +817,17 @@ export default function ChatView({
       }
       else {
         socket.send(
-        JSON.stringify({
-          type: "resume",
-        }));
-        
+          JSON.stringify({
+            type: "resume",
+          }));
+
         socket.send(
           JSON.stringify({
             type: "input_response",
             response: responseString,
           })
         );
-        
+
         console.log("Input response sent successfully");
 
         setCurrentRun((current: Run | null) => {
@@ -997,7 +997,7 @@ export default function ChatView({
         }
       }
 
-      
+
       // Setup websocket connection
       const socket = setupWebSocket(run.id, fresh_socket, false);
       if (!socket) {
@@ -1043,9 +1043,9 @@ export default function ChatView({
         team_config: teamConfig,
         settings_config: {
           ...currentSettings,
-          agent_mode_config:{
-            config:currentSessionConfig,
-            mode:currentSessionConfig.mode
+          agent_mode_config: {
+            config: currentSessionConfig,
+            mode: currentSessionConfig.mode
           }
           // agent_mode_config: {
           //   mode: newConfig.mode,

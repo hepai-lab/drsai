@@ -22,6 +22,7 @@ import { Agent } from "../common/AgentSelectorAdvanced";
 import { parse } from "yaml";
 import { useModeConfigStore } from "../../store/modeConfig";
 
+
 interface SessionWebSocket {
   socket: WebSocket;
   runId: string;
@@ -277,22 +278,26 @@ export const SessionManager: React.FC = () => {
     try {
       setIsLoading(true);
       if (sessionData.id) {
-        const updated = await sessionAPI.updateSession(
-          sessionData.id,
-          sessionData,
-          user.email
-        );
-        setSessions(
-          Array.isArray(sessions)
-            ? sessions.map((s) =>
-              s.id === updated.id ? updated : s
-            )
-            : [updated]
-        );
-        if (session?.id === updated.id) {
-          setSession(updated);
-        }
+        // const updated = await sessionAPI.updateSession(
+        //   sessionData.id,
+        //   sessionData,
+        //   user.email
+        // );
+        // setSessions(
+        //   Array.isArray(sessions)
+        //     ? sessions.map((s) =>
+        //       s.id === updated.id ? updated : s
+        //     )
+        //     : [updated]
+        // );
+        // if (session?.id === updated.id) {
+        //   setSession(updated);
+        // }
       } else {
+        setSelectedAgent({
+          mode: "magentic-one",
+          name: "Dr.Sai General",
+        });
         const created = await sessionAPI.createSession(
           {
             ...sessionData,
@@ -305,10 +310,16 @@ export const SessionManager: React.FC = () => {
                 hour: "2-digit",
                 minute: "2-digit",
               }),
-            agent: selectedAgent?.name,
+            agent_mode_config: {
+              mode: "magentic-one",
+              name: "Dr.Sai General",
+            },
           },
           user.email
         );
+
+
+        console.log("Created session:1998:::", created);
         setSessions([
           created,
           ...(Array.isArray(sessions) && sessions ? sessions : []),
@@ -329,9 +340,7 @@ export const SessionManager: React.FC = () => {
   const handleAgentClickCreateSession = async (agent: Agent) => {
     if (!user?.email) return;
     try {
-      console.log("handleAgentClickCreateSession", agent);
       setIsLoading(true);
-      // 设定前端当前 agent（持久化）
       setSelectedAgent(agent);
       setConfig({ mode: agent.mode });
 
@@ -374,7 +383,10 @@ export const SessionManager: React.FC = () => {
       setEditingSession(session);
       setIsEditorOpen(true);
     } else {
-      // this means we are creating a new session
+      setSelectedAgent({
+        mode: "magentic-one",
+        name: "Dr.Sai General",
+      });
       handleSaveSession({});
     }
     setIsLoading(false);
@@ -517,8 +529,6 @@ export const SessionManager: React.FC = () => {
       // 如果后端返回了 agent 名称，则同步更新全局选中智能体，便于 ContentHeader 展示
       if (data.agent_mode_config) {
 
-        console.log('agent_mode_config', data.agent_mode_config);
-
         setSelectedAgent(data.agent_mode_config);
         setMode(data.agent_mode_config.mode);
         // 同步加载该智能体的后端配置，避免运行时报 AssistantAgent 配置为空
@@ -550,9 +560,6 @@ export const SessionManager: React.FC = () => {
           if (matched) {
             setSelectedAgent(matched);
             setMode(matched.mode);
-          } else {
-            setSelectedAgent({ name: sessions[0].agent, mode: "custom" } as Agent);
-            setMode("custom");
           }
         } else {
           setSelectedAgent(null);
@@ -580,21 +587,21 @@ export const SessionManager: React.FC = () => {
     // Only update if it starts with "Default Session - "
     if (currentSession.name.startsWith("Default Session - ")) {
       try {
-        const updated = await sessionAPI.updateSession(
-          sessionData.id,
-          sessionData,
-          user.email
-        );
-        setSessions(
-          Array.isArray(sessions)
-            ? sessions.map((s) =>
-              s.id === updated.id ? updated : s
-            )
-            : [updated]
-        );
-        if (session?.id === updated.id) {
-          setSession(updated);
-        }
+        // const updated = await sessionAPI.updateSession(
+        //   sessionData.id,
+        //   sessionData,
+        //   user.email
+        // );
+        // setSessions(
+        //   Array.isArray(sessions)
+        //     ? sessions.map((s) =>
+        //       s.id === updated.id ? updated : s
+        //     )
+        //     : [updated]
+        // );
+        // if (session?.id === updated.id) {
+        //   setSession(updated);
+        // }
       } catch (error) {
         console.error("Error updating session name:", error);
         messageApi.error("Error updating session name");
@@ -709,7 +716,6 @@ export const SessionManager: React.FC = () => {
         window.history.pushState({}, "", `?sessionId=${created.id}`);
       }
 
-      console.log("default session设置完成");
     } catch (error) {
       console.error("Error creating default session:", error);
       messageApi.error("Error creating default session");
