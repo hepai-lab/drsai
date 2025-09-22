@@ -816,10 +816,6 @@ export default function ChatView({
         }
       }
       else {
-        socket.send(
-          JSON.stringify({
-            type: "resume",
-          }));
 
         socket.send(
           JSON.stringify({

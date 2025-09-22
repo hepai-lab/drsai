@@ -128,6 +128,11 @@ class RoundRobinGroupChatManager(BaseGroupChatManager):
     ) -> str:
         """Select a speaker from the participants in a round-robin fashion."""
         if self._is_paused:
+            # 为了确保暂停只会还能选到remoteagent
+            if self._next_speaker_index>=len(self._participant_names)-1:
+                self._next_speaker_index = 0
+            else:
+                self._next_speaker_index += 1
             # If paused, let the user speak next
             for name in self._participant_names:
                 if name == "user_proxy":
