@@ -47,6 +47,7 @@ export const SessionManager: React.FC = () => {
 
   const { user } = useContext(appContext);
   const { session, setSession, sessions, setSessions } = useConfigStore();
+  const [existing, setExisting] = React.useState(false);
   const [secretKey, setSecretKey] = React.useState<string | undefined>();
   const [baseUrl, setBaseUrl] = React.useState<string | undefined>();
   const { selectedAgent, setSelectedAgent, setMode, setConfig } = useModeConfigStore();
@@ -329,16 +330,12 @@ export const SessionManager: React.FC = () => {
   const handleAgentClickCreateSession = async (agent: Agent) => {
     if (!user?.email) return;
     try {
+      console.log("handleAgentClickCreateSession", agent);
       setIsLoading(true);
       // 设定前端当前 agent（持久化）
       setSelectedAgent(agent);
-      setMode(agent.mode);
-      try {
-        const agentConfig = await agentAPI.getAgentConfig(user.email, agent.mode);
-        if (agentConfig) {
-          setConfig(agentConfig.config);
-        }
-      } catch { }
+      setConfig({ mode: agent.mode });
+
 
       // 创建新会话
       const created = await sessionAPI.createSession(
@@ -352,7 +349,7 @@ export const SessionManager: React.FC = () => {
               hour: "2-digit",
               minute: "2-digit",
             }),
-          agent: agent.name,
+          agent_mode_config: { mode: agent.mode, name: agent.name },
         },
         user.email
       );
@@ -491,7 +488,9 @@ export const SessionManager: React.FC = () => {
     }
   };
 
-  const handleSelectSession = async (selectedSession: Session) => {
+  const handleSelectSession = async (selectedSession: Session, existing = false) => {
+    setExisting(existing);
+
     if (!user?.email || !selectedSession.id) return;
 
     try {
@@ -518,27 +517,20 @@ export const SessionManager: React.FC = () => {
       setSession(data);
 
       // 如果后端返回了 agent 名称，则同步更新全局选中智能体，便于 ContentHeader 展示
-      if (data.agent) {
-        // 优先在已加载的 agents 列表中按名称匹配
-        const matched = Array.isArray(agents)
-          ? (agents as Agent[]).find((a) => a.name === data.agent)
-          : undefined;
-        if (matched) {
-          setSelectedAgent(matched);
-          setMode(matched.mode);
-          // 同步加载该智能体的后端配置，避免运行时报 AssistantAgent 配置为空
-          try {
-            const agentConfig = await agentAPI.getAgentConfig(user.email, matched.mode);
-            if (agentConfig) {
-              setConfig(agentConfig.config);
-            }
-          } catch (e) {
-            console.warn("Failed to load agent config for matched agent:", e);
+      if (data.agent_mode_config) {
+
+        console.log('agent_mode_config', data.agent_mode_config);
+
+        setSelectedAgent(data.agent_mode_config);
+        setMode(data.agent_mode_config.mode);
+        // 同步加载该智能体的后端配置，避免运行时报 AssistantAgent 配置为空
+        try {
+          const agentConfig = await agentAPI.getAgentConfig(user.email, data.agent_mode_config.mode);
+          if (agentConfig) {
+            setConfig(agentConfig.config);
           }
-        } else {
-          // 回退：仅用名称构造一个占位的 agent，避免 header 为空
-          setSelectedAgent({ name: data.agent, mode: "custom" } as Agent);
-          setMode("custom");
+        } catch (e) {
+          console.warn("Failed to load agent config for matched agent:", e);
         }
       }
       window.history.pushState(
@@ -552,8 +544,28 @@ export const SessionManager: React.FC = () => {
       window.history.pushState({}, "", window.location.pathname); // Clear invalid URL
       if (Array.isArray(sessions) && sessions.length > 0) {
         setSession(sessions[0]); // Fall back to first session
+        // 同时更新agent信息
+        if (sessions[0].agent) {
+          const matched = Array.isArray(agents)
+            ? (agents as Agent[]).find((a) => a.name === sessions[0].agent)
+            : undefined;
+          if (matched) {
+            setSelectedAgent(matched);
+            setMode(matched.mode);
+          } else {
+            setSelectedAgent({ name: sessions[0].agent, mode: "custom" } as Agent);
+            setMode("custom");
+          }
+        } else {
+          setSelectedAgent(null);
+          setMode("");
+          setConfig({});
+        }
       } else {
         setSession(null);
+        setSelectedAgent(null);
+        setMode("");
+        setConfig({});
       }
     } finally {
       setIsLoading(false);
@@ -670,8 +682,6 @@ export const SessionManager: React.FC = () => {
   const createDefaultSession = async () => {
     if (!user?.email) return;
 
-    console.log("开始创建default session，当前sessions数量:", Array.isArray(sessions) ? sessions.length : 0);
-
     try {
       setIsLoading(true);
       const defaultName = `Default Session - ${new Date().toLocaleDateString(
@@ -685,17 +695,13 @@ export const SessionManager: React.FC = () => {
         }
       )}`;
 
-      console.log("创建session，名称:", defaultName);
-
       const created = await sessionAPI.createSession(
         {
           name: defaultName,
+          agent_mode_config: {},
         },
         user.email
       );
-
-      console.log("session创建成功:", created);
-
       setSessions([
         created,
         ...(Array.isArray(sessions) && sessions ? sessions : []),
@@ -747,6 +753,7 @@ export const SessionManager: React.FC = () => {
             </div>
           )}
           <ChatView
+            existing={existing}
             session={s}
             onSessionNameChange={handleSessionName}
             getSessionSocket={getSessionSocket}

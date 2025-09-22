@@ -6,6 +6,7 @@ import { parse } from "yaml";
 import { useModeConfigStore } from "../../../store/modeConfig";
 import RemoteAgentModal from "./RemoteAgentModal";
 import { Plus, X, Network } from "lucide-react";
+import { Agent } from "../../common/AgentSelectorAdvanced";
 
 interface AgentCardProps {
   logo: string;
@@ -16,13 +17,11 @@ interface AgentCardProps {
   config: any;
   onClick?: () => void;
   tags?: string[];
+  mode?: string;
+  apiKey?: string;
   isRemovable?: boolean;
   onRemove?: () => void;
 }
-
-
-
-
 
 const AgentCard: React.FC<AgentCardProps> = ({
   logo,
@@ -30,7 +29,9 @@ const AgentCard: React.FC<AgentCardProps> = ({
   description,
   owner,
   url,
+  mode,
   config,
+  apiKey,
   onClick,
   tags = [],
   isRemovable = false,
@@ -42,22 +43,19 @@ const AgentCard: React.FC<AgentCardProps> = ({
   const handleTryClick = async () => {
     // 创建agent对象，按照新的格式
     const agent = {
-      mode: "remote",
-      name: name,
-      type: "remote" as const,
-      description: description,
-      config: {
-        model: config.model, // 传递当前的Model信息
-      },
+      mode,
+
+      name, // 传递当前的Model信息
     };
 
     // 设置选中的agent
-    setSelectedAgent(agent);
+    setSelectedAgent({ name });
 
-    // 同时更新mode和config，这样WebSocket消息就会使用正确的参数
-    setMode("remote");
     setConfig({
-      model: config.model, // 传递当前的Model信息
+      name, // 传递当前的Model信息
+      url,
+      apiKey,
+      mode,
     });
 
     // 创建新Session
@@ -73,7 +71,12 @@ const AgentCard: React.FC<AgentCardProps> = ({
               hour: "2-digit",
               minute: "2-digit",
             })}`,
-            agent: name,
+            agent_mode_config: {
+              name, // 传递当前的Model信息
+              url,
+              apiKey,
+              mode,
+            },
           },
           user.email
         );
@@ -84,22 +87,9 @@ const AgentCard: React.FC<AgentCardProps> = ({
             detail: { agent, newSession },
           })
         );
-      } else {
-        // 如果没有用户，只触发原有的事件
-        window.dispatchEvent(
-          new CustomEvent("switchToCurrentSession", {
-            detail: { agent },
-          })
-        );
       }
     } catch (error) {
-      console.error("Error creating new session:", error);
-      // 即使创建Session失败，也要触发原有的事件
-      window.dispatchEvent(
-        new CustomEvent("switchToCurrentSession", {
-          detail: { agent },
-        })
-      );
+
     }
 
     // 保留原有的onClick回调
@@ -205,17 +195,19 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const [isRemoteModalOpen, setIsRemoteModalOpen] = useState(false);
 
   // 处理移除远程智能体
-  const handleRemoveRemoteAgent = async (agentName: string) => {
+  const handleRemoveRemoteAgent = async (id?: string) => {
+
+    console.log("handleRemoveRemoteAgent", id);
+    if (!id) return;
     try {
       if (user?.email) {
         // 从后端删除
-        await agentWorkerAPI.removeRemoteAgent(user.email, agentName);
-        console.log("Remote agent removed from backend successfully");
+        await agentWorkerAPI.removeRemoteAgent(user.email, id);
       }
 
       // 从前端列表中移除
       setAgentList(prev => prev.filter(agent =>
-        !(agent.config?.type === "remote" && agent.config?.remoteConfig?.name === agentName)
+        !(agent.mode === "remote" && agent.id === id)
       ));
 
       console.log("Remote agent removed from frontend list");
@@ -225,52 +217,26 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     }
   };
 
-  const handleRemoteAgentSave = async (config: { name: string; url: string; apiKey: string }, agentInfo?: any) => {
+  const handleRemoteAgentSave = async (config: any, agentInfo?: any) => {
     try {
-      // 从测试结果中获取智能体信息，如果没有则使用默认值
-      const agentDetails = agentInfo?.[config.name] || {};
-
-      // 处理 owner 字段 - 可能是数组或字符串
-      let ownerDisplay = "用户";
-      if (agentDetails.owner) {
-        if (Array.isArray(agentDetails.owner)) {
-          ownerDisplay = agentDetails.owner[0] || "用户";
-        } else {
-          ownerDisplay = agentDetails.owner;
-        }
-      } else if (agentDetails.author) {
-        ownerDisplay = agentDetails.author;
-      } else if (user?.email) {
-        ownerDisplay = user.email;
-      }
 
       // 创建新的远程智能体卡片，参考其他智能体的结构
       const newRemoteAgent: AgentCardProps = {
-        logo: agentDetails.logo || "/api/placeholder/64/64",
-        name: agentDetails.name || config.name,
-        description: agentDetails.description || "远程智能体 - 自定义连接",
-        owner: ownerDisplay,
+        logo: agentInfo.logo || "/api/placeholder/64/64",
+        name: agentInfo.name || config.name,
+        description: agentInfo.description || "远程智能体 - 自定义连接",
+        owner: agentInfo.owner || "未知",
         url: config.url,
         config: {
-          model: config.name, // 保持与其他智能体一致的结构
-          temperature: 0.7,
-          maxTokens: 2048,
-          specialization: "remote",
-          version: agentDetails.version,
+          name: config.name, // 保持与其他智能体一致的结构
           type: "remote",
-          // 远程智能体特有的配置
-          remoteConfig: {
-            name: config.name,
-            url: config.url,
-            apiKey: config.apiKey
-          },
-          // 包含从远程智能体获取的其他信息
-          ...agentDetails
+          url: config.url,
+          apiKey: config.apiKey
         },
         // 添加标签和移除功能
         tags: ["远程"],
         isRemovable: true,
-        onRemove: () => handleRemoveRemoteAgent(config.name),
+        onRemove: () => handleRemoveRemoteAgent(config.id),
         onClick: () => {
           // 处理点击事件，可以设置为选中的智能体
           console.log("Selected remote agent:", config.name);
@@ -281,17 +247,14 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       if (user?.email) {
         await agentWorkerAPI.saveRemoteAgent(
           user.email,
-          config.name,
           {
             name: config.name,
             url: config.url,
             apiKey: config.apiKey,
-            agentInfo: agentDetails,
-            type: "remote"
-            // 移除 createdAt，让数据库的 created_at 字段自动处理
+            mode: "remote",
+            ...agentInfo
           }
         );
-        console.log("Remote agent saved to backend successfully");
       }
 
       // 添加到智能体列表
@@ -300,33 +263,11 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
     } catch (error) {
       console.error("Failed to save remote agent:", error);
-      // 即使保存到后端失败，也要添加到前端列表
-      const newRemoteAgent: AgentCardProps = {
-        logo: "/api/placeholder/64/64",
-        name: config.name,
-        description: "远程智能体 - 自定义连接",
-        owner: user?.email || "用户",
-        url: config.url,
-        config: {
-          model: config.name,
-          temperature: 0.7,
-          maxTokens: 2048,
-          specialization: "remote",
-          type: "remote",
-          remoteConfig: {
-            name: config.name,
-            url: config.url,
-            apiKey: config.apiKey
-          }
-        },
-        onClick: () => {
-          console.log("Selected remote agent:", config.name);
-        }
-      };
-      setAgentList(prev => [...prev, newRemoteAgent]);
-      setIsRemoteModalOpen(false);
     }
   };
+  useEffect(() => {
+    console.log("agentList:", agentList);
+  })
 
   useEffect(() => {
     const loadAgentList = async () => {
@@ -346,12 +287,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
             throw new Error("API key not found in settings");
           }
 
-          console.log("Loading agent list for user:", user.email);
           const response = await agentWorkerAPI.getAgentList(
             user?.email || "",
             apiKey
           );
-          console.log("Agent worker response:", response);
 
           // 检查响应是否为空
           if (!response || Object.keys(response).length === 0) {
@@ -360,94 +299,30 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
             return;
           }
 
-          // 转换后端数据格式为前端需要的格式
-          const convertedAgents: AgentCardProps[] = Object.entries(
-            response
-          ).map(([agentId, agentData]) => {
-            console.log("Processing agent:", agentId, agentData);
-            return {
-              logo: agentData.logo, // 默认logo
-              name:
-                agentData.name ||
-                agentId.split("/").pop() ||
-                "Unknown Agent",
-              description:
-                agentData.description ||
-                "专业的AI助手，提供智能对话和任务处理服务",
-              owner: agentData.owner || "DrSAI团队",
-              url: `https://aiapi.ihep.ac.cn/apiv2/chat/completions?model=${agentId}`,
-              config: {
-                model: agentId,
-                temperature: 0.7,
-                maxTokens: 2048,
-                specialization: agentData.type || "general",
-                version: agentData.version,
-                ...agentData, // 包含所有其他字段
-              },
-            };
-          });
-
-          console.log("Converted agents:", convertedAgents);
-
           // 加载用户保存的远程智能体
           try {
             const userRemoteAgents = await agentWorkerAPI.getUserRemoteAgents(user.email || "");
-            console.log("User remote agents:", userRemoteAgents);
-
             // 转换远程智能体为前端格式，保持与保存时相同的结构
-            const remoteAgentCards: AgentCardProps[] = Object.entries(userRemoteAgents).map(([agentName, agentConfig]: [string, any]) => {
-              const agentInfo = agentConfig.agentInfo || {};
-
-              // 处理 owner 字段 - 可能是数组或字符串
-              let ownerDisplay = "用户";
-              if (agentInfo.owner) {
-                if (Array.isArray(agentInfo.owner)) {
-                  ownerDisplay = agentInfo.owner[0] || "用户";
-                } else {
-                  ownerDisplay = agentInfo.owner;
-                }
-              } else if (agentInfo.author) {
-                ownerDisplay = agentInfo.author;
-              }
-
+            const remoteAgentCards: AgentCardProps[] = userRemoteAgents.map((agent: Agent) => {
               return {
-                logo: agentInfo.logo || "/api/placeholder/64/64",
-                name: agentInfo.name || agentName,
-                description: agentInfo.description || "远程智能体 - 自定义连接",
-                owner: ownerDisplay,
-                url: agentConfig.url,
-                config: {
-                  model: agentName, // 保持与其他智能体一致的结构
-                  temperature: 0.7,
-                  maxTokens: 2048,
-                  specialization: "remote",
-                  version: agentInfo.version,
-                  type: "remote",
-                  // 远程智能体特有的配置
-                  remoteConfig: {
-                    name: agentName,
-                    url: agentConfig.url,
-                    apiKey: agentConfig.apiKey
-                  },
-                  // 包含从远程智能体获取的其他信息
-                  ...agentInfo
-                },
+                mode: "remote",
+                ...agent,
                 // 添加标签和移除功能
                 tags: ["远程"],
                 isRemovable: true,
-                onRemove: () => handleRemoveRemoteAgent(agentName),
+                onRemove: () => handleRemoveRemoteAgent(agent.id),
                 onClick: () => {
-                  console.log("Selected remote agent:", agentName);
+                  console.log("Selected remote agent:", agent.name);
                 }
               };
             });
 
             // 合并远程智能体和普通智能体
-            setAgentList([...convertedAgents, ...remoteAgentCards]);
+            setAgentList([...response, ...remoteAgentCards]);
           } catch (remoteError) {
             console.error("Error loading remote agents:", remoteError);
             // 即使远程智能体加载失败，也要显示普通智能体
-            setAgentList(convertedAgents);
+            setAgentList(response);
           }
         } catch (err) {
           console.error("Error loading agent list:", err);
@@ -493,6 +368,9 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     );
   }
 
+
+
+
   return (
     <>
       {/* 连接远程智能体小按钮 - 放在右上角 */}
@@ -531,7 +409,9 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               config={agent.config}
               onClick={agent.onClick}
               tags={agent.tags}
+              mode={agent.mode}
               isRemovable={agent.isRemovable}
+              apiKey={agent.apiKey}
               onRemove={agent.onRemove}
             />
           ))}
@@ -558,112 +438,7 @@ export const mockAgents: AgentCardProps[] = [
     owner: "DrSAI团队",
     url: "https://example.com/code-assistant",
     config: {
-      model: "gpt-4",
-      temperature: 0.2,
-      maxTokens: 2048,
-      specialization: "coding",
-    },
-  },
-  {
-    logo: "/api/placeholder/64/64",
-    name: "文档写手",
-    description:
-      "专注于技术文档编写，能够生成清晰、专业的API文档、用户手册和技术规范",
-    owner: "文档团队",
-    url: "https://example.com/doc-writer",
-    config: {
-      model: "gpt-4",
-      temperature: 0.7,
-      maxTokens: 4096,
-      specialization: "documentation",
-    },
-  },
-  {
-    logo: "/api/placeholder/64/64",
-    name: "数据分析师",
-    description:
-      "强大的数据分析和可视化助手，能够处理各种数据格式，生成洞察报告和图表",
-    owner: "数据科学团队",
-    url: "https://example.com/data-analyst",
-    config: {
-      model: "gpt-4",
-      temperature: 0.3,
-      maxTokens: 3072,
-      specialization: "data_analysis",
-      tools: ["pandas", "matplotlib", "plotly"],
-    },
-  },
-  {
-    logo: "/api/placeholder/64/64",
-    name: "UI设计顾问",
-    description:
-      "专业的UI/UX设计助手，提供界面设计建议、用户体验优化和设计系统指导",
-    owner: "设计团队",
-    url: "https://example.com/ui-consultant",
-    config: {
-      model: "gpt-4",
-      temperature: 0.8,
-      maxTokens: 2048,
-      specialization: "ui_design",
-    },
-  },
-  {
-    logo: "/api/placeholder/64/64",
-    name: "营销策划师",
-    description:
-      "创意营销策划助手，能够制定营销方案、撰写推广文案和分析市场趋势",
-    owner: "营销团队",
-    url: "https://example.com/marketing-planner",
-    config: {
-      model: "gpt-4",
-      temperature: 0.9,
-      maxTokens: 2048,
-      specialization: "marketing",
-    },
-  },
-  {
-    logo: "/api/placeholder/64/64",
-    name: "客服助手",
-    description:
-      "智能客户服务助手，提供24/7在线支持，能够快速响应用户问题并提供解决方案",
-    owner: "客服团队",
-    url: "https://example.com/customer-service",
-    config: {
-      model: "gpt-3.5-turbo",
-      temperature: 0.5,
-      maxTokens: 1024,
-      specialization: "customer_service",
-      knowledge_base: "faq_database",
-    },
-  },
-  {
-    logo: "/api/placeholder/64/64",
-    name: "翻译专家",
-    description:
-      "多语种翻译助手，支持50+种语言互译，保持语言的准确性和文化适应性",
-    owner: "本地化团队",
-    url: "https://example.com/translator",
-    config: {
-      model: "gpt-4",
-      temperature: 0.3,
-      maxTokens: 2048,
-      specialization: "translation",
-      supported_languages: ["zh", "en", "ja", "ko", "fr", "de", "es"],
-    },
-  },
-  {
-    logo: "/api/placeholder/64/64",
-    name: "安全顾问",
-    description:
-      "网络安全专家助手，提供安全漏洞检测、安全策略建议和威胁分析服务",
-    owner: "安全团队",
-    url: "https://example.com/security-advisor",
-    config: {
-      model: "gpt-4",
-      temperature: 0.1,
-      maxTokens: 3072,
-      specialization: "cybersecurity",
-      security_frameworks: ["OWASP", "NIST", "ISO27001"],
+      name: "gpt-4",
     },
   },
 ];

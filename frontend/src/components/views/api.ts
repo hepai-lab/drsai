@@ -577,7 +577,7 @@ export class AgentWorkerAPI {
         return data.data;
     }
 
-    async saveRemoteAgent(userId: string, agentName: string, agentConfig: any): Promise<any> {
+    async saveRemoteAgent(userId: string, agentConfig: any): Promise<any> {
         const response = await fetch(
             `${this.getBaseUrl()}/agentworker/remote_agent/save`,
             {
@@ -587,7 +587,6 @@ export class AgentWorkerAPI {
                 },
                 body: JSON.stringify({
                     user_id: userId,
-                    agent_name: agentName,
                     agent_config: agentConfig
                 })
             }
@@ -614,7 +613,7 @@ export class AgentWorkerAPI {
         return data.data;
     }
 
-    async removeRemoteAgent(userId: string, agentName: string): Promise<any> {
+    async removeRemoteAgent(userId: string, id: string): Promise<any> {
         const response = await fetch(
             `${this.getBaseUrl()}/agentworker/remote_agent/remove`,
             {
@@ -624,7 +623,7 @@ export class AgentWorkerAPI {
                 },
                 body: JSON.stringify({
                     user_id: userId,
-                    agent_name: agentName
+                    id
                 })
             }
         );

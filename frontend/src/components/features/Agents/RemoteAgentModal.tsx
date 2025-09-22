@@ -25,9 +25,9 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
   const { darkMode, user } = useContext(appContext);
   const [modalRoot, setModalRoot] = useState<HTMLElement | null>(null);
   const [formData, setFormData] = useState<RemoteAgentConfig>({
-    name: "",
-    url: "",
-    apiKey: "",
+    name: "R1_test",
+    url: "https://aiapi.ihep.ac.cn/apiv2",
+    apiKey: "sk-qdouiLUJIYPXkrsjwwdavEIXCrFCmwfwmLGaSKUeotORDPA",
   });
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [connectionTestPassed, setConnectionTestPassed] = useState(false);

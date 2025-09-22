@@ -51,6 +51,7 @@ interface ChatViewProps {
     only_retrieve_existing_socket: boolean
   ) => WebSocket | null;
   visible?: boolean;
+  existing?: boolean;
   onRunStatusChange: (sessionId: number, status: BaseRunStatus) => void;
 }
 
@@ -76,6 +77,7 @@ export default function ChatView({
   onSessionNameChange,
   getSessionSocket,
   visible = true,
+  existing = false,
   onRunStatusChange,
 }: ChatViewProps) {
   const serverUrl = getServerUrl();
@@ -640,6 +642,7 @@ export default function ChatView({
   // 确保WebSocket连接可用的辅助函数
   const ensureWebSocketConnection = async (runId: string, needsContinue: boolean = false): Promise<WebSocket> => {
 
+    console.log("ensureWebSocketConnection called", needsContinue);
     if (activeSocketRef.current?.readyState === WebSocket.OPEN) {
       console.log("Using existing WebSocket connection");
       return activeSocketRef.current;
@@ -688,19 +691,18 @@ export default function ChatView({
       });
     }
 
-    // 如果需要发送continue消息来恢复会话
-    if (needsContinue && currentRun) {
-      console.log("Sending continue message to resume session...");
-      const continueMessage = {
-        type: "continue",
-        task: "continue", // 继续当前任务
-        team_config: teamConfig,
-        settings_config: settingsConfig,
-      };
+    // // 如果需要发送continue消息来恢复会话
+    // if (needsContinue && currentRun) {
+    //   console.log("Sending continue message to resume session...");
+    //   const continueMessage = {
+    //     type: "continue",
+    //     team_config: teamConfig,
+    //     settings_config: settingsConfig,
+    //   };
 
-      socket.send(JSON.stringify(continueMessage));
-      console.log("Continue message sent:", continueMessage);
-    }
+    //   socket.send(JSON.stringify(continueMessage));
+    //   console.log("Continue message sent:", continueMessage);
+    // }
 
     console.log("Returning socket with readyState:", socket.readyState);
     return socket;
@@ -724,7 +726,7 @@ export default function ChatView({
       const needsReconnect = !activeSocketRef.current || activeSocketRef.current.readyState !== WebSocket.OPEN;
       console.log("Needs reconnect:", needsReconnect);
 
-      // 尝试获取或重新建立WebSocket连接
+      // // 尝试获取或重新建立WebSocket连接
       console.log("Attempting to ensure WebSocket connection...");
       const socket = await ensureWebSocketConnection(currentRun.id, needsReconnect);
       console.log("WebSocket connection ensured, socket:", socket);
@@ -757,27 +759,49 @@ export default function ChatView({
       const responseString = JSON.stringify(responseJson);
       console.log("Sending input response:", { type: "input_response", response: responseString });
 
-      socket.send(
-        JSON.stringify({
-          type: "input_response",
-          response: responseString,
-        })
-      );
+      // 尝试获取或重新建立WebSocket连接
+      if (needsReconnect) {
 
-      console.log("Input response sent successfully");
+        // 如果需要发送continue消息来恢复会话
+        if (needsContinue && currentRun) {
+          console.log("Sending continue message to resume session...");
+          const continueMessage = {
+            type: "continue",
+            task: responseString,
+            team_config: teamConfig,
+            //1.！！！！！！！！！！
+            // NOTE: 这里需要从SESSIONS表中获取settings_config or Agentmodeconfig
+            settings_config: settingsConfig,
+          };
 
-      setCurrentRun((current: Run | null) => {
-        if (!current) return null;
-        const updatedRun = {
-          ...current,
-          status: "active" as BaseRunStatus,
-          input_request: undefined, // Changed null to undefined
-        };
-        console.log("Updated run status to active:", updatedRun);
-        return updatedRun;
-      });
+          socket.send(JSON.stringify(continueMessage));
+          console.log("Continue message sent:", continueMessage);
+        }
+      }
+      else {
+        socket.send(
+          JSON.stringify({
+            type: "input_response",
+            response: responseString,
+          })
+        );
+
+        console.log("Input response sent successfully");
+
+        setCurrentRun((current: Run | null) => {
+          if (!current) return null;
+          const updatedRun = {
+            ...current,
+            status: "active" as BaseRunStatus,
+            input_request: undefined, // Changed null to undefined
+          };
+          console.log("Updated run status to active:", updatedRun);
+          return updatedRun;
+        });
+      }
+
+
     } catch (error) {
-      console.error("handleInputResponse error:", error);
       handleError(error);
     }
   };
@@ -893,6 +917,7 @@ export default function ChatView({
     }
   };
 
+  // TODO
   const runTask = async (
     query: string,
     files: RcFile[] = [],
@@ -965,7 +990,10 @@ export default function ChatView({
         ...(planString !== "" && { plan: planString }),
       };
 
-      console.log("runTask - uploadedFileData:", uploadedFileData);
+      if (existing) {
+        console.log("Session:::110000", session)
+      }
+
       const messageToSend = {
         type: "start",
         task: JSON.stringify(taskJson),
@@ -978,12 +1006,11 @@ export default function ChatView({
         settings_config: {
           ...currentSettings,
           agent_mode_config: {
-            mode,
+            mode: newConfig.mode,
             config: newConfig,
           },
         },
       };
-      console.log("runTask - messageToSend:", messageToSend);
       socket.send(JSON.stringify(messageToSend));
       const sessionData = {
         id: session?.id,

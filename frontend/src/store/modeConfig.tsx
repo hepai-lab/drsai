@@ -23,7 +23,7 @@ interface IModeConfig {
     config: Record<string, any>;
     setConfig: (config: Record<string, any>) => void;
     selectedAgent: Agent | null;
-    setSelectedAgent: (agent: Agent | null) => void;
+    setSelectedAgent: (agent: Partial<Agent> | null) => void;
     lastSelectedAgentMode: string;
     setLastSelectedAgentMode: (mode: string) => void;
 }

@@ -35,7 +35,7 @@ interface SidebarProps {
   sessions: Session[];
   currentSession: Session | null;
   onToggle: () => void;
-  onSelectSession: (session: Session) => void;
+  onSelectSession: (session: Session, existing?: boolean) => void;
   onEditSession: (session?: Session) => void;
   onDeleteSession: (sessionId: number) => void;
   isLoading?: boolean;
@@ -166,7 +166,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ? "bg-purple-100/50"
                   : ""
                 }`}
-              onClick={() => !isLoading && onSelectSession(s)}
+              onClick={() => !isLoading && onSelectSession(s, true)}
             >
               <div className="flex items-center gap-2 flex-1 min-w-0">
                 <div className={`rounded-full flex-shrink-0 ${currentSession?.id === s.id

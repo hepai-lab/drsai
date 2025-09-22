@@ -18,12 +18,11 @@ import magneticOneIcon from "../../assets/magnetic-one.png";
 import magneticTwoIcon from "../../assets/magnetic-two.svg";
 
 export interface Agent {
-    mode: string;
+    id?: string;
     name: string;
-    type?:
-    | "custom"
-    | "drsai-besiii"
-    | "drsai-agent"
+    mode?:
+    | "besiii"
+    | "ddf"
     | "magentic-one"
     | "remote";
     description?: string;
@@ -321,12 +320,7 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
     //==================================================
 
     const handleAgentSelect = async (agent: Agent) => {
-        // 之后可能会删掉==========================================
-        console.log("handleAgentSelect called with:", agent);
-        console.log("sessionHasMessages:", sessionHasMessages);
-        console.log("persistedSelectedAgent:", persistedSelectedAgent);
-        console.log("agent.mode:", agent.mode);
-        console.log("persistedSelectedAgent?.mode:", persistedSelectedAgent?.mode);
+        console.log('111222')
 
         // 如果当前session存在，异步检查是否有消息
         let actualHasMessages = sessionHasMessages;
@@ -399,101 +393,101 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         }
     };
 
-    const handleCustomFormSubmit = async (data: CustomAgentData) => {
-        // 创建新的自定义智能体
-        const newCustomAgent: Agent = {
-            mode: `custom`,
-            name: data.name || "Custom Agent",
-            config: data,
-        } as any;
-        const modelConfigYaml = `model_config: &client
-  provider: ${data.llmProvider || "OpenAIChatCompletionClient"}
-  config:
-    model: ${data.llmModel}
-    api_key: ${data.apiKey || "{{AUTO_PERSONAL_KEY_FOR_DR_SAI}}"}
-    base_url: ${data.baseUrl || "https://api.openai.com/v1"}
-    max_retries: 5
+    //     const handleCustomFormSubmit = async (data: CustomAgentData) => {
+    //         // 创建新的自定义智能体
+    //         const newCustomAgent: Agent = {
+    //             mode: `custom`,
+    //             name: data.name || "Custom Agent",
+    //             config: data,
+    //         } as any;
+    //         const modelConfigYaml = `model_config: &client
+    //   provider: ${data.llmProvider || "OpenAIChatCompletionClient"}
+    //   config:
+    //     model: ${data.llmModel}
+    //     api_key: ${data.apiKey || "{{AUTO_PERSONAL_KEY_FOR_DR_SAI}}"}
+    //     base_url: ${data.baseUrl || "https://api.openai.com/v1"}
+    //     max_retries: 5
 
-orchestrator_client: *client
-coder_client: *client
-web_surfer_client: *client
-file_surfer_client: *client
-action_guard_client: *client
+    // orchestrator_client: *client
+    // coder_client: *client
+    // web_surfer_client: *client
+    // file_surfer_client: *client
+    // action_guard_client: *client
 
-# Custom agent configuration
-custom_agent_config:
-  name: ${data.name || "Custom Agent"}
-  type: "custom"
-  tools: ${JSON.stringify(data.toolConfigs)}
-  knowledge: ${JSON.stringify(data.knowledge)}
-`;
+    // # Custom agent configuration
+    // custom_agent_config:
+    //   name: ${data.name || "Custom Agent"}
+    //   type: "custom"
+    //   tools: ${JSON.stringify(data.toolConfigs)}
+    //   knowledge: ${JSON.stringify(data.knowledge)}
+    // `;
 
-        try {
-            await agentAPI.saveAgentConfig(newCustomAgent);
+    //         try {
+    //             await agentAPI.saveAgentConfig(newCustomAgent);
 
-            // 更新 settings store
-            const currentSettings = useSettingsStore.getState().config;
-            const sessionSettingsConfig = {
-                ...currentSettings,
-                model_configs: modelConfigYaml,
-            };
-            useSettingsStore.getState().updateConfig(sessionSettingsConfig);
+    //             // 更新 settings store
+    //             const currentSettings = useSettingsStore.getState().config;
+    //             const sessionSettingsConfig = {
+    //                 ...currentSettings,
+    //                 model_configs: modelConfigYaml,
+    //             };
+    //             useSettingsStore.getState().updateConfig(sessionSettingsConfig);
 
-            if (user?.email) {
-                try {
-                    await settingsAPI.updateSettings(
-                        user.email,
-                        sessionSettingsConfig
-                    );
-                    console.log("Custom agent configuration saved to database");
-                } catch (error) {
-                    console.error(
-                        "Failed to save custom agent configuration:",
-                        error
-                    );
-                }
-            }
+    //             if (user?.email) {
+    //                 try {
+    //                     await settingsAPI.updateSettings(
+    //                         user.email,
+    //                         sessionSettingsConfig
+    //                     );
+    //                     console.log("Custom agent configuration saved to database");
+    //                 } catch (error) {
+    //                     console.error(
+    //                         "Failed to save custom agent configuration:",
+    //                         error
+    //                     );
+    //                 }
+    //             }
 
-            // 持久化选中的智能体
-            setPersistedSelectedAgent(newCustomAgent);
-            setLastSelectedAgentMode(newCustomAgent.mode);
+    //             // 持久化选中的智能体
+    //             setPersistedSelectedAgent(newCustomAgent);
+    //             setLastSelectedAgentMode(newCustomAgent.mode);
 
-            onAgentSelect(newCustomAgent);
-            setShowCustomForm(false);
-        } catch (error) {
-            console.error("Failed to save custom agent:", error);
-            // 即使保存失败，也要更新本地状态
-            setPersistedSelectedAgent(newCustomAgent);
-            setLastSelectedAgentMode(newCustomAgent.mode);
-            onAgentSelect(newCustomAgent);
-            setShowCustomForm(false);
-        }
-    };
+    //             onAgentSelect(newCustomAgent);
+    //             setShowCustomForm(false);
+    //         } catch (error) {
+    //             console.error("Failed to save custom agent:", error);
+    //             // 即使保存失败，也要更新本地状态
+    //             setPersistedSelectedAgent(newCustomAgent);
+    //             setLastSelectedAgentMode(newCustomAgent.mode);
+    //             onAgentSelect(newCustomAgent);
+    //             setShowCustomForm(false);
+    //         }
+    //     };
 
-    const handleCustomFormCancel = () => {
-        setShowCustomForm(false);
-    };
+    // const handleCustomFormCancel = () => {
+    //     setShowCustomForm(false);
+    // };
 
-    const handleDrsaiFormSubmit = async (data: DrsaiAgentData) => {
-        // 创建新的 Drsai 智能体
-        const newDrsaiAgent: Agent = {
-            mode: `drsai-${Date.now()}`,
-            name: data.name || "Dr.Sai Agent",
-            type: "drsai-agent",
-            description: `Planer: ${data.planer.llmModel}, Coder: ${data.coder.llmModel}, Tester: ${data.tester.type}`,
-        };
+    // const handleDrsaiFormSubmit = async (data: DrsaiAgentData) => {
+    //     // 创建新的 Drsai 智能体
+    //     const newDrsaiAgent: Agent = {
+    //         mode: `drsai-${Date.now()}`,
+    //         name: data.name || "Dr.Sai Agent",
+    //         type: "drsai-agent",
+    //         description: `Planer: ${data.planer.llmModel}, Coder: ${data.coder.llmModel}, Tester: ${data.tester.type}`,
+    //     };
 
-        // 持久化选中的智能体
-        setPersistedSelectedAgent(newDrsaiAgent);
-        setLastSelectedAgentMode(newDrsaiAgent.mode);
+    //     // 持久化选中的智能体
+    //     setPersistedSelectedAgent(newDrsaiAgent);
+    //     setLastSelectedAgentMode(newDrsaiAgent.mode);
 
-        onAgentSelect(newDrsaiAgent);
-        setShowDrsaiForm(false);
-    };
+    //     onAgentSelect(newDrsaiAgent);
+    //     setShowDrsaiForm(false);
+    // };
 
-    const handleDrsaiFormCancel = () => {
-        setShowDrsaiForm(false);
-    };
+    // const handleDrsaiFormCancel = () => {
+    //     setShowDrsaiForm(false);
+    // };
 
     const toggleDropdown = () => {
         if (!disabled) {
@@ -676,7 +670,7 @@ custom_agent_config:
             </div>
 
             {/* Custom Agent Form Modal */}
-            {showCustomForm && (
+            {/* {showCustomForm && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                     <div className="w-full max-w-2xl">
                         <div className="min-h-0">
@@ -688,9 +682,9 @@ custom_agent_config:
                         </div>
                     </div>
                 </div>
-            )}
+            )} */}
             {/* Drsai Agent Form Modal */}
-            {showDrsaiForm && (
+            {/* {showDrsaiForm && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                     <div className="w-full max-w-2xl">
                         <div className="min-h-0">
@@ -702,7 +696,7 @@ custom_agent_config:
                         </div>
                     </div>
                 </div>
-            )}
+            )} */}
         </>
     );
 };
