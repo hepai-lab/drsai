@@ -30,8 +30,8 @@ async def get_session(session_id: int, user_id: str, db=Depends(get_db)) -> Dict
 async def create_session(session: Session, db=Depends(get_db)) -> Dict:
     """Create a new session with an associated run"""
     # Set default mode if not provided
-    if not session.agent:
-        session.agent = "magentic-one"
+    if not session.agent_mode_config:
+        session.agent_mode_config = {"mode": "magentic-one", "config": {}}
     
     # Create session
     session_response = db.upsert(session)
@@ -68,9 +68,6 @@ async def update_session(
     existing = db.get(Session, filters={"id": session_id, "user_id": user_id})
     if not existing.status or not existing.data:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    if session.agent is None:
-        session.agent = existing.data.agent or "magentic-one"
 
     # Update the session
     response = db.upsert(session)
@@ -173,3 +170,28 @@ async def list_session_runs(session_id: int, user_id: str, db=Depends(get_db)) -
         raise HTTPException(
             status_code=500, detail="Internal server error while fetching session data"
         ) from e
+
+
+@router.put("/{session_id}/run")
+async def update_session(
+    session_id: int, user_id: str, run: Run, db=Depends(get_db)
+) -> Dict:
+    """Update an existing run"""
+    runs = db.get(
+            Run, filters={"id": run.id, "user_id": user_id, "session_id": session_id}, order="asc", return_json=False
+        )
+    if not runs.status:
+        raise HTTPException(
+            status_code=500, detail="Database error while fetching runs"
+        )
+
+    # Update the session
+    response = db.upsert(run)
+    if not response.status:
+        raise HTTPException(status_code=400, detail=response.message)
+
+    return {
+        "status": True,
+        "data": response.data,
+        "message": "Run updated successfully",
+    }

@@ -35,7 +35,7 @@ interface SidebarProps {
   sessions: Session[];
   currentSession: Session | null;
   onToggle: () => void;
-  onSelectSession: (session: Session, existing?: boolean) => void;
+  onSelectSession: (session: Session) => void;
   onEditSession: (session?: Session) => void;
   onDeleteSession: (sessionId: number) => void;
   isLoading?: boolean;

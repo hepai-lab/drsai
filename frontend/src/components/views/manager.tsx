@@ -47,7 +47,6 @@ export const SessionManager: React.FC = () => {
 
   const { user } = useContext(appContext);
   const { session, setSession, sessions, setSessions } = useConfigStore();
-  const [existing, setExisting] = React.useState(false);
   const [secretKey, setSecretKey] = React.useState<string | undefined>();
   const [baseUrl, setBaseUrl] = React.useState<string | undefined>();
   const { selectedAgent, setSelectedAgent, setMode, setConfig } = useModeConfigStore();
@@ -488,8 +487,7 @@ export const SessionManager: React.FC = () => {
     }
   };
 
-  const handleSelectSession = async (selectedSession: Session, existing = false) => {
-    setExisting(existing);
+  const handleSelectSession = async (selectedSession: Session,) => {
 
     if (!user?.email || !selectedSession.id) return;
 
@@ -753,7 +751,6 @@ export const SessionManager: React.FC = () => {
             </div>
           )}
           <ChatView
-            existing={existing}
             session={s}
             onSessionNameChange={handleSessionName}
             getSessionSocket={getSessionSocket}

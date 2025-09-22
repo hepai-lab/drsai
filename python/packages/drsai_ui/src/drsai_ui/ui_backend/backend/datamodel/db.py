@@ -83,7 +83,9 @@ class Session(SQLModel, table=True):
         sa_column=Column(Integer, ForeignKey("team.id", ondelete="CASCADE")),
     )
     name: Optional[str] = None
-    agent: Optional[str] = Field(default="magentic-one")
+    agent_mode_config: Optional[dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON)
+    )
 
 
 class RunStatus(str, Enum):
@@ -143,6 +145,10 @@ class Run(SQLModel, table=True):
     state: Optional[str] = None
 
     input_request: Optional[dict[str, Any]] = Field(
+        default=None, sa_column=Column(JSON)
+    )
+
+    settings: Optional[dict[str, Any]] = Field(
         default=None, sa_column=Column(JSON)
     )
 
@@ -293,8 +299,8 @@ class UserAgents(SQLModel, table=True):
     )  # pylint: disable=not-callable
     user_id: Optional[str] = None
     version: Optional[str] = "0.0.1"
-    agents: Optional[dict[str, Any]] = Field(
-        default_factory=dict, sa_column=Column(JSON)
+    agents: Optional[list[dict[str, Any]]] = Field(
+        default_factory=list, sa_column=Column(JSON)
     )
 
 ##

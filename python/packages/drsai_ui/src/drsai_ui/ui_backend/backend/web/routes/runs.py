@@ -86,3 +86,23 @@ async def get_run_messages(run_id: int, db=Depends(get_db)) -> Dict:
     )
 
     return {"status": True, "data": messages.data}
+
+
+@router.put("/{run_id}")
+async def update_run(run_id: int, run: Run, db=Depends(get_db)) -> Dict:
+    """update a run's status and result"""
+    existing_run = db.get(Run, filters={"id": run_id}, return_json=False)
+    if not existing_run.status or not existing_run.data:
+        raise HTTPException(status_code=404, detail="Run not found")
+    
+    response = db.upsert(run, return_json=False,)
+
+    # return {"status": True, "data": run.data[0]}
+    if not response.status:
+        raise HTTPException(status_code=400, detail=response.message)
+
+    return {
+        "status": True,
+        "data": response.data,
+        "message": "Session updated successfully",
+    }

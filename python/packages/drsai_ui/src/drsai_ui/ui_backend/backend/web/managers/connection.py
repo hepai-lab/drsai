@@ -184,10 +184,10 @@ class WebSocketManager:
                 else:
                     state_dict_decompress = state
                 
-                # TODO: 后面思考换掉
-                if state_dict_decompress:
-                    if 'RemoteAgent' in state_dict_decompress["agent_states"]:
-                        state_dict_decompress = None
+                # # TODO: 后面思考换掉
+                # if state_dict_decompress:
+                #     if 'RemoteAgent' in state_dict_decompress["agent_states"]:
+                #         state_dict_decompress = None
 
 
             # add task as message
@@ -754,15 +754,15 @@ class WebSocketManager:
             team_manager = self._team_managers.get(run_id)
             if team_manager:
                 await team_manager.pause_run()
-                # await self._send_message(
-                #     run_id,
-                #     {
-                #         "type": "system",
-                #         "status": "paused",
-                #         "timestamp": datetime.now(timezone.utc).isoformat(),
-                #     },
-                # )
-                # await self._update_run_status(run_id, RunStatus.PAUSED)
+                await self._send_message(
+                    run_id,
+                    {
+                        "type": "system",
+                        "status": "paused",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+                await self._update_run_status(run_id, RunStatus.PAUSED)
 
     async def resume_run(self, run_id: int) -> None:
         """Resume the run"""

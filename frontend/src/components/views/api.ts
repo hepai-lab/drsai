@@ -101,6 +101,25 @@ export class SessionAPI {
         return data.data; // Returns { runs: RunMessage[] }
     }
 
+    async updateSessionRuns(
+        runId: string,
+        runData: Partial<any>,
+    ): Promise<Session> {
+    
+        const response = await fetch(
+            `${this.getBaseUrl()}/runs/${runId}`,
+            {
+                method: "PUT",
+                headers: this.getHeaders(),
+                body: JSON.stringify(runData),
+            }
+        );
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.message || "Failed to update Runs");
+        return data.data;
+    }
+
     async deleteSession(sessionId: number, userId: string): Promise<void> {
         const response = await fetch(
             `${this.getBaseUrl()}/sessions/${sessionId}?user_id=${userId}`,
