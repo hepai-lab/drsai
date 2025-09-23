@@ -118,14 +118,25 @@ class StatusAgent(AssistantAgent):
     async def lazy_init(self, **kwargs) -> None:
         """Initialize the tools and models needed by the agent."""
         try:
-            funcs = get_worker_sync_functions(
-                name=self.model_name, 
-                api_key=self.api_key,
-                base_url=self.url,
-            )
+            funcs = await asyncio.wait_for(
+              asyncio.to_thread(
+                  get_worker_sync_functions,
+                  name=self.model_name,
+                  api_key=self.api_key,
+                  base_url=self.url,
+              ),
+              timeout=30.0 
+          )
             # print([f.__name__ for f in funcs])
             self._funcs_map = {f.__name__: f for f in funcs}
-            result: Dict[str, Any] = self._funcs_map['lazy_init'](chat_id=self._chat_id, api_key=self.api_key)
+            result: Dict[str, Any] = await asyncio.wait_for(
+              asyncio.to_thread(
+                  self._funcs_map['lazy_init'],
+                  chat_id=self._chat_id,
+                  api_key=self.api_key
+              ),
+              timeout=30.0
+            )
             status = result.get("status", False)
             message = result.get("message", "")
             if message:
@@ -134,6 +145,9 @@ class StatusAgent(AssistantAgent):
                 raise Exception(message)
             else:
                 logger.info(f"Lazy init {self.name} successfully.")
+        except asyncio.TimeoutError:
+          logger.error(f"Timeout initializing worker functions for {self.model_name}")
+          self._funcs_map = {}
         except Exception as e:
             logger.error(f"Failed to load worker functions: {e}")
             self._funcs_map = {}
@@ -144,7 +158,14 @@ class StatusAgent(AssistantAgent):
         logger.info(f"Paused {self.name}...")
 
         # 停掉远程的模型
-        result: Dict[str, Any] = self._funcs_map['pause'](chat_id=self._chat_id)
+        # result: Dict[str, Any] = self._funcs_map['pause'](chat_id=self._chat_id)
+        result: Dict[str, Any] = await asyncio.wait_for(
+              asyncio.to_thread(
+                  self._funcs_map['pause'],
+                  chat_id=self._chat_id
+              ),
+              timeout=30.0
+            )
         status = result.get("status", False)
         message = result.get("message", "")
         if not status:
@@ -160,7 +181,14 @@ class StatusAgent(AssistantAgent):
         """Pause the long task by setting the paused state."""
 
         # 停掉远程的long task
-        result: Dict[str, Any] = self._funcs_map['pause_long_task'](chat_id=self._chat_id)
+        # result: Dict[str, Any] = self._funcs_map['pause_long_task'](chat_id=self._chat_id)
+        result: Dict[str, Any] = await asyncio.wait_for(
+              asyncio.to_thread(
+                  self._funcs_map['pause_long_task'],
+                  chat_id=self._chat_id
+              ),
+              timeout=30.0
+            )
         status = result.get("status", False)
         message = result.get("message", "")
         if not status:
@@ -172,7 +200,14 @@ class StatusAgent(AssistantAgent):
         """Resume the agent by clearing the paused state."""
 
         # 恢复远程的模型
-        result: Dict[str, Any] = self._funcs_map['resume'](chat_id=self._chat_id)
+        # result: Dict[str, Any] = self._funcs_map['resume'](chat_id=self._chat_id)
+        result: Dict[str, Any] = await asyncio.wait_for(
+              asyncio.to_thread(
+                  self._funcs_map['resume'],
+                  chat_id=self._chat_id
+              ),
+              timeout=30.0
+            )
         status = result.get("status", False)
         message = result.get("message", "")
         if not status:
@@ -196,7 +231,14 @@ class StatusAgent(AssistantAgent):
         if self._model_client:
             await self._model_client.close()
 
-        result: Dict[str, Any] = self._funcs_map['close'](chat_id=self._chat_id)
+        # result: Dict[str, Any] = self._funcs_map['close'](chat_id=self._chat_id)
+        result: Dict[str, Any] = await asyncio.wait_for(
+              asyncio.to_thread(
+                  self._funcs_map['close'],
+                  chat_id=self._chat_id
+              ),
+              timeout=30.0
+            )
         status = result.get("status", False)
         message = result.get("message", "")
         if not status:
@@ -204,7 +246,7 @@ class StatusAgent(AssistantAgent):
         else:
             logger.info(f"Closed {self.name} successfully.")
 
-    async def async_stream_generator(self, stream, timeout: float = 180.0) -> AsyncGenerator[dict, None]:
+    async def async_stream_generator(self, stream, timeout: float = 60.0) -> AsyncGenerator[dict, None]:
         loop = asyncio.get_event_loop()
         queue = asyncio.Queue()
 

@@ -1,4 +1,5 @@
 from typing import Dict
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 # from openai import OpenAI
@@ -41,7 +42,13 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), db=Depe
                         api_key=apikey,
                         base_url="https://aiapi.ihep.ac.cn/apiv2",
                     )
-                    agent_info: dict|WorkerInfo = worker.get_info()
+                    # agent_info: dict|WorkerInfo = worker.get_info()
+                    agent_info: dict|WorkerInfo = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                worker.get_info
+                            ),
+                            timeout=5.0
+                        )
                     if isinstance(agent_info, WorkerInfo):
                         agent_info = agent_info.to_dict()
                     agent_info.update({"owner": model.owner})
