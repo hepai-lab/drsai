@@ -44,12 +44,11 @@ const AgentCard: React.FC<AgentCardProps> = ({
     // 创建agent对象，按照新的格式
     const agent = {
       mode,
-
       name, // 传递当前的Model信息
     };
 
     // 设置选中的agent
-    setSelectedAgent({ name });
+    setSelectedAgent({ name, mode });
 
     setConfig({
       name, // 传递当前的Model信息
@@ -93,9 +92,9 @@ const AgentCard: React.FC<AgentCardProps> = ({
     }
 
     // 保留原有的onClick回调
-    if (onClick) {
-      onClick();
-    }
+    // if (onClick) {
+    //   onClick();
+    // }
   };
 
   return (
@@ -197,7 +196,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   // 处理移除远程智能体
   const handleRemoveRemoteAgent = async (id?: string) => {
 
-    console.log("handleRemoveRemoteAgent", id);
     if (!id) return;
     try {
       if (user?.email) {
@@ -227,9 +225,9 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         description: agentInfo.description || "远程智能体 - 自定义连接",
         owner: agentInfo.owner || "未知",
         url: config.url,
+        mode: "remote",
         config: {
           name: config.name, // 保持与其他智能体一致的结构
-          type: "remote",
           url: config.url,
           apiKey: config.apiKey
         },
@@ -265,9 +263,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       console.error("Failed to save remote agent:", error);
     }
   };
-  useEffect(() => {
-    console.log("agentList:", agentList);
-  })
+
 
   useEffect(() => {
     const loadAgentList = async () => {
@@ -302,20 +298,23 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
           // 加载用户保存的远程智能体
           try {
             const userRemoteAgents = await agentWorkerAPI.getUserRemoteAgents(user.email || "");
-            // 转换远程智能体为前端格式，保持与保存时相同的结构
-            const remoteAgentCards: AgentCardProps[] = userRemoteAgents.map((agent: Agent) => {
-              return {
-                mode: "remote",
-                ...agent,
-                // 添加标签和移除功能
-                tags: ["远程"],
-                isRemovable: true,
-                onRemove: () => handleRemoveRemoteAgent(agent.id),
-                onClick: () => {
-                  console.log("Selected remote agent:", agent.name);
-                }
-              };
-            });
+
+            const remoteAgentCards: AgentCardProps[] = userRemoteAgents.map((agent: Agent) => ({
+              id: agent.id,
+              logo: agent.logo || "/api/placeholder/64/64",
+              name: agent.name,
+              description: agent.description || "远程智能体 - 自定义连接",
+              owner: agent.owner || "未知",
+              url: agent.url,
+              config: agent.config,
+              mode: "remote",
+              apiKey: agent.apiKey,
+              tags: ["远程"],
+              isRemovable: true,
+              onRemove: () => handleRemoveRemoteAgent(agent.id),
+              onClick: () => console.log("Selected remote agent:", agent.name),
+            }));
+
 
             // 合并远程智能体和普通智能体
             setAgentList([...response, ...remoteAgentCards]);
@@ -367,6 +366,8 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       </div>
     );
   }
+
+
 
 
 

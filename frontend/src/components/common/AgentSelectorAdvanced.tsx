@@ -2,14 +2,12 @@ import { Bot, ChevronDown } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { appContext } from "../../hooks/provider";
 import { useModeConfigStore } from "../../store/modeConfig";
-import { useSettingsStore } from "../store";
-import { agentAPI, settingsAPI } from "../views/api";
-import CustomAgentForm, { CustomAgentData } from "./agent-form/CustomAgentForm";
-import DrsaiAgentForm, { DrsaiAgentData } from "./agent-form/DrsaiAgentForm";
+import { agentAPI } from "../views/api";
+import { CustomAgentData } from "./agent-form/CustomAgentForm";
 // 之后可能会删掉==========================================
-import { useMessageCacheStore } from "../../store/messageCache";
-import { useConfigStore } from "../../hooks/store";
 import { Modal } from "antd";
+import { useConfigStore } from "../../hooks/store";
+import { useMessageCacheStore } from "../../store/messageCache";
 import { sessionAPI } from "../views/api";
 //==================================================
 
@@ -29,6 +27,11 @@ export interface Agent {
     icon?: React.ReactNode;
     tags?: string[];
     config?: CustomAgentData;
+    logo?: string;
+    owner?: string;
+    url?: string;
+    apiKey?: string;
+    baseUrl?: string;
 }
 
 interface AgentSelectorAdvancedProps {
@@ -317,18 +320,14 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
             return false;
         }
     };
-    //==================================================
 
     const handleAgentSelect = async (agent: Agent) => {
-        console.log('111222')
 
         // 如果当前session存在，异步检查是否有消息
         let actualHasMessages = sessionHasMessages;
         if (session?.id && !sessionHasMessages) {
             actualHasMessages = await checkSessionHasMessages(session.id);
         }
-
-        console.log("actualHasMessages:", actualHasMessages);
 
         // 检查是否需要给出警告提示
         if (actualHasMessages && persistedSelectedAgent && persistedSelectedAgent.mode !== agent.mode) {
@@ -359,7 +358,6 @@ const AgentSelectorAdvanced: React.FC<AgentSelectorAdvancedProps> = ({
         // 如果没有警告情况，直接执行切换
         await performAgentSwitch(agent);
     };
-    //=================================================
 
     // 提取切换逻辑到单独的函数
     const performAgentSwitch = async (agent: Agent) => {

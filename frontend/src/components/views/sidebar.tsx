@@ -243,6 +243,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           e.domEvent.stopPropagation();
                           if (s.id) onDeleteSession(s.id);
                         },
+                        disabled: isLoading,
                         danger: true,
                       },
                       {
