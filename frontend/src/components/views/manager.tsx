@@ -210,15 +210,15 @@ export const SessionManager: React.FC = () => {
           "Restoring session from localStorage:",
           storedSessionId
         );
-        try {
-          await handleSelectSession({
-            id: storedSessionId,
-          } as Session);
-        } catch (error) {
-          console.error("Failed to restore session:", error);
-          // 如果恢复失败，清除localStorage中的无效sessionId
-          saveSessionIdToStorage(null);
-        }
+        // try {
+        //   await handleSelectSession({
+        //     id: storedSessionId,
+        //   } as Session);
+        // } catch (error) {
+        //   console.error("Failed to restore session:", error);
+        //   // 如果恢复失败，清除localStorage中的无效sessionId
+        //   saveSessionIdToStorage(null);
+        // }
       }
 
       // 3. 如果localStorage中没有sessionId，但URL中有sessionId参数
@@ -227,16 +227,16 @@ export const SessionManager: React.FC = () => {
         const urlSessionId = params.get("sessionId");
         if (urlSessionId && !session) {
           console.log("Restoring session from URL:", urlSessionId);
-          try {
-            await handleSelectSession({
-              id: parseInt(urlSessionId),
-            } as Session);
-          } catch (error) {
-            console.error(
-              "Failed to restore session from URL:",
-              error
-            );
-          }
+          // try {
+          //   await handleSelectSession({
+          //     id: parseInt(urlSessionId),
+          //   } as Session);
+          // } catch (error) {
+          //   console.error(
+          //     "Failed to restore session from URL:",
+          //     error
+          //   );
+          // }
         }
       }
 
@@ -278,21 +278,27 @@ export const SessionManager: React.FC = () => {
     try {
       setIsLoading(true);
       if (sessionData.id) {
-        // const updated = await sessionAPI.updateSession(
-        //   sessionData.id,
-        //   sessionData,
-        //   user.email
-        // );
-        // setSessions(
-        //   Array.isArray(sessions)
-        //     ? sessions.map((s) =>
-        //       s.id === updated.id ? updated : s
-        //     )
-        //     : [updated]
-        // );
-        // if (session?.id === updated.id) {
-        //   setSession(updated);
-        // }
+        const curSession = sessions.find((s) => s.id === sessionData.id);
+        if (!curSession) return;
+        curSession.name = sessionData.name || curSession.name;
+        // curSession.created_at = ((new Date()).toISOString());
+        const updated = await sessionAPI.updateSession(
+          sessionData.id,
+          curSession,
+          user.email
+        );
+
+        console.log("Updated session1:", updated);
+        setSessions(
+          Array.isArray(sessions)
+            ? sessions.map((s) =>
+              s.id === updated.id ? updated : s
+            )
+            : [updated]
+        );
+        if (session?.id === updated.id) {
+          setSession(updated);
+        }
       } else {
         setSelectedAgent({
           mode: "magentic-one",
@@ -405,14 +411,6 @@ export const SessionManager: React.FC = () => {
     }
 
     // 创建新会话
-    handleEditSession();
-  };
-
-  const handleCreateNewSessionAfterDelete = () => {
-    // 切换到 Current Session tab
-    setActiveSubMenuItem("current_session");
-
-    // 创建新会话（保持当前选中的agent）
     handleEditSession();
   };
 
@@ -583,29 +581,31 @@ export const SessionManager: React.FC = () => {
     // Check if current session name matches default pattern
     const currentSession = sessions.find((s) => s.id === sessionData.id);
     if (!currentSession) return;
-
+    currentSession.name = sessionData.name || currentSession.name;
+    // currentSession.created_at = ((new Date()).toISOString());
     // Only update if it starts with "Default Session - "
-    if (currentSession.name.startsWith("Default Session - ")) {
-      try {
-        // const updated = await sessionAPI.updateSession(
-        //   sessionData.id,
-        //   sessionData,
-        //   user.email
-        // );
-        // setSessions(
-        //   Array.isArray(sessions)
-        //     ? sessions.map((s) =>
-        //       s.id === updated.id ? updated : s
-        //     )
-        //     : [updated]
-        // );
-        // if (session?.id === updated.id) {
-        //   setSession(updated);
-        // }
-      } catch (error) {
-        console.error("Error updating session name:", error);
-        messageApi.error("Error updating session name");
+
+    try {
+      const updated = await sessionAPI.updateSession(
+        sessionData.id,
+        currentSession,
+        user.email
+      );
+      console.log("Updated session2222:", updated);
+
+      setSessions(
+        Array.isArray(sessions)
+          ? sessions.map((s) =>
+            s.id === updated.id ? updated : s
+          )
+          : [updated]
+      );
+      if (session?.id === updated.id) {
+        setSession(updated);
       }
+    } catch (error) {
+      console.error("Error updating session name:", error);
+      messageApi.error("Error updating session name");
     }
   };
 

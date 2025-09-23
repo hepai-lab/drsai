@@ -1049,11 +1049,13 @@ export default function ChatView({
           // },
         },
       };
+      console.log("messageToSend：：：：11111", messageToSend);
       socket.send(JSON.stringify(messageToSend));
       const sessionData = {
         id: session?.id,
         name: query.slice(0, 50),
       };
+      console.log("onSessionNameChange：：：：", sessionData);
       onSessionNameChange(sessionData);
     } catch (error) {
       setError({
