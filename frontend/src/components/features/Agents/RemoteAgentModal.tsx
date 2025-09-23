@@ -74,13 +74,11 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
         formData.apiKey // 使用用户输入的远程智能体API key
       );
 
-      console.log("Remote agent test result:", testResult);
       setAgentInfo(testResult);
       setConnectionTestPassed(true);
       message.success("连接测试成功！远程智能体响应正常");
 
     } catch (error) {
-      console.error("Connection test failed:", error);
       const errorMessage = error instanceof Error ? error.message : "连接失败";
       setTestError(errorMessage);
       message.error(`连接测试失败: ${errorMessage}`);
