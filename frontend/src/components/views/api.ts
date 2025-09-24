@@ -490,9 +490,10 @@ export class Agent {
         };
     }
 
+    // get main agent list
     async getAgentList(userId: string): Promise<any[]> {
-        console.log("Fetching agent list for user:", userId);
-        console.log("Using base URL:", this.getBaseUrl());
+        // console.log("Fetching agent list for user:", userId);
+        // console.log("Using base URL:", this.getBaseUrl());
         const response = await fetch(
             `${this.getBaseUrl()}/agentmode/?user_id=${userId}`,
             {
@@ -505,16 +506,57 @@ export class Agent {
         if (!data.status)
             throw new Error(data.message || "Failed to fetch agents");
 
-        // 后端返回的数据结构是 { config: { agent_modes: [...] } }
+        // 后端返回的数据结构是 { agents_mode: [] }
         // 需要提取 config.agent_modes 数组
         const agentSettings = data.data;
-        if (agentSettings && agentSettings.config && agentSettings.config.agent_modes) {
-            return agentSettings.config.agent_modes;
+        if (agentSettings && agentSettings.agents_mode) {
+            return agentSettings.agents_mode;
         }
 
         // 如果数据结构不符合预期，返回空数组
         console.warn("Unexpected agent list data structure:", agentSettings);
         return [];
+    }
+
+    // update main agent list
+    async updateAgentList(
+        userId: string,
+        agent_mode_config: Record<string, any>): Promise<any[]> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/agentmode/?user_id=${userId}`,
+            {
+                method: "PUT",
+                headers: this.getHeaders(),
+                body: JSON.stringify({"agent_mode_config": agent_mode_config}),
+            }
+        );
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.message || "Failed to update agents");
+
+        // 后端返回的数据结构是 { agents_mode: [] }
+        // 需要提取 config.agent_modes 数组
+        const agentSettings = data.data;
+        if (agentSettings && agentSettings.agents_mode) {
+            return agentSettings.agents_mode;
+        }
+
+        // 如果数据结构不符合预期，返回空数组
+        console.warn("Unexpected agent list data structure:", agentSettings);
+        return [];
+    }
+
+    // delete main agent list
+    async deleteMainAgent(
+        userId: string,
+        id: string) {
+        const response = await fetch(
+            `${this.getBaseUrl()}/agentmode/?user_id=${userId}&id=${id}`,
+            {
+                method: "DELETE",
+                headers: this.getHeaders(),
+            }
+        );
     }
 
     // save agent config
@@ -567,7 +609,7 @@ export class AgentWorkerAPI {
             }
         );
         const data = await response.json();
-        console.log("Agent worker list response:", data);
+        // console.log("Agent worker list response:", data);
         if (!data.status)
             throw new Error(data.message || "Failed to fetch agent workers");
         return data.data;

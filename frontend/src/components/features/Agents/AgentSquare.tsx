@@ -2,11 +2,12 @@ import React, { useEffect, useState, useContext } from "react";
 import { Button } from "../../common/Button";
 import { appContext } from "../../../hooks/provider";
 import { agentWorkerAPI, settingsAPI, SessionAPI } from "../../views/api";
+import { agentAPI } from "../../views/api";
 import { parse } from "yaml";
 import { useModeConfigStore } from "../../../store/modeConfig";
 import RemoteAgentModal from "./RemoteAgentModal";
-import { Plus, X, Network } from "lucide-react";
-import { Agent } from "../../common/AgentSelectorAdvanced";
+import { Plus, X, Network, MoreVertical, Trash2 } from "lucide-react";
+import { Agent } from "../../../types/common";
 
 interface AgentCardProps {
   logo: string;
@@ -16,11 +17,11 @@ interface AgentCardProps {
   url: string;
   config: any;
   onClick?: () => void;
-  tags?: string[];
   mode?: string;
   apiKey?: string;
-  isRemovable?: boolean;
-  onRemove?: () => void;
+  onRemove?: (id?: string) => void;
+  handleAgentList?: (agents: any[]) => Promise<void>;
+  id?: string;
 }
 
 const AgentCard: React.FC<AgentCardProps> = ({
@@ -33,11 +34,11 @@ const AgentCard: React.FC<AgentCardProps> = ({
   config,
   apiKey,
   onClick,
-  tags = [],
-  isRemovable = false,
   onRemove,
+  handleAgentList,
+  id,
 }) => {
-  const { setSelectedAgent, setMode, setConfig } = useModeConfigStore();
+  const { setSelectedAgent, setConfig } = useModeConfigStore();
   const { user } = useContext(appContext);
 
   const handleTryClick = async () => {
@@ -90,39 +91,60 @@ const AgentCard: React.FC<AgentCardProps> = ({
     } catch (error) {
 
     }
+  };
 
-    // 保留原有的onClick回调
-    // if (onClick) {
-    //   onClick();
-    // }
+  const AddMainAgent = async () => {
+
+    // Add agent to the list
+    try {
+      if (user?.email) {
+        const AgentNewList =  await agentAPI.updateAgentList(
+          user.email,
+          {
+            "mode":mode,
+            "name":name,
+            "logo":logo,
+            "description":description,
+            "config": {
+              "url":url,
+              "apiKey": apiKey,
+            },
+            "type": "add",
+
+          },
+        );
+        if (handleAgentList) {
+          await handleAgentList(AgentNewList);
+        }
+      }
+    } catch (error) {
+
+    }
+
   };
 
   return (
     <div className="bg-primary border border-secondary rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-200 hover:border-magenta-800 group relative">
       {/* 标签 - 定位在卡片上方 */}
-      {tags.length > 0 && (
+      {mode === "remote" && (
         <div className="absolute -top-[-0.5px] left-6 flex gap-1 z-20">
-          {tags.map((tag, index) => (
             <span
-              key={index}
-              className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium shadow-sm ${tag === "远程"
-                ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-                : "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
-                }`}
+              className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium shadow-sm bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
             >
-              {tag === "远程" && <Network className="w-2.5 h-2.5 mr-0.5" />}
-              {tag}
+              <Network className="w-2.5 h-2.5 mr-0.5" />
+              远程
             </span>
-          ))}
         </div>
       )}
 
-      {/* 移除按钮 - 右上角 */}
-      {isRemovable && onRemove && (
+    
+
+      {/* 移除按钮 - 右上角（远程智能体专用） */}
+      {mode === "remote" && onRemove && (
         <button
           onClick={(e) => {
             e.stopPropagation();
-            onRemove();
+            onRemove(id);
           }}
           className="absolute top-2 right-2 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
           title="移除智能体"
@@ -163,8 +185,8 @@ const AgentCard: React.FC<AgentCardProps> = ({
         {description}
       </p>
 
-      {/* Try Button */}
-      <div className="w-full">
+      {/* Action Buttons */}
+      <div className="w-full flex flex-col gap-2">
         <Button
           variant="primary"
           size="sm"
@@ -172,6 +194,14 @@ const AgentCard: React.FC<AgentCardProps> = ({
           className="w-full group-hover:bg-magenta-900 transition-colors"
         >
           点击试用
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={AddMainAgent}
+          className="w-full border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+        >
+          添加到侧边栏
         </Button>
       </div>
     </div>
@@ -181,11 +211,12 @@ const AgentCard: React.FC<AgentCardProps> = ({
 interface AgentSquareProps {
   agents: AgentCardProps[];
   className?: string;
+  handleAgentList?: (agents: any[]) => Promise<void>;
 }
 
 const AgentSquare: React.FC<AgentSquareProps> = ({
-  agents,
   className = "",
+  handleAgentList,
 }) => {
   const { user } = React.useContext(appContext);
   const [agentList, setAgentList] = useState<AgentCardProps[]>([]);
@@ -218,29 +249,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const handleRemoteAgentSave = async (config: any, agentInfo?: any) => {
     try {
 
-      // 创建新的远程智能体卡片，参考其他智能体的结构
-      const newRemoteAgent: AgentCardProps = {
-        logo: agentInfo.logo || "/api/placeholder/64/64",
-        name: agentInfo.name || config.name,
-        description: agentInfo.description || "远程智能体 - 自定义连接",
-        owner: agentInfo.owner || "未知",
-        url: config.url,
-        mode: "remote",
-        config: {
-          name: config.name, // 保持与其他智能体一致的结构
-          url: config.url,
-          apiKey: config.apiKey
-        },
-        // 添加标签和移除功能
-        tags: ["远程"],
-        isRemovable: true,
-        onRemove: () => handleRemoveRemoteAgent(config.id),
-        onClick: () => {
-          // 处理点击事件，可以设置为选中的智能体
-          console.log("Selected remote agent:", config.name);
-        }
-      };
-
       // 保存到后端 - 移除 createdAt，让数据库自动处理
       if (user?.email) {
         await agentWorkerAPI.saveRemoteAgent(
@@ -255,8 +263,27 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         );
       }
 
+      const newRemoteAgents = await agentWorkerAPI.getUserRemoteAgents(user?.email || "");
+      console.log("New remote agent saved to backend:", newRemoteAgents);
+
+      // 获取最新添加的远程智能体并创建完整的AgentCard对象
+      const latestAgent = newRemoteAgents[newRemoteAgents.length - 1];
+      const newRemoteAgentCard: AgentCardProps = {
+        id: latestAgent.id,
+        logo: latestAgent.logo || "/api/placeholder/64/64",
+        name: latestAgent.name,
+        description: latestAgent.description || "远程智能体 - 自定义连接",
+        owner: latestAgent.owner || "未知",
+        url: latestAgent.url,
+        config: latestAgent.config,
+        mode: "remote",
+        apiKey: latestAgent.apiKey,
+        onRemove: (id?: string) => handleRemoveRemoteAgent(id || latestAgent.id),
+        onClick: () => console.log("Selected remote agent:", latestAgent.name),
+      };
+
       // 添加到智能体列表
-      setAgentList(prev => [...prev, newRemoteAgent]);
+      setAgentList(prev => [...prev, newRemoteAgentCard]);
       setIsRemoteModalOpen(false);
 
     } catch (error) {
@@ -299,7 +326,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
           try {
             const userRemoteAgents = await agentWorkerAPI.getUserRemoteAgents(user.email || "");
 
-            const remoteAgentCards: AgentCardProps[] = userRemoteAgents.map((agent: Agent) => ({
+            const remoteAgentCards: AgentCardProps[] = userRemoteAgents?.map((agent: Agent) => ({
               id: agent.id,
               logo: agent.logo || "/api/placeholder/64/64",
               name: agent.name,
@@ -309,9 +336,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               config: agent.config,
               mode: "remote",
               apiKey: agent.apiKey,
-              tags: ["远程"],
-              isRemovable: true,
-              onRemove: () => handleRemoveRemoteAgent(agent.id),
+              onRemove: (id?: string) => handleRemoveRemoteAgent(id || agent.id),
               onClick: () => console.log("Selected remote agent:", agent.name),
             }));
 
@@ -409,11 +434,11 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               url={agent.url}
               config={agent.config}
               onClick={agent.onClick}
-              tags={agent.tags}
               mode={agent.mode}
-              isRemovable={agent.isRemovable}
               apiKey={agent.apiKey}
               onRemove={agent.onRemove}
+              handleAgentList={handleAgentList}
+              id={agent.id || agent.name}
             />
           ))}
         </div>

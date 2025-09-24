@@ -23,6 +23,7 @@ const ContentHeader = ({
   onToggleSidebar,
   onNewSession,
   agentSelector,
+  activeSubMenuItem
 }: ContentHeaderProps) => {
   useConfigStore();
   const { selectedAgent } = useModeConfigStore();
@@ -65,7 +66,7 @@ const ContentHeader = ({
             </div>
           )}
           {/* Current Agent Name - show whenever an agent is selected */}
-          {selectedAgent?.name && (
+          {activeSubMenuItem==="current_session"&&selectedAgent?.name && (
             <div className="ml-2 px-2 py-1 rounded-md text-lg text-accent bg-tertiary/30">
               <div className="ml-2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-tertiary/30">
                 <span className="text-lg font-medium">
@@ -75,10 +76,7 @@ const ContentHeader = ({
             </div>
           )}
         </div>
-
       </div>
-
-
     </div>
   );
 };

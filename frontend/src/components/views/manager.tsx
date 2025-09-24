@@ -18,9 +18,10 @@ import { agentAPI, sessionAPI, settingsAPI } from "./api";
 import ChatView from "./chat/chat";
 import { SessionEditor } from "./session_editor";
 import { Sidebar } from "./sidebar";
-import { Agent } from "../common/AgentSelectorAdvanced";
+import { Agent } from "../../types/common";
 import { parse } from "yaml";
 import { useModeConfigStore } from "../../store/modeConfig";
+import { config } from "process";
 
 
 interface SessionWebSocket {
@@ -76,7 +77,7 @@ export const SessionManager: React.FC = () => {
     return null;
   };
 
-  const handleAgentList = async (agents: Agent[]) => {
+  const handleAgentList = async () => {
     try {
       const res = await agentAPI.getAgentList(user?.email || "");
       setAgents(res);
@@ -113,7 +114,7 @@ export const SessionManager: React.FC = () => {
   React.useEffect(() => {
     // handleAgentList(agents);
     if (user?.email) {
-      handleAgentList(agents);
+      handleAgentList();
     }
   }, [user?.email]);
 
@@ -363,7 +364,13 @@ export const SessionManager: React.FC = () => {
               hour: "2-digit",
               minute: "2-digit",
             }),
-          agent_mode_config: { mode: agent.mode, name: agent.name },
+          agent_mode_config: {
+            mode: agent.mode,
+            name: agent.name,
+            description: agent.description,
+            url: agent.config.url,
+            apikey: agent.config.apikey,
+           },
         },
         user.email
       );
@@ -877,6 +884,32 @@ export const SessionManager: React.FC = () => {
     }, 2000); // Give time for session selection to complete
   };
 
+  const handleDeleteAgent = async (id: string) => {
+    if (!user?.email) return;
+
+    try {
+      setIsLoading(true);
+      // 调用删除接口
+      await agentAPI.deleteMainAgent(user.email, id);
+      // 调用list接口
+      const updatedAgents = await agentAPI.getAgentList(user.email);
+      // 更新agents列表
+      setAgents(updatedAgents);
+
+      messageApi.success(`Agent deleted successfully`);
+    } catch (error) {
+      console.error("Error deleting agent:", error);
+      messageApi.error("Failed to delete agent");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteAgentWrapper = async (id:string) => {
+
+      await handleDeleteAgent(id);
+  };
+
   return (
     <div className="relative flex flex-1 w-full h-full">
       {contextHolder}
@@ -932,6 +965,7 @@ export const SessionManager: React.FC = () => {
           agents={agents}
           selectedAgentMode={selectedAgent?.mode}
           onAgentClick={handleAgentClickCreateSession}
+          onDeleteAgent={handleDeleteAgentWrapper}
         />
       </div>
 
@@ -946,6 +980,7 @@ export const SessionManager: React.FC = () => {
           onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
           onNewSession={() => handleEditSession()}
           agentSelector={null}
+          activeSubMenuItem={activeSubMenuItem}
         />
 
 
@@ -966,7 +1001,7 @@ export const SessionManager: React.FC = () => {
           )
         ) : activeSubMenuItem === "agent_square" ? (
           <div className="h-full overflow-hidden">
-            <AgentSquare agents={[]} />
+            <AgentSquare agents={[]} handleAgentList={handleAgentList} />
           </div>
         ) : (
           <div className="h-full overflow-hidden">

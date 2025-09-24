@@ -244,8 +244,8 @@ class AgentModeSettings(SQLModel, table=True):
     )  # pylint: disable=not-callable
     user_id: Optional[str] = None
     version: Optional[str] = "0.0.1"
-    config: Union[AgentModeSetting, dict[str, Any]] = Field(
-        default_factory=AgentModeSetting, sa_column=Column(JSON)
+    agents_mode: Optional[list[dict[str, Any]]] = Field(
+        default_factory=list, sa_column=Column(JSON)
     )
 
 class AgentModeConfig(SQLModel, table=True):

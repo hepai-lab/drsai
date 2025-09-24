@@ -4,29 +4,29 @@ import {
   Edit,
   FileText,
   InfoIcon,
+  LogOut,
   MoreVertical,
   PanelLeftClose,
   Plus,
   RefreshCcw,
-  StopCircle,
-  Trash2,
   Sailboat,
   Settings,
-  User,
-  LogOut
+  StopCircle,
+  Trash2,
+  User
 } from "lucide-react";
-import React, { useMemo, useRef, useEffect } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
+import magneticOneIcon from "../../assets/magnetic-one.png";
+import magneticTwoIcon from "../../assets/magnetic-two.svg";
+import { appContext } from "../../hooks/provider";
+import { Agent } from "../../types/common";
 import { Button } from "../common/Button";
 import SubMenu from "../common/SubMenu";
 import LearnPlanButton from "../features/Plans/LearnPlanButton";
-import type { RunStatus, Session } from "../types/datamodel";
-import { SessionRunStatusIndicator } from "./statusicon";
-import { appContext } from "../../hooks/provider";
-import UserProfileModal from "../userProfile";
 import SettingsMenu from "../settings";
-import magneticOneIcon from "../../assets/magnetic-one.png";
-import magneticTwoIcon from "../../assets/magnetic-two.svg";
-import { useModeConfigStore } from "../../store/modeConfig";
+import type { RunStatus, Session } from "../types/datamodel";
+import UserProfileModal from "../userProfile";
+import { SessionRunStatusIndicator } from "./statusicon";
 
 
 
@@ -44,9 +44,10 @@ interface SidebarProps {
   onSubMenuChange: (tabId: string) => void;
   onStopSession: (sessionId: number) => void;
   onLogoClick?: () => void;
-  agents?: { mode: string; name: string; description?: string }[];
+  agents?: Agent[];
   selectedAgentMode?: string;
-  onAgentClick?: (agent: { mode: string; name: string }) => void;
+  onAgentClick?: (agent: Agent) => void;
+  onDeleteAgent?: (id: string) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -66,11 +67,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   agents = [],
   selectedAgentMode,
   onAgentClick,
+  onDeleteAgent,
 }) => {
   const { user } = React.useContext(appContext);
   const [isProfileModalOpen, setIsProfileModalOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
-  const { selectedAgent } = useModeConfigStore();
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -166,7 +167,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ? "bg-purple-100/50"
                   : ""
                 }`}
-              onClick={() => !isLoading && onSelectSession(s, true)}
+              onClick={() => !isLoading && onSelectSession(s)}
             >
               <div className="flex items-center gap-2 flex-1 min-w-0">
                 <div className={`rounded-full flex-shrink-0 ${currentSession?.id === s.id
@@ -384,33 +385,90 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   const isSelected = selectedAgentMode === agent.mode;
                   const icon = getAgentIcon(agent.mode || "");
                   return (
-                    <button
-                      key={agent.mode}
-                      type="button"
-                      onClick={() => onAgentClick && onAgentClick(agent)}
-                      className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-colors duration-150 ${isSelected ? "bg-[#e7e5f2] text-[#4d3dc3] hover:bg-[#e7e5f2]" : "text-[#4a5568] hover:bg-[#f9fafb]"}`}
-                    >
-                      {icon ? (
-                        <img
-                          src={icon}
-                          alt={agent.name}
-                          className="w-6 h-6"
-                          style={{
-                            borderRadius: "4px",
-                            padding: "2px",
-                            filter: agent.mode === "magentic-one" ? "brightness(0) saturate(100%)" : "none",
-                          }}
-                        />
-                      ) : (
-                        <div className="w-6 h-6 rounded bg-tertiary/40" />
+                    <div key={agent.mode} className="relative group">
+                      <button
+                        type="button"
+                        onClick={() => onAgentClick && onAgentClick(agent)}
+                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-colors duration-150 ${isSelected ? "bg-[#e7e5f2] text-[#4d3dc3] hover:bg-[#e7e5f2]" : "text-[#4a5568] hover:bg-[#f9fafb]"}`}
+                      >
+                        {agent.logo ? (
+                          <img
+                            src={agent.logo}
+                            alt={agent.name}
+                            className="w-6 h-6 rounded"
+                            style={{
+                              padding: "2px",
+                              filter: agent.mode === "magentic-one" ? "brightness(0) saturate(100%)" : "none",
+                            }}
+                          />
+                        ) : icon ? (
+                          <img
+                            src={icon}
+                            alt={agent.name}
+                            className="w-6 h-6"
+                            style={{
+                              borderRadius: "4px",
+                              padding: "2px",
+                              filter: agent.mode === "magentic-one" ? "brightness(0) saturate(100%)" : "none",
+                            }}
+                          />
+                        ) : (
+                          <div className="w-6 h-6 rounded bg-tertiary/40 flex items-center justify-center">
+                            <span className="text-xs font-medium text-secondary">
+                              {agent.name.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex-1 text-left">
+                          <div className="truncate font-medium">{agent.name}</div>
+                        </div>
+                      </button>
+
+                      {agent.type === "add" && (
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Dropdown
+                            trigger={["hover"]}
+                            menu={{
+                              items: [
+                                {
+                                  key: "delete",
+                                  label: (
+                                    <>
+                                      <Trash2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />{" "}
+                                      Delete
+                                    </>
+                                  ),
+                                  onClick: (e) => {
+                                    e.domEvent.stopPropagation();
+                                    if (onDeleteAgent && agent.id) {
+                                      onDeleteAgent(agent.id);
+                                    }
+                                  },
+                                  danger: true,
+                                },
+                              ],
+                            }}
+                            placement="bottomRight"
+                          >
+                            <Button
+                              variant="tertiary"
+                              size="sm"
+                              icon={<MoreVertical className="w-3.5 h-3.5 text-secondary" />}
+                              onClick={(e) => e.stopPropagation()}
+                              onFocus={(e) => e.target.blur()}
+                              className="!p-0 min-w-[20px] h-5 hover:bg-tertiary/30"
+                              style={{
+                                outline: 'none',
+                                border: 'none',
+                                boxShadow: 'none',
+                                '--tw-ring-shadow': '0 0 #0000',
+                                '--tw-ring-offset-shadow': '0 0 #0000'
+                              } as React.CSSProperties}
+                            />
+                          </Dropdown>
+                        </div>
                       )}
-                      <div className="flex-1 text-left">
-                        <div className="truncate">{agent.name}</div>
-                        {/* {agent.description && (
-                          <div className="text-xs truncate mt-1 text-[#4a5568]">{agent.description}</div>
-                        )} */}
-                      </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
