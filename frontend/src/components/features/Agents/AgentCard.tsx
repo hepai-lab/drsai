@@ -4,6 +4,7 @@ import { appContext } from "../../../hooks/provider";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { Button } from "../../common/Button";
 import { agentAPI, SessionAPI } from "../../views/api";
+import type { Agent, AgentMode } from "@/types/common";
 
 interface AgentCardProps {
   logo: string;
@@ -13,7 +14,7 @@ interface AgentCardProps {
   url: string;
   config: any;
   onClick?: () => void;
-  mode?: string;
+  mode?: AgentMode;
   apiKey?: string;
   onRemove?: (id?: string) => void;
   handleAgentList?: (agents: any[]) => Promise<void>;
@@ -32,7 +33,7 @@ const createSessionName = (name: string): string => {
   })}`;
 };
 
-const createAgentConfig = (name: string, url: string, apiKey: string, mode: string) => ({
+const createAgentConfig = (name: string, url: string, apiKey: string, mode?: AgentMode) => ({
   name,
   url,
   apiKey,
@@ -55,8 +56,8 @@ const AgentCard: React.FC<AgentCardProps> = ({
   const { user } = useContext(appContext);
 
   const handleTryClick = async () => {
-    const agent = { mode, name };
-    const config = createAgentConfig(name, url, apiKey || "", mode || "");
+    const agent: Partial<Agent> = { mode, name };
+    const config = createAgentConfig(name, url, apiKey || "", mode);
 
     setSelectedAgent({ name, mode });
     setConfig(config);

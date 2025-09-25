@@ -1,28 +1,13 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-
-export interface Agent {
-    mode: string;
-    name: string;
-    type?:
-    | "ddf"
-    | "custom"
-    | "drsai-besiii"
-    | "drsai-agent"
-    | "magentic-one"
-    | "remote";
-    description?: string;
-    icon?: React.ReactNode;
-    tags?: string[];
-    config?: any;
-}
+import type { Agent } from "@/types/common";
 
 interface IModeConfig {
     mode: string;
     setMode: (mode: string) => void;
     config: Record<string, any>;
     setConfig: (config: Record<string, any>) => void;
-    selectedAgent: Agent | null;
+    selectedAgent: Partial<Agent> | null;
     setSelectedAgent: (agent: Partial<Agent> | null) => void;
     lastSelectedAgentMode: string;
     setLastSelectedAgentMode: (mode: string) => void;
