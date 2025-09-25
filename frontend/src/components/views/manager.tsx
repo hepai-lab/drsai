@@ -6,11 +6,14 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { appContext } from "../../hooks/provider";
+import { parse } from "yaml";
+import { appContext } from "@/hooks/provider";
 import { useConfigStore } from "../../hooks/store";
+import { useModeConfigStore } from "../../store/modeConfig";
+import { Agent } from "../../types/common";
 import ContentHeader from "../contentheader";
-import PlanList from "../features/Plans/PlanList";
 import { AgentSquare } from "../features/Agents/AgentSquare";
+import PlanList from "../features/Plans/PlanList";
 import type { Session } from "../types/datamodel";
 import { RunStatus } from "../types/datamodel";
 import { getServerUrl } from "../utils";
@@ -18,10 +21,6 @@ import { agentAPI, sessionAPI, settingsAPI } from "./api";
 import ChatView from "./chat/chat";
 import { SessionEditor } from "./session_editor";
 import { Sidebar } from "./sidebar";
-import { Agent } from "../../types/common";
-import { parse } from "yaml";
-import { useModeConfigStore } from "../../store/modeConfig";
-import { config } from "process";
 
 
 interface SessionWebSocket {
@@ -49,10 +48,8 @@ export const SessionManager: React.FC = () => {
 
   const { user } = useContext(appContext);
   const { session, setSession, sessions, setSessions } = useConfigStore();
-  const [secretKey, setSecretKey] = React.useState<string | undefined>();
   const [baseUrl, setBaseUrl] = React.useState<string | undefined>();
   const { selectedAgent, setSelectedAgent, setMode, setConfig } = useModeConfigStore();
-  const [models, setModels] = React.useState<{ id: string }[]>([]);
   const [agents, setAgents] = React.useState<Agent[]>([]);
 
   // 添加sessionId持久化存储函数
@@ -123,13 +120,9 @@ export const SessionManager: React.FC = () => {
     const loadSettings = async () => {
       if (user?.email) {
         try {
-          // const settings = useSettingsStore.getState().config; // Use the settings from the store
-          // const parsed = parse(settings.model_configs);
           const settings = await settingsAPI.getSettings(user.email);
           const parsed = parse(settings.model_configs);
-          const secretKey = parsed.model_config.config.api_key;
           const baseUrl = parsed.model_config.config.base_url;
-          setSecretKey(secretKey);
           setBaseUrl(baseUrl);
         } catch (error) {
           console.error("Failed to load settings");
@@ -139,21 +132,6 @@ export const SessionManager: React.FC = () => {
     loadSettings();
   }, [user?.email]);
 
-  React.useEffect(() => {
-    // const loadModels = async () => {
-    //   if (secretKey) {
-    //     const response = await fetch(`${baseUrl}/models`, {
-    //       headers: {
-    //         "Content-Type": "application/json",
-    //         Authorization: `Bearer ${secretKey}`,
-    //       },
-    //     });
-    //     const data = (await response.json()).data;
-    //     setModels(data);
-    //   }
-    // };
-    // loadModels();
-  }, [secretKey]);
 
   const fetchSessions = useCallback(async () => {
     if (!user?.email) return;
@@ -189,59 +167,105 @@ export const SessionManager: React.FC = () => {
       saveSessionIdToStorage(null);
     }
   }, [session?.id]);
+  const handleSelectSession = async (selectedSession: Session) => {
+    if (!user?.email || !selectedSession?.id) return;
 
+    try {
+      setActiveSubMenuItem("current_session");
+      setIsLoading(true);
+      const data = await sessionAPI.getSession(
+        selectedSession.id,
+        user.email
+      );
+      if (!data) {
+        // Session not found
+        messageApi.error("Session not found");
+        window.history.pushState({}, "", window.location.pathname); // Clear URL
+        if (Array.isArray(sessions) && sessions.length > 0) {
+          setSession(sessions[0]); // Fall back to first session
+        } else {
+          setSession(null);
+        }
+        return;
+      }
+
+
+
+      setSession(data);
+
+      // 如果后端返回了 agent 名称，则同步更新全局选中智能体，便于 ContentHeader 展示
+      if (data.agent_mode_config) {
+
+        setSelectedAgent(data.agent_mode_config);
+        setMode(data.agent_mode_config.mode);
+        // 同步加载该智能体的后端配置，避免运行时报 AssistantAgent 配置为空
+        try {
+          const agentConfig = await agentAPI.getAgentConfig(user.email, data.agent_mode_config.mode);
+          if (agentConfig) {
+            setConfig(agentConfig.config);
+          }
+        } catch (e) {
+          console.warn("Failed to load agent config for matched agent:", e);
+        }
+      }
+      window.history.pushState(
+        {},
+        "",
+        `?sessionId=${selectedSession.id}`
+      );
+    } catch (error) {
+      console.error("Error loading session:", error);
+      messageApi.error("Error loading session");
+      window.history.pushState({}, "", window.location.pathname); // Clear invalid URL
+      if (Array.isArray(sessions) && sessions.length > 0) {
+        setSession(sessions[0]); // Fall back to first session
+        // 同时更新agent信息
+        if (sessions[0].agent_mode_config) {
+          setSelectedAgent(sessions[0].agent_mode_config);
+          setMode(sessions[0].agent_mode_config.mode || "");
+        } else {
+          setSelectedAgent(null);
+          setMode("");
+          setConfig({});
+        }
+      } else {
+        setSession(null);
+        setSelectedAgent(null);
+        setMode("");
+        setConfig({});
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
   // 在组件初始化时恢复sessionId
   useEffect(() => {
     const storedSessionId = getSessionIdFromStorage();
     if (storedSessionId && !session) {
-      // 如果有存储的sessionId但没有当前session，尝试恢复
       handleSelectSession({ id: storedSessionId } as Session);
     }
-  }, []);
+  }, [session, handleSelectSession]);
 
   // 添加刷新时自动获取当前会话的id
   useEffect(() => {
     const initializeSessionOnRefresh = async () => {
-      // 1. 首先尝试从localStorage获取sessionId
       const storedSessionId = getSessionIdFromStorage();
 
-      // 2. 如果localStorage中有sessionId，但当前没有session，则恢复session
       if (storedSessionId && !session) {
         console.log(
           "Restoring session from localStorage:",
           storedSessionId
         );
-        // try {
-        //   await handleSelectSession({
-        //     id: storedSessionId,
-        //   } as Session);
-        // } catch (error) {
-        //   console.error("Failed to restore session:", error);
-        //   // 如果恢复失败，清除localStorage中的无效sessionId
-        //   saveSessionIdToStorage(null);
-        // }
       }
 
-      // 3. 如果localStorage中没有sessionId，但URL中有sessionId参数
       if (!storedSessionId) {
         const params = new URLSearchParams(window.location.search);
         const urlSessionId = params.get("sessionId");
         if (urlSessionId && !session) {
           console.log("Restoring session from URL:", urlSessionId);
-          // try {
-          //   await handleSelectSession({
-          //     id: parseInt(urlSessionId),
-          //   } as Session);
-          // } catch (error) {
-          //   console.error(
-          //     "Failed to restore session from URL:",
-          //     error
-          //   );
-          // }
         }
       }
 
-      // 4. 如果都没有，但有sessions列表，选择第一个session
       if (!session && Array.isArray(sessions) && sessions.length > 0) {
         console.log(
           "No stored session, selecting first available session"
@@ -253,9 +277,8 @@ export const SessionManager: React.FC = () => {
       }
     };
 
-    // 在组件挂载和sessions变化时执行
     initializeSessionOnRefresh();
-  }, [sessions]); // 依赖sessions，确保sessions加载完成后执行
+  }, [sessions, session, setSession]);
 
   // Handle browser back/forward
   useEffect(() => {
@@ -289,7 +312,6 @@ export const SessionManager: React.FC = () => {
           user.email
         );
 
-        console.log("Updated session1:", updated);
         setSessions(
           Array.isArray(sessions)
             ? sessions.map((s) =>
@@ -370,7 +392,7 @@ export const SessionManager: React.FC = () => {
             description: agent.description,
             url: agent.config.url,
             apikey: agent.config.apikey,
-           },
+          },
         },
         user.email
       );
@@ -480,7 +502,6 @@ export const SessionManager: React.FC = () => {
         // 清除URL参数
         window.history.pushState({}, "", window.location.pathname);
       } else {
-        // 删除的不是当前选中的session，不需要创建新的default session
         // 只需要确保当前session仍然有效
         if (session && !updatedSessions.find(s => s.id === session.id)) {
           // 如果当前session被删除了，选择第一个可用的session
@@ -504,83 +525,7 @@ export const SessionManager: React.FC = () => {
     }
   };
 
-  const handleSelectSession = async (selectedSession: Session,) => {
 
-    if (!user?.email || !selectedSession.id) return;
-
-    try {
-      setActiveSubMenuItem("current_session");
-      setIsLoading(true);
-      const data = await sessionAPI.getSession(
-        selectedSession.id,
-        user.email
-      );
-      if (!data) {
-        // Session not found
-        messageApi.error("Session not found");
-        window.history.pushState({}, "", window.location.pathname); // Clear URL
-        if (Array.isArray(sessions) && sessions.length > 0) {
-          setSession(sessions[0]); // Fall back to first session
-        } else {
-          setSession(null);
-        }
-        return;
-      }
-
-
-
-      setSession(data);
-
-      // 如果后端返回了 agent 名称，则同步更新全局选中智能体，便于 ContentHeader 展示
-      if (data.agent_mode_config) {
-
-        setSelectedAgent(data.agent_mode_config);
-        setMode(data.agent_mode_config.mode);
-        // 同步加载该智能体的后端配置，避免运行时报 AssistantAgent 配置为空
-        try {
-          const agentConfig = await agentAPI.getAgentConfig(user.email, data.agent_mode_config.mode);
-          if (agentConfig) {
-            setConfig(agentConfig.config);
-          }
-        } catch (e) {
-          console.warn("Failed to load agent config for matched agent:", e);
-        }
-      }
-      window.history.pushState(
-        {},
-        "",
-        `?sessionId=${selectedSession.id}`
-      );
-    } catch (error) {
-      console.error("Error loading session:", error);
-      messageApi.error("Error loading session");
-      window.history.pushState({}, "", window.location.pathname); // Clear invalid URL
-      if (Array.isArray(sessions) && sessions.length > 0) {
-        setSession(sessions[0]); // Fall back to first session
-        // 同时更新agent信息
-        if (sessions[0].agent) {
-          const matched = Array.isArray(agents)
-            ? (agents as Agent[]).find((a) => a.name === sessions[0].agent)
-            : undefined;
-          if (matched) {
-            setSelectedAgent(matched);
-            setMode(matched.mode);
-          }
-        } else {
-          setSelectedAgent(null);
-          setMode("");
-          setConfig({});
-        }
-      } else {
-        setSession(null);
-        setSelectedAgent(null);
-        setMode("");
-        setConfig({});
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const handleSessionName = async (sessionData: Partial<Session>) => {
     if (!sessionData.id || !user?.email) return;
@@ -616,7 +561,7 @@ export const SessionManager: React.FC = () => {
     }
   };
 
-  const getBaseUrl = (url: string): string => {
+  const getBaseUrl = useCallback((url: string): string => {
     try {
       let baseUrl = url.replace(/(^\w+:|^)\/\//, "");
       if (baseUrl.startsWith("localhost")) {
@@ -631,9 +576,9 @@ export const SessionManager: React.FC = () => {
       console.error("Error processing server URL:", error);
       throw new Error("Invalid server URL configuration");
     }
-  };
+  }, []);
 
-  const setupWebSocket = (sessionId: number, runId: string): WebSocket => {
+  const setupWebSocket = useCallback((sessionId: number, runId: string): WebSocket => {
     // Close existing socket for this session if it exists
     if (sessionSockets[sessionId]) {
       sessionSockets[sessionId].socket.close();
@@ -654,9 +599,9 @@ export const SessionManager: React.FC = () => {
     }));
 
     return socket;
-  };
+  }, [sessionSockets, getBaseUrl]);
 
-  const getSessionSocket = (
+  const getSessionSocket = useCallback((
     sessionId: number,
     runId: string,
     fresh_socket: boolean = false,
@@ -678,20 +623,20 @@ export const SessionManager: React.FC = () => {
       }
       return setupWebSocket(sessionId, runId);
     }
-  };
+  }, [sessionSockets, setupWebSocket]);
 
   useEffect(() => {
     fetchSessions();
   }, [fetchSessions]);
 
-  const updateSessionRunStatus = (sessionId: number, status: RunStatus) => {
+  const updateSessionRunStatus = useCallback((sessionId: number, status: RunStatus) => {
     setSessionRunStatuses((prev) => ({
       ...prev,
       [sessionId]: status,
     }));
-  };
+  }, []);
 
-  const createDefaultSession = async () => {
+  const createDefaultSession = useCallback(async () => {
     if (!user?.email) return;
 
     try {
@@ -729,7 +674,7 @@ export const SessionManager: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [user?.email, sessions, setSessions, setSession, messageApi]);
 
   const chatViews = useMemo(() => {
     // 确保sessions是数组
@@ -788,7 +733,9 @@ export const SessionManager: React.FC = () => {
     const closeAllSockets = () => {
       Object.values(sessionSockets).forEach(({ socket }) => {
         try {
-          socket.close();
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.close();
+          }
         } catch (error) {
           console.error("Error closing socket:", error);
         }
@@ -806,7 +753,7 @@ export const SessionManager: React.FC = () => {
       window.removeEventListener("offline", closeAllSockets);
       closeAllSockets(); // Clean up on component unmount too
     };
-  }, []);
+  }, [sessionSockets]);
 
   // 监听切换到 Current Session tab 的事件
   useEffect(() => {
@@ -862,9 +809,8 @@ export const SessionManager: React.FC = () => {
     };
   }, [setSelectedAgent, setSessions, setSession]); // 添加依赖项
 
-  const handleCreateSessionFromPlan = (
+  const handleCreateSessionFromPlan = useCallback((
     sessionId: number,
-    sessionName: string,
     planData: any
   ) => {
     // First select the session
@@ -882,7 +828,7 @@ export const SessionManager: React.FC = () => {
         })
       );
     }, 2000); // Give time for session selection to complete
-  };
+  }, [handleSelectSession]);
 
   const handleDeleteAgent = async (id: string) => {
     if (!user?.email) return;
@@ -905,9 +851,9 @@ export const SessionManager: React.FC = () => {
     }
   };
 
-  const handleDeleteAgentWrapper = async (id:string) => {
+  const handleDeleteAgentWrapper = async (id: string) => {
 
-      await handleDeleteAgent(id);
+    await handleDeleteAgent(id);
   };
 
   return (
