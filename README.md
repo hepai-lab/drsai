@@ -2,7 +2,7 @@
 
 # OpenDrSai 
 
-由中国科学院高能物理研究所[HepAI](https://ai.ihep.ac.cn/)团队开发的智能体与多智能体系统快速开发和部署一体化框架，可快速地开发和部署自己的智能体与多智能体协作系统前后端服务。
+由中国科学院高能物理研究所[HepAI](https://ai.ihep.ac.cn/)团队开发的智能体、多智能体协同系统快速开发和部署一体化框架，可快速地开发和部署自己的智能体、多智能体协同系统前后端服务。
 
 <div align="center">
   <p>
@@ -37,7 +37,7 @@ cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # for DrSai-U
 conda create -n drsai python=>3.11
 conda activate drsai
 pip install drsai drsai_ui -U
-# NOTE: if you have installed openai>=1.99.0, please keep opneai<= 1.98.0
+# NOTE: if you have installed hepai<=1.40.0, please keep opneai<= 1.98.0
 ```
 
 #### 配置HepAI平台的API访问密钥
@@ -66,17 +66,35 @@ python examples/agent_groupchat/assistant_R1_oai.py
 ```
 **NOTE**: 请根据自己的测试需要更改```if __name__ == "__main__":```中的智能体启动方式。
 
-### 2.2.命令行启动OpenDrSai服务
+**NOTE**: examples/agent_groupchat中还包括了其他智能体和多智能体系统的案例，包括MCP等工具接入、RAG接入、多智能体协作系统的设计、多任务执行的设计等。
+
+### 2.2.命令行启动OpenDrSai人机交互后端服务
 
 ```shell
 # pip install drsai_ui -U # 确保安装了drsai_ui
 
 cp .env.example .env # 复制.env.example文件为.env
 drsai ui # 启动Magenti-UI人机交互后端和静态前端
+```
+后端和静态前端默认启动在8081端口，连接2.1启动的R1_test智能体并在前端进行交互的视频如下：
 
+<video width="80%" controls>
+  <source src="assets/video/drsai_ui.mp4" type="video/mp4">
+</video>
+
+[下载演示视频](assets/video/drsai_ui.mp4)
+
+**NOTE:**
+- DrSai-General 功能需要编译python执行沙盒和浏览器VNC的Docker镜像，请确保安装了docker环境。具体docker镜像及安装配置见[docker](docker/README.md)
+
+### 2.3.通过配置文件运行智能体/多智能体服务
+
+```shell
+# pip install drsai_ui -U # 确保安装了drsai_ui
 drsai console --agent-config agent_config.yaml # 启动命令行模式的智能体/多智能体服务
 drsai backend --agent-config agent_config.yaml # 将智能体/多智能体部署为OpenAI格式的后端模型服务
 ```
+
 **NOTE:**
 - agent_config.yaml文件展示了智能体和多智能体的配置信息，进行智能体尝鲜，或者前端用户自定义配置智能体时可以根据配置文件进行智能体/多智能体系统的快速创建，一个案例如下：
 
@@ -99,10 +117,7 @@ myassistant:
 ```
 具体的配置项说明见[配置文件说明文档](docs/agent_factory.md)。在我们[AI平台](https://drsai.ihep.ac.cn)上，提供了丰富的智能体的基座模型、MCP/HEPAI Worker工具、RAG记忆插件；多种逻辑的智能体和多智能体框架；一些预设的智能体/多智能体工作模式供你选择。你可以在前后端选择适合你的智能体/多智能体框架和工具、知识库等，快速搭建自己的智能体/多智能体协作系统。通过配置快速构建智能体/多智能体系统详细的说明见：```docs/agent_factory.md```.
 
-**NOTE:**
-- DrSai-General 功能需要编译python执行沙盒和浏览器VNC的Docker镜像，请确保安装了docker环境。具体docker镜像及安装配置见[docker](docker/README.md)
-
-### 2.3.人机交互前端
+### 2.4.人机交互前端
 
 #### 配置npm环境
 
@@ -128,8 +143,53 @@ yarn install
 yarn run dev # 启动前端开发环境
 ```
 
+## 3.开发计划(TODO)
 
-## 3.详细文档
+### 3.1.智能体组件开发
+
+- [ ] 模型层：支持Anthropic Claude、Ollama等其他格式的模型的接入
+
+- [ ] 感知层：默认支持可UTF-8编码的文本附件的解析和聊天上下文注入。
+
+- [ ] 记忆层：开发基于提示词的进行长记忆压缩的ChatCompletionContext类
+
+- [ ] 知识库层：基于组件化开发兼容HepAI RAGFlow的知识库组件
+
+- [ ] 执行层: 将工具执行过程进行独立，支持长任务状态管理和执行
+
+- [ ] 状态管理系统：进一步支持长任务的状态管理
+
+- [ ] 文件管理系统：开发文件缓存和注入系统
+
+- [ ] 智能体配置管理系统：进一步优化智能体配置和基于组件化和快照回复的智能体配置管理
+
+- [ ] 智能体学习系统: 开发智能体学习系统，在智能体回复结束后异步记录智能体根据聊天上下文任务回复的内容和策略，存入智能体知识库
+
+- [ ] 组件调度器: 开发支持自我规划和多工具调用的组件调度器，作为通用的规划执行智能体
+
+### 3.2.多智能体系统开发
+
+- [ ] 多智能体协同架构
+
+- [ ] 任务管理系统
+
+- [ ] 智能体管理系统
+
+- [ ] 多智能体状态管理系统
+
+- [ ] 学习反思系统
+
+- [ ] 多智能体系统协同调度器
+ 
+### 3.3.人机交互前后端开发
+
+- [ ] 前端UI的任务管理系统展示交互
+
+- [ ] 前端UI的执行文件、log等信息的展示交互
+
+- [ ] 前端UI的长任务的展示交互
+
+## 4.详细文档
 详细的教程见tutorials目录（正在开发中，有问题及时联系我们）：
 ```
 tutorials/base01-hepai.md：HepAI平台的模型配置和使用
@@ -148,7 +208,7 @@ docs/drsai_ui.md: 人机交互前端使用指南
 docs/open-webui.md：OpenAI格式的前端访问，以及OpenWebui的Pipeline插件的使用指南
 ```
 
-## 4.参与贡献
+## 5.参与贡献
 
 欢迎参与OpenDrSai的开发，贡献代码、文档、问题、建议等。我们社区欢迎各种形式的贡献，包括但不限于：
 
@@ -157,9 +217,10 @@ docs/open-webui.md：OpenAI格式的前端访问，以及OpenWebui的Pipeline插
 - 问题反馈：包括Bug反馈、功能建议、使用问题等。
 - 社区活动：包括线下活动、线上沙龙、线上分享等。 
 
-## 5.联系我们
+## 6.联系我们
 
 - 邮箱：hepai@ihep.ac.cn/zdzhang@ihep.ac.cn/xiongdb@ihep.ac.cn
 - 微信：xiongdongbo_12138
 - 微信群聊：HepAI大模型技术交流3群：
-![alt text](assets/微信三群.jpg)
+
+<img src="assets/微信三群.jpg" alt="微信三群" style="max-width:20%; height:auto;">
