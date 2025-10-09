@@ -37,7 +37,7 @@ cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # for DrSai-U
 conda create -n drsai python=>3.11
 conda activate drsai
 pip install drsai drsai_ui -U
-# NOTE: if you have installed openai>=1.99.0, please keep opneai<= 1.98.0
+# NOTE: if you have installed hepai<=1.40.0, please keep opneai<= 1.98.0
 ```
 
 #### 配置HepAI平台的API访问密钥
@@ -82,6 +82,11 @@ drsai ui # 启动Magenti-UI人机交互后端和静态前端
   <source src="assets/video/drsai_ui.mp4" type="video/mp4">
 </video>
 
+[下载演示视频](assets/video/drsai_ui.mp4)
+
+**NOTE:**
+- DrSai-General 功能需要编译python执行沙盒和浏览器VNC的Docker镜像，请确保安装了docker环境。具体docker镜像及安装配置见[docker](docker/README.md)
+
 ### 2.3.通过配置文件运行智能体/多智能体服务
 
 ```shell
@@ -111,9 +116,6 @@ myassistant:
   model_client: *client
 ```
 具体的配置项说明见[配置文件说明文档](docs/agent_factory.md)。在我们[AI平台](https://drsai.ihep.ac.cn)上，提供了丰富的智能体的基座模型、MCP/HEPAI Worker工具、RAG记忆插件；多种逻辑的智能体和多智能体框架；一些预设的智能体/多智能体工作模式供你选择。你可以在前后端选择适合你的智能体/多智能体框架和工具、知识库等，快速搭建自己的智能体/多智能体协作系统。通过配置快速构建智能体/多智能体系统详细的说明见：```docs/agent_factory.md```.
-
-**NOTE:**
-- DrSai-General 功能需要编译python执行沙盒和浏览器VNC的Docker镜像，请确保安装了docker环境。具体docker镜像及安装配置见[docker](docker/README.md)
 
 ### 2.4.人机交互前端
 
