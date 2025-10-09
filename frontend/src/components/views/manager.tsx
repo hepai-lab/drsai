@@ -586,8 +586,9 @@ export const SessionManager: React.FC = () => {
 
     const serverUrl = getServerUrl();
     const baseUrl = getBaseUrl(serverUrl);
+    // TODO: 适配wss
     const wsProtocol =
-      window.location.protocol === "https:" ? "wss:" : "ws:";
+      window.location.protocol === "https:" ? "ws:" : "ws:";
     const wsUrl = `${wsProtocol}//${baseUrl}/api/ws/runs/${runId}`;
 
     const socket = new WebSocket(wsUrl);
@@ -947,7 +948,11 @@ export const SessionManager: React.FC = () => {
           )
         ) : activeSubMenuItem === "agent_square" ? (
           <div className="h-full overflow-hidden">
-            <AgentSquare agents={[]} handleAgentList={handleAgentList} />
+            <AgentSquare
+              agents={[]}
+              handleAgentList={handleAgentList}
+              existingAgents={agents}
+            />
           </div>
         ) : (
           <div className="h-full overflow-hidden">

@@ -104,7 +104,6 @@ export function truncateText(text: string, length = 50) {
   }
   return text;
 }
-console.log('getServerUrl()',getServerUrl())
 export const fetchVersion = () => {
   const versionUrl = getServerUrl() + "/version";
   
