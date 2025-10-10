@@ -19,6 +19,7 @@ interface AgentCardProps {
   onRemove?: (id?: string) => void;
   handleAgentList?: (agents: any[]) => Promise<void>;
   id?: string;
+  existingAgents?: any[]; // 现有的侧边栏智能体列表
 }
 
 const DEFAULT_AVATAR = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRkM2RjMyIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyNCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPkE8L3RleHQ+Cjwvc3ZnPgo=";
@@ -51,9 +52,38 @@ const AgentCard: React.FC<AgentCardProps> = ({
   onRemove,
   handleAgentList,
   id,
+  existingAgents = [],
 }) => {
   const { setSelectedAgent, setConfig } = useModeConfigStore();
   const { user } = useContext(appContext);
+
+  // 添加状态跟踪
+  const [isAdding, setIsAdding] = React.useState(false);
+  const [isAdded, setIsAdded] = React.useState(false);
+
+  // 检查智能体是否已存在于侧边栏中
+  const checkIfAgentExists = React.useCallback(() => {
+    return existingAgents.some(existingAgent => {
+      // 检查名称是否相同
+      if (existingAgent.name === name) {
+        return true;
+      }
+      // 检查配置是否相同
+      if (existingAgent.mode === mode &&
+        existingAgent.config?.url === url &&
+        existingAgent.config?.apiKey === apiKey) {
+        return true;
+      }
+      return false;
+    });
+  }, [existingAgents, name, mode, url, apiKey]);
+
+  // 组件初始化时检查是否已存在
+  React.useEffect(() => {
+    if (existingAgents.length > 0) {
+      setIsAdded(checkIfAgentExists());
+    }
+  }, [existingAgents, checkIfAgentExists]);
 
   const handleTryClick = async () => {
     const agent: Partial<Agent> = { mode, name };
@@ -85,8 +115,9 @@ const AgentCard: React.FC<AgentCardProps> = ({
   };
 
   const handleAddToSidebar = async () => {
-    if (!user?.email) return;
+    if (!user?.email || isAdding || isAdded) return;
 
+    setIsAdding(true);
     try {
       const agentNewList = await agentAPI.updateAgentList(
         user.email,
@@ -106,8 +137,13 @@ const AgentCard: React.FC<AgentCardProps> = ({
       if (handleAgentList) {
         await handleAgentList(agentNewList);
       }
+
+      // 添加成功后设置状态
+      setIsAdded(true);
     } catch (error) {
       console.error("Failed to add agent to sidebar:", error);
+    } finally {
+      setIsAdding(false);
     }
   };
 
@@ -164,20 +200,31 @@ const AgentCard: React.FC<AgentCardProps> = ({
 
       <div className="w-full flex flex-col gap-2">
         <Button
-          variant="primary"
-          size="sm"
-          onClick={handleTryClick}
-          className="w-full group-hover:bg-magenta-900 transition-colors"
-        >
-          点击试用
-        </Button>
-        <Button
-          variant="secondary"
+          variant={isAdded ? "success" : "secondary"}
           size="sm"
           onClick={handleAddToSidebar}
-          className="w-full border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+          disabled={isAdding || isAdded}
+          isLoading={isAdding}
+          className={`w-full transition-all duration-300 ${isAdded
+            ? "bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+            : "bg-black/5 dark:bg-white/5 backdrop-blur-sm border border-white/20 dark:border-white/10 text-primary hover:bg-accent/10 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/20 transform hover:-translate-y-0.5"
+            }`}
         >
-          添加到侧边栏
+          {isAdded ? (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+              已添加
+            </span>
+          ) : (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              添加到侧边栏
+            </span>
+          )}
         </Button>
       </div>
     </div>

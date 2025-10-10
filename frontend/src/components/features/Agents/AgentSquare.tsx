@@ -12,11 +12,13 @@ interface AgentSquareProps {
   agents: AgentCardProps[];
   className?: string;
   handleAgentList?: (agents: any[]) => Promise<void>;
+  existingAgents?: any[]; // 现有的侧边栏智能体列表
 }
 
 const AgentSquare: React.FC<AgentSquareProps> = ({
   className = "",
   handleAgentList,
+  existingAgents = [],
 }) => {
   const { user } = useContext(appContext);
   const [agentList, setAgentList] = useState<AgentCardProps[]>([]);
@@ -26,10 +28,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
   const handleRemoveRemoteAgent = useCallback(async (id?: string) => {
     if (!id || !user?.email) return;
-    
+
     try {
       await agentWorkerAPI.removeRemoteAgent(user.email, id);
-      setAgentList(prev => prev.filter(agent => 
+      setAgentList(prev => prev.filter(agent =>
         !(agent.mode === "remote" && agent.id === id)
       ));
       console.log("Remote agent removed successfully");
@@ -54,7 +56,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
   const handleRemoteAgentSave = useCallback(async (config: any, agentInfo?: any) => {
     if (!user?.email) return;
-    
+
     try {
       await agentWorkerAPI.saveRemoteAgent(user.email, {
         name: config.name,
@@ -110,7 +112,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         loadRemoteAgents(user.email)
       ]);
 
-      const agents = Array.isArray(standardAgents) && standardAgents.length > 0 
+      const agents = Array.isArray(standardAgents) && standardAgents.length > 0
         ? [...standardAgents, ...remoteAgents]
         : remoteAgents;
 
@@ -180,6 +182,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               key={agent.id || agent.name}
               {...agent}
               handleAgentList={handleAgentList}
+              existingAgents={existingAgents}
             />
           ))}
         </div>
