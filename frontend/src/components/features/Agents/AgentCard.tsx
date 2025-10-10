@@ -200,6 +200,14 @@ const AgentCard: React.FC<AgentCardProps> = ({
 
       <div className="w-full flex flex-col gap-2">
         <Button
+          variant="primary"
+          size="sm"
+          onClick={handleTryClick}
+          className="w-full"
+        >
+          点击试用
+        </Button>
+        <Button
           variant={isAdded ? "success" : "secondary"}
           size="sm"
           onClick={handleAddToSidebar}

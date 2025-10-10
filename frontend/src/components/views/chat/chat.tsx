@@ -78,7 +78,6 @@ export default function ChatView({
   visible = true,
   onRunStatusChange,
 }: ChatViewProps) {
-  const serverUrl = getServerUrl();
   const [error, setError] = React.useState<IStatus | null>({
     status: true,
     message: "All good",
@@ -95,9 +94,6 @@ export default function ChatView({
   const {
     getSessionRun,
     setSessionRun,
-    addMessageToSession,
-    updateMessageInSession,
-    updateSessionMessages,
   } = useMessageCacheStore();
 
   // Core state
@@ -139,14 +135,6 @@ export default function ChatView({
   // Replace stepTitles state with currentPlan state
   const [currentPlan, setCurrentPlan] =
     React.useState<StepProgress["plan"]>();
-
-  const { config } = useSettingsStore();
-  const {
-    mode,
-    config: newConfig,
-    setMode,
-    setConfig,
-  } = useModeConfigStore();
 
   const [currentSessionConfig, setCurrentSessionConfig] = React.useState({ mode: "", config: {} })
 
@@ -203,7 +191,6 @@ export default function ChatView({
         const res = await sessionAPI.getSession(session?.id, user?.email)
 
         setCurrentSessionConfig(res.agent_mode_config)
-        console.log('rrr:', res)
       }
 
     }
@@ -1049,13 +1036,11 @@ export default function ChatView({
           // },
         },
       };
-      console.log("messageToSend：：：：11111", messageToSend);
       socket.send(JSON.stringify(messageToSend));
       const sessionData = {
         id: session?.id,
         name: query.slice(0, 50),
       };
-      console.log("onSessionNameChange：：：：", sessionData);
       onSessionNameChange(sessionData);
     } catch (error) {
       setError({
@@ -1474,7 +1459,7 @@ export default function ChatView({
                       try a sample task below
                     </p>
                     {/* Current Model Indicator */}
-                    {newConfig?.name && (
+                    {/* {newConfig?.name && (
                       <div
                         className="text-sm text-secondary animate-slide-up"
                         style={{
@@ -1486,7 +1471,7 @@ export default function ChatView({
                           {newConfig.name}
                         </span>
                       </div>
-                    )}
+                    )} */}
                   </div>
                 </div>
 

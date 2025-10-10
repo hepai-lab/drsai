@@ -543,7 +543,6 @@ export const SessionManager: React.FC = () => {
         currentSession,
         user.email
       );
-      console.log("Updated session2222:", updated);
 
       setSessions(
         Array.isArray(sessions)
