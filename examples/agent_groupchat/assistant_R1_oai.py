@@ -93,6 +93,6 @@ if __name__ == "__main__":
             no_register=False,
             enable_openwebui_pipeline=True, 
             history_mode = "backend",
-            # use_api_key_mode = "backend",
+            use_api_key_mode = "backend",
         )
     )

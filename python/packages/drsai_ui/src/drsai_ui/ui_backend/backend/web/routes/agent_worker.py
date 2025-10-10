@@ -16,7 +16,7 @@ import uuid
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("/ddf_agents")
 async def get_ddf_agents(user_id: str, authorization: str = Header(...), db=Depends(get_db)) -> Dict:
     '''
     获取后端的mode种类设置

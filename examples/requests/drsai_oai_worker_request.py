@@ -61,12 +61,14 @@ def get_model_list():
 def test_sync_request():
     model = HRModel.connect(
         api_key=HEPAI_API_KEY,
-        name="DeepSeek_R1_test",
+        name="R1_test",
         base_url="https://aiapi.ihep.ac.cn/apiv2"
     )
     funcs = model.functions  # Get all remote callable functions.
     print(f"Remote callable funcs: {funcs}")
-
+    
+    info = model.get_info()
+    print(f"Model info: {info}")
     stream = True
     completion = model.a_chat_completions(
       api_key=HEPAI_API_KEY,
@@ -82,6 +84,33 @@ def test_sync_request():
     for chunk in completion:
        print(chunk)
 
+async def test_async_request():
+  model = await HRModel.async_connect(
+      api_key=HEPAI_API_KEY,
+      name="R1_test",
+      base_url="https://aiapi.ihep.ac.cn/apiv2"
+  )
+  
+  funcs = model.functions  # Get all remote callable functions.
+  print(f"Remote callable funcs: {funcs}")
+  
+  info = await model.get_info()
+  print(f"Model info: {info}")
+  stream = True
+  completion = await model.a_chat_completions(
+    api_key=HEPAI_API_KEY,
+    stream =  stream,
+    messages=[
+      # {"role": "user", "content": "请使用百度搜索什么是Ptychography?"}
+      # {"role": "user", "content": "What is the weather in New York?"},
+      TextMessage(content="Hello, world!", source="Alice", metadata={"timestamp": "1626713600"}).model_dump(mode="json")
+    ],
+    chat_id =  "1234567893",
+    user =  {"name": "Alice", "email": "alice@example.com"}
+  )
+  async for chunk in completion:
+      print(chunk)
+
 async def test_StatusAgent_request():
     from drsai_ui import StatusAgent
      
@@ -90,7 +119,7 @@ async def test_StatusAgent_request():
           model_remote_configs = {
             "api_key" : HEPAI_API_KEY,
             "url" : base_url,
-            "model" : "DeepSeek_R1_test",
+            "model" : "R1_test",
           },
           chat_id="1234567893",
           run_info={"name": "Alice", "email": "alice@example.com"},
@@ -110,4 +139,5 @@ if __name__ == '__main__':
     # get_model_list()
     # asyncio.run(test_async_request())
     # test_sync_request()
-    asyncio.run(test_StatusAgent_request())
+    asyncio.run(test_async_request())
+    # asyncio.run(test_StatusAgent_request())
