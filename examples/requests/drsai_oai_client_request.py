@@ -47,7 +47,7 @@ async def request_async_client():
   from openai import AsyncOpenAI
   client = AsyncOpenAI(api_key=HEPAI_API_KEY, base_url=base_url)
   completion = await client.chat.completions.create(
-    model='R2_test',
+    model='R1_test',
     messages=[
       # {"role": "user", "content": "请使用百度搜索什么是Ptychography?"}
       {"role": "user", "content": "What is the weather in New York?"}

@@ -87,6 +87,10 @@ class Session(SQLModel, table=True):
         default=None, sa_column=Column(JSON)
     )
 
+    @field_serializer("created_at", "updated_at")
+    def serialize_datetime(cls, value: datetime) -> str:
+        if isinstance(value, datetime):
+            return value.isoformat()
 
 class RunStatus(str, Enum):
     CREATED = "created"
