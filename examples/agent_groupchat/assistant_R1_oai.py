@@ -80,7 +80,7 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册信息
-            agent_name="R2_test",
+            agent_name="R1_test",
             author = "xiongdb@ihep.ac.cn",
             permission='groups: drsai; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             description = "DeepSeek_R1 聊天助手.",

@@ -61,7 +61,7 @@ def get_model_list():
 def test_sync_request():
     model = HRModel.connect(
         api_key=HEPAI_API_KEY,
-        name="R2_test",
+        name="R1_test",
         base_url="https://aiapi.ihep.ac.cn/apiv2"
     )
     funcs = model.functions  # Get all remote callable functions.
@@ -87,7 +87,7 @@ def test_sync_request():
 async def test_async_request():
   model = await HRModel.async_connect(
       api_key=HEPAI_API_KEY,
-      name="R2_test",
+      name="R1_test",
       base_url="https://aiapi.ihep.ac.cn/apiv2"
   )
   
