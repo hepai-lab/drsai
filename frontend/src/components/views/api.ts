@@ -603,7 +603,7 @@ export class AgentWorkerAPI {
 
     async getAgentList(userId: string, apiKey: string): Promise<any[]> {
         const response = await fetch(
-            `${this.getBaseUrl()}/agentworker?user_id=${userId}`,
+            `${this.getBaseUrl()}/agentworker/ddf_agents?user_id=${userId}`,
             {
                 headers: this.getHeaders(apiKey),
             }

@@ -37,23 +37,25 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), db=Depe
         for model in models.data:
             if model.id != "hepai/custom-model":
                 try:
-                    worker = HRModel.connect(
+                    model = HRModel.connect(
                         name=model.id, 
                         api_key=apikey,
                         base_url="https://aiapi.ihep.ac.cn/apiv2",
                     )
-                    # agent_info: dict|WorkerInfo = worker.get_info()
+                    # agent_info: dict|WorkerInfo = model.get_info()
                     agent_info: dict|WorkerInfo = await asyncio.wait_for(
                             asyncio.to_thread(
-                                worker.get_info
+                                model.get_info
                             ),
                             timeout=5.0
                         )
                     if isinstance(agent_info, WorkerInfo):
-                        agent_info = agent_info.to_dict()
-                    agent_info.update({"owner": model.owner})
-                    agent_info.update({"mode": "ddf"})
-                    agents.append(agent_info)
+                        pass
+                        # agent_info = agent_info.to_dict()
+                        # agent_info.update({"owner": agent_info["resource_info"][0]["owned_by"]})
+                    else:
+                        agent_info.update({"mode": "ddf"})
+                        agents.append(agent_info)
                 except Exception as e:
                     pass
         return {"status": True, "data": agents}

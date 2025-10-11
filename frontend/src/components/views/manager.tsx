@@ -45,6 +45,7 @@ export const SessionManager: React.FC = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activeSubMenuItem, setActiveSubMenuItem] =
     useState("current_session");
+  const [isSessionLoading, setIsSessionLoading] = useState(false);
 
   const { user } = useContext(appContext);
   const { session, setSession, sessions, setSessions } = useConfigStore();
@@ -109,7 +110,6 @@ export const SessionManager: React.FC = () => {
   };
 
   React.useEffect(() => {
-    // handleAgentList(agents);
     if (user?.email) {
       handleAgentList();
     }
@@ -159,7 +159,7 @@ export const SessionManager: React.FC = () => {
     }
   }, [user?.email, setSessions, session, setSession]);
 
-  // 在session变化时保存到localStorage
+  // Save session to localStorage when it changes
   useEffect(() => {
     if (session?.id) {
       saveSessionIdToStorage(session.id);
@@ -170,15 +170,23 @@ export const SessionManager: React.FC = () => {
   const handleSelectSession = async (selectedSession: Session) => {
     if (!user?.email || !selectedSession?.id) return;
 
+    // 防止重复调用
+    if (isSessionLoading) {
+      return;
+    }
+
     try {
       setActiveSubMenuItem("current_session");
       setIsLoading(true);
+      setIsSessionLoading(true);
+
       const data = await sessionAPI.getSession(
         selectedSession.id,
         user.email
       );
       if (!data) {
-        // Session not found
+        // Session not found - 清除无效的sessionId
+        saveSessionIdToStorage(null);
         messageApi.error("Session not found");
         window.history.pushState({}, "", window.location.pathname); // Clear URL
         if (Array.isArray(sessions) && sessions.length > 0) {
@@ -215,6 +223,10 @@ export const SessionManager: React.FC = () => {
       );
     } catch (error) {
       console.error("Error loading session:", error);
+      // 如果是"Failed to fetch session"错误，清除localStorage中的无效sessionId
+      if (error instanceof Error && error.message.includes("Failed to fetch session")) {
+        saveSessionIdToStorage(null);
+      }
       messageApi.error("Error loading session");
       window.history.pushState({}, "", window.location.pathname); // Clear invalid URL
       if (Array.isArray(sessions) && sessions.length > 0) {
@@ -236,40 +248,31 @@ export const SessionManager: React.FC = () => {
       }
     } finally {
       setIsLoading(false);
+      setIsSessionLoading(false);
     }
   };
-  // 在组件初始化时恢复sessionId
-  useEffect(() => {
-    const storedSessionId = getSessionIdFromStorage();
-    if (storedSessionId && !session) {
-      handleSelectSession({ id: storedSessionId } as Session);
-    }
-  }, [session, handleSelectSession]);
+  // Restore sessionId on component initialization
 
-  // 添加刷新时自动获取当前会话的id
+
+  // Initialize session on refresh
   useEffect(() => {
     const initializeSessionOnRefresh = async () => {
       const storedSessionId = getSessionIdFromStorage();
 
       if (storedSessionId && !session) {
-        console.log(
-          "Restoring session from localStorage:",
-          storedSessionId
-        );
+        // Restoring session from localStorage
       }
 
       if (!storedSessionId) {
         const params = new URLSearchParams(window.location.search);
         const urlSessionId = params.get("sessionId");
         if (urlSessionId && !session) {
-          console.log("Restoring session from URL:", urlSessionId);
+          // Restoring session from URL
         }
       }
 
       if (!session && Array.isArray(sessions) && sessions.length > 0) {
-        console.log(
-          "No stored session, selecting first available session"
-        );
+        // No stored session, selecting first available session
         setSession(sessions[0]);
         if (sessions[0].id) {
           saveSessionIdToStorage(sessions[0].id);
@@ -280,6 +283,34 @@ export const SessionManager: React.FC = () => {
     initializeSessionOnRefresh();
   }, [sessions, session, setSession]);
 
+  useEffect(() => {
+    const delayReload = async () => {
+      // 防止竞态条件：如果正在加载session或者正在删除session，则不执行
+      if (isSessionLoading || isLoading) {
+        return;
+      }
+
+      const storedSessionId = getSessionIdFromStorage();
+
+      if (storedSessionId && !session) {
+        setIsSessionLoading(true);
+        try {
+          await handleSelectSession({ id: storedSessionId } as Session);
+        } catch (error) {
+          console.error('Error in delayReload:', error);
+          // 如果获取session失败，清除localStorage中的无效sessionId
+          saveSessionIdToStorage(null);
+        } finally {
+          setIsSessionLoading(false);
+        }
+      }
+    };
+
+    // 添加延迟执行，避免在快速状态变化时重复触发
+    const timeoutId = setTimeout(delayReload, 100);
+
+    return () => clearTimeout(timeoutId);
+  }, [session, handleSelectSession, isSessionLoading, isLoading]);
   // Handle browser back/forward
   useEffect(() => {
     const handleLocationChange = () => {
@@ -305,7 +336,6 @@ export const SessionManager: React.FC = () => {
         const curSession = sessions.find((s) => s.id === sessionData.id);
         if (!curSession) return;
         curSession.name = sessionData.name || curSession.name;
-        // curSession.created_at = ((new Date()).toISOString());
         const updated = await sessionAPI.updateSession(
           sessionData.id,
           curSession,
@@ -348,7 +378,6 @@ export const SessionManager: React.FC = () => {
         );
 
 
-        console.log("Created session:1998:::", created);
         setSessions([
           created,
           ...(Array.isArray(sessions) && sessions ? sessions : []),
@@ -470,33 +499,45 @@ export const SessionManager: React.FC = () => {
       setSessions(updatedSessions);
 
       if (isDeletingCurrentSession) {
-        // 删除的是当前选中的session
-        console.log("删除的是当前选中的session，剩余sessions:", updatedSessions);
+        // 删除的是当前选中的session，先清除localStorage中的sessionId，避免竞态条件
+        saveSessionIdToStorage(null);
+
+        // 关闭当前session相关的WebSocket连接
+        if (sessionSockets[sessionId]) {
+          sessionSockets[sessionId].socket.close();
+          setSessionSockets((prev) => {
+            const updated = { ...prev };
+            delete updated[sessionId];
+            return updated;
+          });
+        }
+
+        // 清除当前session状态，确保不会再尝试获取被删除的session
+        setSession(null);
+        setSelectedAgent(null);
+        setMode("");
+        setConfig({});
+
 
         if (updatedSessions.length > 0) {
           // 检查第一个session是否是default session
           const firstSession = updatedSessions[0];
           const isFirstSessionDefault = firstSession.name && firstSession.name.startsWith("Default Session - ");
 
-          console.log("第一个session:", firstSession.name, "是否是default:", isFirstSessionDefault);
 
           if (isFirstSessionDefault) {
             // 如果第一个session是default session，直接选中它
-            console.log("选中现有的default session");
             setSession(firstSession);
             if (firstSession.id) {
               window.history.pushState({}, "", `?sessionId=${firstSession.id}`);
             }
           } else {
             // 如果第一个session不是default session，创建新的default session
-            console.log("创建新的default session");
-            // 先等待sessions状态更新完成
             await new Promise(resolve => setTimeout(resolve, 0));
             await createDefaultSession();
           }
         } else {
           // 如果没有其他session了，创建新的default session
-          console.log("没有其他session，创建新的default session");
           await createDefaultSession();
         }
         // 清除URL参数
@@ -534,7 +575,6 @@ export const SessionManager: React.FC = () => {
     const currentSession = sessions.find((s) => s.id === sessionData.id);
     if (!currentSession) return;
     currentSession.name = sessionData.name || currentSession.name;
-    // currentSession.created_at = ((new Date()).toISOString());
     // Only update if it starts with "Default Session - "
 
     try {
@@ -587,7 +627,7 @@ export const SessionManager: React.FC = () => {
     const baseUrl = getBaseUrl(serverUrl);
     // TODO: 适配wss
     const wsProtocol =
-      window.location.protocol === "https:" ? "ws:" : "ws:";
+      window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${wsProtocol}//${baseUrl}/api/ws/runs/${runId}`;
 
     const socket = new WebSocket(wsUrl);
@@ -786,10 +826,6 @@ export const SessionManager: React.FC = () => {
           // 保存到localStorage
           saveSessionIdToStorage(newSession.id);
 
-          console.log(
-            "New session created and set as current:",
-            newSession
-          );
         } catch (error) {
           console.error("Error setting new session:", error);
         }

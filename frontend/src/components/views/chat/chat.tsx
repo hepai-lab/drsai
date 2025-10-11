@@ -187,16 +187,22 @@ export default function ChatView({
   React.useEffect(() => {
     const loadCurrentSession = async () => {
       if (session?.id && user?.email) {
-
-        const res = await sessionAPI.getSession(session?.id, user?.email)
-
-        setCurrentSessionConfig(res.agent_mode_config)
+        try {
+          const res = await sessionAPI.getSession(session?.id, user?.email)
+          setCurrentSessionConfig(res.agent_mode_config)
+        } catch (error) {
+          console.error("Error loading current session:", error);
+          // 如果获取session失败，清除可能无效的session状态
+          if (error instanceof Error && error.message.includes("Failed to fetch session")) {
+            console.warn("Session not found, it may have been deleted");
+            // 可以在这里添加清理逻辑，比如清除localStorage等
+          }
+        }
       }
+    };
 
-    }
-
-    loadCurrentSession()
-  }, []);
+    loadCurrentSession();
+  }, [session?.id, user?.email]);
 
   React.useEffect(() => {
     const initializeSession = async () => {

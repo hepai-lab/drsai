@@ -73,7 +73,7 @@ python examples/agent_groupchat/assistant_R1_oai.py
 ```shell
 # pip install drsai_ui -U # 确保安装了drsai_ui
 
-cp .env.example .env # 复制.env.example文件为.env
+cp .env.example .env # 复制.env.example文件为.env, 用于高能所部署统一认证
 drsai ui # 启动Magenti-UI人机交互后端和静态前端
 ```
 后端和静态前端默认启动在8081端口，连接2.1启动的R1_test智能体并在前端进行交互的视频如下：
