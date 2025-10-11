@@ -1,6 +1,14 @@
 import React, { useState, useEffect } from "react";
 import { useModeConfigStore } from "../../../store/modeConfig";
 
+// 导入 createAgentConfig 函数
+const createAgentConfig = (name: string, url: string, apiKey: string, mode?: string) => ({
+  name,
+  url,
+  apiKey,
+  mode,
+});
+
 interface SampleTasksProps {
   onSelect: (task: string) => void;
 }
@@ -37,32 +45,28 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
     // 根据任务类型设置对应的模型配置
     if (task.model === "besiii") {
       // 设置BESIII模型配置
-      setMode("besiii");
-      setConfig({
-        mode: "besiii",
-        name: "Dr.Sai BESIII",
-        description: "BESIII实验专用智能体，专为高能物理实验优化",
-      });
-      setSelectedAgent({
-        mode: "besiii",
-        name: "Dr.Sai BESIII",
-        type: "drsai-besiii",
-        description: "BESIII实验专用智能体，专为高能物理实验优化",
-      });
+      const mode = "besiii";
+      const name = "Dr.Sai BESIII";
+      const url = ""; // 默认URL
+      const apiKey = ""; // 默认API密钥
+
+      const agent = { mode, name };
+      const config = createAgentConfig(name, url, apiKey || "", mode);
+
+      setSelectedAgent({ name, mode });
+      setConfig(config);
     } else if (task.model === "magentic-one") {
       // 设置General模型配置
-      setMode("magentic-one");
-      setConfig({
-        mode: "magentic-one",
-        name: "Dr.Sai General",
-        description: "Dr.Sai通用智能体，适用于多种任务",
-      });
-      setSelectedAgent({
-        mode: "magentic-one",
-        name: "Dr.Sai General",
-        type: "magentic-one",
-        description: "Dr.Sai通用智能体，适用于多种任务",
-      });
+      const mode = "magentic-one";
+      const name = "Dr.Sai General";
+      const url = ""; // 默认URL
+      const apiKey = ""; // 默认API密钥
+
+      const agent = { mode, name };
+      const config = createAgentConfig(name, url, apiKey || "", mode);
+
+      setSelectedAgent({ name, mode });
+      setConfig(config);
     }
 
     // 只填充任务文本到输入框，不发送消息

@@ -163,7 +163,6 @@ export default function ChatView({
 
     // 如果缓存中没有，则从数据库加载
     try {
-      console.log("Loading session run from database:", session.id);
       const response = await sessionAPI.getSessionRuns(
         session.id,
         user?.email
@@ -414,7 +413,6 @@ export default function ChatView({
                 (newContent === streamingMessage.content ||
                   newContent.includes(streamingMessage.content) ||
                   streamingMessage.content.includes(newContent))) {
-                console.log("Skipping duplicate message rendering - streaming message detected");
                 // 清除流式消息跟踪
                 streamingMessageRef.current = null;
                 return current;
@@ -424,7 +422,6 @@ export default function ChatView({
               if (lastContent === newContent ||
                 newContent.includes(lastContent) ||
                 lastContent.includes(newContent)) {
-                console.log("Skipping duplicate message rendering - content similarity detected");
                 return current;
               }
             }
@@ -456,7 +453,6 @@ export default function ChatView({
           return updatedRun;
 
         case "message_chunk":
-          // console.log("Received message_chunk:", message.data);yo
           if (!message.data) return current;
 
           // Handle streaming chunks for typewriter effect
@@ -538,7 +534,6 @@ export default function ChatView({
           return current;
 
         case "input_request":
-          //console.log("InputRequest: " + JSON.stringify(message))
 
           var input_request: InputRequest;
           switch (message.input_type) {
@@ -651,37 +646,28 @@ export default function ChatView({
   // 确保WebSocket连接可用的辅助函数
   const ensureWebSocketConnection = async (runId: string, needsContinue: boolean = false): Promise<WebSocket> => {
 
-    console.log("ensureWebSocketConnection called", needsContinue);
     if (activeSocketRef.current?.readyState === WebSocket.OPEN) {
-      console.log("Using existing WebSocket connection");
       return activeSocketRef.current;
     }
 
-    console.log("WebSocket not available, attempting to reconnect...");
     // 显示重连提示
     message.loading("正在重新连接...", 0.5);
 
     const socket = setupWebSocket(runId, true, false);
     if (!socket) {
-      console.error("setupWebSocket returned null");
       throw new Error("Failed to establish WebSocket connection");
     }
 
-    console.log("New socket created, readyState:", socket.readyState);
 
     if (socket.readyState !== WebSocket.OPEN) {
-      console.log("Waiting for socket to open...");
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
-          console.error("WebSocket connection timeout");
           reject(new Error("WebSocket connection timeout"));
         }, 5000);
 
         const checkState = () => {
-          console.log("Checking socket state:", socket.readyState);
           if (socket.readyState === WebSocket.OPEN) {
             clearTimeout(timeout);
-            console.log("WebSocket reconnected successfully");
             message.success("重新连接成功", 1);
             resolve();
           } else if (
@@ -689,7 +675,6 @@ export default function ChatView({
             socket.readyState === WebSocket.CLOSING
           ) {
             clearTimeout(timeout);
-            console.error("WebSocket connection failed");
             reject(new Error("WebSocket connection failed"));
           } else {
             setTimeout(checkState, 100);
@@ -700,20 +685,7 @@ export default function ChatView({
       });
     }
 
-    // // 如果需要发送continue消息来恢复会话
-    // if (needsContinue && currentRun) {
-    //   console.log("Sending continue message to resume session...");
-    //   const continueMessage = {
-    //     type: "continue",
-    //     team_config: teamConfig,
-    //     settings_config: settingsConfig,
-    //   };
 
-    //   socket.send(JSON.stringify(continueMessage));
-    //   console.log("Continue message sent:", continueMessage);
-    // }
-
-    console.log("Returning socket with readyState:", socket.readyState);
     return socket;
   };
 
@@ -725,7 +697,6 @@ export default function ChatView({
     files: RcFile[] = [] // 添加files参数
   ) => {
     if (!currentRun) {
-      console.error("No current run available");
       handleError(new Error("No active run"));
       return;
     }
@@ -733,12 +704,9 @@ export default function ChatView({
     try {
       // 检查是否需要重连
       const needsReconnect = !activeSocketRef.current || activeSocketRef.current.readyState !== WebSocket.OPEN;
-      console.log("Needs reconnect:", needsReconnect);
 
       // // 尝试获取或重新建立WebSocket连接
-      console.log("Attempting to ensure WebSocket connection...");
       const socket = await ensureWebSocketConnection(currentRun.id, needsReconnect);
-      console.log("WebSocket connection ensured, socket:", socket);
 
       // Check if the last message is a plan
       const lastMessage = currentRun.messages.slice(-1)[0];
@@ -766,7 +734,6 @@ export default function ChatView({
         ...(processedFiles.length > 0 && { files: processedFiles }),
       };
       const responseString = JSON.stringify(responseJson);
-      console.log("Sending input response:", { type: "input_response", response: responseString });
 
       // 尝试获取或重新建立WebSocket连接
       if (needsReconnect) {
@@ -783,29 +750,20 @@ export default function ChatView({
         }
         // 如果需要发送continue消息来恢复会话
         if (currentRun) {
-          console.log("Sending continue message to resume session...");
           const continueMessage = {
             type: "continue",
             task: responseString,
             team_config: teamConfig,
-            //1.！！！！！！！！！！
-            // NOTE: 这里需要从SESSIONS表中获取settings_config or Agentmodeconfig
-            // settings_config: settingsConfig,
             settings_config: {
               ...currentSettings,
               agent_mode_config: {
                 config: currentSessionConfig,
                 mode: currentSessionConfig.mode
               }
-              // agent_mode_config: {
-              //   mode: newConfig.mode,
-              //   config: newConfig,
-              // },
             },
           };
 
           socket.send(JSON.stringify(continueMessage));
-          console.log("Continue message sent:", continueMessage);
         }
       }
       else {
@@ -817,7 +775,6 @@ export default function ChatView({
           })
         );
 
-        console.log("Input response sent successfully");
 
         setCurrentRun((current: Run | null) => {
           if (!current) return null;
@@ -826,7 +783,6 @@ export default function ChatView({
             status: "active" as BaseRunStatus,
             input_request: undefined, // Changed null to undefined
           };
-          console.log("Updated run status to active:", updatedRun);
           return updatedRun;
         });
       }
@@ -959,7 +915,6 @@ export default function ChatView({
     setError(null);
     setNoMessagesYet(false);
 
-    console.log("Running task:", query, files);
 
     try {
       // Make sure run is setup first
@@ -1009,7 +964,6 @@ export default function ChatView({
         };
         checkState();
       });
-      console.log("Socket connected");
       const processedFiles = await convertFilesToBase64(files);
       // Send start message
 
@@ -1099,7 +1053,6 @@ export default function ChatView({
     setActiveSocket(socket);
     // set up socket ref
     activeSocketRef.current = socket;
-    console.log("Socket setup complete");
     return socket;
   };
 
@@ -1345,13 +1298,10 @@ export default function ChatView({
   const handleAcceptPlan = (text: string) => {
     if (currentRun?.status === "awaiting_input") {
       const query = text || "Plan Accepted";
-      console.log("handleAcceptPlan - query:", query);
       handleInputResponse(query, true).catch(error => {
         console.error("handleAcceptPlan error:", error);
         handleError(error);
       });
-    } else {
-      console.log("Cannot accept plan - run status is not awaiting_input");
     }
   };
 
