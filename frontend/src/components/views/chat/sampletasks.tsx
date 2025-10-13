@@ -1,6 +1,6 @@
 import { useModeConfigStore } from "@/store/modeConfig";
 import React, { useContext, useEffect, useState } from "react";
-import { appContext } from "../../../hooks/provider";
+import { appContext } from "@/hooks/provider";
 
 interface SampleTasksProps {
   onSelect: (task: string) => void;
