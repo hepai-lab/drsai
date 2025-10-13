@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useContext } from "react";
-import { useModeConfigStore } from "../../../store/modeConfig";
-import { sessionAPI } from "../api";
+import { useModeConfigStore } from "@/store/modeConfig";
+import React, { useContext, useEffect, useState } from "react";
 import { appContext } from "../../../hooks/provider";
 
 interface SampleTasksProps {
@@ -8,7 +7,7 @@ interface SampleTasksProps {
 }
 
 // 定义任务和对应的模型配置
-const SAMPLE_TASKS = [
+const BESIII_TASKS = [
   {
     text: "帮我测量psi(4260) -> pi+ pi- [J/psi -> mu+ mu-]过程在4.26 GeV能量点上的截面，并且绘制Jpsi（mumu）的不变质量。先规划后执行。",
     model: "besiii",
@@ -16,10 +15,36 @@ const SAMPLE_TASKS = [
   },
   {
     text: "Search arXiv for the latest papers on computer use agents",
+    model: "besiii",
+    name: "Dr.Sai BESIII",
+  },
+];
+
+const MAGENTIC_ONE_TASKS = [
+  {
+    text: "为什么现代人越来越难集中注意力？从认知科学和生活方式角度分析原因，并提出一些实用可行的改善建议。",
+    model: "magentic-one",
+    name: "Dr.Sai General",
+  },
+  {
+    text: "电动车真的比燃油车更环保吗？从全生命周期角度比较碳排放、资源消耗和环境影响，给出客观分析。",
+    model: "magentic-one",
+    name: "Dr.Sai General",
+  },
+  {
+    text: "远程工作是未来趋势吗？分析其对生产力、创新能力和工作生活平衡的影响，讨论企业和个人的应对策略。",
+    model: "magentic-one",
+    name: "Dr.Sai General",
+  },
+  {
+    text: "人工智能会取代人类创造力吗？探讨AI在艺术、音乐和文学创作中的作用，分析人类创造力和AI生成内容的本质区别。",
     model: "magentic-one",
     name: "Dr.Sai General",
   },
 ];
+
+// 合并所有任务类型
+const SAMPLE_TASKS = [...BESIII_TASKS, ...MAGENTIC_ONE_TASKS];
 
 const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
   const [isExpanded, setIsExpanded] = useState(false);
@@ -30,7 +55,7 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
   const { user } = useContext(appContext);
 
   // 获取模式配置存储和会话管理
-  const { setMode, setConfig, setSelectedAgent } = useModeConfigStore();
+  const { selectedAgent } = useModeConfigStore();
 
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -44,76 +69,8 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
 
     try {
       setIsLoading(true);
+      onSelect(task.text);
 
-      // 根据任务类型创建对应的 agent 对象
-      let agent;
-      if (task.model === "besiii") {
-        agent = {
-          mode: "besiii" as const,
-          name: "Dr.Sai BESIII",
-          description: "BESIII实验专用智能助手",
-          config: {
-            url: "",
-            apikey: ""
-          }
-        };
-      } else if (task.model === "magentic-one") {
-        agent = {
-          mode: "magentic-one" as const,
-          name: "Dr.Sai General",
-          description: "通用智能助手",
-          config: {
-            url: "",
-            apikey: ""
-          }
-        };
-      }
-
-      if (agent) {
-        // 设置选中的 agent 和配置
-        setSelectedAgent(agent);
-        setConfig({ mode: agent.mode });
-
-        // 创建新会话
-        const created = await sessionAPI.createSession(
-          {
-            name:
-              `${agent.name} - ` +
-              new Date().toLocaleDateString(undefined, {
-                year: "numeric",
-                month: "long",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              }),
-            agent_mode_config: {
-              mode: agent.mode,
-              name: agent.name,
-              description: agent.description,
-              url: agent.config.url,
-              apikey: agent.config.apikey,
-            },
-          },
-          user.email
-        );
-
-        // 触发自定义事件，通知其他组件会话已创建
-        window.dispatchEvent(
-          new CustomEvent("switchToCurrentSession", {
-            detail: {
-              agent: agent,
-              newSession: created,
-            },
-          })
-        );
-
-        // 确保会话创建完成后立即填充任务文本到输入框
-        // 直接调用，不使用延迟
-        onSelect(task.text);
-      } else {
-        // 如果没有创建 agent，直接填充任务文本
-        onSelect(task.text);
-      }
     } catch (e) {
       console.error("Failed to create session for task:", e);
       // 即使会话创建失败，也要填充任务文本
@@ -123,15 +80,27 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
     }
   };
 
+  // 根据选中的agent过滤任务
+  const getFilteredTasks = () => {
+    if (!selectedAgent?.name) {
+      return SAMPLE_TASKS;
+    }
+
+    // 根据选中的agent名字过滤对应的任务
+    return SAMPLE_TASKS.filter(task => task.name === selectedAgent.name);
+  };
+
+  const filteredTasks = getFilteredTasks();
+
   const isLargeScreen = windowWidth >= 1024; // lg breakpoint
   const tasksPerRow = windowWidth >= 640 ? 2 : 1; // 2 columns on sm, 1 on mobile
   const defaultVisibleTasks = tasksPerRow * 2;
   const maxVisibleTasks = isLargeScreen
-    ? SAMPLE_TASKS.length
+    ? filteredTasks.length
     : isExpanded
-      ? SAMPLE_TASKS.length
+      ? filteredTasks.length
       : defaultVisibleTasks;
-  const visibleTasks = SAMPLE_TASKS.slice(0, maxVisibleTasks);
+  const visibleTasks = filteredTasks.slice(0, maxVisibleTasks);
   const shouldShowToggle =
     !isLargeScreen && SAMPLE_TASKS.length > defaultVisibleTasks;
 
