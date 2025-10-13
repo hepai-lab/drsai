@@ -144,7 +144,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     () => groupSessions(sortedSessions),
     [sortedSessions]
   );
-
   // Helper function to render session group
   const renderSessionGroup = (sessions: Session[]) => (
     <>

@@ -1,13 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useContext } from "react";
 import { useModeConfigStore } from "../../../store/modeConfig";
-
-// 导入 createAgentConfig 函数
-const createAgentConfig = (name: string, url: string, apiKey: string, mode?: string) => ({
-  name,
-  url,
-  apiKey,
-  mode,
-});
+import { sessionAPI } from "../api";
+import { appContext } from "../../../hooks/provider";
 
 interface SampleTasksProps {
   onSelect: (task: string) => void;
@@ -30,8 +24,12 @@ const SAMPLE_TASKS = [
 const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [windowWidth, setWindowWidth] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
 
-  // 获取模式配置存储
+  // 获取用户上下文
+  const { user } = useContext(appContext);
+
+  // 获取模式配置存储和会话管理
   const { setMode, setConfig, setSelectedAgent } = useModeConfigStore();
 
   useEffect(() => {
@@ -41,36 +39,88 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  const handleTaskSelect = (task: (typeof SAMPLE_TASKS)[0]) => {
-    // 根据任务类型设置对应的模型配置
-    if (task.model === "besiii") {
-      // 设置BESIII模型配置
-      const mode = "besiii";
-      const name = "Dr.Sai BESIII";
-      const url = ""; // 默认URL
-      const apiKey = ""; // 默认API密钥
+  const handleTaskSelect = async (task: (typeof SAMPLE_TASKS)[0]) => {
+    if (!user?.email) return;
 
-      const agent = { mode, name };
-      const config = createAgentConfig(name, url, apiKey || "", mode);
+    try {
+      setIsLoading(true);
 
-      setSelectedAgent({ name, mode });
-      setConfig(config);
-    } else if (task.model === "magentic-one") {
-      // 设置General模型配置
-      const mode = "magentic-one";
-      const name = "Dr.Sai General";
-      const url = ""; // 默认URL
-      const apiKey = ""; // 默认API密钥
+      // 根据任务类型创建对应的 agent 对象
+      let agent;
+      if (task.model === "besiii") {
+        agent = {
+          mode: "besiii" as const,
+          name: "Dr.Sai BESIII",
+          description: "BESIII实验专用智能助手",
+          config: {
+            url: "",
+            apikey: ""
+          }
+        };
+      } else if (task.model === "magentic-one") {
+        agent = {
+          mode: "magentic-one" as const,
+          name: "Dr.Sai General",
+          description: "通用智能助手",
+          config: {
+            url: "",
+            apikey: ""
+          }
+        };
+      }
 
-      const agent = { mode, name };
-      const config = createAgentConfig(name, url, apiKey || "", mode);
+      if (agent) {
+        // 设置选中的 agent 和配置
+        setSelectedAgent(agent);
+        setConfig({ mode: agent.mode });
 
-      setSelectedAgent({ name, mode });
-      setConfig(config);
+        // 创建新会话
+        const created = await sessionAPI.createSession(
+          {
+            name:
+              `${agent.name} - ` +
+              new Date().toLocaleDateString(undefined, {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            agent_mode_config: {
+              mode: agent.mode,
+              name: agent.name,
+              description: agent.description,
+              url: agent.config.url,
+              apikey: agent.config.apikey,
+            },
+          },
+          user.email
+        );
+
+        // 触发自定义事件，通知其他组件会话已创建
+        window.dispatchEvent(
+          new CustomEvent("switchToCurrentSession", {
+            detail: {
+              agent: agent,
+              newSession: created,
+            },
+          })
+        );
+
+        // 确保会话创建完成后立即填充任务文本到输入框
+        // 直接调用，不使用延迟
+        onSelect(task.text);
+      } else {
+        // 如果没有创建 agent，直接填充任务文本
+        onSelect(task.text);
+      }
+    } catch (e) {
+      console.error("Failed to create session for task:", e);
+      // 即使会话创建失败，也要填充任务文本
+      onSelect(task.text);
+    } finally {
+      setIsLoading(false);
     }
-
-    // 只填充任务文本到输入框，不发送消息
-    onSelect(task.text);
   };
 
   const isLargeScreen = windowWidth >= 1024; // lg breakpoint
@@ -96,8 +146,9 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
               className="max-w-80 rounded-2xl px-6 py-4 text-left transition-smooth text-primary hover:text-accent bg-tertiary/50 hover:bg-tertiary/70 backdrop-blur-sm border border-border-primary hover:border-accent/50 shadow-modern hover:shadow-modern-lg hover-lift animate-fade-in group"
               style={{ animationDelay: `${idx * 0.1}s` }}
               onClick={() => handleTaskSelect(task)}
+              disabled={isLoading}
               type="button"
-              title="点击填充到输入框，可编辑后发送"
+              title="点击创建会话并填充到输入框，可编辑后发送"
             >
               <div className="text-sm leading-relaxed">
                 {task.text}
@@ -107,7 +158,7 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
                   {task.name}
                 </div>
                 <div className="text-xs text-secondary opacity-0 group-hover:opacity-100 transition-opacity">
-                  点击填充
+                  {isLoading ? "创建会话中..." : "点击创建会话"}
                 </div>
               </div>
             </button>
@@ -130,3 +181,4 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
 };
 
 export default SampleTasks;
+

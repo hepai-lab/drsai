@@ -46,6 +46,7 @@ export class SessionAPI {
         const session = {
             ...sessionData,
             user_id: userId, // Ensure user_id is included
+            // Note: created_at is handled by server_default=func.now() in backend
         };
 
         const response = await fetch(`${this.getBaseUrl()}/sessions/`, {
@@ -64,10 +65,14 @@ export class SessionAPI {
         sessionData: Partial<Session>,
         userId: string
     ): Promise<Session> {
+        // Exclude created_at when updating, as it should be preserved
+        const { created_at, ...dataWithoutCreatedAt } = sessionData;
+
         const session = {
-            ...sessionData,
+            ...dataWithoutCreatedAt,
             id: sessionId,
             user_id: userId, // Ensure user_id is included
+            // Note: updated_at is handled by onupdate=func.now() in backend
         };
 
         const response = await fetch(
