@@ -1,6 +1,6 @@
 import React, { useState, useContext } from "react";
 import ReactDOM from "react-dom";
-import { X, Wifi, Save, TestTube, CheckCircle2, AlertCircle } from "lucide-react";
+import { X, Wifi, Save, Zap, CheckCircle2, AlertCircle } from "lucide-react";
 import { appContext } from "../../../hooks/provider";
 import { agentWorkerAPI } from "../../views/api";
 import { message } from "antd";
@@ -226,7 +226,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
               </>
             ) : (
               <>
-                <TestTube className="h-4 w-4" />
+                <Zap className="h-4 w-4" />
                 测试连接
               </>
             )}

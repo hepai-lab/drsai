@@ -70,7 +70,7 @@ async def update_session(
         raise HTTPException(status_code=404, detail="Session not found")
 
     # Update the session
-    session.created_at = existing.data[0].created_at  # Preserve creation time
+    # session.created_at = existing.data[0].created_at  # Preserve creation time
     response = db.upsert(session)
     if not response.status:
         raise HTTPException(status_code=400, detail=response.message)
