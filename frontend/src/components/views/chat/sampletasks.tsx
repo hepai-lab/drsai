@@ -14,33 +14,38 @@ const BESIII_TASKS = [
     name: "Dr.Sai BESIII",
   },
   {
-    text: "Search arXiv for the latest papers on computer use agents",
+    text: "帮我测量Psip -> pi+ pi- [J/psi -> Lambda Lambdabar]过程在3.686GeV能量点上的截面,并且绘制Lambda的能量分布。先规划后执行。",
     model: "besiii",
     name: "Dr.Sai BESIII",
   },
+  {
+    text: "帮我测量Jpsi to eta [phi -> K+ K-]过程在3.097 GeV能量点上的截面,并且绘制eta的动量分布。先规划后执行。",
+    model: "besiii",
+    name: "Dr.Sai BESIII",
+  }
 ];
 
 const MAGENTIC_ONE_TASKS = [
   {
-    text: "为什么现代人越来越难集中注意力？从认知科学和生活方式角度分析原因，并提出一些实用可行的改善建议。",
+    text: "Search arXiv for the latest papers on computer use agents",
     model: "magentic-one",
     name: "Dr.Sai General",
   },
   {
-    text: "电动车真的比燃油车更环保吗？从全生命周期角度比较碳排放、资源消耗和环境影响，给出客观分析。",
+    text: "检索arXiv上关于高能物理人工智能智能体的最新进展",
     model: "magentic-one",
     name: "Dr.Sai General",
   },
-  {
-    text: "远程工作是未来趋势吗？分析其对生产力、创新能力和工作生活平衡的影响，讨论企业和个人的应对策略。",
-    model: "magentic-one",
-    name: "Dr.Sai General",
-  },
-  {
-    text: "人工智能会取代人类创造力吗？探讨AI在艺术、音乐和文学创作中的作用，分析人类创造力和AI生成内容的本质区别。",
-    model: "magentic-one",
-    name: "Dr.Sai General",
-  },
+  // {
+  //   text: "远程工作是未来趋势吗？分析其对生产力、创新能力和工作生活平衡的影响，讨论企业和个人的应对策略。",
+  //   model: "magentic-one",
+  //   name: "Dr.Sai General",
+  // },
+  // {
+  //   text: "人工智能会取代人类创造力吗？探讨AI在艺术、音乐和文学创作中的作用，分析人类创造力和AI生成内容的本质区别。",
+  //   model: "magentic-one",
+  //   name: "Dr.Sai General",
+  // },
 ];
 
 // 合并所有任务类型
