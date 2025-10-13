@@ -80,6 +80,20 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
     }
   };
 
+  // 检查当前选中的agent是否支持sample tasks
+  const shouldShowSampleTasks = () => {
+    if (!selectedAgent?.name) {
+      return true; // 没有选择agent时显示所有任务
+    }
+
+    // 只在这两个特定agent名称时显示sample tasks
+    return selectedAgent.name === "Dr.Sai General" || selectedAgent.name === "Dr.Sai BESIII";
+  };
+
+  if (!shouldShowSampleTasks()) {
+    return null;
+  }
+
   // 根据选中的agent过滤任务
   const getFilteredTasks = () => {
     if (!selectedAgent?.name) {
