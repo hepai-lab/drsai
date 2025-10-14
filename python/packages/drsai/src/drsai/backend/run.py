@@ -414,6 +414,7 @@ async def run_worker(agent_factory: callable, **kwargs):
     )
     server = uvicorn.Server(config)
     # 在现有事件循环中启动服务
+    print(f"Enable HepAI worker: `http://{worker_args.host}:{worker_args.port}/apiv2`")
     if enable_pipeline:
         print(f"Enable OpenWebUI pipelines: `http://{worker_args.host}:{worker_args.port}/pipelines` with API-KEY: `{owebui_pipeline_app.api_key}`")
     try:
