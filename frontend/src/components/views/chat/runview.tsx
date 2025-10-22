@@ -171,12 +171,7 @@ const RunView: React.FC<RunViewProps> = ({
 
   // Effect to handle BESIII tasks message (for BESIII panel)
   useEffect(() => {
-    // 🐛 DEBUG: 检查 BESIII 消息处理
-    console.log('🔍 [BESIII Debug] Message Check:', {
-      panelType: agentConfig.panel.type,
-      totalMessages: run.messages.length,
-      isBesiiiAgent: agentConfig.panel.type === 'besiii',
-    });
+
 
     if (agentConfig.panel.type !== 'besiii') return;
 
@@ -194,13 +189,11 @@ const RunView: React.FC<RunViewProps> = ({
 
     if (lastBesiiiTaskMsg) {
       const tasks = lastBesiiiTaskMsg.config.metadata?.tasks as BESIIITask[] | undefined;
-      console.log('🔍 [BESIII Debug] Tasks Data:', tasks);
 
       if (tasks && Array.isArray(tasks)) {
         setBesiiiTasks(tasks);
         setShowPanel(true);
         setIsPanelMinimized(false);
-        console.log('✅ [BESIII Debug] Panel should be visible now!');
       }
     }
 
@@ -213,7 +206,6 @@ const RunView: React.FC<RunViewProps> = ({
         .map((msg: Message) => msg.config.metadata?.output || '')
         .join('\n');
       setTerminalOutput(allOutput);
-      console.log('🔍 [BESIII Debug] Terminal Output:', allOutput.substring(0, 100) + '...');
     }
   }, [run.messages, agentConfig.panel.type]);
 
@@ -860,17 +852,6 @@ const RunView: React.FC<RunViewProps> = ({
           <Globe2 size={20} />
         </button>
       )}
-
-      {/* 🐛 DEBUG: Panel 渲染条件检查 */}
-      {(() => {
-        console.log('🔍 [BESIII Debug] Panel Render Conditions:', {
-          showPanel,
-          panelType: agentConfig.panel.type,
-          isPanelMinimized,
-          shouldRender: showPanel && agentConfig.panel.type !== 'none' && !isPanelMinimized,
-        });
-        return null;
-      })()}
 
       {showPanel &&
         agentConfig.panel.type !== 'none' &&

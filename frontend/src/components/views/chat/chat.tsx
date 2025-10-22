@@ -69,6 +69,7 @@ export default function ChatView({
   const [noMessagesYet, setNoMessagesYet] = React.useState(true);
   const chatContainerRef = React.useRef<HTMLDivElement | null>(null);
 
+  // TODO: 根据当前run的task的metadata或session的agent_mode_config来确定agent类型
   // Panel state - initialized based on agent configuration
   // Dynamically detect agent type from session or current run
   const agentType = React.useMemo(() => {

@@ -147,29 +147,29 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     return (
         <div className="bg-white rounded-lg shadow-lg h-full flex flex-col">
             {/* Tab Headers */}
-            <div className="flex border-b bg-gray-50">
+            <div className="flex bg-gray-50 border-b border-gray-200">
                 <button
-                    className={`px-6 py-3 font-medium transition-colors ${activeTab === 'overview'
-                            ? 'bg-white border-b-2 border-purple-500 text-purple-600'
-                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'overview'
+                        ? 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                         }`}
                     onClick={() => setActiveTab('overview')}
                 >
                     全局任务执行
                 </button>
                 <button
-                    className={`px-6 py-3 font-medium transition-colors ${activeTab === 'taskmanager'
-                            ? 'bg-white border-b-2 border-purple-500 text-purple-600'
-                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'taskmanager'
+                        ? 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                         }`}
                     onClick={() => setActiveTab('taskmanager')}
                 >
                     TaskManager
                 </button>
                 <button
-                    className={`px-6 py-3 font-medium transition-colors ${activeTab === 'terminal'
-                            ? 'bg-white border-b-2 border-purple-500 text-purple-600'
-                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'terminal'
+                        ? 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                         }`}
                     onClick={() => setActiveTab('terminal')}
                 >
