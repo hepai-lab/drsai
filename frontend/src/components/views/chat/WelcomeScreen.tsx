@@ -9,7 +9,6 @@ import SampleTasks from "./sampletasks";
 interface WelcomeScreenProps {
     currentRun: Run | null;
     sessionId: number;
-    showDetailViewer: boolean;
     error: IStatus | null;
     isPlanMessage: boolean | undefined;
     chatInputRef: React.RefObject<{
@@ -31,7 +30,6 @@ interface WelcomeScreenProps {
 export default function WelcomeScreen({
     currentRun,
     sessionId,
-    showDetailViewer,
     error,
     isPlanMessage,
     chatInputRef,

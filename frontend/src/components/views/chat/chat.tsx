@@ -14,6 +14,7 @@ import {
 } from "../../types/datamodel";
 import { IPlan } from "../../types/plan";
 import { sessionAPI } from "../api";
+import { getAgentConfig } from "./config/agentConfigs";
 import { useChatWebSocket } from "./hooks/useChatWebSocket";
 import { usePlanManagement } from "./hooks/usePlanManagement";
 import { useProgressTracking } from "./hooks/useProgressTracking";
@@ -67,8 +68,33 @@ export default function ChatView({
   const [messageApi, contextHolder] = message.useMessage();
   const [noMessagesYet, setNoMessagesYet] = React.useState(true);
   const chatContainerRef = React.useRef<HTMLDivElement | null>(null);
-  const [isDetailViewerMinimized, setIsDetailViewerMinimized] = React.useState(true);
-  const [showDetailViewer, setShowDetailViewer] = React.useState(true);
+
+  // Panel state - initialized based on agent configuration
+  // Dynamically detect agent type from session or current run
+  const agentType = React.useMemo(() => {
+    // Try to get agent type from multiple sources
+    // if (currentRun?.task?.metadata?.agent_type) {
+    //   return currentRun.task.metadata.agent_type;
+    // }
+    // if (session?.agent_mode_config?.agent_type) {
+    //   return session.agent_mode_config.agent_type;
+    // }
+    // if (session?.agent_mode_config?.type) {
+    //   return session.agent_mode_config.type;
+    // }
+    // Default to magnetic-one for backward compatibility
+    return 'besiii';
+  }, [currentRun, session]);
+
+  const agentConfig = React.useMemo(() => getAgentConfig(agentType), [agentType]);
+
+  const [isPanelMinimized, setIsPanelMinimized] = React.useState(
+    agentConfig.panel.defaultMinimized
+  );
+  const [showPanel, setShowPanel] = React.useState(
+    agentConfig.panel.type !== 'none'
+  );
+
   const [teamConfig, setTeamConfig] = React.useState<TeamConfig | null>(defaultTeamConfig);
   const [currentSessionConfig, setCurrentSessionConfig] = React.useState({ mode: "", config: {} });
 
@@ -375,7 +401,7 @@ export default function ChatView({
             }`}
         >
           <div
-            className={`${showDetailViewer && !isDetailViewerMinimized
+            className={`${showPanel && !isPanelMinimized
               ? "w-full max-w-sm sm:max-w-md md:max-w-4xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-7xl [&>*]:max-w-none [@media(min-width:1920px)]:max-w-[1600px] [@media(min-width:2560px)]:max-w-[2000px]"
               : "w-full max-w-sm sm:max-w-md md:max-w-2xl lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl [@media(min-width:1920px)]:max-w-[1200px] [@media(min-width:2560px)]:max-w-[1400px]"
               } mx-auto px-2 sm:px-3 md:px-4 h-full ${noMessagesYet && currentRun ? "hidden" : ""
@@ -390,16 +416,11 @@ export default function ChatView({
                     onSavePlan={handlePlanUpdate}
                     onPause={handlePause}
                     onRegeneratePlan={handleRegeneratePlan}
-                    isDetailViewerMinimized={
-                      isDetailViewerMinimized
-                    }
-                    setIsDetailViewerMinimized={
-                      setIsDetailViewerMinimized
-                    }
-                    showDetailViewer={showDetailViewer}
-                    setShowDetailViewer={
-                      setShowDetailViewer
-                    }
+                    isPanelMinimized={isPanelMinimized}
+                    setIsPanelMinimized={setIsPanelMinimized}
+                    showPanel={showPanel}
+                    setShowPanel={setShowPanel}
+                    agentConfig={agentConfig}
                     onApprove={handleApprove}
                     onDeny={handleDeny}
                     onAcceptPlan={handleAcceptPlan}
@@ -421,7 +442,6 @@ export default function ChatView({
             <WelcomeScreen
               currentRun={currentRun}
               sessionId={session.id}
-              showDetailViewer={showDetailViewer}
               error={error}
               isPlanMessage={isPlanMessage}
               chatInputRef={chatInputRef}

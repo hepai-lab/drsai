@@ -3,12 +3,14 @@ import { Globe2 } from "lucide-react";
 import { Run, Message } from "../../types/datamodel";
 import { RenderMessage, messageUtils } from "./rendermessage";
 import { getStatusIcon } from "../statusicon";
-import DetailViewer from "./detail_viewer";
 import { IPlanStep, IPlan } from "../../types/plan";
 import ApprovalButtons from "./approval_buttons";
 import ChatInput from "./chat/chatinput";
 import { IStatus } from "../../types/app";
 import { RcFile } from "antd/es/upload";
+import AgentPanel from "./panels/AgentPanel";
+import { AgentConfiguration } from "./config/agentConfigs";
+import { BESIIITask } from "./panels/types";
 
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 
@@ -17,10 +19,13 @@ interface RunViewProps {
   onSavePlan?: (plan: IPlanStep[]) => void;
   onPause?: () => void;
   onRegeneratePlan?: () => void;
-  isDetailViewerMinimized: boolean;
-  setIsDetailViewerMinimized: (minimized: boolean) => void;
-  showDetailViewer: boolean;
-  setShowDetailViewer: (show: boolean) => void;
+  // Panel control props (renamed for generalization)
+  isPanelMinimized: boolean;
+  setIsPanelMinimized: (minimized: boolean) => void;
+  showPanel: boolean;
+  setShowPanel: (show: boolean) => void;
+  // Agent configuration (from parent)
+  agentConfig: AgentConfiguration;
   onApprove?: () => void;
   onDeny?: () => void;
   onAcceptPlan?: (text: string) => void;
@@ -51,10 +56,11 @@ const RunView: React.FC<RunViewProps> = ({
   onSavePlan,
   onPause,
   onRegeneratePlan,
-  isDetailViewerMinimized,
-  setIsDetailViewerMinimized,
-  showDetailViewer,
-  setShowDetailViewer,
+  isPanelMinimized,
+  setIsPanelMinimized,
+  showPanel,
+  setShowPanel,
+  agentConfig, // 从 parent 接收
   onApprove,
   onDeny,
   onAcceptPlan,
@@ -99,6 +105,36 @@ const RunView: React.FC<RunViewProps> = ({
   // Add this with other refs near the top of the component
   const buttonsContainerRef = useRef<HTMLDivElement | null>(null);
 
+  // Agent configuration - 从 parent (chat.tsx) 接收
+  // 🐛 DEBUG: 检查 agent 配置
+  React.useEffect(() => {
+    console.log('🔍 [BESIII Debug] Agent Config from Parent:', {
+      agentName: agentConfig.name,
+      panelType: agentConfig.panel.type,
+      panelTitle: agentConfig.panel.title,
+    });
+  }, [agentConfig]);
+
+  // BESIII Panel states
+  // 🧪 临时测试：添加模拟数据以便查看效果
+  const [besiiiTasks, setBesiiiTasks] = useState<BESIIITask[]>([
+    {
+      id: 'task1',
+      name: 'Task1 - 物理分析任务',
+      isExpanded: true,
+      subtasks: [
+        { id: 'st1', name: '创建分析算法JSON变量卡', status: 'completed' },
+        { id: 'st2', name: '执行内置脚本并生成分析算', status: 'completed' },
+        { id: 'st3', name: '创建JobOption脚本JSON', status: 'running' },
+        { id: 'st4', name: '执行内置脚本并生成并提交', status: 'waiting' },
+        { id: 'st5', name: '打印变量名称', status: 'waiting' },
+        { id: 'st6', name: '创建绘图JSON变量卡', status: 'waiting' },
+        { id: 'st7', name: '执行内置脚本并生成变量分', status: 'waiting' },
+      ]
+    }
+  ]);
+  const [terminalOutput, setTerminalOutput] = useState<string>('[INFO] Starting BESIII analysis workflow...\n[INFO] Loading detector configuration...\n[SUCCESS] Detector configuration loaded\n[INFO] Processing event data...');
+
   // Combine scroll behavior when messages or status change
   useEffect(() => {
     if (run.messages.length > 0 && threadContainerRef.current) {
@@ -112,8 +148,10 @@ const RunView: React.FC<RunViewProps> = ({
     }
   }, [run.messages, run.status]);
 
-  // Effect to handle browser_address message
+  // Effect to handle browser_address message (for VNC panel)
   useEffect(() => {
+    if (agentConfig.panel.type !== 'vnc') return;
+
     const browserAddressMessages = run.messages.filter(
       (msg: Message) => msg.config.metadata?.type === "browser_address"
     );
@@ -125,11 +163,59 @@ const RunView: React.FC<RunViewProps> = ({
       lastBrowserAddressMsg.config.metadata?.novnc_port !== novncPort
     ) {
       setNovncPort(lastBrowserAddressMsg.config.metadata?.novnc_port);
-      // Show DetailViewer when novncPort becomes available
-      setShowDetailViewer(true);
-      setIsDetailViewerMinimized(false);
+      // Show Panel when novncPort becomes available
+      setShowPanel(true);
+      setIsPanelMinimized(false);
     }
-  }, [run.messages]);
+  }, [run.messages, agentConfig.panel.type]);
+
+  // Effect to handle BESIII tasks message (for BESIII panel)
+  useEffect(() => {
+    // 🐛 DEBUG: 检查 BESIII 消息处理
+    console.log('🔍 [BESIII Debug] Message Check:', {
+      panelType: agentConfig.panel.type,
+      totalMessages: run.messages.length,
+      isBesiiiAgent: agentConfig.panel.type === 'besiii',
+    });
+
+    if (agentConfig.panel.type !== 'besiii') return;
+
+    const besiiiTaskMessages = run.messages.filter(
+      (msg: Message) => msg.config.metadata?.type === "besiii_tasks"
+    );
+
+    console.log('🔍 [BESIII Debug] Task Messages:', {
+      found: besiiiTaskMessages.length,
+      messages: besiiiTaskMessages,
+    });
+
+    const lastBesiiiTaskMsg =
+      besiiiTaskMessages[besiiiTaskMessages.length - 1];
+
+    if (lastBesiiiTaskMsg) {
+      const tasks = lastBesiiiTaskMsg.config.metadata?.tasks as BESIIITask[] | undefined;
+      console.log('🔍 [BESIII Debug] Tasks Data:', tasks);
+
+      if (tasks && Array.isArray(tasks)) {
+        setBesiiiTasks(tasks);
+        setShowPanel(true);
+        setIsPanelMinimized(false);
+        console.log('✅ [BESIII Debug] Panel should be visible now!');
+      }
+    }
+
+    // Also handle terminal output
+    const terminalMessages = run.messages.filter(
+      (msg: Message) => msg.config.metadata?.type === "besiii_terminal"
+    );
+    if (terminalMessages.length > 0) {
+      const allOutput = terminalMessages
+        .map((msg: Message) => msg.config.metadata?.output || '')
+        .join('\n');
+      setTerminalOutput(allOutput);
+      console.log('🔍 [BESIII Debug] Terminal Output:', allOutput.substring(0, 100) + '...');
+    }
+  }, [run.messages, agentConfig.panel.type]);
 
   const isEditable =
     run.status === "awaiting_input" &&
@@ -202,8 +288,8 @@ const RunView: React.FC<RunViewProps> = ({
   }, [run.messages]);
 
   const handleMaximize = () => {
-    setIsDetailViewerMinimized(false);
-    setShowDetailViewer(true);
+    setIsPanelMinimized(false);
+    setShowPanel(true);
   };
 
   // Update handleImageClick to use the correct image index
@@ -611,9 +697,9 @@ const RunView: React.FC<RunViewProps> = ({
     >
       {/* Messages section */}
       <div
-        className={`items-start relative flex flex-col h-full ${showDetailViewer &&
+        className={`items-start relative flex flex-col h-full ${showPanel &&
           novncPort !== undefined &&
-          !isDetailViewerMinimized
+          !isPanelMinimized
           ? detailViewerExpanded
             ? "w-0"
             : "w-[40%]"
@@ -764,53 +850,76 @@ const RunView: React.FC<RunViewProps> = ({
         </div>
       </div>
 
-      {/* Detail Viewer section */}
-      {isDetailViewerMinimized && novncPort !== undefined && (
+      {/* Agent Panel section - Dynamic panel based on agent type */}
+      {isPanelMinimized && agentConfig.panel.type !== 'none' && (
         <button
-          onClick={() => setIsDetailViewerMinimized(false)}
+          onClick={() => setIsPanelMinimized(false)}
           className="self-start sticky top-0 h-full inline-flex text-magenta-800 hover:text-magenta-900 cursor-pointer"
-          title="Show browser"
+          title={`Show ${agentConfig.panel.title}`}
         >
           <Globe2 size={20} />
         </button>
       )}
 
-      {showDetailViewer &&
-        novncPort !== undefined &&
-        !isDetailViewerMinimized && (
+      {/* 🐛 DEBUG: Panel 渲染条件检查 */}
+      {(() => {
+        console.log('🔍 [BESIII Debug] Panel Render Conditions:', {
+          showPanel,
+          panelType: agentConfig.panel.type,
+          isPanelMinimized,
+          shouldRender: showPanel && agentConfig.panel.type !== 'none' && !isPanelMinimized,
+        });
+        return null;
+      })()}
+
+      {showPanel &&
+        agentConfig.panel.type !== 'none' &&
+        !isPanelMinimized && (
           <div
             className={`${detailViewerExpanded ? "w-full" : "w-[60%]"
               } self-start sticky top-0 h-full`}
           >
             <div className="h-full flex-1">
-              <DetailViewer
-                images={messageImages.urls}
-                imageTitles={messageImages.titles}
-                onMinimize={() =>
-                  setIsDetailViewerMinimized(true)
-                }
-                onToggleExpand={() =>
-                  setDetailViewerExpanded(
-                    !detailViewerExpanded
-                  )
-                }
-                isExpanded={detailViewerExpanded}
-                currentIndex={messageImages.currentIndex || 0}
-                onIndexChange={(index: number) =>
-                  setMessageImages((prev) => ({
-                    ...prev,
-                    currentIndex: index,
-                  }))
-                }
-                novncPort={novncPort}
-                onPause={onPause}
-                runStatus={run.status}
-                activeTab={detailViewerTab}
-                onTabChange={setDetailViewerTab}
-                detailViewerContainerId={
-                  DETAIL_VIEWER_CONTAINER_ID
-                }
-                onInputResponse={onInputResponse}
+              {/* Dynamic Agent Panel - renders different panels based on agent type */}
+              <AgentPanel
+                panelConfig={agentConfig.panel}
+                onMinimize={() => setIsPanelMinimized(true)}
+
+                // VNC Panel props
+                vncProps={{
+                  images: messageImages.urls,
+                  imageTitles: messageImages.titles,
+                  currentIndex: messageImages.currentIndex || 0,
+                  onIndexChange: (index: number) =>
+                    setMessageImages((prev) => ({
+                      ...prev,
+                      currentIndex: index,
+                    })),
+                  novncPort: novncPort,
+                  onPause: onPause,
+                  runStatus: run.status,
+                  activeTab: detailViewerTab,
+                  onTabChange: setDetailViewerTab,
+                  detailViewerContainerId: DETAIL_VIEWER_CONTAINER_ID,
+                  onInputResponse: onInputResponse,
+                  isExpanded: detailViewerExpanded,
+                  onToggleExpand: () =>
+                    setDetailViewerExpanded(!detailViewerExpanded),
+                }}
+
+                // BESIII Panel props
+                besiiiProps={{
+                  tasks: besiiiTasks,
+                  terminalOutput: terminalOutput,
+                  onTaskClick: (taskId: string) => {
+                    console.log('Task clicked:', taskId);
+                    // TODO: Handle task click
+                  },
+                  onSubtaskClick: (taskId: string, subtaskId: string) => {
+                    console.log('Subtask clicked:', taskId, subtaskId);
+                    // TODO: Handle subtask click
+                  },
+                }}
               />
             </div>
           </div>
