@@ -514,8 +514,11 @@ export const SessionManager: React.FC = () => {
 
         // 清除当前session状态，确保不会再尝试获取被删除的session
         setSession(null);
-        setSelectedAgent(null);
-        setMode("");
+        setSelectedAgent({
+          mode: "magentic-one",
+          name: "Dr.Sai General",
+        });
+        setMode("magentic-one");
         setConfig({});
 
 

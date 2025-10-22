@@ -143,7 +143,6 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
     <div
       className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50"
       style={{ zIndex: 1000 }}
-      onClick={handleClose}
     >
       <div
         className={`rounded-2xl shadow-2xl border ${darkMode === "dark" ? "bg-[#2a2a2a] border-gray-700" : "bg-white border-gray-200"} w-[520px] max-w-[92vw] max-h-[90vh] overflow-auto`}
