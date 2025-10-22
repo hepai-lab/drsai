@@ -2,6 +2,7 @@ import { message } from "antd";
 import { RcFile } from "antd/es/upload";
 import * as React from "react";
 import { appContext } from "../../../hooks/provider";
+import { useMessageCacheStore } from "../../../store/messageCache";
 import { useSettingsStore } from "../../store";
 import { IStatus } from "../../types/app";
 import {
@@ -13,16 +14,14 @@ import {
 } from "../../types/datamodel";
 import { IPlan } from "../../types/plan";
 import { sessionAPI } from "../api";
-import { useMessageCacheStore } from "../../../store/messageCache";
-import ChatInput from "./chat/chatinput";
-import ProgressBar from "./progressbar";
-import { messageUtils } from "./rendermessage";
-import RunView from "./runview";
-import WelcomeScreen from "./WelcomeScreen";
 import { useChatWebSocket } from "./hooks/useChatWebSocket";
 import { usePlanManagement } from "./hooks/usePlanManagement";
 import { useProgressTracking } from "./hooks/useProgressTracking";
 import { useTaskActions } from "./hooks/useTaskActions";
+import ProgressBar from "./progressbar";
+import { messageUtils } from "./rendermessage";
+import RunView from "./runview";
+import WelcomeScreen from "./WelcomeScreen";
 
 // Extend RunStatus for sidebar status reporting
 type SidebarRunStatus = BaseRunStatus | "final_answer_awaiting_input";
@@ -423,7 +422,6 @@ export default function ChatView({
               currentRun={currentRun}
               sessionId={session.id}
               showDetailViewer={showDetailViewer}
-              isDetailViewerMinimized={isDetailViewerMinimized}
               error={error}
               isPlanMessage={isPlanMessage}
               chatInputRef={chatInputRef}

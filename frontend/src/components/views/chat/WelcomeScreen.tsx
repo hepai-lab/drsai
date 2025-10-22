@@ -10,7 +10,6 @@ interface WelcomeScreenProps {
     currentRun: Run | null;
     sessionId: number;
     showDetailViewer: boolean;
-    isDetailViewerMinimized: boolean;
     error: IStatus | null;
     isPlanMessage: boolean | undefined;
     chatInputRef: React.RefObject<{
@@ -33,7 +32,6 @@ export default function WelcomeScreen({
     currentRun,
     sessionId,
     showDetailViewer,
-    isDetailViewerMinimized,
     error,
     isPlanMessage,
     chatInputRef,
@@ -44,8 +42,7 @@ export default function WelcomeScreen({
 }: WelcomeScreenProps) {
     return (
         <div
-            className={`text-center ${showDetailViewer && !isDetailViewerMinimized ? "w-full" : "w-full"
-                } mx-auto px-2 sm:px-3 md:px-4`}
+            className="text-center w-full mx-auto px-2 sm:px-3 md:px-4"
         >
             <div className="animate-fade-in text-center mb-8">
                 {/* Welcome Message */}
