@@ -69,6 +69,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient):
                 "json_output": False,
                 "structured_output": False,
                 "family": ModelFamily.UNKNOWN,
+                "multiple_system_messages":False,
             }
             kwargs["model_info"] = model_info
         r1_series = [

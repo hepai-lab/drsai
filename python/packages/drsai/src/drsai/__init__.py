@@ -2,7 +2,7 @@ from drsai.dr_sai import DrSai
 
 # Agent components
 from drsai.modules.components.LLMClient import HepAIChatCompletionClient
-from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory
+from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory, RAGFlowMemoryConfig
 
 # Agents
 from drsai.modules.baseagent.drsaiagent import DrSaiAgent as AssistantAgent

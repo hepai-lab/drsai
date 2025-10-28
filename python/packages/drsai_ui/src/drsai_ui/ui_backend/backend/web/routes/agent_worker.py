@@ -55,6 +55,7 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), db=Depe
                         # agent_info.update({"owner": agent_info["resource_info"][0]["owned_by"]})
                     else:
                         agent_info.update({"mode": "ddf"})
+                        agent_info.update({"owner": agent_info["author"]})
                         agents.append(agent_info)
                 except Exception as e:
                     pass
