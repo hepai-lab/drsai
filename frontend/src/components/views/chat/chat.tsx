@@ -45,6 +45,13 @@ interface ChatViewProps {
   ) => WebSocket | null;
   visible?: boolean;
   onRunStatusChange: (sessionId: number, status: BaseRunStatus) => void;
+  pendingFirstMessage?: {
+    query: string;
+    files: any[];
+    plan?: any;
+    uploadedFileData?: Record<string, any>;
+  } | null;
+  onPendingMessageSent?: () => void;
 }
 
 export default function ChatView({
@@ -53,6 +60,8 @@ export default function ChatView({
   getSessionSocket,
   visible = true,
   onRunStatusChange,
+  pendingFirstMessage,
+  onPendingMessageSent,
 }: ChatViewProps) {
   // Context and store
   const settingsConfig = useSettingsStore((state) => state.config);
@@ -295,6 +304,34 @@ export default function ChatView({
     currentRun?.messages,
     session?.id,
     onRunStatusChange,
+  ]);
+
+  // Handle pending first message - auto-send when run is ready
+  React.useEffect(() => {
+    if (
+      pendingFirstMessage &&
+      currentRun &&
+      noMessagesYet &&
+      (currentRun.status === "created" || currentRun.status === "connected")
+    ) {
+      // Auto-send the pending first message
+      const { query, files, plan, uploadedFileData } = pendingFirstMessage;
+
+      // Send the message
+      runTask(query, files as any[], plan, true, uploadedFileData);
+
+      // Clear the pending message
+      if (onPendingMessageSent) {
+        onPendingMessageSent();
+      }
+    }
+  }, [
+    pendingFirstMessage,
+    currentRun,
+    noMessagesYet,
+    currentRun?.status,
+    runTask,
+    onPendingMessageSent,
   ]);
 
   // Scroll to bottom when a new message appears or message is updated

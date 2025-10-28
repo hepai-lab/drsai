@@ -127,11 +127,11 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
     <div className="mb-8">
       <div className="mb-4 text-center"></div>
       <div className="flex flex-col gap-3 w-full">
-        <div className="inline-flex flex-wrap justify-center gap-3 w-full">
+        <div className="flex flex-wrap justify-center gap-3 w-full">
           {visibleTasks.map((task, idx) => (
             <button
               key={idx}
-              className="max-w-80 rounded-2xl px-6 py-4 text-left transition-smooth text-primary hover:text-accent bg-tertiary/50 hover:bg-tertiary/70 backdrop-blur-sm border border-border-primary hover:border-accent/50 shadow-modern hover:shadow-modern-lg hover-lift animate-fade-in group"
+              className="flex-1 min-w-[280px] max-w-[400px] rounded-2xl px-6 py-4 text-left transition-smooth text-primary hover:text-accent bg-tertiary/50 hover:bg-tertiary/70 backdrop-blur-sm border border-border-primary hover:border-accent/50 shadow-modern hover:shadow-modern-lg hover-lift animate-fade-in group"
               style={{ animationDelay: `${idx * 0.1}s` }}
               onClick={() => handleTaskSelect(task)}
               disabled={isLoading}

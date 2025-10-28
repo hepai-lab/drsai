@@ -19,6 +19,7 @@ import { RunStatus } from "../types/datamodel";
 import { getServerUrl } from "../utils";
 import { agentAPI, sessionAPI, settingsAPI } from "./api";
 import ChatView from "./chat/chat";
+import NewChatView from "./chat/NewChatView";
 import { SessionEditor } from "./session_editor";
 import { Sidebar } from "./sidebar";
 
@@ -46,6 +47,13 @@ export const SessionManager: React.FC = () => {
   const [activeSubMenuItem, setActiveSubMenuItem] =
     useState("current_session");
   const [isSessionLoading, setIsSessionLoading] = useState(false);
+  const [pendingFirstMessage, setPendingFirstMessage] = useState<{
+    query: string;
+    files: any[];
+    plan?: any;
+    uploadedFileData?: Record<string, any>;
+  } | null>(null);
+  const [isIntentionalSessionClear, setIsIntentionalSessionClear] = useState(false); // 标记用户主动清空session
 
   const { user } = useContext(appContext);
   const { session, setSession, sessions, setSessions } = useConfigStore();
@@ -271,8 +279,13 @@ export const SessionManager: React.FC = () => {
         }
       }
 
-      if (!session && Array.isArray(sessions) && sessions.length > 0) {
+      // 只在非主动清空的情况下自动选择第一个 session
+      if (!session &&
+        Array.isArray(sessions) &&
+        sessions.length > 0 &&
+        !isIntentionalSessionClear) {
         // No stored session, selecting first available session
+        // 但不在用户主动切换智能体时自动选择
         setSession(sessions[0]);
         if (sessions[0].id) {
           saveSessionIdToStorage(sessions[0].id);
@@ -281,7 +294,7 @@ export const SessionManager: React.FC = () => {
     };
 
     initializeSessionOnRefresh();
-  }, [sessions, session, setSession]);
+  }, [sessions, session, setSession, isIntentionalSessionClear]);
 
   useEffect(() => {
     const delayReload = async () => {
@@ -394,27 +407,58 @@ export const SessionManager: React.FC = () => {
     }
   };
 
-  // 点击 Agent：创建新会话并切换到该会话，设定当前 agent
-  const handleAgentClickCreateSession = async (agent: Agent) => {
+  // 点击 Agent：只选中智能体，不创建会话
+  const handleAgentClick = async (agent: Agent) => {
     if (!user?.email) return;
+
+    // 检查是否切换到不同的智能体
+    const isDifferentAgent = selectedAgent?.mode !== agent.mode;
+
     try {
       setIsLoading(true);
       setSelectedAgent(agent);
       setConfig({ mode: agent.mode });
 
+      // 只有在切换到不同智能体时才清空当前会话
+      if (isDifferentAgent) {
+        setIsIntentionalSessionClear(true); // 标记为用户主动清空
+        setSession(null);
+        messageApi.success(`已切换到 ${agent.name}，现在可以开始新对话`);
+      } else {
+      }
 
-      // 创建新会话
+      setActiveSubMenuItem("current_session");
+    } catch (e) {
+      messageApi.error("Failed to select agent");
+      console.error(e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 处理新对话的第一条消息：创建会话并设置待发送的消息
+  const handleNewChatFirstMessage = async (
+    agent: Agent,
+    query: string,
+    files: any[] = [],
+    plan?: any,
+    uploadedFileData?: Record<string, any>
+  ) => {
+    if (!user?.email) {
+      messageApi.error("User not logged in");
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+
+      // 1. 保存待发送的消息
+      setPendingFirstMessage({ query, files, plan, uploadedFileData });
+
+      // 2. 创建新会话
       const created = await sessionAPI.createSession(
         {
-          name:
-            `${agent.name} - ` +
-            new Date().toLocaleDateString(undefined, {
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
+          name: query.slice(0, 50) || `${agent.name} Chat`,
           agent_mode_config: {
             mode: agent.mode,
             name: agent.name,
@@ -426,15 +470,21 @@ export const SessionManager: React.FC = () => {
         user.email
       );
 
+      // 3. 更新会话列表和当前会话
       setSessions([
         created,
         ...(Array.isArray(sessions) && sessions ? sessions : []),
       ]);
       setSession(created);
-      setActiveSubMenuItem("current_session");
+
+      // 重置标志，因为已经创建了新会话
+      setIsIntentionalSessionClear(false);
+
+      // ChatView 会检测到 session 的变化和 pendingFirstMessage，然后自动发送消息
     } catch (e) {
-      messageApi.error("Failed to create session for agent");
+      messageApi.error("创建会话失败");
       console.error(e);
+      setPendingFirstMessage(null); // 清除待发送消息
     } finally {
       setIsLoading(false);
     }
@@ -447,6 +497,7 @@ export const SessionManager: React.FC = () => {
       setEditingSession(session);
       setIsEditorOpen(true);
     } else {
+      // 创建新会话（恢复原来的逻辑）
       setSelectedAgent({
         mode: "magentic-one",
         name: "Dr.Sai General",
@@ -757,6 +808,8 @@ export const SessionManager: React.FC = () => {
             getSessionSocket={getSessionSocket}
             visible={session?.id === s.id}
             onRunStatusChange={updateSessionRunStatus}
+            pendingFirstMessage={session?.id === s.id ? pendingFirstMessage : null}
+            onPendingMessageSent={() => setPendingFirstMessage(null)}
           />
         </div>
       );
@@ -769,6 +822,7 @@ export const SessionManager: React.FC = () => {
     updateSessionRunStatus,
     isLoading,
     sessionRunStatuses,
+    pendingFirstMessage,
   ]);
 
   // Add cleanup handlers for page unload and connection loss
@@ -949,7 +1003,7 @@ export const SessionManager: React.FC = () => {
           }}
           agents={agents}
           selectedAgentMode={selectedAgent?.mode}
-          onAgentClick={handleAgentClickCreateSession}
+          onAgentClick={handleAgentClick}
           onDeleteAgent={handleDeleteAgentWrapper}
         />
       </div>
@@ -970,12 +1024,25 @@ export const SessionManager: React.FC = () => {
 
 
         {activeSubMenuItem === "current_session" ? (
-          session &&
-            Array.isArray(sessions) &&
-            sessions.length > 0 ? (
+          session ? (
+            // 有当前会话 - 显示 ChatView
             <div className="h-full">
               {chatViews}
             </div>
+          ) : selectedAgent && selectedAgent.name ? (
+            // 用户选中了智能体但没有会话 - 显示新对话视图
+            <NewChatView
+              agent={selectedAgent as Agent}
+              onSubmit={async (query, files, plan, uploadedFileData) => {
+                await handleNewChatFirstMessage(
+                  selectedAgent as Agent,
+                  query,
+                  files,
+                  plan,
+                  uploadedFileData
+                );
+              }}
+            />
           ) : (
             <div className="flex items-center justify-center h-full text-secondary">
               <div className="text-center">
