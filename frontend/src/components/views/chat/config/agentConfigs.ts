@@ -45,16 +45,16 @@ export interface AgentConfiguration {
  * Agent 类型枚举
  * 根据实际的 agent 类型来定义
  */
-export type AgentType = 'magnetic-one' | 'besiii' | 'default';
+export type AgentType = 'magentic-one' | 'besiii' | 'default';
 
 /**
  * Agent 配置映射表
  */
 export const AGENT_CONFIGS: Record<AgentType, AgentConfiguration> = {
-  // Magnetic One - 使用 VNC 浏览器预览
-  'magnetic-one': {
-    name: 'magnetic-one',
-    displayName: 'Magnetic One',
+  // Magentic One - 使用 VNC 浏览器预览
+  'magentic-one': {
+    name: 'magentic-one',
+    displayName: 'Magentic One',
     panel: {
       type: 'vnc',
       title: 'Browser Preview',
@@ -94,7 +94,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfiguration> = {
  * 获取 Agent 配置
  * 
  * 这个函数支持灵活的 agent 类型匹配：
- * - 精确匹配：'magnetic-one', 'besiii', 'default'
+ * - 精确匹配：'magentic-one', 'besiii', 'default'
  * - 模糊匹配：包含关键词的字符串
  * - 大小写不敏感
  * 
@@ -105,8 +105,8 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfiguration> = {
  * @returns Agent 配置对象
  * 
  * @example
- * getAgentConfig('magnetic-one') // 返回 magnetic-one 配置
- * getAgentConfig('MagenticOneAgent') // 模糊匹配，返回 magnetic-one 配置
+ * getAgentConfig('magentic-one') // 返回 magentic-one 配置
+ * getAgentConfig('MagenticOneAgent') // 模糊匹配，返回 magentic-one 配置
  * getAgentConfig('BESIII_Analyzer') // 模糊匹配，返回 besiii 配置
  * getAgentConfig(null) // 返回 default 配置
  */
@@ -124,11 +124,11 @@ export function getAgentConfig(agentType?: string | null): AgentConfiguration {
   // 尝试模糊匹配已知的 agent 类型
   const normalizedType = agentType.toLowerCase().trim();
   
-  // Magnetic One agent - 用于浏览器自动化
-  // 匹配: 'magnetic', 'magentic'(拼写错误), 'magneticone' 等
-  if (normalizedType.includes('magnetic') || normalizedType.includes('magentic')) {
-    console.log(`[AgentConfig] Matched '${agentType}' to 'magnetic-one'`);
-    return AGENT_CONFIGS['magnetic-one'];
+  // Magentic One agent - 用于浏览器自动化
+  // 匹配: 'magentic', 'magnetic', 'magneticone' 等
+  if (normalizedType.includes('magentic') || normalizedType.includes('magnetic')) {
+    console.log(`[AgentConfig] Matched '${agentType}' to 'magentic-one'`);
+    return AGENT_CONFIGS['magentic-one'];
   }
   
   // BESIII agent - 用于物理分析

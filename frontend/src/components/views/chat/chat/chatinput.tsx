@@ -1339,7 +1339,7 @@ const ChatInput = React.forwardRef<
                       } focus:outline-none focus:ring-2 focus:ring-accent/20`}
                     style={{
                       maxHeight: "120px",
-                      overflowY: "auto",
+                      overflowY: "hidden",
                       minHeight: "52px",
                     }}
                     placeholder={

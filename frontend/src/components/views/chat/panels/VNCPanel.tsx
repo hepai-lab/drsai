@@ -5,7 +5,7 @@ import { IPlan } from "../../../types/plan";
 /**
  * VNCPanel - VNC 浏览器预览面板
  * 
- * 这是 DetailViewer 的包装组件，用于 magnetic-one agent 的浏览器预览功能
+ * 这是 DetailViewer 的包装组件，用于 magentic-one agent 的浏览器预览功能
  * 包含两个标签页：
  * 1. Screenshots - 浏览器截图历史
  * 2. Live View - VNC 实时浏览器预览

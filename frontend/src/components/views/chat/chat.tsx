@@ -82,19 +82,21 @@ export default function ChatView({
   // Panel state - initialized based on agent configuration
   // Dynamically detect agent type from session or current run
   const agentType = React.useMemo(() => {
-    // Try to get agent type from multiple sources
-    // if (currentRun?.task?.metadata?.agent_type) {
-    //   return currentRun.task.metadata.agent_type;
-    // }
-    // if (session?.agent_mode_config?.agent_type) {
-    //   return session.agent_mode_config.agent_type;
-    // }
-    // if (session?.agent_mode_config?.type) {
-    //   return session.agent_mode_config.type;
-    // }
-    // Default to magnetic-one for backward compatibility
-    return 'besiii';
-  }, [currentRun, session]);
+    // 如果组件不可见，返回默认值，避免不必要的计算
+    if (!visible) {
+      return 'besiii';
+    }
+
+    // 根据 session 的 agent_mode_config 判断 agent 类型
+    if (session?.agent_mode_config?.mode === 'magentic-one') {
+      return 'magentic-one';
+    } else if (session?.agent_mode_config?.mode === 'besiii') {
+      return 'besiii';
+    } else {
+      // 默认返回 besiii（如果 session 为空或没有配置）
+      return 'besiii';
+    }
+  }, [visible, session]);
 
   const agentConfig = React.useMemo(() => getAgentConfig(agentType), [agentType]);
 

@@ -16,8 +16,8 @@ import {
   User
 } from "lucide-react";
 import React, { useEffect, useMemo, useRef } from "react";
-import magneticOneIcon from "../../assets/magnetic-one.png";
-import magneticTwoIcon from "../../assets/magnetic-two.svg";
+import magneticOneIcon from "../../assets/magentic-one.png";
+import magneticTwoIcon from "../../assets/magentic-two.svg";
 import { appContext } from "../../hooks/provider";
 import { Agent } from "../../types/common";
 import { Button } from "../common/Button";

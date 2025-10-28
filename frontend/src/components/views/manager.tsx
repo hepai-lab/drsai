@@ -55,6 +55,9 @@ export const SessionManager: React.FC = () => {
   } | null>(null);
   const [isIntentionalSessionClear, setIsIntentionalSessionClear] = useState(false); // 标记用户主动清空session
 
+  // 使用 ref 来同步标记，避免状态更新延迟导致的时序问题
+  const isIntentionalSessionClearRef = React.useRef(false);
+
   const { user } = useContext(appContext);
   const { session, setSession, sessions, setSessions } = useConfigStore();
   const [baseUrl, setBaseUrl] = React.useState<string | undefined>();
@@ -152,7 +155,7 @@ export const SessionManager: React.FC = () => {
       // Only set first session if there's no sessionId in URL
       const params = new URLSearchParams(window.location.search);
       const sessionId = params.get("sessionId");
-      if (!session && data.length > 0 && !sessionId) {
+      if (!session && data.length > 0 && !sessionId && !isIntentionalSessionClearRef.current) {
         setSession(data[0]);
       } else {
         if (data.length === 0) {
@@ -209,8 +212,13 @@ export const SessionManager: React.FC = () => {
 
       setSession(data);
 
+      // 重置清空标志，因为用户选择了一个会话
+      isIntentionalSessionClearRef.current = false;
+      setIsIntentionalSessionClear(false);
+
       // 如果后端返回了 agent 名称，则同步更新全局选中智能体，便于 ContentHeader 展示
       if (data.agent_mode_config) {
+        console.log('[加载 session] 同步 selectedAgent.mode:', data.agent_mode_config.mode);
 
         setSelectedAgent(data.agent_mode_config);
         setMode(data.agent_mode_config.mode);
@@ -280,10 +288,11 @@ export const SessionManager: React.FC = () => {
       }
 
       // 只在非主动清空的情况下自动选择第一个 session
+      // 使用 ref 来检查，避免状态更新延迟
       if (!session &&
         Array.isArray(sessions) &&
         sessions.length > 0 &&
-        !isIntentionalSessionClear) {
+        !isIntentionalSessionClearRef.current) {
         // No stored session, selecting first available session
         // 但不在用户主动切换智能体时自动选择
         setSession(sessions[0]);
@@ -303,9 +312,16 @@ export const SessionManager: React.FC = () => {
         return;
       }
 
+      // 如果用户主动清空了 session，不要自动恢复
+      // 使用 ref 来检查，避免状态更新延迟
+      if (isIntentionalSessionClearRef.current) {
+        return;
+      }
+
       const storedSessionId = getSessionIdFromStorage();
 
       if (storedSessionId && !session) {
+        // console.log('[delayReload] 从 localStorage 恢复 session:', storedSessionId);
         setIsSessionLoading(true);
         try {
           await handleSelectSession({ id: storedSessionId } as Session);
@@ -323,7 +339,7 @@ export const SessionManager: React.FC = () => {
     const timeoutId = setTimeout(delayReload, 100);
 
     return () => clearTimeout(timeoutId);
-  }, [session, handleSelectSession, isSessionLoading, isLoading]);
+  }, [session, handleSelectSession, isSessionLoading, isLoading, isIntentionalSessionClear]);
   // Handle browser back/forward
   useEffect(() => {
     const handleLocationChange = () => {
@@ -411,20 +427,31 @@ export const SessionManager: React.FC = () => {
   const handleAgentClick = async (agent: Agent) => {
     if (!user?.email) return;
 
+    // console.log('[点击 Agent] 收到的 agent 对象:', agent.mode, agent.name);
+
     // 检查是否切换到不同的智能体
     const isDifferentAgent = selectedAgent?.mode !== agent.mode;
 
     try {
       setIsLoading(true);
+
       setSelectedAgent(agent);
       setConfig({ mode: agent.mode });
 
       // 只有在切换到不同智能体时才清空当前会话
       if (isDifferentAgent) {
+        // 同步设置 ref，避免状态更新延迟
+        isIntentionalSessionClearRef.current = true;
         setIsIntentionalSessionClear(true); // 标记为用户主动清空
         setSession(null);
-        messageApi.success(`已切换到 ${agent.name}，现在可以开始新对话`);
-      } else {
+        saveSessionIdToStorage(null); // 清除 localStorage 中的 sessionId，防止自动恢复
+        window.history.replaceState({}, '', window.location.pathname); // 清除 URL 中的 sessionId
+
+        // 延迟一下再重置 loading 状态，确保状态更新完成
+        setTimeout(() => {
+          setIsLoading(false);
+        }, 100);
+        return; // 提前返回，不要继续执行
       }
 
       setActiveSubMenuItem("current_session");
@@ -432,7 +459,9 @@ export const SessionManager: React.FC = () => {
       messageApi.error("Failed to select agent");
       console.error(e);
     } finally {
-      setIsLoading(false);
+      if (!isDifferentAgent) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -449,6 +478,8 @@ export const SessionManager: React.FC = () => {
       return;
     }
 
+    // console.log('[创建新会话] agent.mode:', agent.mode, 'agent.name:', agent.name);
+
     try {
       setIsLoading(true);
 
@@ -456,19 +487,27 @@ export const SessionManager: React.FC = () => {
       setPendingFirstMessage({ query, files, plan, uploadedFileData });
 
       // 2. 创建新会话
+      const agentModeConfig = {
+        mode: agent.mode,
+        name: agent.name,
+        description: agent.description,
+        url: agent.config?.url,
+        apikey: agent.config?.apikey,
+      };
+
+      const sessionData = {
+        name: query.slice(0, 50) || `${agent.name} Chat`,
+        agent_mode_config: agentModeConfig,
+      };
+
+      // console.log('[发送给后端] session 数据:', sessionData);
+
       const created = await sessionAPI.createSession(
-        {
-          name: query.slice(0, 50) || `${agent.name} Chat`,
-          agent_mode_config: {
-            mode: agent.mode,
-            name: agent.name,
-            description: agent.description,
-            url: agent.config.url,
-            apikey: agent.config.apikey,
-          },
-        },
+        sessionData,
         user.email
       );
+
+      // console.log('[会话已创建] 完整数据:', created.id, created.agent_mode_config?.mode);
 
       // 3. 更新会话列表和当前会话
       setSessions([
@@ -478,6 +517,7 @@ export const SessionManager: React.FC = () => {
       setSession(created);
 
       // 重置标志，因为已经创建了新会话
+      isIntentionalSessionClearRef.current = false;
       setIsIntentionalSessionClear(false);
 
       // ChatView 会检测到 session 的变化和 pendingFirstMessage，然后自动发送消息
@@ -731,6 +771,7 @@ export const SessionManager: React.FC = () => {
   }, []);
 
   const createDefaultSession = useCallback(async () => {
+    console.log('createSession-------------------', session);
     if (!user?.email) return;
 
     try {
@@ -777,6 +818,11 @@ export const SessionManager: React.FC = () => {
       return [];
     }
 
+    // 如果没有选中任何 session，直接返回空数组
+    if (!session) {
+      return [];
+    }
+
     return sessions.map((s: Session) => {
       if (!s.id) return null; // 跳过没有id的session
 
@@ -816,7 +862,7 @@ export const SessionManager: React.FC = () => {
     });
   }, [
     sessions,
-    session?.id,
+    session,  // 使用完整的 session 对象，而不只是 session?.id
     handleSessionName,
     getSessionSocket,
     updateSessionRunStatus,
@@ -1024,33 +1070,41 @@ export const SessionManager: React.FC = () => {
 
 
         {activeSubMenuItem === "current_session" ? (
-          session ? (
-            // 有当前会话 - 显示 ChatView
-            <div className="h-full">
-              {chatViews}
-            </div>
-          ) : selectedAgent && selectedAgent.name ? (
-            // 用户选中了智能体但没有会话 - 显示新对话视图
-            <NewChatView
-              agent={selectedAgent as Agent}
-              onSubmit={async (query, files, plan, uploadedFileData) => {
-                await handleNewChatFirstMessage(
-                  selectedAgent as Agent,
-                  query,
-                  files,
-                  plan,
-                  uploadedFileData
-                );
-              }}
-            />
-          ) : (
-            <div className="flex items-center justify-center h-full text-secondary">
-              <div className="text-center">
-                <Spin size="large" />
-                <p className="mt-4 text-sm">Loading...</p>
-              </div>
-            </div>
-          )
+          (() => {
+            if (session) {
+              return (
+                // 有当前会话 - 显示 ChatView
+                <div className="h-full">
+                  {chatViews}
+                </div>
+              );
+            } else if (selectedAgent && selectedAgent.name) {
+              return (
+                // 用户选中了智能体但没有会话 - 显示新对话视图
+                <NewChatView
+                  agent={selectedAgent as Agent}
+                  onSubmit={async (agent, query, files, plan, uploadedFileData) => {
+                    await handleNewChatFirstMessage(
+                      agent,  // 使用 NewChatView 传递过来的 agent，而不是闭包中的 selectedAgent
+                      query,
+                      files,
+                      plan,
+                      uploadedFileData
+                    );
+                  }}
+                />
+              );
+            } else {
+              return (
+                <div className="flex items-center justify-center h-full text-secondary">
+                  <div className="text-center">
+                    <Spin size="large" />
+                    <p className="mt-4 text-sm">Loading...</p>
+                  </div>
+                </div>
+              );
+            }
+          })()
         ) : activeSubMenuItem === "agent_square" ? (
           <div className="h-full overflow-hidden">
             <AgentSquare

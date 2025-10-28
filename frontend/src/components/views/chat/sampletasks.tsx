@@ -36,16 +36,6 @@ const MAGENTIC_ONE_TASKS = [
     model: "magentic-one",
     name: "Dr.Sai General",
   },
-  // {
-  //   text: "远程工作是未来趋势吗？分析其对生产力、创新能力和工作生活平衡的影响，讨论企业和个人的应对策略。",
-  //   model: "magentic-one",
-  //   name: "Dr.Sai General",
-  // },
-  // {
-  //   text: "人工智能会取代人类创造力吗？探讨AI在艺术、音乐和文学创作中的作用，分析人类创造力和AI生成内容的本质区别。",
-  //   model: "magentic-one",
-  //   name: "Dr.Sai General",
-  // },
 ];
 
 // 合并所有任务类型

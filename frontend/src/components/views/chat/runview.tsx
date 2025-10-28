@@ -106,14 +106,6 @@ const RunView: React.FC<RunViewProps> = ({
   const buttonsContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Agent configuration - 从 parent (chat.tsx) 接收
-  // 🐛 DEBUG: 检查 agent 配置
-  React.useEffect(() => {
-    console.log('🔍 [BESIII Debug] Agent Config from Parent:', {
-      agentName: agentConfig.name,
-      panelType: agentConfig.panel.type,
-      panelTitle: agentConfig.panel.title,
-    });
-  }, [agentConfig]);
 
   // BESIII Panel states
   // 🧪 临时测试：添加模拟数据以便查看效果
@@ -178,11 +170,6 @@ const RunView: React.FC<RunViewProps> = ({
     const besiiiTaskMessages = run.messages.filter(
       (msg: Message) => msg.config.metadata?.type === "besiii_tasks"
     );
-
-    console.log('🔍 [BESIII Debug] Task Messages:', {
-      found: besiiiTaskMessages.length,
-      messages: besiiiTaskMessages,
-    });
 
     const lastBesiiiTaskMsg =
       besiiiTaskMessages[besiiiTaskMessages.length - 1];

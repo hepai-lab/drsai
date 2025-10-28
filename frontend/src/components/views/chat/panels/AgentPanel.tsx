@@ -56,7 +56,7 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
     const renderPanel = () => {
         switch (panelConfig.type) {
             case 'vnc':
-                // VNC 浏览器预览面板 (magnetic-one)
+                // VNC 浏览器预览面板 (magentic-one)
                 if (!vncProps) {
                     return (
                         <div className="flex items-center justify-center h-full text-gray-500">
