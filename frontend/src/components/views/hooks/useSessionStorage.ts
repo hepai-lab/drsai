@@ -3,6 +3,7 @@
  */
 
 const SESSION_STORAGE_KEY = 'current_session_id';
+const SELECTED_AGENT_KEY = 'selected_agent';
 
 export const useSessionStorage = () => {
   const saveSessionId = (sessionId: number | null) => {
@@ -23,6 +24,24 @@ export const useSessionStorage = () => {
     return null;
   };
 
-  return { saveSessionId, getSessionId };
+  const saveSelectedAgent = (agent: any | null) => {
+    if (typeof window !== "undefined") {
+      if (agent) {
+        localStorage.setItem(SELECTED_AGENT_KEY, JSON.stringify(agent));
+      } else {
+        localStorage.removeItem(SELECTED_AGENT_KEY);
+      }
+    }
+  };
+
+  const getSelectedAgent = (): any | null => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem(SELECTED_AGENT_KEY);
+      return stored ? JSON.parse(stored) : null;
+    }
+    return null;
+  };
+
+  return { saveSessionId, getSessionId, saveSelectedAgent, getSelectedAgent };
 };
 

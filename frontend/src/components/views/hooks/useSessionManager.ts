@@ -52,69 +52,52 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
       if (!hasInitializedRef.current) {
         hasInitializedRef.current = true;
         
-        // Check URL params first
+        // Check URL params - only load session if explicitly specified in URL
         const params = new URLSearchParams(window.location.search);
         const urlSessionId = params.get("sessionId");
-        
-        // Then check localStorage
-        const storedSessionId = getSessionId();
-        
-        // Priority: URL sessionId > localStorage sessionId > first session
-        let sessionToLoad: Session | null = null;
         
         if (urlSessionId) {
           // Load session from URL
           const sessionIdNum = parseInt(urlSessionId, 10);
-          sessionToLoad = data.find(s => s.id === sessionIdNum) || null;
-        } else if (storedSessionId && !isIntentionalSessionClearRef.current) {
-          // Load session from localStorage
-          sessionToLoad = data.find(s => s.id === storedSessionId) || null;
+          const sessionToLoad = data.find(s => s.id === sessionIdNum) || null;
           
-          if (!sessionToLoad) {
-            // Session in localStorage not found in DB, clear it
-            saveSessionId(null);
-          }
-        }
-        
-        // If we found a session to load and no current session, load it fully
-        if (sessionToLoad && !session) {
-          try {
-            const fullSessionData = await sessionAPI.getSession(sessionToLoad.id!, userEmail);
-            setSession(fullSessionData);
-            
-            // Reset intentional clear flag
-            isIntentionalSessionClearRef.current = false;
-            setIsIntentionalSessionClear(false);
-            
-            // Update agent config
-            if (fullSessionData.agent_mode_config) {
-              setSelectedAgent(fullSessionData.agent_mode_config);
-              setMode(fullSessionData.agent_mode_config.mode);
+          if (sessionToLoad && !session) {
+            try {
+              const fullSessionData = await sessionAPI.getSession(sessionToLoad.id!, userEmail);
+              setSession(fullSessionData);
               
-              try {
-                const agentConfig = await agentAPI.getAgentConfig(userEmail, fullSessionData.agent_mode_config.mode);
-                if (agentConfig) {
-                  setConfig(agentConfig.config);
+              // Reset intentional clear flag
+              isIntentionalSessionClearRef.current = false;
+              setIsIntentionalSessionClear(false);
+              
+              // Update agent config
+              if (fullSessionData.agent_mode_config) {
+                setSelectedAgent(fullSessionData.agent_mode_config);
+                setMode(fullSessionData.agent_mode_config.mode);
+                
+                try {
+                  const agentConfig = await agentAPI.getAgentConfig(userEmail, fullSessionData.agent_mode_config.mode);
+                  if (agentConfig) {
+                    setConfig(agentConfig.config);
+                  }
+                } catch (e) {
+                  console.warn("Failed to load agent config:", e);
                 }
-              } catch (e) {
-                console.warn("Failed to load agent config:", e);
               }
-            }
-            
-            window.history.pushState({}, "", `?sessionId=${sessionToLoad.id}`);
-          } catch (error) {
-            console.error("Error loading session details:", error);
-            // Fallback to first session if loading fails
-            if (data.length > 0) {
-              setSession(data[0]);
+              
+              window.history.pushState({}, "", `?sessionId=${sessionToLoad.id}`);
+            } catch (error) {
+              console.error("Error loading session details:", error);
             }
           }
-        } else if (!session && !sessionToLoad && data.length > 0 && !isIntentionalSessionClearRef.current) {
-          // No URL param and no localStorage, set first session
-          setSession(data[0]);
-        } else if (data.length === 0) {
-          await createDefaultSession();
+        } else {
+          // No URL sessionId - clear localStorage and don't auto-load any session
+          // This ensures we always show welcome page when opening the app fresh
+          saveSessionId(null);
+          setSession(null);
+          window.history.replaceState({}, '', window.location.pathname);
         }
+        // The selected agent will be restored from localStorage separately
       }
     } catch (error) {
       console.error("Error fetching sessions:", error);

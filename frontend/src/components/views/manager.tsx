@@ -31,7 +31,7 @@ export const SessionManager: React.FC = () => {
   const { user } = useContext(appContext);
   const { session, setSession, setSessions } = useConfigStore();
   const { selectedAgent, setSelectedAgent, setConfig } = useModeConfigStore();
-  const { saveSessionId } = useSessionStorage();
+  const { saveSessionId, saveSelectedAgent, getSelectedAgent } = useSessionStorage();
 
   // Session management
   const {
@@ -88,6 +88,42 @@ export const SessionManager: React.FC = () => {
   useEffect(() => {
     fetchSessions();
   }, [fetchSessions]);
+
+  // Restore selected agent from localStorage on mount
+  useEffect(() => {
+    if (!selectedAgent && agents && agents.length > 0) {
+      const storedAgent = getSelectedAgent();
+      if (storedAgent) {
+        // Verify the stored agent still exists in the agent list
+        const agentExists = agents.find(a => a.mode === storedAgent.mode);
+        if (agentExists) {
+          setSelectedAgent(storedAgent);
+          if (storedAgent.mode) {
+            setConfig({ mode: storedAgent.mode });
+          }
+        } else {
+          // Stored agent no longer exists, use default
+          const defaultAgent = agents.find(agent => agent.mode === "magentic-one");
+          if (defaultAgent) {
+            setSelectedAgent(defaultAgent);
+          }
+        }
+      } else {
+        // No stored agent, use default
+        const defaultAgent = agents.find(agent => agent.mode === "magentic-one");
+        if (defaultAgent) {
+          setSelectedAgent(defaultAgent);
+        }
+      }
+    }
+  }, [agents, selectedAgent, getSelectedAgent, setSelectedAgent, setConfig]);
+
+  // Save selected agent to localStorage when it changes
+  useEffect(() => {
+    if (selectedAgent) {
+      saveSelectedAgent(selectedAgent);
+    }
+  }, [selectedAgent, saveSelectedAgent]);
 
   // Handle agent click
   const handleAgentClick = useCallback(async (agent: Agent) => {
