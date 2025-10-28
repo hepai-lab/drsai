@@ -30,6 +30,14 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
   // 标记用户主动清空session（使用 ref 避免状态更新延迟）
   const [isIntentionalSessionClear, setIsIntentionalSessionClear] = useState(false);
   const isIntentionalSessionClearRef = useRef(false);
+  const hasInitializedRef = useRef(false);
+  const lastUserEmailRef = useRef(userEmail);
+  
+  // Reset initialization flag when user changes
+  if (lastUserEmailRef.current !== userEmail) {
+    lastUserEmailRef.current = userEmail;
+    hasInitializedRef.current = false;
+  }
 
   // Fetch sessions from API
   const fetchSessions = useCallback(async () => {
@@ -40,13 +48,71 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
       const data = await sessionAPI.listSessions(userEmail);
       setSessions(data);
 
-      // Only set first session if there's no sessionId in URL and user didn't intentionally clear
-      const params = new URLSearchParams(window.location.search);
-      const sessionId = params.get("sessionId");
-      if (!session && data.length > 0 && !sessionId && !isIntentionalSessionClearRef.current) {
-        setSession(data[0]);
-      } else {
-        if (data.length === 0) {
+      // Only auto-load session on initial fetch
+      if (!hasInitializedRef.current) {
+        hasInitializedRef.current = true;
+        
+        // Check URL params first
+        const params = new URLSearchParams(window.location.search);
+        const urlSessionId = params.get("sessionId");
+        
+        // Then check localStorage
+        const storedSessionId = getSessionId();
+        
+        // Priority: URL sessionId > localStorage sessionId > first session
+        let sessionToLoad: Session | null = null;
+        
+        if (urlSessionId) {
+          // Load session from URL
+          const sessionIdNum = parseInt(urlSessionId, 10);
+          sessionToLoad = data.find(s => s.id === sessionIdNum) || null;
+        } else if (storedSessionId && !isIntentionalSessionClearRef.current) {
+          // Load session from localStorage
+          sessionToLoad = data.find(s => s.id === storedSessionId) || null;
+          
+          if (!sessionToLoad) {
+            // Session in localStorage not found in DB, clear it
+            saveSessionId(null);
+          }
+        }
+        
+        // If we found a session to load and no current session, load it fully
+        if (sessionToLoad && !session) {
+          try {
+            const fullSessionData = await sessionAPI.getSession(sessionToLoad.id!, userEmail);
+            setSession(fullSessionData);
+            
+            // Reset intentional clear flag
+            isIntentionalSessionClearRef.current = false;
+            setIsIntentionalSessionClear(false);
+            
+            // Update agent config
+            if (fullSessionData.agent_mode_config) {
+              setSelectedAgent(fullSessionData.agent_mode_config);
+              setMode(fullSessionData.agent_mode_config.mode);
+              
+              try {
+                const agentConfig = await agentAPI.getAgentConfig(userEmail, fullSessionData.agent_mode_config.mode);
+                if (agentConfig) {
+                  setConfig(agentConfig.config);
+                }
+              } catch (e) {
+                console.warn("Failed to load agent config:", e);
+              }
+            }
+            
+            window.history.pushState({}, "", `?sessionId=${sessionToLoad.id}`);
+          } catch (error) {
+            console.error("Error loading session details:", error);
+            // Fallback to first session if loading fails
+            if (data.length > 0) {
+              setSession(data[0]);
+            }
+          }
+        } else if (!session && !sessionToLoad && data.length > 0 && !isIntentionalSessionClearRef.current) {
+          // No URL param and no localStorage, set first session
+          setSession(data[0]);
+        } else if (data.length === 0) {
           await createDefaultSession();
         }
       }
@@ -56,7 +122,10 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
     } finally {
       setIsLoading(false);
     }
-  }, [userEmail, setSessions, session, setSession, isIntentionalSessionClearRef.current]);
+  }, [userEmail]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Note: This should only depend on userEmail to avoid infinite loops
+  // Other dependencies (setSessions, setSession, etc.) are stable from stores
+  // session state is checked inside but shouldn't trigger refetch
 
   // Select a session
   const selectSession = useCallback(async (selectedSession: Session) => {
@@ -366,38 +435,11 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
     setSessionRunStatuses((prev) => ({ ...prev, [sessionId]: status }));
   }, []);
 
-  // Auto-restore session from localStorage
-  useEffect(() => {
-    if (isSessionLoading || isLoading || isIntentionalSessionClearRef.current) return;
+  // Note: Auto-restore session from localStorage is now handled in fetchSessions
+  // This ensures the session from localStorage is properly validated against DB data
 
-    const storedSessionId = getSessionId();
-    
-    if (storedSessionId && !session) {
-      const timeoutId = setTimeout(async () => {
-        setIsSessionLoading(true);
-        try {
-          await selectSession({ id: storedSessionId } as Session);
-        } catch (error) {
-          console.error('Error restoring session:', error);
-          saveSessionId(null);
-        } finally {
-          setIsSessionLoading(false);
-        }
-      }, 100);
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [session, isSessionLoading, isLoading, getSessionId, selectSession, saveSessionId]);
-
-  // Auto-select first session if no session selected
-  useEffect(() => {
-    if (!session && Array.isArray(sessions) && sessions.length > 0 && !isIntentionalSessionClearRef.current) {
-      setSession(sessions[0]);
-      if (sessions[0].id) {
-        saveSessionId(sessions[0].id);
-      }
-    }
-  }, [sessions, session, setSession, saveSessionId]);
+  // Note: Auto-select first session is now handled in fetchSessions
+  // This avoids race conditions and ensures proper session selection priority
 
   // Save session to localStorage when it changes
   useEffect(() => {
