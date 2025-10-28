@@ -325,27 +325,9 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
         saveSessionId(null);
         closeSocket(sessionId);
         
+        // 清空当前会话，不创建默认 session
+        // 保持当前选中的 agent 不变
         setSession(null);
-        setSelectedAgent({ mode: "magentic-one", name: "Dr.Sai General" });
-        setMode("magentic-one");
-        setConfig({});
-
-        if (updatedSessions.length > 0) {
-          const firstSession = updatedSessions[0];
-          const isFirstSessionDefault = firstSession.name?.startsWith("Default Session - ");
-
-          if (isFirstSessionDefault) {
-            setSession(firstSession);
-            if (firstSession.id) {
-              window.history.pushState({}, "", `?sessionId=${firstSession.id}`);
-            }
-          } else {
-            await new Promise(resolve => setTimeout(resolve, 0));
-            await createDefaultSession();
-          }
-        } else {
-          await createDefaultSession();
-        }
         
         window.history.pushState({}, "", window.location.pathname);
       } else {
@@ -368,7 +350,7 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
     } finally {
       setIsLoading(false);
     }
-  }, [userEmail, session, sessions, setSessions, setSession, setSelectedAgent, setMode, setConfig, saveSessionId, createDefaultSession, onSuccess, onError]);
+  }, [userEmail, session, sessions, setSessions, setSession, saveSessionId, onSuccess, onError]);
 
   // Clear current session (when switching agents)
   const clearCurrentSession = useCallback(() => {
