@@ -14,9 +14,9 @@ const DragDropOverlay: React.FC<DragDropOverlayProps> = ({
 
     return (
         <div
-            className={`absolute inset-0 border-2 border-dashed rounded-lg flex items-center justify-center z-10 ${darkMode === "dark"
-                    ? "bg-magenta-500 bg-opacity-10 border-magenta-500"
-                    : "bg-magenta-500 bg-opacity-5 border-magenta-500"
+            className={`absolute inset-0 border-2 border-dashed rounded-lg flex items-center justify-center z-10 pointer-events-none ${darkMode === "dark"
+                ? "bg-magenta-500 bg-opacity-10 border-magenta-500"
+                : "bg-magenta-500 bg-opacity-5 border-magenta-500"
                 }`}
         >
             <div className="text-center">

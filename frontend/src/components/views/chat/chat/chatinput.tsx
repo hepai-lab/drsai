@@ -246,10 +246,15 @@ const ChatInput = React.forwardRef<
         (textAreaRef.current?.value || fileList.length > 0) &&
         !isInputDisabled
       ) {
-        const query = textAreaRef.current?.value || "";
+        let query = textAreaRef.current?.value || "";
         const files = fileList
           .filter((file) => file.originFileObj)
           .map((file) => file.originFileObj as RcFile);
+
+        // 如果只有文件没有文字，添加默认提示
+        if (!query.trim() && files.length > 0) {
+          query = "请帮我分析这些文件。";
+        }
 
         submitInternal(query, files, false);
       }

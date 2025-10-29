@@ -27,12 +27,19 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
         accepted: boolean = false,
         plan?: IPlan
     ) => {
-        if (isSubmitting || !query.trim()) return;
+        // 允许只发送文件（没有文本）
+        if (isSubmitting || (!query.trim() && files.length === 0)) return;
+
+        // 如果只有文件没有文字，添加默认提示
+        let finalQuery = query;
+        if (!query.trim() && files.length > 0) {
+            finalQuery = "请帮我分析这些文件。";
+        }
 
         setIsSubmitting(true);
         try {
             // 传递当前的 agent，确保使用的是最新的 agent
-            await onSubmit(agent, query, files, plan);
+            await onSubmit(agent, finalQuery, files, plan);
         } finally {
             setIsSubmitting(false);
         }
