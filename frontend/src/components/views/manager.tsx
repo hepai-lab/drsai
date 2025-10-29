@@ -352,8 +352,8 @@ export const SessionManager: React.FC = () => {
               return (
                 <NewChatView
                   agent={selectedAgent as Agent}
-                  onSubmit={async (agent, query, files, plan, uploadedFileData) => {
-                    await createNewChatSession(agent, query, files, plan, uploadedFileData);
+                  onSubmit={async (agent, query, files, plan) => {
+                    await createNewChatSession(agent, query, files, plan);
                   }}
                 />
               );

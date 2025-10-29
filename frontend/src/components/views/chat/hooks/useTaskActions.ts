@@ -70,7 +70,6 @@ export const useTaskActions = ({
       response: string,
       accepted = false,
       plan?: IPlan,
-      uploadedFileData?: Record<string, any>,
       files: RcFile[] = []
     ) => {
       if (!currentRun) {
@@ -102,10 +101,6 @@ export const useTaskActions = ({
           accepted: accepted,
           content: response,
           ...(planString !== "" && { plan: planString }),
-          ...(uploadedFileData &&
-            Object.keys(uploadedFileData).length > 0 && {
-              uploadedFileData,
-            }),
           ...(processedFiles.length > 0 && { files: processedFiles }),
         };
         const responseString = JSON.stringify(responseJson);
@@ -301,8 +296,7 @@ export const useTaskActions = ({
       query: string,
       files: RcFile[] = [],
       plan?: IPlan,
-      fresh_socket: boolean = false,
-      uploadedFileData?: Record<string, any>
+      fresh_socket: boolean = false
     ) => {
       setError(null);
       setNoMessagesYet(false);
@@ -363,10 +357,6 @@ export const useTaskActions = ({
           type: "start",
           task: JSON.stringify(taskJson),
           files: processedFiles,
-          ...(uploadedFileData &&
-            Object.keys(uploadedFileData).length > 0 && {
-              uploadedFileData,
-            }),
           team_config: teamConfig,
           settings_config: {
             ...currentSettings,

@@ -7,7 +7,7 @@ import SampleTasks from "./sampletasks";
 
 interface NewChatViewProps {
     agent: Agent;
-    onSubmit: (agent: Agent, query: string, files: RcFile[], plan?: IPlan, uploadedFileData?: Record<string, any>) => Promise<void>;
+    onSubmit: (agent: Agent, query: string, files: RcFile[], plan?: IPlan) => Promise<void>;
 }
 
 /**
@@ -25,15 +25,14 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
         query: string,
         files: RcFile[],
         accepted: boolean = false,
-        plan?: IPlan,
-        uploadedFileData?: Record<string, any>
+        plan?: IPlan
     ) => {
         if (isSubmitting || !query.trim()) return;
 
         setIsSubmitting(true);
         try {
             // 传递当前的 agent，确保使用的是最新的 agent
-            await onSubmit(agent, query, files, plan, uploadedFileData);
+            await onSubmit(agent, query, files, plan);
         } finally {
             setIsSubmitting(false);
         }

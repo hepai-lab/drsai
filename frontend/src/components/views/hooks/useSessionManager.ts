@@ -24,7 +24,6 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
     query: string;
     files: any[];
     plan?: any;
-    uploadedFileData?: Record<string, any>;
   } | null>(null);
 
   // 标记用户主动清空session（使用 ref 避免状态更新延迟）
@@ -224,8 +223,7 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
     agent: Agent,
     query: string,
     files: any[] = [],
-    plan?: any,
-    uploadedFileData?: Record<string, any>
+    plan?: any
   ) => {
     if (!userEmail) {
       onError?.("User not logged in");
@@ -236,7 +234,7 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
       setIsLoading(true);
 
       // 1. 保存待发送的消息
-      setPendingFirstMessage({ query, files, plan, uploadedFileData });
+      setPendingFirstMessage({ query, files, plan });
 
       // 2. 创建新会话
       const sessionData = {

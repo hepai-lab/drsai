@@ -49,7 +49,6 @@ interface ChatViewProps {
     query: string;
     files: any[];
     plan?: any;
-    uploadedFileData?: Record<string, any>;
   } | null;
   onPendingMessageSent?: () => void;
 }
@@ -317,10 +316,10 @@ export default function ChatView({
       (currentRun.status === "created" || currentRun.status === "connected")
     ) {
       // Auto-send the pending first message
-      const { query, files, plan, uploadedFileData } = pendingFirstMessage;
+      const { query, files, plan } = pendingFirstMessage;
 
       // Send the message
-      runTask(query, files as any[], plan, true, uploadedFileData);
+      runTask(query, files as any[], plan, true);
 
       // Clear the pending message
       if (onPendingMessageSent) {
@@ -489,16 +488,15 @@ export default function ChatView({
                 query: string,
                 files: RcFile[],
                 accepted = false,
-                plan?: IPlan,
-                uploadedFileData?: Record<string, any>
+                plan?: IPlan
               ) => {
                 if (
                   currentRun?.status === "awaiting_input" ||
                   currentRun?.status === "paused"
                 ) {
-                  handleInputResponse(query, accepted, plan, uploadedFileData, files);
+                  handleInputResponse(query, accepted, plan, files);
                 } else {
-                  runTask(query, files, plan, true, uploadedFileData);
+                  runTask(query, files, plan, true);
                 }
               }}
               onCancel={handleCancel}

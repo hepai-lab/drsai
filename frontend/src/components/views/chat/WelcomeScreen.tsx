@@ -19,8 +19,7 @@ interface WelcomeScreenProps {
         query: string,
         files: RcFile[],
         accepted: boolean,
-        plan?: IPlan,
-        uploadedFileData?: Record<string, any>
+        plan?: IPlan
     ) => void;
     onCancel: () => void;
     onPause: () => void;
@@ -66,10 +65,9 @@ export default function WelcomeScreen({
                         query: string,
                         files: RcFile[],
                         accepted = false,
-                        plan?: IPlan,
-                        uploadedFileData?: Record<string, any>
+                        plan?: IPlan
                     ) => {
-                        onSubmit(query, files, accepted, plan, uploadedFileData);
+                        onSubmit(query, files, accepted, plan);
                     }}
                     error={error}
                     onCancel={onCancel}

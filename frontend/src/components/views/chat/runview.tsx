@@ -34,15 +34,13 @@ interface RunViewProps {
     query: string,
     accepted?: boolean,
     plan?: IPlan,
-    uploadedFileData?: Record<string, any>,
     files?: RcFile[] // 添加files参数
   ) => void;
   onRunTask?: (
     query: string,
     files: RcFile[],
     plan?: IPlan,
-    fresh_socket?: boolean,
-    uploadedFileData?: Record<string, any>
+    fresh_socket?: boolean
   ) => void;
   onCancel?: () => void;
   error?: IStatus | null;
@@ -792,8 +790,7 @@ const RunView: React.FC<RunViewProps> = ({
               query: string,
               files: RcFile[],
               accepted = false,
-              plan?: IPlan,
-              uploadedFileData?: Record<string, any>
+              plan?: IPlan
             ) => {
               if (
                 run.status === "awaiting_input" ||
@@ -803,7 +800,6 @@ const RunView: React.FC<RunViewProps> = ({
                   query,
                   accepted,
                   plan,
-                  uploadedFileData,
                   files // 添加files参数
                 );
               } else {
@@ -811,8 +807,7 @@ const RunView: React.FC<RunViewProps> = ({
                   query,
                   files,
                   plan,
-                  true,
-                  uploadedFileData
+                  true
                 );
               }
             }}
