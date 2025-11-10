@@ -14,17 +14,18 @@ from drsai import run_backend, run_console
 import os, json
 import asyncio
 
-# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
+# Create a factory function to ensure isolated Agent instances for concurrent access.
 def create_agent() -> AssistantAgent:
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
-    # model_client = HepAIChatCompletionClient(
-    #     model="openai/gpt-4o",
-    #     api_key=os.environ.get("HEPAI_API_KEY"),
-    #     # base_url = "http://192.168.32.148:42601/apiv2"
-    # )
-    model_client = None
+    model_client = HepAIChatCompletionClient(
+        # model="openai/gpt-4.1",
+        model="deepseek-ai/deepseek-v3",
+        api_key=os.environ.get("HEPAI_API_KEY"),
+        # base_url = "http://192.168.32.148:42601/apiv2"
+    )
+    # model_client = None
 
 
     # Define a simple function tool that the agent can use.
@@ -40,7 +41,9 @@ def create_agent() -> AssistantAgent:
         model_client=model_client,
         tools=[get_weather],
         system_message="You are a helpful assistant.",
-        reflect_on_tool_use=False,
+        tool_call_summary_format = "Calling {tool_name} with {arguments}.\nResult:\n{result}.\n",
+        reflect_on_tool_use=False, # Only supported by OpenAI model or other model that supports tool use and strucutred output.
+        output_content_type=None,
         model_client_stream=True,  # Enable streaming tokens from the model client.
     )
 

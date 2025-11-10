@@ -17,6 +17,11 @@ from autogen_agentchat.messages import (
     ToolCallExecutionEvent,
     ToolCallRequestEvent,
 )
+from drsai.modules.managers.messages.drsai_messages import (
+    AgentLogEvent,
+    Send_level,
+    TaskEvent
+)
 from ....input_func import InputFuncType, InputRequestType
 from autogen_core import CancellationToken
 from fastapi import WebSocket, WebSocketDisconnect
@@ -625,7 +630,16 @@ class WebSocketManager:
                     "type": "message",
                     "data": {"source": "user", "content": message},
                 }
-
+            elif isinstance(message, AgentLogEvent):
+                return {
+                    "type": "message_log",
+                    "data": message.model_dump(),
+                }
+            elif isinstance(message, TaskEvent):
+                return {
+                    "type": "message_task",
+                    "data": message.model_dump(),
+                }
             return None
 
         except Exception as e:

@@ -8,14 +8,14 @@ except ImportError:
     drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
     sys.path.append(drsai_path)
 
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, DrSaiSelectorGroupChat, TextMentionTermination
+from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, AGSelectorGroupChat, TextMentionTermination
 import json
 import asyncio
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
 from drsai import run_backend, run_console
 
-# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
-def create_team() -> DrSaiSelectorGroupChat:
+# Create a factory function to ensure isolated Agent instances for concurrent access.
+def create_team() -> AGSelectorGroupChat:
     # Create an OpenAI model client.
     model_client = HepAIChatCompletionClient(
         model="openai/gpt-4o",
@@ -42,7 +42,7 @@ def create_team() -> DrSaiSelectorGroupChat:
     text_termination = TextMentionTermination("APPROVE")
 
     # Create a team with the primary and critic agents.
-    return DrSaiSelectorGroupChat(
+    return AGSelectorGroupChat(
         participants=[primary_agent, critic_agent], 
         termination_condition=text_termination,
         model_client = model_client

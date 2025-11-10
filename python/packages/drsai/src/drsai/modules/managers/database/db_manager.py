@@ -7,12 +7,29 @@ from loguru import logger
 from sqlalchemy import exc, inspect, text
 from sqlmodel import Session, SQLModel, and_, create_engine, select
 
+from autogen_core import (
+    ComponentModel,
+    ComponentBase,
+    Component,
+)
+from pydantic import BaseModel
+
 from ..datamodel import DatabaseModel, Response, AgentJson
 from .schema_manager import SchemaManager
 
 from drsai.configs import CONST
 
-class DatabaseManager:
+class DatabaseManagerConfig(BaseModel):
+    engine_uri: str
+    base_dir: Optional[Path] = None
+
+class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]):
+    """A database manager component for managing database operations."""
+
+    component_type = "database_manager"
+    component_config_schema = DatabaseManagerConfig
+    component_provider_override = "drsai.DatabaseManager"
+
     _init_lock = threading.Lock()
 
     def __init__(self, engine_uri: str, base_dir: Optional[Path] = None):
@@ -410,3 +427,19 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error closing database connections: {str(e)}")
             raise
+    
+    @classmethod
+    def _from_config(
+        cls, 
+        config: DatabaseManagerConfig, 
+        **kwargs
+        ) -> "DatabaseManager":
+        """Create a new instance of the component from a config"""
+        return cls(engine_uri=config.engine_uri, base_dir=config.base_dir)
+    
+    def _to_config(self) -> DatabaseManagerConfig:
+        """Convert the component to a config"""
+        return DatabaseManagerConfig(
+            engine_uri=str(self.engine.url),
+            base_dir=str(self.schema_manager.base_dir)
+        )

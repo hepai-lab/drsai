@@ -15,7 +15,7 @@ import os, json
 import asyncio
 from pydantic import BaseModel
 
-# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
+# Create a factory function to ensure isolated Agent instances for concurrent access.
 def create_agent() -> AssistantAgent:
     
     class Step(BaseModel):
@@ -40,7 +40,7 @@ def create_agent() -> AssistantAgent:
         name="weather_agent",
         model_client=model_client,
         system_message="You are a helpful assistant.",
-        output_content_type = MathReasoning,
+        output_content_type = MathReasoning, # Only supported by OpenAI model or other model that supports strucutured output.
         reflect_on_tool_use=False,
         model_client_stream=True,  # Enable streaming tokens from the model client.
     )

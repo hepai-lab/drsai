@@ -16,7 +16,7 @@ from drsai.modules.groupchat import RoundRobinGroupChat
 import json
 import asyncio
 
-# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
+# Create a factory function to ensure isolated Agent instances for concurrent access.
 def create_team() -> RoundRobinGroupChat:
     # Create an OpenAI model client.
     model_client = HepAIChatCompletionClient(

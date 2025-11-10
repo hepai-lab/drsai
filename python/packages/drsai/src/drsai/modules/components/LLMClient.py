@@ -15,6 +15,7 @@ from typing import (
     Union,
     cast,
 )
+# from typing_extensions import Required
 from pydantic import BaseModel
 
 from openai.types.chat import ChatCompletionChunk
@@ -33,6 +34,7 @@ from autogen_core.models import (
     ChatCompletionTokenLogprob,
     CreateResult,
     LLMMessage,
+    ModelInfo,
     ModelFamily,
     RequestUsage,
     TopLogprob,
@@ -48,14 +50,29 @@ from autogen_ext.models.openai._openai_client import (
     to_oai_type,
     create_kwargs
     )
-from autogen_ext.models.openai.config import OpenAIClientConfiguration
+from autogen_ext.models.openai.config import (
+    OpenAIClientConfiguration, 
+    OpenAIClientConfigurationConfigModel)
 
 logger = logging.getLogger(EVENT_LOGGER_NAME)
 
 
-class HepAIChatCompletionClient(OpenAIChatCompletionClient):
+# See OpenAI docs for explanation of these parameters
+class HepAIClientConfiguration(OpenAIClientConfiguration, total=False):
+    api_version: str | None = None
 
-    def __init__(self, **kwargs: Unpack[OpenAIClientConfiguration]):
+
+class HepAIClientConfigurationConfigModel(OpenAIClientConfigurationConfigModel):
+    api_version: str | None = None
+
+
+class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClientConfigurationConfigModel]):
+
+    component_type = "model"
+    component_config_schema = HepAIClientConfigurationConfigModel
+    component_provider_override = "drsai.HepAIChatCompletionClient"
+
+    def __init__(self, **kwargs: Unpack[HepAIClientConfiguration]):
 
         if "api_key" not in kwargs:
             kwargs["api_key"] = os.environ.get("HEPAI_API_KEY")
@@ -63,7 +80,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient):
             kwargs["base_url"] = "https://aiapi.ihep.ac.cn/apiv2"
 
         if "model_info" not in kwargs:
-            model_info={
+            model_info: Optional[ModelInfo] ={
                 "vision": False,
                 "function_calling": False,  # You must sure that the model can handle function calling
                 "json_output": False,

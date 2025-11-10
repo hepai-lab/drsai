@@ -15,10 +15,10 @@ from autogen_agentchat.teams._group_chat._events import (
     GroupChatTermination,
 )
 
-from ._base_group_chat import DrSaiGroupChat, DrSaiGroupChatManager
+from .ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
 from drsai.modules.managers.database import DatabaseManager
 
-class DrSaiSwarmGroupChatManager(DrSaiGroupChatManager):
+class AGSwarmGroupChatManager(AGBaseGroupChatManager):
     """A group chat manager that selects the next speaker based on handoff message only."""
 
     def __init__(
@@ -132,7 +132,7 @@ class DrSaiSwarmGroupChatManager(DrSaiGroupChatManager):
 
 
 
-class DrSaiSwarmConfig(BaseModel):
+class AGSwarmConfig(BaseModel):
     """The declarative configuration for Swarm."""
 
     participants: List[ComponentModel]
@@ -141,7 +141,7 @@ class DrSaiSwarmConfig(BaseModel):
     emit_team_events: bool = False
 
 
-class DrSaiSwarm(DrSaiGroupChat, Component[DrSaiSwarmConfig]):
+class AGSwarm(AGGroupChat, Component[AGSwarmConfig]):
     """A group chat team that selects the next speaker based on handoff message only.
 
     The first participant in the list of participants is the initial speaker.
@@ -233,8 +233,8 @@ class DrSaiSwarm(DrSaiGroupChat, Component[DrSaiSwarmConfig]):
             asyncio.run(main())
     """
 
-    component_config_schema = DrSaiSwarmConfig
-    component_provider_override = "drsai.DrSaiSwarm"
+    component_config_schema = AGSwarmConfig
+    component_provider_override = "drsai.AGSwarm"
 
     # TODO: Add * to the constructor to separate the positional parameters from the kwargs.
     # This may be a breaking change so let's wait until a good time to do it.
@@ -251,8 +251,8 @@ class DrSaiSwarm(DrSaiGroupChat, Component[DrSaiSwarmConfig]):
     ) -> None:
         super().__init__(
             participants,
-            group_chat_manager_name="DrSaiSwarmGroupChatManager",
-            group_chat_manager_class=DrSaiSwarmGroupChatManager,
+            group_chat_manager_name="AGSwarmGroupChatManager",
+            group_chat_manager_class=AGSwarmGroupChatManager,
             termination_condition=termination_condition,
             max_turns=max_turns,
             runtime=runtime,
@@ -279,9 +279,9 @@ class DrSaiSwarm(DrSaiGroupChat, Component[DrSaiSwarmConfig]):
         max_turns: int | None,
         message_factory: MessageFactory,
         **kwargs: Any
-    ) -> Callable[[], DrSaiSwarmGroupChatManager]:
-        def _factory() -> DrSaiSwarmGroupChatManager:
-            return DrSaiSwarmGroupChatManager(
+    ) -> Callable[[], AGSwarmGroupChatManager]:
+        def _factory() -> AGSwarmGroupChatManager:
+            return AGSwarmGroupChatManager(
                 name,
                 group_topic_type,
                 output_topic_type,
@@ -299,10 +299,10 @@ class DrSaiSwarm(DrSaiGroupChat, Component[DrSaiSwarmConfig]):
 
         return _factory
 
-    def _to_config(self) -> DrSaiSwarmConfig:
+    def _to_config(self) -> AGSwarmConfig:
         participants = [participant.dump_component() for participant in self._participants]
         termination_condition = self._termination_condition.dump_component() if self._termination_condition else None
-        return DrSaiSwarmConfig(
+        return AGSwarmConfig(
             participants=participants,
             termination_condition=termination_condition,
             max_turns=self._max_turns,
@@ -310,7 +310,7 @@ class DrSaiSwarm(DrSaiGroupChat, Component[DrSaiSwarmConfig]):
         )
 
     @classmethod
-    def _from_config(cls, config: DrSaiSwarmConfig) -> "DrSaiSwarm":
+    def _from_config(cls, config: AGSwarmConfig) -> "AGSwarm":
         participants = [ChatAgent.load_component(participant) for participant in config.participants]
         termination_condition = (
             TerminationCondition.load_component(config.termination_condition) if config.termination_condition else None

@@ -14,7 +14,7 @@ except ImportError:
 from drsai import AssistantAgent, HandoffTermination, TextMentionTermination
 from drsai import run_backend, run_console
 from drsai import HandoffMessage
-from drsai import DrSaiSwarm
+from drsai import AGSwarm
 from drsai import Console, DrSaiAPP
 import json
 from typing import AsyncGenerator, Union
@@ -24,8 +24,8 @@ def refund_flight(flight_id: str) -> str:
     """Refund a flight"""
     return f"Flight {flight_id} refunded"
 
-# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
-def create_team() -> DrSaiSwarm:
+# Create a factory function to ensure isolated Agent instances for concurrent access.
+def create_team() -> AGSwarm:
 
     travel_agent = AssistantAgent(
         "travel_agent",
@@ -49,7 +49,7 @@ def create_team() -> DrSaiSwarm:
 
     termination = HandoffTermination(target="user") | TextMentionTermination("TERMINATE")
 
-    return DrSaiSwarm([travel_agent, flights_refunder], termination_condition=termination)
+    return AGSwarm([travel_agent, flights_refunder], termination_condition=termination)
 
 
 async def run_team_stream() -> None:

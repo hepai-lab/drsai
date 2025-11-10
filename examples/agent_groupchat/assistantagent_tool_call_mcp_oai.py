@@ -17,17 +17,18 @@ from drsai import tools_reply_function, tools_recycle_reply_function
 import os, json
 import asyncio
 
-# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
+# Create a factory function to ensure isolated Agent instances for concurrent access.
 async def create_agent() -> AssistantAgent:
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
-    # model_client = HepAIChatCompletionClient(
-    #     model="openai/gpt-4o",
-    #     api_key=os.environ.get("HEPAI_API_KEY"),
-    #     # base_url = "http://192.168.32.148:42601/apiv2"
-    # )
-    model_client = None
+    model_client = HepAIChatCompletionClient(
+        # model="openai/gpt-4.1",
+        model="deepseek-ai/deepseek-v3",
+        api_key=os.environ.get("HEPAI_API_KEY"),
+        # base_url = "http://192.168.32.148:42601/apiv2"
+    )
+    # model_client = None
 
 
     # Define a simple function tool that the agent can use.
@@ -42,7 +43,8 @@ async def create_agent() -> AssistantAgent:
                     "drsai",
                     "--live-stream",
                     "python",
-                    "examples/oai_client/MCP_tools/mcp_server.py"
+                    "examples/agent_groupchat/MCP_tools/mcp_server.py"
+                    # "examples/tools/MCP/mcp_sever01.py"
                     ],
             env=None)))
     # async def get_weather(city: str) -> str:
@@ -56,9 +58,13 @@ async def create_agent() -> AssistantAgent:
         model_client=model_client,
         tools=tools,
         system_message="You are a helpful assistant.",
+        tool_call_summary_format = "Calling {tool_name} with {arguments}.\nResult:\n{result}\n",
+        reflect_on_tool_use=False, # Only supported by OpenAI model or other model that supports tool use and strucutred output.
+        output_content_type=None,
+        model_client_stream=True,  # Enable streaming tokens from the model client.
         # reply_function=tools_reply_function,
-        reply_function=tools_recycle_reply_function,
-        max_turns = 5
+        # reply_function=tools_recycle_reply_function,
+        # max_turns = 5
     )
     
 

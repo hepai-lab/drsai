@@ -13,12 +13,12 @@ from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
 from drsai import run_backend, run_console
 from drsai import AssistantAgent, UserProxyAgent
 from drsai import TextMentionTermination
-from drsai import RoundRobinGroupChat, DrSaiRoundRobinGroupChat
+from drsai import RoundRobinGroupChat, AGRoundRobinGroupChat
 from drsai import Console
 import asyncio
 
-# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
-def create_team() -> DrSaiRoundRobinGroupChat:
+# Create a factory function to ensure isolated Agent instances for concurrent access.
+def create_team() -> AGRoundRobinGroupChat:
     # Create the agents.
     model_client = HepAIChatCompletionClient(
         model="deepseek-ai/deepseek-r1:671b",
@@ -36,7 +36,7 @@ def create_team() -> DrSaiRoundRobinGroupChat:
     termination = TextMentionTermination("APPROVE")
 
     # Create the team.
-    return DrSaiRoundRobinGroupChat([ assistant, user_proxy,], termination_condition=termination)
+    return AGRoundRobinGroupChat([ assistant, user_proxy,], termination_condition=termination)
 
 
 if __name__ == "__main__":

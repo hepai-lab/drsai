@@ -12,13 +12,12 @@ from autogen_agentchat.messages import AgentEvent, ChatMessage, BaseAgentEvent, 
 from autogen_agentchat.state import RoundRobinManagerState
 # from autogen_agentchat.teams import BaseGroupChat
 # from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
-from drsai.modules.groupchat._base_group_chat import DrSaiGroupChat
-from drsai.modules.groupchat._base_group_chat import DrSaiGroupChatManager
+from drsai.modules.groupchat.ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
 from autogen_agentchat.teams._group_chat._events import GroupChatTermination
 
 from drsai.modules.managers.database import DatabaseManager
 
-class DrSaiRoundRobinGroupChatManager(DrSaiGroupChatManager):
+class AGRoundRobinGroupChatManager(AGBaseGroupChatManager):
     """A group chat manager that selects the next speaker in a round-robin fashion."""
 
     def __init__(
@@ -87,7 +86,7 @@ class DrSaiRoundRobinGroupChatManager(DrSaiGroupChatManager):
         return current_speaker
 
 
-class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
+class AGRoundRobinGroupChat(AGGroupChat):
     """A team that runs a group chat with participants taking turns in a round-robin fashion
     to publish a message to all.
 
@@ -160,7 +159,7 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
     """
 
     component_config_schema = RoundRobinGroupChatConfig
-    component_provider_override = "autogen_agentchat.teams.RoundRobinGroupChat"
+    component_provider_override = "drsai.AGRoundRobinGroupChat"
 
     def __init__(
         self,
@@ -175,8 +174,8 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
     ) -> None:
         super().__init__(
             participants=participants,
-            group_chat_manager_name="DrSaiRoundRobinGroupChatManager",
-            group_chat_manager_class=DrSaiRoundRobinGroupChatManager,
+            group_chat_manager_name="AGRoundRobinGroupChatManager",
+            group_chat_manager_class=AGRoundRobinGroupChatManager,
             termination_condition=termination_condition,
             max_turns=max_turns,
             runtime=runtime,
@@ -198,10 +197,10 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
         message_factory: MessageFactory,
-    ) -> Callable[[], DrSaiRoundRobinGroupChatManager]:
+    ) -> Callable[[], AGRoundRobinGroupChatManager]:
 
-        def _factory() -> DrSaiRoundRobinGroupChatManager:
-            return DrSaiRoundRobinGroupChatManager(
+        def _factory() -> AGRoundRobinGroupChatManager:
+            return AGRoundRobinGroupChatManager(
                 name,
                 group_topic_type,
                 output_topic_type,
@@ -213,8 +212,7 @@ class DrSaiRoundRobinGroupChat(DrSaiGroupChat):
                 max_turns,
                 message_factory,
                 self._emit_team_events,
-                thread=self._thread,
-                thread_mgr=self._thread_mgr,
+                db_manager=self._db_manager,
             )
 
         return _factory

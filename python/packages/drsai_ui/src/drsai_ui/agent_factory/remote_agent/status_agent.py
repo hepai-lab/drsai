@@ -1,5 +1,4 @@
 import json
-from drsai import AssistantAgent, HepAIChatCompletionClient
 import asyncio
 from typing import AsyncGenerator,Optional, List, Dict, Tuple, Sequence, Any, Awaitable, Callable, Union
 from loguru import logger
@@ -61,6 +60,13 @@ from ..magentic_one.guarded_action import ApprovalDeniedError
 from hepai.tools.get_woker_functions import get_worker_sync_functions
 from openai import Stream
 
+from drsai import AssistantAgent, HepAIChatCompletionClient
+from drsai.modules.managers.messages.drsai_messages import (
+    AgentLogEvent,
+    Send_level,
+    TaskEvent
+)
+
 class StatusAgent(AssistantAgent):
     '''
     连接OpenAI格式的模型或者智能体后端
@@ -114,6 +120,8 @@ class StatusAgent(AssistantAgent):
 
         # 消息类型
         self._message_factory = MessageFactory()
+        self._message_factory._message_types[AgentLogEvent.__name__] = AgentLogEvent
+        self._message_factory._message_types[TaskEvent.__name__] = TaskEvent
 
     async def lazy_init(self, **kwargs) -> None:
         """Initialize the tools and models needed by the agent."""

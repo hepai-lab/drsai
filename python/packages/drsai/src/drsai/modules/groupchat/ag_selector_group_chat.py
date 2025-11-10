@@ -35,7 +35,7 @@ from autogen_agentchat.messages import (
 from autogen_agentchat.state import SelectorManagerState
 from autogen_agentchat.teams._group_chat._events import GroupChatTermination
 
-from ._base_group_chat import DrSaiGroupChat, DrSaiGroupChatManager
+from .ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
 from drsai.modules.managers.database import DatabaseManager
 
 trace_logger = logging.getLogger(TRACE_LOGGER_NAME)
@@ -49,7 +49,7 @@ AsyncCandidateFunc = Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], Awai
 CandidateFuncType = Union[SyncCandidateFunc | AsyncCandidateFunc]
 
 
-class DrSaiSelectorGroupChatManager(DrSaiGroupChatManager):
+class AGSelectorGroupChatManager(AGBaseGroupChatManager):
     """A group chat manager that selects the next speaker using a ChatCompletion
     model and a custom selector function."""
 
@@ -357,7 +357,7 @@ class DrSaiSelectorGroupChatManager(DrSaiGroupChatManager):
         trace_logger.info(f"Closing SelectorGroupChatManager...")
 
 
-class DrSaiSelectorGroupChatConfig(BaseModel):
+class AGSelectorGroupChatConfig(BaseModel):
     """The declarative configuration for SelectorGroupChat."""
 
     participants: List[ComponentModel]
@@ -373,7 +373,7 @@ class DrSaiSelectorGroupChatConfig(BaseModel):
     model_context: ComponentModel | None = None
 
 
-class DrSaiSelectorGroupChat(DrSaiGroupChat, Component[DrSaiSelectorGroupChatConfig]):
+class AGSelectorGroupChat(AGGroupChat, Component[AGSelectorGroupChatConfig]):
     """A group chat team that have participants takes turn to publish a message
     to all, using a ChatCompletion model to select the next speaker after each message.
 
@@ -585,8 +585,8 @@ class DrSaiSelectorGroupChat(DrSaiGroupChat, Component[DrSaiSelectorGroupChatCon
             asyncio.run(main())
     """
 
-    component_config_schema = DrSaiSelectorGroupChatConfig
-    component_provider_override = "autogen_agentchat.teams.SelectorGroupChat"
+    component_config_schema = AGSelectorGroupChatConfig
+    component_provider_override = "drsai.AGSelectorGroupChat"
 
     def __init__(
         self,
@@ -617,8 +617,8 @@ Read the above conversation. Then select the next role from {participants} to pl
     ):
         super().__init__(
             participants,
-            group_chat_manager_name="DrSaiSelectorGroupChatManager",
-            group_chat_manager_class=DrSaiSelectorGroupChatManager,
+            group_chat_manager_name="AGSelectorGroupChatManager",
+            group_chat_manager_class=AGSelectorGroupChatManager,
             termination_condition=termination_condition,
             max_turns=max_turns,
             runtime=runtime,
@@ -652,8 +652,8 @@ Read the above conversation. Then select the next role from {participants} to pl
         max_turns: int | None,
         message_factory: MessageFactory,
         **kwargs: Any
-    ) -> Callable[[], DrSaiSelectorGroupChatManager]:
-        return lambda: DrSaiSelectorGroupChatManager(
+    ) -> Callable[[], AGSelectorGroupChatManager]:
+        return lambda: AGSelectorGroupChatManager(
             name,
             group_topic_type,
             output_topic_type,
@@ -677,8 +677,8 @@ Read the above conversation. Then select the next role from {participants} to pl
             **kwargs
         )
 
-    def _to_config(self) -> DrSaiSelectorGroupChatConfig:
-        return DrSaiSelectorGroupChatConfig(
+    def _to_config(self) -> AGSelectorGroupChatConfig:
+        return AGSelectorGroupChatConfig(
             participants=[participant.dump_component() for participant in self._participants],
             model_client=self._model_client.dump_component(),
             termination_condition=self._termination_condition.dump_component() if self._termination_condition else None,
@@ -695,7 +695,7 @@ Read the above conversation. Then select the next role from {participants} to pl
     @classmethod
     def _from_config(
         cls, 
-        config: DrSaiSelectorGroupChatConfig,
+        config: AGSelectorGroupChatConfig,
         db_manager: DatabaseManager = None,
         **kwargs: Any
         ) -> Self:
@@ -722,7 +722,7 @@ Read the above conversation. Then select the next role from {participants} to pl
     @classmethod
     def _from_config(
         cls, 
-        config: DrSaiSelectorGroupChatConfig,
+        config: AGSelectorGroupChatConfig,
         db_manager: DatabaseManager = None,
         **kwargs: Any
         ) -> Self:
@@ -746,7 +746,7 @@ Read the above conversation. Then select the next role from {participants} to pl
         """Pause the group chat."""
         orchestrator = await self._runtime.try_get_underlying_agent_instance(
             AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
-            type=DrSaiSelectorGroupChatManager,
+            type=AGSelectorGroupChatManager,
         )
         await orchestrator.pause()
         for agent in self._participants:
@@ -760,7 +760,7 @@ Read the above conversation. Then select the next role from {participants} to pl
         """Resume the group chat."""
         orchestrator = await self._runtime.try_get_underlying_agent_instance(
             AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
-            type=DrSaiSelectorGroupChatManager,
+            type=AGSelectorGroupChatManager,
         )
         await orchestrator.resume()
         for agent in self._participants:
@@ -778,13 +778,13 @@ Read the above conversation. Then select the next role from {participants} to pl
     async def close(self) -> None:
         """Close all resources."""
         # Prepare a list of closable agents
-        closable_agents: List[DrSaiSelectorGroupChatManager | ChatAgent] = [
+        closable_agents: List[AGSelectorGroupChatManager | ChatAgent] = [
             agent for agent in self._participants if hasattr(agent, "close")
         ]
         # Check if we can close the orchestrator
         orchestrator = await self._runtime.try_get_underlying_agent_instance(
             AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
-            type=DrSaiSelectorGroupChatManager,
+            type=AGSelectorGroupChatManager,
         )
         if hasattr(orchestrator, "close"):
             closable_agents.append(orchestrator)

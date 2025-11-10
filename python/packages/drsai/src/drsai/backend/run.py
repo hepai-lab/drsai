@@ -21,8 +21,9 @@ from hepai import HRModel, HModelConfig, HWorkerConfig, HWorkerAPP
 import hepai
 
 from drsai.modules.managers.database import DatabaseManager
-from drsai.modules.groupchat import DrSaiGroupChat
-from drsai.modules.baseagent import DrSaiAgent
+from autogen_agentchat.base import (
+    ChatAgent, 
+    Team,)
 from drsai.configs import CONST
 
 here = Path(__file__).parent.resolve()
@@ -224,13 +225,13 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
     
     @HRModel.remote_callable
     async def a_get_agents_info(self, chat_id: str) -> List[Dict[str, Any]]:
-        agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance.get(chat_id, None)
+        agent: Team|ChatAgent = self.drsai.agent_instance.get(chat_id, None)
         return await self.drsai.get_agents_info(agent=agent)
     
     @HRModel.remote_callable
     async def lazy_init(self, chat_id: str, api_key: str) -> Dict[str, Any]:
         try:
-            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance.get(chat_id, None)
+            agent: Team|ChatAgent = self.drsai.agent_instance.get(chat_id, None)
             if agent is None:
                 agent = await self.drsai._create_agent_instance()
                 self.drsai.agent_instance[chat_id] = agent
@@ -242,7 +243,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
     @HRModel.remote_callable
     async def pause(self, chat_id: str) -> Dict[str, Any]:
         try:
-            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
+            agent: Team|ChatAgent = self.drsai.agent_instance[chat_id]
             message = await agent.pause()
             if message is None:
                 message = ""
@@ -253,7 +254,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
     @HRModel.remote_callable
     async def pause_long_task(self, chat_id: str) -> Dict[str, Any]:
         try:
-            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
+            agent: Team|ChatAgent = self.drsai.agent_instance[chat_id]
             if hasattr(agent, "long_task_pause"):
                 await agent.long_task_pause()  # type: ignore
             return {"status": True, "message": ""}
@@ -263,7 +264,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
     @HRModel.remote_callable
     async def resume(self, chat_id: str) -> Dict[str, Any]:
         try:
-            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
+            agent: Team|ChatAgent = self.drsai.agent_instance[chat_id]
             await agent.resume()
             return {"status": True, "message": ""}
         except Exception as e:
@@ -272,7 +273,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
     @HRModel.remote_callable
     async def close(self, chat_id: str) -> Dict[str, Any]:
         try:
-            agent: DrSaiGroupChat|DrSaiAgent = self.drsai.agent_instance[chat_id]
+            agent: Team|ChatAgent = self.drsai.agent_instance[chat_id]
             await agent.close()
             self.drsai.agent_instance.pop(chat_id, None)
             return {"status": True, "message": ""}

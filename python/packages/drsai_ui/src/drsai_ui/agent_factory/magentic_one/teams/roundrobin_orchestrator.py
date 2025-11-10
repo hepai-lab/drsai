@@ -46,6 +46,11 @@ from autogen_agentchat.teams._group_chat._events import (
 )
 from ....ui_backend.types import CheckpointEvent
 
+from drsai.modules.managers.messages.drsai_messages import (
+    AgentLogEvent,
+    Send_level,
+    TaskEvent
+)
 
 class RoundRobinManagerState(BaseState):
     """The state of the RoundRobinGroupChatManager."""
@@ -276,6 +281,9 @@ class RoundRobinGroupChat(BaseGroupChat, Component[RoundRobinGroupChatConfig]):
         )
 
         self._init_messages = []
+
+        self._message_factory._message_types[AgentLogEvent.__name__] = AgentLogEvent
+        self._message_factory._message_types[TaskEvent.__name__] = TaskEvent
 
     def _create_group_chat_manager_factory(
         self,

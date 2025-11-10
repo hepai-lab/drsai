@@ -17,7 +17,7 @@ import asyncio
 
 web_fetch_tool = asyncio.run(web_fetch())
 
-# 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
+# Create a factory function to ensure isolated Agent instances for concurrent access.
 async def create_agent() -> AssistantAgent:
     
     # Define a model client. You can use other model client that implements

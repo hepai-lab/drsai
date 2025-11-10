@@ -50,7 +50,7 @@ class BaseManagerState(BaseState):
     current_turn: int = 0
     is_paused: bool = False
 
-class DrSaiGroupChatManager(BaseGroupChatManager):
+class AGBaseGroupChatManager(BaseGroupChatManager):
 
     def __init__(
         self,
@@ -129,7 +129,7 @@ class DrSaiGroupChatManager(BaseGroupChatManager):
     ) -> None:
         pass
 
-class DrSaiGroupChat(BaseGroupChat):
+class AGGroupChat(BaseGroupChat):
 
     component_type = "team"
 
@@ -182,9 +182,9 @@ class DrSaiGroupChat(BaseGroupChat):
         max_turns: int | None,
         message_factory: MessageFactory,
         **kwargs: Any
-    ) -> Callable[[], DrSaiGroupChatManager]:
-        def _factory() -> DrSaiGroupChatManager:
-            return DrSaiGroupChatManager(
+    ) -> Callable[[], AGBaseGroupChatManager]:
+        def _factory() -> AGBaseGroupChatManager:
+            return AGBaseGroupChatManager(
                 name = name,
                 group_topic_type = group_topic_type,
                 output_topic_type = output_topic_type,
@@ -448,7 +448,7 @@ class DrSaiGroupChat(BaseGroupChat):
         """Pause the group chat."""
         orchestrator = await self._runtime.try_get_underlying_agent_instance(
             AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
-            type=DrSaiGroupChatManager,
+            type=AGBaseGroupChatManager,
         )
         await orchestrator.pause()
         for agent in self._participants:
@@ -462,7 +462,7 @@ class DrSaiGroupChat(BaseGroupChat):
         """Resume the group chat."""
         orchestrator = await self._runtime.try_get_underlying_agent_instance(
             AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
-            type=DrSaiGroupChatManager,
+            type=AGBaseGroupChatManager,
         )
         await orchestrator.resume()
         for agent in self._participants:
@@ -480,13 +480,13 @@ class DrSaiGroupChat(BaseGroupChat):
     async def close(self) -> None:
         """Close all resources."""
         # Prepare a list of closable agents
-        closable_agents: List[DrSaiGroupChatManager | ChatAgent] = [
+        closable_agents: List[AGBaseGroupChatManager | ChatAgent] = [
             agent for agent in self._participants if hasattr(agent, "close")
         ]
         # Check if we can close the orchestrator
         orchestrator = await self._runtime.try_get_underlying_agent_instance(
             AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
-            type=DrSaiGroupChatManager,
+            type=AGBaseGroupChatManager,
         )
         if hasattr(orchestrator, "close"):
             closable_agents.append(orchestrator)

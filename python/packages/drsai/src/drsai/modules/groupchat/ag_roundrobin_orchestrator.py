@@ -47,7 +47,7 @@ from autogen_agentchat.teams._group_chat._events import (
     GroupChatTermination,
 )
 
-from ._base_group_chat import DrSaiGroupChat, DrSaiGroupChatManager
+from .ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
 from drsai.modules.managers.database import DatabaseManager
 
 class RoundRobinManagerState(BaseState):
@@ -59,7 +59,7 @@ class RoundRobinManagerState(BaseState):
     is_paused: bool = False
 
 
-class RoundRobinGroupChatManager(DrSaiGroupChatManager):
+class RoundRobinGroupChatManager(AGBaseGroupChatManager):
     """A group chat manager that selects the next speaker in a round-robin fashion."""
 
     def __init__(
@@ -261,13 +261,13 @@ class RoundRobinGroupChatConfig(BaseModel):
     max_turns: int | None = None
 
 
-class RoundRobinGroupChat(DrSaiGroupChat, Component[RoundRobinGroupChatConfig]):
+class RoundRobinGroupChat(AGGroupChat, Component[RoundRobinGroupChatConfig]):
     """A team that runs a group chat with participants taking turns in a round-robin fashion
     to publish a message to all.
     """
 
     component_config_schema = RoundRobinGroupChatConfig
-    component_provider_override = "autogen_agentchat.teams.RoundRobinGroupChat"
+    component_provider_override = "drsai.RoundRobinGroupChat"
 
     def __init__(
         self,
