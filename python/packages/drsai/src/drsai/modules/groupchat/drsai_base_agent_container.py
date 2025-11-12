@@ -44,13 +44,12 @@ class DrSaiChatAgentContainer(SequentialRoutedAgent):
     """
 
     def __init__(
-        self, 
-        parent_topic_type: str, 
-        output_topic_type: str, 
-        agent: DrSaiAgent, 
+        self,
+        parent_topic_type: str,
+        output_topic_type: str,
+        agent: DrSaiAgent,
         message_factory: MessageFactory,
-        team_id: str,
-        group_chat_manager_topic_type: str,
+        long_task_topic_type: str | None = None,
     ) -> None:
         super().__init__(
             description=agent.description,
@@ -67,8 +66,8 @@ class DrSaiChatAgentContainer(SequentialRoutedAgent):
         self._agent = agent
         self._message_buffer: List[BaseChatMessage] = []
         self._message_factory = message_factory
-        self._team_id = team_id
-        self._group_chat_manager_topic_type = group_chat_manager_topic_type
+        # 专门用于长任务通信的 topic
+        self._long_task_topic_type = long_task_topic_type or f"{parent_topic_type}_long_task"
 
     @rpc
     async def handle_lazy_init(self, message: GroupChatLazyInit, ctx: MessageContext) -> None:
@@ -87,11 +86,11 @@ class DrSaiChatAgentContainer(SequentialRoutedAgent):
         """Handle an agent response event by appending the content to the buffer."""
         self._buffer_message(message.agent_response.chat_message)
     
-    @rpc
+    @event
     async def handle_long_task(self, message: GroupChatAgentLongTask, ctx: MessageContext) -> None:
         """Handle Agent's long task."""
         cancellation_token = ctx.cancellation_token
-        
+
         # Only support one long task query here
         try:
             request_message: LongTaskQueryMessage = message.message
@@ -99,22 +98,23 @@ class DrSaiChatAgentContainer(SequentialRoutedAgent):
                 await self._log_message(request_message)
             else:
                 raise ValueError("Invalid message type.")
-            
+
             if request_message is None:
                 raise ValueError("No long task query message found.")
-            
+
             response: Response | None = None
             async for msg in self._agent._process_long_task_query(
                 task=request_message,
                 cancellation_token=cancellation_token,
             ):
                 if isinstance(msg, Response):
+                    response = msg
                     await self._log_message(msg.chat_message)
-                    # if AgentLongTaskMessage, publish the message with long task to the group chat
+                    # if AgentLongTaskMessage, publish the message with long task to the long_task_topic
                     if isinstance(msg.chat_message, AgentLongTaskMessage):
-                        await self.send_message(
+                        await self.publish_message(
                             GroupChatAgentLongTask(message=msg.chat_message),
-                            recipient=AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
+                            topic_id=DefaultTopicId(type=self._long_task_topic_type),
                             cancellation_token=cancellation_token,
                         )
                     else:
@@ -165,9 +165,10 @@ class DrSaiChatAgentContainer(SequentialRoutedAgent):
             self._message_buffer.clear()
 
             if isinstance(response.chat_message, AgentLongTaskMessage):
-                await self.send_message(
+                # 发布到专门的长任务 topic
+                await self.publish_message(
                     GroupChatAgentLongTask(message=response.chat_message),
-                    recipient=AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
+                    topic_id=DefaultTopicId(type=self._long_task_topic_type),
                     cancellation_token=ctx.cancellation_token,
                 )
             else:

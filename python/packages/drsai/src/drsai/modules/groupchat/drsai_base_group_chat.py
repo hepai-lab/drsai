@@ -153,6 +153,8 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
         # The output topic type is used for emitting streaming messages from the group chat.
         # The group chat manager will relay the messages to the output message queue.
         self._output_topic_type = f"output_topic_{self._team_id}"
+        # The long task topic type is used for long task communication between agents and manager.
+        self._long_task_topic_type = f"long_task_topic_{self._team_id}"
 
         # The queue for collecting the output messages.
         self._output_message_queue: asyncio.Queue[BaseAgentEvent | BaseChatMessage | GroupChatTermination] = (
@@ -216,9 +218,16 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
         output_topic_type: str,
         agent: ChatAgent,
         message_factory: DrSaiMessageFactory,
+        long_task_topic_type: str,
     ) -> Callable[[], DrSaiChatAgentContainer]:
         def _factory() -> DrSaiChatAgentContainer:
-            container = DrSaiChatAgentContainer(parent_topic_type, output_topic_type, agent, message_factory, self._team_id, self._group_chat_manager_topic_type)
+            container = DrSaiChatAgentContainer(
+                parent_topic_type,
+                output_topic_type,
+                agent,
+                message_factory,
+                long_task_topic_type,
+            )
             return container
 
         return _factory
@@ -235,7 +244,11 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
                 runtime,
                 type=agent_type,
                 factory=self._create_participant_factory(
-                    self._group_topic_type, self._output_topic_type, participant, self._message_factory
+                    self._group_topic_type,
+                    self._output_topic_type,
+                    participant,
+                    self._message_factory,
+                    self._long_task_topic_type,
                 ),
             )
             # Add subscriptions for the participant.
@@ -243,6 +256,10 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
             await runtime.add_subscription(TypeSubscription(topic_type=agent_type, agent_type=agent_type))
             # The participant should be able to receive messages from the group topic.
             await runtime.add_subscription(TypeSubscription(topic_type=self._group_topic_type, agent_type=agent_type))
+            # The participant should be able to receive messages from the long task topic.
+            await runtime.add_subscription(
+                TypeSubscription(topic_type=self._long_task_topic_type, agent_type=agent_type)
+            )
 
         # Register the group chat manager.
         await self._base_group_chat_manager_class.register(
@@ -275,6 +292,10 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
         # The group chat manager will relay the messages from output topic to the output message queue.
         await runtime.add_subscription(
             TypeSubscription(topic_type=self._output_topic_type, agent_type=group_chat_manager_agent_type.type)
+        )
+        # The group chat manager should be able to receive messages from the long task topic.
+        await runtime.add_subscription(
+            TypeSubscription(topic_type=self._long_task_topic_type, agent_type=group_chat_manager_agent_type.type)
         )
 
         self._initialized = True

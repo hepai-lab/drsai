@@ -272,23 +272,20 @@ class LongMCPAgent(AssistantAgent):
                 arguments=query_arguments)
         result_json = json.loads(result.result[0].content)
 
-        if result_json["status"] == "ERROR":
+        if result_json["status"] == "IN_PROGRESS":
             yield Response(
                 chat_message=AgentLongTaskMessage(
                     source=self.name,
                     content=result_json["result"],
-                    task_status=TaskStatus.error.value,
+                    task_status=TaskStatus.in_progress.value,
                     query_arguments=query_arguments,
                     tool_name=query_tool_name
                 ))
         else:
             yield Response(
-                chat_message=AgentLongTaskMessage(
+                chat_message=TextMessage(
                         source=self.name,
                         content=result_json["result"],
-                        task_status=TaskStatus.completed.value,
-                        query_arguments=query_arguments,
-                        tool_name=query_tool_name
                     ))
         
     

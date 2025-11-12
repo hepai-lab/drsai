@@ -71,7 +71,7 @@ class DrSaiBaseGroupChatManager(SequentialRoutedAgent, ABC):
         message_factory: DrSaiMessageFactory,
         emit_team_events: bool = False,
         db_manager: DatabaseManager|None = None,
-        team_id: str|None = None,
+        long_task_topic_type: str|None = None,
     ):
         super().__init__(
             description="Group chat manager",
@@ -112,7 +112,8 @@ class DrSaiBaseGroupChatManager(SequentialRoutedAgent, ABC):
         # for database
         self._db_manager = db_manager
 
-        self._team_id = team_id
+        # 专门用于长任务通信的 topic
+        self._long_task_topic_type = long_task_topic_type or f"{group_topic_type}_long_task"
 
     @rpc
     async def handle_lazy_init(self, message: GroupChatLazyInit, ctx: MessageContext) -> None:
@@ -171,31 +172,29 @@ class DrSaiBaseGroupChatManager(SequentialRoutedAgent, ABC):
     async def update_message_thread(self, messages: Sequence[BaseAgentEvent | BaseChatMessage]) -> None:
         self._message_thread.extend(messages)
 
-    @rpc
+    @event
     async def handle_long_task(self, message: GroupChatAgentLongTask, ctx: MessageContext) -> None:
         """Handle Agent's long task."""
-        
+
         if self._is_paused:
             return
-        
+
         long_task_message: AgentLongTaskMessage | LongTaskQueryMessage = message.message
 
         # handle agent long task response
         if isinstance(long_task_message, AgentLongTaskMessage):
             if long_task_message.task_status == TaskStatus.in_progress.value:
-                asyncio.sleep(10)
+                await asyncio.sleep(10)
                 query_message = LongTaskQueryMessage(
                     source=self._name,
                     content = long_task_message.query_arguments,
                     query_arguments=long_task_message.query_arguments,
                     tool_name=long_task_message.tool_name,
                 )
-                await self.send_message(
+                # 发布到专门的长任务 topic,只有对应的 agent 能接收
+                await self.publish_message(
                     GroupChatAgentLongTask(message=query_message),
-                    recipient=AgentId(
-                        type=self._participant_name_to_topic_type[long_task_message.source],
-                        key=self._team_id
-                    ),
+                    topic_id=DefaultTopicId(type=self._long_task_topic_type),
                     cancellation_token=ctx.cancellation_token,
                 )
             else:
