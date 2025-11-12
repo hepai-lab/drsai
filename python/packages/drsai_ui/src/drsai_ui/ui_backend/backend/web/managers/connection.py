@@ -17,7 +17,7 @@ from autogen_agentchat.messages import (
     ToolCallExecutionEvent,
     ToolCallRequestEvent,
 )
-from drsai.modules.managers.messages.drsai_messages import (
+from drsai.modules.managers.messages.agent_messages import (
     AgentLogEvent,
     Send_level,
     TaskEvent

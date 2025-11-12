@@ -1,10 +1,10 @@
 import asyncio
+from abc import ABC, abstractmethod
+from typing import Any, List, Sequence, Mapping, Dict, cast
 
-from typing import Any, List, Sequence
+from autogen_core import AgentId, DefaultTopicId, MessageContext, event, rpc
 
-from autogen_core import DefaultTopicId, MessageContext, event, rpc
-
-from autogen_agentchat.base import ChatAgent, TaskResult, TerminationCondition
+from autogen_agentchat.base import ChatAgent, TaskResult, TerminationCondition, Response
 from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
 from autogen_agentchat.messages import (
     BaseAgentEvent, 
@@ -29,9 +29,23 @@ from autogen_agentchat.teams._group_chat._events import (
     SerializableException,
 )
 from autogen_agentchat.teams._group_chat._sequential_routed_agent import SequentialRoutedAgent
+from drsai.modules.managers.messages.groupchat_messages import (
+    GroupChatAgentLongTask,
+    GroupChatLazyInit,
+    GroupChatClose
+    )
+from drsai.modules.components.task_manager.base_task_system import TaskStatus
+from drsai.modules.managers.messages.agent_messages import (
+    AgentLongTaskMessage, 
+    LongTaskQueryMessage,
+    DrSaiMessageFactory,
+    )
+from drsai.modules.managers.database import DatabaseManager
+from loguru import logger
+from autogen_agentchat.state import BaseState, TeamState
 
 
-class TaskGroupChatManager(BaseGroupChatManager):
+class DrSaiBaseGroupChatManager(SequentialRoutedAgent, ABC):
     """Base class for a group chat manager that manages a group chat with multiple participants.
 
     It is the responsibility of the caller to ensure:
@@ -54,8 +68,10 @@ class TaskGroupChatManager(BaseGroupChatManager):
         output_message_queue: asyncio.Queue[BaseAgentEvent | BaseChatMessage | GroupChatTermination],
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
-        message_factory: MessageFactory,
+        message_factory: DrSaiMessageFactory,
         emit_team_events: bool = False,
+        db_manager: DatabaseManager|None = None,
+        team_id: str|None = None,
     ):
         super().__init__(
             description="Group chat manager",
@@ -64,6 +80,7 @@ class TaskGroupChatManager(BaseGroupChatManager):
                 GroupChatAgentResponse,
                 GroupChatMessage,
                 GroupChatReset,
+                GroupChatAgentLongTask,
             ],
         )
         if max_turns is not None and max_turns <= 0:
@@ -90,47 +107,48 @@ class TaskGroupChatManager(BaseGroupChatManager):
         self._message_factory = message_factory
         self._emit_team_events = emit_team_events
 
+        self._is_paused = False
+
+        # for database
+        self._db_manager = db_manager
+
+        self._team_id = team_id
+
+    @rpc
+    async def handle_lazy_init(self, message: GroupChatLazyInit, ctx: MessageContext) -> None:
+        """Handle the lazy_init for a group chat."""
+        pass
+
     @rpc
     async def handle_start(self, message: GroupChatStart, ctx: MessageContext) -> None:
         """Handle the start of a group chat by selecting a speaker to start the conversation."""
 
         # Check if the conversation has already terminated.
-        if self._termination_condition is not None and self._termination_condition.terminated:
+        if self._is_paused:
+            return
+        
+        if (
+            self._termination_condition is not None
+            and self._termination_condition.terminated
+        ):
             early_stop_message = StopMessage(
-                content="The group chat has already terminated.",
-                source=self._name,
+                content="The group chat has already terminated.", source=self._name
             )
-            # Signal termination to the caller of the team.
             await self._signal_termination(early_stop_message)
-            # Stop the group chat.
             return
 
-        # Validate the group state given the start messages
-        await self.validate_group_state(message.messages)
+        assert message is not None and message.messages is not None
 
-        if message.messages is not None:
-            # Log all messages at once
-            await self.publish_message(
-                GroupChatStart(messages=message.messages),
-                topic_id=DefaultTopicId(type=self._output_topic_type),
-            )
-            for msg in message.messages:
-                await self._output_message_queue.put(msg)
+        # Send message to all agents with initial user message
+        await self.publish_message(
+            GroupChatStart(messages=message.messages),
+            topic_id=DefaultTopicId(type=self._group_topic_type),
+            cancellation_token=ctx.cancellation_token,
+        )
 
-            # Relay all messages at once to participants
-            await self.publish_message(
-                GroupChatStart(messages=message.messages),
-                topic_id=DefaultTopicId(type=self._group_topic_type),
-                cancellation_token=ctx.cancellation_token,
-            )
-
-            # Append all messages to thread
-            await self.update_message_thread(message.messages)
-
-            # Check termination condition after processing all messages
-            if await self._apply_termination_condition(message.messages):
-                # Stop the group chat.
-                return
+        # Add messages to thread
+        for m in message.messages:
+            self._message_thread.append(m)
 
         # Select a speaker to start/continue the conversation
         speaker_name_future = asyncio.ensure_future(self.select_speaker(self._message_thread))
@@ -141,47 +159,106 @@ class TaskGroupChatManager(BaseGroupChatManager):
             raise RuntimeError(f"Speaker {speaker_name} not found in participant names.")
         await self._log_speaker_selection(speaker_name)
 
-        # Send the message to the next speaker
-        speaker_topic_type = self._participant_name_to_topic_type[speaker_name]
+        # send request to next speaker
         await self.publish_message(
             GroupChatRequestPublish(),
-            topic_id=DefaultTopicId(type=speaker_topic_type),
+            topic_id=DefaultTopicId(
+                type=self._participant_name_to_topic_type[speaker_name]
+            ),
             cancellation_token=ctx.cancellation_token,
         )
 
     async def update_message_thread(self, messages: Sequence[BaseAgentEvent | BaseChatMessage]) -> None:
         self._message_thread.extend(messages)
 
+    @rpc
+    async def handle_long_task(self, message: GroupChatAgentLongTask, ctx: MessageContext) -> None:
+        """Handle Agent's long task."""
+        
+        if self._is_paused:
+            return
+        
+        long_task_message: AgentLongTaskMessage | LongTaskQueryMessage = message.message
+
+        # handle agent long task response
+        if isinstance(long_task_message, AgentLongTaskMessage):
+            if long_task_message.task_status == TaskStatus.in_progress.value:
+                asyncio.sleep(10)
+                query_message = LongTaskQueryMessage(
+                    source=self._name,
+                    content = long_task_message.query_arguments,
+                    query_arguments=long_task_message.query_arguments,
+                    tool_name=long_task_message.tool_name,
+                )
+                await self.send_message(
+                    GroupChatAgentLongTask(message=query_message),
+                    recipient=AgentId(
+                        type=self._participant_name_to_topic_type[long_task_message.source],
+                        key=self._team_id
+                    ),
+                    cancellation_token=ctx.cancellation_token,
+                )
+            else:
+                await self.publish_message(
+                    GroupChatAgentResponse(agent_response=Response(chat_message = long_task_message, )),
+                    topic_id=DefaultTopicId(type=self._group_topic_type),
+                    cancellation_token=ctx.cancellation_token,
+                )
+        
     @event
     async def handle_agent_response(self, message: GroupChatAgentResponse, ctx: MessageContext) -> None:
         try:
-            # Append the message to the message thread and construct the delta.
-            delta: List[BaseAgentEvent | BaseChatMessage] = []
+            if self._is_paused:
+                return
+        
+            delta: List[BaseChatMessage] = []
             if message.agent_response.inner_messages is not None:
                 for inner_message in message.agent_response.inner_messages:
-                    delta.append(inner_message)
-            delta.append(message.agent_response.chat_message)
-            await self.update_message_thread(delta)
+                    delta.append(inner_message)  # type: ignore
+                    self._message_thread.append(inner_message)  # type: ignore
 
-            # Check if the conversation should be terminated.
-            if await self._apply_termination_condition(delta, increment_turn_count=True):
-                # Stop the group chat.
+            # Add the agent's response to the thread
+            self._message_thread.append(message.agent_response.chat_message)
+            delta.append(message.agent_response.chat_message)
+
+            # # Check termination condition
+            # if self._termination_condition is not None:
+            #     stop_message = await self._termination_condition(delta)
+            #     if stop_message is not None:
+            #         await self._signal_termination(stop_message)
+            #         await self._termination_condition.reset()
+            #         return
+
+            # # Check max turns
+            # self._current_turn += 1
+            # if self._max_turns is not None and self._current_turn >= self._max_turns:
+            #     stop_message = StopMessage(
+            #         content=f"Maximum number of turns ({self._max_turns}) reached.",
+            #         source=self._name,
+            #     )
+            #     await self._signal_termination(stop_message)
+            #     return
+
+            # "Check termination condition" and "Check max turns" is all in _apply_termination_condition
+            is_terminated = await self._apply_termination_condition(delta, increment_turn_count=True)
+            if is_terminated:
                 return
 
-            # Select a speaker to continue the conversation.
+            # Select a speaker to start/continue the conversation
             speaker_name_future = asyncio.ensure_future(self.select_speaker(self._message_thread))
             # Link the select speaker future to the cancellation token.
             ctx.cancellation_token.link_future(speaker_name_future)
-            speaker_name = await speaker_name_future
-            if speaker_name not in self._participant_name_to_topic_type:
-                raise RuntimeError(f"Speaker {speaker_name} not found in participant names.")
-            await self._log_speaker_selection(speaker_name)
+            next_speaker = await speaker_name_future
+            if next_speaker not in self._participant_name_to_topic_type:
+                raise RuntimeError(f"Speaker {next_speaker} not found in participant names.")
+            await self._log_speaker_selection(next_speaker)
 
-            # Send the message to the next speakers
-            speaker_topic_type = self._participant_name_to_topic_type[speaker_name]
+            # send request to next speaker
             await self.publish_message(
                 GroupChatRequestPublish(),
-                topic_id=DefaultTopicId(type=speaker_topic_type),
+                topic_id=DefaultTopicId(
+                    type=self._participant_name_to_topic_type[next_speaker]
+                ),
                 cancellation_token=ctx.cancellation_token,
             )
         except Exception as e:
@@ -277,13 +354,17 @@ class TaskGroupChatManager(BaseGroupChatManager):
     @rpc
     async def handle_pause(self, message: GroupChatPause, ctx: MessageContext) -> None:
         """Pause the group chat manager. This is a no-op in the base class."""
-        pass
+        self.pause()
 
     @rpc
     async def handle_resume(self, message: GroupChatResume, ctx: MessageContext) -> None:
         """Resume the group chat manager. This is a no-op in the base class."""
-        pass
-
+        self.resume()
+    
+    @rpc
+    async def handle_close(self, message: GroupChatClose, ctx: MessageContext) -> None:
+        """Handle the group colse for a group chat."""
+        self.close()
     
     async def validate_group_state(self, messages: List[BaseChatMessage] | None) -> None:
         """Validate the state of the group chat given the start messages.
@@ -292,18 +373,45 @@ class TaskGroupChatManager(BaseGroupChatManager):
         Args:
             messages: A list of chat messages to validate, or None if no messages are provided.
         """
+        pass
+
+    @abstractmethod
+    async def select_speaker(
+        self, thread: List[BaseAgentEvent | BaseChatMessage]
+    ) -> str:
+        """Select a speaker from the participants in a round-robin fashion."""
         ...
 
-    
-    async def select_speaker(self, thread: List[BaseAgentEvent | BaseChatMessage]) -> str:
-        """Select a speaker from the participants and return the
-        topic type of the selected speaker."""
+    @abstractmethod
+    async def save_state(self) -> Mapping[str, Any]:
+        """save the state of the group chat manager."""
         ...
 
-    
+    @abstractmethod
+    async def load_state(self, state: Mapping[str, Any]) -> None:
+        """Load the state of the group chat manager."""
+        ...
+
+    @abstractmethod
+    async def pause(self) -> None:
+        """Pause the group chat manager."""
+        ...
+
+    @abstractmethod
+    async def resume(self) -> None:
+        """Resume the group chat manager."""
+        ...
+
+    @abstractmethod
+    async def close(self) -> None:
+        """Close any resources."""
+        ...
+
+    @abstractmethod
     async def reset(self) -> None:
         """Reset the group chat manager."""
         ...
 
     async def on_unhandled_message(self, message: Any, ctx: MessageContext) -> None:
-        raise ValueError(f"Unhandled message in group chat manager: {type(message)}")
+        # raise ValueError(f"Unhandled message in group chat manager: {type(message)}")
+        logger.warning(f"Unhandled message in group chat manager: {type(message)}")

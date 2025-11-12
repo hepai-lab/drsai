@@ -1,42 +1,84 @@
-import asyncio
-import os
-import time
 from typing import (
-    AsyncGenerator,
-    List,
-    Sequence,
+    AsyncGenerator, 
+    List, 
+    Sequence, 
+    Dict, 
+    Any, 
+    Callable, 
+    Awaitable, 
+    Union, 
+    Optional, 
+    Tuple,
+    Self,
+    Mapping,
+    )
+
+import asyncio
+from loguru import logger
+import inspect
+import json
+import os
+
+from pydantic import BaseModel
+
+from autogen_core import CancellationToken, FunctionCall
+from autogen_core.tools import (
+    BaseTool, 
+    Workbench, 
+    ToolSchema)
+from autogen_core.memory import Memory
+from autogen_core.model_context import ChatCompletionContext
+from autogen_core.models import (
+    ChatCompletionClient,
+    CreateResult,
+    FunctionExecutionResultMessage,
+    FunctionExecutionResult,
+    LLMMessage,
+    UserMessage,
+    AssistantMessage,
+    SystemMessage,
+    RequestUsage,
 )
 
-from autogen_agentchat.base import Response
+from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.state import AssistantAgentState
+from autogen_agentchat.agents._assistant_agent import AssistantAgentConfig
+from autogen_agentchat.base import Handoff as HandoffBase
+from autogen_agentchat.base import Response, TaskResult
 from autogen_agentchat.messages import (
     BaseAgentEvent,
     BaseChatMessage,
+    AgentEvent,
+    ChatMessage,
+    HandoffMessage,
+    MemoryQueryEvent,
     ModelClientStreamingChunkEvent,
     TextMessage,
+    ToolCallExecutionEvent,
+    ToolCallRequestEvent,
+    ToolCallSummaryMessage,
+    UserInputRequestedEvent,
     ThoughtEvent,
+    StructuredMessage,
+    StructuredMessageFactory,
+    # MultiModalMessage,
+    Image,
 )
-from autogen_core import CancellationToken
+
+from drsai.modules.managers.database import DatabaseManager
+from drsai import DrsaiStaticWorkbench
+from drsai import RAGFlowMemory, RAGFlowMemoryConfig
 from autogen_core.model_context import (
-    BufferedChatCompletionContext,
-)
-from autogen_core.models import (
-    AssistantMessage,
-    CreateResult,
-)
+    BufferedChatCompletionContext,)
+from drsai import AssistantAgent, HepAIChatCompletionClient
+from drsai import run_backend, run_console, run_worker
+import os, json, time
 from dotenv import load_dotenv
-from drsai import (
-    AssistantAgent,
-    HepAIChatCompletionClient,
-    RAGFlowMemory,
-    RAGFlowMemoryConfig,
-    run_worker,
-)
-from drsai.modules.components.task_manager.base_task_system import Task, TaskStatus
-from drsai.modules.managers.messages.agent_messages import AgentLogEvent, TaskEvent
-from loguru import logger
-
 load_dotenv()
+import asyncio
 
+from drsai.modules.components.task_manager.base_task_system import TaskType, TaskStatus, Task
+from drsai.modules.managers.messages.agent_messages import TaskEvent, AgentLogEvent
 
 class TaskAgent(AssistantAgent):
 
@@ -158,17 +200,12 @@ class TaskAgent(AssistantAgent):
             ):
                 if self.is_paused:
                     raise asyncio.CancelledError()
-
+                
                 if isinstance(inference_output, CreateResult):
                     model_result = inference_output
                 else:
                     # Streaming chunk event
                     yield inference_output
-                    yield AgentLogEvent(
-                        source=self.name,
-                        content_type="streaming_chunk",
-                        content=str(inference_output.content) if hasattr(inference_output, 'content') else str(inference_output),
-                    )
 
             assert model_result is not None, "No model result was produced."
 
@@ -313,7 +350,7 @@ if __name__ == "__main__":
             port = 42816, 
             no_register=False,
             enable_openwebui_pipeline=True, 
-            # pipelines_dir="/home/xiongdb/drsai/examples/agent_groupchat/assistant_ragflow/pipelines/",
+            pipelines_dir="/home/xiongdb/drsai/examples/agent_groupchat/assistant_ragflow/pipelines/",
             history_mode = "backend",
             # use_api_key_mode = "backend",
         )

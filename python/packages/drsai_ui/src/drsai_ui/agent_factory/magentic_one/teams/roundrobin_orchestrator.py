@@ -46,7 +46,7 @@ from autogen_agentchat.teams._group_chat._events import (
 )
 from ....ui_backend.types import CheckpointEvent
 
-from drsai.modules.managers.messages.drsai_messages import (
+from drsai.modules.managers.messages.agent_messages import (
     AgentLogEvent,
     Send_level,
     TaskEvent

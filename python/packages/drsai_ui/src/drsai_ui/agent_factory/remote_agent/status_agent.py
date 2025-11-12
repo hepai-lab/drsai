@@ -61,7 +61,7 @@ from hepai.tools.get_woker_functions import get_worker_sync_functions
 from openai import Stream
 
 from drsai import AssistantAgent, HepAIChatCompletionClient
-from drsai.modules.managers.messages.drsai_messages import (
+from drsai.modules.managers.messages.agent_messages import (
     AgentLogEvent,
     Send_level,
     TaskEvent

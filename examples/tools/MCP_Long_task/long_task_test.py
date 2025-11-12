@@ -192,7 +192,7 @@ async def perform_long_research(
             result_json = {
                 "id": task_id,
                 'status': TaskStatus.IN_PROGRESS.value,
-                'result': None,
+                'result': "Task is still running",
                 'message': f'Task is still running. Elapsed time: {elapsed_time:.1f}s / Time limit: {time_limit}s',
                 'elapsed_time': elapsed_time
             }
@@ -216,7 +216,7 @@ async def perform_long_research(
                 result_json = {
                     "id": task_id,
                     'status': TaskStatus.IN_PROGRESS.value,
-                    'result': None,
+                    'result': "Task is still running",
                     'message': f'Task is still running after {time_limit}s',
                     'elapsed_time': time.time() - start_time
                 }
@@ -256,7 +256,7 @@ async def perform_long_research(
         result_json = {
             "id": task_id,
             'status': TaskStatus.IN_PROGRESS.value,
-            'result': None,
+            'result': "Task is still running",
             'message': f'Task is still running after {time_limit}s. Use the same task_id to check status.',
             'elapsed_time': time_limit
         }

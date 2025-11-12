@@ -1,49 +1,91 @@
-import asyncio
-import os
-import time
 from typing import (
-    AsyncGenerator,
-    List,
-    Sequence,
+    AsyncGenerator, 
+    List, 
+    Sequence, 
+    Dict, 
+    Any, 
+    Callable, 
+    Awaitable, 
+    Union, 
+    Optional, 
+    Tuple,
+    Self,
+    Mapping,
+    )
+
+import asyncio
+from loguru import logger
+import inspect
+import json
+import os, json, time
+import asyncio
+from pydantic import BaseModel
+
+from autogen_core import CancellationToken, FunctionCall
+from autogen_core.tools import (
+    BaseTool, 
+    Workbench, 
+    ToolSchema)
+from autogen_ext.tools.mcp import SseServerParams,mcp_server_tools
+from autogen_core.memory import Memory
+from autogen_core.model_context import ChatCompletionContext
+from autogen_core.models import (
+    ChatCompletionClient,
+    CreateResult,
+    FunctionExecutionResultMessage,
+    FunctionExecutionResult,
+    LLMMessage,
+    UserMessage,
+    AssistantMessage,
+    SystemMessage,
+    RequestUsage,
 )
 
-from autogen_agentchat.base import Response
+from autogen_agentchat.base import Response, TaskResult
 from autogen_agentchat.messages import (
     BaseAgentEvent,
     BaseChatMessage,
+    AgentEvent,
+    ChatMessage,
+    HandoffMessage,
+    MemoryQueryEvent,
     ModelClientStreamingChunkEvent,
     TextMessage,
+    ToolCallExecutionEvent,
+    ToolCallRequestEvent,
+    ToolCallSummaryMessage,
+    UserInputRequestedEvent,
     ThoughtEvent,
+    StructuredMessage,
+    StructuredMessageFactory,
+    # MultiModalMessage,
+    Image,
 )
-from autogen_core import CancellationToken
+
+from drsai.modules.managers.database import DatabaseManager
+from drsai import DrsaiStaticWorkbench
+from drsai import RAGFlowMemory, RAGFlowMemoryConfig
 from autogen_core.model_context import (
-    BufferedChatCompletionContext,
+    BufferedChatCompletionContext,)
+from drsai import AssistantAgent, HepAIChatCompletionClient
+from drsai.modules.components.task_manager.base_task_system import TaskType, TaskStatus, Task
+from drsai.modules.managers.messages.agent_messages import(
+    AgentLongTaskMessage,
+    LongTaskQueryMessage,
+    AgentLogEvent,
+    ToolLongTaskEvent,
 )
-from autogen_core.models import (
-    AssistantMessage,
-    CreateResult,
-)
-from dotenv import load_dotenv
-from drsai import (
-    AssistantAgent,
-    HepAIChatCompletionClient,
-    RAGFlowMemory,
-    RAGFlowMemoryConfig,
-    run_worker,
-)
-from drsai.modules.components.task_manager.base_task_system import Task, TaskStatus
-from drsai.modules.managers.messages.agent_messages import AgentLogEvent, TaskEvent
-from loguru import logger
 
-load_dotenv()
+from drsai import run_backend, run_console, run_worker
 
-
-class TaskAgent(AssistantAgent):
+class LongMCPAgent(AssistantAgent):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-    
 
+        self._tool_name: Optional[str] = None
+        self._tool_arguments: Optional[Dict[str, Any]] = None
+    
     async def on_messages_stream(
         self, messages: Sequence[BaseChatMessage], cancellation_token: CancellationToken
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
@@ -85,44 +127,6 @@ class TaskAgent(AssistantAgent):
             output_content_type = self._output_content_type
             format_string = self._output_content_type_format
 
-            # create tree of tasks
-            
-            parent_task = Task(
-                content = "parent_task for test",
-                source = "task_manager",
-            )   
-
-            sub_task_1 = Task(
-                content = "sub_task_1 for test",
-                source = "task_manager",
-                parent_task_id = parent_task.id,
-                status = TaskStatus.completed,
-                completed_at = time.time(),
-                executor = self.name,
-                solution = "None"
-            )
-
-            sub_task_2 = Task(
-                content = "sub_task_2 for test",
-                source = "task_manager",
-                parent_task_id = parent_task.id,
-            )
-
-            sub_task_3 = Task(
-                content = "sub_task_3 for test",
-                source = "task_manager",
-                parent_task_id = parent_task.id,
-            )
-
-            parent_task.child_tasks = [sub_task_1.model_dump(), sub_task_2.model_dump(), sub_task_3.model_dump()]
-            parent_task.child_task_ids= [sub_task_1.id, sub_task_2.id, sub_task_3.id]
-
-            yield TaskEvent(
-                content=parent_task.model_dump(),
-                source="task_manager",
-                metadata={}
-            )
-
             # STEP 1: Add new user/handoff messages to the model context
             await self._add_messages_to_context(
                 model_context=model_context,
@@ -136,12 +140,7 @@ class TaskAgent(AssistantAgent):
                 agent_name=agent_name,
             ):
                 inner_messages.append(event_msg)
-                # yield event_msg
-                yield AgentLogEvent(
-                    source=self.name,
-                    content_type = event_msg.type,
-                    content=str(event_msg.content),
-                )
+                yield event_msg
 
             # STEP 3: Run the first inference
             model_result = None
@@ -158,17 +157,12 @@ class TaskAgent(AssistantAgent):
             ):
                 if self.is_paused:
                     raise asyncio.CancelledError()
-
+                
                 if isinstance(inference_output, CreateResult):
                     model_result = inference_output
                 else:
                     # Streaming chunk event
                     yield inference_output
-                    yield AgentLogEvent(
-                        source=self.name,
-                        content_type="streaming_chunk",
-                        content=str(inference_output.content) if hasattr(inference_output, 'content') else str(inference_output),
-                    )
 
             assert model_result is not None, "No model result was produced."
 
@@ -186,7 +180,10 @@ class TaskAgent(AssistantAgent):
                     thought=getattr(model_result, "thought", None),
                 )
             )
-
+            if not isinstance(model_result.content, str):
+                self._tool_name = model_result.content[0].name
+                self._tool_arguments = json.loads(model_result.content[0].arguments)
+                
             # STEP 4: Process the model output
             async for output_event in self._process_model_result(
                 model_result=model_result,
@@ -204,8 +201,22 @@ class TaskAgent(AssistantAgent):
                 tool_call_summary_format=tool_call_summary_format,
                 output_content_type=output_content_type,
                 format_string=format_string,
-            ):
-                yield output_event
+            ): 
+                if isinstance(output_event, Response):
+                    if isinstance(output_event.chat_message, ToolCallSummaryMessage):
+                        mcp_output = json.loads(output_event.chat_message.content)
+                        if mcp_output["status"] == "IN_PROGRESS":
+                            self._tool_arguments["task_id"] = mcp_output["id"]
+                            output_event.chat_message =  AgentLongTaskMessage(
+                                source=self.name,
+                                content=f"{self._tool_name} is running. Please wait for the result.",
+                                task_status=TaskStatus.in_progress.value,
+                                query_arguments=self._tool_arguments,
+                                tool_name=self._tool_name
+                            )
+                        yield output_event
+                else:
+                    yield output_event
 
         except asyncio.CancelledError:
             # If the task is cancelled, we respond with a message.
@@ -242,41 +253,85 @@ class TaskAgent(AssistantAgent):
             except asyncio.CancelledError:
                 pass
 
-RAGFLOW_URL = os.getenv('RAGFLOW_URL')
-RAGFLOW_TOKEN = os.getenv('RAGFLOW_TOKEN')
+    async def _process_long_task_query(
+            self,
+            task: Dict|LongTaskQueryMessage|Sequence[BaseChatMessage] | None = None,
+            cancellation_token: CancellationToken | None = None,
+        )-> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
+        
+        if not isinstance(task, LongTaskQueryMessage):
+            raise ValueError("tasks must be a LongTaskQueryMessage")
+        
+        query_arguments: Dict = task.query_arguments
+        query_tool_name = task.tool_name
+        if query_tool_name is None or query_arguments is None:
+            raise ValueError("query_tool_name or query_arguments cannot be None")
+        
+        result = await self._workbench.call_tool(
+                name = query_tool_name,
+                arguments=query_arguments)
+        result_json = json.loads(result.result[0].content)
+
+        if result_json["status"] == "ERROR":
+            yield Response(
+                chat_message=AgentLongTaskMessage(
+                    source=self.name,
+                    content=result_json["result"],
+                    task_status=TaskStatus.error.value,
+                    query_arguments=query_arguments,
+                    tool_name=query_tool_name
+                ))
+        else:
+            yield Response(
+                chat_message=AgentLongTaskMessage(
+                        source=self.name,
+                        content=result_json["result"],
+                        task_status=TaskStatus.completed.value,
+                        query_arguments=query_arguments,
+                        tool_name=query_tool_name
+                    ))
+        
+    
 
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
-async def create_agent() -> TaskAgent:
+async def create_agent() -> LongMCPAgent:
 
     model_client = HepAIChatCompletionClient(
         model="deepseek-ai/deepseek-v3-1",
     )
-
-    ragflow_memory = RAGFlowMemory(
-        RAGFlowMemoryConfig(
-            RAGFLOW_URL=RAGFLOW_URL,
-            RAGFLOW_TOKEN=RAGFLOW_TOKEN,
-            dataset_ids=["28e3ad8499b311f0a65d0242ac120006"],
-            keyword=True,
-        )
-    )
-
-    # Create assistant agent with ChromaDB memory
-    assistant_agent = TaskAgent(
+    tools=await mcp_server_tools(SseServerParams(
+                                url="http://0.0.0.0:42608/sse",
+                                env=None)
+                        ) 
+    assistant_agent = LongMCPAgent(
         name="assistant_agent",
-        system_message="""你是一个高能物理BESIII实验分析软件BOSS8的问答助手， 你需要根据查询到记忆回答用户的相关问题，你的要求如下：
-1. 严格按照查询的到的记忆进行回复，禁止自己编造相关内容；
-2. 当未查询到相关内容，或者查询的内容与用户的不相关时，请回复“未查询到相关内容，具体内容参见：https://code.ihep.ac.cn/mrli/boss_docs/-/releases”；
-""",
-        description="一个高能物理BESIII实验分析软件BOSS8的一个问答助手",
+        system_message="""你是一个可以进行web检索的智能体""",
+        description="一个web检索助手",
         model_client=model_client,
         model_client_stream=True,
-        memory=[ragflow_memory],
-        model_context=BufferedChatCompletionContext(buffer_size = 20) # 限制最多20条消息
+        model_context=BufferedChatCompletionContext(buffer_size = 20), # 限制最多20条消息
+        tools = tools,
     )
 
     return assistant_agent
+
+async def agent_long_task_output():
+    agent_event = await create_agent()
+    
+    async for event in agent_event._process_long_task_query(
+        task = LongTaskQueryMessage(
+            source="user",
+            content="""查询任务进度""",
+            tool_name="perform_long_research",
+            query_arguments={
+                "keywords": ["如何使用BOSS8"],
+                "task_id": "5db27395-f93b-4652-aa7a-c892f753442b"
+            }
+        ),
+        cancellation_token=CancellationToken()
+    ):
+        print(event)
 
 async def agent_event_output():
     agent_event = await create_agent()
@@ -294,27 +349,30 @@ async def agent_event_output():
             print(event)
         else:
             print(event)
+        
+        print()
 
 
 if __name__ == "__main__":
     # asyncio.run(agent_event_output())
-    asyncio.run(
-        run_worker(
-            # 智能体注册信息
-            agent_name="Task_Assistant",
-            author = "xiongdb@ihep.ac.cn",
-            permission='groups: drsai, payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
-            description = "一个任务系统的问答助手",
-            version = "0.1.0",
-            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
-            # 智能体实体
-            agent_factory=create_agent, 
-            # 后端服务配置
-            port = 42816, 
-            no_register=False,
-            enable_openwebui_pipeline=True, 
-            # pipelines_dir="/home/xiongdb/drsai/examples/agent_groupchat/assistant_ragflow/pipelines/",
-            history_mode = "backend",
-            # use_api_key_mode = "backend",
-        )
-    )
+    asyncio.run(agent_long_task_output())
+    # asyncio.run(
+    #     run_worker(
+    #         # 智能体注册信息
+    #         agent_name="Task_Assistant",
+    #         author = "xiongdb@ihep.ac.cn",
+    #         permission='groups: drsai, payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
+    #         description = "一个任务系统的问答助手",
+    #         version = "0.1.0",
+    #         logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+    #         # 智能体实体
+    #         agent_factory=create_agent, 
+    #         # 后端服务配置
+    #         port = 42816, 
+    #         no_register=False,
+    #         enable_openwebui_pipeline=True, 
+    #         pipelines_dir="/home/xiongdb/drsai/examples/agent_groupchat/assistant_ragflow/pipelines/",
+    #         history_mode = "backend",
+    #         # use_api_key_mode = "backend",
+    #     )
+    # )
