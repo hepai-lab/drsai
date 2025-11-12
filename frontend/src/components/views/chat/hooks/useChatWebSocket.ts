@@ -109,7 +109,15 @@ export const useChatWebSocket = ({
             }
 
             return updatedRun;
-
+          case "message_task":
+            if (!wsMessage.data) return current;
+            const taskData = wsMessage.data as any;
+            updatedRun = {
+              ...current,
+              task: taskData,
+            };
+            setSessionRun(session.id, updatedRun);
+            return updatedRun;
           case "message_chunk":
             if (!wsMessage.data) return current;
 
@@ -177,6 +185,23 @@ export const useChatWebSocket = ({
             }
             return current;
 
+          case "message_log":
+            if (!wsMessage.data) return current;
+            const logData = wsMessage.data as any;
+            // 提取 content 字段并追加到日志数组
+            if (logData.content && typeof logData.content === "string") {
+              const logContent = logData.content;
+              // 确保 logs 数组存在，如果不存在则初始化为空数组
+              const currentLogs = Array.isArray(current.logs) ? current.logs : [];
+              const updatedLogs = [...currentLogs, logContent];
+              updatedRun = {
+                ...current,
+                logs: updatedLogs,
+              };
+              setSessionRun(session.id, updatedRun);
+              return updatedRun;
+            }
+            return current;
           case "input_request":
             let input_request: InputRequest;
             switch (wsMessage.input_type) {

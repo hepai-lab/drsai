@@ -28,6 +28,7 @@ export interface BESIIITask {
 export interface BESIIIPanelProps {
   tasks?: BESIIITask[];
   terminalOutput?: string;
+  logs?: string[];
   onMinimize?: () => void;
   onTaskClick?: (taskId: string) => void;
   onSubtaskClick?: (taskId: string, subtaskId: string) => void;

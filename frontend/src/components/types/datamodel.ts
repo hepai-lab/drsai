@@ -107,7 +107,9 @@ export interface BaseConfig {
 export interface WebSocketMessage {
   type:
   | "message"
-   | "message_chunk"
+  | "message_task"
+  | "message_chunk"
+  | "message_log"
     | "result"
     | "completion"
     | "input_request"
@@ -305,10 +307,12 @@ export interface Run {
   status: RunStatus;
   input_request?: InputRequest;
   task: AgentMessageConfig;
+  logs?: string[];
   team_result: TeamResult | null;
   messages: Message[]; // Change to Message[]
   error_message?: string;
-   session_id: number;
+  session_id: number;
+  
 }
 
 export interface InputRequest {

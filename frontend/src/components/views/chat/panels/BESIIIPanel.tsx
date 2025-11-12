@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { ChevronDown, ChevronUp, CheckCircle, Clock, Circle } from "lucide-react";
 import { BESIIIPanelProps, BESIIITask, BESIIISubTask } from "./types";
 
@@ -11,15 +11,32 @@ import { BESIIIPanelProps, BESIIITask, BESIIISubTask } from "./types";
  * 3. Terminal - 终端输出
  */
 
-type TabType = 'overview' | 'taskmanager' | 'terminal';
+type TabType = 'logs' | 'taskmanager' | 'terminal';
 
 const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     tasks = [],
     terminalOutput = '',
+    logs = [],
     onMinimize,
 }) => {
     const [activeTab, setActiveTab] = useState<TabType>('taskmanager');
     const [localTasks, setLocalTasks] = useState<BESIIITask[]>(tasks);
+    const logContainerRef = useRef<HTMLDivElement>(null);
+
+    // 同步 tasks prop 到 localTasks 状态
+    useEffect(() => {
+        // 始终同步 tasks prop，即使为空数组也要更新
+        if (Array.isArray(tasks)) {
+            setLocalTasks(tasks);
+        }
+    }, [tasks]);
+
+    // 自动滚动日志到底部
+    useEffect(() => {
+        if (activeTab === 'logs' && logContainerRef.current && logs.length > 0) {
+            logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        }
+    }, [logs, activeTab]);
 
     // 切换任务展开/折叠
     const toggleTask = (taskId: string) => {
@@ -98,42 +115,45 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     );
 
     // 渲染全局任务执行标签页
-    const renderOverview = () => (
-        <div className="flex flex-col gap-4 overflow-y-auto">
-            <h3 className="text-lg font-semibold">全局任务执行概览</h3>
-            {localTasks.map(task => {
-                const total = task.subtasks.length;
-                const completed = task.subtasks.filter(st => st.status === 'completed').length;
-                const running = task.subtasks.filter(st => st.status === 'running').length;
-                const progress = total > 0 ? (completed / total) * 100 : 0;
-
-                return (
-                    <div key={task.id} className="border rounded-lg p-4 bg-white">
-                        <div className="flex justify-between items-center mb-2">
-                            <span className="font-medium">{task.name}</span>
-                            <span className="text-sm text-gray-500">
-                                {completed}/{total} 完成
-                            </span>
-                        </div>
-
-                        {/* Progress bar */}
-                        <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
-                            <div
-                                className="bg-green-500 h-2 rounded-full transition-all duration-300"
-                                style={{ width: `${progress}%` }}
-                            />
-                        </div>
-
-                        <div className="flex gap-4 text-sm">
-                            <span className="text-green-600">✓ {completed} 完成</span>
-                            {running > 0 && <span className="text-yellow-600">⟳ {running} 执行中</span>}
-                            <span className="text-gray-500">○ {total - completed - running} 等待</span>
-                        </div>
+    const renderLogs = () => {
+        if (!logs || logs.length === 0) {
+            return (
+                <div className="flex items-center justify-center h-full text-purple-500 text-sm">
+                    <div className="text-center">
+                        <div className="text-purple-400 mb-2">📋</div>
+                        <div>暂无日志</div>
                     </div>
-                );
-            })}
-        </div>
-    );
+                </div>
+            );
+        }
+
+        const logContent = logs.join('');
+
+        return (
+            <div className="h-full overflow-hidden flex flex-col">
+                <div
+                    ref={logContainerRef}
+                    className="flex-1 overflow-y-auto bg-purple-50 rounded-lg border border-purple-200 shadow-sm"
+                    style={{
+                        scrollbarWidth: 'thin',
+                        scrollbarColor: '#c084fc #e9d5ff'
+                    }}
+                >
+                    <div className="p-4">
+                        <pre className="whitespace-pre-wrap font-mono text-sm text-purple-900 leading-relaxed select-text">
+                            <code className="block">
+                                {logContent}
+                            </code>
+                        </pre>
+                    </div>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-xs text-purple-600 px-1">
+                    <span>共 {logs.length} 条日志条目</span>
+                    <span className="text-purple-500">自动滚动到底部</span>
+                </div>
+            </div>
+        );
+    };
 
     // 渲染 Terminal 标签页
     const renderTerminal = () => (
@@ -148,15 +168,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
         <div className="bg-white rounded-lg shadow-lg h-full flex flex-col">
             {/* Tab Headers */}
             <div className="flex bg-gray-50 border-b border-gray-200">
-                <button
-                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'overview'
-                        ? 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                        }`}
-                    onClick={() => setActiveTab('overview')}
-                >
-                    全局任务执行
-                </button>
+
                 <button
                     className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'taskmanager'
                         ? 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
@@ -165,6 +177,15 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                     onClick={() => setActiveTab('taskmanager')}
                 >
                     TaskManager
+                </button>
+                <button
+                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'logs'
+                        ? 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                        }`}
+                    onClick={() => setActiveTab('logs')}
+                >
+                    LogExecution
                 </button>
                 <button
                     className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'terminal'
@@ -189,9 +210,9 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
             </div>
 
             {/* Tab Content */}
-            <div className="flex-1 p-4 overflow-hidden">
-                {activeTab === 'overview' && renderOverview()}
-                {activeTab === 'taskmanager' && renderTaskManager()}
+            <div className="flex-1 overflow-hidden">
+                {activeTab === 'logs' && <div className="h-full p-4">{renderLogs()}</div>}
+                {activeTab === 'taskmanager' && <div className="h-full p-4 overflow-y-auto">{renderTaskManager()}</div>}
                 {activeTab === 'terminal' && renderTerminal()}
             </div>
         </div>

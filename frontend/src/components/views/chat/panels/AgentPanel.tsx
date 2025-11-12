@@ -34,6 +34,7 @@ interface AgentPanelProps {
 
     // BESIII Panel 需要的 props
     besiiiProps?: {
+        logs?: string[];
         tasks?: any[];
         terminalOutput?: string;
         onTaskClick?: (taskId: string) => void;
@@ -89,6 +90,7 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                     <BESIIIPanel
                         tasks={besiiiProps?.tasks}
                         terminalOutput={besiiiProps?.terminalOutput}
+                        logs={besiiiProps?.logs}
                         onMinimize={onMinimize}
                         onTaskClick={besiiiProps?.onTaskClick}
                         onSubtaskClick={besiiiProps?.onSubtaskClick}

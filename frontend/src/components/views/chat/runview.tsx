@@ -105,24 +105,98 @@ const RunView: React.FC<RunViewProps> = ({
 
   // Agent configuration - 从 parent (chat.tsx) 接收
 
-  // BESIII Panel states
-  // 🧪 临时测试：添加模拟数据以便查看效果
-  const [besiiiTasks, setBesiiiTasks] = useState<BESIIITask[]>([
-    {
-      id: 'task1',
-      name: 'Task1 - 物理分析任务',
-      isExpanded: true,
-      subtasks: [
-        { id: 'st1', name: '创建分析算法JSON变量卡', status: 'completed' },
-        { id: 'st2', name: '执行内置脚本并生成分析算', status: 'completed' },
-        { id: 'st3', name: '创建JobOption脚本JSON', status: 'running' },
-        { id: 'st4', name: '执行内置脚本并生成并提交', status: 'waiting' },
-        { id: 'st5', name: '打印变量名称', status: 'waiting' },
-        { id: 'st6', name: '创建绘图JSON变量卡', status: 'waiting' },
-        { id: 'st7', name: '执行内置脚本并生成变量分', status: 'waiting' },
-      ]
+  // 将 run.task 转换为 BESIIITask 格式的辅助函数
+  const convertTaskToBESIIITask = React.useCallback((task: any): BESIIITask[] => {
+    if (!task) {
+      return [];
     }
-  ]);
+
+    // TaskEvent 的结构: { content: str | Dict, type: "TaskEvent", source: ..., ... }
+    // 处理不同的数据结构
+    let taskContent: any = null;
+
+    if (task.content) {
+      // 如果 task 有 content 字段
+      if (typeof task.content === 'string') {
+        try {
+          // 尝试解析 JSON 字符串
+          taskContent = JSON.parse(task.content);
+        } catch (e) {
+          // 如果不是 JSON，可能是纯文本，创建一个简单的任务结构
+          taskContent = { content: task.content };
+        }
+      } else if (typeof task.content === 'object') {
+        // 如果 content 是对象，直接使用
+        taskContent = task.content;
+      }
+    } else {
+      // 如果没有 content 字段，可能 task 本身就是内容
+      taskContent = task;
+    }
+
+    if (!taskContent) {
+      return [];
+    }
+
+    const childTasks = taskContent.child_tasks || [];
+
+    // 将子任务转换为 BESIIISubTask 格式
+    const subtasks = childTasks.map((childTask: any) => {
+      let status: 'completed' | 'running' | 'waiting' = 'waiting';
+      if (childTask.status === 'completed') {
+        status = 'completed';
+      } else if (childTask.status === 'running' || childTask.status === 'active' || childTask.status === 'queued') {
+        status = 'running';
+      }
+
+      // 处理时间戳：如果是数字（秒级），转换为毫秒；如果已经是字符串，直接使用
+      const formatTimestamp = (ts: any): string | undefined => {
+        if (!ts) return undefined;
+        if (typeof ts === 'number') {
+          // 判断是秒级还是毫秒级时间戳
+          const timestamp = ts > 1e12 ? ts : ts * 1000;
+          return new Date(timestamp).toISOString();
+        }
+        if (typeof ts === 'string') {
+          return ts;
+        }
+        return undefined;
+      };
+
+      return {
+        id: childTask.id || '',
+        name: childTask.content || '未命名任务',
+        status: status,
+        startTime: formatTimestamp(childTask.created_at),
+        endTime: formatTimestamp(childTask.completed_at),
+        error: childTask.error || undefined,
+      };
+    });
+
+    // 返回主任务
+    // 如果没有子任务，至少显示主任务本身
+    const mainTaskName = taskContent.content || taskContent.name || taskContent.task || '主任务';
+    return [{
+      id: task.id || taskContent.id || taskContent.task_id || 'main-task',
+      name: typeof mainTaskName === 'string' ? mainTaskName : JSON.stringify(mainTaskName),
+      subtasks: subtasks,
+      isExpanded: true,
+      metadata: {
+        status: taskContent.status || task.status,
+        executor: taskContent.executor,
+        created_at: taskContent.created_at,
+        completed_at: taskContent.completed_at,
+        solution: taskContent.solution,
+        raw: taskContent, // 保存原始数据用于调试
+      }
+    }];
+  }, []);
+
+  // BESIII Panel states - 从 run.task 初始化
+  const [besiiiTasks, setBesiiiTasks] = useState<BESIIITask[]>(() => {
+    return convertTaskToBESIIITask(run.task);
+  });
+  const [logs, setLogs] = useState<string[]>([]);
   const [terminalOutput, setTerminalOutput] = useState<string>('[INFO] Starting BESIII analysis workflow...\n[INFO] Loading detector configuration...\n[SUCCESS] Detector configuration loaded\n[INFO] Processing event data...');
 
   // Combine scroll behavior when messages or status change
@@ -159,27 +233,22 @@ const RunView: React.FC<RunViewProps> = ({
     }
   }, [run.messages, agentConfig.panel.type]);
 
-  // Effect to handle BESIII tasks message (for BESIII panel)
+  // Effect to handle BESIII tasks from run.task (for BESIII panel)
   useEffect(() => {
-
-
     if (agentConfig.panel.type !== 'besiii') return;
 
-    const besiiiTaskMessages = run.messages.filter(
-      (msg: Message) => msg.config.metadata?.type === "besiii_tasks"
-    );
-
-    const lastBesiiiTaskMsg =
-      besiiiTaskMessages[besiiiTaskMessages.length - 1];
-
-    if (lastBesiiiTaskMsg) {
-      const tasks = lastBesiiiTaskMsg.config.metadata?.tasks as BESIIITask[] | undefined;
-
-      if (tasks && Array.isArray(tasks)) {
-        setBesiiiTasks(tasks);
+    // 从 run.task 更新任务数据
+    if (run.task) {
+      const convertedTasks = convertTaskToBESIIITask(run.task);
+      // 即使 convertedTasks 为空，也要更新状态，以便清空之前的任务
+      setBesiiiTasks(convertedTasks);
+      if (convertedTasks.length > 0) {
         setShowPanel(true);
         setIsPanelMinimized(false);
       }
+    } else {
+      // 如果 run.task 为空，清空任务列表
+      setBesiiiTasks([]);
     }
 
     // Also handle terminal output
@@ -192,7 +261,17 @@ const RunView: React.FC<RunViewProps> = ({
         .join('\n');
       setTerminalOutput(allOutput);
     }
-  }, [run.messages, agentConfig.panel.type]);
+  }, [run.task, run.messages, agentConfig.panel.type, convertTaskToBESIIITask]);
+
+  // Effect to handle logs from run.logs (for BESIII panel LogExecution)
+  useEffect(() => {
+    if (agentConfig.panel.type !== 'besiii') return;
+
+    // 从 run.logs 更新日志数据
+    if (run.logs && Array.isArray(run.logs)) {
+      setLogs(run.logs);
+    }
+  }, [run.logs, agentConfig.panel.type]);
 
   const isEditable =
     run.status === "awaiting_input" &&
@@ -874,6 +953,7 @@ const RunView: React.FC<RunViewProps> = ({
                 besiiiProps={{
                   tasks: besiiiTasks,
                   terminalOutput: terminalOutput,
+                  logs: logs,
                   onTaskClick: (taskId: string) => {
                     console.log('Task clicked:', taskId);
                     // TODO: Handle task click

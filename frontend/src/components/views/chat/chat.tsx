@@ -264,6 +264,7 @@ export default function ChatView({
   // Update noMessagesYet when messages change
   React.useEffect(() => {
     if (currentRun) {
+      console.log('currentRun:::::', currentRun)
       setNoMessagesYet(currentRun.messages.length === 0);
     }
   }, [currentRun?.messages?.length]);
