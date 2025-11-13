@@ -51,10 +51,13 @@ if __name__ == '__main__':
     
     ## create a RAGFlowMemory instance
     ragflow_memory = create_ragflow_memory_01(config)
+    print(ragflow_memory)
     ## dump the RAGFlowMemory component
     component_dump = dump_ragflow_memory_component(ragflow_memory)
+    print(component_dump)
     ## create a RAGFlowMemory instance from the dumped component
     ragflow_memory_from_dump = create_ragflow_memory_from_config(component_dump)
+    print(ragflow_memory_from_dump)
     print("RAGFlowMemory instance created from dumped component successfully.")
     ## test the RAGFlowMemory instance
  

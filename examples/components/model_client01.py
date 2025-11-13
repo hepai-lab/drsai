@@ -21,7 +21,7 @@ from autogen_core.models import  (
 async def main():
     async_client = HepAIChatCompletionClient(
         # model="openai/gpt-4.1",
-        model="deepseek-ai/deepseek-v3",
+        model="deepseek-ai/deepseek-v3-1",
         api_key=os.environ.get("HEPAI_API_KEY"),
         base_url="https://aiapi.ihep.ac.cn/apiv2",
         model_info={
@@ -35,6 +35,7 @@ async def main():
         temperature=0.5,
         )
     
+    # mutiple coversation
     llm_messages = [
         SystemMessage(content="You are a helpful assistant."),
         UserMessage(content="What is the weather today?", source="user"),
@@ -50,6 +51,7 @@ async def main():
             sys.stdout.write(chunk)
             sys.stdout.flush()
         elif isinstance(chunk, CreateResult):
+            print()
             print(chunk.model_dump())
         else:
             print("Unknown chunk type:", type(chunk))

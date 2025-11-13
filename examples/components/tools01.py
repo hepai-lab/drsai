@@ -17,8 +17,8 @@ async def test():
 async def test2():
     tool = FunctionTool(get_weather, description=get_weather.__doc__)
     wb = DrsaiStaticWorkbench(tools=[tool])
-    print(wb.list_tools())
-    result = await wb.call_tool_original(name = 'get_weather', arguments={'city': 'New York'})
+    print(await wb.list_tools())
+    result = await wb.call_tool(name = 'get_weather', arguments={'city': 'New York'})
     print(result)
     
 
