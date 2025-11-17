@@ -129,12 +129,16 @@ export const SessionManager: React.FC = () => {
   const handleAgentClick = useCallback(async (agent: Agent) => {
     if (!user?.email) return;
 
-    const isDifferentAgent = selectedAgent?.mode !== agent.mode;
+    // 对于 type === "add" 的自定义智能体，使用 id 或 name 来判断是否为不同智能体
+    // 对于非自定义智能体，使用 mode 来判断
+    const isDifferentAgent = agent.type === "add"
+      ? (selectedAgent?.id !== agent.id && selectedAgent?.name !== agent.name)
+      : (selectedAgent?.mode !== agent.mode);
 
     setSelectedAgent(agent);
     setConfig({ mode: agent.mode });
 
-    // 只有在切换到不同智能体时才清空当前会话
+    // 只有在切换到不同智能体时才清空当前会话（不创建新会话，会话在发送消息时创建）
     if (isDifferentAgent) {
       clearCurrentSession();
     }
@@ -327,6 +331,7 @@ export const SessionManager: React.FC = () => {
           onStopSession={handleStopSession}
           agents={agents}
           selectedAgentMode={selectedAgent?.mode}
+          selectedAgent={selectedAgent}
           onAgentClick={handleAgentClick}
           onDeleteAgent={handleDeleteAgent}
         />

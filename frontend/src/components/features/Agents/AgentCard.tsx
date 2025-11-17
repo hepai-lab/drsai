@@ -64,19 +64,26 @@ const AgentCard: React.FC<AgentCardProps> = ({
   // 检查智能体是否已存在于侧边栏中
   const checkIfAgentExists = React.useCallback(() => {
     return existingAgents.some(existingAgent => {
-      // 检查名称是否相同
+      // 对于 remote agent，优先通过 id 检查
+      if (id && mode === "remote" && existingAgent.id === id) {
+        return true;
+      }
+      // 优先检查名称是否相同
       if (existingAgent.name === name) {
         return true;
       }
-      // 检查配置是否相同
-      if (existingAgent.mode === mode &&
+      // 对于非 remote agent，如果 mode 相同且配置相同，且 name 也匹配，认为是同一个
+      // 这里确保 name 必须匹配，避免因为配置相同而误判不同的 agent
+      if (mode && mode !== "remote" &&
+        existingAgent.mode === mode &&
+        existingAgent.name === name &&
         existingAgent.config?.url === url &&
         existingAgent.config?.apiKey === apiKey) {
         return true;
       }
       return false;
     });
-  }, [existingAgents, name, mode, url, apiKey]);
+  }, [existingAgents, name, mode, url, apiKey, id]);
 
   // 组件初始化时检查是否已存在
   React.useEffect(() => {

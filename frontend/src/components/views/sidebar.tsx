@@ -46,6 +46,7 @@ interface SidebarProps {
   onLogoClick?: () => void;
   agents?: Agent[];
   selectedAgentMode?: string;
+  selectedAgent?: Partial<Agent> | null;
   onAgentClick?: (agent: Agent) => void;
   onDeleteAgent?: (id: string) => void;
 }
@@ -66,6 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLogoClick,
   agents = [],
   selectedAgentMode,
+  selectedAgent,
   onAgentClick,
   onDeleteAgent,
 }) => {
@@ -381,10 +383,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
               <div className="grid grid-cols-1 gap-1">
                 {agents.map((agent) => {
-                  const isSelected = selectedAgentMode === agent.mode;
+                  // 对于 type === "add" 的自定义智能体，使用 id 或 name 来判断选中状态
+                  // 对于其他智能体，使用 mode 来判断选中状态
+                  let isSelected = false;
+                  if (agent.type === "add") {
+                    // 自定义智能体优先使用 id，如果没有 id 则使用 name
+                    if (agent.id && selectedAgent?.id) {
+                      isSelected = agent.id === selectedAgent.id;
+                    } else if (selectedAgent?.name) {
+                      isSelected = agent.name === selectedAgent.name && selectedAgentMode === agent.mode;
+                    } else {
+                      isSelected = false;
+                    }
+                  } else {
+                    // 非自定义智能体使用 mode 判断
+                    isSelected = selectedAgentMode === agent.mode;
+                  }
                   const icon = getAgentIcon(agent.mode || "");
+                  // 使用唯一标识作为 key：优先使用 id，其次使用 mode + name
+                  const agentKey = agent.id || (agent.mode && agent.name ? `${agent.mode}-${agent.name}` : agent.mode) || `agent-${agent.name}`;
                   return (
-                    <div key={agent.mode} className="relative group">
+                    <div key={agentKey} className="relative group">
                       <button
                         type="button"
                         onClick={() => onAgentClick && onAgentClick(agent)}
@@ -423,7 +442,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         </div>
                       </button>
 
-                      {agent.type === "add" && (
+                      {agent.type === "add" && isSelected && (
                         <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
                           <Dropdown
                             trigger={["hover"]}
