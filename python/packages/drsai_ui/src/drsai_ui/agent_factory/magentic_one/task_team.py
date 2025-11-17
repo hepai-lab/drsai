@@ -448,8 +448,8 @@ async def create_magentic_round_team(
         )
         
     elif agent_mode == "custom":
-        agent_factory: Callable[[], Union[AssistantAgent, BaseGroupChat]] = await a_load_agent_factory_from_config(agent_config, mode = "ui")
-        agent: AssistantAgent|BaseGroupChat = await agent_factory()
+        agent_factory: Callable[[], Union[ChatAgent, Team]] = await a_load_agent_factory_from_config(agent_config, mode = "ui")
+        agent: ChatAgent|Team = await agent_factory()
 
     elif agent_mode == "remote" or agent_mode == "ddf":
         agent_config["api_key"] = agent_config.get("api_key", api_key)
@@ -462,7 +462,7 @@ async def create_magentic_round_team(
             )
     elif agent_mode == "pip_install":
         module = importlib.import_module(agent_config["provider"])
-        agent_factory: Callable[[], Union[AssistantAgent, BaseGroupChat]] = await module.a_load_agent_factory_from_installed(
+        agent_factory: Callable[[], Union[ChatAgent, Team]] = await module.a_load_agent_factory_from_installed(
             team_config = team_config,
             state = state,
             input_func = input_func,
@@ -474,13 +474,13 @@ async def create_magentic_round_team(
             inside_docker = inside_docker,
             run_info = run_info,
         )
-        agent: AssistantAgent|BaseGroupChat = await agent_factory()
+        agent: ChatAgent|Team = await agent_factory()
 
     else:
-        agent_factory: Callable[[], Union[AssistantAgent, BaseGroupChat]] = await a_load_agent_factory_from_config(model_configs, mode = "ui")
-        agent: AssistantAgent|BaseGroupChat = await agent_factory()
+        agent_factory: Callable[[], Union[ChatAgent, Team]] = await a_load_agent_factory_from_config(model_configs, mode = "ui")
+        agent: ChatAgent|Team = await agent_factory()
 
-    if isinstance(agent, AssistantAgent):
+    if isinstance(agent, ChatAgent):
         user_proxy_input_func = make_agentchat_input_func(input_func)
         user_proxy = UserProxyAgent(
             description=USER_PROXY_DESCRIPTION,

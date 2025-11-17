@@ -60,14 +60,14 @@ from ..magentic_one.guarded_action import ApprovalDeniedError
 from hepai.tools.get_woker_functions import get_worker_sync_functions
 from openai import Stream
 
-from drsai import AssistantAgent, HepAIChatCompletionClient
+from drsai import DrSaiAgent, HepAIChatCompletionClient
 from drsai.modules.managers.messages.agent_messages import (
     AgentLogEvent,
     Send_level,
     TaskEvent
 )
 
-class StatusAgent(AssistantAgent):
+class StatusAgent(DrSaiAgent):
     '''
     连接OpenAI格式的模型或者智能体后端
     '''

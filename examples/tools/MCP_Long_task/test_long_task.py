@@ -20,7 +20,7 @@ async def test_task_flow():
                             env=None)
                     ) )
     workbench = DrsaiStaticWorkbench(tools)
-    print(await workbench.list_tools())
+    # print(await workbench.list_tools())
     
     print("=" * 60)
     print("Test 1: Create a new task")
@@ -31,7 +31,7 @@ async def test_task_flow():
     result = await workbench.call_tool(
         name = "perform_long_research",
         arguments={'keywords': keywords})
-    result1 = json.loads(result)
+    result1 = json.loads(result.result[0].content)
     print(f"\nResult 1: {result1}")
     task_id = result1['id']
 
@@ -67,7 +67,7 @@ async def test_task_flow():
         result = await workbench.call_tool(
         name = "perform_long_research",
         arguments={'keywords': keywords, "task_id": task_id})
-        result = json.loads(result)
+        result = json.loads(result.result[0].content)
         print(f"\nCheck {check_count + 1}: Status = {result['status']}")
 
         if result['status'] in ['DONE', 'ERROR']:

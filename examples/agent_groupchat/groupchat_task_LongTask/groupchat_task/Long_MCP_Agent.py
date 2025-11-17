@@ -180,6 +180,8 @@ class LongMCPAgent(AssistantAgent):
                     thought=getattr(model_result, "thought", None),
                 )
             )
+
+            # For long task 
             if not isinstance(model_result.content, str):
                 self._tool_name = model_result.content[0].name
                 self._tool_arguments = json.loads(model_result.content[0].arguments)
@@ -313,23 +315,6 @@ async def create_agent() -> LongMCPAgent:
 
     return assistant_agent
 
-async def agent_long_task_output():
-    agent_event = await create_agent()
-    
-    async for event in agent_event._process_long_task_query(
-        task = LongTaskQueryMessage(
-            source="user",
-            content="""查询任务进度""",
-            tool_name="perform_long_research",
-            query_arguments={
-                "keywords": ["如何使用BOSS8"],
-                "task_id": "5db27395-f93b-4652-aa7a-c892f753442b"
-            }
-        ),
-        cancellation_token=CancellationToken()
-    ):
-        print(event)
-
 async def agent_event_output():
     agent_event = await create_agent()
     
@@ -348,6 +333,25 @@ async def agent_event_output():
             print(event)
         
         print()
+
+async def agent_long_task_output():
+    agent_event = await create_agent()
+    
+    async for event in agent_event._process_long_task_query(
+        task = LongTaskQueryMessage(
+            source="user",
+            content="""查询任务进度""",
+            tool_name="perform_long_research",
+            query_arguments={
+                "keywords": ["如何使用BOSS8"],
+                "task_id": "6ee56087-d6a0-46a7-9509-e13b721f9598"
+            }
+        ),
+        cancellation_token=CancellationToken()
+    ):
+        print(event)
+
+
 
 
 if __name__ == "__main__":

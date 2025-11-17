@@ -966,11 +966,11 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             ),
         )
     
-    async def lazy_init(self, cancellation_token: CancellationToken) -> None:
+    async def lazy_init(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Initialize the tools and models needed by the agent."""
         pass
 
-    async def close(self, cancellation_token: CancellationToken) -> None:
+    async def close(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Clean up resources used by the agent.
 
         This method:
@@ -982,7 +982,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         # Close the model client.
         await self._model_client.close()
 
-    async def pause(self, cancellation_token: CancellationToken) -> None:
+    async def pause(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Pause the agent by setting the paused state."""
         logger.info(f"Pausing {self.name}...")
         if self._cancellation_token is not None and not self._cancellation_token.is_cancelled():
@@ -990,11 +990,11 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         self.is_paused = True
         self._paused.set()
 
-    async def resume(self, cancellation_token: CancellationToken) -> None:
+    async def resume(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Resume the agent by clearing the paused state."""
         self.is_paused = False
         self._paused.clear()
-    async def on_reset(self, cancellation_token: CancellationToken) -> None:
+    async def on_reset(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Reset the assistant agent to its initialization state."""
         await self._model_context.clear()
 

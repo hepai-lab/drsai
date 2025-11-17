@@ -48,26 +48,6 @@ async def explain_image(oai_messages: List[Dict], api_key: str = "") -> AsyncGen
         # 捕获并返回异常信息
         yield f"图片解释失败: {str(e)}"
 
-async def interface(
-    oai_messages: List[Dict],  # OAI messages
-    agent_name: str,  # Agent name
-    llm_messages: List[LLMMessage],  # AutoGen LLM messages
-    model_client: HepAIChatCompletionClient,  # AutoGen LLM Model client
-    workbench: Workbench,
-    handoff_tools: List[BaseTool[Any, Any]],
-    tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
-    cancellation_token: CancellationToken,  # AutoGen cancellation token
-    db_manager: DatabaseManager,  # DrSai database manager,
-    **kwargs)  -> AsyncGenerator[Union[CreateResult, ModelClientStreamingChunkEvent], None]:
-    """Address the messages and return the response."""
-
-    # HEPAI_API_KEY = model_client._client.api_key
-
-    # 
-    
-    
-
-
 async def create_agent() -> AssistantAgent:
     # 创建模型客户端实例
     model_client = HepAIChatCompletionClient(

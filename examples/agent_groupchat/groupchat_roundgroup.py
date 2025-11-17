@@ -20,11 +20,7 @@ import asyncio
 def create_team() -> RoundRobinGroupChat:
     # Create an OpenAI model client.
     model_client = HepAIChatCompletionClient(
-        # model="deepseek-ai/deepseek-r1:671b",
-        # api_key=os.environ.get("HEPAI_API_KEY"),
-        # base_url="https://aiapi.ihep.ac.cn/apiv2",
         model="openai/gpt-4o",
-        # api_key="sk-...", # Optional if you have an HEPAI_API_KEY env variable set.
     )
 
     # Create the primary agent.
