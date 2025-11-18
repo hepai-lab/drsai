@@ -181,7 +181,6 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
         self._emit_team_events = emit_team_events
 
         self._db_manager: DatabaseManager = db_manager
-        self._is_paused = False
         self._cancellation_token: CancellationToken | None = None
 
     @property
@@ -486,21 +485,29 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
                 # Indicate that the team is no longer running.
                 self._is_running = False
     
-    async def lazy_init(self) -> None:
+    async def lazy_init(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Initialize any lazy-loaded components."""
-        # Send a lazy_init message to all participants.
-        for participant_topic_type in self._participant_topic_types:
-            await self._runtime.send_message(
-                GroupChatLazyInit(),
-                recipient=AgentId(type=participant_topic_type, key=self._team_id),
-            )
-        # Send a pause message to the group chat manager.
-        await self._runtime.send_message(
-            GroupChatLazyInit(),
-            recipient=AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
-        )
+        
+        # TODO:
+        # if not self._initialized:
+        #     await self._init(self._runtime)
+        # if self._runtime._run_context is None:
+        #     self._runtime.start()
+
+        # # Send a lazy_init message to all participants.
+        # for participant_topic_type in self._participant_topic_types:
+        #     await self._runtime.send_message(
+        #         GroupChatLazyInit(),
+        #         recipient=AgentId(type=participant_topic_type, key=self._team_id),
+        #     )
+        # # Send a pause message to the group chat manager.
+        # await self._runtime.send_message(
+        #     GroupChatLazyInit(),
+        #     recipient=AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
+        # )
+        pass
                 
-    async def reset(self) -> None:
+    async def reset(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Reset the team and its participants to their initial state.
 
         The team must be stopped before it can be reset.
@@ -546,7 +553,7 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
             # Indicate that the team is no longer running.
             self._is_running = False
 
-    async def pause(self) -> None:
+    async def pause(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Pause the group chat."""
         if not self._initialized:
             raise RuntimeError("The group chat has not been initialized. It must be run before it can be paused.")
@@ -565,9 +572,8 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
         )
         
         self._is_running = False
-        self._is_paused = True
 
-    async def resume(self) -> None:
+    async def resume(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Resume the group chat."""
         if not self._initialized:
             raise RuntimeError("The group chat has not been initialized. It must be run before it can be resumed.")
@@ -583,10 +589,8 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
             GroupChatResume(),
             recipient=AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
         )
-        
-        self._is_paused = False
 
-    async def close(self) -> None:
+    async def close(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Close all resources."""
         if self._cancellation_token is not None and not self._cancellation_token.is_cancelled():
             self._cancellation_token.cancel()
@@ -603,7 +607,6 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
         )
         
         self._is_running = False
-        self._is_paused = True
 
     async def save_state(self) -> Mapping[str, Any]:
         """Save the state of the group chat team."""

@@ -12,12 +12,14 @@ from autogen_agentchat.messages import AgentEvent, ChatMessage, BaseAgentEvent, 
 from autogen_agentchat.state import RoundRobinManagerState
 # from autogen_agentchat.teams import BaseGroupChat
 # from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
-from drsai.modules.groupchat.ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
+# from drsai.modules.groupchat.ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
+from drsai.modules.groupchat.drsai_base_group_chat import DrSaiBaseGroupChat
+from drsai.modules.groupchat.drsai_base_group_chat_manager import DrSaiBaseGroupChatManager
 from autogen_agentchat.teams._group_chat._events import GroupChatTermination
 
 from drsai.modules.managers.database import DatabaseManager
 
-class AGRoundRobinGroupChatManager(AGBaseGroupChatManager):
+class AGRoundRobinGroupChatManager(DrSaiBaseGroupChatManager):
     """A group chat manager that selects the next speaker in a round-robin fashion."""
 
     def __init__(
@@ -86,7 +88,7 @@ class AGRoundRobinGroupChatManager(AGBaseGroupChatManager):
         return current_speaker
 
 
-class AGRoundRobinGroupChat(AGGroupChat):
+class AGRoundRobinGroupChat(DrSaiBaseGroupChat):
     """A team that runs a group chat with participants taking turns in a round-robin fashion
     to publish a message to all.
 

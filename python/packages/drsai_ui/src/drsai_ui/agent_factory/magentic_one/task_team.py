@@ -6,7 +6,8 @@ from autogen_agentchat.agents import UserProxyAgent, BaseChatAgent, AssistantAge
 from autogen_agentchat.teams import BaseGroupChat
 
 from .tools.playwright.browser import get_browser_resource_config
-from .teams import GroupChat, RoundRobinGroupChat
+from .teams import GroupChat , RoundRobinGroupChat
+# from drsai.modules.groupchat import RoundRobinGroupChat
 from .teams.orchestrator.orchestrator_config import OrchestratorConfig
 from .agents import WebSurfer, CoderAgent, USER_PROXY_DESCRIPTION, FileSurfer
 from .magentic_ui_config import MagenticUIConfig, ModelClientConfigs

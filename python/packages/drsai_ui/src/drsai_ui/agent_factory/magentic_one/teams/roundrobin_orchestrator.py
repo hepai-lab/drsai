@@ -51,6 +51,9 @@ from drsai.modules.managers.messages.agent_messages import (
     Send_level,
     TaskEvent
 )
+from drsai.modules.managers.messages.agent_messages import DrSaiMessageFactory
+from drsai.modules.groupchat.drsai_base_group_chat import DrSaiBaseGroupChat
+from drsai.modules.groupchat.drsai_base_group_chat_manager import DrSaiBaseGroupChatManager
 
 class RoundRobinManagerState(BaseState):
     """The state of the RoundRobinGroupChatManager."""
@@ -61,7 +64,7 @@ class RoundRobinManagerState(BaseState):
     is_paused: bool = False
 
 
-class RoundRobinGroupChatManager(BaseGroupChatManager):
+class RoundRobinGroupChatManager(DrSaiBaseGroupChatManager):
     """A group chat manager that selects the next speaker in a round-robin fashion."""
 
     def __init__(
@@ -77,7 +80,7 @@ class RoundRobinGroupChatManager(BaseGroupChatManager):
         ],
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
-        message_factory: MessageFactory,
+        message_factory: DrSaiMessageFactory,
     ) -> None:
         super().__init__(
             name,
@@ -253,7 +256,7 @@ class RoundRobinGroupChatConfig(BaseModel):
     max_turns: int | None = None
 
 
-class RoundRobinGroupChat(BaseGroupChat, Component[RoundRobinGroupChatConfig]):
+class RoundRobinGroupChat(DrSaiBaseGroupChat, Component[RoundRobinGroupChatConfig]):
     """A team that runs a group chat with participants taking turns in a round-robin fashion
     to publish a message to all.
     """
@@ -351,7 +354,7 @@ class RoundRobinGroupChat(BaseGroupChat, Component[RoundRobinGroupChatConfig]):
             if hasattr(agent, "_init_message"):
                 self._init_messages.append(agent._init_message)  # type: ignore
 
-    async def pause(self) -> None:
+    async def pause(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Pause the group chat."""
         orchestrator = await self._runtime.try_get_underlying_agent_instance(
             AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
@@ -362,7 +365,7 @@ class RoundRobinGroupChat(BaseGroupChat, Component[RoundRobinGroupChatConfig]):
             if hasattr(agent, "pause"):
                 await agent.pause()  # type: ignore
 
-    async def resume(self) -> None:
+    async def resume(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Resume the group chat."""
         orchestrator = await self._runtime.try_get_underlying_agent_instance(
             AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
@@ -373,13 +376,13 @@ class RoundRobinGroupChat(BaseGroupChat, Component[RoundRobinGroupChatConfig]):
             if hasattr(agent, "resume"):
                 await agent.resume()  # type: ignore
 
-    async def lazy_init(self) -> None:
+    async def lazy_init(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Initialize any lazy-loaded components."""
         for agent in self._participants:
             if hasattr(agent, "lazy_init"):
                 await agent.lazy_init()  # type: ignore
 
-    async def close(self) -> None:
+    async def close(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Close all resources."""
         # Prepare a list of closable agents
         closable_agents: List[RoundRobinGroupChatManager | ChatAgent] = [

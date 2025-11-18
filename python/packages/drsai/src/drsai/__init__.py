@@ -12,7 +12,7 @@ from drsai.modules.baseagent.drsaiagent import DrSaiAgent as AssistantAgent
 
 # Groupchat
 from drsai.modules.groupchat.ag_round_robin_group_chat import AGRoundRobinGroupChat, AGRoundRobinGroupChatManager
-from drsai.modules.groupchat.ag_selector_group_chat import AGSelectorGroupChat, AGBaseGroupChatManager
+from drsai.modules.groupchat.ag_selector_group_chat import AGSelectorGroupChat, AGSelectorGroupChatManager
 from drsai.modules.groupchat.ag_swarm_group_chat import AGSwarm, AGSwarmGroupChatManager
 from drsai.modules.groupchat.ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
 from drsai.modules.groupchat.ag_roundrobin_orchestrator import RoundRobinGroupChat, RoundRobinGroupChatManager

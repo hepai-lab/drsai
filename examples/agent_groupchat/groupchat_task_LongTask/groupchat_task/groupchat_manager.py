@@ -32,7 +32,7 @@ from drsai.modules.managers.messages.groupchat_messages import (
     GroupChatLazyInit,
     GroupChatClose
     )
-from drsai.modules.groupchat.drsai_base_groupchat_manager import DrSaiBaseGroupChatManager
+from drsai.modules.groupchat.drsai_base_group_chat_manager import DrSaiBaseGroupChatManager
 from drsai.modules.components.task_manager.base_task_system import TaskStatus
 from drsai.modules.managers.messages.agent_messages import (
     AgentLongTaskMessage, 

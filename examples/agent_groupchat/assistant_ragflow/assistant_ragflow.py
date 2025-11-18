@@ -56,17 +56,17 @@ async def create_agent() -> AssistantAgent:
     return assistant_agent
 
 if __name__ == "__main__":
-    # ragflow = RAGFlowMemory(
-    #     RAGFlowMemoryConfig(
-    #         RAGFLOW_URL=RAGFLOW_URL,
-    #         RAGFLOW_TOKEN=RAGFLOW_TOKEN,
-    #         dataset_ids=["28e3ad8499b311f0a65d0242ac120006"],
-    #     )
-    # )
+    ragflow = RAGFlowMemory(
+        RAGFlowMemoryConfig(
+            RAGFLOW_URL=RAGFLOW_URL,
+            RAGFLOW_TOKEN=RAGFLOW_TOKEN,
+            dataset_ids=["28e3ad8499b311f0a65d0242ac120006"],
+        )
+    )
 
-    # asyncio.run(ragflow.query(
-    #     query = "BOSS8 使用的C++版本"
-    # ))
+    asyncio.run(ragflow.query(
+        query = "BOSS8 使用的C++版本"
+    ))
 
     # asyncio.run(
     #     run_console(
@@ -75,23 +75,23 @@ if __name__ == "__main__":
     #     )
     # )
 
-    asyncio.run(
-        run_worker(
-            # 智能体注册信息
-            agent_name="BOSS8_Assistant",
-            author = "xiongdb@ihep.ac.cn",
-            permission='groups: drsai, payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
-            description = "一个高能物理BESIII实验分析软件BOSS8的一个问答助手",
-            version = "0.1.0",
-            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
-            # 智能体实体
-            agent_factory=create_agent, 
-            # 后端服务配置
-            port = 42816, 
-            no_register=False,
-            enable_openwebui_pipeline=True, 
-            pipelines_dir="/home/xiongdb/drsai/examples/agent_groupchat/assistant_ragflow/pipelines/",
-            history_mode = "backend",
-            # use_api_key_mode = "backend",
-        )
-    )
+    # asyncio.run(
+    #     run_worker(
+    #         # 智能体注册信息
+    #         agent_name="BOSS8_Assistant",
+    #         author = "xiongdb@ihep.ac.cn",
+    #         permission='groups: drsai, payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
+    #         description = "一个高能物理BESIII实验分析软件BOSS8的一个问答助手",
+    #         version = "0.1.0",
+    #         logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+    #         # 智能体实体
+    #         agent_factory=create_agent, 
+    #         # 后端服务配置
+    #         port = 42816, 
+    #         no_register=False,
+    #         enable_openwebui_pipeline=True, 
+    #         pipelines_dir="/home/xiongdb/drsai/examples/agent_groupchat/assistant_ragflow/pipelines/",
+    #         history_mode = "backend",
+    #         # use_api_key_mode = "backend",
+    #     )
+    # )

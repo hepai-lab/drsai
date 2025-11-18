@@ -12,7 +12,7 @@ except ImportError:
     sys.path.append(drsai_path)
 
 from drsai import AssistantAgent, HandoffTermination, TextMentionTermination
-from drsai import run_backend, run_console
+from drsai import run_backend, run_console, run_worker
 from drsai import HandoffMessage
 from drsai import AGSwarm
 from drsai import Console, DrSaiAPP
@@ -99,13 +99,30 @@ async def main():
     await handle_oai_stream(stream)
 
 if __name__ == "__main__":
-    # asyncio.run(run_team_stream())
-    asyncio.run(main())
-    # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
-    # asyncio.run(run_backend(
-    #     agent_factory=create_agent, 
-    #     port = 42805, 
-    #     enable_openwebui_pipeline=True, 
-    #     history_mode = "backend",
-    #     use_api_key_mode = "backend")
+    # asyncio.run(main())
+    # asyncio.run(
+    #     run_console(
+    #         agent_factory=create_team, 
+    #         task="I need to refund my flight.?"
     #     )
+    # )
+    
+    asyncio.run(
+        run_worker(
+            # 智能体注册信息
+            agent_name="Swarm_GroupChat",
+            author = "xiongdb@ihep.ac.cn",
+            permission='groups: drsai, payg, ddf_free; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
+            description = "一个使用Swarm机制的多智能体系统",
+            version = "0.1.0",
+            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            # 智能体实体
+            agent_factory=create_team, 
+            # 后端服务配置
+            port = 42816, 
+            no_register=False,
+            enable_openwebui_pipeline=True, 
+            history_mode = "backend",
+            # use_api_key_mode = "backend",
+        )
+    )

@@ -35,7 +35,11 @@ from autogen_agentchat.messages import (
 from autogen_agentchat.state import SelectorManagerState
 from autogen_agentchat.teams._group_chat._events import GroupChatTermination
 
-from .ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
+# from autogen_agentchat.teams import BaseGroupChat
+# from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
+# from drsai.modules.groupchat.ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
+from drsai.modules.groupchat.drsai_base_group_chat import DrSaiBaseGroupChat
+from drsai.modules.groupchat.drsai_base_group_chat_manager import DrSaiBaseGroupChatManager
 from drsai.modules.managers.database import DatabaseManager
 
 trace_logger = logging.getLogger(TRACE_LOGGER_NAME)
@@ -49,7 +53,7 @@ AsyncCandidateFunc = Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], Awai
 CandidateFuncType = Union[SyncCandidateFunc | AsyncCandidateFunc]
 
 
-class AGSelectorGroupChatManager(AGBaseGroupChatManager):
+class AGSelectorGroupChatManager(DrSaiBaseGroupChatManager):
     """A group chat manager that selects the next speaker using a ChatCompletion
     model and a custom selector function."""
 
@@ -342,16 +346,16 @@ class AGSelectorGroupChatManager(AGBaseGroupChatManager):
                 mentions[name] = count
         return mentions
     
-    async def pause(self) -> None:
+    async def pause(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Pause the group chat manager."""
         trace_logger.info(f"Pausing SelectorGroupChatManager...")
         self._is_paused = True
 
-    async def resume(self) -> None:
+    async def resume(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Resume the group chat manager."""
         self._is_paused = False
 
-    async def close(self) -> None:
+    async def close(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Close any resources."""
         self._is_paused = True
         trace_logger.info(f"Closing SelectorGroupChatManager...")
@@ -373,7 +377,7 @@ class AGSelectorGroupChatConfig(BaseModel):
     model_context: ComponentModel | None = None
 
 
-class AGSelectorGroupChat(AGGroupChat, Component[AGSelectorGroupChatConfig]):
+class AGSelectorGroupChat(DrSaiBaseGroupChat, Component[AGSelectorGroupChatConfig]):
     """A group chat team that have participants takes turn to publish a message
     to all, using a ChatCompletion model to select the next speaker after each message.
 
@@ -742,7 +746,7 @@ Read the above conversation. Then select the next role from {participants} to pl
             **kwargs
         )
 
-    async def pause(self) -> None:
+    async def pause(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Pause the group chat."""
         orchestrator = await self._runtime.try_get_underlying_agent_instance(
             AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
@@ -756,7 +760,7 @@ Read the above conversation. Then select the next role from {participants} to pl
         self._is_running = False
         self._is_paused = True
 
-    async def resume(self) -> None:
+    async def resume(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Resume the group chat."""
         orchestrator = await self._runtime.try_get_underlying_agent_instance(
             AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
@@ -769,13 +773,15 @@ Read the above conversation. Then select the next role from {participants} to pl
         
         self._is_paused = False
 
-    async def lazy_init(self) -> None:
+    async def lazy_init(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
+        if not self._initialized:
+            await self._init(self._runtime)
         """Initialize any lazy-loaded components."""
         for agent in self._participants:
             if hasattr(agent, "lazy_init"):
                 await agent.lazy_init()  # type: ignore
 
-    async def close(self) -> None:
+    async def close(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Close all resources."""
         # Prepare a list of closable agents
         closable_agents: List[AGSelectorGroupChatManager | ChatAgent] = [

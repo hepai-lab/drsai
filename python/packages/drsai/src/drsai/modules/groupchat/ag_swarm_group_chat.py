@@ -1,12 +1,46 @@
 import asyncio
+from typing import (
+    List, 
+    Optional, 
+    Dict, 
+    Any, 
+    Union, 
+    Tuple,
+    Mapping,
+    Sequence,
+    AsyncGenerator,
+    Callable,
+    )
+
+from pydantic import BaseModel, ValidationError
+import uuid
+
+from autogen_core import (
+    AgentId,
+    AgentRuntime,
+    AgentType,
+    CancellationToken,
+    ComponentBase,
+    SingleThreadedAgentRuntime,
+    TypeSubscription,
+)
+
+from autogen_agentchat.base import (
+    ChatAgent, 
+    Team,
+    TaskResult, 
+    Response,
+    TerminationCondition,
+    TaskRunner,
+    )
 from typing import Any, Callable, List, Mapping
 from loguru import logger
 
-from autogen_core import AgentRuntime, Component, ComponentModel
+from autogen_core import AgentRuntime, Component, ComponentModel, CancellationToken
 from pydantic import BaseModel
 
 from autogen_agentchat.base import ChatAgent, TerminationCondition
-from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage, HandoffMessage, MessageFactory
+# from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage, HandoffMessage, MessageFactory
 from autogen_agentchat.state import SwarmManagerState
 from autogen_agentchat.teams._group_chat._events import (
     GroupChatAgentResponse,
@@ -14,11 +48,60 @@ from autogen_agentchat.teams._group_chat._events import (
     GroupChatStart,
     GroupChatTermination,
 )
+from autogen_agentchat.messages import (
+    BaseAgentEvent,
+    BaseChatMessage,
+    AgentEvent,
+    ChatMessage,
+    HandoffMessage,
+    MemoryQueryEvent,
+    ModelClientStreamingChunkEvent,
+    TextMessage,
+    ToolCallExecutionEvent,
+    ToolCallRequestEvent,
+    ToolCallSummaryMessage,
+    UserInputRequestedEvent,
+    ThoughtEvent,
+    StructuredMessageFactory,
+    MultiModalMessage,
+    Image,
+    # MessageFactory,
+    StructuredMessage,
+    StopMessage,
+)
+from drsai.modules.managers.messages.agent_messages import (
+    AgentLongTaskMessage, 
+    LongTaskQueryMessage,
+    ToolLongTaskEvent,
+    AgentLogEvent,
+    DrSaiMessageFactory,
+    )
+from autogen_agentchat.teams._group_chat._events import (
+    GroupChatAgentResponse,
+    GroupChatError,
+    GroupChatMessage,
+    GroupChatPause,
+    GroupChatRequestPublish,
+    GroupChatReset,
+    GroupChatResume,
+    GroupChatStart,
+    GroupChatTermination,
+    SerializableException,
+    )
+from drsai.modules.managers.messages.groupchat_messages import (
+    GroupChatAgentLongTask,
+    GroupChatLazyInit,
+    GroupChatClose
+    )
 
-from .ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
+# from autogen_agentchat.teams import BaseGroupChat
+# from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
+# from drsai.modules.groupchat.ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
+from drsai.modules.groupchat.drsai_base_group_chat import DrSaiBaseGroupChat
+from drsai.modules.groupchat.drsai_base_group_chat_manager import DrSaiBaseGroupChatManager
 from drsai.modules.managers.database import DatabaseManager
 
-class AGSwarmGroupChatManager(AGBaseGroupChatManager):
+class AGSwarmGroupChatManager(DrSaiBaseGroupChatManager):
     """A group chat manager that selects the next speaker based on handoff message only."""
 
     def __init__(
@@ -32,7 +115,7 @@ class AGSwarmGroupChatManager(AGBaseGroupChatManager):
         output_message_queue: asyncio.Queue[BaseAgentEvent | BaseChatMessage | GroupChatTermination],
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
-        message_factory: MessageFactory,
+        message_factory: DrSaiMessageFactory,
         emit_team_events: bool,
         db_manager: DatabaseManager = None,
         **kwargs: Any
@@ -116,16 +199,16 @@ class AGSwarmGroupChatManager(AGBaseGroupChatManager):
         self._current_turn = swarm_state.current_turn
         self._current_speaker = swarm_state.current_speaker
     
-    async def pause(self) -> None:
+    async def pause(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Pause the group chat manager."""
         logger.info(f"Pausing DrSaiSwarmGroupChatManager...")
         self._is_paused = True
 
-    async def resume(self) -> None:
+    async def resume(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Resume the group chat manager."""
         self._is_paused = False
 
-    async def close(self) -> None:
+    async def close(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Close any resources."""
         self._is_paused = True
         logger.info(f"Closing DrSaiSwarmGroupChatManager...")
@@ -141,7 +224,7 @@ class AGSwarmConfig(BaseModel):
     emit_team_events: bool = False
 
 
-class AGSwarm(AGGroupChat, Component[AGSwarmConfig]):
+class AGSwarm(DrSaiBaseGroupChat, Component[AGSwarmConfig]):
     """A group chat team that selects the next speaker based on handoff message only.
 
     The first participant in the list of participants is the initial speaker.
@@ -277,7 +360,7 @@ class AGSwarm(AGGroupChat, Component[AGSwarmConfig]):
         output_message_queue: asyncio.Queue[BaseAgentEvent | BaseChatMessage | GroupChatTermination],
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
-        message_factory: MessageFactory,
+        message_factory: DrSaiMessageFactory,
         **kwargs: Any
     ) -> Callable[[], AGSwarmGroupChatManager]:
         def _factory() -> AGSwarmGroupChatManager:
@@ -298,6 +381,233 @@ class AGSwarm(AGGroupChat, Component[AGSwarmConfig]):
             )
 
         return _factory
+    
+    async def pause(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
+        """Pause the group chat."""
+        orchestrator = await self._runtime.try_get_underlying_agent_instance(
+            AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
+            type=AGSwarmGroupChatManager,
+        )
+        await orchestrator.pause()
+        for agent in self._participants:
+            if hasattr(agent, "pause"):
+                await agent.pause()  # type: ignore
+
+    async def resume(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
+        """Resume the group chat."""
+        orchestrator = await self._runtime.try_get_underlying_agent_instance(
+            AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
+            type=AGSwarmGroupChatManager,
+        )
+        await orchestrator.resume()
+        for agent in self._participants:
+            if hasattr(agent, "resume"):
+                await agent.resume()  # type: ignore
+
+    async def lazy_init(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
+        """Initialize any lazy-loaded components."""
+        for agent in self._participants:
+            if hasattr(agent, "lazy_init"):
+                await agent.lazy_init()  # type: ignore
+
+    async def close(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
+        """Close all resources."""
+        # Prepare a list of closable agents
+        closable_agents: List[AGSwarmGroupChatManager | ChatAgent] = [
+            agent for agent in self._participants if hasattr(agent, "close")
+        ]
+        # Check if we can close the orchestrator
+        orchestrator = await self._runtime.try_get_underlying_agent_instance(
+            AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
+            type=AGSwarmGroupChatManager,
+        )
+        if hasattr(orchestrator, "close"):
+            closable_agents.append(orchestrator)
+
+        # Close all closable agents concurrently
+        await asyncio.gather(
+            *(agent.close() for agent in closable_agents), return_exceptions=True
+        )
+
+    async def _get_history_messages(
+        self,
+    ) -> List[BaseChatMessage]:
+        
+        orchestrator = await self._runtime.try_get_underlying_agent_instance(
+            AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
+            type=AGSwarmGroupChatManager,
+        )
+
+        return orchestrator._message_thread
+        
+    async def run_stream(
+        self,
+        *,
+        task: str | BaseChatMessage | Sequence[BaseChatMessage] | None = None,
+        cancellation_token: CancellationToken | None = None,
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | TaskResult, None]:
+        """Run the team and produces a stream of messages and the final result
+        of the type :class:`~autogen_agentchat.base.TaskResult` as the last item in the stream. Once the
+        team is stopped, the termination condition is reset.
+
+        .. note::
+
+            If an agent produces :class:`~autogen_agentchat.messages.ModelClientStreamingChunkEvent`,
+            the message will be yielded in the stream but it will not be included in the
+            :attr:`~autogen_agentchat.base.TaskResult.messages`.
+
+        Args:
+            task (str | BaseChatMessage | Sequence[BaseChatMessage] | None): The task to run the team with. Can be a string, a single :class:`BaseChatMessage` , or a list of :class:`BaseChatMessage`.
+            cancellation_token (CancellationToken | None): The cancellation token to kill the task immediately.
+                Setting the cancellation token potentially put the team in an inconsistent state,
+                and it may not reset the termination condition.
+                To gracefully stop the team, use :class:`~autogen_agentchat.conditions.ExternalTermination` instead.
+
+        Returns:
+            stream: an :class:`~collections.abc.AsyncGenerator` that yields :class:`~autogen_agentchat.messages.BaseAgentEvent`, :class:`~autogen_agentchat.messages.BaseChatMessage`, and the final result :class:`~autogen_agentchat.base.TaskResult` as the last item in the stream.
+        """
+
+        # Create the messages list if the task is a string or a chat message.
+        messages: List[BaseChatMessage] | None = None
+        if task is None:
+            pass
+        elif isinstance(task, str):
+            messages = [TextMessage(content=task, source="user")]
+        elif isinstance(task, BaseChatMessage):
+            messages = [task]
+        elif isinstance(task, list):
+            if not task:
+                raise ValueError("Task list cannot be empty.")
+            messages = []
+            for msg in task:
+                if not isinstance(msg, BaseChatMessage):
+                    raise ValueError("All messages in task list must be valid BaseChatMessage types")
+                messages.append(msg)
+        else:
+            raise ValueError("Task must be a string, a BaseChatMessage, or a list of BaseChatMessage.")
+        # Check if the messages types are registered with the message factory.
+        if messages is not None:
+            for msg in messages:
+                if not self._message_factory.is_registered(msg.__class__):
+                    raise ValueError(
+                        f"Message type {msg.__class__} is not registered with the message factory. "
+                        "Please register it with the message factory by adding it to the "
+                        "custom_message_types list when creating the team."
+                    )
+        
+        # Set the cancellation token.
+        if cancellation_token is None:
+            cancellation_token = CancellationToken()
+        self._cancellation_token = cancellation_token
+
+        if self._is_running:
+            raise ValueError("The team is already running, it cannot run again until it is stopped.")
+        self._is_running = True
+
+        if self._embedded_runtime:
+            # Start the embedded runtime.
+            assert isinstance(self._runtime, SingleThreadedAgentRuntime)
+            self._runtime.start()
+
+        if not self._initialized:
+            await self._init(self._runtime)
+
+        shutdown_task: asyncio.Task[None] | None = None
+        if self._embedded_runtime:
+
+            async def stop_runtime() -> None:
+                assert isinstance(self._runtime, SingleThreadedAgentRuntime)
+                try:
+                    # This will propagate any exceptions raised.
+                    await self._runtime.stop_when_idle()
+                    # Put a termination message in the queue to indicate that the group chat is stopped for whatever reason
+                    # but not due to an exception.
+                    await self._output_message_queue.put(
+                        GroupChatTermination(
+                            message=StopMessage(
+                                content="The group chat is stopped.", source=self._group_chat_manager_name
+                            )
+                        )
+                    )
+                except Exception as e:
+                    # Stop the consumption of messages and end the stream.
+                    # NOTE: we also need to put a GroupChatTermination event here because when the runtime
+                    # has an exception, the group chat manager may not be able to put a GroupChatTermination event in the queue.
+                    # This may not be necessary if the group chat manager is able to handle the exception and put the event in the queue.
+                    await self._output_message_queue.put(
+                        GroupChatTermination(
+                            message=StopMessage(
+                                content="An exception occurred in the runtime.", source=self._group_chat_manager_name
+                            ),
+                            error=SerializableException.from_exception(e),
+                        )
+                    )
+
+            # Create a background task to stop the runtime when the group chat
+            # is stopped or has an exception.
+            shutdown_task = asyncio.create_task(stop_runtime())
+
+        try:
+            history_messages = await self._get_history_messages()
+            if history_messages:
+                if isinstance(history_messages[-1], HandoffMessage):
+                    messages[-1] = HandoffMessage(
+                        source="user",
+                        target=history_messages[-1].source,
+                        content=messages[-1].content,
+                    )
+            # Run the team by sending the start message to the group chat manager.
+            # The group chat manager will start the group chat by relaying the message to the participants
+            # and the group chat manager.
+            await self._runtime.send_message(
+                GroupChatStart(messages=messages),
+                recipient=AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
+                cancellation_token=cancellation_token,
+            )
+            # Collect the output messages in order.
+            output_messages: List[BaseAgentEvent | BaseChatMessage] = []
+            stop_reason: str | None = None
+            # Yield the messsages until the queue is empty.
+            while True:
+                message_future = asyncio.ensure_future(self._output_message_queue.get())
+                if cancellation_token is not None:
+                    cancellation_token.link_future(message_future)
+                # Wait for the next message, this will raise an exception if the task is cancelled.
+                message = await message_future
+                if isinstance(message, GroupChatTermination):
+                    # If the message contains an error, we need to raise it here.
+                    # This will stop the team and propagate the error.
+                    if message.error is not None:
+                        raise RuntimeError(str(message.error))
+                    stop_reason = message.message.content
+                    break
+                yield message
+                if isinstance(message, HandoffMessage):
+                    # Skip the model client streaming start events.
+                    yield ModelClientStreamingChunkEvent(source=message.source, content=message.content)
+                    if message.target == "user":
+                        break
+                if isinstance(message, ModelClientStreamingChunkEvent):
+                    # Skip the model client streaming chunk events.
+                    continue
+                output_messages.append(message)
+
+            # Yield the final result.
+            yield TaskResult(messages=output_messages, stop_reason=stop_reason)
+
+        finally:
+            try:
+                if shutdown_task is not None:
+                    # Wait for the shutdown task to finish.
+                    # This will propagate any exceptions raised.
+                    await shutdown_task
+            finally:
+                # Clear the output message queue.
+                while not self._output_message_queue.empty():
+                    self._output_message_queue.get_nowait()
+
+                # Indicate that the team is no longer running.
+                self._is_running = False
 
     def _to_config(self) -> AGSwarmConfig:
         participants = [participant.dump_component() for participant in self._participants]

@@ -47,8 +47,13 @@ from autogen_agentchat.teams._group_chat._events import (
     GroupChatTermination,
 )
 
-from .ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
+# from autogen_agentchat.teams import BaseGroupChat
+# from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
+# from drsai.modules.groupchat.ag_base_group_chat import AGGroupChat, AGBaseGroupChatManager
+from drsai.modules.groupchat.drsai_base_group_chat import DrSaiBaseGroupChat
+from drsai.modules.groupchat.drsai_base_group_chat_manager import DrSaiBaseGroupChatManager
 from drsai.modules.managers.database import DatabaseManager
+from drsai.modules.managers.messages.agent_messages import DrSaiMessageFactory
 
 class RoundRobinManagerState(BaseState):
     """The state of the RoundRobinGroupChatManager."""
@@ -59,7 +64,7 @@ class RoundRobinManagerState(BaseState):
     is_paused: bool = False
 
 
-class RoundRobinGroupChatManager(AGBaseGroupChatManager):
+class RoundRobinGroupChatManager(DrSaiBaseGroupChatManager):
     """A group chat manager that selects the next speaker in a round-robin fashion."""
 
     def __init__(
@@ -75,7 +80,7 @@ class RoundRobinGroupChatManager(AGBaseGroupChatManager):
         ],
         termination_condition: TerminationCondition | None,
         max_turns: int | None,
-        message_factory: MessageFactory,
+        message_factory: DrSaiMessageFactory,
         db_manager: DatabaseManager = None,
         **kwargs: Any
     ) -> None:
@@ -150,6 +155,10 @@ class RoundRobinGroupChatManager(AGBaseGroupChatManager):
     ) -> str:
         """Select a speaker from the participants in a round-robin fashion."""
         if self._is_paused:
+            if self._next_speaker_index>=len(self._participant_names)-1:
+                self._next_speaker_index = 0
+            else:
+                self._next_speaker_index += 1
             # If paused, let the user speak next
             for name in self._participant_names:
                 if name == "user_proxy":
@@ -261,7 +270,7 @@ class RoundRobinGroupChatConfig(BaseModel):
     max_turns: int | None = None
 
 
-class RoundRobinGroupChat(AGGroupChat, Component[RoundRobinGroupChatConfig]):
+class RoundRobinGroupChat(DrSaiBaseGroupChat, Component[RoundRobinGroupChatConfig]):
     """A team that runs a group chat with participants taking turns in a round-robin fashion
     to publish a message to all.
     """
@@ -366,7 +375,7 @@ class RoundRobinGroupChat(AGGroupChat, Component[RoundRobinGroupChatConfig]):
             **kwargs
         )
 
-    async def pause(self) -> None:
+    async def pause(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Pause the group chat."""
         orchestrator = await self._runtime.try_get_underlying_agent_instance(
             AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
@@ -380,7 +389,7 @@ class RoundRobinGroupChat(AGGroupChat, Component[RoundRobinGroupChatConfig]):
         self._is_running = False
         self._is_paused = True
 
-    async def resume(self) -> None:
+    async def resume(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Resume the group chat."""
         orchestrator = await self._runtime.try_get_underlying_agent_instance(
             AgentId(type=self._group_chat_manager_topic_type, key=self._team_id),
@@ -393,13 +402,16 @@ class RoundRobinGroupChat(AGGroupChat, Component[RoundRobinGroupChatConfig]):
         
         self._is_paused = False
 
-    async def lazy_init(self) -> None:
+    async def lazy_init(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Initialize any lazy-loaded components."""
+        if not self._initialized:
+            await self._init(self._runtime)
+            
         for agent in self._participants:
             if hasattr(agent, "lazy_init"):
                 await agent.lazy_init()  # type: ignore
 
-    async def close(self) -> None:
+    async def close(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Close all resources."""
         # Prepare a list of closable agents
         closable_agents: List[RoundRobinGroupChatManager | ChatAgent] = [

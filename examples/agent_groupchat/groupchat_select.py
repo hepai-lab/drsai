@@ -8,10 +8,10 @@ except ImportError:
     drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
     sys.path.append(drsai_path)
 
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, AGSelectorGroupChat, TextMentionTermination
+from drsai import AGSelectorGroupChat, TextMentionTermination
 import json
 import asyncio
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
+from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_worker
 from drsai import run_backend, run_console
 
 # Create a factory function to ensure isolated Agent instances for concurrent access.
@@ -71,12 +71,31 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
-    # asyncio.run(run_console(agent_factory=create_team, task="What is the weather in New York?"))
-    # asyncio.run(run_backend(
-    #     agent_factory=create_agent, 
-    #     port = 42805, 
-    #     enable_openwebui_pipeline=True, 
-    #     history_mode = "backend",
-    #     use_api_key_mode = "backend")
+    
+    # asyncio.run(main())
+    # asyncio.run(
+    #     run_console(
+    #         agent_factory=create_team, 
+    #         task="-5+20=?"
     #     )
+    # )
+    
+    asyncio.run(
+        run_worker(
+            # 智能体注册信息
+            agent_name="Selector_GroupChat",
+            author = "xiongdb@ihep.ac.cn",
+            permission='groups: drsai, payg, ddf_free; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
+            description = "一个可智能选择智能体的多智能体系统",
+            version = "0.1.0",
+            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            # 智能体实体
+            agent_factory=create_team, 
+            # 后端服务配置
+            port = 42816, 
+            no_register=False,
+            enable_openwebui_pipeline=True, 
+            history_mode = "backend",
+            # use_api_key_mode = "backend",
+        )
+    )

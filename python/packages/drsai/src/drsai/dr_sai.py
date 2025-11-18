@@ -14,8 +14,6 @@ import asyncio
 import time
 import traceback
 
-from autogen_agentchat.agents import AssistantAgent, BaseChatAgent
-from autogen_agentchat.base import TaskResult
 from autogen_core import FunctionCall
 from autogen_core.model_context import (
     ChatCompletionContext,
@@ -44,10 +42,11 @@ from autogen_agentchat.messages import (
     Image,
     # UserInputRequestedEvent,
 )
-from autogen_agentchat.teams import BaseGroupChat
+# from autogen_agentchat.teams import BaseGroupChat
+from autogen_agentchat.base import ChatAgent, TaskResult, Team
 from autogen_agentchat.ui import Console
 
-# from loguru import logger
+
 # logger = logger.bind(name="dr_sai.py")
 
 # 单个模型日志
@@ -59,6 +58,7 @@ third_party_logger2.propagate = False
 third_party_logger3 = logging.getLogger("httpx")
 third_party_logger3.propagate = False
 
+from loguru import logger
 # from drsai.utils.async_process import sync_wrapper
 # from drsai.modules.managers.threads_manager import ThreadsManager
 # from drsai.modules.managers.base_thread_message import Content, Text
@@ -105,7 +105,7 @@ class DrSai:
 
         # 智能体管理
         self.agent_factory: callable = kwargs.pop('agent_factory', None)
-        self.agent_instance: Dict[str, AssistantAgent | BaseGroupChat] = {}
+        self.agent_instance: Dict[str, ChatAgent | Team] = {}
 
         # 额外设置
         # self.history_mode = kwargs.pop('history_mode', 'backend') # backend or frontend
@@ -159,8 +159,8 @@ class DrSai:
             print(f"Error closing DrSai resources: {e}")
             raise
 
-    async def _create_agent_instance(self) -> AssistantAgent | BaseGroupChat:
-        agent: AssistantAgent | BaseGroupChat = (
+    async def _create_agent_instance(self) -> ChatAgent | Team:
+        agent: ChatAgent | Team = (
             await self.agent_factory() 
             if asyncio.iscoroutinefunction(self.agent_factory)
             else (self.agent_factory())
@@ -239,7 +239,7 @@ class DrSai:
             thread_id: str,
             stream: bool,
             api_key: str,
-            ) -> Tuple[AssistantAgent | BaseGroupChat, Thread|None]:
+            ) -> Tuple[ChatAgent | Team, Thread|None]:
 
         # 加载/检查Thread
 
@@ -283,14 +283,14 @@ class DrSai:
         ## 为智能体添加数据库管理器
         if hasattr(agent, "_db_manager"):
             agent._db_manager = self.db_manager
-            if isinstance(agent, BaseGroupChat):
+            if isinstance(agent, Team):
                 for participant in agent._participants:
                     participant._db_manager = self.db_manager
             else:
                 agent._db_manager = self.db_manager
         
         ## 是否使用流式模式
-        if isinstance(agent, BaseGroupChat) and stream:
+        if isinstance(agent, Team) and stream:
             for participant in agent._participants:
                 if not participant._model_client_stream:
                     raise ValueError("Streaming mode is not supported when participant._model_client_stream is False")
@@ -393,8 +393,12 @@ class DrSai:
                     yield f"data: {message_str}\n\n"
                     break
 
+        except asyncio.CancelledError:
+            logger.info(f"Top-level cancellation for thread {thread_id}")
+            pass
         except Exception as e:
-            raise traceback.print_exc()
+            logger.error(f"Error in a_drsai_ui_completions: {e}")
+            traceback.print_exc()
         finally:
             # 更新thread状态
             response: Response = self.db_manager.get(
@@ -468,7 +472,7 @@ class DrSai:
             last_message = messages[-1]
             is_not_handoff = True
             if thread is not None:
-                if isinstance(agent, BaseGroupChat) and thread.messages:
+                if isinstance(agent, Team) and thread.messages:
                     if (HandoffMessage in agent._participants[0].produced_message_types) and thread.messages[-1]["type"] == "HandoffMessage":
                         task.append(HandoffMessage(
                             source=thread.messages[-1]["target"], 
@@ -530,12 +534,12 @@ class DrSai:
                 # The Unix timestamp (in seconds) of when the chat completion was created
                 oai_chunk["created"] = int(time.time())
                 if isinstance(message, ModelClientStreamingChunkEvent):
-                    if stream and isinstance(agent, BaseChatAgent):
+                    if stream and isinstance(agent, ChatAgent):
                         content = message.content
                         oai_chunk["choices"][0]["delta"]['content'] = content
                         oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
                         yield f'data: {json.dumps(oai_chunk)}\n\n'
-                    elif stream and isinstance(agent, BaseGroupChat):
+                    elif stream and isinstance(agent, Team):
                         role_tmp = message.source
                         if role != role_tmp:
                             role = role_tmp
@@ -564,12 +568,12 @@ class DrSai:
                         ThoughtContent = None # 重置thought内容
 
                     chatcompletions["choices"][0]["message"]["created"] = int(time.time())
-                    if (not stream) and isinstance(agent, BaseChatAgent):
+                    if (not stream) and isinstance(agent, ChatAgent):
                         if message.source!="user":
                             content = message.content
                             chatcompletions["choices"][0]["message"]["content"] = content
                             yield f'data: {json.dumps(chatcompletions)}\n\n'
-                    elif (not stream) and isinstance(agent, BaseGroupChat):
+                    elif (not stream) and isinstance(agent, Team):
                         if message.source!="user":
                             content = message.content
                             source = message.source
@@ -611,7 +615,7 @@ class DrSai:
                             chatcompletions["choices"][0]["message"]["content"] = content + "\n\n"
                             yield f'data: {json.dumps(chatcompletions)}\n\n'
                         else:
-                            if role and isinstance(agent, BaseGroupChat):
+                            if role and isinstance(agent, Team):
                                 oai_chunk["choices"][0]["delta"]['content'] = f"\n\n**{role}发言：**\n\n"
                                 oai_chunk["choices"][0]["delta"]['role'] = 'assistant'
                                 yield f'data: {json.dumps(oai_chunk)}\n\n'
@@ -688,22 +692,22 @@ class DrSai:
 
     
     #### --- 关于get agent/groupchat infomation --- ####
-    async def get_agents_info(self, agent: AssistantAgent | BaseGroupChat=None) -> List[Dict[str, Any]]:
+    async def get_agents_info(self, agent: ChatAgent | Team=None) -> List[Dict[str, Any]]:
         """
         获取当前运行的Agents信息
         """
         # 从函数工厂中获取定义的Agents
         if agent is None:
-            agent: AssistantAgent | BaseGroupChat = (
+            agent: ChatAgent | Team = (
                 await self.agent_factory() 
                 if asyncio.iscoroutinefunction(self.agent_factory)
                 else (self.agent_factory())
             )
         agent_info = []
-        if isinstance(agent, AssistantAgent):
+        if isinstance(agent, ChatAgent):
             agent_info.append(agent._to_config().model_dump())
             return agent_info
-        elif isinstance(agent, BaseGroupChat):
+        elif isinstance(agent, Team):
             participant_names = [participant.name for participant in agent._participants]
             for participant in agent._participants:
                 agent_info.append(participant._to_config().model_dump())
@@ -715,7 +719,7 @@ class DrSai:
     #### --- 关于测试 agent/groupchat --- ####
     async def test_agents(self, **kwargs) -> AsyncGenerator:
 
-        agent: AssistantAgent | BaseGroupChat = (
+        agent: ChatAgent | Team = (
             await self.agent_factory() 
             if asyncio.iscoroutinefunction(self.agent_factory)
             else (self.agent_factory())
@@ -725,9 +729,9 @@ class DrSai:
 
         assert agent_name is not None, "agent_name must be provided"
 
-        if isinstance(agent, AssistantAgent):
+        if isinstance(agent, ChatAgent):
             kwargs.update({"agent": agent})
-        elif isinstance(agent, BaseGroupChat):
+        elif isinstance(agent, Team):
             if agent_name == "groupchat":
                 kwargs.update({"agent": agent})
             else:
@@ -738,7 +742,7 @@ class DrSai:
                 participant = next((p for p in agent._participants if p.name == agent_name), None)
                 kwargs.update({"agent": participant})
         else:
-            raise ValueError("Agent must be AssistantAgent or BaseGroupChat")
+            raise ValueError("Agent must be ChatAgent or Team")
         
         # 启动聊天任务
         async for message in self.a_start_chat_completions(**kwargs):

@@ -28,7 +28,7 @@ from drsai.modules.managers.messages.agent_messages import (
     )
 from drsai.modules.baseagent.drsaiagent import DrSaiAgent
 from autogen_agentchat.teams._group_chat._sequential_routed_agent import SequentialRoutedAgent
-
+from loguru import logger
 
 class DrSaiChatAgentContainer(SequentialRoutedAgent):
     """A core agent class that delegates message handling to an
@@ -225,7 +225,8 @@ class DrSaiChatAgentContainer(SequentialRoutedAgent):
         await self._agent.close(ctx.cancellation_token)
 
     async def on_unhandled_message(self, message: Any, ctx: MessageContext) -> None:
-        raise ValueError(f"Unhandled message in agent container: {type(message)}")
+        # raise ValueError(f"Unhandled message in agent container: {type(message)}")
+        logger.warning(f"Unhandled message in agent container: {type(message)}")
 
     async def save_state(self) -> Mapping[str, Any]:
         agent_state = await self._agent.save_state()

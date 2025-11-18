@@ -165,25 +165,30 @@ class StatusAgent(DrSaiAgent):
         """Pause the agent by setting the paused state."""
         logger.info(f"Paused {self.name}...")
 
-        # 停掉远程的模型
-        # result: Dict[str, Any] = self._funcs_map['pause'](chat_id=self._chat_id)
-        result: Dict[str, Any] = await asyncio.wait_for(
-              asyncio.to_thread(
-                  self._funcs_map['pause'],
-                  chat_id=self._chat_id
-              ),
-              timeout=30.0
-            )
-        status = result.get("status", False)
-        message = result.get("message", "")
-        if not status:
-            raise Exception(message)
-        else:
-            logger.info(f"Paused {self.name} successfully.")
-
-        # 设置暂停状态
+        # 先设置暂停状态,让流检测到并停止
         self.is_paused = True
         self._paused.set()
+
+        # 给流一点时间来检测暂停状态并停止
+        await asyncio.sleep(0.1)
+
+        # 停掉远程的模型
+        try:
+            result: Dict[str, Any] = await asyncio.wait_for(
+                  asyncio.to_thread(
+                      self._funcs_map['pause'],
+                      chat_id=self._chat_id
+                  ),
+                  timeout=30.0
+                )
+            status = result.get("status", False)
+            message = result.get("message", "")
+            if not status:
+                logger.warning(f"Remote pause failed: {message}")
+            else:
+                logger.info(f"Paused {self.name} successfully.")
+        except Exception as e:
+            logger.warning(f"Error pausing remote agent (local state is paused): {e}")
     
     async def pause_long_task(self) -> None:
         """Pause the long task by setting the paused state."""
@@ -207,26 +212,31 @@ class StatusAgent(DrSaiAgent):
     async def resume(self) -> None:
         """Resume the agent by clearing the paused state."""
 
-        # 恢复远程的模型
-        # result: Dict[str, Any] = self._funcs_map['resume'](chat_id=self._chat_id)
-        result: Dict[str, Any] = await asyncio.wait_for(
-              asyncio.to_thread(
-                  self._funcs_map['resume'],
-                  chat_id=self._chat_id
-              ),
-              timeout=30.0
-            )
-        status = result.get("status", False)
-        message = result.get("message", "")
-        if not status:
-            raise Exception(message)
-        else:
-            logger.info(f"Resumed {self.name} successfully.")
-
-        # 取消暂停状态
+        # 先取消暂停状态
         self.is_paused = False
         self._paused.clear()
 
+        # 恢复远程的模型
+        try:
+            result: Dict[str, Any] = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._funcs_map['resume'],
+                        chat_id=self._chat_id
+                    ),
+                    timeout=30.0
+                )
+            status = result.get("status", False)
+            message = result.get("message", "")
+            if not status:
+                logger.warning(f"Remote resume failed: {message}")
+            else:
+                logger.info(f"Resumed {self.name} successfully.")
+                return
+        except asyncio.TimeoutError:
+            logger.warning(f"Resume timeout for {self.name}.")
+        except Exception as e:
+            logger.warning(f"Error resuming remote agent: {e}")
+        
     async def close(self) -> None:
         """Clean up resources used by the agent.
 
@@ -261,12 +271,17 @@ class StatusAgent(DrSaiAgent):
         def sync_consumer():
             try:
                 for chunk in stream:
-                    # # 检查暂停状态
-                    # if self.is_paused:
-                    #     loop.call_soon_threadsafe(queue.put_nowait, asyncio.CancelledError())
-                    #     return
+                    # 检查暂停状态
+                    if self.is_paused:
+                        logger.info(f"Stream detected pause signal, stopping consumer")
+                        break
                     loop.call_soon_threadsafe(queue.put_nowait, chunk)
             except Exception as e:
+                # 如果是连接关闭错误且已暂停,不记录为错误
+                if self.is_paused and "peer closed connection" in str(e).lower():
+                    logger.info(f"Connection closed due to pause, this is expected")
+                else:
+                    logger.error(f"Error in sync consumer: {e}")
                 loop.call_soon_threadsafe(queue.put_nowait, e)
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)  # 结束信号
@@ -275,23 +290,32 @@ class StatusAgent(DrSaiAgent):
 
         try:
             while True:
-                item = await asyncio.wait_for(queue.get(), timeout=timeout)
+                # 检查是否被暂停
+                if self.is_paused:
+                    logger.info(f"Stream generator detected pause, stopping")
+                    break
+
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    logger.warning(f"Stream timeout after {timeout} seconds")
+                    raise asyncio.TimeoutError("Model streaming timed out")
+
                 if item is None:  # 正常结束
                     break
                 elif isinstance(item, type) and issubclass(item, Exception):
-                    # 如果是异常类型，实例化并抛出
-                    # if issubclass(item, asyncio.CancelledError):
-                    #     raise asyncio.CancelledError("Stream cancelled")
-                    # else:
-                    #     raise item()
                     raise item()
                 elif isinstance(item, Exception):
+                    # 如果是连接错误且已暂停,不抛出异常
+                    if self.is_paused and "peer closed connection" in str(item).lower():
+                        logger.info(f"Connection closed due to pause, stopping gracefully")
+                        break
                     raise item
                 else:
                     yield item
-        except asyncio.TimeoutError:
-            logger.warning(f"Stream timeout after {timeout} seconds")
-            raise asyncio.TimeoutError("Model streaming timed out")
+        except asyncio.CancelledError:
+            logger.info(f"Stream generator was cancelled")
+            raise
         finally:
             if not executor_task.done():
                 executor_task.cancel()
@@ -404,6 +428,7 @@ class StatusAgent(DrSaiAgent):
             try:
                 async for chunk in self.async_stream_generator(stream):
                     if self.is_paused:
+                        logger.info(f"{self.name} paused during streaming")
                         raise asyncio.CancelledError("Agent paused during streaming")
                     # textchunk = chunk["choices"][0]["delta"].get("content", "")
                     # if textchunk:
@@ -415,7 +440,7 @@ class StatusAgent(DrSaiAgent):
                     message_type = chunk.get("type", None)
                     if message_type in self._message_factory._message_types:
                         msg: BaseChatMessage|BaseAgentEvent = self._message_factory._message_types[message_type].model_validate(chunk)
-                        
+
                         if message_type in [
                             "TextMessage",
                             "ToolCallSummaryMessage",
@@ -428,12 +453,20 @@ class StatusAgent(DrSaiAgent):
                     if "stop_reason" in chunk:
                         # taskresult = TaskResult.model_validate(chunk)
                         break
-                    
+
             except asyncio.CancelledError:
+                # 如果是由于暂停导致的取消,返回一个友好的消息
+                if self.is_paused:
+                    logger.info(f"{self.name} was paused, handling gracefully")
                 raise
             except Exception as e:
-                logger.error(f"Error during streaming: {e}")
-                raise
+                # 检查是否是由于暂停导致的连接关闭
+                if self.is_paused and "peer closed connection" in str(e).lower():
+                    logger.info(f"Connection closed due to pause for {self.name}, handling as cancellation")
+                    raise asyncio.CancelledError("Agent paused")
+                else:
+                    logger.error(f"Error during streaming: {e}")
+                    raise
             # for chunk in stream:
             #     if self.is_paused:
             #         raise asyncio.CancelledError()
@@ -515,14 +548,25 @@ class StatusAgent(DrSaiAgent):
             )
         except asyncio.CancelledError:
             # If the task is cancelled, we respond with a message.
-            yield Response(
-                chat_message=TextMessage(
-                    content="The task was cancelled by the user.",
-                    source=self.name,
-                    metadata={"internal": "yes"},
-                ),
-                inner_messages=inner_messages,
-            )
+            # 如果是由于暂停导致的取消,使用更友好的消息
+            if self.is_paused:
+                yield Response(
+                    chat_message=TextMessage(
+                        content=f"The {self.name} was paused.",
+                        source=self.name,
+                        metadata={"internal": "yes"},
+                    ),
+                    inner_messages=inner_messages,
+                )
+            else:
+                yield Response(
+                    chat_message=TextMessage(
+                        content="The task was cancelled by the user.",
+                        source=self.name,
+                        metadata={"internal": "yes"},
+                    ),
+                    inner_messages=inner_messages,
+                )
         except asyncio.TimeoutError:
             # If the task times out, we respond with a message.
             yield Response(
