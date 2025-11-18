@@ -5,7 +5,7 @@ from typing import Any, List, Sequence, Mapping, Dict, cast
 from autogen_core import AgentId, DefaultTopicId, MessageContext, event, rpc
 
 from autogen_agentchat.base import ChatAgent, TaskResult, TerminationCondition, Response
-from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
+# from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
 from autogen_agentchat.messages import (
     BaseAgentEvent, 
     AgentEvent, 
@@ -71,6 +71,8 @@ class DrSaiBaseGroupChatManager(SequentialRoutedAgent, ABC):
         message_factory: DrSaiMessageFactory,
         emit_team_events: bool = False,
         db_manager: DatabaseManager|None = None,
+        thread_id: str|None = None,
+        user_id: str|None = None,
         long_task_topic_type: str|None = None,
     ):
         super().__init__(
@@ -110,6 +112,8 @@ class DrSaiBaseGroupChatManager(SequentialRoutedAgent, ABC):
         self._is_paused = False
 
         # for database
+        self._thread_id = thread_id
+        self._user_id = user_id
         self._db_manager = db_manager
 
         # 专门用于长任务通信的 topic

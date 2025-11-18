@@ -105,7 +105,8 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
         custom_message_types: List[type[BaseAgentEvent | BaseChatMessage]] | None = None,
         emit_team_events: bool = False,
         db_manager: DatabaseManager = None,
-        **kwargs: Any
+        thread_id: str = None,
+        user_id: str = None,
     ):
         if len(participants) == 0:
             raise ValueError("At least one participant is required.")
@@ -180,7 +181,12 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
         # Flag to track if the team events should be emitted.
         self._emit_team_events = emit_team_events
 
-        self._db_manager: DatabaseManager = db_manager
+        # For user's customization
+        self._thread_id: str|None = thread_id
+        self._user_id: str|None= user_id
+        self._db_manager: DatabaseManager|None = db_manager
+
+        # For cancellation
         self._cancellation_token: CancellationToken | None = None
 
     @property
@@ -208,7 +214,9 @@ class DrSaiBaseGroupChat(Team, ABC, ComponentBase[BaseModel]):
         message_factory: DrSaiMessageFactory,
         emit_team_events: bool,
         db_manager: DatabaseManager,
-        team_id: str,
+        thread_id: str,
+        user_id: str,
+        long_task_topic_type: str,
     ) -> Callable[[], SequentialRoutedAgent]: ...
 
     def _create_participant_factory(
