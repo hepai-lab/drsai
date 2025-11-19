@@ -25,10 +25,6 @@ import asyncio
 from dotenv import load_dotenv
 load_dotenv()
 
-RAGFLOW_URL = os.getenv('RAGFLOW_URL')
-RAGFLOW_TOKEN = os.getenv('RAGFLOW_TOKEN')
-
-
 # Create a factory function to ensure isolated Agent instances for concurrent access.
 async def create_agent() -> AssistantAgent:
 
@@ -47,25 +43,16 @@ async def create_agent() -> AssistantAgent:
             },)
 
     # Create a RAGFlow memory for your specific knowledge
-    # ragflow_memory = RAGFlowMemory(
-    #     RAGFlowMemoryConfig(
-    #         RAGFLOW_URL=RAGFLOW_URL,
-    #         RAGFLOW_TOKEN=RAGFLOW_TOKEN,
-    #         dataset_ids=["28e3ad8499b311f0a65d0242ac120006"],
-    #         keyword=True,
-    #     )
-    # )
-
-    # Create a memory for your specific konwledge
-    with open("examples/agent_groupchat/Your_specific_konwledge.md", "r") as f:
-        Your_specific_konwledge = f.read()
-    list_momery = ListMemory(name = "list_memory")
-    await list_momery.add(
-        content=MemoryContent(
-            content=Your_specific_konwledge,
-            mime_type=MemoryMimeType.TEXT,
+    RAGFLOW_URL = os.getenv('RAGFLOW_URL')
+    RAGFLOW_TOKEN = os.getenv('RAGFLOW_TOKEN')
+    ragflow_memory = RAGFlowMemory(
+        RAGFlowMemoryConfig(
+            RAGFLOW_URL=RAGFLOW_URL,
+            RAGFLOW_TOKEN=RAGFLOW_TOKEN,
+            dataset_ids=["28e3ad8499b311f0a65d0242ac120006"],
+            keyword=True,
         )
-        )
+    )
 
     # Create model context
     model_context = TokenLimitedChatCompletionContext(
@@ -80,7 +67,7 @@ async def create_agent() -> AssistantAgent:
         description="一个问答助手",
         model_client=model_client,
         model_client_stream=True,
-        memory=[list_momery],
+        memory=[ragflow_memory],
         model_context=model_context
     )
 

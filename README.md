@@ -56,27 +56,29 @@ setx "HEPAI_API_KEY" "your_api_key"
 # 注意 windows环境变量需要重启电脑才会生效
 ```
 
-#### 智能体案例测试
+**NOTE:** 所有OpenAI格式的模型都可以使用以上方式接入。其他格式的模型接入见：tutorials/components/ModelClient01.md
 
-以[examples/agent_groupchat/assistant_R1_oai.py](examples/agent_groupchat/assistant_R1_oai.py)为例，展示了如何基于OpenDrSai快速开发一个智能体系统。
+### 2.2.快速启动一个大模型智能体
+
+以[examples/agent_groupchat/assistant_base_R1_oai.py](examples/agent_groupchat/assistant_base_R1_oai.py)为例，展示了如何基于OpenDrSai快速启动一个智能体系统。
 
 ```shell
 conda activate drsai
-python examples/agent_groupchat/assistant_R1_oai.py
+python examples/agent_groupchat/assistant_base_R1_oai.py
 ```
 **NOTE**: 请根据自己的测试需要更改```if __name__ == "__main__":```中的智能体启动方式。
 
 **NOTE**: examples/agent_groupchat中还包括了其他智能体和多智能体系统的案例，包括MCP等工具接入、RAG接入、多智能体协作系统的设计、多任务执行的设计等。
 
-### 2.2.命令行启动OpenDrSai人机交互后端服务
+### 2.3.命令行启动OpenDrSai人机交互后端服务
 
 ```shell
 # pip install drsai_ui -U # 确保安装了drsai_ui
 
 cp .env.example .env # 复制.env.example文件为.env, 用于高能所部署统一认证
-drsai ui # 启动Magenti-UI人机交互后端和静态前端
+drsai ui # 启动Dr.Sai-UI人机交互后端和静态前端
 ```
-后端和静态前端默认启动在8081端口，连接2.1启动的R1_test智能体并在前端进行交互的视频如下：
+后端和静态前端默认启动在8081端口，```drsai --help```获取更多的启动参数，连接2.2启动的R1_test智能体并在前端进行交互的视频如下：
 
 <video width="80%" controls>
   <source src="assets/video/drsai_ui.mp4" type="video/mp4">
@@ -87,7 +89,35 @@ drsai ui # 启动Magenti-UI人机交互后端和静态前端
 **NOTE:**
 - DrSai-General 功能需要编译python执行沙盒和浏览器VNC的Docker镜像，请确保安装了docker环境。具体docker镜像及安装配置见[docker](docker/README.md)
 
-### 2.3.通过配置文件运行智能体/多智能体服务
+
+### 2.4.人机交互前端
+
+#### 配置npm环境
+
+安装node
+```shell
+# install nvm to install node
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+nvm install node # recommended node version ~ 22
+```
+
+安装前端依赖
+```shell
+cd your/path/to/drsai/frontend
+npm install -g gatsby-cli
+npm install --global yarn
+yarn install
+
+# *********NOTE：*********
+# cp .env.default .env.development or .env.production # 复制.env.default文件为.env.development或.env.production
+# 开发环境变量为frontend/.env.development
+# 生产环境变量为frontend/.env.production
+
+# yarn build # 打包前端静态资源
+yarn run dev # 启动前端开发环境
+```
+
+### 2.5.通过配置文件运行智能体/多智能体服务（可选的）
 
 ```shell
 # pip install drsai_ui -U # 确保安装了drsai_ui
@@ -117,31 +147,6 @@ myassistant:
 ```
 具体的配置项说明见[配置文件说明文档](docs/agent_factory.md)。在我们[AI平台](https://drsai.ihep.ac.cn)上，提供了丰富的智能体的基座模型、MCP/HEPAI Worker工具、RAG记忆插件；多种逻辑的智能体和多智能体框架；一些预设的智能体/多智能体工作模式供你选择。你可以在前后端选择适合你的智能体/多智能体框架和工具、知识库等，快速搭建自己的智能体/多智能体协作系统。通过配置快速构建智能体/多智能体系统详细的说明见：```docs/agent_factory.md```.
 
-### 2.4.人机交互前端
-
-#### 配置npm环境
-
-安装node
-```shell
-# install nvm to install node
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-nvm install node # recommended node version ~ 22
-```
-
-安装前端依赖
-```shell
-cd your/path/to/drsai/frontend
-npm install -g gatsby-cli
-npm install --global yarn
-yarn install
-
-# cp .env.default .env.development or .env.production # 复制.env.default文件为.env.development或.env.production
-# 开发环境变量为frontend/.env.development
-# 生产环境变量为frontend/.env.production
-
-# yarn build # 打包前端静态资源
-yarn run dev # 启动前端开发环境
-```
 
 ## 3.开发计划(TODO)
 
@@ -153,7 +158,7 @@ yarn run dev # 启动前端开发环境
 
 - [ ] 记忆层：开发基于提示词的进行长记忆压缩的ChatCompletionContext类
 
-- [ ] 知识库层：基于组件化开发兼容HepAI RAGFlow的知识库组件
+- [x] 知识库层：基于组件化开发兼容HepAI RAGFlow的知识库组件
 
 - [ ] 执行层: 将工具执行过程进行独立，支持长任务状态管理和执行
 
@@ -169,9 +174,9 @@ yarn run dev # 启动前端开发环境
 
 ### 3.2.多智能体系统开发
 
-- [ ] 基于长任务守护的多智能体协同架构
+- [x] 基于长任务守护的多智能体协同架构
 
-- [ ] 基于长任务守护的任务管理系统
+- [x] 基于长任务守护的任务管理系统
 
 - [ ] 智能体管理系统
 
@@ -187,11 +192,13 @@ yarn run dev # 启动前端开发环境
 
 - [ ] drsai后端的智能体实例在长时间不运行时自动pop, 节约资源。
 
-- [ ] 前端UI的任务管理系统展示交互
+- [x] 前端UI的任务管理系统展示交互
 
-- [ ] 前端UI的执行文件、log等信息的展示交互
+- [x] 前端UI的执行文件、log等信息的展示交互
 
 - [ ] 前端UI的长任务的展示交互
+
+- [ ] 登录系统
 
 ## 4.详细文档
 详细的教程见tutorials目录（正在开发中，有问题及时联系我们）：
