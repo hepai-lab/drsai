@@ -1208,6 +1208,8 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 tools=tools, 
                 cancellation_token=cancellation_token, 
                 db_manager=db_manager,
+                thread_id=self._thread_id,
+                user_id=self._user_id,
                 **self._user_params
                 ):
                 if isinstance(chunk, str):

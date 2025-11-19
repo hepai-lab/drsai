@@ -52,6 +52,8 @@ def create_agent() -> AssistantAgent:
         tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
         cancellation_token: CancellationToken,  # AutoGen cancellation token,
         db_manager: DatabaseManager,  # DrSai database manager,
+        thread_id: str,  # Thread ID
+        user_id: str,  # User ID
         **kwargs) -> Union[str, AsyncGenerator[str, None]]:
         """Address the messages and return the response."""
         yield "test_worker reply"
