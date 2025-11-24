@@ -13,6 +13,7 @@ import { AgentConfiguration } from "./config/agentConfigs";
 import { BESIIITask } from "./panels/types";
 
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
+const CHAT_INPUT_HEIGHT_PX = 78;
 
 interface RunViewProps {
   run: Run;
@@ -104,6 +105,27 @@ const RunView: React.FC<RunViewProps> = ({
 
   // Add this with other refs near the top of the component
   const buttonsContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollToBottom = (behavior: "auto" | "smooth" = "auto") => {
+    const container = threadContainerRef.current;
+    if (!container) return;
+
+    autoScrollLockedRef.current = false;
+    setAutoScrollLocked(false);
+
+    const scroll = () => {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior,
+      });
+    };
+
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(scroll);
+    } else {
+      scroll();
+    }
+  };
 
   // Agent configuration - 从 parent (chat.tsx) 接收
 
@@ -209,7 +231,7 @@ const RunView: React.FC<RunViewProps> = ({
     const handleScroll = () => {
       const distanceFromBottom =
         container.scrollHeight - container.scrollTop - container.clientHeight;
-      const isAtBottom = distanceFromBottom <= 40;
+      const isAtBottom = distanceFromBottom <= 48;
 
       if (!isAtBottom && !autoScrollLockedRef.current) {
         autoScrollLockedRef.current = true;
@@ -236,14 +258,22 @@ const RunView: React.FC<RunViewProps> = ({
 
     // Use a small delay to ensure the DOM has updated
     const timeout = setTimeout(() => {
-      const container = threadContainerRef.current;
-      if (container) {
-        container.scrollTop = container.scrollHeight;
-      }
+      scrollToBottom("auto");
     }, 100);
 
     return () => clearTimeout(timeout);
   }, [run.messages, run.status, autoScrollLocked]);
+
+  useEffect(() => {
+    autoScrollLockedRef.current = false;
+    setAutoScrollLocked(false);
+
+    const timeout = setTimeout(() => {
+      scrollToBottom("auto");
+    }, 100);
+
+    return () => clearTimeout(timeout);
+  }, [run.id]);
 
   // Effect to handle browser_address message (for VNC panel)
   useEffect(() => {
@@ -783,10 +813,7 @@ const RunView: React.FC<RunViewProps> = ({
   }, [run.status]);
 
   return (
-    <div
-      className="flex w-full gap-4 h-full overflow-y-auto scroll"
-      ref={threadContainerRef}
-    >
+    <div className="flex w-full gap-4 h-full">
       {/* Messages section */}
       <div
         className={`items-start relative flex flex-col h-full ${showPanel &&
@@ -799,7 +826,14 @@ const RunView: React.FC<RunViewProps> = ({
           } transition-all duration-300`}
       >
         {/* Thread Section - use flex-1 for height, but remove overflow-y-auto */}
-        <div className="w-full max-w-4xl mx-auto flex-1">
+        <div
+          ref={threadContainerRef}
+          className="w-full max-w-4xl mx-auto flex-1"
+          style={{
+            height: `calc(100% - ${CHAT_INPUT_HEIGHT_PX}px)`,
+            overflowY: "auto",
+          }}
+        >
           {localMessages.length > 0 &&
             localMessages.map((msg: Message, idx: number) => {
               const isCurrentMessagePlan =
@@ -907,6 +941,7 @@ const RunView: React.FC<RunViewProps> = ({
               accepted = false,
               plan?: IPlan
             ) => {
+              scrollToBottom("smooth");
               if (
                 run.status === "awaiting_input" ||
                 run.status === "paused"
