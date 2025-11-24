@@ -133,6 +133,14 @@ export interface TaskResult {
   stop_reason?: string;
 }
 
+export interface RunLogEntry {
+  content: string;
+  source?: string;
+  send_time_stamp?: number;
+  send_level?: string;
+  content_type?: string;
+}
+
 export type ModelTypes =
   | "OpenAIChatCompletionClient"
   | "AzureOpenAIChatCompletionClient";
@@ -307,7 +315,7 @@ export interface Run {
   status: RunStatus;
   input_request?: InputRequest;
   task: AgentMessageConfig;
-  logs?: string[];
+  logs?: RunLogEntry[];
   team_result: TeamResult | null;
   messages: Message[]; // Change to Message[]
   error_message?: string;

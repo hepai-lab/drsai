@@ -2,6 +2,7 @@ import React from "react";
 import VNCPanel from "./VNCPanel";
 import BESIIIPanel from "./BESIIIPanel";
 import { AgentPanelConfig } from "../config/agentConfigs";
+import { RunLogEntry } from "../../../types/datamodel";
 
 /**
  * AgentPanel - 通用 Panel 容器组件
@@ -34,7 +35,7 @@ interface AgentPanelProps {
 
     // BESIII Panel 需要的 props
     besiiiProps?: {
-        logs?: string[];
+        logs?: RunLogEntry[];
         tasks?: any[];
         terminalOutput?: string;
         onTaskClick?: (taskId: string) => void;

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Globe2 } from "lucide-react";
-import { Run, Message } from "../../types/datamodel";
+import { Run, Message, RunLogEntry } from "../../types/datamodel";
 import { RenderMessage, messageUtils } from "./rendermessage";
 import { getStatusIcon } from "../statusicon";
 import { IPlanStep, IPlan } from "../../types/plan";
@@ -72,6 +72,8 @@ const RunView: React.FC<RunViewProps> = ({
   enable_upload = false,
 }) => {
   const threadContainerRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollLockedRef = useRef(false);
+  const [autoScrollLocked, setAutoScrollLocked] = useState(false);
   const [novncPort, setNovncPort] = useState<string | undefined>();
   const [detailViewerExpanded, setDetailViewerExpanded] = useState(false);
   const [detailViewerTab, setDetailViewerTab] = useState<
@@ -196,21 +198,52 @@ const RunView: React.FC<RunViewProps> = ({
   const [besiiiTasks, setBesiiiTasks] = useState<BESIIITask[]>(() => {
     return convertTaskToBESIIITask(run.task);
   });
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<RunLogEntry[]>([]);
   const [terminalOutput, setTerminalOutput] = useState<string>('[INFO] Starting BESIII analysis workflow...\n[INFO] Loading detector configuration...\n[SUCCESS] Detector configuration loaded\n[INFO] Processing event data...');
+
+  // Track manual scrolling so users can inspect earlier messages without being forced to bottom
+  useEffect(() => {
+    const container = threadContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      const isAtBottom = distanceFromBottom <= 40;
+
+      if (!isAtBottom && !autoScrollLockedRef.current) {
+        autoScrollLockedRef.current = true;
+        setAutoScrollLocked(true);
+      } else if (isAtBottom && autoScrollLockedRef.current) {
+        autoScrollLockedRef.current = false;
+        setAutoScrollLocked(false);
+      }
+    };
+
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, []);
 
   // Combine scroll behavior when messages or status change
   useEffect(() => {
-    if (run.messages.length > 0 && threadContainerRef.current) {
-      // Use a small delay to ensure the DOM has updated
-      setTimeout(() => {
-        const container = threadContainerRef.current;
-        if (container) {
-          container.scrollTop = container.scrollHeight;
-        }
-      }, 100);
+    if (
+      run.messages.length === 0 ||
+      !threadContainerRef.current ||
+      autoScrollLockedRef.current
+    ) {
+      return;
     }
-  }, [run.messages, run.status]);
+
+    // Use a small delay to ensure the DOM has updated
+    const timeout = setTimeout(() => {
+      const container = threadContainerRef.current;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }, 100);
+
+    return () => clearTimeout(timeout);
+  }, [run.messages, run.status, autoScrollLocked]);
 
   // Effect to handle browser_address message (for VNC panel)
   useEffect(() => {
@@ -269,7 +302,10 @@ const RunView: React.FC<RunViewProps> = ({
 
     // 从 run.logs 更新日志数据
     if (run.logs && Array.isArray(run.logs)) {
-      setLogs(run.logs);
+      const normalizedLogs = (run.logs as Array<RunLogEntry | string>).map((entry) =>
+        typeof entry === "string" ? { content: entry } : entry
+      );
+      setLogs(normalizedLogs);
     }
   }, [run.logs, agentConfig.panel.type]);
 

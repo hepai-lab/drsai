@@ -114,42 +114,102 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
         </div>
     );
 
+    const formatTimestamp = (timestamp?: number | string) => {
+        if (timestamp === undefined || timestamp === null) {
+            return "--";
+        }
+        const numericValue =
+            typeof timestamp === "number" ? timestamp : Number(timestamp);
+        if (!Number.isFinite(numericValue)) {
+            return "--";
+        }
+        const millis = numericValue > 1e12 ? numericValue : numericValue * 1000;
+        return new Date(millis).toLocaleString();
+    };
+
+    const getLevelBadgeClasses = (level: string) => {
+        switch (level) {
+            case "ERROR":
+            case "FATAL":
+                return "bg-red-500/20 text-red-300 border-red-500/40";
+            case "WARNING":
+                return "bg-amber-500/20 text-amber-300 border-amber-500/40";
+            case "DEBUG":
+            case "TRACE":
+                return "bg-cyan-500/20 text-cyan-300 border-cyan-500/40";
+            default:
+                return "bg-emerald-500/20 text-emerald-200 border-emerald-500/40";
+        }
+    };
+
+    const renderLogMeta = (logLevel: string, source?: string, contentType?: string) => (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+            <span
+                className={`px-2 py-0.5 rounded-full border font-semibold ${getLevelBadgeClasses(
+                    logLevel
+                )}`}
+            >
+                {logLevel}
+            </span>
+            <span className="text-slate-400">{source || "agent"}</span>
+            {contentType && (
+                <span className="px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-200 border border-purple-500/30">
+                    {contentType}
+                </span>
+            )}
+        </div>
+    );
+
     // 渲染全局任务执行标签页
     const renderLogs = () => {
         if (!logs || logs.length === 0) {
             return (
-                <div className="flex items-center justify-center h-full text-purple-500 text-sm">
+                <div className="flex items-center justify-center h-full text-slate-300 text-sm bg-gray-950 rounded-lg border border-gray-900">
                     <div className="text-center">
-                        <div className="text-purple-400 mb-2">📋</div>
+                        <div className="text-slate-500 mb-2">📋</div>
                         <div>暂无日志</div>
                     </div>
                 </div>
             );
         }
 
-        const logContent = logs.join('');
-
         return (
             <div className="h-full overflow-hidden flex flex-col">
                 <div
                     ref={logContainerRef}
-                    className="flex-1 overflow-y-auto bg-purple-50 rounded-lg border border-purple-200 shadow-sm"
+                    className="flex-1 overflow-y-auto bg-gray-950 rounded-lg border border-gray-900 shadow-inner"
                     style={{
                         scrollbarWidth: 'thin',
-                        scrollbarColor: '#c084fc #e9d5ff'
+                        scrollbarColor: '#475569 #0f172a'
                     }}
                 >
-                    <div className="p-4">
-                        <pre className="whitespace-pre-wrap font-mono text-sm text-purple-900 leading-relaxed select-text">
-                            <code className="block">
-                                {logContent}
-                            </code>
-                        </pre>
+                    <div className="p-4 flex flex-col gap-3 text-slate-100">
+                        {logs.map((log, index) => {
+                            const level = (log.send_level || "INFO").toUpperCase();
+                            return (
+                                <div
+                                    key={`${log.send_time_stamp ?? index}-${index}`}
+                                    className="rounded-lg bg-gray-900 border border-gray-800 shadow-sm"
+                                >
+                                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-800 bg-gray-900/80 px-4 py-2">
+                                        <span className="font-mono text-[12px] text-slate-400">
+                                            {formatTimestamp(log.send_time_stamp)}
+                                        </span>
+                                        {renderLogMeta(level, log.source, log.content_type)}
+                                    </div>
+                                    <div className="px-4 py-3">
+                                        <pre className="whitespace-pre-wrap font-mono text-sm text-slate-100 leading-relaxed select-text">
+                                            {log.content}
+                                        </pre>
+                                    </div>
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
-                <div className="mt-2 flex items-center justify-between text-xs text-purple-600 px-1">
+                <div className="mt-2 flex items-center justify-between text-xs text-slate-400 px-1">
                     <span>共 {logs.length} 条日志条目</span>
-                    <span className="text-purple-500">自动滚动到底部</span>
+                    <span className="text-slate-500">自动滚动到底部</span>
                 </div>
             </div>
         );

@@ -2,6 +2,7 @@ import * as React from "react";
 import { message as antdMessage } from "antd";
 import {
   Run,
+  RunLogEntry,
   WebSocketMessage,
   AgentMessageConfig,
   RunStatus as BaseRunStatus,
@@ -190,10 +191,39 @@ export const useChatWebSocket = ({
             const logData = wsMessage.data as any;
             // 提取 content 字段并追加到日志数组
             if (logData.content && typeof logData.content === "string") {
-              const logContent = logData.content;
+              const timestamp =
+                typeof logData.send_time_stamp === "number"
+                  ? logData.send_time_stamp
+                  : typeof logData.send_time_stamp === "string"
+                  ? Number(logData.send_time_stamp)
+                  : undefined;
+              const level =
+                typeof logData.send_level === "string"
+                  ? logData.send_level
+                  : typeof logData.send_level?.value === "string"
+                  ? logData.send_level.value
+                  : undefined;
+              const logEntry: RunLogEntry = {
+                content: logData.content,
+                source: typeof logData.source === "string" ? logData.source : undefined,
+                send_time_stamp:
+                  typeof timestamp === "number" && Number.isFinite(timestamp)
+                    ? timestamp
+                    : undefined,
+                send_level: level,
+                content_type:
+                  typeof logData.content_type === "string"
+                    ? logData.content_type
+                    : undefined,
+              };
               // 确保 logs 数组存在，如果不存在则初始化为空数组
-              const currentLogs = Array.isArray(current.logs) ? current.logs : [];
-              const updatedLogs = [...currentLogs, logContent];
+              const currentLogsRaw = Array.isArray(current.logs)
+                ? (current.logs as Array<RunLogEntry | string>)
+                : [];
+              const normalizedLogs: RunLogEntry[] = currentLogsRaw.map((log) =>
+                typeof log === "string" ? { content: log } : log
+              );
+              const updatedLogs = [...normalizedLogs, logEntry];
               updatedRun = {
                 ...current,
                 logs: updatedLogs,
