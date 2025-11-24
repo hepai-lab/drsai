@@ -13,7 +13,7 @@ import { AgentConfiguration } from "./config/agentConfigs";
 import { BESIIITask } from "./panels/types";
 
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
-const CHAT_INPUT_HEIGHT_PX = 78;
+const CHAT_INPUT_BASE_HEIGHT_PX = 78;
 
 interface RunViewProps {
   run: Run;
@@ -105,6 +105,31 @@ const RunView: React.FC<RunViewProps> = ({
 
   // Add this with other refs near the top of the component
   const buttonsContainerRef = useRef<HTMLDivElement | null>(null);
+  const [chatInputHeight, setChatInputHeight] = useState<number>(
+    CHAT_INPUT_BASE_HEIGHT_PX
+  );
+
+  useEffect(() => {
+    const container = buttonsContainerRef.current;
+    if (!container) return;
+
+    const updateHeight = () => {
+      const nextHeight = container.offsetHeight || CHAT_INPUT_BASE_HEIGHT_PX;
+      setChatInputHeight(nextHeight);
+    };
+
+    updateHeight();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateHeight);
+      return () => window.removeEventListener("resize", updateHeight);
+    }
+
+    const observer = new ResizeObserver(() => updateHeight());
+    observer.observe(container);
+
+    return () => observer.disconnect();
+  }, []);
 
   const scrollToBottom = (behavior: "auto" | "smooth" = "auto") => {
     const container = threadContainerRef.current;
@@ -830,7 +855,7 @@ const RunView: React.FC<RunViewProps> = ({
           ref={threadContainerRef}
           className="w-full max-w-4xl mx-auto flex-1"
           style={{
-            height: `calc(100% - ${CHAT_INPUT_HEIGHT_PX}px)`,
+            height: `calc(100% - ${chatInputHeight}px)`,
             overflowY: "auto",
           }}
         >
