@@ -238,7 +238,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 raise ValueError("Tools cannot be used with a workbench.")
             self._workbench = workbench
         else:
-            self._workbench = DrsaiStaticWorkbench(self._tools)
+            self._workbench = StaticWorkbench(self._tools)
 
         if model_context is not None:
             self._model_context = model_context

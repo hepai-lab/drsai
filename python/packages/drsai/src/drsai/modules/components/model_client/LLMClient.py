@@ -15,10 +15,11 @@ from typing import (
     Union,
     cast,
 )
-# from typing_extensions import Required
+from typing_extensions import Required
 from pydantic import BaseModel
 
 from openai.types.chat import ChatCompletionChunk
+from tiktoken.model import MODEL_TO_ENCODING
 
 from autogen_core import (
     EVENT_LOGGER_NAME,
@@ -44,11 +45,16 @@ from autogen_core.logging import LLMCallEvent, LLMStreamEndEvent, LLMStreamStart
 from autogen_core.tools import Tool, ToolSchema
 
 from autogen_ext.models.openai import OpenAIChatCompletionClient
+from autogen_ext.models.openai._model_info import (
+    _MODEL_TOKEN_LIMITS,
+)
 from autogen_ext.models.openai._openai_client import (
     convert_tools, 
     _add_usage,
     to_oai_type,
-    create_kwargs
+    create_kwargs,
+    count_tokens_openai,
+    _model_info,
     )
 from autogen_ext.models.openai.config import (
     OpenAIClientConfiguration, 
@@ -56,6 +62,9 @@ from autogen_ext.models.openai.config import (
 
 logger = logging.getLogger(EVENT_LOGGER_NAME)
 
+
+class HepAIModelInfo(ModelInfo):
+    token_model: Required[str]
 
 # See OpenAI docs for explanation of these parameters
 class HepAIClientConfiguration(OpenAIClientConfiguration, total=False):
@@ -80,13 +89,14 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             kwargs["base_url"] = "https://aiapi.ihep.ac.cn/apiv2"
 
         if "model_info" not in kwargs:
-            model_info: Optional[ModelInfo] ={
+            model_info: Optional[HepAIModelInfo] ={
                 "vision": False,
                 "function_calling": False,  # You must sure that the model can handle function calling
                 "json_output": False,
                 "structured_output": False,
                 "family": ModelFamily.UNKNOWN,
                 "multiple_system_messages":False,
+                "token_model": "gpt-4o-2024-11-20", # Default model for token counting
             }
             kwargs["model_info"] = model_info
         r1_series = [
@@ -458,3 +468,33 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
 
         # Yield the CreateResult.
         yield result
+    
+    def count_tokens(self, messages: Sequence[LLMMessage], *, tools: Sequence[Tool | ToolSchema] = []) -> int:
+
+    
+        model_name = self._model_info.get("token_model")
+        if model_name is None:
+            raise ValueError(f"Maybe you can provide a token_model with in {_MODEL_TOKEN_LIMITS} when provide the model_info")
+
+        return count_tokens_openai(
+            messages,
+            model_name,
+            add_name_prefixes=self._add_name_prefixes,
+            tools=tools,
+            model_family=self._model_info["family"],
+        )
+
+    def remaining_tokens(
+            self, 
+            messages: Sequence[LLMMessage], 
+            *, 
+            tools: Sequence[Tool | ToolSchema] = [],
+            token_limit: int | None = None,
+            ) -> int:
+        model_name = self._model_info.get("token_model")
+        if model_name is None:
+            raise ValueError(f"Maybe you can provide a token_model with in {_MODEL_TOKEN_LIMITS} when provide the model_info")
+        
+        if token_limit is None:
+            token_limit = _model_info.get_token_limit(model_name)
+        return token_limit - self.count_tokens(messages, tools=tools)

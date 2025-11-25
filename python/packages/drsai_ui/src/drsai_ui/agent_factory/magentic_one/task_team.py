@@ -31,6 +31,7 @@ from ...ui_backend.types import RunPaths
 from ...ui_backend.backend.datamodel.types import EnvironmentVariable
 from ...ui_backend.backend.utils.utils import decompress_state
 from ...agent_factory.remote_agent import StatusAgent
+from ...agent_factory.local_agents.ragflow_agent import RAGFlowAgent
 
 import json, os
 import aiofiles
@@ -440,17 +441,16 @@ async def create_magentic_round_team(
         # )
     
     elif agent_mode == "drsai":
-        # raise NotImplementedError("DrSai mode not implemented yet")
-        agent = DrSaiAgent(
-            name='drsai',
-            system_message="A helpfull assistant.",
-            description="A helpfull assistant.",
-            model_client=get_model_client(model_client_config = model_config)
+
+        agent = RAGFlowAgent(
+            name=agent_config.get("name", "drsai"),
+            system_message=agent_config.get("system_message","A helpfull assistant."),
+            description=agent_config.get("description","A helpfull assistant."),
+            model_client=get_model_client(model_client_config = model_config),
+            thread_id = chat_id,
+            user_id=user_id,
+            agent_config = agent_config,
         )
-        
-    elif agent_mode == "custom":
-        agent_factory: Callable[[], Union[ChatAgent, Team]] = await a_load_agent_factory_from_config(agent_config, mode = "ui")
-        agent: ChatAgent|Team = await agent_factory()
 
     elif agent_mode == "remote" or agent_mode == "ddf":
         agent_config["api_key"] = agent_config.get("api_key", api_key)
@@ -461,6 +461,7 @@ async def create_magentic_round_team(
             chat_id=chat_id,
             run_info=run_info
             )
+        
     elif agent_mode == "pip_install":
         module = importlib.import_module(agent_config["provider"])
         agent_factory: Callable[[], Union[ChatAgent, Team]] = await module.a_load_agent_factory_from_installed(
@@ -477,9 +478,12 @@ async def create_magentic_round_team(
         )
         agent: ChatAgent|Team = await agent_factory()
 
-    else:
-        agent_factory: Callable[[], Union[ChatAgent, Team]] = await a_load_agent_factory_from_config(model_configs, mode = "ui")
+    elif agent_mode == "custom":
+        agent_factory: Callable[[], Union[ChatAgent, Team]] = await a_load_agent_factory_from_config(agent_config, mode = "ui")
         agent: ChatAgent|Team = await agent_factory()
+
+    else:
+        raise ValueError(f"Invalid agent mode: {agent_mode}")
 
     if isinstance(agent, ChatAgent):
         user_proxy_input_func = make_agentchat_input_func(input_func)
@@ -512,19 +516,3 @@ async def create_magentic_round_team(
             await team.load_state(state)
 
     return team, -1, -1
-
-
-async def create_magentic_general_team(
-    team_config: Union[str, Path, Dict[str, Any], ComponentModel],
-    state: Optional[Mapping[str, Any] | str] = None,
-    input_func: Optional[InputFuncType] = None,
-    env_vars: Optional[List[EnvironmentVariable]] = None,
-    settings_config: dict[str, Any] = {},
-    *,
-    paths: RunPaths,
-    config: dict[str, Any],
-    load_from_config: bool = False,
-    inside_docker: bool = True,
-) -> tuple[Team, int, int]:
-    '''通过本地PIP安装的智能体/多智能体系统进行通用加载'''
-    ...

@@ -22,15 +22,6 @@
 
 ### 2.1.安装OpenDrSai
 
-#### 源码安装(推荐)
-```shell
-conda create -n drsai python=>3.11
-conda activate drsai
-git clone https://code.ihep.ac.cn/hepai/drsai drsai
-
-cd your/path/to/drsai/python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
-cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # for DrSai-UI  human-computer interaction frontend
-```
 #### pip 安装
 
 ```shell
@@ -38,6 +29,16 @@ conda create -n drsai python=>3.11
 conda activate drsai
 pip install drsai drsai_ui -U
 # NOTE: if you have installed hepai<=1.40.0, please keep opneai<= 1.98.0
+```
+
+#### 源码安装
+```shell
+conda create -n drsai python=>3.11
+conda activate drsai
+git clone https://code.ihep.ac.cn/hepai/drsai drsai
+
+cd your/path/to/drsai/python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
+cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # for DrSai-UI  human-computer interaction frontend
 ```
 
 #### 配置HepAI平台的API访问密钥
@@ -152,55 +153,79 @@ myassistant:
 
 ### 3.1.智能体组件开发
 
-- [ ] 模型层：支持Anthropic Claude、Ollama等其他格式的模型的接入
+- [ ] 模型层：正在开发支持Anthropic Claude、Ollama等其他格式的模型的接入
 
-- [ ] 感知层：默认支持可UTF-8编码的文本附件的解析和聊天上下文注入。
+~~-支持HepAI平台的模型接入，具体见examples/components/model_client01.py~~
 
-- [ ] 记忆层：开发基于提示词的进行长记忆压缩的ChatCompletionContext类
+- [ ] 感知层：正在开发默认支持可UTF-8编码的文本附件的解析和聊天上下文注入。
 
-- [x] 知识库层：基于组件化开发兼容HepAI RAGFlow的知识库组件
+- [ ] 记忆层：正在进一步开发DrSaiChatCompletionContext中长期记忆通过与RAGFlow进行关联并进行长期记忆的查询
 
-- [ ] 执行层: 将工具执行过程进行独立，支持长任务状态管理和执行
+~~-开发基于提示词的进行长记忆压缩的ChatCompletionContext类，具体见examples/components/model_context01.py~~
 
-- [ ] 状态管理系统：进一步支持长任务的状态管理
+- [ ] 知识库层：正在开发兼容Llama_index的知识库组件
 
-- [ ] 文件管理系统：开发文件缓存和注入系统
+~~-基于组件化开发兼容HepAI RAGFlow的知识库组件，具体见examples/components/memory_ragflow01.py~~-
 
-- [ ] 智能体配置管理系统：进一步优化智能体配置和基于组件化和快照回复的智能体配置管理
+- [ ] 执行层: 正在进一步开发针对MCP工具调用，开发可进行流式输出的调用方式，并与前端联动。
 
-- [ ] 智能体学习系统: 开发智能体学习系统，在智能体回复结束后异步记录智能体根据聊天上下文任务回复的内容和策略，存入智能体知识库
+- [ ] 状态管理系统：暂无进一步开发计划，欢迎提出需求。
 
-- [ ] 组件调度器: 开发支持自我规划和多工具调用的组件调度器，作为通用的规划执行智能体
+~~进一步支持长任务的状态管理，但是用户进一步开发智能体工具端、智能体长任务查询逻辑等，具体见python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py的_process_long_task_query函数~~
 
-### 3.2.多智能体系统开发
+- [ ] 文件管理系统：正在进一步开发文件缓存和注入系统
 
-- [x] 基于长任务守护的多智能体协同架构
+- [x] 智能体配置管理系统：暂无开发计划，欢迎提出需求。
 
-- [x] 基于长任务守护的任务管理系统
+~~进一步优化智能体配置和基于组件化和快照回复的智能体配置管理，具体见python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py的_to_config、_from_config与save_state、load_state函数。~~
 
-- [ ] 智能体管理系统
+- [ ] 智能体学习系统: 正在进一步开发智能体学习系统，在智能体回复结束后异步记录智能体根据聊天上下文任务回复的内容和策略，存入智能体知识库
 
-- [ ] 基于长任务守护的多智能体状态管理系统
+- [x] 智能体的事件与通知：暂无进一步开发计划，欢迎提出需求。
 
-- [ ] 多智能体系统的学习反思系统
+~~构建智能体与Dr.Sai UI的前端前后消息联动：ModelClientStreamingChunkEvent输出流式事件；AgentLogEvent输出智能体对外展示的log事件；TaskEvent发送后端任务执行进度事件，具体见examples/agent_groupchat/assistant_custom_log_event-interaction.py~~
+
+### 3.2.专业智能体
+
+- [ ] 长任务处理智能体: 开发支持自我规划和多工具调用的组件调度器，作为通用的规划执行智能体
+
+### 3.3.多智能体系统开发
+
+- [ ] 进一步开发基于长任务守护的多智能体协同架构案例，保证长任务可在后台持续运行，人机可随时交互
+
+~~可进行长任务查询的智能体多智能体系统相互协同的长任务管理系统，具体案例见：examples/agent_groupchat/groupchat_task_LongTask~~
+
+- [ ] 多智能体系统层面的学习反思系统
 
 - [ ] 基于任务分发机制多智能体系统协同调度器
+
+- [ ] 可进行多远程智能体协同的多智能体系统案例
  
-### 3.3.人机交互前后端开发
+### 3.4.人机交互前后端开发
 
 - [ ] 后端数据库的自动生成id设计为UUID，以代替现在使用整数id进行自动排序的设计
 
 - [ ] drsai后端的智能体实例在长时间不运行时自动pop, 节约资源。
 
-- [x] 前端UI的任务管理系统展示交互
+~~- [x] 前端UI的任务管理系统展示交互~~
 
-- [x] 前端UI的执行文件、log等信息的展示交互
+~~- [x] 前端UI的执行文件、log等信息的展示交互~~
 
 - [ ] 前端UI的长任务的展示交互
 
-- [ ] 登录系统
+- [ ] 默认登录系统开发
+
+- [ ] drsai hub展示与缓存机制
+
+- [ ] 非文本文件和大文件的上传与智能体接收机制开发，计划通过文件系统进行前后端大文件交互
+
+- [ ] 开放可链接RAGFlow知识库和MCP远程函数的智能体调用（尽快）
+
 
 ## 4.详细文档
+
+培训教程可见：[OpenDrSai-tutorials-v3.pdf](tutorials/OpenDrSai-tutorials-v3.pdf)
+
 详细的教程见tutorials目录（正在开发中，有问题及时联系我们）：
 ```
 tutorials/base01-hepai.md：HepAI平台的模型配置和使用

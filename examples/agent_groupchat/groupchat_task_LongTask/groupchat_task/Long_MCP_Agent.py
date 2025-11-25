@@ -303,6 +303,7 @@ async def create_agent() -> LongMCPAgent:
                                 url="http://0.0.0.0:42608/sse",
                                 env=None)
                         ) 
+    workbench = DrsaiStaticWorkbench(tools = tools)
     assistant_agent = LongMCPAgent(
         name="assistant_agent",
         system_message="""你是一个可以进行web检索的智能体""",
@@ -310,7 +311,7 @@ async def create_agent() -> LongMCPAgent:
         model_client=model_client,
         model_client_stream=True,
         model_context=BufferedChatCompletionContext(buffer_size = 20), # 限制最多20条消息
-        tools = tools,
+        workbench=workbench,
     )
 
     return assistant_agent

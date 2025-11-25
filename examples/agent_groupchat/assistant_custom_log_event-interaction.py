@@ -91,6 +91,11 @@ class TaskAgent(AssistantAgent):
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
         """
         Process the incoming messages with the assistant agent and yield events/responses as they happen.
+        
+        There are three types of agent events to access drsai ui frontend:
+        ModelClientStreamingChunkEvent - send the model client streaming chunk event to the frontend
+        TaskEvent: send the task event to the frontend within the task manager
+        AgentLogEvent: send the agent log event to the frontend
         """
 
         # monitor the pause event
@@ -171,6 +176,12 @@ class TaskAgent(AssistantAgent):
                 messages=messages,
             )
 
+            yield AgentLogEvent(
+                    source=self.name,
+                    content_type = "log",
+                    content="Adding the memory to the model context",
+                )
+            
             # STEP 2: Update model context with any relevant memory
             for event_msg in await self._update_model_context_with_memory(
                 memory=memory,
@@ -349,8 +360,8 @@ if __name__ == "__main__":
             # 后端服务配置
             port = 42816, 
             no_register=False,
-            enable_openwebui_pipeline=True, 
-            pipelines_dir="/home/xiongdb/drsai/examples/agent_groupchat/assistant_ragflow/pipelines/",
+            # enable_openwebui_pipeline=True, 
+            # pipelines_dir="/home/xiongdb/drsai/examples/agent_groupchat/assistant_ragflow/pipelines/",
             history_mode = "backend",
             # use_api_key_mode = "backend",
         )

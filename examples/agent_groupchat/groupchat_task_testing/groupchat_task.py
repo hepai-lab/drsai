@@ -1,4 +1,4 @@
-from drsai.modules.components.model_clients.LLMClient import HepAIChatCompletionClient
+from drsai.modules.components.model_client.LLMClient import HepAIChatCompletionClient
 from drsai.modules.components.task_manager.base_task_system import Task, TaskStatus
 from drsai.modules.managers.database.db_manager import DatabaseManager
 from drsai.modules.groupchat import DrSaiBaseGroupChatRunner, DrSaiBaseGroupChatRunnerConfig

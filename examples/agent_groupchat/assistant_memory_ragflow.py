@@ -40,6 +40,7 @@ async def create_agent() -> AssistantAgent:
                 "structured_output": False,
                 "family": ModelFamily.GPT_41,
                 "multiple_system_messages":True,
+                "token_model": "gpt-4o-2024-11-20", # Default model for token counting
             },)
 
     # Create a RAGFlow memory for your specific knowledge

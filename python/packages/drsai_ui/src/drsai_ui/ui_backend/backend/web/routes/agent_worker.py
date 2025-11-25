@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from hepai import HepAI
 from hepai import HRModel
 from hepai.components.haiddf.worker._related_class import WorkerInfo
-from ...datamodel.db import UserAgents
+from ...datamodel.db import UserAgents, UserDDFAgents
 
 
 from ..deps import get_db
@@ -22,6 +22,11 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), db=Depe
     获取后端的mode种类设置
     '''
     try:
+        # TODO: think the caching mechanism
+        # response = db.get(UserDDFAgents, filters={"user_id": user_id})
+        # if response.status and response.data:
+        #     user_ddf_agents:UserDDFAgents = response.data[0] 
+
         # Extract API key from Authorization header (Bearer format)
         if not authorization.startswith("Bearer "):
             raise HTTPException(status_code=401, detail="Invalid authorization header format")
@@ -62,7 +67,8 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), db=Depe
         return {"status": True, "data": agents}
     
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        # raise HTTPException(status_code=500, detail=str(e)) from e
+        return {"status": True, "data": []}
 
 class RemoteAgentTestRequest(BaseModel):
     user_id: str

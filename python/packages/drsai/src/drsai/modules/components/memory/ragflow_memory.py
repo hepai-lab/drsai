@@ -1,7 +1,7 @@
 import requests
 from typing import Any
 import httpx
-
+import os
 
 from pydantic import BaseModel
 from typing import List, Dict, Any
@@ -265,31 +265,179 @@ class RAGFlowMemoryManager:
     """
     def __init__(
             self,
-            base_url: str,
-            api_key: str
+            rag_flow_url: str,
+            rag_flow_token: str
     ):
-        self.base_url = base_url
-        self.api_key = api_key
+        self.base_url = rag_flow_url
+        self.api_key = rag_flow_token
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
 
-    def list_datasets(self) -> list[dict[str, Any]]:
+    async def list_datasets(self) -> list[dict[str, Any]]:
         try:
-            response = requests.get(f"{self.base_url}/api/v1/datasets", headers=self.headers)
-            return response.json()["data"]
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"{self.base_url}/api/v1/datasets", headers=self.headers)
+                return response.json()["data"]
         except:
             return []
     
-    def list_documents(self, dataset_id: str) -> list[dict[str, Any]]:
+    async def list_documents(self, dataset_id: str) -> list[dict[str, Any]]:
         try:
-            response = requests.get(f"{self.base_url}/api/v1/datasets/{dataset_id}/documents", headers=self.headers)
-            return response.json()["data"]
+            async with httpx.AsyncClient() as client:
+                response = await client.get(f"{self.base_url}/api/v1/datasets/{dataset_id}/documents", headers=self.headers)
+                return response.json()["data"]
         except:
             return []
     
-    def retrieve_chunks_by_content(
+    async def add_files_to_dataset(
+            self,
+            dataset_id: str,
+            files_path: str|List[str],
+            ) -> dict[str, Any]:
+        """
+        Add content to dataset.
+        
+        Args:
+            dataset_id: The ID of the dataset to which the documents will be uploaded.
+            files_path: Path to the file(s) to upload. Can be a single path (str) or list of paths (List[str]).
+            
+        Returns:
+            Response from the API.
+        """
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents"
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}"
+        }
+        
+        # Convert single file path to list
+        if isinstance(files_path, str):
+            files_path = [files_path]
+            
+        # Prepare files for upload
+        files = []
+        opened_files = []
+        try:
+            # Open all files
+            for file_path in files_path:
+                abs_file_path = os.path.abspath(file_path)
+                file_handle = open(abs_file_path, 'rb')
+                opened_files.append(file_handle)
+                files.append(('file', (os.path.basename(abs_file_path), file_handle, 'application/octet-stream')))
+            
+            # Upload all files in a single request
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=headers, files=files)
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            print(f"Error uploading file(s) to dataset: {str(e)}")
+            return {"error": str(e)}
+        finally:
+            # Close all opened files
+            for file_handle in opened_files:
+                try:
+                    file_handle.close()
+                except:
+                    pass
+    
+    async def parse_files(self, dataset_id: str, document_ids: List[str]):
+        """
+        Parse documents in a specified dataset.
+        
+        Args:
+            dataset_id: The dataset ID.
+            document_ids: The IDs of the documents to parse.
+            
+        Returns:
+            Response from the API.
+        """
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/chunks"
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url, 
+                    headers=self.headers, 
+                    json={"document_ids": document_ids}
+                )
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            print(f"Error parsing files: {str(e)}")
+            return {"error": str(e)}
+    
+    async def add_files_to_dataset_and_parse(
+            self,
+            dataset_id: str,
+            files_path: str|List[str],
+            ) -> dict[str, Any]:
+        """
+        add files to dataset and parse
+        Args:
+            dataset_id: The ID of the dataset to which the documents will be uploaded.
+            files_path: Path to the file(s) to upload. Can be a single path (str) or list of paths (List[str]).
+            
+        Returns:
+            Response from the API.
+        """
+        result = await self.add_files_to_dataset(dataset_id, files_path)
+        if result["code"] != 0:
+            raise result["message"]
+        document_ids = [datai["id"] for datai in result["data"]]
+        return await self.parse_files(dataset_id, document_ids)
+    
+
+    async def add_chunks_to_dataset(
+            self,
+            dataset_id: str,
+            document_id: str,
+            content: str,
+            important_keywords: List[str] = None,
+            questions: List[str] = None
+            ) -> dict[str, Any]:
+        """
+        Adds a chunk to a specified document in a specified dataset.
+        
+        Args:
+            dataset_id: The associated dataset ID.
+            document_id: The associated document ID.
+            content: The text content of the chunk.
+            important_keywords: The key terms or phrases to tag with the chunk.
+            questions: If there is a given question, the embedded chunks will be based on them.
+            
+        Returns:
+            Response from the API.
+        """
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents/{document_id}/chunks"
+        
+        # Prepare request body
+        body = {
+            "content": content
+        }
+        
+        if important_keywords is not None:
+            body["important_keywords"] = important_keywords
+            
+        if questions is not None:
+            body["questions"] = questions
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url, 
+                    headers=self.headers, 
+                    json=body
+                )
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            print(f"Error adding chunks to dataset: {str(e)}")
+            return {"error": str(e)}
+    
+    async def retrieve_chunks_by_content(
             self,
             question: str,
             dataset_ids: list[str] = [],
@@ -319,29 +467,62 @@ class RAGFlowMemoryManager:
         try:
             if not dataset_ids and not document_ids:
                 raise
-            response = requests.post(
-                f"{self.base_url}/api/v1/retrieval", 
-                headers=self.headers,
-                json=params
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.base_url}/api/v1/retrieval", 
+                    headers=self.headers,
+                    json=params
                 )
             return response.json()["data"]
         except:
             return {}
-
 if __name__ == "__main__":
 
     import json
+    import asyncio
 
-    base_url = "https://aiweb01.ihep.ac.cn:886"
-    api_key = "ragflow-***" 
+    base_url = "https://ragflow.ihep.ac.cn"
+    api_key = "ragflow-I1OWE2N2U0NTE5ODExZjA5NzgyMDI0Mm" 
     ragflow_memory = RAGFlowMemoryManager(base_url, api_key)
 
-    # print(json.dumps(ragflow_memory.list_datasets(), indent=4))
-    # print(json.dumps(ragflow_memory.list_documents("70722df8519011f08a170242ac120006"), indent=4))
-    result = ragflow_memory.retrieve_chunks_by_content(
-        question="The Open Molecules 2025 (OMol25) Dataset",
-        dataset_ids=["70722df8519011f08a170242ac120006"]
+    # list the datasets
+    # datasets = asyncio.run(ragflow_memory.list_datasets())
+    # print(json.dumps(datasets, indent=4, ensure_ascii=False))
 
-    )
-    print(json.dumps(result, indent=4))
-  
+    # list the documents
+    # documents = asyncio.run(ragflow_memory.list_documents("70722df8519011f08a170242ac120006"))
+    # print(json.dumps(documents, indent=4, ensure_ascii=False))
+
+    # search content from datasets
+    # result = asyncio.run(ragflow_memory.retrieve_chunks_by_content(
+    #     question="北京出差的报销标准",
+    #     dataset_ids=["70722df8519011f08a170242ac120006"]
+    # ))
+    # print(json.dumps(result, indent=4, ensure_ascii=False))
+
+    # add files to dataset
+    # file_path = "/home/xiongdb/drsai/README.md"
+    # result = asyncio.run(ragflow_memory.add_files_to_dataset(
+    #     dataset_id="70722df8519011f08a170242ac120006",
+    #     files_path=file_path
+    # ))
+    # print(json.dumps(result, indent=4, ensure_ascii=False))
+
+    # parse files
+    # result = asyncio.run(ragflow_memory.parse_files(
+    #     dataset_id="70722df8519011f08a170242ac120006",
+    #     document_ids=["424b7bb8c8e711f091ce0242ac120006"]
+    # ))
+    # print(json.dumps(result, indent=4, ensure_ascii=False))
+    
+    # add chunks to dataset
+    # dataset_id="70722df8519011f08a170242ac120006"
+    # document_id="424b7bb8c8e711f091ce0242ac120006"
+    # result = asyncio.run(ragflow_memory.add_chunks_to_dataset(
+    #     dataset_id=dataset_id,
+    #     document_id=document_id,
+    #     content="opendrsai常用于专业科学智能体开发",
+    #     important_keywords=["Opendrsai"],
+    #     questions=["opendrsai常用于做什么"]
+    # ))
+    # print(json.dumps(result, indent=4, ensure_ascii=False))

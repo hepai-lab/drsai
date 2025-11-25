@@ -56,6 +56,9 @@ model_client = HepAIChatCompletionClient(
             "vision": False,
             "family": "unknown",
             "structured_output": False,
+            "multiple_system_messages":True,
+            "token_model": "gpt-4o-2024-11-20", # Default model for token counting
+        
         }
     )
 ```
