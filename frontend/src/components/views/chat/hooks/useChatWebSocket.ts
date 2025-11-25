@@ -61,6 +61,15 @@ export const useChatWebSocket = ({
             if (!wsMessage.data) return current;
 
             const messageData = wsMessage.data as AgentMessageConfig;
+            const messageSource =
+              typeof messageData.source === "string" ? messageData.source : undefined;
+
+            // Backend occasionally replays assistant content as a message after streaming.
+            // Only persist true user-authored messages to avoid duplicate assistant renders.
+            if (messageSource !== "user") {
+              return current;
+            }
+
             const lastMessageIndex = current.messages.length - 1;
 
             if (lastMessageIndex >= 0) {
@@ -76,10 +85,12 @@ export const useChatWebSocket = ({
                 const newContent = messageData.content.trim();
 
                 // Check for streaming duplicate
-                if (isStreamingDuplicate(streamingMessageRef.current, {
-                  source: messageData.source,
-                  content: newContent,
-                })) {
+                if (
+                  isStreamingDuplicate(streamingMessageRef.current, {
+                    source: messageData.source,
+                    content: newContent,
+                  })
+                ) {
                   streamingMessageRef.current = null;
                   return current;
                 }
@@ -126,13 +137,53 @@ export const useChatWebSocket = ({
             if (chunkData.content && typeof chunkData.content === "string") {
               const processedContent = chunkData.content;
               const lastMsgIndex = current.messages.length - 1;
+              const chunkSource =
+                typeof chunkData.source === "string" ? chunkData.source : "assistant";
+              const sanitizedChunkMetadata =
+                chunkData.metadata && typeof chunkData.metadata === "object"
+                  ? { ...(chunkData.metadata as Record<string, string>) }
+                  : undefined;
+              const rawStartFlag = sanitizedChunkMetadata?.start_flag;
+              const startFlagValue =
+                typeof rawStartFlag === "string" ? rawStartFlag : undefined;
+              const isStartChunk = startFlagValue?.toLowerCase() === "yes";
+
+              if (isStartChunk) {
+                const newChunkMessage = createMessage(
+                  {
+                    source: chunkSource,
+                    content: processedContent,
+                    metadata: {
+                      ...(sanitizedChunkMetadata || {}),
+                      start_flag: startFlagValue!,
+                      stream_source_label: chunkSource,
+                    },
+                  } as AgentMessageConfig,
+                  current.id,
+                  session.id,
+                  userEmail
+                );
+
+                streamingMessageRef.current = {
+                  source: chunkSource,
+                  content: processedContent,
+                };
+
+                updatedRun = {
+                  ...current,
+                  messages: [...current.messages, newChunkMessage],
+                };
+
+                setSessionRun(session.id, updatedRun);
+                return updatedRun;
+              }
 
               if (lastMsgIndex >= 0) {
                 const lastMessage = current.messages[lastMsgIndex];
 
                 if (
                   lastMessage.config.source === "assistant" ||
-                  lastMessage.config.source === chunkData.source
+                  lastMessage.config.source === chunkSource
                 ) {
                   const updatedMessages = [...current.messages];
                   const newContent = (lastMessage.config.content as string) + processedContent;
@@ -146,7 +197,7 @@ export const useChatWebSocket = ({
                   };
 
                   streamingMessageRef.current = {
-                    source: chunkData.source || "assistant",
+                    source: chunkSource,
                     content: newContent,
                   };
 
@@ -162,9 +213,9 @@ export const useChatWebSocket = ({
 
               const newChunkMessage = createMessage(
                 {
-                  source: "assistant",
+                  source: chunkSource,
                   content: processedContent,
-                  metadata: chunkData.metadata || {},
+                  metadata: sanitizedChunkMetadata || {},
                 } as AgentMessageConfig,
                 current.id,
                 session.id,
@@ -172,7 +223,7 @@ export const useChatWebSocket = ({
               );
 
               streamingMessageRef.current = {
-                source: chunkData.source || "assistant",
+                source: chunkSource,
                 content: processedContent,
               };
 

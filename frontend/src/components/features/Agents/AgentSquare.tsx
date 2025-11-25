@@ -54,31 +54,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     onClick: () => console.log("Selected remote agent:", agent.name),
   }), [handleRemoveRemoteAgent]);
 
-  const handleRemoteAgentSave = useCallback(async (config: any, agentInfo?: any) => {
-    if (!user?.email) return;
-
-    try {
-      await agentWorkerAPI.saveRemoteAgent(user.email, {
-        name: config.name,
-        url: config.url,
-        apiKey: config.apiKey,
-        mode: "remote",
-        ...agentInfo
-      });
-
-      const newRemoteAgents = await agentWorkerAPI.getUserRemoteAgents(user.email);
-      const latestAgent = newRemoteAgents[newRemoteAgents.length - 1];
-      const newRemoteAgentCard = createRemoteAgentCard(latestAgent);
-
-      setAgentList(prev => [...prev, newRemoteAgentCard]);
-      setIsRemoteModalOpen(false);
-      console.log("Remote agent saved successfully");
-    } catch (error) {
-      console.error("Failed to save remote agent:", error);
-    }
-  }, [user?.email, createRemoteAgentCard]);
-
-
   const loadRemoteAgents = useCallback(async (userEmail: string): Promise<AgentCardProps[]> => {
     try {
       const userRemoteAgents = await agentWorkerAPI.getUserRemoteAgents(userEmail);
@@ -89,7 +64,9 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     }
   }, [createRemoteAgentCard]);
 
-  const loadAgentList = useCallback(async () => {
+  const loadAgentList = useCallback(async (options?: { forceRefresh?: boolean }) => {
+    const forceRefresh = options?.forceRefresh ?? false;
+
     if (!user?.email) {
       setLoading(false);
       return;
@@ -108,7 +85,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       }
 
       const [standardAgents, remoteAgents] = await Promise.all([
-        agentWorkerAPI.getAgentList(user.email, apiKey),
+        agentWorkerAPI.getAgentList(user.email, apiKey, forceRefresh),
         loadRemoteAgents(user.email)
       ]);
 
@@ -124,6 +101,26 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       setLoading(false);
     }
   }, [user?.email, loadRemoteAgents]);
+
+  const handleRemoteAgentSave = useCallback(async (config: any, agentInfo?: any) => {
+    if (!user?.email) return;
+
+    try {
+      await agentWorkerAPI.saveRemoteAgent(user.email, {
+        name: config.name,
+        url: config.url,
+        apiKey: config.apiKey,
+        mode: "remote",
+        ...agentInfo
+      });
+
+      await loadAgentList({ forceRefresh: true });
+      setIsRemoteModalOpen(false);
+      console.log("Remote agent saved successfully");
+    } catch (error) {
+      console.error("Failed to save remote agent:", error);
+    }
+  }, [user?.email, loadAgentList]);
 
   useEffect(() => {
     loadAgentList();

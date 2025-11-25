@@ -1,4 +1,5 @@
 
+from re import T
 from typing import (
     List, 
     Dict, 
@@ -369,9 +370,15 @@ class DrSai:
             agent_result: TaskResult|None = None
             
             res = agent.run_stream(task=task)
+            role = ""
             async for message in res:
                 if hasattr(message, "metadata"):
                     if message.metadata.get("internal", "no") == "no":
+                        if isinstance(message, ModelClientStreamingChunkEvent):
+                            role_tmp = message.source
+                            if role != role_tmp:
+                                role = role_tmp
+                                message.metadata["start_flag"] = "yes"
                         message_str = json.dumps(message.model_dump(mode="json"))
                         yield f"data: {message_str}\n\n"
 

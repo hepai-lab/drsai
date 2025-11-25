@@ -689,6 +689,17 @@ export const RenderMessage: React.FC<MessageProps> = memo(
         ? parseorchestratorContent(message.content, message.metadata)
         : null;
 
+    const startFlagValue = message.metadata?.start_flag;
+    const isStartFlagActive =
+      typeof startFlagValue === "string" &&
+      startFlagValue.toLowerCase() === "yes";
+    const streamSourceLabel =
+      typeof message.metadata?.stream_source_label === "string"
+        ? message.metadata.stream_source_label
+        : undefined;
+    const sourceBadgeText = streamSourceLabel || message.source;
+    const shouldShowSourceBadge = !isUser && !isUserProxy && isStartFlagActive;
+
     // Hide regeneration request messages
     if (
       parsedContent.text ===
@@ -725,6 +736,11 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                 parsedContent={parsedContent}
                 isUserProxy={isUserProxy}
               />
+            )}
+            {!isUser && !isUserProxy && shouldShowSourceBadge && (
+              <div className="mb-2 inline-flex items-center rounded-full bg-secondary/40 py-0.5 text-lg font-semibold text-primary">
+                {sourceBadgeText}:
+              </div>
             )}
             {/* Handle other content types */}
             {!isUser &&
