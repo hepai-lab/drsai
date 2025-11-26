@@ -1,11 +1,14 @@
-import { Plus } from "lucide-react";
+import { message } from "antd";
+import { Plus, Sparkles } from "lucide-react";
 import React, { useCallback, useContext, useEffect, useState } from "react";
 import { parse } from "yaml";
 import { appContext } from "../../../hooks/provider";
 import { Agent } from "../../../types/common";
 import { Button } from "../../common/Button";
-import { agentWorkerAPI, settingsAPI } from "../../views/api";
+import { CustomAgentData } from "../../common/agent-form/CustomAgentForm";
+import { agentWorkerAPI, settingsAPI, agentAPI } from "../../views/api";
 import { AgentCard, AgentCardProps } from "./AgentCard";
+import CustomAgentModal from "./CustomAgentModal";
 import RemoteAgentModal from "./RemoteAgentModal";
 
 interface AgentSquareProps {
@@ -25,6 +28,12 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isRemoteModalOpen, setIsRemoteModalOpen] = useState(false);
+  const [isCustomModalOpen, setIsCustomModalOpen] = useState(false);
+  const [availableModels, setAvailableModels] = useState<{ id: string }[]>([]);
+  const [isModelListLoading, setIsModelListLoading] = useState(false);
+  const [modelSourceBaseUrl, setModelSourceBaseUrl] = useState<string | undefined>();
+  const [modelSourceApiKey, setModelSourceApiKey] = useState<string | undefined>();
+  const [isSavingCustomAgent, setIsSavingCustomAgent] = useState(false);
 
   const handleRemoveRemoteAgent = useCallback(async (id?: string) => {
     if (!id || !user?.email) return;
@@ -78,11 +87,16 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
       const settings = await settingsAPI.getSettings(user.email);
       const parsed = parse(settings.model_configs);
-      const apiKey = parsed.model_config.config.api_key;
+      const modelConfig = parsed?.model_config?.config || {};
+      const apiKey = modelConfig.api_key;
+      const baseUrl = modelConfig.base_url;
 
       if (!apiKey) {
         throw new Error("API key not found in settings");
       }
+
+      setModelSourceApiKey(apiKey);
+      setModelSourceBaseUrl(baseUrl);
 
       const [standardAgents, remoteAgents] = await Promise.all([
         agentWorkerAPI.getAgentList(user.email, apiKey, forceRefresh),
@@ -101,6 +115,54 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       setLoading(false);
     }
   }, [user?.email, loadRemoteAgents]);
+
+  const loadAvailableModels = useCallback(async () => {
+    if (!modelSourceBaseUrl) {
+      setAvailableModels([]);
+      return;
+    }
+
+    setIsModelListLoading(true);
+
+    try {
+      const normalizedBaseUrl = modelSourceBaseUrl.endsWith("/")
+        ? modelSourceBaseUrl.slice(0, -1)
+        : modelSourceBaseUrl;
+      const modelsUrl = `${normalizedBaseUrl}/models`;
+
+      const response = await fetch(modelsUrl, {
+        headers: {
+          "Content-Type": "application/json",
+          ...(modelSourceApiKey ? { Authorization: `Bearer ${modelSourceApiKey}` } : {}),
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch models: ${response.status}`);
+      }
+
+      const payload = await response.json();
+      const rawList: any[] = Array.isArray(payload?.data)
+        ? payload.data
+        : Array.isArray(payload?.models)
+          ? payload.models
+          : [];
+
+      const formatted = rawList
+        .map((item, index) => ({
+          id: item?.id || item?.name || item?.model || `model-${index}`,
+        }))
+        .filter((item) => Boolean(item.id))
+        .filter((item, index, arr) => arr.findIndex((candidate) => candidate.id === item.id) === index);
+
+      setAvailableModels(formatted);
+    } catch (err) {
+      console.error("Failed to load available models:", err);
+      setAvailableModels([]);
+    } finally {
+      setIsModelListLoading(false);
+    }
+  }, [modelSourceBaseUrl, modelSourceApiKey]);
 
   const handleRemoteAgentSave = useCallback(async (config: any, agentInfo?: any) => {
     if (!user?.email) return;
@@ -122,9 +184,56 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     }
   }, [user?.email, loadAgentList]);
 
+  const handleCustomAgentSave = useCallback(async (customConfig: CustomAgentData) => {
+    if (!user?.email) {
+      message.error("用户未登录");
+      return;
+    }
+
+    try {
+      setIsSavingCustomAgent(true);
+
+      const payload = {
+        mode: "besiii",
+        name: customConfig.name,
+        description: customConfig.description || "自定义智能体",
+        owner: user.email,
+        type: "add",
+        logo: customConfig.avatar || "/api/placeholder/64/64",
+        system_message: customConfig.system_message,
+        // 将前端自定义 Agent 配置整体塞到 config 中，方便后端统一解析
+        config: {
+          model_client: customConfig.model_client,
+          tools: customConfig.tools,
+          knowledge: customConfig.knowledge,
+        },
+      };
+
+      const updatedAgents = await agentAPI.updateAgentList(user.email, payload);
+
+      if (handleAgentList) {
+        await handleAgentList(updatedAgents);
+      }
+
+      message.success("自定义智能体已保存");
+      setIsCustomModalOpen(false);
+    } catch (err) {
+      console.error("Failed to save custom agent:", err);
+      message.error("保存自定义智能体失败");
+    } finally {
+      setIsSavingCustomAgent(false);
+    }
+  }, [user?.email, handleAgentList]);
+
   useEffect(() => {
     loadAgentList();
   }, [loadAgentList]);
+
+  useEffect(() => {
+    if (isCustomModalOpen) {
+      loadAvailableModels();
+    }
+  }, [isCustomModalOpen, loadAvailableModels]);
 
   if (loading) {
     return (
@@ -149,8 +258,17 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
   return (
     <>
-      {/* 连接远程智能体小按钮 - 放在右上角 */}
-      <div className="flex justify-end items-center mb-4 pr-4">
+      {/* 连接远程/自定义智能体按钮 */}
+      <div className="flex justify-end items-center mb-4 pr-4 gap-2 flex-wrap">
+        <Button
+          variant="tertiary"
+          size="sm"
+          onClick={() => setIsCustomModalOpen(true)}
+          icon={<Sparkles className="h-4 w-4" />}
+          className="text-sm opacity-75 hover:opacity-100 transition-opacity border border-gray-300 dark:border-gray-600"
+        >
+          自定义智能体
+        </Button>
         <Button
           variant="tertiary"
           size="sm"
@@ -184,6 +302,17 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
           ))}
         </div>
       )}
+
+      {/* 自定义智能体弹框 */}
+      <CustomAgentModal
+        isOpen={isCustomModalOpen}
+        onClose={() => setIsCustomModalOpen(false)}
+        onSave={handleCustomAgentSave}
+        models={availableModels}
+        isLoadingModels={isModelListLoading}
+        onReloadModels={loadAvailableModels}
+        isSaving={isSavingCustomAgent}
+      />
 
       {/* 远程智能体连接弹框 */}
       <RemoteAgentModal

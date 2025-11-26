@@ -162,11 +162,14 @@ class RAGFlowAgent(DrSaiAgent):
         ragflow_config = agent_config.get("ragflow_config")
         ragflow_url = ragflow_config.get("ragflow_url")
         ragflow_token = ragflow_config.get("ragflow_token")
+        dataset_ids = ragflow_config.get("dataset_ids") # necessary
+        # document_ids = ragflow_config.get("document_ids")
         self._memory.append(RAGFlowMemory(
             config=RAGFlowMemoryConfig(
                 name="ragflow_memory",
                 RAGFLOW_URL=ragflow_url,
                 RAGFLOW_TOKEN=ragflow_token,
+                dataset_ids=dataset_ids,
                 keyword=True,
             )
         )) 

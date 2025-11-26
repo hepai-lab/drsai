@@ -66,7 +66,7 @@ export const useChatWebSocket = ({
 
             // Backend occasionally replays assistant content as a message after streaming.
             // Only persist true user-authored messages to avoid duplicate assistant renders.
-            if (messageSource !== "user") {
+            if (messageSource !== "user" && messageSource !== "user_proxy") {
               return current;
             }
 

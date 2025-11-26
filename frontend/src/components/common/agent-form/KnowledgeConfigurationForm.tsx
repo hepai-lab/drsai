@@ -1,14 +1,17 @@
 import React from "react";
+import { Select } from "antd";
 import { Info, ExternalLink } from "lucide-react";
 
 export interface KnowledgeConfig {
     apiKey: string;
-    dataSetName: string;
+    // 支持多选数据集
+    dataSetName: string[];
 }
 
 interface KnowledgeConfigurationFormProps {
     config: KnowledgeConfig;
-    onConfigChange: (field: keyof KnowledgeConfig, value: string) => void;
+    // apiKey 传 string，dataSetName 传 string[]
+    onConfigChange: (field: keyof KnowledgeConfig, value: string | string[]) => void;
     darkMode?: string;
     showLabel?: boolean;
 }
@@ -165,33 +168,18 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                 DataSet Name:
                             </label>
                             <div className="flex-1 ml-4 relative group">
-                                <select
+                                <Select
+                                    mode="multiple"
+                                    allowClear
                                     value={config.dataSetName}
-                                    onChange={(e) =>
-                                        onConfigChange(
-                                            "dataSetName",
-                                            e.target.value
-                                        )
+                                    onChange={(values) =>
+                                        onConfigChange("dataSetName", values)
                                     }
-                                    className={`
-                                        w-full px-3 py-2 rounded-md border
-                                        ${darkMode === "dark"
-                                            ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                                            : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
-                                        }
-                                        focus:outline-none focus:border-[#4d3dc3]
-                                    `}
-                                >
-                                    <option value="">请选择数据集名称</option>
-                                    {dataSets.map((dataset, index) => (
-                                        <option
-                                            key={index}
-                                            value={dataset.value}
-                                        >
-                                            {dataset.label}
-                                        </option>
-                                    ))}
-                                </select>
+                                    options={dataSets}
+                                    placeholder="请选择数据集名称"
+                                    style={{ width: "100%" }}
+                                    size="middle"
+                                />
                             </div>
                         </div>
                     </div>
@@ -291,30 +279,18 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                             DataSet Name:
                         </label>
                         <div className="flex-1 ml-4 relative group">
-                            <select
+                            <Select
+                                mode="multiple"
+                                allowClear
                                 value={config.dataSetName}
-                                onChange={(e) =>
-                                    onConfigChange(
-                                        "dataSetName",
-                                        e.target.value
-                                    )
+                                onChange={(values) =>
+                                    onConfigChange("dataSetName", values)
                                 }
-                                className={`
-                                    w-full px-3 py-2 rounded-md border
-                                    ${darkMode === "dark"
-                                        ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                                        : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
-                                    }
-                                    focus:outline-none focus:border-[#4d3dc3]
-                                `}
-                            >
-                                <option value="">请选择数据集名称</option>
-                                {dataSets.map((dataset, index) => (
-                                    <option key={index} value={dataset.value}>
-                                        {dataset.label}
-                                    </option>
-                                ))}
-                            </select>
+                                options={dataSets}
+                                placeholder="请选择数据集名称"
+                                style={{ width: "100%" }}
+                                size="middle"
+                            />
                         </div>
                     </div>
                 </div>
