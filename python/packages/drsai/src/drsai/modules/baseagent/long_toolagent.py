@@ -39,7 +39,6 @@ from autogen_core.models import (
     RequestUsage,
 )
 
-from .drsaiagent import DrSaiAgent
 from autogen_agentchat.agents._assistant_agent import AssistantAgentConfig
 from autogen_agentchat.base import Handoff as HandoffBase
 from autogen_agentchat.base import Response
@@ -61,16 +60,34 @@ from autogen_agentchat.messages import (
     # MultiModalMessage,
     Image,
 )
-from drsai import HepAIChatCompletionClient
+
+from .drsaiagent import DrSaiAgent, DrSaiAgentConfig
+from drsai.modules.managers.messages.agent_messages import(
+    AgentLongTaskMessage,
+    LongTaskQueryMessage,
+    AgentLogEvent,
+    ToolLongTaskEvent,
+)
+from drsai.modules.components.task_manager.base_task_system import TaskStatus
 from drsai.modules.managers.database import DatabaseManager
 
+class LongTaskAgentConfig(DrSaiAgentConfig):
+    """
+    A configuration class for LongTaskAgent.
+    """
+    tool_name: str|None = None
+    tool_status: str|None = None
 
 
-class ToolAgent(DrSaiAgent):
-    """通过多工具进行优化"""
+class LongTaskAgent(DrSaiAgent):
+    """
+    # TODO: 一个实现可以执行长时间任务执行的和查询的智能体
+    
+    """
     def __init__(
         self,
         name: str,
+        *,
         model_client: ChatCompletionClient = None,
         tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
         workbench: Workbench | None = None,
@@ -87,10 +104,14 @@ class ToolAgent(DrSaiAgent):
         output_content_type_format: str | None = None,
         memory: Sequence[Memory] | None = None,
         metadata: Dict[str, str] | None = None,
+
+        # drsaiAgent specific
         memory_function: Callable = None,
         # allow_reply_function: bool = False,
         reply_function: Callable = None,
         db_manager: DatabaseManager = None,
+        thread_id: str = None,
+        user_id: str = None,
         **kwargs,
             ):
         
@@ -113,36 +134,14 @@ class ToolAgent(DrSaiAgent):
             memory_function=memory_function,
             reply_function=reply_function,
             db_manager=db_manager,
+            thread_id=thread_id,
+            user_id=user_id,
             **kwargs,
             )
     
-    async def lazy_init(self, **kwargs: Any) -> None:
-        """Initialize the tools and models needed by the agent."""
-        pass
-
-    async def close(self) -> None:
-        """Clean up resources used by the agent.
-
-        This method:
-          ...
-        """
-        logger.info(f"Closing {self.name}...")
-        
-        # Close the model client.
-        await self._model_client.close()
-
-    async def pause(self) -> None:
-        """Pause the agent by setting the paused state."""
-        logger.info(f"Pausing {self.name}...")
-
-        self.is_paused = True
-        self._paused.set()
-
-    async def resume(self) -> None:
-        """Resume the agent by clearing the paused state."""
-        self.is_paused = False
-        self._paused.clear()
-
+        self._tool_name: Optional[str] = None
+        self._tool_arguments: Optional[Dict[str, Any]] = None
+    
     async def on_messages_stream(
         self, messages: Sequence[BaseChatMessage], cancellation_token: CancellationToken
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
@@ -167,7 +166,7 @@ class ToolAgent(DrSaiAgent):
             self.is_paused = True
 
         monitor_pause_task = asyncio.create_task(monitor_pause())
-
+        inner_messages: List[BaseAgentEvent | BaseChatMessage] = []
         try:
             # Gather all relevant state here
             agent_name = self.name
@@ -189,9 +188,8 @@ class ToolAgent(DrSaiAgent):
                 model_context=model_context,
                 messages=messages,
             )
-
+            
             # STEP 2: Update model context with any relevant memory
-            inner_messages: List[BaseAgentEvent | BaseChatMessage] = []
             for event_msg in await self._update_model_context_with_memory(
                 memory=memory,
                 model_context=model_context,
@@ -239,6 +237,11 @@ class ToolAgent(DrSaiAgent):
                 )
             )
 
+            # For long task 
+            if not isinstance(model_result.content, str):
+                self._tool_name = model_result.content[0].name
+                self._tool_arguments = json.loads(model_result.content[0].arguments)
+                
             # STEP 4: Process the model output
             async for output_event in self._process_model_result(
                 model_result=model_result,
@@ -256,11 +259,22 @@ class ToolAgent(DrSaiAgent):
                 tool_call_summary_format=tool_call_summary_format,
                 output_content_type=output_content_type,
                 format_string=format_string,
-            ):
-                if self.is_paused:
-                    raise asyncio.CancelledError()
-                
-                yield output_event
+            ): 
+                if isinstance(output_event, Response):
+                    if isinstance(output_event.chat_message, ToolCallSummaryMessage):
+                        mcp_output = json.loads(output_event.chat_message.content)
+                        if mcp_output["status"] == "IN_PROGRESS":
+                            self._tool_arguments["task_id"] = mcp_output["id"]
+                            output_event.chat_message =  AgentLongTaskMessage(
+                                source=self.name,
+                                content=f"{self._tool_name} is running. Please wait for the result.",
+                                task_status=TaskStatus.in_progress.value,
+                                query_arguments=self._tool_arguments,
+                                tool_name=self._tool_name
+                            )
+                        yield output_event
+                else:
+                    yield output_event
 
         except asyncio.CancelledError:
             # If the task is cancelled, we respond with a message.
@@ -297,85 +311,39 @@ class ToolAgent(DrSaiAgent):
             except asyncio.CancelledError:
                 pass
 
-    @staticmethod
-    def _summarize_tool_use(
-        executed_calls_and_results: List[Tuple[FunctionCall, FunctionExecutionResult]],
-        inner_messages: List[BaseAgentEvent | BaseChatMessage],
-        handoffs: Dict[str, HandoffBase],
-        tool_call_summary_format: str,
-        agent_name: str,
-    ) -> Response:
-        """
-        If reflect_on_tool_use=False, create a summary message of all tool calls.
-        """
-        # Filter out calls which were actually handoffs
-        normal_tool_calls = [(call, result) for call, result in executed_calls_and_results if call.name not in handoffs]
-        tool_call_summaries: List[str] = []
-        for tool_call, tool_call_result in normal_tool_calls:
-            # 对MCP的结果进行处理
-            try:
-                json_results = json.loads(tool_call_result.content)
-                if isinstance(json_results, list):
-                    json_result = json_results[0]
-                    if isinstance(json_result, dict) and 'type' in json_result:
-                        if json_result['type'] == 'text':
-                            tool_call_result.content = json_result['text']
-            except:
-                pass
-            # 其他的tool的结果直接用content
-            tool_call_summaries.append(
-                tool_call_summary_format.format(
-                    tool_name=tool_call.name,
-                    arguments=tool_call.arguments,
-                    result=tool_call_result.content,
-                )
-            )
-        tool_call_summary = "\n".join(tool_call_summaries)
-        return Response(
-            chat_message=ToolCallSummaryMessage(
-                content=tool_call_summary,
-                source=agent_name,
-            ),
-            inner_messages=inner_messages,
-        )
-    
-    @classmethod
-    def _from_config(
-        cls, config: AssistantAgentConfig, 
-        db_manager: DatabaseManager,
-        memory_function: Callable = None,
-        reply_function: Callable = None,
-        **kwargs,
-        ) -> Self:
-        """Create an assistant agent from a declarative config."""
-        if config.structured_message_factory:
-            structured_message_factory = StructuredMessageFactory.load_component(config.structured_message_factory)
-            format_string = structured_message_factory.format_string
-            output_content_type = structured_message_factory.ContentModel
-
-        else:
-            format_string = None
-            output_content_type = None
-
-        return cls(
-            name=config.name,
-            model_client=ChatCompletionClient.load_component(config.model_client),
-            workbench=Workbench.load_component(config.workbench) if config.workbench else None,
-            handoffs=config.handoffs,
-            model_context=ChatCompletionContext.load_component(config.model_context) if config.model_context else None,
-            tools=[BaseTool.load_component(tool) for tool in config.tools] if config.tools else None,
-            memory=[Memory.load_component(memory) for memory in config.memory] if config.memory else None,
-            description=config.description,
-            system_message=config.system_message,
-            model_client_stream=config.model_client_stream,
-            reflect_on_tool_use=config.reflect_on_tool_use,
-            tool_call_summary_format=config.tool_call_summary_format,
-            output_content_type=output_content_type,
-            output_content_type_format=format_string,
-            metadata=config.metadata,
-            memory_function=memory_function,
-            reply_function=reply_function,
-            db_manager=db_manager,
-            **kwargs,
+    async def _process_long_task_query(
+            self,
+            task: Dict|LongTaskQueryMessage|Sequence[BaseChatMessage] | None = None,
+            cancellation_token: CancellationToken | None = None,
+        )-> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
         
-        )
+        if not isinstance(task, LongTaskQueryMessage):
+            raise ValueError("tasks must be a LongTaskQueryMessage")
+        
+        query_arguments: Dict = task.query_arguments
+        query_tool_name = task.tool_name
+        if query_tool_name is None or query_arguments is None:
+            raise ValueError("query_tool_name or query_arguments cannot be None")
+        
+        result = await self._workbench.call_tool(
+                name = query_tool_name,
+                arguments=query_arguments,
+                cancellation_token=cancellation_token
+                )
+        result_json = json.loads(result.result[0].content)
+
+        if result_json["status"] == "IN_PROGRESS":
+            yield Response(
+                chat_message=AgentLongTaskMessage(
+                    source=self.name,
+                    content=result_json["result"],
+                    task_status=TaskStatus.in_progress.value,
+                    query_arguments=query_arguments,
+                    tool_name=query_tool_name
+                ))
+        else:
+            yield Response(
+                chat_message=TextMessage(
+                        source=self.name,
+                        content=result_json["result"],
+                    ))

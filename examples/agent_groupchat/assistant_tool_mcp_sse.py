@@ -34,6 +34,7 @@ async def create_agent() -> AssistantAgent:
                 "structured_output": False,
                 "family": ModelFamily.GPT_41,
                 "multiple_system_messages":True,
+                "token_model": "gpt-4o-2024-11-20", # Default model for token counting
             },)
 
     tools = await mcp_server_tools(SseServerParams(

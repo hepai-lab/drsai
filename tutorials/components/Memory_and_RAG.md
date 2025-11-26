@@ -1,6 +1,6 @@
 # RAG和智能体记忆系统设计
 
-## 模型的上下文管理类-model_context
+## 模型的上下文管理类-ChatCompletionContext
 
 模型上下文管理类是用来管理模型的状态和记忆的类，在智能体内部接受传入智能体的messages（主要为BaseTextMessage类型），然后处理传入智能体的memory类列表，转化为LLMMessage的SystemMessage，将最终的LLMMessage发送给LLM（ModelClient）做出回复。目前AutoGen框架默认支持以下四种模型上下文管理类：
 

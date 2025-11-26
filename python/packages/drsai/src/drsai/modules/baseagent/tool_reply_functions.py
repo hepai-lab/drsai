@@ -56,6 +56,8 @@ async def tools_reply_function(
     tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
     cancellation_token: CancellationToken,  # AutoGen cancellation token,
     db_manager: DatabaseManager,  # DrSai database manager,
+    thread_id: str,
+    user_id: str,
     **kwargs) -> Union[str, AsyncGenerator[str, None]]:
     """
     自定义回复函数：能够智能地调用工具，然后通过工具的执行结果进行回复。
@@ -91,18 +93,21 @@ async def tools_reply_function(
                 tool_result: ToolResult = await workbench.call_tool(name=function_call.name, arguments=json.loads(function_call.arguments), cancellation_token=cancellation_token)
                 name = tool_result.name
                 content: str = "\n".join([str(i.content) for i  in tool_result.result])
-                function_call_contents += f"{name}:\n{content}\n\n"
+                function_call_contents += f"tool:{name}\n{content}\n\n"
+                yield "<think>\n"
+                yield f"The result of tool {name} is as follows:\n"
+                yield f"{content}\n"
+                yield "</think>\n"
             else:
                 function_calls_new.append(function_call)
         if function_calls_new:
             model_result.content = function_calls_new
             yield model_result
         else:
-            prompt = f"""以下是对应工具的执行结果：
+            prompt = f"""The next is the result of the tool calls. Please summarize the result according to user's requirements and the system's requirements.
     ```
     {function_call_contents}
     ```
-    请根据执行结果进一步回复上面用户的问题。
     """
             llm_messages.append(UserMessage(content=prompt, source="user"))
             async for chunk in model_client.create_stream(
@@ -125,6 +130,8 @@ async def tools_recycle_reply_function(
     tools: Union[ToolSchema, List[BaseTool[Any, Any]]],
     cancellation_token: CancellationToken,  # AutoGen cancellation token,
     db_manager: DatabaseManager,
+    thread_id: str,
+    user_id: str,
     **kwargs) -> Union[str, AsyncGenerator[str, None]]:
     """
     自定义回复函数：能够智能地循环调用工具自有的工具集进行规划完成任务。
