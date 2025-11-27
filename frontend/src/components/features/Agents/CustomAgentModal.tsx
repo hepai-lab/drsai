@@ -12,6 +12,8 @@ interface CustomAgentModalProps {
     isLoadingModels?: boolean;
     onReloadModels?: () => void;
     isSaving?: boolean;
+    initialData?: Partial<CustomAgentData>;
+    title?: string;
 }
 
 const CustomAgentModal: React.FC<CustomAgentModalProps> = ({
@@ -22,6 +24,8 @@ const CustomAgentModal: React.FC<CustomAgentModalProps> = ({
     isLoadingModels = false,
     onReloadModels,
     isSaving = false,
+    initialData,
+    title,
 }) => {
     const { darkMode } = useContext(appContext);
     const [modalRoot, setModalRoot] = useState<HTMLElement | null>(null);
@@ -80,7 +84,7 @@ const CustomAgentModal: React.FC<CustomAgentModalProps> = ({
                         </div>
                         <div>
                             <h2 className={`text-lg font-semibold ${darkMode === "dark" ? "text-gray-100" : "text-gray-800"}`}>
-                                自定义智能体
+                                {title || "自定义智能体"}
                             </h2>
                             <p className="text-xs text-gray-500 dark:text-gray-400">
                                 配置多模态能力、工具链以及知识库，打造个性化智能体。
@@ -121,6 +125,7 @@ const CustomAgentModal: React.FC<CustomAgentModalProps> = ({
                             models={models}
                             onSubmit={onSave}
                             onCancel={onClose}
+                            initialData={initialData}
                         />
                     )}
                 </div>

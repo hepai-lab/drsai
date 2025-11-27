@@ -1,4 +1,4 @@
-import { Network, X } from "lucide-react";
+import { Network, Pencil, X } from "lucide-react";
 import React, { useContext } from "react";
 import { appContext } from "../../../hooks/provider";
 import { useModeConfigStore } from "@/store/modeConfig";
@@ -17,6 +17,7 @@ interface AgentCardProps {
   mode?: AgentMode;
   apiKey?: string;
   onRemove?: (id?: string) => void;
+  onEdit?: (id?: string) => void;
   handleAgentList?: (agents: any[]) => Promise<void>;
   id?: string;
   existingAgents?: any[]; // 现有的侧边栏智能体列表
@@ -50,6 +51,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
   mode,
   apiKey,
   onRemove,
+  onEdit,
   handleAgentList,
   id,
   existingAgents = [],
@@ -159,6 +161,11 @@ const AgentCard: React.FC<AgentCardProps> = ({
     onRemove?.(id);
   };
 
+  const handleEditClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onEdit?.(id);
+  };
+
   return (
     <div className="bg-primary border border-secondary rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-200 hover:border-magenta-800 group relative">
       {mode === "remote" && (
@@ -170,13 +177,23 @@ const AgentCard: React.FC<AgentCardProps> = ({
         </div>
       )}
 
-      {mode === "remote" || mode === "custom" && onRemove && (
+      {(mode === "remote" || mode === "custom") && onRemove && (
         <button
           onClick={handleRemoveClick}
           className="absolute top-2 right-2 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
           title="移除智能体"
         >
           <X className="w-2.5 h-2.5" />
+        </button>
+      )}
+
+      {mode === "custom" && onEdit && (
+        <button
+          onClick={handleEditClick}
+          className="absolute top-2 right-8 w-5 h-5 bg-blue-500 hover:bg-blue-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
+          title="编辑自定义智能体"
+        >
+          <Pencil className="w-2.5 h-2.5" />
         </button>
       )}
 

@@ -29,6 +29,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isRemoteModalOpen, setIsRemoteModalOpen] = useState(false);
   const [isCustomModalOpen, setIsCustomModalOpen] = useState(false);
+  const [editingCustomAgent, setEditingCustomAgent] = useState<any | null>(null);
   const [availableModels, setAvailableModels] = useState<{ id: string }[]>([]);
   const [isModelListLoading, setIsModelListLoading] = useState(false);
   const [modelSourceBaseUrl, setModelSourceBaseUrl] = useState<string | undefined>();
@@ -193,12 +194,14 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     try {
       setIsSavingCustomAgent(true);
 
-      const payload = {
+      const isEdit = Boolean(editingCustomAgent?.id);
+
+      const payload: any = {
         mode: "custom",
         name: customConfig.name,
         description: customConfig.description || "自定义智能体",
         owner: user.email,
-        type: "add",
+        type: isEdit ? "update" : "add",
         logo: customConfig.avatar || "/api/placeholder/64/64",
         system_message: customConfig.system_message,
         // 将前端自定义 Agent 配置整体塞到 config 中，方便后端统一解析
@@ -213,14 +216,19 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         },
       };
 
+      if (isEdit) {
+        payload.id = editingCustomAgent.id;
+      }
+
       const updatedAgents = await agentWorkerAPI.saveRemoteAgent(user.email, payload);
       await loadAgentList({ forceRefresh: true });
       if (handleAgentList) {
         await handleAgentList(updatedAgents);
       }
 
-      message.success("自定义智能体已保存");
+      message.success(isEdit ? "自定义智能体已更新" : "自定义智能体已保存");
       setIsCustomModalOpen(false);
+      setEditingCustomAgent(null);
     } catch (err) {
       console.error("Failed to save custom agent:", err);
       message.error("保存自定义智能体失败");
@@ -228,6 +236,26 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       setIsSavingCustomAgent(false);
     }
   }, [user?.email, handleAgentList]);
+
+  const handleEditCustomAgent = useCallback((agent: any) => {
+    const config = agent.config || {};
+
+    const initialData: Partial<CustomAgentData> = {
+      name: agent.name,
+      avatar: agent.logo,
+      description: agent.description,
+      system_message: agent.system_message ?? config.system_message,
+      model_client: config.model_client,
+      mcp_sse_list: config.mcp_sse_list || [],
+      ragflow_configs: config.ragflow_configs || [],
+    };
+
+    setEditingCustomAgent({
+      id: agent.id,
+      initialData,
+    });
+    setIsCustomModalOpen(true);
+  }, []);
 
   useEffect(() => {
     loadAgentList();
@@ -267,7 +295,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         <Button
           variant="tertiary"
           size="sm"
-          onClick={() => setIsCustomModalOpen(true)}
+          onClick={() => {
+            setEditingCustomAgent(null);
+            setIsCustomModalOpen(true);
+          }}
           icon={<Sparkles className="h-4 w-4" />}
           className="text-sm opacity-75 hover:opacity-100 transition-opacity border border-gray-300 dark:border-gray-600"
         >
@@ -302,6 +333,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               {...agent}
               handleAgentList={handleAgentList}
               existingAgents={existingAgents}
+              onEdit={agent.mode === "custom" ? () => handleEditCustomAgent(agent) : undefined}
             />
           ))}
         </div>
@@ -310,12 +342,17 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       {/* 自定义智能体弹框 */}
       <CustomAgentModal
         isOpen={isCustomModalOpen}
-        onClose={() => setIsCustomModalOpen(false)}
+        onClose={() => {
+          setIsCustomModalOpen(false);
+          setEditingCustomAgent(null);
+        }}
         onSave={handleCustomAgentSave}
         models={availableModels}
         isLoadingModels={isModelListLoading}
         onReloadModels={loadAvailableModels}
         isSaving={isSavingCustomAgent}
+        initialData={editingCustomAgent?.initialData}
+        title={editingCustomAgent ? "编辑自定义智能体" : "自定义智能体"}
       />
 
       {/* 远程智能体连接弹框 */}
