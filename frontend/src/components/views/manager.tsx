@@ -223,6 +223,16 @@ export const SessionManager: React.FC = () => {
     }, 2000);
   }, [selectSession]);
 
+  // Handle selecting a session from sidebar / plan list:
+  // always switch back to "current_session" view so the chat is visible.
+  const handleSelectSession = useCallback(
+    (selectedSession: Session) => {
+      setActiveSubMenuItem("current_session");
+      selectSession(selectedSession);
+    },
+    [selectSession]
+  );
+
   // Listen for switchToCurrentSession event
   useEffect(() => {
     const handleSwitchToCurrentSession = async (event: CustomEvent) => {
@@ -320,7 +330,7 @@ export const SessionManager: React.FC = () => {
           sessions={sessions}
           currentSession={session}
           onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
-          onSelectSession={selectSession}
+          onSelectSession={handleSelectSession}
           onEditSession={handleEditSession}
           onDeleteSession={handleDeleteSession}
           isLoading={isSessionLoading}
@@ -381,7 +391,7 @@ export const SessionManager: React.FC = () => {
           <div className="h-full overflow-hidden">
             <PlanList
               onTabChange={setActiveSubMenuItem}
-              onSelectSession={selectSession}
+              onSelectSession={handleSelectSession}
               onCreateSessionFromPlan={handleCreateSessionFromPlan}
             />
           </div>
