@@ -53,12 +53,11 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
         },
         host: initialData?.host || { llmModel: "" },
         parser: initialData?.parser || { llmModel: "" },
-        knowledge:
-                ?.knowledge || {
-                ragflow_url: "",
-                ragflow_token: "",
-                dataset_ids: [],
-            },
+        knowledge: initialData?.knowledge || {
+            ragflow_url: "",
+            ragflow_token: "",
+            dataset_ids: [],
+        },
     });
 
     // 为每个下拉框添加独立的状态
