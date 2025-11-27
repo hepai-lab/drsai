@@ -17,8 +17,9 @@ export interface CustomAgentData {
         base_url: string;
         api_key: string;
     };
-    tools: ToolConfig[];
-    knowledge: KnowledgeConfig;
+    mcp_sse_list: ToolConfig[];
+    // 注意：后端期望 ragflow_configs 是一个列表
+    ragflow_configs: KnowledgeConfig[];
 }
 
 // 前端表单内部使用的数据结构
@@ -34,10 +35,10 @@ interface CustomAgentFormState {
     // 自定义模型时使用
     baseUrl: string;
     apiKey: string;
-    // 工具配置（对应后端的 tools）
+    // 工具配置（对应后端的 mcp_sse_list）
     toolConfigs: ToolConfig[];
-    // 知识配置（直接映射到后端的 knowledge）
-    knowledge: KnowledgeConfig;
+    // 知识配置（直接映射到后端的 ragflow_configs）
+    ragflow_configs: KnowledgeConfig[];
 }
 
 interface CustomAgentFormProps {
@@ -61,13 +62,13 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         description: initialData?.description || "",
         system_message: initialData?.system_message || "",
         // 如果 initialData 里有 model_client，认为是自定义模型
-        model_cource: initialData?.model_client ? "custom" : "hepAI",
+        model_cource: initialData?.model_client ? "custom" : "HepAI",
         llmProvider: initialData?.model_client?.model || "",
         baseUrl: initialData?.model_client?.base_url || "",
         apiKey: initialData?.model_client?.api_key || "",
         toolConfigs:
-            initialData?.tools && initialData.tools.length > 0
-                ? initialData.tools
+            initialData?.mcp_sse_list && initialData.mcp_sse_list.length > 0
+                ? initialData.mcp_sse_list
                 : [
                     {
                         id: "1",
@@ -76,11 +77,16 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                         token: "",
                     },
                 ],
-        knowledge:
-            initialData?.knowledge || {
-                apiKey: "",
-                dataSetName: [],
-            },
+        ragflow_configs:
+            initialData?.ragflow_configs && initialData.ragflow_configs.length > 0
+                ? initialData.ragflow_configs
+                : [
+                    {
+                        ragflow_url: "",
+                        ragflow_token: "",
+                        dataset_ids: [],
+                    },
+                ]
     });
     const [avatarError, setAvatarError] = useState<string | null>(null);
     const avatarInputRef = useRef<HTMLInputElement | null>(null);
@@ -166,12 +172,54 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
     };
 
     const handleKnowledgeConfigChange = (
+        index: number,
         field: keyof KnowledgeConfig,
         value: string | string[]
     ) => {
+        setFormData((prev) => {
+            const baseConfigs =
+                prev.ragflow_configs && prev.ragflow_configs.length > 0
+                    ? prev.ragflow_configs
+                    : [
+                        {
+                            ragflow_url: "",
+                            ragflow_token: "",
+                            dataset_ids: [],
+                        } as KnowledgeConfig,
+                    ];
+
+            const configs = [...baseConfigs];
+            const current =
+                configs[index] ??
+                ({
+                    ragflow_url: "",
+                    ragflow_token: "",
+                    dataset_ids: [],
+                } as KnowledgeConfig);
+
+            configs[index] = {
+                ...current,
+                [field]: value,
+            } as KnowledgeConfig;
+
+            return {
+                ...prev,
+                ragflow_configs: configs,
+            };
+        });
+    };
+
+    const addKnowledgeConfig = () => {
         setFormData((prev) => ({
             ...prev,
-            knowledge: { ...prev.knowledge, [field]: value } as KnowledgeConfig,
+            ragflow_configs: [
+                ...(prev.ragflow_configs || []),
+                {
+                    ragflow_url: "",
+                    ragflow_token: "",
+                    dataset_ids: [],
+                },
+            ],
         }));
     };
 
@@ -179,6 +227,25 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         e.preventDefault();
 
         // 临时测试数据：表单为空时使用默认值，方便快速联调，测试完可以删掉这段逻辑
+        const hasValidRagflowConfig =
+            formData.ragflow_configs &&
+            formData.ragflow_configs.some(
+                (cfg) =>
+                    cfg &&
+                    (cfg.ragflow_token ||
+                        (cfg.dataset_ids && cfg.dataset_ids.length > 0))
+            );
+
+        const ragflowConfigs: KnowledgeConfig[] = hasValidRagflowConfig
+            ? formData.ragflow_configs
+            : [
+                {
+                    ragflow_url: "https://aiweb01.ihep.ac.cn:886",
+                    ragflow_token: "test-knowledge-token",
+                    dataset_ids: ["sample-dataset-1"],
+                },
+            ];
+
         const payload: CustomAgentData = {
             name: formData.name || "Test Agent",
             avatar: formData.avatar || undefined,
@@ -192,7 +259,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                     formData.baseUrl || "https://api.openai.com/v1",
                 api_key: formData.apiKey || "sk-test-xxxx",
             },
-            tools:
+            mcp_sse_list:
                 formData.toolConfigs && formData.toolConfigs.length > 0
                     ? formData.toolConfigs
                     : [
@@ -203,15 +270,8 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                             token: "test-mcp-token",
                         },
                     ],
-            knowledge:
-                formData.knowledge.apiKey ||
-                    (formData.knowledge.dataSetName &&
-                        formData.knowledge.dataSetName.length > 0)
-                    ? formData.knowledge
-                    : {
-                        apiKey: "test-knowledge-api-key",
-                        dataSetName: ["sample-dataset-1"],
-                    },
+            // 后端需要 ragflow_configs: KnowledgeConfig[]
+            ragflow_configs: ragflowConfigs,
         };
 
         console.log("agent payload :::", payload);
@@ -569,7 +629,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                             {renderSelect(
                                 formData.model_cource || "hepAI",
                                 [
-                                    { value: "hepAI", label: "hepAI" },
+                                    { value: "HepAI", label: "HepAI" },
                                     { value: "custom", label: "自定义模型" },
                                 ],
                                 (value) => handleInputChange("model_cource", value),
@@ -589,7 +649,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                             >
                                 Provider
                             </span>
-                            {formData.model_cource === "hepAI"
+                            {formData.model_cource === "HepAI"
                                 ? renderSelect(
                                     formData.llmProvider || "",
                                     providerOptions,
@@ -780,16 +840,47 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                     : "text-gray-500"
                                     }`}
                             >
-                                连接到一个知识源，增强 RAG 能力
+                                连接到一个或多个知识源，增强 RAG 能力
                             </p>
                         </div>
+                        <button
+                            type="button"
+                            onClick={addKnowledgeConfig}
+                            className={`
+                                inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium
+                                ${darkMode === "dark"
+                                    ? "bg-[#4d3dc3] text-white hover:bg-[#3d2db3]"
+                                    : "bg-[#4d3dc3] text-white hover:bg-[#3d2db3]"
+                                }
+                                transition-colors
+                            `}
+                        >
+                            <Plus className="w-3 h-3" />
+                            增加KnowledgeBase
+                        </button>
                     </header>
 
-                    <KnowledgeConfigurationForm
-                        config={formData.knowledge}
-                        onConfigChange={handleKnowledgeConfigChange}
-                        darkMode={darkMode}
-                    />
+                    {(formData.ragflow_configs && formData.ragflow_configs.length > 0
+                        ? formData.ragflow_configs
+                        : [
+                            {
+                                ragflow_url: "",
+                                ragflow_token: "",
+                                dataset_ids: [],
+                            } as KnowledgeConfig,
+                        ]
+                    ).map((cfg, index) => (
+                        <div key={index} className={index === 0 ? "" : "mt-4"}>
+                            <KnowledgeConfigurationForm
+                                config={cfg}
+                                onConfigChange={(field, value) =>
+                                    handleKnowledgeConfigChange(index, field, value)
+                                }
+                                darkMode={darkMode}
+                                showLabel={index === 0}
+                            />
+                        </div>
+                    ))}
                 </div>
 
                 {/* Action Buttons */}

@@ -35,14 +35,13 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const [modelSourceApiKey, setModelSourceApiKey] = useState<string | undefined>();
   const [isSavingCustomAgent, setIsSavingCustomAgent] = useState(false);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleRemoveRemoteAgent = useCallback(async (id?: string) => {
     if (!id || !user?.email) return;
 
     try {
       await agentWorkerAPI.removeRemoteAgent(user.email, id);
-      setAgentList(prev => prev.filter(agent =>
-        !(agent.mode === "remote" && agent.id === id)
-      ));
+      await loadAgentList({ forceRefresh: true });
       console.log("Remote agent removed successfully");
     } catch (error) {
       console.error("Failed to remove remote agent:", error);
@@ -57,7 +56,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     owner: agent.owner || "未知",
     url: agent.url || "",
     config: agent.config,
-    mode: "remote",
+    mode: agent.mode || "remote",
     apiKey: agent.apiKey,
     onRemove: (id?: string) => handleRemoveRemoteAgent(id || agent.id),
     onClick: () => console.log("Selected remote agent:", agent.name),
@@ -107,6 +106,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         ? [...standardAgents, ...remoteAgents]
         : remoteAgents;
 
+      console.log("agentsssss::::", agents);
       setAgentList(agents);
     } catch (err) {
       console.error("Error loading agent list:", err);
@@ -194,7 +194,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       setIsSavingCustomAgent(true);
 
       const payload = {
-        mode: "besiii",
+        mode: "custom",
         name: customConfig.name,
         description: customConfig.description || "自定义智能体",
         owner: user.email,
@@ -204,13 +204,17 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         // 将前端自定义 Agent 配置整体塞到 config 中，方便后端统一解析
         config: {
           model_client: customConfig.model_client,
-          tools: customConfig.tools,
-          knowledge: customConfig.knowledge,
+          mcp_sse_list: customConfig.mcp_sse_list,
+          // 后端期望 ragflow_configs 为列表
+          ragflow_configs: customConfig.ragflow_configs,
+          name: customConfig.name,
+          description: customConfig.description || "自定义智能体",
+          system_message: customConfig.system_message,
         },
       };
 
-      const updatedAgents = await agentAPI.updateAgentList(user.email, payload);
-
+      const updatedAgents = await agentWorkerAPI.saveRemoteAgent(user.email, payload);
+      await loadAgentList({ forceRefresh: true });
       if (handleAgentList) {
         await handleAgentList(updatedAgents);
       }

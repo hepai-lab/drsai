@@ -54,9 +54,10 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
         host: initialData?.host || { llmModel: "" },
         parser: initialData?.parser || { llmModel: "" },
         knowledge:
-            initialData?.knowledge || {
-                apiKey: "",
-                dataSetName: [],
+                ?.knowledge || {
+                ragflow_url: "",
+                ragflow_token: "",
+                dataset_ids: [],
             },
     });
 

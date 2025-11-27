@@ -443,7 +443,7 @@ async def create_magentic_round_team(
     elif agent_mode == "custom":
 
         agent = RAGFlowAgent(
-            name=agent_config.get("name", "drsai"),
+            name= "drsai", #agent_config.get("name", "drsai"),
             system_message=agent_config.get("system_message","A helpfull assistant."),
             description=agent_config.get("description","A helpfull assistant."),
             model_client=get_model_client(model_client_config = model_config),

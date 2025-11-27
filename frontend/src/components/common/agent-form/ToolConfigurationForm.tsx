@@ -7,7 +7,9 @@ export interface ToolConfig {
     type: "MCP";
     url: string;
     token: string;
-    name?: string;
+    // 以下为可选高级配置，不是必填
+    timeout?: number;
+    sse_read_timeout?: number;
 }
 
 export interface ToolConfigurationFormProps {

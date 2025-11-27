@@ -1,16 +1,18 @@
 import React from "react";
 import { Select } from "antd";
-import { Info, ExternalLink } from "lucide-react";
+import { Info } from "lucide-react";
 
 export interface KnowledgeConfig {
-    apiKey: string;
+    // 后端需要的字段：ragflow_url / ragflow_token / dataset_ids
+    ragflow_url: string;
+    ragflow_token: string;
     // 支持多选数据集
-    dataSetName: string[];
+    dataset_ids: string[];
 }
 
 interface KnowledgeConfigurationFormProps {
     config: KnowledgeConfig;
-    // apiKey 传 string，dataSetName 传 string[]
+    // ragflow_url / ragflow_token 传 string，dataset_ids 传 string[]
     onConfigChange: (field: keyof KnowledgeConfig, value: string | string[]) => void;
     darkMode?: string;
     showLabel?: boolean;
@@ -31,78 +33,138 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
     const [dataSets, setDataSets] = React.useState<
         { label: string; value: string }[]
     >([]);
+    // Provider 选择：Ihep Knowledge / Local Knowledge
+    const [provider, setProvider] = React.useState<"ihep" | "local">("ihep");
 
     const fetchDataSets = async () => {
-        // 模拟异步获取数据集列表
-        const response = await fetch(
-            "https://aiweb01.ihep.ac.cn:886/api/v1/datasets",
-            {
-                method: "GET",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${config.apiKey}`,
-                },
-            }
-        );
+        if (!config.ragflow_url || !config.ragflow_token) return;
+
+        const baseUrl = config.ragflow_url.replace(/\/+$/, "");
+        const response = await fetch(`${baseUrl}/api/v1/datasets`, {
+            method: "GET",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${config.ragflow_token}`,
+            },
+        });
         const data = await response.json();
 
         setDataSets(
-            data.data.map((item: any) => ({
+            (data.data || []).map((item: any) => ({
                 label: item.name,
-                value: item.name,
+                value: item.id ?? item.name,
             }))
         );
     };
+
     React.useEffect(() => {
-        if (config.apiKey) {
+        if (config.ragflow_url && config.ragflow_token) {
             fetchDataSets();
         }
-    }, [config.apiKey]);
+    }, [config.ragflow_url, config.ragflow_token]);
 
     return (
         <div className="space-y-4">
             {/* Knowledge Label */}
             {showLabel && (
                 <div className="flex items-center">
-                    <label
-                        className={`
-                            w-20 text-sm font-medium
-                            ${darkMode === "dark"
-                                ? "text-[#e5e5e5]"
-                                : "text-[#4a5568]"
-                            }
-                        `}
-                    >
-                        Knowledge:
-                    </label>
                     <div
-                        className={`flex-1 ml-4 space-y-4 w-full items-center justify-between px-3 py-2 rounded-md
+                        className={`flex-1 space-y-4 w-full items-center justify-between px-3 py-2 rounded-md
                             border transition-all duration-200  ${darkMode === "dark"
                                 ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
                                 : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
                             }  `}
                     >
-                        {/* API Key Field */}
+                        {/* Provider Field */}
                         <div className="flex items-center">
                             <label
                                 className={`
-                                    w-20 text-sm font-medium
+                                    w-24 text-sm font-medium
                                     ${darkMode === "dark"
                                         ? "text-[#e5e5e5]"
                                         : "text-[#4a5568]"
                                     }
                                 `}
                             >
-                                API Key:
+                                Provider:
+                            </label>
+                            <div className="flex-1 ml-4">
+                                <select
+                                    value={provider}
+                                    onChange={(e) =>
+                                        setProvider(e.target.value as "ihep" | "local")
+                                    }
+                                    className={`
+                                        w-full px-3 py-2 rounded-md border text-sm
+                                        ${darkMode === "dark"
+                                            ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530]"
+                                            : "bg-white text-[#4a5568] border-[#e2e8f0]"
+                                        }
+                                        focus:outline-none focus:border-[#4d3dc3]
+                                    `}
+                                >
+                                    <option value="ihep">Ihep Knowledge</option>
+                                    <option value="local">Local Knowledge</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        {/* Local Knowledge: URL 输入 */}
+                        {provider === "local" && (
+                            <div className="flex items-center">
+                                <label
+                                    className={`
+                                        w-24 text-sm font-medium
+                                        ${darkMode === "dark"
+                                            ? "text-[#e5e5e5]"
+                                            : "text-[#4a5568]"
+                                        }
+                                    `}
+                                >
+                                    Knowledge URL:
+                                </label>
+                                <div className="flex-1 ml-4">
+                                    <input
+                                        type="text"
+                                        value={config.ragflow_url}
+                                        onChange={(e) =>
+                                            onConfigChange("ragflow_url", e.target.value)
+                                        }
+                                        placeholder="例如 http://localhost:886"
+                                        className={`
+                                            w-full px-3 py-2 rounded-md border
+                                            ${darkMode === "dark"
+                                                ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
+                                                : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
+                                            }   
+                                            focus:outline-none focus:border-[#4d3dc3]
+                                        `}
+                                    />
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Ragflow Token Field */}
+                        <div className="flex items-center">
+                            <label
+                                className={`
+                                    w-24 text-sm font-medium
+                                    ${darkMode === "dark"
+                                        ? "text-[#e5e5e5]"
+                                        : "text-[#4a5568]"
+                                    }
+                                `}
+                            >
+                                Ragflow Token:
                             </label>
                             <div className="flex-1 ml-4 relative group">
                                 <input
                                     type="password"
-                                    value={config.apiKey}
+                                    value={config.ragflow_token}
                                     onChange={(e) =>
-                                        onConfigChange("apiKey", e.target.value)
+                                        onConfigChange("ragflow_token", e.target.value)
                                     }
-                                    placeholder="请输入API Key"
+                                    placeholder="请输入 Ragflow Token"
                                     className={`
                                         w-full px-3 py-2 rounded-md border
                                         ${darkMode === "dark"
@@ -134,9 +196,8 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                         `}
                                     >
                                         <p>
-                                            请输入您的API
-                                            Key以访问知识库服务。如果没有API
-                                            Key，请点击"获取"按钮。
+                                            请输入用于访问 Ragflow 的 Token。如果没有 Token，
+                                            请点击"获取"按钮。
                                         </p>
                                         <div className="absolute top-full right-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-[#3a3a3a]"></div>
                                     </div>
@@ -154,26 +215,26 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                             </div>
                         </div>
 
-                        {/* DataSet Name Field */}
+                        {/* Dataset IDs Field */}
                         <div className="flex items-center">
                             <label
                                 className={`
-                                    w-20 text-sm font-medium
+                                    w-24 text-sm font-medium
                                     ${darkMode === "dark"
                                         ? "text-[#e5e5e5]"
                                         : "text-[#4a5568]"
                                     }
                                 `}
                             >
-                                DataSet Name:
+                                Dataset IDs:
                             </label>
                             <div className="flex-1 ml-4 relative group">
                                 <Select
                                     mode="multiple"
                                     allowClear
-                                    value={config.dataSetName}
+                                    value={config.dataset_ids}
                                     onChange={(values) =>
-                                        onConfigChange("dataSetName", values)
+                                        onConfigChange("dataset_ids", values)
                                     }
                                     options={dataSets}
                                     placeholder="请选择数据集名称"
@@ -193,7 +254,7 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                             : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
                         }  `}
                 >
-                    {/* API Key Field */}
+                    {/* Provider Field */}
                     <div className="flex items-center">
                         <label
                             className={`
@@ -204,16 +265,85 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                 }
                             `}
                         >
-                            API Key:
+                            Provider:
+                        </label>
+                        <div className="flex-1 ml-4">
+                            <select
+                                value={provider}
+                                onChange={(e) =>
+                                    setProvider(e.target.value as "ihep" | "local")
+                                }
+                                className={`
+                                    w-full px-3 py-2 rounded-md border text-sm
+                                    ${darkMode === "dark"
+                                        ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530]"
+                                        : "bg-white text-[#4a5568] border-[#e2e8f0]"
+                                    }
+                                    focus:outline-none focus:border-[#4d3dc3]
+                                `}
+                            >
+                                <option value="ihep">Ihep Knowledge</option>
+                                <option value="local">Local Knowledge</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    {/* Local Knowledge: URL 输入 */}
+                    {provider === "local" && (
+                        <div className="flex items-center">
+                            <label
+                                className={`
+                                    w-20 text-sm font-medium
+                                    ${darkMode === "dark"
+                                        ? "text-[#e5e5e5]"
+                                        : "text-[#4a5568]"
+                                    }
+                                `}
+                            >
+                                Knowledge URL:
+                            </label>
+                            <div className="flex-1 ml-4">
+                                <input
+                                    type="text"
+                                    value={config.ragflow_url}
+                                    onChange={(e) =>
+                                        onConfigChange("ragflow_url", e.target.value)
+                                    }
+                                    placeholder="例如 http://localhost:886"
+                                    className={`
+                                        w-full px-3 py-2 rounded-md border
+                                        ${darkMode === "dark"
+                                            ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
+                                            : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
+                                        }   
+                                        focus:outline-none focus:border-[#4d3dc3]
+                                    `}
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Ragflow Token Field */}
+                    <div className="flex items-center">
+                        <label
+                            className={`
+                                w-20 text-sm font-medium
+                                ${darkMode === "dark"
+                                    ? "text-[#e5e5e5]"
+                                    : "text-[#4a5568]"
+                                }
+                            `}
+                        >
+                            Ragflow Token:
                         </label>
                         <div className="flex-1 ml-4 relative group">
                             <input
                                 type="password"
-                                value={config.apiKey}
+                                value={config.ragflow_token}
                                 onChange={(e) =>
-                                    onConfigChange("apiKey", e.target.value)
+                                    onConfigChange("ragflow_token", e.target.value)
                                 }
-                                placeholder="请输入API Key"
+                                placeholder="请输入 Ragflow Token"
                                 className={`
                                     w-full px-3 py-2 rounded-md border
                                     ${darkMode === "dark"
@@ -265,7 +395,7 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                         </div>
                     </div>
 
-                    {/* DataSet Name Field */}
+                    {/* Dataset IDs Field */}
                     <div className="flex items-center">
                         <label
                             className={`
@@ -276,15 +406,15 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                 }
                             `}
                         >
-                            DataSet Name:
+                            Dataset IDs:
                         </label>
                         <div className="flex-1 ml-4 relative group">
                             <Select
                                 mode="multiple"
                                 allowClear
-                                value={config.dataSetName}
+                                value={config.dataset_ids}
                                 onChange={(values) =>
-                                    onConfigChange("dataSetName", values)
+                                    onConfigChange("dataset_ids", values)
                                 }
                                 options={dataSets}
                                 placeholder="请选择数据集名称"

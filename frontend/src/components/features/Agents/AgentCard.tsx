@@ -170,7 +170,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
         </div>
       )}
 
-      {mode === "remote" && onRemove && (
+      {mode === "remote" || mode === "custom" && onRemove && (
         <button
           onClick={handleRemoveClick}
           className="absolute top-2 right-2 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
