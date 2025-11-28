@@ -1,5 +1,5 @@
 import { Network, Pencil, X } from "lucide-react";
-import React, { useContext } from "react";
+import React, { useContext, useEffect } from "react";
 import { appContext } from "../../../hooks/provider";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { Button } from "../../common/Button";
@@ -35,11 +35,12 @@ const createSessionName = (name: string): string => {
   })}`;
 };
 
-const createAgentConfig = (name: string, url: string, apiKey: string, mode?: AgentMode) => ({
+const createAgentConfig = (name: string, url: string, apiKey: string, mode?: AgentMode, extendConfig?: any) => ({
   name,
   url,
   apiKey,
   mode,
+  ...extendConfig,
 });
 
 const AgentCard: React.FC<AgentCardProps> = ({
@@ -55,6 +56,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
   handleAgentList,
   id,
   existingAgents = [],
+  config: extendConfig,
 }) => {
   const { setSelectedAgent, setConfig } = useModeConfigStore();
   const { user } = useContext(appContext);
@@ -62,6 +64,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
   // 添加状态跟踪
   const [isAdding, setIsAdding] = React.useState(false);
   const [isAdded, setIsAdded] = React.useState(false);
+
 
   // 检查智能体是否已存在于侧边栏中
   const checkIfAgentExists = React.useCallback(() => {
@@ -96,8 +99,10 @@ const AgentCard: React.FC<AgentCardProps> = ({
 
   const handleTryClick = async () => {
     const agent: Partial<Agent> = { mode, name };
-    const config = createAgentConfig(name, url, apiKey || "", mode);
+    const config = createAgentConfig(name, url, apiKey || "", mode, extendConfig);
 
+
+    console.log('config：：：：：：：：：：：：：：：：：：：：：：：：：：：：：：：：', config);
     setSelectedAgent({ name, mode });
     setConfig(config);
 
@@ -115,7 +120,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
 
       window.dispatchEvent(
         new CustomEvent("switchToCurrentSession", {
-          detail: { agent, newSession },
+          detail: { agent, newSession, config },
         })
       );
     } catch (error) {

@@ -242,9 +242,7 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
         agent_mode_config: {
           mode: agent.mode,
           name: agent.name,
-          description: agent.description,
-          url: agent.config?.url,
-          apikey: agent.config?.apikey,
+          ...agent.config,
         },
       };
 

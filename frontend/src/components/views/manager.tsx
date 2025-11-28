@@ -236,10 +236,11 @@ export const SessionManager: React.FC = () => {
   // Listen for switchToCurrentSession event
   useEffect(() => {
     const handleSwitchToCurrentSession = async (event: CustomEvent) => {
-      const { agent, newSession } = event.detail;
+      const { agent, newSession, config } = event.detail;
 
       setActiveSubMenuItem("current_session");
       setSelectedAgent(agent);
+      setConfig(config)
 
       if (newSession) {
         try {
