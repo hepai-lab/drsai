@@ -1,1 +1,1 @@
-from ._drsai_static_workbench import DrsaiStaticWorkbench
+from ._drsai_static_workbench import DrSaiStaticWorkbench

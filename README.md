@@ -1,6 +1,6 @@
-#### [English](README_en.md) | 简体中文
+# 高能万悟(Wanwu)智能体平台-OpenDrSai科学智能体开发框架
 
-# OpenDrSai 
+## [English](README_en.md) | 简体中文
 
 由中国科学院高能物理研究所[HepAI](https://ai.ihep.ac.cn/)团队开发的智能体、多智能体协同系统快速开发和部署一体化框架，可快速地开发和部署自己的智能体、多智能体协同系统前后端服务。
 
@@ -18,6 +18,25 @@
 - 2.为智能体和多智能体系统设计了感知、思考、记忆、执行、状态管理等预定义组件，并进行了插件化设计，可灵活扩展，满足多种专业智能体设计应用场景。
 - 3.提供了一键启动的人机交互前后端，实现了开发即应用。并为智能体和多智能体协作系统交互提供了兼容OpenAI ChatCompletions、OpenWebui-Pipeline的标准后端接口，可将智能体和多智能体协作系统作为第三方的模型或智能体API服务。
 
+### &#x1F4E2; 功能比较
+
+|      功能       | 高能万悟(Wanwu)-OpenDrSai智能体开发框架 |    AutoGen     |    Camel AI    |    LangChain   |    AutoGPT     | Dify.AI |
+| :-------------: | :------------: | :------------: | :------------: | :------------: | :------------: | :------------: |
+| 框架特征 | ✅基于AutoGen，针对科学任务优化，扩展性和人机交互能力强，能可视化和低代码构建专业科学智能体和多智能体系统 | 以对话驱动的多智能体协同架构，模块化和通用性强，生态较好，但只提供基本框架功能 | 基于角色扮演+启示式提示的协作架构，生态较好 | 模块式组装开发  | 集成度较高的智能体和多智能体架构  | 低代码平台，可拖拽构建，扩展性较差 |
+| 模型接入 | ✅支持专业科学模型的接入及开发策略 | 目前只支持通用的大模型格式接入 | 目前只支持通用的大模型格式接入 | 目前只支持通用的大模型格式接入  | 目前只支持通用的大模型格式接入  | 目前只支持通用的大模型格式接入  |
+| 专业科学数据接入 | ✅开发了感知器等专业科学数据接入策略 | 需要开发 | 暂无 | 暂无 | 暂无 | 暂无 |
+| 记忆与知识 | ✅模块化的专业知识接入、长期智能记忆管理 | 需要开发 | ✅具有长期智能记忆 | 需要开发 | ✅具有长短期记忆机制 | ✅内置知识库和消息存储功能 |
+| 科学工具| ✅支持MCP/OpenAPI/HepAI Worker等多种工具、资源接入方式 | 只支持MCP Tool格式和本地函数，其它需要进一步开发 | ✅预设了多种通用工具和多种接入方式 | 需要开发 | 需要开发 | 内置有限工具，专业工具需要开发 |
+| 学习反思 | ✅模块化的反思和学习 | 需要开发 | ✅内置反思过程和学习步骤 | 需要开发 | ✅内置反思过程和学习步骤 | 反思能力有限，主要依赖 RAG |
+| 状态管理与人机交互 | ✅支持前后端人机交互 | 基础的userproxy模式，需要进一步开发 | 基础的userproxy模式，需要进一步开发 | 需要开发 | 需要开发 | 暂无 |
+| 长时间任务执行管理 | ✅支持超长时间科学任务监控与守护 | 暂无 | 暂无 | 暂无 | 暂无 | 暂无 |
+| 框架模块化和扩展性 | ✅模块化、扩展性强 | ✅模块化、扩展性强 | ✅模块化、扩展性强 | 具有较强的模块化、扩展性 | 扩展性较差 | 扩展性较差 |
+| 交互式应用开发 | ✅具有开发即应用的特性，构建的智能体可直接转化为人机交互的web应用 | 在AutoGen Studio中可进行拖拽构建多智能体系统 | 在CAMEL Web App进行前端应用 | 需要与其他开源界面集成 | 需要与其他开源界面集成 | 前端可拖拽构建智能体应用 |
+
+> 截止时间：2025年11月25日
+
+------
+
 ## 2.快速开始
 
 ### 2.1.安装OpenDrSai
@@ -32,6 +51,7 @@ pip install drsai drsai_ui -U
 ```
 
 #### 源码安装
+
 ```shell
 conda create -n drsai python=>3.11
 conda activate drsai
@@ -46,12 +66,15 @@ cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # for DrSai-U
 配置[HepAI](https://aiapi.ihep.ac.cn)DDF2平台的API访问密钥等环境变量(Based on bash)：
 
 linux/mac平台:
+
 ```shell
 vi ~/.bashrc
 export HEPAI_API_KEY=your_api_key
 source ~/.bashrc
 ```
+
 windows平台：
+
 ```shell
 setx "HEPAI_API_KEY" "your_api_key"
 # 注意 windows环境变量需要重启电脑才会生效
@@ -67,6 +90,7 @@ setx "HEPAI_API_KEY" "your_api_key"
 conda activate drsai
 python examples/agent_groupchat/assistant_base_R1_oai.py
 ```
+
 **NOTE**: 请根据自己的测试需要更改```if __name__ == "__main__":```中的智能体启动方式。
 
 **NOTE**: examples/agent_groupchat中还包括了其他智能体和多智能体系统的案例，包括MCP等工具接入、RAG接入、多智能体协作系统的设计、多任务执行的设计等。
@@ -76,9 +100,10 @@ python examples/agent_groupchat/assistant_base_R1_oai.py
 ```shell
 # pip install drsai_ui -U # 确保安装了drsai_ui
 
-cp .env.example .env # 复制.env.example文件为.env, 用于高能所部署统一认证
+cp .env.example .env # 复制.env.example文件为.env, 可用于高能所部署统一认证
 drsai ui # 启动Dr.Sai-UI人机交互后端和静态前端
 ```
+
 后端和静态前端默认启动在8081端口，```drsai --help```获取更多的启动参数，连接2.2启动的R1_test智能体并在前端进行交互的视频如下：
 
 <video width="80%" controls>
@@ -88,6 +113,7 @@ drsai ui # 启动Dr.Sai-UI人机交互后端和静态前端
 [下载演示视频](assets/video/drsai_ui.mp4)
 
 **NOTE:**
+
 - DrSai-General 功能需要编译python执行沙盒和浏览器VNC的Docker镜像，请确保安装了docker环境。具体docker镜像及安装配置见[docker](docker/README.md)
 
 
@@ -96,6 +122,7 @@ drsai ui # 启动Dr.Sai-UI人机交互后端和静态前端
 #### 配置npm环境
 
 安装node
+
 ```shell
 # install nvm to install node
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
@@ -103,6 +130,7 @@ nvm install node # recommended node version ~ 22
 ```
 
 安装前端依赖
+
 ```shell
 cd your/path/to/drsai/frontend
 npm install -g gatsby-cli
@@ -113,6 +141,7 @@ yarn install
 # cp .env.default .env.development or .env.production # 复制.env.default文件为.env.development或.env.production
 # 开发环境变量为frontend/.env.development
 # 生产环境变量为frontend/.env.production
+# ************************
 
 # yarn build # 打包前端静态资源
 yarn run dev # 启动前端开发环境
@@ -127,6 +156,7 @@ drsai backend --agent-config agent_config.yaml # 将智能体/多智能体部署
 ```
 
 **NOTE:**
+
 - agent_config.yaml文件展示了智能体和多智能体的配置信息，进行智能体尝鲜，或者前端用户自定义配置智能体时可以根据配置文件进行智能体/多智能体系统的快速创建，一个案例如下：
 
 ```yaml
@@ -146,6 +176,7 @@ myassistant:
   description: "An agent that provides assistance with ability to use tools."
   model_client: *client
 ```
+
 具体的配置项说明见[配置文件说明文档](docs/agent_factory.md)。在我们[AI平台](https://drsai.ihep.ac.cn)上，提供了丰富的智能体的基座模型、MCP/HEPAI Worker工具、RAG记忆插件；多种逻辑的智能体和多智能体框架；一些预设的智能体/多智能体工作模式供你选择。你可以在前后端选择适合你的智能体/多智能体框架和工具、知识库等，快速搭建自己的智能体/多智能体协作系统。通过配置快速构建智能体/多智能体系统详细的说明见：```docs/agent_factory.md```.
 
 
@@ -153,7 +184,7 @@ myassistant:
 
 ### 3.1.智能体组件开发
 
-- [ ] 模型层：正在开发支持Anthropic Claude、Ollama等其他格式的模型的接入
+- [ ] 模型层：正在开发支持特殊格式数据的小模型的接入，定制相应的消息类型和事件类型
 
 ~~-支持HepAI平台的模型接入，具体见examples/components/model_client01.py~~
 
@@ -187,7 +218,11 @@ myassistant:
 
 ### 3.2.专业智能体
 
-- [ ] 长任务处理智能体: 开发支持自我规划和多工具调用的组件调度器，作为通用的规划执行智能体
+- [ ] 长任务处理智能体及开发教程: 开发支持自我规划和多工具调用的组件调度器，作为通用的规划执行智能体
+
+- [ ] 深度检索智能体及开发教程：开发基于长记忆和自我规划的深度检索智能体
+
+- [ ] 包含长任务处理的多智能体系统及开发教程
 
 ### 3.3.多智能体系统开发
 
@@ -200,7 +235,7 @@ myassistant:
 - [ ] 基于任务分发机制多智能体系统协同调度器
 
 - [ ] 可进行多远程智能体协同的多智能体系统案例
- 
+
 ### 3.4.人机交互前后端开发
 
 - [ ] 后端数据库的自动生成id设计为UUID，以代替现在使用整数id进行自动排序的设计
@@ -227,7 +262,8 @@ myassistant:
 培训教程可见：[OpenDrSai-tutorials-v3.pdf](tutorials/OpenDrSai-tutorials-v3.pdf)
 
 详细的教程见tutorials目录（正在开发中，有问题及时联系我们）：
-```
+
+```text
 tutorials/base01-hepai.md：HepAI平台的模型配置和使用
 tutorials/base02-worker.md：HEPAI Worker远程函数的配置和使用
 tutorials/base03-use_claude-code.md：基HepAI平台于Claude-Code的使用
@@ -237,7 +273,8 @@ tutorials/request: 客户端请求案例
 ```
 
 文档说明见docs目录（正在开发中，有问题及时联系我们）：
-```
+
+```text
 docs/develop.md: 智能体/多智能体系统代码开发说明
 docs/agent_factory.md: 智能体/多智能体开放和社区开发指南
 docs/drsai_ui.md: 人机交互前端使用指南
@@ -255,7 +292,7 @@ docs/open-webui.md：OpenAI格式的前端访问，以及OpenWebui的Pipeline插
 
 ## 6.联系我们
 
-- 邮箱：hepai@ihep.ac.cn/zdzhang@ihep.ac.cn/xiongdb@ihep.ac.cn
+- 邮箱：<hepai@ihep.ac.cn> / <zdzhang@ihep.ac.cn> / <xiongdb@ihep.ac.cn>
 - 微信：xiongdongbo_12138
 - 微信群聊：HepAI大模型技术交流3群：
 

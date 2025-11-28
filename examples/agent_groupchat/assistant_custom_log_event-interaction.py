@@ -66,7 +66,7 @@ from autogen_agentchat.messages import (
 )
 
 from drsai.modules.managers.database import DatabaseManager
-from drsai import DrsaiStaticWorkbench
+from drsai import DrSaiStaticWorkbench
 from drsai import RAGFlowMemory, RAGFlowMemoryConfig
 from autogen_core.model_context import (
     BufferedChatCompletionContext,)

@@ -5,9 +5,9 @@ from autogen_core.tools import StaticWorkbench, ToolResult, TextResultContent
 from autogen_ext.tools.mcp import StdioMcpToolAdapter, SseMcpToolAdapter
 from autogen_core import CancellationToken
 
-class DrsaiStaticWorkbench(StaticWorkbench):
+class DrSaiStaticWorkbench(StaticWorkbench):
 
-    component_provider_override = 'drsai.DrsaiStaticWorkbench'
+    component_provider_override = 'drsai.DrSaiStaticWorkbench'
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
