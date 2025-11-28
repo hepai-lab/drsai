@@ -440,7 +440,7 @@ async def create_magentic_round_team(
         #     },
         # )
     
-    elif agent_mode == "drsai":
+    elif agent_mode == "custom":
 
         agent = RAGFlowAgent(
             name=agent_config.get("name", "drsai"),
@@ -477,10 +477,10 @@ async def create_magentic_round_team(
             run_info = run_info,
         )
         agent: ChatAgent|Team = await agent_factory()
-
-    elif agent_mode == "custom":
-        agent_factory: Callable[[], Union[ChatAgent, Team]] = await a_load_agent_factory_from_config(agent_config, mode = "ui")
-        agent: ChatAgent|Team = await agent_factory()
+    # TODO: 自定义Agent
+    # elif agent_mode == "custom":
+    #     agent_factory: Callable[[], Union[ChatAgent, Team]] = await a_load_agent_factory_from_config(agent_config, mode = "ui")
+    #     agent: ChatAgent|Team = await agent_factory()
 
     else:
         raise ValueError(f"Invalid agent mode: {agent_mode}")

@@ -4,10 +4,10 @@ import { appContext } from "../../../hooks/provider";
 
 export interface ToolConfig {
     id: string;
-    type: string;
+    type: "MCP";
     url: string;
     token: string;
-    workerName?: string; // 为HepAI添加worker name字段
+    name?: string;
 }
 
 export interface ToolConfigurationFormProps {
@@ -35,12 +35,8 @@ const ToolConfigurationForm: React.FC<ToolConfigurationFormProps> = ({
 }) => {
     const { darkMode } = React.useContext(appContext);
 
-    // Tools options
-    const toolsOptions = [
-        { value: "MCP", label: "MCP" },
-        { value: "HepAI", label: "HepAI" },
-        { value: "OpenAPI", label: "OpenAPI" },
-    ];
+    // Tools options - 当前只支持 MCP，但可以配置多个 MCP
+    const toolsOptions = [{ value: "MCP", label: "MCP" }];
 
     const renderSelect = (
         value: string,
@@ -149,7 +145,7 @@ const ToolConfigurationForm: React.FC<ToolConfigurationFormProps> = ({
         </div>
     );
 
-    // 根据选择的工具类型渲染不同的字段
+    // 根据选择的工具类型渲染不同的字段（当前只支持 MCP）
     const renderFieldsByToolType = () => {
         switch (config.type) {
             case "MCP":
@@ -167,37 +163,29 @@ const ToolConfigurationForm: React.FC<ToolConfigurationFormProps> = ({
                         )}
                     </>
                 );
-            case "HepAI":
-                return (
-                    <>
-                        {renderInputField(
-                            "Worker Name",
-                            config.workerName || "",
-                            (value) =>
-                                onConfigChange(config.id, "workerName", value)
-                        )}
-                        {renderInputField("URL", config.url, (value) =>
-                            onConfigChange(config.id, "url", value)
-                        )}
-                    </>
-                );
-            case "OpenAPI":
-                return (
-                    <>
-                        {renderInputField("URL", config.url, (value) =>
-                            onConfigChange(config.id, "url", value)
-                        )}
-                    </>
-                );
             default:
-                return null;
+                // 兜底也按 MCP 渲染，保证表单可用
+                return (
+                    <>
+                        {renderInputField("URL", config.url, (value) =>
+                            onConfigChange(config.id, "url", value)
+                        )}
+                        {renderInputField(
+                            "Token",
+                            config.token,
+                            (value) =>
+                                onConfigChange(config.id, "token", value),
+                            "password"
+                        )}
+                    </>
+                );
         }
     };
 
     return (
         <div
             className={`
-                border-2 rounded-md p-4
+                 rounded-md p-4
                 ${darkMode === "dark"
                     ? "border-[#e5e5e530] bg-[#3a3a3a]"
                     : "border-[#e2e8f0] bg-[#f9fafb]"

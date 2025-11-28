@@ -46,15 +46,18 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
         coder: initialData?.coder || { llmModel: "" },
         tester: initialData?.tester || {
             id: "1",
-            type: "",
+            type: "MCP",
             url: "",
             token: "",
-            workerName: "",
             llmModel: "",
         },
         host: initialData?.host || { llmModel: "" },
         parser: initialData?.parser || { llmModel: "" },
-        knowledge: initialData?.knowledge || { apiKey: "", dataSetName: "" },
+        knowledge:
+            initialData?.knowledge || {
+                apiKey: "",
+                dataSetName: [],
+            },
     });
 
     // 为每个下拉框添加独立的状态
@@ -98,7 +101,7 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
 
     const handleTesterConfigChange = (
         id: string,
-        field: keyof ToolConfig,
+        field: keyof (ToolConfig & { llmModel: string }),
         value: string
     ) => {
         setFormData((prev) => ({
@@ -109,11 +112,11 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
 
     const handleKnowledgeConfigChange = (
         field: keyof KnowledgeConfig,
-        value: string
+        value: string | string[]
     ) => {
         setFormData((prev) => ({
             ...prev,
-            knowledge: { ...prev.knowledge, [field]: value },
+            knowledge: { ...prev.knowledge, [field]: value } as KnowledgeConfig,
         }));
     };
 

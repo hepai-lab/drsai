@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Globe2 } from "lucide-react";
-import { Run, Message } from "../../types/datamodel";
+import { Run, Message, RunLogEntry } from "../../types/datamodel";
 import { RenderMessage, messageUtils } from "./rendermessage";
 import { getStatusIcon } from "../statusicon";
 import { IPlanStep, IPlan } from "../../types/plan";
@@ -13,6 +13,7 @@ import { AgentConfiguration } from "./config/agentConfigs";
 import { BESIIITask } from "./panels/types";
 
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
+const CHAT_INPUT_BASE_HEIGHT_PX = 78;
 
 interface RunViewProps {
   run: Run;
@@ -72,6 +73,8 @@ const RunView: React.FC<RunViewProps> = ({
   enable_upload = false,
 }) => {
   const threadContainerRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollLockedRef = useRef(false);
+  const [autoScrollLocked, setAutoScrollLocked] = useState(false);
   const [novncPort, setNovncPort] = useState<string | undefined>();
   const [detailViewerExpanded, setDetailViewerExpanded] = useState(false);
   const [detailViewerTab, setDetailViewerTab] = useState<
@@ -102,6 +105,52 @@ const RunView: React.FC<RunViewProps> = ({
 
   // Add this with other refs near the top of the component
   const buttonsContainerRef = useRef<HTMLDivElement | null>(null);
+  const [chatInputHeight, setChatInputHeight] = useState<number>(
+    CHAT_INPUT_BASE_HEIGHT_PX
+  );
+
+  useEffect(() => {
+    const container = buttonsContainerRef.current;
+    if (!container) return;
+
+    const updateHeight = () => {
+      const nextHeight = container.offsetHeight || CHAT_INPUT_BASE_HEIGHT_PX;
+      setChatInputHeight(nextHeight);
+    };
+
+    updateHeight();
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", updateHeight);
+      return () => window.removeEventListener("resize", updateHeight);
+    }
+
+    const observer = new ResizeObserver(() => updateHeight());
+    observer.observe(container);
+
+    return () => observer.disconnect();
+  }, []);
+
+  const scrollToBottom = (behavior: "auto" | "smooth" = "auto") => {
+    const container = threadContainerRef.current;
+    if (!container) return;
+
+    autoScrollLockedRef.current = false;
+    setAutoScrollLocked(false);
+
+    const scroll = () => {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior,
+      });
+    };
+
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(scroll);
+    } else {
+      scroll();
+    }
+  };
 
   // Agent configuration - 从 parent (chat.tsx) 接收
 
@@ -196,21 +245,60 @@ const RunView: React.FC<RunViewProps> = ({
   const [besiiiTasks, setBesiiiTasks] = useState<BESIIITask[]>(() => {
     return convertTaskToBESIIITask(run.task);
   });
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<RunLogEntry[]>([]);
   const [terminalOutput, setTerminalOutput] = useState<string>('[INFO] Starting BESIII analysis workflow...\n[INFO] Loading detector configuration...\n[SUCCESS] Detector configuration loaded\n[INFO] Processing event data...');
+
+  // Track manual scrolling so users can inspect earlier messages without being forced to bottom
+  useEffect(() => {
+    const container = threadContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      const isAtBottom = distanceFromBottom <= 48;
+
+      if (!isAtBottom && !autoScrollLockedRef.current) {
+        autoScrollLockedRef.current = true;
+        setAutoScrollLocked(true);
+      } else if (isAtBottom && autoScrollLockedRef.current) {
+        autoScrollLockedRef.current = false;
+        setAutoScrollLocked(false);
+      }
+    };
+
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, []);
 
   // Combine scroll behavior when messages or status change
   useEffect(() => {
-    if (run.messages.length > 0 && threadContainerRef.current) {
-      // Use a small delay to ensure the DOM has updated
-      setTimeout(() => {
-        const container = threadContainerRef.current;
-        if (container) {
-          container.scrollTop = container.scrollHeight;
-        }
-      }, 100);
+    if (
+      run.messages.length === 0 ||
+      !threadContainerRef.current ||
+      autoScrollLockedRef.current
+    ) {
+      return;
     }
-  }, [run.messages, run.status]);
+
+    // Use a small delay to ensure the DOM has updated
+    const timeout = setTimeout(() => {
+      scrollToBottom("auto");
+    }, 100);
+
+    return () => clearTimeout(timeout);
+  }, [run.messages, run.status, autoScrollLocked]);
+
+  useEffect(() => {
+    autoScrollLockedRef.current = false;
+    setAutoScrollLocked(false);
+
+    const timeout = setTimeout(() => {
+      scrollToBottom("auto");
+    }, 100);
+
+    return () => clearTimeout(timeout);
+  }, [run.id]);
 
   // Effect to handle browser_address message (for VNC panel)
   useEffect(() => {
@@ -269,7 +357,10 @@ const RunView: React.FC<RunViewProps> = ({
 
     // 从 run.logs 更新日志数据
     if (run.logs && Array.isArray(run.logs)) {
-      setLogs(run.logs);
+      const normalizedLogs = (run.logs as Array<RunLogEntry | string>).map((entry) =>
+        typeof entry === "string" ? { content: entry } : entry
+      );
+      setLogs(normalizedLogs);
     }
   }, [run.logs, agentConfig.panel.type]);
 
@@ -747,10 +838,7 @@ const RunView: React.FC<RunViewProps> = ({
   }, [run.status]);
 
   return (
-    <div
-      className="flex w-full gap-4 h-full overflow-y-auto scroll"
-      ref={threadContainerRef}
-    >
+    <div className="flex w-full gap-4 h-full">
       {/* Messages section */}
       <div
         className={`items-start relative flex flex-col h-full ${showPanel &&
@@ -763,7 +851,14 @@ const RunView: React.FC<RunViewProps> = ({
           } transition-all duration-300`}
       >
         {/* Thread Section - use flex-1 for height, but remove overflow-y-auto */}
-        <div className="w-full max-w-4xl mx-auto flex-1">
+        <div
+          ref={threadContainerRef}
+          className="w-full max-w-4xl mx-auto flex-1"
+          style={{
+            height: `calc(100% - ${chatInputHeight}px)`,
+            overflowY: "auto",
+          }}
+        >
           {localMessages.length > 0 &&
             localMessages.map((msg: Message, idx: number) => {
               const isCurrentMessagePlan =
@@ -871,6 +966,7 @@ const RunView: React.FC<RunViewProps> = ({
               accepted = false,
               plan?: IPlan
             ) => {
+              scrollToBottom("smooth");
               if (
                 run.status === "awaiting_input" ||
                 run.status === "paused"

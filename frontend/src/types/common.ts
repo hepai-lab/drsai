@@ -2,7 +2,8 @@ export type AgentMode =
     | "besiii"
     | "ddf"
     | "magentic-one"
-    | "remote";
+    | "remote"
+    | "custom";
 
 export type AgentType =
     | "default"

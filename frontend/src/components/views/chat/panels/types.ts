@@ -1,3 +1,5 @@
+import { RunLogEntry } from "../../../types/datamodel";
+
 /**
  * Panel 组件的通用类型定义
  */
@@ -28,7 +30,7 @@ export interface BESIIITask {
 export interface BESIIIPanelProps {
   tasks?: BESIIITask[];
   terminalOutput?: string;
-  logs?: string[];
+  logs?: RunLogEntry[];
   onMinimize?: () => void;
   onTaskClick?: (taskId: string) => void;
   onSubtaskClick?: (taskId: string, subtaskId: string) => void;
