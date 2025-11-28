@@ -63,7 +63,7 @@ from autogen_agentchat.messages import (
 )
 
 from drsai.modules.managers.database import DatabaseManager
-from drsai import DrsaiStaticWorkbench
+from drsai import DrSaiStaticWorkbench
 from drsai import RAGFlowMemory, RAGFlowMemoryConfig
 from autogen_core.model_context import (
     BufferedChatCompletionContext,)
@@ -303,7 +303,7 @@ async def create_agent() -> LongMCPAgent:
                                 url="http://0.0.0.0:42608/sse",
                                 env=None)
                         ) 
-    workbench = DrsaiStaticWorkbench(tools = tools)
+    workbench = DrSaiStaticWorkbench(tools = tools)
     assistant_agent = LongMCPAgent(
         name="assistant_agent",
         system_message="""你是一个可以进行web检索的智能体""",

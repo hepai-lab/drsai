@@ -1,6 +1,6 @@
 
 from autogen_core.tools import BaseTool, FunctionTool, StaticWorkbench, Workbench
-from drsai import DrsaiStaticWorkbench
+from drsai import DrSaiStaticWorkbench
 
 async def get_weather(city: str) -> str:
     """Get the weather for a given city."""
@@ -16,7 +16,7 @@ async def test():
 
 async def test2():
     tool = FunctionTool(get_weather, description=get_weather.__doc__)
-    wb = DrsaiStaticWorkbench(tools=[tool])
+    wb = DrSaiStaticWorkbench(tools=[tool])
     print(await wb.list_tools())
     result = await wb.call_tool(name = 'get_weather', arguments={'city': 'New York'})
     print(result)

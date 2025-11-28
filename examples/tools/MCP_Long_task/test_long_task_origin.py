@@ -16,7 +16,7 @@ async def test_task_flow():
     """Test the complete task lifecycle."""
     tools = []
     tools.extend(await mcp_server_tools(SseServerParams(
-                            url="http://localhost:42609/sse",
+                            url="http://localhost:42608/sse",
                             env=None)
                     ) )
     workbench = DrSaiStaticWorkbench(tools)
@@ -29,7 +29,7 @@ async def test_task_flow():
     # Create a new task without task_id
     keywords = ["OpenDrSai", "AutoGen", "AI Agent"]
     result = await workbench.call_tool(
-        name = "search_google",
+        name = "perform_long_research",
         arguments={'keywords': keywords})
     result1 = json.loads(result.result[0].content)
     print(f"\nResult 1: {result1}")
@@ -41,8 +41,8 @@ async def test_task_flow():
 
     # Check status after initial time_limit
     result2 = await workbench.call_tool(
-        name = "query_research_status",
-        arguments={"task_id": task_id})
+        name = "perform_long_research",
+        arguments={'keywords': keywords, "task_id": task_id})
     print(f"\nResult 2: {result2}")
 
     print("\n" + "=" * 60)
@@ -52,8 +52,8 @@ async def test_task_flow():
     # Wait a bit more and check again
     await asyncio.sleep(5)
     result3 = await workbench.call_tool(
-        name = "query_research_status",
-        arguments={"task_id": task_id})
+        name = "perform_long_research",
+        arguments={'keywords': keywords, "task_id": task_id})
     print(f"\nResult 3: {result3}")
 
     print("\n" + "=" * 60)
@@ -65,8 +65,8 @@ async def test_task_flow():
     check_count = 0
     while check_count < max_checks:
         result = await workbench.call_tool(
-        name = "query_research_status",
-        arguments={"task_id": task_id})
+        name = "perform_long_research",
+        arguments={'keywords': keywords, "task_id": task_id})
         result = json.loads(result.result[0].content)
         print(f"\nCheck {check_count + 1}: Status = {result['status']}")
 
@@ -84,7 +84,7 @@ async def test_task_flow():
     # Create another task
     keywords2 = ["Machine Learning", "Deep Learning"]
     result_new = await workbench.call_tool(
-        name = "search_google",
+        name = "perform_long_research",
         arguments={'keywords': keywords2})
     
     print(f"\nNew Task Result: {result_new}")

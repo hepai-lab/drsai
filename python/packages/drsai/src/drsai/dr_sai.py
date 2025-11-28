@@ -182,14 +182,15 @@ class DrSai:
         extra_body: Union[Dict, None] = kwargs.pop('extra_body', None)
         if extra_body is not None:
             ## 用户信息 从DDF2传入的
-            user_info: Dict = kwargs.get('extra_body', {}).get("user", {})
+            user_info: Dict = extra_body.get("user", {})
             username = user_info.get('email', None) or user_info.get('name', "anonymous")
-            chat_id = extra_body.get("chat_id", None) # 获取前端聊天界面的chat_id
+            # chat_id = extra_body.get("chat_id", None) # 获取前端聊天界面的chat_id
+            api_key = user_info.pop('api_key', None) 
         else:
             #  {'model': 'drsai_pipeline', 'user': {'name': '888', 'id': '888', 'email': 888', 'role': 'admin'}, 'metadata': {}, 'base_models': 'openai/gpt-4o', 'apikey': 'sk-88'}
             user_info = kwargs.get('user', {})
             username = user_info.get('email', None) or user_info.get('name', "anonymous")
-            chat_id = kwargs.pop('chat_id', None) # 获取前端聊天端口的chat_id
+        chat_id = kwargs.pop('chat_id', None) # 获取前端聊天端口的chat_id
             # history_mode = kwargs.pop('history_mode', None) or self.history_mode # backend or frontend
         ## 保存用户的extra_requests
         extra_requests: Dict = copy.deepcopy(kwargs)

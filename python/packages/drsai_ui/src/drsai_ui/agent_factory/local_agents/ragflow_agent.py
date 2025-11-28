@@ -89,7 +89,7 @@ from autogen_agentchat.utils import remove_images
 from drsai import HepAIChatCompletionClient
 from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory, RAGFlowMemoryConfig
 from drsai.modules.managers.database import DatabaseManager, DatabaseManagerConfig
-from drsai import DrsaiStaticWorkbench
+from drsai import DrSaiStaticWorkbench
 from drsai import DrSaiChatCompletionContext
 from drsai.modules.managers.messages.agent_messages import(
     AgentLongTaskMessage,
@@ -189,5 +189,5 @@ class RAGFlowAgent(DrSaiAgent):
                 url=mcp_url,
             ))) 
         
-        self._workbench = DrsaiStaticWorkbench(tools=sse_tools)
+        self._workbench = DrSaiStaticWorkbench(tools=sse_tools)
         

@@ -79,7 +79,7 @@ from autogen_agentchat.messages import (
 from autogen_agentchat.utils import remove_images
 from drsai import HepAIChatCompletionClient
 from drsai.modules.managers.database import DatabaseManager, DatabaseManagerConfig
-from drsai import DrsaiStaticWorkbench
+from drsai import DrSaiStaticWorkbench
 from drsai.modules.managers.messages.agent_messages import(
     AgentLongTaskMessage,
     LongTaskQueryMessage,

@@ -3,7 +3,7 @@ from drsai.dr_sai import DrSai
 # Agent components
 from drsai.modules.components.model_client.LLMClient import HepAIChatCompletionClient
 from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory, RAGFlowMemoryConfig
-from drsai.modules.components.tool._drsai_static_workbench import DrsaiStaticWorkbench
+from drsai.modules.components.tool._drsai_static_workbench import DrSaiStaticWorkbench
 from drsai.modules.components.sensor.base_sensor import BaseSensor, BaseSensorConfig
 from drsai.modules.components.model_context import DrSaiChatCompletionContext
 

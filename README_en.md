@@ -1,37 +1,49 @@
-#### [简体中文](README.md) | English
+# High-Energy Wanwu (Wanwu) Agent Platform — OpenDrSai Agent Development Framework
 
-# OpenDrSai
+## English | [简体中文](README.md)
 
-An integrated framework for rapid development and deployment of intelligent agents and multi-agent collaborative systems, developed by the [HepAI](https://ai.ihep.ac.cn/) team of the Institute of High Energy Physics, Chinese Academy of Sciences. It enables fast creation and deployment of intelligent agents and multi-agent systems with both frontend and backend services.
+Developed by the HepAI team at the Institute of High Energy Physics, Chinese Academy of Sciences (CAS), this framework provides an integrated environment for rapid development and deployment of intelligent agents and multi-agent collaborative systems. It enables fast creation and deployment of backend and frontend services for your own agents and multi-agent systems.
 
 <div align="center">
   <p>
-      <img width="30%" src="assets/drsai.png" alt="Adaptation Logic Diagram">
+      <img width="30%" src="assets/drsai.png" alt="architecture overview">
   </p>
 </div>
 
-This framework is based on Microsoft’s open-source project [AutoGen](https://github.com/microsoft/autogen) (currently version 0.5.7). While maintaining full compatibility with AutoGen’s structure and ecosystem, it redesigns the components and development logic of agents and multi-agent systems to better support the development of **professional scientific agents and multi-agent systems 🤖 — such as complex multi-task execution 💡, state management and human-computer interaction 🙋‍♂️🙋‍♀️, professional scientific tool execution 🛠️, long-task management ⏰, and memory management 🧠**. It is highly compatible with mainstream MCP, A2A protocols, [HepAI](https://ai.ihep.ac.cn/) ecosystem components, and RAG architectures like RAGFlow. Moreover, it offers integrated development and deployment capabilities: agent or multi-agent system code can be launched with one command, registered as an OpenAI ChatCompletions or HepAI Worker API service. A supporting frontend enables direct development and deployment of complete end-to-end applications.
+This development framework is based on Microsoft’s open-source project [AutoGen](https://github.com/microsoft/autogen) (version 0.5.7). While fully compatible with AutoGen’s architecture and ecosystem, OpenDrSai redesigns the components and development logic for agents and multi-agent systems to better support **professional scientific agents 🤖**, including: **complex multi-task execution 💡, state management and human–computer interaction 🙋‍♂️🙋‍♀️, scientific tool orchestration and execution 🛠️, long-task execution and monitoring ⏰, long/short-term memory handling 🧠**, etc.
+
+It is also highly compatible with mainstream MCP and A2A protocols, the [HepAI](https://ai.ihep.ac.cn/) ecosystem, and popular RAG frameworks such as RAGFlow. With integrated development and deployment capabilities, agent or multi-agent system code can be launched with one command and registered as an OpenAI ChatCompletions API or a HepAI Worker service. A built-in human–computer interaction frontend allows rapid development of complete full-stack applications.
+
+---
 
 ## 1. Features
 
-* 1. Flexible switching between base models, tools, and knowledge bases on the [HepAI platform](https://aiapi.ihep.ac.cn/). Supports integration with OpenAI ChatCompletions, Ollama, and other model formats.
-* 2. Predefined components for perception, reasoning, memory, execution, and state management, with a modular design allowing flexible extension for various professional agent applications.
-* 3. One-click startup for human-computer interaction frontend and backend. Provides OpenAI ChatCompletions and OpenWebUI-Pipeline compatible backend APIs, allowing agents or multi-agent systems to serve as third-party model or agent APIs.
+* **1.** Flexible switching of base models and intelligent agent components—such as tools and knowledge bases—through the [HepAI platform](https://aiapi.ihep.ac.cn/). Compatible with OpenAI ChatCompletions, Ollama, and other model formats.
+* **2.** Predefined and modularized components for perception, reasoning, memory, execution, and state management for both single-agent and multi-agent systems. Designed for extensibility and suitable for various professional scientific scenarios.
+* **3.** One-click deployment of full-stack human–computer interaction services. Provides standardized backend interfaces compatible with OpenAI ChatCompletions and OpenWebUI-Pipeline, enabling agent systems to function as third-party model or agent APIs.
+
+### 📢 Feature Comparison
+
+|           Feature           |                                                                  Wanwu-OpenDrSai Agent Framework                                                                 |                                                         AutoGen                                                        |                            Camel AI                           |       LangChain      |                      AutoGPT                     |                   Dify.AI                  |
+| :-------------------------: | :--------------------------------------------------------------------------------------------------------------------------------------------------------------: | :--------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------: | :------------------: | :----------------------------------------------: | :----------------------------------------: |
+|  Framework Characteristics  | ✅ AutoGen-based, optimized for scientific tasks, strong extensibility & HCI support, visual & low-code construction of scientific agents and multi-agent systems | Dialogue-driven multi-agent architecture, modular, general-purpose, good ecosystem, but only basic framework functions | Role-play & heuristic prompting collaboration, good ecosystem |  Modular composition | Highly integrated agent/multi-agent architecture | Low-code drag-and-drop, weak extensibility |
+|      Model Integration      |                                                      ✅ Supports scientific models and development strategies                                                     |                                           General-purpose model formats only                                           |                              Same                             |         Same         |                       Same                       |                    Same                    |
+|    Scientific Data Access   |                                                             ✅ Scientific perception modules provided                                                             |                                                  Requires development                                                  |                              None                             |         None         |                       None                       |                    None                    |
+|      Memory & Knowledge     |                                                  ✅ Modular knowledge integration & long-term intelligent memory                                                  |                                                  Requires development                                                  |                  ✅ Long-term memory included                  | Requires development |            ✅ Short + long-term memory            |        Built-in KB & message storage       |
+|       Scientific Tools      |                                                 ✅ Supports MCP/OpenAPI/HepAI Worker, multiple tool access methods                                                |                              Only MCP tools + local functions; others require development                              |                        Multiple presets                       | Requires development |               Requires development               |          Built-in basic tools only         |
+|    Reflection & Learning    |                                                                  ✅ Modular reflection & learning                                                                 |                                                  Requires development                                                  |                           ✅ Built-in                          | Requires development |                    ✅ Built-in                    |         Limited (mainly RAG-based)         |
+|    State Management & HCI   |                                                            ✅ Full frontend–backend interaction support                                                           |                                                  Basic userproxy mode                                                  |                      Basic userproxy mode                     | Requires development |               Requires development               |                    None                    |
+|     Long-task Execution     |                                                   ✅ Supports ultra-long scientific task monitoring & guardians                                                   |                                                          None                                                          |                              None                             |         None         |                       None                       |                    None                    |
+|        Extensibility        |                                                                   ✅ Highly modular & extensible                                                                  |                                                        ✅ Modular                                                       |                           ✅ Modular                           |   Strong modularity  |                       Weak                       |                    Weak                    |
+| Interactive App Development |                                                               ✅ Directly build deployable web apps                                                               |                                             Drag-and-drop in AutoGen Studio                                            |                         CAMEL Web App                         |   Needs external UI  |                 Needs external UI                |                Drag-and-drop               |
+
+> Data as of: **2025-11-25**
+
+---
 
 ## 2. Quick Start
 
-### 2.1. Install OpenDrSai
-
-#### Install from source (recommended)
-
-```shell
-conda create -n drsai python=>3.11
-conda activate drsai
-git clone https://code.ihep.ac.cn/hepai/drsai drsai
-
-cd your/path/to/drsai/python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
-cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # for DrSai-UI human-computer interaction frontend
-```
+### 2.1 Install OpenDrSai
 
 #### Install via pip
 
@@ -39,14 +51,25 @@ cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # for DrSai-U
 conda create -n drsai python=>3.11
 conda activate drsai
 pip install drsai drsai_ui -U
-# NOTE: if you have installed openai>=1.99.0, please keep openai<=1.98.0
+# NOTE: if you have installed hepai<=1.40.0, please keep openai<=1.98.0
 ```
 
-#### Configure HepAI API Access Key
+#### Install from source
 
-Set the API key and environment variables for the [HepAI](https://aiapi.ihep.ac.cn) DDF2 platform (based on bash):
+```shell
+conda create -n drsai python=>3.11
+conda activate drsai
+git clone https://code.ihep.ac.cn/hepai/drsai drsai
 
-For Linux/Mac:
+cd your/path/to/drsai/python/packages/drsai && pip install -e . # backend and agent components
+cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # DrSai-UI frontend
+```
+
+#### Configure HepAI API Keys
+
+Configure environment variables for the [HepAI](https://aiapi.ihep.ac.cn) DDF2 platform (bash example):
+
+Linux/macOS:
 
 ```shell
 vi ~/.bashrc
@@ -54,87 +77,70 @@ export HEPAI_API_KEY=your_api_key
 source ~/.bashrc
 ```
 
-For Windows:
+Windows:
 
 ```shell
 setx "HEPAI_API_KEY" "your_api_key"
-# NOTE: Windows environment variables take effect after restarting the computer
+# Note: Windows environment variables require a restart
 ```
 
-#### Agent Example Test
+**NOTE:** All OpenAI-format models can be connected using the same method. Other formats: see `tutorials/components/ModelClient01.md`.
 
-Take [examples/agent_groupchat/assistant_R1_oai.py](examples/agent_groupchat/assistant_R1_oai.py) as an example — it demonstrates how to quickly build an agent system using OpenDrSai.
+---
+
+### 2.2 Launch a Large-Model Agent Quickly
+
+Using the example:
+`examples/agent_groupchat/assistant_base_R1_oai.py`
 
 ```shell
 conda activate drsai
-python examples/agent_groupchat/assistant_R1_oai.py
+python examples/agent_groupchat/assistant_base_R1_oai.py
 ```
 
-**NOTE:** Modify the agent startup method in `if __name__ == "__main__":` as needed for testing.
+**NOTE:** Modify the agent launch method inside
 
-**NOTE:** The `examples/agent_groupchat` directory contains additional examples of agents and multi-agent systems, including MCP tool integration, RAG integration, multi-agent collaboration, and multi-task execution.
+```python
+if __name__ == "__main__":
+```
 
-### 2.2. Launch the OpenDrSai Human-Computer Interaction Backend
+as needed.
+
+**NOTE:** Additional cases—including MCP integration, RAG integration, multi-agent collaboration, multi-task workflows—are available in `examples/agent_groupchat`.
+
+---
+
+### 2.3 Start the OpenDrSai HCI Backend (CLI)
 
 ```shell
-# pip install drsai_ui -U # ensure drsai_ui is installed
-
-cp .env.example .env # copy .env.example to .env
-drsai ui # start the Magenti-UI backend and static frontend
+# pip install drsai_ui -U
+cp .env.example .env
+drsai ui  # start backend + static frontend
 ```
 
-The backend and static frontend run on port 8081 by default. The following video demonstrates interaction with the R1_test agent launched in section 2.1:
+The default port is **8081**.
+
+Demonstration video:
 
 <video width="80%" controls>
   <source src="assets/video/drsai_ui.mp4" type="video/mp4">
 </video>
 
-### 2.3. Run Agent / Multi-Agent Services via Configuration File
-
-```shell
-# pip install drsai_ui -U # ensure drsai_ui is installed
-drsai console --agent-config agent_config.yaml # launch command-line mode agent/multi-agent service
-drsai backend --agent-config agent_config.yaml # deploy as an OpenAI-format backend model service
-```
+[Download Video](assets/video/drsai_ui.mp4)
 
 **NOTE:**
 
-* The `agent_config.yaml` file defines configurations for agents and multi-agent systems. You can use it to quickly create custom agent setups. Example:
+* The **DrSai-General** feature requires Docker to run sandboxes and browser VNC. See: `docker/README.md`.
 
-```yaml
-# Define your base model
-model_config: &client
-  provider: drsai.HepAIChatCompletionClient
-  config:
-    model: openai/gpt-4o
-    api_key: sk-****
-    base_url: "https://aiapi.ihep.ac.cn/apiv2"
-    max_retries: 10
-# Assemble your agent
-myassistant:
-  type: AssistantAgent # agent type, provided by OpenDrSai or user-defined
-  name: myassistant
-  system_message: "You are a helpful assistant who responds to user requests based on your tools and knowledge."
-  description: "An agent that provides assistance with ability to use tools."
-  model_client: *client
-```
+---
 
-See [agent configuration documentation](docs/agent_factory.md) for details. On our [AI Platform](https://drsai.ihep.ac.cn), you’ll find rich base models, MCP/HEPAI Worker tools, RAG memory plugins, and various predefined agent/multi-agent frameworks. You can flexibly choose components to rapidly build your own intelligent collaboration system. See `docs/agent_factory.md` for more details.
+### 2.4 Frontend Setup
 
-**NOTE:**
-
-* The DrSai-General feature requires Docker for sandboxed Python and browser VNC containers. See [docker](docker/README.md) for Docker image setup and configuration.
-
-### 2.4. Human-Computer Interaction Frontend
-
-#### Configure npm Environment
-
-Install Node.js:
+#### Install npm environment
 
 ```shell
-# install nvm to install node
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-nvm install node # recommended node version ~ 22
+nvm install node  # recommended ~22
 ```
 
 Install frontend dependencies:
@@ -145,79 +151,131 @@ npm install -g gatsby-cli
 npm install --global yarn
 yarn install
 
-# cp .env.default .env.development or .env.production # copy .env.default to .env.development or .env.production
-# development env: frontend/.env.development
-# production env: frontend/.env.production
+# ********* NOTE *********
+# cp .env.default .env.development or .env.production
+# Dev env: frontend/.env.development
+# Prod env: frontend/.env.production
+# ************************
 
-# yarn build # build static frontend resources
-yarn run dev # start frontend development server
+# yarn build
+yarn run dev
 ```
+
+---
+
+### 2.5 Run Agents via Configuration Files (Optional)
+
+```shell
+drsai console --agent-config agent_config.yaml
+drsai backend --agent-config agent_config.yaml
+```
+
+**NOTE:**
+
+* `agent_config.yaml` defines agent/multi-agent configuration. Example:
+
+```yaml
+model_config: &client
+  provider: drsai.HepAIChatCompletionClient
+  config:
+    model: openai/gpt-4o
+    api_key: sk-****
+    base_url: "https://aiapi.ihep.ac.cn/apiv2"
+    max_retries: 10
+
+myassistant:
+  type: AssistantAgent
+  name: myassistant
+  system_message: "You are a helpful assistant who responds to user requests based on your tools and knowledge."
+  description: "An agent that provides assistance with ability to use tools."
+  model_client: *client
+```
+
+For more details see `docs/agent_factory.md`.
+
+On our platform: [https://drsai.ihep.ac.cn](https://drsai.ihep.ac.cn)
+You’ll find model libraries, MCP/HepAI Worker tools, RAG memory plugins, agent frameworks, and presets.
+
+---
 
 ## 3. Development Plan (TODO)
 
-### 3.1. Agent Component Development
+### 3.1 Agent Component Development
 
-* [ ] Model layer: support for Anthropic Claude, Ollama, and other model formats
-* [ ] Perception layer: default support for UTF-8 encoded text attachments and context injection
-* [ ] Memory layer: develop ChatCompletionContext for long-term memory compression
-* [ ] Knowledge base layer: develop HepAI RAGFlow-compatible modular knowledge components
-* [ ] Execution layer: independent tool execution process with long-task management
-* [ ] State management system: enhance long-task state tracking
-* [ ] File management system: develop file caching and injection
-* [ ] Agent configuration management: optimize configuration snapshots and modular management
-* [ ] Agent learning system: record agent responses asynchronously for post-task learning
-* [ ] Component scheduler: design self-planning, multi-tool execution scheduler agent
+* [ ] Model Layer: support small models with special data formats; custom message/event types
+* [ ] Perception Layer: support UTF-8 encoded text attachments and context injection
+* [ ] Memory Layer: integrate DrSaiChatCompletionContext long-term memory with RAGFlow
+* [ ] Knowledge Base Layer: compatibility with LlamaIndex
+* [ ] Execution Layer: improve MCP tool streaming + frontend linkage
+* [ ] State Management: no current plan
+* [ ] File System: enhanced caching and injection
+* [x] Agent Configuration System: stable
+* [ ] Agent Learning: asynchronous experience logging after responses
+* [x] Agent Events & Notifications: component completed
 
-### 3.2. Multi-Agent System Development
+### 3.2 Professional Agents
 
-* [ ] Multi-agent collaboration architecture
-* [ ] Task management system
-* [ ] Agent management system
-* [ ] Multi-agent state management system
-* [ ] Learning and reflection system
-* [ ] Multi-agent coordination scheduler
+* [ ] Long-task processing agent: planner + multi-tool scheduler
 
-### 3.3. Frontend and Backend Interaction
+### 3.3 Multi-Agent Development
 
-* [ ] Task management interaction in UI
-* [ ] Display and interaction for execution logs and files
-* [ ] Visualization of long-running task processes
+* [ ] Long-task–aware collaborative multi-agent architecture
+* [ ] Learning & reflection across multi-agent systems
+* [ ] Task dispatch scheduling
+* [ ] Multi-remote-agent collaboration examples
+
+### 3.4 Human–Computer Interaction Development
+
+* [ ] Switch backend DB IDs to UUID
+* [ ] Auto-cleanup idle agent instances
+* [ ] Large file upload + agent access
+* [ ] RAGFlow and remote MCP function binding
+* [ ] drsai hub browsing & caching
+
+---
 
 ## 4. Documentation
 
-Detailed tutorials are in the `tutorials` directory (in progress, contact us for help):
+Training materials:
+**OpenDrSai-tutorials-v3.pdf** (in `tutorials/`)
+
+Tutorials (in development):
 
 ```
-tutorials/base01-hepai.md: Model configuration and usage on HepAI platform
-tutorials/base02-worker.md: Remote function configuration using HEPAI Worker
-tutorials/base03-use_claude-code.md: Using Claude-Code on the HepAI platform
-tutorials/agents: Examples of agent/multi-agent systems
-tutorials/components: Agent component development examples
-tutorials/request: Client request examples
+tutorials/base01-hepai.md
+tutorials/base02-worker.md
+tutorials/base03-use_claude-code.md
+tutorials/agents
+tutorials/components
+tutorials/request
 ```
 
-Documentation is available in the `docs` directory (in progress):
+Documentation (in development):
 
 ```
-docs/develop.md: Guide for developing agent/multi-agent system code
-docs/agent_factory.md: Open development and community guide for agent/multi-agent systems
-docs/drsai_ui.md: User guide for the human-computer interaction frontend
-docs/open-webui.md: Frontend access guide for OpenAI format and OpenWebUI Pipeline plugin
+docs/develop.md
+docs/agent_factory.md
+docs/drsai_ui.md
+docs/open-webui.md
 ```
+
+---
 
 ## 5. Contributing
 
-We welcome contributions to OpenDrSai — including code, documentation, issue reports, and suggestions. You can contribute in many ways:
+We welcome contributions of all kinds, including:
 
-* **Code contributions:** agent/multi-agent components, system examples, frontend UI development
-* **Documentation contributions:** tutorials, FAQs, and guides
-* **Issue reporting:** bugs, feature requests, and usage feedback
-* **Community engagement:** online/offline workshops, discussions, and sharing sessions
+* Code contributions
+* Documentation and tutorials
+* Bug reports, feature requests
+* Community events and sharing
 
-## 6. Contact Us
+---
+
+## 6. Contact
 
 * Email: [hepai@ihep.ac.cn](mailto:hepai@ihep.ac.cn) / [zdzhang@ihep.ac.cn](mailto:zdzhang@ihep.ac.cn) / [xiongdb@ihep.ac.cn](mailto:xiongdb@ihep.ac.cn)
 * WeChat: xiongdongbo_12138
-* WeChat Group: *HepAI Large Model Tech Exchange Group 3*
+* WeChat Community Group (HepAI大模型技术交流3群):
 
-<img src="assets/微信三群.jpg" alt="WeChat Group 3" style="max-width:20%; height:auto;">
+<img src="assets/微信三群.jpg" alt="微信群" style="max-width:20%; height:auto;">
