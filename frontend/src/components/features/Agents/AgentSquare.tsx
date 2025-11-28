@@ -107,7 +107,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         ? [...standardAgents, ...remoteAgents]
         : remoteAgents;
 
-      console.log("agentsssss::::", agents);
       setAgentList(agents);
     } catch (err) {
       console.error("Error loading agent list:", err);
@@ -218,6 +217,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
       if (isEdit) {
         payload.id = editingCustomAgent.id;
+        payload.config.id = editingCustomAgent.id;
       }
 
       const updatedAgents = await agentWorkerAPI.saveRemoteAgent(user.email, payload);
@@ -235,12 +235,13 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     } finally {
       setIsSavingCustomAgent(false);
     }
-  }, [user?.email, handleAgentList]);
+  }, [user?.email, handleAgentList, loadAgentList, editingCustomAgent]);
 
   const handleEditCustomAgent = useCallback((agent: any) => {
     const config = agent.config || {};
 
     const initialData: Partial<CustomAgentData> = {
+      id: agent.id,
       name: agent.name,
       avatar: agent.logo,
       description: agent.description,

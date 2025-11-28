@@ -22,7 +22,7 @@ from .approval_guard import (
 from ..remote_agent.drsai_remote_agent import RemoteAgent
 # from ..magentic_one.agents.drsai_agents.drsai_agent import MagenticAgent
 from drsai.modules.baseagent import DrSaiAgent
-from ...agent_factory.load_agent import get_model_client
+from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory, RAGFlowMemoryConfig
 
 from ...ui_backend.input_func import InputFuncType, make_agentchat_input_func
 from ...ui_backend.learning.memory_provider import MemoryControllerProvider
@@ -46,8 +46,13 @@ from typing import (
     Union,
     Callable,
 )
-from ..load_agent import a_load_agent_factory_from_config
 
+from ...agent_factory.load_agent import (
+    get_model_client, 
+    a_get_ragflow_memorys, 
+    a_get_mcp_workbench,
+    a_load_agent_factory_from_config,
+    )
 import yaml
 import importlib
 from loguru import logger
@@ -441,15 +446,30 @@ async def create_magentic_round_team(
         # )
     
     elif agent_mode == "custom":
+        ragflow_configs = agent_config.get("ragflow_configs")
+        if ragflow_configs is not None:
+            ragflow_memorys = await a_get_ragflow_memorys(ragflow_configs)
+        else:
+            ragflow_memorys = None
+        
+        mcp_sse_list = agent_config.get("mcp_sse_list")
+        if mcp_sse_list is not None:
+            mcp_workbench = await a_get_mcp_workbench(mcp_sse_list)
+        else:
+            mcp_workbench = None
+        tool_schema = await mcp_workbench.list_tools() if mcp_workbench is not None else None
 
         agent = RAGFlowAgent(
             name= "drsai", #agent_config.get("name", "drsai"),
             system_message=agent_config.get("system_message","A helpfull assistant."),
             description=agent_config.get("description","A helpfull assistant."),
             model_client=get_model_client(model_client_config = model_config),
+            memory=ragflow_memorys,
+            workbench=mcp_workbench,
             thread_id = chat_id,
             user_id=user_id,
             agent_config = agent_config,
+            tool_schema=tool_schema,
         )
 
     elif agent_mode == "remote" or agent_mode == "ddf":

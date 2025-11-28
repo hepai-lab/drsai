@@ -8,6 +8,7 @@ import KnowledgeConfigurationForm, {
 
 // 后端需要的最终数据结构
 export interface CustomAgentData {
+    id?: string;
     name: string;
     avatar?: string;
     description?: string;

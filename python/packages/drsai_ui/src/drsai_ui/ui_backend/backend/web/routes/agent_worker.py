@@ -117,7 +117,9 @@ async def save_remote_agent(
     '''
     try:
         saved_agent_config = request.agent_config
-        saved_agent_config.update({"id": str(uuid.uuid4())})
+        agent_id: str|None = saved_agent_config.get("id")
+        if agent_id is None:
+            saved_agent_config.update({"id": str(uuid.uuid4())})
 
         # 获取用户现有的远程智能体配置
         response = db.get(UserAgents, filters={"user_id": request.user_id})
@@ -125,6 +127,10 @@ async def save_remote_agent(
             # 用户已有配置，更新现有配置
             user_agents: UserAgents = response.data[0]
             agents_list = user_agents.agents or []
+            for agent in agents_list:
+                if agent["id"] == agent_id:
+                    agents_list.remove(agent)
+                    break
             agents_list.append(saved_agent_config)
             user_agents.agents = agents_list
             db.upsert(user_agents)
@@ -137,7 +143,7 @@ async def save_remote_agent(
             )
             db.upsert(user_agents)
 
-        return {"status": True, "message": "远程智能体配置保存成功"}
+        return {"status": True, "message": "智能体配置保存/更新成功"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

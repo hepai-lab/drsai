@@ -619,7 +619,21 @@ class WebSocketManager:
                 }
             elif isinstance(message, ModelClientStreamingChunkEvent):
                 return {"type": "message_chunk", "data": message.model_dump()}
+            elif isinstance(message, ToolCallExecutionEvent):
+                message.metadata.update({"start_flag": "yes"})
+                tool_call_output = ""
+                for tool_call_content in message.content:
+                    tool_call_output += tool_call_content.name + ":" + tool_call_content.content + "\n\n"
 
+                tool_call_chunk = ModelClientStreamingChunkEvent(
+                    source=message.source,
+                    content=tool_call_output,
+                    metadata=message.metadata,
+                    )
+                return {
+                    "type": "message_chunk",
+                    "data": tool_call_chunk.model_dump(),
+                }
             elif isinstance(
                 message,
                 (TextMessage,),
