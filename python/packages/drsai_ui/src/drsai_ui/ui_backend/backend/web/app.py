@@ -27,6 +27,7 @@ from .routes import (
     agent_mode,
     files,
     agent_worker,
+    models,
 )
 import httpx
 from fastapi.responses import HTMLResponse
@@ -183,6 +184,13 @@ api.include_router(
     agent_worker.router,
     prefix="/agentworker",
     tags=["agentworker"],
+    responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    models.router,
+    prefix="/models",
+    tags=["models"],
     responses={404: {"description": "Not found"}},
 )
 

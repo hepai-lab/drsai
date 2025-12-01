@@ -137,6 +137,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         model_client_stream: bool = True,
         reflect_on_tool_use: bool | None = None,
         tool_call_summary_format: str = "{result}",
+        tool_call_summary_prompt: str| None = None,
         output_content_type: type[BaseModel] | None = None,
         output_content_type_format: str | None = None,
         memory: Sequence[Memory] | None = None,
@@ -263,6 +264,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 stacklevel=2,
             )
         self._tool_call_summary_format = tool_call_summary_format
+        self._tool_call_summary_prompt = tool_call_summary_prompt
         self._is_running = False
 
         # Custom reply function instead of call_llm
@@ -470,6 +472,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 model_client_stream=model_client_stream,
                 reflect_on_tool_use=reflect_on_tool_use,
                 tool_call_summary_format=tool_call_summary_format,
+                tool_call_summary_prompt=self._tool_call_summary_prompt,
                 output_content_type=output_content_type,
                 format_string=format_string,
             ):
@@ -629,6 +632,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         model_client_stream: bool,
         reflect_on_tool_use: bool,
         tool_call_summary_format: str,
+        tool_call_summary_prompt: str | None,
         output_content_type: type[BaseModel] | None,
         format_string: str | None = None,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
@@ -726,13 +730,19 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             ):
                 yield reflection_response
         else:
-            yield cls._summarize_tool_use(
+            async for reflection_response in  cls._summarize_tool_use(
                 executed_calls_and_results=executed_calls_and_results,
+                system_messages=system_messages,
+                model_client=model_client,
+                model_client_stream=model_client_stream,
+                model_context=model_context,
                 inner_messages=inner_messages,
                 handoffs=handoffs,
                 tool_call_summary_format=tool_call_summary_format,
+                tool_call_summary_prompt=tool_call_summary_prompt,
                 agent_name=agent_name,
-            )
+            ):
+                yield reflection_response
 
     @staticmethod
     def _check_and_handle_handoff(
@@ -879,14 +889,21 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 inner_messages=inner_messages,
             )
 
-    @staticmethod
-    def _summarize_tool_use(
+    # @staticmethod
+    @classmethod
+    async def _summarize_tool_use(
+        cls,
         executed_calls_and_results: List[Tuple[FunctionCall, FunctionExecutionResult]],
+        system_messages: List[SystemMessage],
+        model_client: ChatCompletionClient,
+        model_client_stream: bool,
+        model_context: ChatCompletionContext,
         inner_messages: List[BaseAgentEvent | BaseChatMessage],
         handoffs: Dict[str, HandoffBase],
         tool_call_summary_format: str,
+        tool_call_summary_prompt: str|None,
         agent_name: str,
-    ) -> Response:
+    ) -> AsyncGenerator[Response | ModelClientStreamingChunkEvent | ThoughtEvent, None]:
         """
         If reflect_on_tool_use=False, create a summary message of all tool calls.
         """
@@ -902,13 +919,61 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 )
             )
         tool_call_summary = "\n".join(tool_call_summaries)
-        return Response(
-            chat_message=ToolCallSummaryMessage(
-                content=tool_call_summary,
-                source=agent_name,
-            ),
-            inner_messages=inner_messages,
-        )
+
+        if tool_call_summary_prompt:
+            yield ModelClientStreamingChunkEvent(content="<think>\n", source=agent_name)
+            yield ModelClientStreamingChunkEvent(content=tool_call_summary_format, source=agent_name)
+            yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
+            all_messages = system_messages + await model_context.get_messages()
+            all_messages.append(
+                UserMessage(
+                    content=tool_call_summary_prompt,
+                    source="user",
+                )
+            )
+            llm_messages = cls._get_compatible_context(model_client=model_client, messages=all_messages)
+            if model_client_stream:
+                async for chunk in model_client.create_stream(
+                    llm_messages,
+                ):
+                    if isinstance(chunk, CreateResult):
+                        reflection_result = chunk
+                    elif isinstance(chunk, str):
+                        yield ModelClientStreamingChunkEvent(content=chunk, source=agent_name)
+                    else:
+                        raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
+            else:
+                reflection_result = await model_client.create(llm_messages)
+            
+            if reflection_result.thought:
+                thought_event = ThoughtEvent(content=reflection_result.thought, source=agent_name)
+                yield thought_event
+                inner_messages.append(thought_event)
+
+            # # Add to context (including thought if present)
+            # await model_context.add_message(
+            #     AssistantMessage(
+            #         content=reflection_result.content,
+            #         source=agent_name,
+            #         thought=getattr(reflection_result, "thought", None),
+            #     )
+            # )
+
+            yield Response(
+                chat_message=TextMessage(
+                    content=reflection_result.content,
+                    source=agent_name,
+                ),
+                inner_messages=inner_messages,
+            )
+        else:
+            yield Response(
+                chat_message=ToolCallSummaryMessage(
+                    content=tool_call_summary,
+                    source=agent_name,
+                ),
+                inner_messages=inner_messages,
+            )
 
     @staticmethod
     async def _execute_tool_call(

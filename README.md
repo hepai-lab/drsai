@@ -254,7 +254,7 @@ myassistant:
 
 - [ ] 非文本文件和大文件的上传与智能体接收机制开发，计划通过文件系统进行前后端大文件交互
 
-- [ ] 开放可链接RAGFlow知识库和MCP远程函数的智能体调用（尽快）
+- [ ] 开放可链接RAGFlow知识库/记忆知识库和MCP远程函数的智能体调用，数据格式符合python/packages/drsai_ui/src/drsai_ui/configs/agent_config.yaml（尽快）
 
 
 ## 4.详细文档
