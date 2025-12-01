@@ -64,11 +64,9 @@ export const useChatWebSocket = ({
             const messageSource =
               typeof messageData.source === "string" ? messageData.source : undefined;
 
-            // Backend occasionally replays assistant content as a message after streaming.
-            // Only persist true user-authored messages to avoid duplicate assistant renders.
-            if (messageSource !== "user" && messageSource !== "user_proxy") {
-              return current;
-            }
+            // if (messageSource !== "user" && messageSource !== "user_proxy") {
+            //   return current;
+            // }
 
             const lastMessageIndex = current.messages.length - 1;
 
