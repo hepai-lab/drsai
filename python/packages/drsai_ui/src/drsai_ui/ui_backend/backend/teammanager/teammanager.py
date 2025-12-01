@@ -333,9 +333,19 @@ class TeamManager:
                             duration=time.time() - start_time,
                             files=modified_files,  # Full file data preserved
                         )
+                    elif (
+                        isinstance(message, TextMessage)
+                        and self.mode not in ["magentic-one"]
+                    ):
+                        internal = message.metadata.get("internal")
+                        if internal == "yes":
+                            yield message
+                        else:
+                            message.metadata.update({"internal": "yes", "is_save": "yes"})
+                            yield message
                     else:
                         yield message
-
+                        
                     # Add generated files to final output
                     if (
                         isinstance(message, TextMessage)

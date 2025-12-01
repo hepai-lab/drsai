@@ -260,6 +260,8 @@ class WebSocketManager:
                     hasattr(message, "metadata")
                     and message.metadata.get("internal") == "yes"  # type: ignore
                 ):
+                    if message.metadata.get("is_save") == "yes":
+                        await self._save_message(run_id, message)
                     continue
 
                 formatted_message = self._format_message(message)
