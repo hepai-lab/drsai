@@ -74,7 +74,7 @@ class UserInput(SQLModel, table=True):
     user_messages: Union[List[AutoGenMessage], List[dict[str, Any]]] = Field(
         default_factory=list, sa_column=Column(JSON)
     )
-    user_last_message: Optional[str] = None
+    user_last_message: Optional[dict[str, Any]] = None
     api_key: Optional[str] = None # user API key for authentication
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None

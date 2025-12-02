@@ -205,7 +205,7 @@ class DrSai:
                 user_id = username,
                 thread_id = chat_id,
                 user_messages = messages,
-                user_last_message = messages[-1].get("content", None),
+                user_last_message = messages[-1],
                 api_key = api_key,
                 temperature = temperature,
                 max_tokens = max_tokens,
@@ -218,7 +218,7 @@ class DrSai:
         else:
             user_input: UserInput = response.data[0]
             user_input.user_messages = messages
-            user_input.user_last_message = messages[-1].get("content", None)
+            user_input.user_last_message = messages[-1]
             user_input.api_key = api_key
             user_input.temperature = temperature
             user_input.max_tokens = max_tokens
