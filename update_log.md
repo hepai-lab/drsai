@@ -16,6 +16,8 @@ TODO:
 
 - [x] Add the `models` route in `python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/routes/models.py`
 
+- [x] Add a ddf worker cache 
+
 TODO:
 
 ## drsai_ext-0.0.1:

@@ -385,7 +385,8 @@ class StatusAgent(DrSaiAgent):
                 if not isinstance(data, dict):
                     raise ValueError("Input string must be a JSON object")
                 input_str = data.get("content", "")
-            except (json.JSONDecodeError, ValueError):
+            except Exception as e:
+                # logger.log(f"Error parsing input string: {e}")
                 input_str = messages[-1].content
             
             messages[-1].content = input_str

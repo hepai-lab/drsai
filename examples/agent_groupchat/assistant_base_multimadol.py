@@ -51,7 +51,7 @@ async def explain_image(oai_messages: List[Dict], api_key: str = "") -> AsyncGen
 async def create_agent() -> AssistantAgent:
     # 创建模型客户端实例
     model_client = HepAIChatCompletionClient(
-        model="aliyun/qwen-vl-max-latest",
+        model="aliyun/qwen3-vl-235b-a22b-thinking",
         api_key=os.environ.get("HEPAI_API_KEY"),
         base_url="https://aiapi.ihep.ac.cn/apiv2",
     )

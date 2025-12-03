@@ -1,5 +1,6 @@
 from typing import Dict
 import asyncio
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 # from openai import OpenAI
@@ -17,15 +18,22 @@ router = APIRouter()
 
 
 @router.get("/ddf_agents")
-async def get_ddf_agents(user_id: str, authorization: str = Header(...), db=Depends(get_db)) -> Dict:
+async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
     '''
     获取后端的mode种类设置
     '''
     try:
-        # TODO: think the caching mechanism
-        # response = db.get(UserDDFAgents, filters={"user_id": user_id})
-        # if response.status and response.data:
-        #     user_ddf_agents:UserDDFAgents = response.data[0] 
+        # Check cache first
+        response = db.get(UserDDFAgents, filters={"user_id": user_id})
+        if response.status and response.data and not is_refresh:
+            user_ddf_agents: UserDDFAgents = response.data[0]
+            
+            # Check if cache is still valid (less than 2 hours old)
+            if user_ddf_agents.updated_at:
+                time_diff = datetime.now() - user_ddf_agents.updated_at.replace(tzinfo=None)
+                if time_diff < timedelta(hours=2):
+                    # Return cached data
+                    return {"status": True, "data": user_ddf_agents.agents or []}
 
         # Extract API key from Authorization header (Bearer format)
         if not authorization.startswith("Bearer "):
@@ -64,6 +72,20 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), db=Depe
                         agents.append(agent_info)
                 except Exception as e:
                     pass
+        
+        # Update cache
+        if response.status and response.data:
+            # Update existing record
+            user_ddf_agents.agents = agents
+            db.upsert(user_ddf_agents)
+        else:
+            # Create new record
+            new_user_ddf_agents = UserDDFAgents(
+                user_id=user_id,
+                agents=agents
+            )
+            db.upsert(new_user_ddf_agents)
+            
         return {"status": True, "data": agents}
     
     except Exception as e:
