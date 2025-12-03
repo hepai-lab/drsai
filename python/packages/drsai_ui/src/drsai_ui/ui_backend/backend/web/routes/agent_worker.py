@@ -25,15 +25,15 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
     try:
         # Check cache first
         response = db.get(UserDDFAgents, filters={"user_id": user_id})
-        if response.status and response.data and not is_refresh:
+        if response.status and response.data:
             user_ddf_agents: UserDDFAgents = response.data[0]
-            
-            # Check if cache is still valid (less than 2 hours old)
-            if user_ddf_agents.updated_at:
-                time_diff = datetime.now() - user_ddf_agents.updated_at.replace(tzinfo=None)
-                if time_diff < timedelta(hours=2):
-                    # Return cached data
-                    return {"status": True, "data": user_ddf_agents.agents or []}
+            if not is_refresh:
+                # Check if cache is still valid (less than 2 hours old)
+                if user_ddf_agents.updated_at:
+                    time_diff = datetime.now() - user_ddf_agents.updated_at.replace(tzinfo=None)
+                    if time_diff < timedelta(hours=2):
+                        # Return cached data
+                        return {"status": True, "data": user_ddf_agents.agents or []}
 
         # Extract API key from Authorization header (Bearer format)
         if not authorization.startswith("Bearer "):
