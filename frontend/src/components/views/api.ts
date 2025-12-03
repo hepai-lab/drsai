@@ -606,10 +606,8 @@ export class AgentWorkerAPI {
         };
     }
 
-    async getAgentList(userId: string, apiKey: string, forceRefresh = false): Promise<any[]> {
-        let url = `${this.getBaseUrl()}/agentworker/ddf_agents?user_id=${encodeURIComponent(userId)}`;
-        if (forceRefresh)
-            url += `&force_refresh=true`;
+    async getAgentList(userId: string, apiKey: string, is_refresh=false): Promise<any[]> {
+        let url = `${this.getBaseUrl()}/agentworker/ddf_agents?user_id=${encodeURIComponent(userId)}&is_refresh=${is_refresh}`;
 
         const response = await fetch(
             url,
