@@ -337,6 +337,7 @@ class TeamManager:
                         isinstance(message, TextMessage)
                         and self.mode not in ["magentic-one"]
                     ):
+                        # For ModelClientStreamChunk output, we need to add internal: yes to the message
                         internal = message.metadata.get("internal")
                         if internal == "yes":
                             yield message

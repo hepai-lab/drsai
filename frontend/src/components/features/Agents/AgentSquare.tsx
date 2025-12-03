@@ -65,7 +65,11 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
   const loadRemoteAgents = useCallback(async (userEmail: string): Promise<AgentCardProps[]> => {
     try {
-      const userRemoteAgents = await agentWorkerAPI.getUserRemoteAgents(userEmail);
+      const userRemoteAgents = await agentWorkerAPI.getUserRemoteAgents(userEmail) ?? [];
+      console.log("Loaded remote agents:", userRemoteAgents);
+      if (!userRemoteAgents?.length) {
+        return [];
+      }
       return userRemoteAgents?.map(createRemoteAgentCard) || [];
     } catch (error) {
       console.error("Failed to load remote agents:", error);
