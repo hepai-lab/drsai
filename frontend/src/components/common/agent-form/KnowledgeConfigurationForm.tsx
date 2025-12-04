@@ -1,5 +1,5 @@
 import React from "react";
-import { Select } from "antd";
+import { Select, Input } from "antd";
 import { Info } from "lucide-react";
 
 export interface KnowledgeConfig {
@@ -16,6 +16,13 @@ interface KnowledgeConfigurationFormProps {
     onConfigChange: (field: keyof KnowledgeConfig, value: string | string[]) => void;
     darkMode?: string;
     showLabel?: boolean;
+    errors?: {
+        ragflow_url?: string;
+        ragflow_token?: string;
+        dataset_ids?: string;
+    };
+    provider?: "ihep" | "local";
+    onProviderChange?: (provider: "ihep" | "local") => void;
 }
 
 const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
@@ -23,6 +30,9 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
     onConfigChange,
     darkMode = "light",
     showLabel = true,
+    errors,
+    provider: externalProvider,
+    onProviderChange,
 }) => {
     const handleGetApiKey = () => {
         // 默认URL，可以根据实际需求修改
@@ -34,34 +44,69 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
         { label: string; value: string }[]
     >([]);
     // Provider 选择：Ihep Knowledge / Local Knowledge
-    const [provider, setProvider] = React.useState<"ihep" | "local">("ihep");
+    const [provider, setProvider] = React.useState<"ihep" | "local">(
+        externalProvider || "ihep"
+    );
 
-    const fetchDataSets = async () => {
-        if (!config.ragflow_url || !config.ragflow_token) return;
+    // 使用 ref 存储 onProviderChange，避免依赖问题
+    const onProviderChangeRef = React.useRef(onProviderChange);
+    React.useEffect(() => {
+        onProviderChangeRef.current = onProviderChange;
+    }, [onProviderChange]);
 
-        const baseUrl = config.ragflow_url.replace(/\/+$/, "");
-        const response = await fetch(`${baseUrl}/api/v1/datasets`, {
-            method: "GET",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${config.ragflow_token}`,
-            },
-        });
-        const data = await response.json();
-
-        setDataSets(
-            (data.data || []).map((item: any) => ({
-                label: item.name,
-                value: item.id ?? item.name,
-            }))
-        );
-    };
+    // 如果外部传入 provider，使用外部的
+    const currentProvider = externalProvider || provider;
 
     React.useEffect(() => {
+        const fetchDataSets = async () => {
+            if (!config.ragflow_url || !config.ragflow_token) return;
+
+            const baseUrl = config.ragflow_url.replace(/\/+$/, "");
+            const response = await fetch(`${baseUrl}/api/v1/datasets`, {
+                method: "GET",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${config.ragflow_token}`,
+                },
+            });
+            const data = await response.json();
+
+            setDataSets(
+                (data.data || []).map((item: any) => ({
+                    label: item.name,
+                    value: item.id ?? item.name,
+                }))
+            );
+        };
         if (config.ragflow_url && config.ragflow_token) {
             fetchDataSets();
         }
     }, [config.ragflow_url, config.ragflow_token]);
+
+    // 如果是 IHEP Provider 且 ragflow_url 还是空，自动填充默认 URL
+    React.useEffect(() => {
+        if (currentProvider === "ihep" && !config.ragflow_url) {
+            onConfigChange("ragflow_url", "https://ragflow.ihep.ac.cn");
+        }
+    }, [currentProvider, config.ragflow_url, onConfigChange]);
+
+    // 当 provider 改变时，同步到外部（如果需要）
+    React.useEffect(() => {
+        if (externalProvider && externalProvider !== provider) {
+            setProvider(externalProvider);
+            // 如果外部 provider 是 ihep，则自动设置默认的 Ragflow URL
+            if (externalProvider === "ihep") {
+                onConfigChange("ragflow_url", "https://ragflow.ihep.ac.cn");
+            }
+        }
+    }, [externalProvider, provider, onConfigChange]);
+
+    // 当 provider 改变时，通知父组件
+    React.useEffect(() => {
+        if (onProviderChangeRef.current) {
+            onProviderChangeRef.current(currentProvider);
+        }
+    }, [currentProvider]);
 
     return (
         <div className="space-y-4">
@@ -89,28 +134,27 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                 Provider:
                             </label>
                             <div className="flex-1 ml-4">
-                                <select
-                                    value={provider}
-                                    onChange={(e) =>
-                                        setProvider(e.target.value as "ihep" | "local")
-                                    }
-                                    className={`
-                                        w-full px-3 py-2 rounded-md border text-sm
-                                        ${darkMode === "dark"
-                                            ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530]"
-                                            : "bg-white text-[#4a5568] border-[#e2e8f0]"
+                                <Select
+                                    value={currentProvider}
+                                    onChange={(value) => {
+                                        const newProvider = value as "ihep" | "local";
+                                        setProvider(newProvider);
+                                        // 如果切换到非 local（即 ihep），自动设置默认 Ragflow URL
+                                        if (newProvider === "ihep") {
+                                            onConfigChange("ragflow_url", "https://ragflow.ihep.ac.cn");
                                         }
-                                        focus:outline-none focus:border-[#4d3dc3]
-                                    `}
-                                >
-                                    <option value="ihep">Ihep Knowledge</option>
-                                    <option value="local">Local Knowledge</option>
-                                </select>
+                                    }}
+                                    style={{ width: '100%' }}
+                                    options={[
+                                        { value: "ihep", label: "Ihep Knowledge" },
+                                        { value: "local", label: "Local Knowledge" },
+                                    ]}
+                                />
                             </div>
                         </div>
 
                         {/* Local Knowledge: URL 输入 */}
-                        {provider === "local" && (
+                        {currentProvider === "local" && (
                             <div className="flex items-center">
                                 <label
                                     className={`
@@ -121,25 +165,21 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                         }
                                     `}
                                 >
-                                    Knowledge URL:
+                                    Knowledge URL: <span className="text-red-500">*</span>
                                 </label>
                                 <div className="flex-1 ml-4">
-                                    <input
-                                        type="text"
+                                    <Input
                                         value={config.ragflow_url}
                                         onChange={(e) =>
                                             onConfigChange("ragflow_url", e.target.value)
                                         }
                                         placeholder="例如 http://localhost:886"
-                                        className={`
-                                            w-full px-3 py-2 rounded-md border
-                                            ${darkMode === "dark"
-                                                ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                                                : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
-                                            }   
-                                            focus:outline-none focus:border-[#4d3dc3]
-                                        `}
+                                        status={errors?.ragflow_url ? "error" : undefined}
+                                        style={{ width: '100%' }}
                                     />
+                                    {errors?.ragflow_url && (
+                                        <p className="mt-1 text-xs text-red-500">{errors.ragflow_url}</p>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -155,25 +195,21 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                     }
                                 `}
                             >
-                                Ragflow Token:
+                                Ragflow Token: <span className="text-red-500">*</span>
                             </label>
                             <div className="flex-1 ml-4 relative group">
-                                <input
-                                    type="password"
+                                <Input.Password
                                     value={config.ragflow_token}
                                     onChange={(e) =>
                                         onConfigChange("ragflow_token", e.target.value)
                                     }
                                     placeholder="请输入 Ragflow Token"
-                                    className={`
-                                        w-full px-3 py-2 rounded-md border
-                                        ${darkMode === "dark"
-                                            ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                                            : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
-                                        }   
-                                        focus:outline-none focus:border-[#4d3dc3]
-                                    `}
+                                    status={errors?.ragflow_token ? "error" : undefined}
+                                    style={{ width: '100%' }}
                                 />
+                                {errors?.ragflow_token && (
+                                    <p className="mt-1 text-xs text-red-500 absolute top-full left-0">{errors.ragflow_token}</p>
+                                )}
                                 <button
                                     type="button"
                                     className={`
@@ -226,7 +262,7 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                     }
                                 `}
                             >
-                                Dataset IDs:
+                                Dataset IDs: <span className="text-red-500">*</span>
                             </label>
                             <div className="flex-1 ml-4 relative group">
                                 <Select
@@ -237,10 +273,14 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                         onConfigChange("dataset_ids", values)
                                     }
                                     options={dataSets}
-                                    placeholder="请选择数据集名称"
+                                    placeholder={"请选择数据集名称"}
                                     style={{ width: "100%" }}
                                     size="middle"
+                                    status={errors?.dataset_ids ? "error" : undefined}
                                 />
+                                {errors?.dataset_ids && (
+                                    <p className="mt-1 text-xs text-red-500">{errors.dataset_ids}</p>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -268,28 +308,27 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                             Provider:
                         </label>
                         <div className="flex-1 ml-4">
-                            <select
-                                value={provider}
-                                onChange={(e) =>
-                                    setProvider(e.target.value as "ihep" | "local")
-                                }
-                                className={`
-                                    w-full px-3 py-2 rounded-md border text-sm
-                                    ${darkMode === "dark"
-                                        ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530]"
-                                        : "bg-white text-[#4a5568] border-[#e2e8f0]"
+                            <Select
+                                value={currentProvider}
+                                onChange={(value) => {
+                                    const newProvider = value as "ihep" | "local";
+                                    setProvider(newProvider);
+                                    // 如果切换到非 local（即 ihep），自动设置默认 Ragflow URL
+                                    if (newProvider === "ihep") {
+                                        onConfigChange("ragflow_url", "https://ragflow.ihep.ac.cn");
                                     }
-                                    focus:outline-none focus:border-[#4d3dc3]
-                                `}
-                            >
-                                <option value="ihep">Ihep Knowledge</option>
-                                <option value="local">Local Knowledge</option>
-                            </select>
+                                }}
+                                style={{ width: '100%' }}
+                                options={[
+                                    { value: "ihep", label: "Ihep Knowledge" },
+                                    { value: "local", label: "Local Knowledge" },
+                                ]}
+                            />
                         </div>
                     </div>
 
                     {/* Local Knowledge: URL 输入 */}
-                    {provider === "local" && (
+                    {currentProvider === "local" && (
                         <div className="flex items-center">
                             <label
                                 className={`
@@ -300,25 +339,21 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                     }
                                 `}
                             >
-                                Knowledge URL:
+                                Knowledge URL: <span className="text-red-500">*</span>
                             </label>
                             <div className="flex-1 ml-4">
-                                <input
-                                    type="text"
+                                <Input
                                     value={config.ragflow_url}
                                     onChange={(e) =>
                                         onConfigChange("ragflow_url", e.target.value)
                                     }
                                     placeholder="例如 http://localhost:886"
-                                    className={`
-                                        w-full px-3 py-2 rounded-md border
-                                        ${darkMode === "dark"
-                                            ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                                            : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
-                                        }   
-                                        focus:outline-none focus:border-[#4d3dc3]
-                                    `}
+                                    status={errors?.ragflow_url ? "error" : undefined}
+                                    style={{ width: '100%' }}
                                 />
+                                {errors?.ragflow_url && (
+                                    <p className="mt-1 text-xs text-red-500">{errors.ragflow_url}</p>
+                                )}
                             </div>
                         </div>
                     )}
@@ -334,25 +369,21 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                 }
                             `}
                         >
-                            Ragflow Token:
+                            Ragflow Token: <span className="text-red-500">*</span>
                         </label>
                         <div className="flex-1 ml-4 relative group">
-                            <input
-                                type="password"
+                            <Input.Password
                                 value={config.ragflow_token}
                                 onChange={(e) =>
                                     onConfigChange("ragflow_token", e.target.value)
                                 }
                                 placeholder="请输入 Ragflow Token"
-                                className={`
-                                    w-full px-3 py-2 rounded-md border
-                                    ${darkMode === "dark"
-                                        ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                                        : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
-                                    }   
-                                    focus:outline-none focus:border-[#4d3dc3]
-                                `}
+                                status={errors?.ragflow_token ? "error" : undefined}
+                                style={{ width: '100%' }}
                             />
+                            {errors?.ragflow_token && (
+                                <p className="mt-1 text-xs text-red-500 absolute top-full left-0">{errors.ragflow_token}</p>
+                            )}
                             <button
                                 type="button"
                                 className={`
@@ -406,7 +437,7 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                 }
                             `}
                         >
-                            Dataset IDs:
+                            Dataset IDs: <span className="text-red-500">*</span>
                         </label>
                         <div className="flex-1 ml-4 relative group">
                             <Select
@@ -417,10 +448,14 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                     onConfigChange("dataset_ids", values)
                                 }
                                 options={dataSets}
-                                placeholder="请选择数据集名称"
+                                placeholder={"请选择数据集名称"}
                                 style={{ width: "100%" }}
                                 size="middle"
+                                status={errors?.dataset_ids ? "error" : undefined}
                             />
+                            {errors?.dataset_ids && (
+                                <p className="mt-1 text-xs text-red-500">{errors.dataset_ids}</p>
+                            )}
                         </div>
                     </div>
                 </div>

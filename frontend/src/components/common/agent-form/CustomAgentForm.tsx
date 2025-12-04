@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ChevronDown, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
+import { Select, Input } from "antd";
+import type { SelectProps } from "antd";
 import { appContext } from "../../../hooks/provider";
 import ToolConfigurationForm, { ToolConfig } from "./ToolConfigurationForm";
 import KnowledgeConfigurationForm, {
@@ -30,7 +32,7 @@ interface CustomAgentFormState {
     description: string;
     system_message: string;
     // 模型来源：hepAI / custom
-    model_cource: string;
+    model_source: string;
     // Provider / 模型名
     llmProvider: string;
     // 自定义模型时使用
@@ -63,7 +65,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         description: initialData?.description || "",
         system_message: initialData?.system_message || "",
         // 如果 initialData 里有 model_client，认为是自定义模型
-        model_cource: initialData?.model_client ? "custom" : "HepAI",
+        model_source: initialData?.model_client ? "custom" : "HepAI",
         llmProvider: initialData?.model_client?.model || "",
         baseUrl: initialData?.model_client?.base_url || "",
         apiKey: initialData?.model_client?.api_key || "",
@@ -94,10 +96,34 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
 
     const MAX_AVATAR_SIZE = 1024 * 1024; // 1MB
 
-    // 为每个下拉框添加独立的状态
-    const [llmModelOpen, setLlmModelOpen] = useState(false); // model_cource 下拉开关
-    const [llmProviderOpen, setLlmProviderOpen] = useState(false); // Provider 下拉开关
-    const [toolsOpen, setToolsOpen] = useState<{ [key: string]: boolean }>({});
+    // 表单验证错误状态
+    const [errors, setErrors] = useState<{
+        name?: string;
+        description?: string;
+        llmProvider?: string;
+        baseUrl?: string;
+        apiKey?: string;
+    }>({});
+
+    // 工具配置错误状态
+    const [toolErrors, setToolErrors] = useState<{
+        [key: string]: { url?: string };
+    }>({});
+
+    // 知识配置错误状态
+    const [knowledgeErrors, setKnowledgeErrors] = useState<{
+        [key: number]: {
+            ragflow_url?: string;
+            ragflow_token?: string;
+            dataset_ids?: string;
+        };
+    }>({});
+
+    // 存储每个知识配置的 provider 状态
+    const [knowledgeProviders, setKnowledgeProviders] = useState<{
+        [key: number]: "ihep" | "local";
+    }>({});
+
     const [llmModelOptions, setLlmModelOptions] = useState<
         { value: string; label: string }[]
     >([]);
@@ -134,6 +160,14 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
 
     const handleInputChange = (field: keyof CustomAgentFormState, value: string) => {
         setFormData((prev) => ({ ...prev, [field]: value }));
+        // 清除对应字段的错误
+        if (errors[field as keyof typeof errors]) {
+            setErrors((prev) => {
+                const newErrors = { ...prev };
+                delete newErrors[field as keyof typeof errors];
+                return newErrors;
+            });
+        }
     };
 
     const handleToolConfigChange = (
@@ -147,6 +181,19 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                 config.id === id ? { ...config, [field]: value } : config
             ),
         }));
+        // 清除对应字段的错误
+        if (toolErrors[id] && toolErrors[id][field as keyof typeof toolErrors[string]]) {
+            setToolErrors((prev) => {
+                const newErrors = { ...prev };
+                if (newErrors[id]) {
+                    delete newErrors[id][field as keyof typeof newErrors[string]];
+                    if (Object.keys(newErrors[id]).length === 0) {
+                        delete newErrors[id];
+                    }
+                }
+                return newErrors;
+            });
+        }
     };
 
     const addToolConfig = () => {
@@ -208,6 +255,19 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                 ragflow_configs: configs,
             };
         });
+        // 清除对应字段的错误
+        if (knowledgeErrors[index] && knowledgeErrors[index][field as keyof typeof knowledgeErrors[number]]) {
+            setKnowledgeErrors((prev) => {
+                const newErrors = { ...prev };
+                if (newErrors[index]) {
+                    delete newErrors[index][field as keyof typeof newErrors[number]];
+                    if (Object.keys(newErrors[index]).length === 0) {
+                        delete newErrors[index];
+                    }
+                }
+                return newErrors;
+            });
+        }
     };
 
     const addKnowledgeConfig = () => {
@@ -226,6 +286,74 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+
+        // 验证必填字段
+        const newErrors: typeof errors = {};
+
+        if (!formData.name.trim()) {
+            newErrors.name = "Name 是必填项";
+        }
+
+        if (!formData.description.trim()) {
+            newErrors.description = "Description 是必填项";
+        }
+
+        if (!formData.llmProvider.trim()) {
+            newErrors.llmProvider = "Provider 是必填项";
+        }
+
+        // 如果是自定义模型，需要验证 baseUrl 和 apiKey
+        if (formData.model_source === "custom") {
+            if (!formData.baseUrl.trim()) {
+                newErrors.baseUrl = "Base URL 是必填项";
+            }
+            if (!formData.apiKey.trim()) {
+                newErrors.apiKey = "API Key 是必填项";
+            }
+        }
+
+        // 验证工具配置
+        const newToolErrors: typeof toolErrors = {};
+        let hasToolErrors = false;
+        formData.toolConfigs.forEach((tool) => {
+            if (!tool.url.trim()) {
+                newToolErrors[tool.id] = { url: "URL 是必填项" };
+                hasToolErrors = true;
+            }
+        });
+
+        // 验证知识配置
+        const newKnowledgeErrors: typeof knowledgeErrors = {};
+        let hasKnowledgeErrors = false;
+        formData.ragflow_configs.forEach((cfg, index) => {
+            const cfgErrors: typeof newKnowledgeErrors[number] = {};
+            if (!cfg.ragflow_token || !cfg.ragflow_token.trim()) {
+                cfgErrors.ragflow_token = "Ragflow Token 是必填项";
+                hasKnowledgeErrors = true;
+            }
+            if (!cfg.dataset_ids || cfg.dataset_ids.length === 0) {
+                cfgErrors.dataset_ids = "Dataset IDs 是必填项，请至少选择一个数据集";
+                hasKnowledgeErrors = true;
+            }
+            // 如果 provider 是 local，验证 ragflow_url
+            const provider = knowledgeProviders[index] || "ihep";
+            if (provider === "local" && (!cfg.ragflow_url || !cfg.ragflow_url.trim())) {
+                cfgErrors.ragflow_url = "Knowledge URL 是必填项（Local Knowledge 模式）";
+                hasKnowledgeErrors = true;
+            }
+            if (Object.keys(cfgErrors).length > 0) {
+                newKnowledgeErrors[index] = cfgErrors;
+            }
+        });
+
+        setToolErrors(newToolErrors);
+        setKnowledgeErrors(newKnowledgeErrors);
+        setErrors(newErrors);
+
+        // 如果有错误，不提交
+        if (Object.keys(newErrors).length > 0 || hasToolErrors || hasKnowledgeErrors) {
+            return;
+        }
 
         // 临时测试数据：表单为空时使用默认值，方便快速联调，测试完可以删掉这段逻辑
         const hasValidRagflowConfig =
@@ -326,98 +454,6 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         resetAvatarInput();
     };
 
-    const renderSelect = (
-        value: string,
-        options: { value: string; label: string }[],
-        onChange: (value: string) => void,
-        placeholder: string,
-        isOpen: boolean,
-        setIsOpen: (open: boolean) => void
-    ) => {
-        const selectedOption = options.find((opt) => opt.value === value);
-
-        if (!options || options.length === 0) {
-            return (
-                <input
-                    type="text"
-                    value={value}
-                    onChange={(e) => onChange(e.target.value)}
-                    placeholder={placeholder}
-                    className={`
-                        w-full px-3 py-2 rounded-md border
-                        ${darkMode === "dark"
-                            ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                            : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
-                        }
-                        focus:outline-none focus:border-[#4d3dc3]
-                    `}
-                />
-            );
-        }
-
-        return (
-            <div className="relative">
-                <button
-                    type="button"
-                    onClick={() => setIsOpen(!isOpen)}
-                    className={`
-                        w-full flex items-center justify-between px-3 py-2 rounded-md
-                        border transition-all duration-200
-                        ${darkMode === "dark"
-                            ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] hover:border-[#e5e5e560]"
-                            : "bg-white text-[#4a5568] border-[#e2e8f0] hover:border-[#4d3dc3]"
-                        }
-                    `}
-                >
-                    <span className={selectedOption ? "" : "text-gray-400"}>
-                        {selectedOption ? selectedOption.label : placeholder}
-                    </span>
-                    <ChevronDown
-                        className={`w-4 h-4 transition-transform ${isOpen ? "rotate-180" : ""
-                            }`}
-                    />
-                </button>
-
-                {isOpen && (
-                    <div
-                        className={`
-                        absolute top-full left-0 right-0 mt-1 z-50 rounded-md shadow-lg border
-                        ${darkMode === "dark"
-                                ? "bg-[#3a3a3a] border-[#e5e5e530]"
-                                : "bg-white border-[#e2e8f0]"
-                            }
-                    `}
-                    >
-                        {options.map((option) => (
-                            <button
-                                key={option.value}
-                                type="button"
-                                onClick={() => {
-                                    onChange(option.value);
-                                    setIsOpen(false);
-                                }}
-                                className={`
-                                    w-full text-left px-3 py-2 text-sm transition-colors
-                                    ${darkMode === "dark"
-                                        ? "text-[#e5e5e5] hover:bg-[#444444]"
-                                        : "text-[#4a5568] hover:bg-[#f9fafb]"
-                                    }
-                                    ${value === option.value
-                                        ? darkMode === "dark"
-                                            ? "bg-[#4d3dc3] text-white"
-                                            : "bg-[#e7e5f2] text-[#4d3dc3]"
-                                        : ""
-                                    }
-                                `}
-                            >
-                                {option.label}
-                            </button>
-                        ))}
-                    </div>
-                )}
-            </div>
-        );
-    };
 
     return (
         <div
@@ -507,24 +543,20 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                     : "text-gray-500"
                                     }`}
                             >
-                                Name
+                                Name <span className="text-red-500">*</span>
                             </label>
-                            <input
-                                type="text"
+                            <Input
                                 value={formData.name}
                                 onChange={(e) =>
                                     handleInputChange("name", e.target.value)
                                 }
                                 placeholder="Set name"
-                                className={`
-                                    mt-1 w-full max-w-xl px-3 py-1.5 rounded-md border text-sm
-                                    ${darkMode === "dark"
-                                        ? "bg-[#1f2933] text-[#e5e5e5] border-[#3b4252] placeholder:text-gray-500"
-                                        : "bg-white text-[#111827] border-[#e5e7eb] placeholder:text-gray-400"
-                                    }
-                                    focus:outline-none focus:border-[#4d3dc3] focus:ring-1 focus:ring-[#4d3dc3]
-                                `}
+                                status={errors.name ? "error" : undefined}
+                                style={{ marginTop: '0.25rem', width: '100%', maxWidth: '36rem' }}
                             />
+                            {errors.name && (
+                                <p className="mt-1 text-xs text-red-500">{errors.name}</p>
+                            )}
                         </div>
                     </div>
 
@@ -536,24 +568,20 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                     : "text-gray-500"
                                     }`}
                             >
-                                Description
+                                Description <span className="text-red-500">*</span>
                             </label>
-                            <input
-                                type="text"
+                            <Input
                                 value={formData.description}
                                 onChange={(e) =>
                                     handleInputChange("description", e.target.value)
                                 }
                                 placeholder="一句话描述 Agent 的风格或用途"
-                                className={`
-                                    w-full px-3 py-1.5 rounded-md border text-sm
-                                    ${darkMode === "dark"
-                                        ? "bg-[#111827] text-[#e5e5e5] border-[#272b35] placeholder:text-gray-500"
-                                        : "bg-white text-[#111827] border-[#e5e7eb] placeholder:text-gray-400"
-                                    }
-                                    focus:outline-none focus:border-[#4d3dc3] focus:ring-1 focus:ring-[#4d3dc3]
-                                `}
+                                status={errors.description ? "error" : undefined}
+                                style={{ width: '100%' }}
                             />
+                            {errors.description && (
+                                <p className="mt-1 text-xs text-red-500">{errors.description}</p>
+                            )}
                         </div>
                         <div className="flex flex-col gap-1 max-w-xl">
                             <label
@@ -564,21 +592,13 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                             >
                                 System Message
                             </label>
-                            <input
-                                type="text"
+                            <Input
                                 value={formData.system_message}
                                 onChange={(e) =>
                                     handleInputChange("system_message", e.target.value)
                                 }
                                 placeholder="可选提示：例如始终以投研顾问回答"
-                                className={`
-                                    w-full px-3 py-1.5 rounded-md border text-sm
-                                    ${darkMode === "dark"
-                                        ? "bg-[#111827] text-[#e5e5e5] border-[#272b35] placeholder:text-gray-500"
-                                        : "bg-white text-[#111827] border-[#e5e7eb] placeholder:text-gray-400"
-                                    }
-                                    focus:outline-none focus:border-[#4d3dc3] focus:ring-1 focus:ring-[#4d3dc3]
-                                `}
+                                style={{ width: '100%' }}
                             />
                         </div>
                     </div>
@@ -617,7 +637,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                     </header>
 
                     <div className="flex flex-col gap-3">
-                        {/* model_cource 下拉框 */}
+                        {/* model_source 下拉框 */}
                         <div className="flex flex-col gap-1">
                             <span
                                 className={`text-xs font-medium uppercase tracking-wide ${darkMode === "dark"
@@ -625,19 +645,18 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                     : "text-gray-500"
                                     }`}
                             >
-                                model_cource
+                                model_source
                             </span>
-                            {renderSelect(
-                                formData.model_cource || "hepAI",
-                                [
+                            <Select
+                                value={formData.model_source || "HepAI"}
+                                onChange={(value) => handleInputChange("model_source", value)}
+                                placeholder="选择模型来源"
+                                style={{ width: '100%' }}
+                                options={[
                                     { value: "HepAI", label: "HepAI" },
                                     { value: "custom", label: "自定义模型" },
-                                ],
-                                (value) => handleInputChange("model_cource", value),
-                                "选择模型来源",
-                                llmModelOpen,
-                                setLlmModelOpen
-                            )}
+                                ]}
+                            />
                         </div>
 
                         {/* Provider 始终显示 */}
@@ -648,39 +667,50 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                     : "text-gray-500"
                                     }`}
                             >
-                                Provider
+                                Provider <span className="text-red-500">*</span>
                             </span>
-                            {formData.model_cource === "HepAI"
-                                ? renderSelect(
-                                    formData.llmProvider || "",
-                                    providerOptions,
-                                    (value) => handleInputChange("llmProvider", value),
-                                    "选择 Provider",
-                                    llmProviderOpen,
-                                    setLlmProviderOpen
+                            {formData.model_source === "HepAI"
+                                ? (
+                                    <Select
+                                        value={formData.llmProvider || undefined}
+                                        onChange={(value) => handleInputChange("llmProvider", value)}
+                                        placeholder="选择 Provider"
+                                        showSearch
+                                        style={{ width: '100%' }}
+                                        options={providerOptions}
+                                        filterOption={(input, option) =>
+                                            (option?.label ?? '').toLowerCase().includes(input.toLowerCase()) ||
+                                            (option?.value ?? '').toLowerCase().includes(input.toLowerCase())
+                                        }
+                                        className={`
+                                            ${errors.llmProvider ? "ant-select-error" : ""}
+                                        `}
+                                        status={errors.llmProvider ? "error" : undefined}
+                                    />
                                 )
                                 : (
-                                    <input
-                                        type="text"
-                                        value={formData.llmProvider}
-                                        onChange={(e) =>
-                                            handleInputChange("llmProvider", e.target.value)
-                                        }
-                                        placeholder="OpenAI / Qwen"
-                                        className={`
-                                                w-full px-3 py-1.5 rounded-md border text-sm
-                                                ${darkMode === "dark"
-                                                ? "bg-[#111827] text-[#e5e5e5] border-[#272b35] placeholder:text-gray-500"
-                                                : "bg-white text-[#111827] border-[#e5e7eb] placeholder:text-gray-400"
+                                    <>
+                                        <Input
+                                            value={formData.llmProvider}
+                                            onChange={(e) =>
+                                                handleInputChange("llmProvider", e.target.value)
                                             }
-                                                focus:outline-none focus:border-[#4d3dc3] focus:ring-1 focus:ring-[#4d3dc3]
-                                            `}
-                                    />
+                                            placeholder="OpenAI / Qwen"
+                                            status={errors.llmProvider ? "error" : undefined}
+                                            style={{ width: '100%' }}
+                                        />
+                                        {errors.llmProvider && (
+                                            <p className="mt-1 text-xs text-red-500">{errors.llmProvider}</p>
+                                        )}
+                                    </>
                                 )}
+                            {formData.model_source === "HepAI" && errors.llmProvider && (
+                                <p className="mt-1 text-xs text-red-500">{errors.llmProvider}</p>
+                            )}
                         </div>
 
-                        {/* 选中“自定义模型”时展示 Base URL 和 API Key */}
-                        {formData.model_cource === "custom" && (
+                        {/* 选中"自定义模型"时展示 Base URL 和 API Key */}
+                        {formData.model_source === "custom" && (
                             <>
                                 <div className="flex flex-col gap-1">
                                     <span
@@ -689,24 +719,20 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                             : "text-gray-500"
                                             }`}
                                     >
-                                        Base URL
+                                        Base URL <span className="text-red-500">*</span>
                                     </span>
-                                    <input
-                                        type="text"
+                                    <Input
                                         value={formData.baseUrl}
                                         onChange={(e) =>
                                             handleInputChange("baseUrl", e.target.value)
                                         }
                                         placeholder="https://api.example.com"
-                                        className={`
-                                                w-full px-3 py-1.5 rounded-md border text-sm
-                                                ${darkMode === "dark"
-                                                ? "bg-[#111827] text-[#e5e5e5] border-[#272b35] placeholder:text-gray-500"
-                                                : "bg-white text-[#111827] border-[#e5e7eb] placeholder:text-gray-400"
-                                            }
-                                                focus:outline-none focus:border-[#4d3dc3] focus:ring-1 focus:ring-[#4d3dc3]
-                                            `}
+                                        status={errors.baseUrl ? "error" : undefined}
+                                        style={{ width: '100%' }}
                                     />
+                                    {errors.baseUrl && (
+                                        <p className="mt-1 text-xs text-red-500">{errors.baseUrl}</p>
+                                    )}
                                 </div>
                                 <div className="flex flex-col gap-1">
                                     <span
@@ -715,24 +741,20 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                             : "text-gray-500"
                                             }`}
                                     >
-                                        API Key
+                                        API Key <span className="text-red-500">*</span>
                                     </span>
-                                    <input
-                                        type="password"
+                                    <Input.Password
                                         value={formData.apiKey}
                                         onChange={(e) =>
                                             handleInputChange("apiKey", e.target.value)
                                         }
                                         placeholder="sk-***"
-                                        className={`
-                                                w-full px-3 py-1.5 rounded-md border text-sm
-                                                ${darkMode === "dark"
-                                                ? "bg-[#111827] text-[#e5e5e5] border-[#272b35] placeholder:text-gray-500"
-                                                : "bg-white text-[#111827] border-[#e5e7eb] placeholder:text-gray-400"
-                                            }
-                                                focus:outline-none focus:border-[#4d3dc3] focus:ring-1 focus:ring-[#4d3dc3]
-                                            `}
+                                        status={errors.apiKey ? "error" : undefined}
+                                        style={{ width: '100%' }}
                                     />
+                                    {errors.apiKey && (
+                                        <p className="mt-1 text-xs text-red-500">{errors.apiKey}</p>
+                                    )}
                                 </div>
                             </>
                         )}
@@ -802,13 +824,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                     onConfigChange={handleToolConfigChange}
                                     onRemove={removeToolConfig}
                                     canRemove={formData.toolConfigs.length > 1}
-                                    toolsOpen={toolsOpen[config.id] || false}
-                                    onToolsOpenChange={(open) =>
-                                        setToolsOpen((prev) => ({
-                                            ...prev,
-                                            [config.id]: open,
-                                        }))
-                                    }
+                                    errors={toolErrors[config.id]}
                                 />
                             </div>
                         ))}
@@ -879,6 +895,13 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                 }
                                 darkMode={darkMode}
                                 showLabel={index === 0}
+                                errors={knowledgeErrors[index]}
+                                onProviderChange={(provider) => {
+                                    setKnowledgeProviders((prev) => ({
+                                        ...prev,
+                                        [index]: provider,
+                                    }));
+                                }}
                             />
                         </div>
                     ))}

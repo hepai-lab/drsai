@@ -33,7 +33,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const [editingCustomAgent, setEditingCustomAgent] = useState<any | null>(null);
   const [availableModels, setAvailableModels] = useState<{ id: string }[]>([]);
   const [isModelListLoading, setIsModelListLoading] = useState(false);
-  const [modelSourceBaseUrl, setModelSourceBaseUrl] = useState<string | undefined>();
   const [modelSourceApiKey, setModelSourceApiKey] = useState<string | undefined>();
   const [isSavingCustomAgent, setIsSavingCustomAgent] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -123,7 +122,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       }
 
       setModelSourceApiKey(apiKey);
-      setModelSourceBaseUrl(baseUrl);
 
       const agents = await fetchAndMergeAgents(user.email, apiKey, false);
       setAgentList(agents);

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ChevronDown, Plus } from "lucide-react";
+import { Input } from "antd";
 import { appContext } from "../../../hooks/provider";
 import ToolConfigurationForm, { ToolConfig } from "./ToolConfigurationForm";
 import KnowledgeConfigurationForm, {
@@ -64,7 +65,6 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
     const [llmModelOpen, setLlmModelOpen] = useState<{
         [key: string]: boolean;
     }>({});
-    const [toolsOpen, setToolsOpen] = useState(false);
     const [llmModelOptions, setLlmModelOptions] = useState<
         { value: string; label: string }[]
     >([]);
@@ -83,10 +83,6 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
             );
         }
     }, [models]);
-
-    const handleInputChange = (field: keyof DrsaiAgentData, value: string) => {
-        setFormData((prev) => ({ ...prev, [field]: value }));
-    };
 
     const handleSectionChange = (
         section: keyof Omit<DrsaiAgentData, "name">,
@@ -259,8 +255,7 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
                                     }))
                             )
                         ) : (
-                            <input
-                                type="text"
+                            <Input
                                 value={
                                     formData[sectionKey][
                                     field.key as keyof (typeof formData)[typeof sectionKey]
@@ -274,14 +269,7 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
                                     )
                                 }
                                 placeholder="Value"
-                                className={`
-                                    w-full px-3 py-2 rounded-md border
-                                    ${darkMode === "dark"
-                                        ? "bg-[#444444] text-[#e5e5e5] border-[#e5e5e530] placeholder:text-gray-400"
-                                        : "bg-white text-[#4a5568] border-[#e2e8f0] placeholder:text-gray-400"
-                                    }
-                                    focus:outline-none focus:border-[#4d3dc3]
-                                `}
+                                style={{ width: '100%' }}
                             />
                         )}
                     </div>
@@ -424,8 +412,6 @@ const DrsaiAgentForm: React.FC<DrsaiAgentFormProps> = ({
                             onConfigChange={handleTesterConfigChange}
                             onRemove={() => { }} // 不提供删除功能
                             canRemove={false}
-                            toolsOpen={toolsOpen}
-                            onToolsOpenChange={setToolsOpen}
                         />
                     </div>
                 </div>
