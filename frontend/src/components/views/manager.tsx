@@ -104,6 +104,7 @@ export const SessionManager: React.FC = () => {
           config: agentConfig.config,
           mode: agentConfig.mode || agent.mode,
         };
+        console.log("fullAgent ::: ssss", fullAgent);
         setSelectedAgent(fullAgent);
         setConfig(agentConfig.config);
       } else {

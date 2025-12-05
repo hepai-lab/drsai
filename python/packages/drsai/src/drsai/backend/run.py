@@ -12,8 +12,9 @@ from dataclasses import dataclass, field
 from fastapi import FastAPI
 import uvicorn, asyncio
 from autogen_agentchat.base import TaskResult
-from autogen_agentchat.teams import BaseGroupChat
-from autogen_agentchat.agents import AssistantAgent
+from autogen_agentchat.base import (
+    ChatAgent, 
+    Team)
 from autogen_agentchat.ui import Console
 from pathlib import Path
 
@@ -35,7 +36,7 @@ here = Path(__file__).parent.resolve()
 async def start_console(
         task: str,
         agent_factory: callable = None, 
-        agent: AssistantAgent|BaseGroupChat = None, 
+        agent: ChatAgent|Team = None, 
         **kwargs) -> Union[None, TaskResult]:
     """
     启动aotugen原生多智能体运行方式和多智能体逻辑
@@ -47,13 +48,13 @@ async def start_console(
     """
 
     if agent is None:
-        agent: AssistantAgent | BaseGroupChat = (
+        agent: ChatAgent|Team = (
             await agent_factory() 
             if asyncio.iscoroutinefunction(agent_factory)
             else agent_factory()
         )
 
-    stream = agent._model_client_stream if not isinstance(agent, BaseGroupChat) else agent._participants[0]._model_client_stream
+    stream = agent._model_client_stream if not isinstance(agent, Team) else agent._participants[0]._model_client_stream
     if stream:
         await Console(agent.run_stream(task=task))
         return 

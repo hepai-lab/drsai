@@ -88,15 +88,27 @@ const AgentCard: React.FC<AgentCardProps> = ({
   }, [existingAgents, checkIfAgentExists]);
 
   const handleTryClick = async () => {
-    const agent: Partial<Agent> = { mode, name };
-    const config = createAgentConfig(name, url, apiKey || "", mode, extendConfig);
+    const runtimeConfig = createAgentConfig(name, url, apiKey || "", mode, extendConfig);
 
-    setSelectedAgent({ name, mode });
-    setConfig(config);
+    const agent: Partial<Agent> = {
+      id,
+      name,
+      mode,
+      description,
+      logo,
+      owner,
+      url,
+      apiKey,
+      tags: extendConfig?.tags,
+      config: runtimeConfig,
+    };
+
+    setSelectedAgent(agent);
+    setConfig(runtimeConfig);
 
     window.dispatchEvent(
       new CustomEvent("switchToCurrentSession", {
-        detail: { agent, config, clearSession: true },
+        detail: { agent, config: runtimeConfig, clearSession: true },
       })
     );
   };

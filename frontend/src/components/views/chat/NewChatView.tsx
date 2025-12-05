@@ -25,6 +25,8 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
 
     // 从 store 中获取 config 并合并到 agent 对象中
     const fullAgent = React.useMemo(() => {
+
+        console.log("agent :::", agent, 'syq:', config);
         // 如果 agent 已经有 config，直接使用
         if (agent.config) {
             return agent;
