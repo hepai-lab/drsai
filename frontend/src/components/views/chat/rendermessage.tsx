@@ -621,7 +621,11 @@ const RenderUserMessage: React.FC<{
                   {parseContent(item)}
                 </div>
               ) : (
-                <></>
+                <ClickableImage
+                  src={getImageSource(item)}
+                  alt={item.alt || `Attachment ${index + 1}`}
+                  className="max-w-[400px] max-h-[30vh] rounded-lg"
+                />
               )}
             </div>
           ))}

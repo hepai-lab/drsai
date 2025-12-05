@@ -213,7 +213,7 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                 <button
                                     type="button"
                                     className={`
-                                        absolute right-12 top-1/2 transform -translate-y-1/2 p-1
+                                        absolute right-12 top-1/2 transform -translate-y-1/2 p-1 z-10
                                         ${darkMode === "dark"
                                             ? "text-[#e5e5e5] hover:text-[#4d3dc3]"
                                             : "text-[#4a5568] hover:text-[#4d3dc3]"
@@ -242,7 +242,7 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                     type="button"
                                     onClick={handleGetApiKey}
                                     className={`
-                                        absolute right-2 top-1/2 transform -translate-y-1/2 px-2 py-1 text-xs rounded
+                                        absolute right-2 top-1/2 transform -translate-y-1/2 px-2 py-1 text-xs rounded z-10
                                         bg-[#4d3dc3] text-white hover:bg-[#3d2db3] transition-colors
                                     `}
                                 >
@@ -387,7 +387,7 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                             <button
                                 type="button"
                                 className={`
-                                    absolute right-12 top-1/2 transform -translate-y-1/2 p-1
+                                    absolute right-12 top-1/2 transform -translate-y-1/2 p-1 z-10
                                     ${darkMode === "dark"
                                         ? "text-[#e5e5e5] hover:text-[#4d3dc3]"
                                         : "text-[#4a5568] hover:text-[#4d3dc3]"
@@ -417,7 +417,7 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
                                 type="button"
                                 onClick={handleGetApiKey}
                                 className={`
-                                    absolute right-2 top-1/2 transform -translate-y-1/2 px-2 py-1 text-xs rounded
+                                    absolute right-2 top-1/2 transform -translate-y-1/2 px-2 py-1 text-xs rounded z-10
                                     bg-[#4d3dc3] text-white hover:bg-[#3d2db3] transition-colors
                                 `}
                             >

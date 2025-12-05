@@ -51,6 +51,22 @@ interface CustomAgentFormProps {
     models: { id: string }[]; // 可选的模型列表
 }
 
+const HEPAI_DEFAULT_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2";
+
+const getModelSourceFromClient = (
+    modelClient?: CustomAgentData["model_client"]
+): "HepAI" | "custom" => {
+    if (!modelClient) {
+        return "HepAI";
+    }
+    const baseUrl = (modelClient.base_url || "").trim();
+    const apiKey = (modelClient.api_key || "").trim();
+    const hasCustomConfig =
+        Boolean(baseUrl && baseUrl !== HEPAI_DEFAULT_BASE_URL) ||
+        Boolean(apiKey);
+    return hasCustomConfig ? "custom" : "HepAI";
+};
+
 const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
     onSubmit,
     onCancel,
@@ -64,8 +80,8 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         avatar: initialData?.avatar || "",
         description: initialData?.description || "",
         system_message: initialData?.system_message || "",
-        // 如果 initialData 里有 model_client，认为是自定义模型
-        model_source: initialData?.model_client ? "custom" : "HepAI",
+        // 根据 model_client 的配置判断初始来源
+        model_source: getModelSourceFromClient(initialData?.model_client),
         llmProvider: initialData?.model_client?.model || "",
         baseUrl: initialData?.model_client?.base_url || "",
         apiKey: initialData?.model_client?.api_key || "",
@@ -159,12 +175,33 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
     );
 
     const handleInputChange = (field: keyof CustomAgentFormState, value: string) => {
-        setFormData((prev) => ({ ...prev, [field]: value }));
+        setFormData((prev) => {
+            let updatedState = { ...prev, [field]: value };
+            if (field === "model_source" && value === "HepAI") {
+                updatedState = {
+                    ...updatedState,
+                    baseUrl: "",
+                    apiKey: "",
+                };
+            }
+            return updatedState;
+        });
         // 清除对应字段的错误
         if (errors[field as keyof typeof errors]) {
             setErrors((prev) => {
                 const newErrors = { ...prev };
                 delete newErrors[field as keyof typeof errors];
+                return newErrors;
+            });
+        }
+        if (field === "model_source" && value === "HepAI") {
+            setErrors((prev) => {
+                if ((!prev.baseUrl && !prev.apiKey)) {
+                    return prev;
+                }
+                const newErrors = { ...prev };
+                delete newErrors.baseUrl;
+                delete newErrors.apiKey;
                 return newErrors;
             });
         }
@@ -375,6 +412,17 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                 },
             ];
 
+        const providerModel = formData.llmProvider?.trim() || "gpt-4o-mini";
+        const customBaseUrl =
+            formData.baseUrl?.trim() || "https://api.openai.com/v1";
+        const customApiKey = formData.apiKey?.trim() || "sk-test-xxxx";
+        const isHepAIModel = formData.model_source === "HepAI";
+
+        const modelClient: CustomAgentData["model_client"] = {
+            model: providerModel,
+            base_url: isHepAIModel ? HEPAI_DEFAULT_BASE_URL : customBaseUrl,
+            api_key: isHepAIModel ? "" : customApiKey,
+        };
         const payload: CustomAgentData = {
             name: formData.name || "Test Agent",
             avatar: formData.avatar || undefined,
@@ -382,12 +430,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                 formData.description || "用于测试后端接口的自定义 Agent",
             system_message:
                 formData.system_message || "你是一个用于测试的智能体。",
-            model_client: {
-                model: formData.llmProvider || "gpt-4o-mini",
-                base_url:
-                    formData.baseUrl || "https://api.openai.com/v1",
-                api_key: formData.apiKey || "sk-test-xxxx",
-            },
+            model_client: modelClient,
             mcp_sse_list:
                 formData.toolConfigs && formData.toolConfigs.length > 0
                     ? formData.toolConfigs
@@ -446,12 +489,6 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
             resetAvatarInput();
         };
         reader.readAsDataURL(file);
-    };
-
-    const handleAvatarRemove = () => {
-        handleInputChange("avatar", "");
-        setAvatarError(null);
-        resetAvatarInput();
     };
 
 

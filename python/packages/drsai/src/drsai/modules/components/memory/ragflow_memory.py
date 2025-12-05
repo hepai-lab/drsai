@@ -166,7 +166,12 @@ class RAGFlowMemory(Memory, Component[RAGFlowMemoryConfig]):
             async with httpx.AsyncClient() as client:
                 response = await client.post(url, json=body, headers=headers)
                 response.raise_for_status()
-                data = response.json()["data"]
+                raw_response_text = response.text
+                print(f"RAGFlow retrieval response text: {raw_response_text}")
+                try:
+                    data = response.json()["data"]
+                except Exception:
+                    raise
 
             return data
         try:

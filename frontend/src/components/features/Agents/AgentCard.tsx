@@ -3,7 +3,7 @@ import React, { useContext, useEffect } from "react";
 import { appContext } from "../../../hooks/provider";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { Button } from "../../common/Button";
-import { agentAPI, SessionAPI } from "../../views/api";
+import { agentAPI } from "../../views/api";
 import type { Agent, AgentMode } from "@/types/common";
 
 interface AgentCardProps {
@@ -24,16 +24,6 @@ interface AgentCardProps {
 }
 
 const DEFAULT_AVATAR = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRkM2RjMyIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyNCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPkE8L3RleHQ+Cjwvc3ZnPgo=";
-
-const createSessionName = (name: string): string => {
-  return `${name} - ${new Date().toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
-};
 
 const createAgentConfig = (name: string, url: string, apiKey: string, mode?: AgentMode, extendConfig?: any) => ({
   name,
@@ -101,31 +91,14 @@ const AgentCard: React.FC<AgentCardProps> = ({
     const agent: Partial<Agent> = { mode, name };
     const config = createAgentConfig(name, url, apiKey || "", mode, extendConfig);
 
-
-    console.log('config：：：：：：：：：：：：：：：：：：：：：：：：：：：：：：：：', config);
     setSelectedAgent({ name, mode });
     setConfig(config);
 
-    if (!user?.email) return;
-
-    try {
-      const sessionAPI = new SessionAPI();
-      const newSession = await sessionAPI.createSession(
-        {
-          name: createSessionName(name),
-          agent_mode_config: config,
-        },
-        user.email
-      );
-
-      window.dispatchEvent(
-        new CustomEvent("switchToCurrentSession", {
-          detail: { agent, newSession, config },
-        })
-      );
-    } catch (error) {
-      console.error("Failed to create session:", error);
-    }
+    window.dispatchEvent(
+      new CustomEvent("switchToCurrentSession", {
+        detail: { agent, config, clearSession: true },
+      })
+    );
   };
 
   const handleAddToSidebar = async () => {

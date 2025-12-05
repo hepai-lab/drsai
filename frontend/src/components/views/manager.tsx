@@ -9,7 +9,7 @@ import type { Session } from "../types/datamodel";
 import ContentHeader from "../contentheader";
 import { AgentSquare } from "../features/Agents/AgentSquare";
 import PlanList from "../features/Plans/PlanList";
-import { settingsAPI } from "./api";
+import { settingsAPI, agentAPI } from "./api";
 import ChatView from "./chat/chat";
 import NewChatView from "./chat/NewChatView";
 import { SessionEditor } from "./session_editor";
@@ -89,34 +89,60 @@ export const SessionManager: React.FC = () => {
     fetchSessions();
   }, [fetchSessions]);
 
+  // Helper function to fetch and merge agent config
+  const fetchAndSetAgent = useCallback(async (agent: Agent) => {
+    if (!user?.email || !agent.mode) {
+      setSelectedAgent(agent);
+      return;
+    }
+
+    try {
+      const agentConfig = await agentAPI.getAgentConfig(user.email, agent.mode);
+      if (agentConfig) {
+        const fullAgent = {
+          ...agent,
+          config: agentConfig.config,
+          mode: agentConfig.mode || agent.mode,
+        };
+        setSelectedAgent(fullAgent);
+        setConfig(agentConfig.config);
+      } else {
+        setSelectedAgent(agent);
+        setConfig({ mode: agent.mode });
+      }
+    } catch (error) {
+      console.warn("Failed to load agent config:", error);
+      setSelectedAgent(agent);
+      setConfig({ mode: agent.mode });
+    }
+  }, [user?.email, setSelectedAgent, setConfig]);
+
   // Restore selected agent from localStorage on mount
   useEffect(() => {
-    if (!selectedAgent && agents && agents.length > 0) {
+    if (!selectedAgent && agents && agents.length > 0 && user?.email) {
       const storedAgent = getSelectedAgent();
       if (storedAgent) {
         // Verify the stored agent still exists in the agent list
         const agentExists = agents.find(a => a.mode === storedAgent.mode);
         if (agentExists) {
-          setSelectedAgent(storedAgent);
-          if (storedAgent.mode) {
-            setConfig({ mode: storedAgent.mode });
-          }
+          // Fetch and set agent with full config
+          fetchAndSetAgent(storedAgent);
         } else {
           // Stored agent no longer exists, use default
           const defaultAgent = agents.find(agent => agent.mode === "magentic-one");
           if (defaultAgent) {
-            setSelectedAgent(defaultAgent);
+            fetchAndSetAgent(defaultAgent);
           }
         }
       } else {
         // No stored agent, use default
         const defaultAgent = agents.find(agent => agent.mode === "magentic-one");
         if (defaultAgent) {
-          setSelectedAgent(defaultAgent);
+          fetchAndSetAgent(defaultAgent);
         }
       }
     }
-  }, [agents, selectedAgent, getSelectedAgent, setSelectedAgent, setConfig]);
+  }, [agents, selectedAgent, getSelectedAgent, fetchAndSetAgent, user?.email]);
 
   // Save selected agent to localStorage when it changes
   useEffect(() => {
@@ -135,8 +161,8 @@ export const SessionManager: React.FC = () => {
       ? (selectedAgent?.id !== agent.id && selectedAgent?.name !== agent.name)
       : (selectedAgent?.mode !== agent.mode);
 
-    setSelectedAgent(agent);
-    setConfig({ mode: agent.mode });
+    // 获取完整的 agent 配置并设置
+    await fetchAndSetAgent(agent);
 
     // 只有在切换到不同智能体时才清空当前会话（不创建新会话，会话在发送消息时创建）
     if (isDifferentAgent) {
@@ -144,23 +170,7 @@ export const SessionManager: React.FC = () => {
     }
 
     setActiveSubMenuItem("current_session");
-  }, [user?.email, selectedAgent, setSelectedAgent, setConfig, clearCurrentSession]);
-
-  // Handle logo click
-  const handleLogoClick = useCallback(() => {
-    setActiveSubMenuItem("current_session");
-
-    // 设置默认agent为 Dr.Sai General (magentic-one)
-    if (Array.isArray(agents) && agents.length > 0) {
-      const defaultAgent = agents.find(agent => agent.mode === "magentic-one");
-      if (defaultAgent) {
-        setSelectedAgent(defaultAgent);
-      }
-    }
-
-    // 创建新会话
-    handleEditSession();
-  }, [agents, setSelectedAgent]);
+  }, [user?.email, selectedAgent, fetchAndSetAgent, clearCurrentSession]);
 
   // Handle edit session
   const handleEditSession = useCallback(async (sessionData?: Session) => {
@@ -176,6 +186,22 @@ export const SessionManager: React.FC = () => {
       clearCurrentSession();
     }
   }, [clearCurrentSession]);
+
+  // Handle logo click
+  const handleLogoClick = useCallback(async () => {
+    setActiveSubMenuItem("current_session");
+
+    // 设置默认agent为 Dr.Sai General (magentic-one)
+    if (Array.isArray(agents) && agents.length > 0) {
+      const defaultAgent = agents.find(agent => agent.mode === "magentic-one");
+      if (defaultAgent) {
+        await fetchAndSetAgent(defaultAgent);
+      }
+    }
+
+    // 创建新会话
+    handleEditSession();
+  }, [agents, fetchAndSetAgent, handleEditSession]);
 
   // Handle save session
   const handleSaveSession = useCallback(async (sessionData: Partial<Session>) => {
@@ -236,11 +262,20 @@ export const SessionManager: React.FC = () => {
   // Listen for switchToCurrentSession event
   useEffect(() => {
     const handleSwitchToCurrentSession = async (event: CustomEvent) => {
-      const { agent, newSession, config } = event.detail;
+      const { agent, newSession, config, clearSession } = event.detail || {};
 
       setActiveSubMenuItem("current_session");
-      setSelectedAgent(agent);
-      setConfig(config)
+      if (agent) {
+        setSelectedAgent(agent);
+      }
+      if (config) {
+        setConfig(config);
+      }
+
+      if (clearSession) {
+        clearCurrentSession();
+        return;
+      }
 
       if (newSession) {
         try {
@@ -267,7 +302,7 @@ export const SessionManager: React.FC = () => {
         handleSwitchToCurrentSession as unknown as EventListener
       );
     };
-  }, [setSelectedAgent, sessions, setSessions, setSession, saveSessionId]);
+  }, [setSelectedAgent, sessions, setSessions, setSession, saveSessionId, setConfig, clearCurrentSession]);
 
   // Chat views
   const chatViews = useMemo(() => {
