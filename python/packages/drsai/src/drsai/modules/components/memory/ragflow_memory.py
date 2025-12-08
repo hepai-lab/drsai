@@ -17,7 +17,7 @@ from autogen_core.memory._base_memory import (
     UpdateContextResult,
     MemoryMimeType
     )
-
+from loguru import logger
 
 
 class RAGFlowMemoryConfig(BaseModel):
@@ -40,7 +40,7 @@ class RAGFlowMemoryConfig(BaseModel):
     """
 
     name: str | None = None
-    RAGFLOW_URL: str = "https://aiweb01.ihep.ac.cn:886"
+    RAGFLOW_URL: str = "https://ragflow.ihep.ac.cn"
     RAGFLOW_TOKEN: str = ""
     dataset_ids: list[str] = None
     document_ids: list[str] = None
@@ -166,7 +166,13 @@ class RAGFlowMemory(Memory, Component[RAGFlowMemoryConfig]):
             async with httpx.AsyncClient() as client:
                 response = await client.post(url, json=body, headers=headers)
                 response.raise_for_status()
-                data = response.json()["data"]
+                response = response.json()
+                if "data" in response:
+                    data = response["data"]
+                else:
+                    logger.warning(f"No data found in response: {response["message"]}")
+                    data = {"chunks":[]}
+                
 
             return data
         try:
@@ -369,6 +375,80 @@ class RAGFlowMemoryManager:
             print(f"Error parsing files: {str(e)}")
             return {"error": str(e)}
     
+    async def update_document(
+        self,
+        dataset_id: str,
+        document_id: str,
+        name: str = None,
+        meta_fields: Dict[str, Any] = None,
+        chunk_method: str = None,
+        parser_config: Dict[str, Any] = None
+    ) -> dict[str, Any]:
+        """
+        Update configurations for a specified document.
+        
+        Args:
+            dataset_id: (Path parameter)
+                The ID of the associated dataset.
+            document_id: (Path parameter)
+                The ID of the document to update.
+            "name": (Body parameter), string name of the document
+            "meta_fields": (Body parameter), dict[str, Any] The meta fields of the document.
+            "chunk_method": (Body parameter), string
+                The parsing method to apply to the document:
+                "naive": General
+                "manual: Manual
+                "qa": Q&A
+                "table": Table
+                "paper": Paper
+                "book": Book
+                "laws": Laws
+                "presentation": Presentation
+                "picture": Picture
+                "one": One
+                "email": Email
+            "parser_config": (Body parameter), object
+                The configuration settings for the dataset parser. The attributes in this JSON object vary with the selected "chunk_method":
+                If "chunk_method" is "naive", the "parser_config" object contains the following attributes:
+                    "chunk_token_num": Defaults to 256.
+                    "layout_recognize": Defaults to true.
+                    "html4excel": Indicates whether to convert Excel documents into HTML format. Defaults to false.
+                    "delimiter": Defaults to "\n".
+                    "task_page_size": Defaults to 12. For PDF only.
+                    "raptor": RAPTOR-specific settings. Defaults to: {"use_raptor": false}.
+                If "chunk_method" is "qa", "manuel", "paper", "book", "laws", or "presentation", the "parser_config" object contains the following attribute:
+                    "raptor": RAPTOR-specific settings. Defaults to: {"use_raptor": false}.
+                If "chunk_method" is "table", "picture", "one", or "email", "parser_config" is an empty JSON object.
+            
+        Returns:
+            Response from the API.
+        """
+        url = f"{self.base_url}/api/v1/datasets/{dataset_id}/documents/{document_id}"
+        
+        # Prepare request body
+        body = {}
+        if name is not None:
+            body["name"] = name
+        if meta_fields is not None:
+            body["meta_fields"] = meta_fields
+        if chunk_method is not None:
+            body["chunk_method"] = chunk_method
+        if parser_config is not None:
+            body["parser_config"] = parser_config
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.put(
+                    url,
+                    headers=self.headers,
+                    json=body
+                )
+                response.raise_for_status()
+                return response.json()
+        except Exception as e:
+            print(f"Error updating document: {str(e)}")
+            return {"error": str(e)}
+
     async def add_files_to_dataset_and_parse(
             self,
             dataset_id: str,
@@ -389,7 +469,6 @@ class RAGFlowMemoryManager:
         document_ids = [datai["id"] for datai in result["data"]]
         return await self.parse_files(dataset_id, document_ids)
     
-
     async def add_chunks_to_dataset(
             self,
             dataset_id: str,
