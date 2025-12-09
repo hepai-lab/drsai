@@ -89,15 +89,11 @@ app = FastAPI(lifespan=lifespan, debug=True)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "http://localhost:8001",
-        "http://localhost:8003",
-        "http://localhost:8081",
         "http://drsai.ihep.ac.cn",
         "https://drsai.ihep.ac.cn",
         "https://aitest.ihep.ac.cn",
      ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

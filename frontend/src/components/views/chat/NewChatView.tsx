@@ -4,6 +4,7 @@ import { IPlan } from "../../types/plan";
 import { Agent } from "../../../types/common";
 import ChatInput from "./chat/chatinput";
 import SampleTasks from "./sampletasks";
+import { useModeConfigStore } from "@/store/modeConfig";
 
 interface NewChatViewProps {
     agent: Agent;
@@ -19,7 +20,29 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
         setValue: (value: string) => void;
     }>(null);
 
+    const { config } = useModeConfigStore();
     const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+    // 从 store 中获取 config 并合并到 agent 对象中
+    const fullAgent = React.useMemo(() => {
+
+        console.log("agent :::", agent, 'syq:', config);
+        // 如果 agent 已经有 config，直接使用
+        if (agent.config) {
+            return agent;
+        }
+
+        // 如果 store 中有 config，合并到 agent 中
+        if (config && Object.keys(config).length > 0) {
+            return {
+                ...agent,
+                config: config,
+            };
+        }
+
+        // 否则返回原始 agent
+        return agent;
+    }, [agent, config]);
 
     const handleSubmit = async (
         query: string,
@@ -38,8 +61,8 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
 
         setIsSubmitting(true);
         try {
-            // 传递当前的 agent，确保使用的是最新的 agent
-            await onSubmit(agent, finalQuery, files, plan);
+            // 传递完整的 agent，确保使用的是包含完整配置的 agent
+            await onSubmit(fullAgent, finalQuery, files, plan);
         } finally {
             setIsSubmitting(false);
         }
@@ -63,22 +86,22 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
                             {/* Agent Logo and Name */}
                             <div className="animate-fade-in">
                                 <div className="flex flex-col items-center gap-4">
-                                    {agent.logo && (
+                                    {fullAgent.logo && (
                                         <img
-                                            src={agent.logo}
-                                            alt={agent.name}
+                                            src={fullAgent.logo}
+                                            alt={fullAgent.name}
                                             className="w-20 h-20 rounded-xl shadow-lg"
                                         />
                                     )}
                                     <div className="space-y-2">
                                         <h1 className="text-5xl font-bold">
                                             <span className="text-6xl bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent font-extrabold">
-                                                {agent.name}
+                                                {fullAgent.name}
                                             </span>
                                         </h1>
-                                        {agent.description && (
+                                        {fullAgent.description && (
                                             <p className="text-xl text-secondary">
-                                                {agent.description}
+                                                {fullAgent.description}
                                             </p>
                                         )}
                                     </div>

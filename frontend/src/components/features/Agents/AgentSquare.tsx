@@ -1,5 +1,5 @@
 import { message } from "antd";
-import { Plus, Sparkles } from "lucide-react";
+import { Plus, Sparkles, RefreshCw } from "lucide-react";
 import React, { useCallback, useContext, useEffect, useState } from "react";
 import { parse } from "yaml";
 import { appContext } from "../../../hooks/provider";
@@ -10,6 +10,7 @@ import { agentWorkerAPI, settingsAPI, agentAPI } from "../../views/api";
 import { AgentCard, AgentCardProps } from "./AgentCard";
 import CustomAgentModal from "./CustomAgentModal";
 import RemoteAgentModal from "./RemoteAgentModal";
+import { getServerUrl } from "../../utils";
 
 interface AgentSquareProps {
   agents: AgentCardProps[];
@@ -32,9 +33,9 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const [editingCustomAgent, setEditingCustomAgent] = useState<any | null>(null);
   const [availableModels, setAvailableModels] = useState<{ id: string }[]>([]);
   const [isModelListLoading, setIsModelListLoading] = useState(false);
-  const [modelSourceBaseUrl, setModelSourceBaseUrl] = useState<string | undefined>();
   const [modelSourceApiKey, setModelSourceApiKey] = useState<string | undefined>();
   const [isSavingCustomAgent, setIsSavingCustomAgent] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleRemoveRemoteAgent = useCallback(async (id?: string) => {
@@ -42,7 +43,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
     try {
       await agentWorkerAPI.removeRemoteAgent(user.email, id);
-      await loadAgentList({ forceRefresh: true });
+      await loadAgentList();
       console.log("Remote agent removed successfully");
     } catch (error) {
       console.error("Failed to remove remote agent:", error);
@@ -77,8 +78,33 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     }
   }, [createRemoteAgentCard]);
 
-  const loadAgentList = useCallback(async (options?: { forceRefresh?: boolean }) => {
-    const forceRefresh = options?.forceRefresh ?? false;
+  // 提取获取 API Key 和 BaseUrl 的逻辑
+  const getApiKeyFromSettings = useCallback(async (userEmail: string) => {
+    const settings = await settingsAPI.getSettings(userEmail);
+    const parsed = parse(settings.model_configs);
+    const modelConfig = parsed?.model_config?.config || {};
+    const apiKey = modelConfig.api_key;
+    const baseUrl = modelConfig.base_url;
+    return { apiKey, baseUrl };
+  }, []);
+
+  // 提取加载并合并 agents 的逻辑
+  const fetchAndMergeAgents = useCallback(async (
+    userEmail: string,
+    apiKey: string,
+    isRefresh: boolean = false
+  ): Promise<AgentCardProps[]> => {
+    const [standardAgents, remoteAgents] = await Promise.all([
+      agentWorkerAPI.getAgentList(userEmail, apiKey, isRefresh),
+      loadRemoteAgents(userEmail)
+    ]);
+
+    return Array.isArray(standardAgents) && standardAgents.length > 0
+      ? [...standardAgents, ...remoteAgents]
+      : remoteAgents;
+  }, [loadRemoteAgents]);
+
+  const loadAgentList = useCallback(async () => {
 
     if (!user?.email) {
       setLoading(false);
@@ -89,28 +115,15 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       setLoading(true);
       setError(null);
 
-      const settings = await settingsAPI.getSettings(user.email);
-      const parsed = parse(settings.model_configs);
-      const modelConfig = parsed?.model_config?.config || {};
-      const apiKey = modelConfig.api_key;
-      const baseUrl = modelConfig.base_url;
+      const { apiKey, baseUrl } = await getApiKeyFromSettings(user.email);
 
       if (!apiKey) {
         throw new Error("API key not found in settings");
       }
 
       setModelSourceApiKey(apiKey);
-      setModelSourceBaseUrl(baseUrl);
 
-      const [standardAgents, remoteAgents] = await Promise.all([
-        agentWorkerAPI.getAgentList(user.email, apiKey, forceRefresh),
-        loadRemoteAgents(user.email)
-      ]);
-
-      const agents = Array.isArray(standardAgents) && standardAgents.length > 0
-        ? [...standardAgents, ...remoteAgents]
-        : remoteAgents;
-
+      const agents = await fetchAndMergeAgents(user.email, apiKey, false);
       setAgentList(agents);
     } catch (err) {
       console.error("Error loading agent list:", err);
@@ -118,10 +131,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [user?.email, loadRemoteAgents]);
+  }, [user?.email, getApiKeyFromSettings, fetchAndMergeAgents]);
 
   const loadAvailableModels = useCallback(async () => {
-    if (!modelSourceBaseUrl) {
+    if (!user?.email || !modelSourceApiKey) {
       setAvailableModels([]);
       return;
     }
@@ -129,15 +142,13 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     setIsModelListLoading(true);
 
     try {
-      const normalizedBaseUrl = modelSourceBaseUrl.endsWith("/")
-        ? modelSourceBaseUrl.slice(0, -1)
-        : modelSourceBaseUrl;
-      const modelsUrl = `${normalizedBaseUrl}/models`;
+      const baseUrl = getServerUrl();
+      const modelsUrl = `${baseUrl}/models/llm_models?user_id=${encodeURIComponent(user.email)}`;
 
       const response = await fetch(modelsUrl, {
         headers: {
           "Content-Type": "application/json",
-          ...(modelSourceApiKey ? { Authorization: `Bearer ${modelSourceApiKey}` } : {}),
+          Authorization: `Bearer ${modelSourceApiKey}`,
         },
       });
 
@@ -146,11 +157,21 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       }
 
       const payload = await response.json();
-      const rawList: any[] = Array.isArray(payload?.data)
-        ? payload.data
-        : Array.isArray(payload?.models)
-          ? payload.models
-          : [];
+
+      if (!payload.status) {
+        throw new Error(payload.message || "Failed to fetch models");
+      }
+
+      // 后端返回的数据结构是 { status: True, data: {...} }
+      // 需要从 data 中提取模型列表
+      const modelsData = payload.data || {};
+      const rawList: any[] = Array.isArray(modelsData?.data)
+        ? modelsData.data
+        : Array.isArray(modelsData?.models)
+          ? modelsData.models
+          : Array.isArray(modelsData)
+            ? modelsData
+            : [];
 
       const formatted = rawList
         .map((item, index) => ({
@@ -166,7 +187,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     } finally {
       setIsModelListLoading(false);
     }
-  }, [modelSourceBaseUrl, modelSourceApiKey]);
+  }, [user?.email, modelSourceApiKey]);
 
   const handleRemoteAgentSave = useCallback(async (config: any, agentInfo?: any) => {
     if (!user?.email) return;
@@ -180,7 +201,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         ...agentInfo
       });
 
-      await loadAgentList({ forceRefresh: true });
+      await loadAgentList();
       setIsRemoteModalOpen(false);
       console.log("Remote agent saved successfully");
     } catch (error) {
@@ -225,7 +246,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       }
 
       const updatedAgents = await agentWorkerAPI.saveRemoteAgent(user.email, payload);
-      await loadAgentList({ forceRefresh: true });
+      await loadAgentList();
       if (handleAgentList) {
         await handleAgentList(updatedAgents);
       }
@@ -262,6 +283,34 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     setIsCustomModalOpen(true);
   }, []);
 
+  const handleRefresh = useCallback(async () => {
+    if (!user?.email) {
+      message.warning("无法刷新：缺少用户信息");
+      return;
+    }
+
+    try {
+      setIsRefreshing(true);
+
+      const { apiKey } = await getApiKeyFromSettings(user.email);
+
+      if (!apiKey) {
+        message.error("无法刷新：API key 未找到");
+        return;
+      }
+
+      // 刷新标准智能体列表（is_refresh=true 会跳过缓存，获取最新数据）
+      const agents = await fetchAndMergeAgents(user.email, apiKey, true);
+      setAgentList(agents);
+      message.success("刷新成功");
+    } catch (err) {
+      console.error("Failed to refresh agent list:", err);
+      message.error("刷新失败");
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [user?.email, getApiKeyFromSettings, fetchAndMergeAgents]);
+
   useEffect(() => {
     loadAgentList();
   }, [loadAgentList]);
@@ -296,28 +345,40 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   return (
     <>
       {/* 连接远程/自定义智能体按钮 */}
-      <div className="flex justify-end items-center mb-4 pr-4 gap-2 flex-wrap">
+      <div className="flex justify-between items-center mb-4 pr-4 gap-2 flex-wrap">
         <Button
-          variant="tertiary"
+          variant="primary"
           size="sm"
-          onClick={() => {
-            setEditingCustomAgent(null);
-            setIsCustomModalOpen(true);
-          }}
-          icon={<Sparkles className="h-4 w-4" />}
-          className="text-sm opacity-75 hover:opacity-100 transition-opacity border border-gray-300 dark:border-gray-600"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          icon={<RefreshCw className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`} />}
+          className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white border-0 shadow-none ml-4"
         >
-          自定义智能体
+          刷新
         </Button>
-        <Button
-          variant="tertiary"
-          size="sm"
-          onClick={() => setIsRemoteModalOpen(true)}
-          icon={<Plus className="h-4 w-4" />}
-          className="text-sm opacity-75 hover:opacity-100 transition-opacity border border-gray-300 dark:border-gray-600"
-        >
-          连接远程智能体
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="tertiary"
+            size="sm"
+            onClick={() => {
+              setEditingCustomAgent(null);
+              setIsCustomModalOpen(true);
+            }}
+            icon={<Sparkles className="h-4 w-4" />}
+            className="text-sm opacity-75 hover:opacity-100 transition-opacity border border-gray-300 dark:border-gray-600"
+          >
+            自定义智能体
+          </Button>
+          <Button
+            variant="tertiary"
+            size="sm"
+            onClick={() => setIsRemoteModalOpen(true)}
+            icon={<Plus className="h-4 w-4" />}
+            className="text-sm opacity-75 hover:opacity-100 transition-opacity border border-gray-300 dark:border-gray-600"
+          >
+            连接远程智能体
+          </Button>
+        </div>
       </div>
 
       {/* 检查是否没有智能体 */}

@@ -446,6 +446,23 @@ async def create_magentic_round_team(
         # )
     
     elif agent_mode == "custom":
+
+        model_config_default = {
+            'provider': 'drsai.HepAIChatCompletionClient', 
+            'config': {
+                'model': 'deepseek-ai/deepseek-v3:671b', 
+                'base_url': 'https://aiapi.ihep.ac.cn/apiv2', 
+                'api_key': api_key, 
+                'max_retries': 10
+            }
+        }
+        
+        model_client = agent_config.get("model_client")
+        if model_client is not None:
+            model_config_default["config"]["model"] = model_client.get("model")
+            model_config_default["config"]["base_url"] = model_client.get("base_url") or "https://aiapi.ihep.ac.cn/apiv2"
+            model_config_default["config"]["api_key"] = model_client.get("api_key") or api_key
+
         ragflow_configs = agent_config.get("ragflow_configs")
         if ragflow_configs is not None:
             ragflow_memorys = await a_get_ragflow_memorys(ragflow_configs)
@@ -463,7 +480,7 @@ async def create_magentic_round_team(
             name= "drsai", #agent_config.get("name", "drsai"),
             system_message=agent_config.get("system_message","A helpfull assistant."),
             description=agent_config.get("description","A helpfull assistant."),
-            model_client=get_model_client(model_client_config = model_config),
+            model_client=get_model_client(model_client_config = model_config_default),
             memory=ragflow_memorys,
             workbench=mcp_workbench,
             thread_id = chat_id,

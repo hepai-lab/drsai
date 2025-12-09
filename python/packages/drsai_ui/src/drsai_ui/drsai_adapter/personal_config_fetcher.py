@@ -41,7 +41,7 @@ class PersonalKeyConfigFetcher:
         default_model_configs = f"""model_config: &client
   provider: drsai.HepAIChatCompletionClient
   config:
-    model: "deepseek-ai/deepseek-v3:671b"
+    model: "openai/gpt-4.1"
     base_url: "https://aiapi.ihep.ac.cn/apiv2"
     api_key: "{personal_key}"
     max_retries: 10

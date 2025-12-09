@@ -23,6 +23,7 @@ import ProgressBar from "./progressbar";
 import { messageUtils } from "./rendermessage";
 import RunView from "./runview";
 import WelcomeScreen from "./WelcomeScreen";
+import { AgentModeConfig, DEFAULT_AGENT_MODE_CONFIG, normalizeAgentModeConfig } from "@/utils/agent";
 
 // Extend RunStatus for sidebar status reporting
 type SidebarRunStatus = BaseRunStatus | "final_answer_awaiting_input";
@@ -107,7 +108,7 @@ export default function ChatView({
   );
 
   const [teamConfig, setTeamConfig] = React.useState<TeamConfig | null>(defaultTeamConfig);
-  const [currentSessionConfig, setCurrentSessionConfig] = React.useState({ mode: "", config: {} });
+  const [currentSessionConfig, setCurrentSessionConfig] = React.useState<AgentModeConfig>(DEFAULT_AGENT_MODE_CONFIG);
 
   // ChatInput ref
   const chatInputRef = React.useRef<{
@@ -214,7 +215,9 @@ export default function ChatView({
       if (session?.id && user?.email) {
         try {
           const res = await sessionAPI.getSession(session?.id, user?.email)
-          setCurrentSessionConfig(res.agent_mode_config)
+          const normalizedConfig =
+            normalizeAgentModeConfig(res.agent_mode_config) || DEFAULT_AGENT_MODE_CONFIG;
+          setCurrentSessionConfig(normalizedConfig);
         } catch (error) {
           console.error("Error loading current session:", error);
           // 如果获取session失败，清除可能无效的session状态
@@ -223,6 +226,8 @@ export default function ChatView({
             // 可以在这里添加清理逻辑，比如清除localStorage等
           }
         }
+      } else {
+        setCurrentSessionConfig(DEFAULT_AGENT_MODE_CONFIG);
       }
     };
 
@@ -264,7 +269,6 @@ export default function ChatView({
   // Update noMessagesYet when messages change
   React.useEffect(() => {
     if (currentRun) {
-      console.log('currentRun:::::', currentRun)
       setNoMessagesYet(currentRun.messages.length === 0);
     }
   }, [currentRun?.messages?.length]);

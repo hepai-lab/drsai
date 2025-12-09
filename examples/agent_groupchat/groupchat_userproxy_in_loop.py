@@ -13,12 +13,12 @@ from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
 from drsai import run_backend, run_console
 from drsai import AssistantAgent, UserProxyAgent
 from drsai import TextMentionTermination
-from drsai import RoundRobinGroupChat, AGRoundRobinGroupChat
+from drsai import RoundRobinGroupChat
 from drsai import Console
 import asyncio
 
 # Create a factory function to ensure isolated Agent instances for concurrent access.
-def create_team() -> AGRoundRobinGroupChat:
+def create_team() -> RoundRobinGroupChat:
     # Create the agents.
     model_client = HepAIChatCompletionClient(
         model="deepseek-ai/deepseek-r1:671b",
@@ -36,7 +36,7 @@ def create_team() -> AGRoundRobinGroupChat:
     termination = TextMentionTermination("APPROVE")
 
     # Create the team.
-    return AGRoundRobinGroupChat([ assistant, user_proxy,], termination_condition=termination)
+    return RoundRobinGroupChat([ assistant, user_proxy,], termination_condition=termination)
 
 
 if __name__ == "__main__":
