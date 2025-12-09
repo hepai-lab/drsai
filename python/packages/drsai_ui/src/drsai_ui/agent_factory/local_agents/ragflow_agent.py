@@ -101,7 +101,9 @@ from drsai import DrSaiAgent
 
 
 class RAGFlowAgent(DrSaiAgent):
-
+    """
+    TODO: 增加用户的个人长期记忆document_id与chat_id+thread_id进行绑定
+    """
     def __init__(
         self,
         name: str,

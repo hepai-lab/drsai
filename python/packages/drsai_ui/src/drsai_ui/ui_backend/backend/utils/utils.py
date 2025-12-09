@@ -8,10 +8,70 @@ from loguru import logger
 import shutil
 from typing import Optional
 import zlib
+from hepai import HepAI
+import tempfile
+import yaml
+
+def upload_to_hepai_filesystem(
+        file_path: str = None, 
+        api_key: str = None, 
+        base_url: str = None,
+        file_content: str = None, 
+        file_name: str = None
+        ) -> Dict[str, Any]:
+    """
+    Upload file to HepAI filesystem.
+    
+    Args:
+        file_path (str): Path to the file to upload
+        api_key (str): API key for authentication
+        file_content (str): Base64 encoded file content (alternative to file_path)
+        file_name (str): Name of the file when using file_content
+        
+    Returns:
+        Dict[str, Any]: File object with URL
+    """
+    
+    client = HepAI(
+        base_url=base_url,
+        api_key= api_key or os.getenv("HEPAI_API_KEY"),
+    )
+
+    # If file_content is provided, create a temporary file
+    if file_content and file_name:
+        # Decode base64 content
+        decoded_content = base64.b64decode(file_content)
+        
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp_file:
+            tmp_file.write(decoded_content)
+            temp_file_path = tmp_file.name
+            
+        # Upload the temporary file
+        file_obj = client.files.create(
+            file=open(temp_file_path, "rb"),
+            purpose="user_data"
+        )
+        
+        # Clean up temporary file
+        os.unlink(temp_file_path)
+    else:
+        # Original behavior with file_path
+        file_obj = client.files.create(
+            file=open(file_path, "rb"),
+            purpose="user_data"
+        )
+
+    url = f"https://aiapi.ihep.ac.cn/apiv2/files/{file_obj.id}/preview"
+    file_obj = file_obj.model_dump()
+    file_obj["url"] = url
+    return file_obj
 
 
 def construct_task(
-    query: str, files: List[Dict[str, Any]] | None = None
+    query: str, 
+    files: List[Dict[str, Any]] | None = None,
+    settings_config: dict[str, Any] = {},
 ) -> Sequence[ChatMessage]:
     """
     Construct a task from a query string and list of files.
@@ -23,6 +83,32 @@ def construct_task(
     Returns:
         Sequence[ChatMessage]: A list of ChatMessages that combines all files and the query.
     """
+
+    # get file system with OpenAI style
+    file_system_config = settings_config.get("file_system", {})
+    ## NOTE: currently only support hepai file system
+    if not file_system_config:
+        file_system_config = {
+            "type": "hepai",
+            "api_key": os.getenv("HEPAI_API_KEY"),
+            "base_url": "https://aiapi.ihep.ac.cn/apiv2",
+        }
+        if isinstance(settings_config.get("model_configs"), str):
+            try:
+                model_configs = yaml.safe_load(settings_config["model_configs"])
+                model_config = model_configs.get("model_config", {})
+                file_system_config["api_key"] = model_config.get("config", {}).get("api_key")
+            except Exception as e:
+                logger.error(f"Error loading model configs: {e}")
+                raise e
+    elif file_system_config.get("type") in ["hepai", "openai"]:
+        pass
+    elif file_system_config.get("type") == "local":
+        pass
+    else:
+        raise ValueError(f"Unknown file system type: {file_system_config.get('type')}")
+
+
     if files is None:
         files = []
 
@@ -59,16 +145,40 @@ def construct_task(
                         }
                     )
                 except Exception as e:
-                    logger.error(f"Error processing file content: {str(e)}")
-                    text_parts.append(
-                        f"Attached file: {file.get('name', 'unknown.file')} (failed to process content)"
-                    )
-                    attached_files.append(
-                        {
-                            "name": file.get("name", "unknown.file"),
-                            "type": file.get("type", "text"),
-                        }
-                    )
+                    # update to hepai file system
+                    if file_system_config.get("type") == "hepai":
+                        api_key = file_system_config.get("api_key")
+                        base_url = file_system_config.get("base_url")
+                        file_obj = upload_to_hepai_filesystem(
+                            api_key=api_key, 
+                            base_url=base_url,
+                            file_content=file["content"], 
+                            file_name=file.get("name", "unknown.file"), 
+                        )
+                        text_parts.append(
+                            f"Attached file: {file.get('name', 'unknown.file')} (uploaded to HepAI)"
+                        )
+                        attached_files.append(
+                            {
+                                "name": file.get("name", "unknown.file"),
+                                "type": file.get("type", "text"),
+                                "file_obj": file_obj
+                            }
+                        )
+                    # elif api_key and base_url:
+                    #     # TODO: implement other file systems
+                    #     raise NotImplementedError("Other file system is not implemented")
+                    else:
+                        logger.error(f"Error processing file content: {str(e)}")
+                        text_parts.append(
+                            f"Attached file: {file.get('name', 'unknown.file')} (failed to process content)"
+                        )
+                        attached_files.append(
+                            {
+                                "name": file.get("name", "unknown.file"),
+                                "type": file.get("type", "text"),
+                            }
+                        )
         except Exception as e:
             logger.error(f"Error processing file {file.get('name')}: {str(e)}")
 

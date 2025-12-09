@@ -2,11 +2,12 @@ from abc import ABC, abstractmethod
 
 
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import Sequence, Any
 from typing_extensions import Self
 from autogen_core._component_config import Component, ComponentBase
 from autogen_core import CancellationToken
 from autogen_core.model_context import ChatCompletionContext
+from autogen_agentchat.messages import BaseChatMessage
 
 class BaseSensorConfig(BaseModel):
     name: str | None = None
@@ -40,6 +41,7 @@ class BaseSensor(ABC, ComponentBase[BaseModel]):
     @abstractmethod
     async def update_context(
         self,
+        messages: Sequence[BaseChatMessage],
         model_context: ChatCompletionContext,
     ) -> Any:
         """
