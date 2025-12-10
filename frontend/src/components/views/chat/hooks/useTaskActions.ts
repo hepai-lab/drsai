@@ -217,9 +217,6 @@ export const useTaskActions = ({
     }
 
     try {
-      const needsReconnect =
-        !activeSocketRef.current ||
-        activeSocketRef.current.readyState !== WebSocket.OPEN;
 
       const socket = await ensureWebSocketConnection(currentRun.id);
 
