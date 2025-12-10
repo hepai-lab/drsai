@@ -56,11 +56,13 @@ async def run_websocket(
                 if message.get("type") == "start" or message.get("type") == "continue":
                     # Handle start message
                     logger.info(f"Received start request for run {run_id}")
-                    task = construct_task(
-                        query=message.get("task"), files=message.get("files")
-                    )
                     team_config = message.get("team_config")
                     settings_config = message.get("settings_config")
+                    task = construct_task(
+                        query=message.get("task"), 
+                        files=message.get("files"),
+                        settings_config=settings_config,
+                    )
                     if task and team_config:
                         # await ws_manager.start_stream(run_id, task, team_config)
                         asyncio.create_task(

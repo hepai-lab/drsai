@@ -10,15 +10,19 @@
 
 TODO:
 
+
+
 ## drsai_ui-0.0.9:
 
 - [x] Add the `RAGFlowAgent` for customized frontend RAG agent.  In: `python/packages/drsai_ui/src/drsai_ui/agent_factory/local_agents/ragflow_agent.py`
 
 - [x] Add the `models` route in `python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/routes/models.py`
 
-- [x] Add a ddf worker cache 
+- [x] Add a ddf worker cache in `python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/routes/agent_worker.py`
 
 TODO:
+
+[ ] `RAGFlowAgent`增加用户的个人长期记忆document_id与chat_id+thread_id进行绑定
 
 ## drsai_ext-0.0.1:
 
