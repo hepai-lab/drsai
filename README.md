@@ -1,4 +1,4 @@
-# 高能万悟(Wanwu)智能体平台-OpenDrSai科学智能体开发框架
+# OpenDrSai科学智能体开发框架
 
 ## [English](README_en.md) | 简体中文
 

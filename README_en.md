@@ -1,4 +1,4 @@
-# High-Energy Wanwu (Wanwu) Agent Platform — OpenDrSai Agent Development Framework
+# OpenDrSai Agent Development Framework
 
 ## English | [简体中文](README.md)
 
