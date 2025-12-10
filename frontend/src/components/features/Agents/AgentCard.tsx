@@ -115,9 +115,10 @@ const AgentCard: React.FC<AgentCardProps> = ({
 
   const handleAddToSidebar = async () => {
     if (!user?.email || isAdding || isAdded) return;
-
     setIsAdding(true);
     try {
+      const runtimeConfig = createAgentConfig(name, url, apiKey || "", mode, extendConfig);
+
       const agentNewList = await agentAPI.updateAgentList(
         user.email,
         {
@@ -125,10 +126,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
           name,
           logo,
           description,
-          config: {
-            url,
-            apiKey,
-          },
+          config: runtimeConfig,
           type: "add",
         }
       );

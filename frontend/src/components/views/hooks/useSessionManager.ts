@@ -5,7 +5,6 @@ import { sessionAPI, agentAPI } from '../api';
 import { useConfigStore } from '../../../hooks/store';
 import { useModeConfigStore } from '../../../store/modeConfig';
 import { useSessionStorage } from './useSessionStorage';
-import { buildAgentModeConfig, normalizeAgentModeConfig, DEFAULT_AGENT_MODE_CONFIG } from '@/utils/agent';
 
 interface UseSessionManagerProps {
   userEmail: string | undefined;
@@ -72,20 +71,16 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
               
               // Update agent config
               if (fullSessionData.agent_mode_config) {
-                const normalizedAgent = normalizeAgentModeConfig(fullSessionData.agent_mode_config) || DEFAULT_AGENT_MODE_CONFIG;
-                fullSessionData.agent_mode_config = normalizedAgent;
-                setSelectedAgent(normalizedAgent);
-                setMode(normalizedAgent.mode || "");
+                setSelectedAgent(fullSessionData.agent_mode_config);
+                setMode(fullSessionData.agent_mode_config.mode);
                 
-                if (normalizedAgent.mode) {
-                  try {
-                    const agentConfig = await agentAPI.getAgentConfig(userEmail, normalizedAgent.mode);
-                    if (agentConfig) {
-                      setConfig(agentConfig.config);
-                    }
-                  } catch (e) {
-                    console.warn("Failed to load agent config:", e);
+                try {
+                  const agentConfig = await agentAPI.getAgentConfig(userEmail, fullSessionData.agent_mode_config.mode);
+                  if (agentConfig) {
+                    setConfig(agentConfig.config);
                   }
+                } catch (e) {
+                  console.warn("Failed to load agent config:", e);
                 }
               }
               
@@ -145,20 +140,16 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
 
       // 同步更新全局选中智能体
       if (data.agent_mode_config) {
-        const normalizedAgent = normalizeAgentModeConfig(data.agent_mode_config) || DEFAULT_AGENT_MODE_CONFIG;
-        data.agent_mode_config = normalizedAgent;
-        setSelectedAgent(normalizedAgent);
-        setMode(normalizedAgent.mode || "");
+        setSelectedAgent(data.agent_mode_config);
+        setMode(data.agent_mode_config.mode);
         
-        if (normalizedAgent.mode) {
-          try {
-            const agentConfig = await agentAPI.getAgentConfig(userEmail, normalizedAgent.mode);
-            if (agentConfig) {
-              setConfig(agentConfig.config);
-            }
-          } catch (e) {
-            console.warn("Failed to load agent config:", e);
+        try {
+          const agentConfig = await agentAPI.getAgentConfig(userEmail, data.agent_mode_config.mode);
+          if (agentConfig) {
+            setConfig(agentConfig.config);
           }
+        } catch (e) {
+          console.warn("Failed to load agent config:", e);
         }
       }
       
@@ -176,9 +167,8 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
       if (Array.isArray(sessions) && sessions.length > 0) {
         setSession(sessions[0]);
         if (sessions[0].agent_mode_config) {
-          const normalizedAgent = normalizeAgentModeConfig(sessions[0].agent_mode_config) || DEFAULT_AGENT_MODE_CONFIG;
-          setSelectedAgent(normalizedAgent);
-          setMode(normalizedAgent.mode || "");
+          setSelectedAgent(sessions[0].agent_mode_config);
+          setMode(sessions[0].agent_mode_config.mode || "");
         }
       } else {
         setSession(null);
@@ -209,7 +199,7 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
       const created = await sessionAPI.createSession(
         {
           name: defaultName,
-          agent_mode_config: buildAgentModeConfig(DEFAULT_AGENT_MODE_CONFIG),
+          agent_mode_config: {},
         },
         userEmail
       );
@@ -249,7 +239,11 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
       // 2. 创建新会话
       const sessionData = {
         name: query.slice(0, 50) || `${agent.name} Chat`,
-        agent_mode_config: buildAgentModeConfig(agent),
+        agent_mode_config: {
+          mode: agent.mode,
+          name: agent.name,
+          ...agent.config,
+        },
       };
 
       const created = await sessionAPI.createSession(sessionData, userEmail);
@@ -295,7 +289,10 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
         }
       } else {
         // Create new session
-        setSelectedAgent(DEFAULT_AGENT_MODE_CONFIG);
+        setSelectedAgent({
+          mode: "magentic-one",
+          name: "Dr.Sai General",
+        });
         
         const created = await sessionAPI.createSession(
           {
@@ -307,7 +304,10 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
               hour: "2-digit",
               minute: "2-digit",
             })}`,
-            agent_mode_config: buildAgentModeConfig(DEFAULT_AGENT_MODE_CONFIG),
+            agent_mode_config: {
+              mode: "magentic-one",
+              name: "Dr.Sai General",
+            },
           },
           userEmail
         );

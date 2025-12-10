@@ -50,6 +50,18 @@ export const DEFAULT_AGENT_MODE_CONFIG: AgentModeConfig = {
   config: {
     name: "Dr.Sai General",
     mode: "magentic-one",
+    url: "",
+    apiKey: "",
+    base_url: "",
+    model_client: {
+      model: "",
+      base_url: "",
+      api_key: "",
+    },
+    mcp_sse_list: [],
+    ragflow_configs: [],
+    system_message: "",
+    description: "",
   },
 };
 
@@ -60,25 +72,6 @@ const toRecord = (value: any): Record<string, any> => {
   return {};
 };
 
-export const buildAgentModeConfig = (agent: Agent): AgentModeConfig => {
-  const meta = pickMetaFields(agent as Record<string, any>);
-  const resolvedName: string = agent.name ?? DEFAULT_AGENT_MODE_CONFIG.name;
-  const resolvedMode: AgentMode =
-    (agent.mode ?? DEFAULT_AGENT_MODE_CONFIG.mode) as AgentMode;
-  const config = ensureIdentityInConfig(
-    toRecord(agent.config),
-    resolvedName,
-    resolvedMode
-  );
-
-  return {
-    ...DEFAULT_AGENT_MODE_CONFIG,
-    ...meta,
-    name: resolvedName,
-    mode: resolvedMode,
-    config,
-  };
-};
 
 export const normalizeAgentModeConfig = (
   raw: any

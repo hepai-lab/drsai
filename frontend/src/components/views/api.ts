@@ -535,6 +535,8 @@ export class Agent {
                 body: JSON.stringify({"agent_mode_config": agent_mode_config}),
             }
         );
+
+ 
         const data = await response.json();
         if (!data.status)
             throw new Error(data.message || "Failed to update agents");
