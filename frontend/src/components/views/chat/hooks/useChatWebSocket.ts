@@ -353,10 +353,23 @@ export const useChatWebSocket = ({
         }
       };
 
+      // Capture sessionId and runId at the time of socket creation to avoid stale closures
+      const socketSessionId = session.id;
+      const socketRunId = runId;
+      
       socket.onclose = () => {
-        // If the socket closes while status is awaiting_input, update to stopped
+        // Only process close event if this socket belongs to the current session and run
+        // This prevents old socket close events from affecting new sessions
         setCurrentRun((current: Run | null) => {
           if (!current || !session?.id) return current;
+          // Check if this socket belongs to the current session and run
+          if (session.id !== socketSessionId || current.id !== socketRunId) {
+            return current;
+          }
+          // Only update if the socket is still the active one
+          if (activeSocketRef.current !== socket) {
+            return current;
+          }
           if (current.status === "awaiting_input") {
             const updatedRun = {
               ...current,
@@ -376,8 +389,11 @@ export const useChatWebSocket = ({
           }
           return current;
         });
-        activeSocketRef.current = null;
-        setActiveSocket(null);
+        // Only clear active socket if this is the current active socket
+        if (activeSocketRef.current === socket) {
+          activeSocketRef.current = null;
+          setActiveSocket(null);
+        }
       };
 
       socket.onerror = (error) => {
