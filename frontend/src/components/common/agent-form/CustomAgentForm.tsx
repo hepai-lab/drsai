@@ -88,24 +88,11 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         toolConfigs:
             initialData?.mcp_sse_list && initialData.mcp_sse_list.length > 0
                 ? initialData.mcp_sse_list
-                : [
-                    {
-                        id: "1",
-                        type: "MCP",
-                        url: "",
-                        token: "",
-                    },
-                ],
+                : [],
         ragflow_configs:
             initialData?.ragflow_configs && initialData.ragflow_configs.length > 0
                 ? initialData.ragflow_configs
-                : [
-                    {
-                        ragflow_url: "",
-                        ragflow_token: "",
-                        dataset_ids: [],
-                    },
-                ]
+                : []
     });
     const [avatarError, setAvatarError] = useState<string | null>(null);
     const avatarInputRef = useRef<HTMLInputElement | null>(null);
@@ -116,6 +103,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
     const [errors, setErrors] = useState<{
         name?: string;
         description?: string;
+        system_message?: string;
         llmProvider?: string;
         baseUrl?: string;
         apiKey?: string;
@@ -246,14 +234,17 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
     };
 
     const removeToolConfig = (id: string) => {
-        if (formData.toolConfigs.length > 1) {
-            setFormData((prev) => ({
-                ...prev,
-                toolConfigs: prev.toolConfigs.filter(
-                    (config) => config.id !== id
-                ),
-            }));
-        }
+        setFormData((prev) => ({
+            ...prev,
+            toolConfigs: prev.toolConfigs.filter(
+                (config) => config.id !== id
+            ),
+        }));
+        setToolErrors((prev) => {
+            const newErrors = { ...prev };
+            delete newErrors[id];
+            return newErrors;
+        });
     };
 
     const handleKnowledgeConfigChange = (
@@ -321,6 +312,36 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
         }));
     };
 
+    const removeKnowledgeConfig = (index: number) => {
+        setFormData((prev) => {
+            const nextConfigs = (prev.ragflow_configs || []).filter((_, i) => i !== index);
+            return {
+                ...prev,
+                ragflow_configs: nextConfigs,
+            };
+        });
+        setKnowledgeErrors((prev) => {
+            const next: typeof prev = {};
+            Object.entries(prev).forEach(([k, v]) => {
+                const idx = Number(k);
+                if (idx === index) return;
+                const newIdx = idx > index ? idx - 1 : idx;
+                next[newIdx] = v;
+            });
+            return next;
+        });
+        setKnowledgeProviders((prev) => {
+            const next: typeof prev = {};
+            Object.entries(prev).forEach(([k, v]) => {
+                const idx = Number(k);
+                if (idx === index) return;
+                const newIdx = idx > index ? idx - 1 : idx;
+                next[newIdx] = v;
+            });
+            return next;
+        });
+    };
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
 
@@ -331,8 +352,8 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
             newErrors.name = "Name 是必填项";
         }
 
-        if (!formData.description.trim()) {
-            newErrors.description = "Description 是必填项";
+        if (!formData.system_message.trim()) {
+            newErrors.system_message = "System Message 是必填项";
         }
 
         if (!formData.llmProvider.trim()) {
@@ -392,26 +413,6 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
             return;
         }
 
-        // 临时测试数据：表单为空时使用默认值，方便快速联调，测试完可以删掉这段逻辑
-        const hasValidRagflowConfig =
-            formData.ragflow_configs &&
-            formData.ragflow_configs.some(
-                (cfg) =>
-                    cfg &&
-                    (cfg.ragflow_token ||
-                        (cfg.dataset_ids && cfg.dataset_ids.length > 0))
-            );
-
-        const ragflowConfigs: KnowledgeConfig[] = hasValidRagflowConfig
-            ? formData.ragflow_configs
-            : [
-                {
-                    ragflow_url: "https://aiweb01.ihep.ac.cn:886",
-                    ragflow_token: "test-knowledge-token",
-                    dataset_ids: ["sample-dataset-1"],
-                },
-            ];
-
         const providerModel = formData.llmProvider?.trim() || "gpt-4o-mini";
         const customBaseUrl =
             formData.baseUrl?.trim() || "https://api.openai.com/v1";
@@ -431,19 +432,9 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
             system_message:
                 formData.system_message || "你是一个用于测试的智能体。",
             model_client: modelClient,
-            mcp_sse_list:
-                formData.toolConfigs && formData.toolConfigs.length > 0
-                    ? formData.toolConfigs
-                    : [
-                        {
-                            id: "1",
-                            type: "MCP",
-                            url: "https://example.com/mcp-endpoint",
-                            token: "test-mcp-token",
-                        },
-                    ],
+            mcp_sse_list: formData.toolConfigs || [],
             // 后端需要 ragflow_configs: KnowledgeConfig[]
-            ragflow_configs: ragflowConfigs,
+            ragflow_configs: formData.ragflow_configs || [],
         };
 
         console.log("agent payload :::", payload);
@@ -573,7 +564,7 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                             />
                         </div>
 
-                        <div className="flex-1 min-w-[260px]">
+                        <div className="w-48">
                             <label
                                 className={`text-xs font-medium uppercase tracking-wide ${darkMode === "dark"
                                     ? "text-gray-400"
@@ -589,23 +580,20 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                 }
                                 placeholder="Set name"
                                 status={errors.name ? "error" : undefined}
-                                style={{ marginTop: '0.25rem', width: '100%', maxWidth: '36rem' }}
+                                style={{ marginTop: '0.25rem', width: '100%' }}
                             />
                             {errors.name && (
                                 <p className="mt-1 text-xs text-red-500">{errors.name}</p>
                             )}
                         </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 w-full">
-                        <div className="flex flex-col gap-1 max-w-xl">
+                        <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
                             <label
                                 className={`text-xs font-medium uppercase tracking-wide ${darkMode === "dark"
                                     ? "text-gray-400"
                                     : "text-gray-500"
                                     }`}
                             >
-                                Description <span className="text-red-500">*</span>
+                                Description
                             </label>
                             <Input
                                 value={formData.description}
@@ -620,14 +608,18 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                 <p className="mt-1 text-xs text-red-500">{errors.description}</p>
                             )}
                         </div>
-                        <div className="flex flex-col gap-1 max-w-xl">
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 w-full">
+
+                        <div className="flex flex-col gap-1 flex-shrink-0">
                             <label
                                 className={`text-xs font-medium uppercase tracking-wide ${darkMode === "dark"
                                     ? "text-gray-400"
                                     : "text-gray-500"
                                     }`}
                             >
-                                System Message
+                                System Message <span className="text-red-500">*</span>
                             </label>
                             <Input
                                 value={formData.system_message}
@@ -635,8 +627,12 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                                     handleInputChange("system_message", e.target.value)
                                 }
                                 placeholder="可选提示：例如始终以投研顾问回答"
+                                status={errors.system_message ? "error" : undefined}
                                 style={{ width: '100%' }}
                             />
+                            {errors.system_message && (
+                                <p className="mt-1 text-xs text-red-500">{errors.system_message}</p>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -843,29 +839,31 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                         </button>
                     </header>
 
-                    <div className="space-y-3">
-                        {formData.toolConfigs.map((config, index) => (
-                            <div
-                                key={config.id}
-                                className={`
-                                    rounded-xl border px-3 py-3
-                                    ${darkMode === "dark"
-                                        ? "border-[#2f2f2f] bg-[#101010]"
-                                        : "border-[#e5e7eb] bg-[#f9fafb]"
-                                    }
-                                `}
-                            >
-                                <ToolConfigurationForm
-                                    config={config}
-                                    index={index}
-                                    onConfigChange={handleToolConfigChange}
-                                    onRemove={removeToolConfig}
-                                    canRemove={formData.toolConfigs.length > 1}
-                                    errors={toolErrors[config.id]}
-                                />
-                            </div>
-                        ))}
-                    </div>
+                    {formData.toolConfigs.length > 0 && (
+                        <div className="space-y-3">
+                            {formData.toolConfigs.map((config, index) => (
+                                <div
+                                    key={config.id}
+                                    className={`
+                                        rounded-xl border px-3 py-3
+                                        ${darkMode === "dark"
+                                            ? "border-[#2f2f2f] bg-[#101010]"
+                                            : "border-[#e5e7eb] bg-[#f9fafb]"
+                                        }
+                                    `}
+                                >
+                                    <ToolConfigurationForm
+                                        config={config}
+                                        index={index}
+                                        onConfigChange={handleToolConfigChange}
+                                        onRemove={removeToolConfig}
+                                        canRemove={formData.toolConfigs.length > 0}
+                                        errors={toolErrors[config.id]}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {/* Knowledge */}
@@ -914,34 +912,32 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
                         </button>
                     </header>
 
-                    {(formData.ragflow_configs && formData.ragflow_configs.length > 0
-                        ? formData.ragflow_configs
-                        : [
-                            {
-                                ragflow_url: "",
-                                ragflow_token: "",
-                                dataset_ids: [],
-                            } as KnowledgeConfig,
-                        ]
-                    ).map((cfg, index) => (
-                        <div key={index} className={index === 0 ? "" : "mt-4"}>
-                            <KnowledgeConfigurationForm
-                                config={cfg}
-                                onConfigChange={(field, value) =>
-                                    handleKnowledgeConfigChange(index, field, value)
-                                }
-                                darkMode={darkMode}
-                                showLabel={index === 0}
-                                errors={knowledgeErrors[index]}
-                                onProviderChange={(provider) => {
-                                    setKnowledgeProviders((prev) => ({
-                                        ...prev,
-                                        [index]: provider,
-                                    }));
-                                }}
-                            />
-                        </div>
-                    ))}
+                    {formData.ragflow_configs.length > 0 && (
+                        <>
+                            {formData.ragflow_configs.map((cfg, index) => (
+                                <div key={index} className={index === 0 ? "" : "mt-4"}>
+                                    <KnowledgeConfigurationForm
+                                        index={index}
+                                        config={cfg}
+                                        onConfigChange={(field, value) =>
+                                            handleKnowledgeConfigChange(index, field, value)
+                                        }
+                                        onRemove={() => removeKnowledgeConfig(index)}
+                                        canRemove={formData.ragflow_configs.length > 0}
+                                        darkMode={darkMode}
+                                        showLabel={index === 0}
+                                        errors={knowledgeErrors[index]}
+                                        onProviderChange={(provider) => {
+                                            setKnowledgeProviders((prev) => ({
+                                                ...prev,
+                                                [index]: provider,
+                                            }));
+                                        }}
+                                    />
+                                </div>
+                            ))}
+                        </>
+                    )}
                 </div>
 
                 {/* Action Buttons */}
