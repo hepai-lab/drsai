@@ -64,15 +64,16 @@ export const useChatWebSocket = ({
             const messageSource =
               typeof messageData.source === "string" ? messageData.source : undefined;
 
-            // if (messageSource !== "user" && messageSource !== "user_proxy") {
-            //   return current;
-            // }
+            // Skip deduplication for user messages - users should be able to send duplicate messages
+            const isUserMessage = messageSource === "user" || messageSource === "user_proxy";
 
             const lastMessageIndex = current.messages.length - 1;
 
-            if (lastMessageIndex >= 0) {
+            // Only apply deduplication logic for non-user messages
+            if (lastMessageIndex >= 0 && !isUserMessage) {
               const lastMessage = current.messages[lastMessageIndex];
 
+              // Only check similarity if the last message is from assistant or same source
               if (
                 (lastMessage.config.source === "assistant" ||
                   lastMessage.config.source === messageData.source) &&
@@ -93,13 +94,14 @@ export const useChatWebSocket = ({
                   return current;
                 }
 
-                // Check for content similarity
+                // Check for content similarity (only for non-user messages)
                 if (areMessagesSimilar(lastContent, newContent)) {
                   return current;
                 }
               }
             }
 
+            // Always add user messages, and non-user messages that passed deduplication
             const newMessage = createMessage(
               messageData,
               current.id,
