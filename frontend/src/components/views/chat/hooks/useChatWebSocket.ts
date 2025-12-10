@@ -393,6 +393,28 @@ export const useChatWebSocket = ({
       };
 
       socket.onclose = () => {
+        // If the socket closes while status is awaiting_input, update to stopped
+        setCurrentRun((current: Run | null) => {
+          if (!current || !session?.id) return current;
+          if (current.status === "awaiting_input") {
+            const updatedRun = {
+              ...current,
+              status: "stopped" as BaseRunStatus,
+              input_request: undefined,
+              team_result: {
+                task_result: {
+                  messages: [],
+                  stop_reason: "Cancelled by user",
+                },
+                usage: "",
+                duration: 0,
+              } as TeamResult,
+            };
+            setSessionRun(session.id, updatedRun);
+            return updatedRun;
+          }
+          return current;
+        });
         activeSocketRef.current = null;
         setActiveSocket(null);
       };
@@ -405,7 +427,7 @@ export const useChatWebSocket = ({
       activeSocketRef.current = socket;
       return socket;
     },
-    [session?.id, getSessionSocket, handleWebSocketMessage]
+    [session?.id, getSessionSocket, handleWebSocketMessage, setCurrentRun, setSessionRun]
   );
 
   const ensureWebSocketConnection = React.useCallback(
