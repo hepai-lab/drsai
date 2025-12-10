@@ -10,7 +10,7 @@ import {
   InputRequestMessage,
   TeamResult,
 } from "../../../types/datamodel";
-import { createMessage, areMessagesSimilar, isStreamingDuplicate } from "../chatHelpers";
+import { createMessage } from "../chatHelpers";
 
 interface UseWebSocketProps {
   session: { id?: number } | null;
@@ -61,45 +61,6 @@ export const useChatWebSocket = ({
             if (!wsMessage.data) return current;
 
             const messageData = wsMessage.data as AgentMessageConfig;
-            const messageSource =
-              typeof messageData.source === "string" ? messageData.source : undefined;
-
-            // Skip deduplication for user messages - users should be able to send duplicate messages
-            const isUserMessage = messageSource === "user" || messageSource === "user_proxy";
-
-            const lastMessageIndex = current.messages.length - 1;
-
-            // Only apply deduplication logic for non-user messages
-            if (lastMessageIndex >= 0 && !isUserMessage) {
-              const lastMessage = current.messages[lastMessageIndex];
-
-              // Only check similarity if the last message is from assistant or same source
-              if (
-                (lastMessage.config.source === "assistant" ||
-                  lastMessage.config.source === messageData.source) &&
-                typeof lastMessage.config.content === "string" &&
-                typeof messageData.content === "string"
-              ) {
-                const lastContent = lastMessage.config.content.trim();
-                const newContent = messageData.content.trim();
-
-                // Check for streaming duplicate
-                if (
-                  isStreamingDuplicate(streamingMessageRef.current, {
-                    source: messageData.source,
-                    content: newContent,
-                  })
-                ) {
-                  streamingMessageRef.current = null;
-                  return current;
-                }
-
-                // Check for content similarity (only for non-user messages)
-                if (areMessagesSimilar(lastContent, newContent)) {
-                  return current;
-                }
-              }
-            }
 
             // Always add user messages, and non-user messages that passed deduplication
             const newMessage = createMessage(

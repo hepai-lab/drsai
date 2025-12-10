@@ -41,7 +41,6 @@ export const SessionManager: React.FC = () => {
     pendingFirstMessage,
     fetchSessions,
     selectSession,
-    createDefaultSession,
     createNewChatSession,
     updateSession,
     updateSessionName,
@@ -96,6 +95,14 @@ export const SessionManager: React.FC = () => {
       return;
     }
 
+    // 对于自定义智能体（type === "add"），如果已经有完整的 config，直接使用
+    if (agent.type === "add" && agent.config && Object.keys(agent.config).length > 0) {
+      console.log("Using existing config for custom agent:", agent);
+      setSelectedAgent(agent);
+      setConfig(agent.config);
+      return;
+    }
+
     try {
       const agentConfig = await agentAPI.getAgentConfig(user.email, agent.mode);
       if (agentConfig) {
@@ -108,13 +115,25 @@ export const SessionManager: React.FC = () => {
         setSelectedAgent(fullAgent);
         setConfig(agentConfig.config);
       } else {
-        setSelectedAgent(agent);
-        setConfig({ mode: agent.mode });
+        // 如果 API 返回空，但 agent 本身有 config，使用 agent 的 config
+        if (agent.config && Object.keys(agent.config).length > 0) {
+          setSelectedAgent(agent);
+          setConfig(agent.config);
+        } else {
+          setSelectedAgent(agent);
+          setConfig({ mode: agent.mode });
+        }
       }
     } catch (error) {
       console.warn("Failed to load agent config:", error);
-      setSelectedAgent(agent);
-      setConfig({ mode: agent.mode });
+      // 如果 API 调用失败，但 agent 本身有 config，使用 agent 的 config
+      if (agent.config && Object.keys(agent.config).length > 0) {
+        setSelectedAgent(agent);
+        setConfig(agent.config);
+      } else {
+        setSelectedAgent(agent);
+        setConfig({ mode: agent.mode });
+      }
     }
   }, [user?.email, setSelectedAgent, setConfig]);
 
@@ -213,8 +232,14 @@ export const SessionManager: React.FC = () => {
 
   // Handle delete session
   const handleDeleteSession = useCallback(async (sessionId: number) => {
+    const isDeletingCurrentSession = session?.id === sessionId;
     await deleteSession(sessionId, closeSocket);
-  }, [deleteSession, closeSocket]);
+
+    // 如果删除的是当前会话，确保显示 NewChatView
+    if (isDeletingCurrentSession) {
+      setActiveSubMenuItem("current_session");
+    }
+  }, [deleteSession, closeSocket, session?.id]);
 
   // Handle delete agent
   const handleDeleteAgent = useCallback(async (id: string) => {
@@ -304,6 +329,32 @@ export const SessionManager: React.FC = () => {
       );
     };
   }, [setSelectedAgent, sessions, setSessions, setSession, saveSessionId, setConfig, clearCurrentSession]);
+
+  // Listen for sessionDeleted event and ensure NewChatView is shown
+  useEffect(() => {
+    const handleSessionDeleted = () => {
+      setActiveSubMenuItem("current_session");
+    };
+
+    window.addEventListener(
+      "sessionDeleted",
+      handleSessionDeleted as unknown as EventListener
+    );
+
+    return () => {
+      window.removeEventListener(
+        "sessionDeleted",
+        handleSessionDeleted as unknown as EventListener
+      );
+    };
+  }, []);
+
+  // Ensure NewChatView is shown when session becomes null
+  useEffect(() => {
+    if (!session && selectedAgent && selectedAgent.name) {
+      setActiveSubMenuItem("current_session");
+    }
+  }, [session, selectedAgent]);
 
   // Chat views
   const chatViews = useMemo(() => {
@@ -405,6 +456,7 @@ export const SessionManager: React.FC = () => {
                 <NewChatView
                   agent={selectedAgent as Agent}
                   onSubmit={async (agent, query, files, plan) => {
+                    console.log("onSubmit :::12346", agent, query, files, plan);
                     await createNewChatSession(agent, query, files, plan);
                   }}
                 />

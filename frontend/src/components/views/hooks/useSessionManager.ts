@@ -378,6 +378,13 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
         setSession(null);
         
         window.history.pushState({}, "", window.location.pathname);
+        
+        // 触发事件，通知 manager 切换到 NewChatView
+        window.dispatchEvent(
+          new CustomEvent("sessionDeleted", {
+            detail: { sessionId }
+          })
+        );
       } else {
         if (session && !updatedSessions.find(s => s.id === session.id)) {
           if (updatedSessions.length > 0) {

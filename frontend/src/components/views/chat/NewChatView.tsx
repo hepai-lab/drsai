@@ -26,22 +26,86 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
     // 从 store 中获取 config 并合并到 agent 对象中
     const fullAgent = React.useMemo(() => {
 
-        console.log("agent :::", agent, 'syq:', config);
-        // 如果 agent 已经有 config，直接使用
-        if (agent.config) {
-            return agent;
+        // 定义配置属性列表（这些属性可能直接在 agent 对象上，也可能在 agent.config 中）
+        const configProperties = [
+            'model_client',
+            'mcp_sse_list',
+            'ragflow_configs',
+            'system_message',
+            'name',
+            'url',
+            'apiKey',
+            'mode',
+            'description',
+            'id'
+        ];
+
+        // 从 agent 对象中提取配置属性
+        const extractConfigFromAgent = (agentObj: Agent): any => {
+            const extractedConfig: any = {};
+
+            // 提取预定义的配置属性
+            configProperties.forEach(prop => {
+                const value = (agentObj as any)[prop];
+                if (value !== undefined && value !== null) {
+                    extractedConfig[prop] = value;
+                }
+            });
+
+            // 提取其他可能的配置属性（排除 Agent 接口的基本属性）
+            const basicAgentProps = ['id', 'name', 'mode', 'description', 'icon', 'tags', 'config', 'logo', 'owner', 'url', 'apiKey', 'baseUrl', 'type'];
+            Object.keys(agentObj).forEach(key => {
+                if (!basicAgentProps.includes(key) && (agentObj as any)[key] !== undefined && (agentObj as any)[key] !== null) {
+                    // 这可能是配置属性（如 model_client, mcp_sse_list 等）
+                    extractedConfig[key] = (agentObj as any)[key];
+                }
+            });
+
+            // 如果提取到了配置，返回配置对象
+            if (Object.keys(extractedConfig).length > 0) {
+                return extractedConfig;
+            }
+            return null;
+        };
+
+        // 构建最终的 config
+        let finalConfig: any = null;
+
+        // 优先级1: 如果 agent 已经有 config 且不为空，直接使用
+        if (agent.config && typeof agent.config === 'object' && Object.keys(agent.config).length > 0) {
+            finalConfig = agent.config;
+        }
+        // 优先级2: 如果 agent.config 为空或不存在，从 agent 对象本身提取配置
+        else {
+            const extractedConfig = extractConfigFromAgent(agent);
+            if (extractedConfig) {
+                finalConfig = extractedConfig;
+            }
         }
 
-        // 如果 store 中有 config，合并到 agent 中
-        if (config && Object.keys(config).length > 0) {
+        // 优先级3: 如果 store 中有 config，合并到最终配置中
+        if (config && typeof config === 'object' && Object.keys(config).length > 0) {
+            if (finalConfig) {
+                // 合并配置，store 中的 config 优先级更高
+                finalConfig = { ...finalConfig, ...config };
+            } else {
+                finalConfig = config;
+            }
+        }
+
+        // 如果最终有配置，构建 fullAgent
+        if (finalConfig) {
             return {
                 ...agent,
-                config: config,
+                config: finalConfig,
             };
         }
 
-        // 否则返回原始 agent
-        return agent;
+        // 否则返回原始 agent（但确保至少有一个空的 config 对象）
+        return {
+            ...agent,
+            config: agent.config || {},
+        };
     }, [agent, config]);
 
     const handleSubmit = async (
@@ -68,6 +132,10 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
         }
     };
 
+    React.useEffect(() => {
+        console.log("fullAgent :::", fullAgent);
+    }, [fullAgent]);
+
     return (
         <>
             <style>{`
@@ -79,6 +147,7 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
                     scrollbar-width: none;
                 }
             `}</style>
+
             <div className="flex flex-col h-full overflow-hidden">
                 <div className="flex-1 flex items-center justify-center overflow-y-auto hide-scrollbar">
                     <div className="w-full max-w-4xl py-8 px-4">
