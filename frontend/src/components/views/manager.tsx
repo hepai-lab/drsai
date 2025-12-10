@@ -110,8 +110,8 @@ export const SessionManager: React.FC = () => {
           ...agent,
           config: agentConfig.config,
           mode: agentConfig.mode || agent.mode,
+          logo: agent.logo,
         };
-        console.log("fullAgent ::: ssss", fullAgent);
         setSelectedAgent(fullAgent);
         setConfig(agentConfig.config);
       } else {
@@ -351,6 +351,7 @@ export const SessionManager: React.FC = () => {
 
   // Ensure NewChatView is shown when session becomes null
   useEffect(() => {
+
     if (!session && selectedAgent && selectedAgent.name) {
       setActiveSubMenuItem("current_session");
     }
@@ -456,7 +457,6 @@ export const SessionManager: React.FC = () => {
                 <NewChatView
                   agent={selectedAgent as Agent}
                   onSubmit={async (agent, query, files, plan) => {
-                    console.log("onSubmit :::12346", agent, query, files, plan);
                     await createNewChatSession(agent, query, files, plan);
                   }}
                 />

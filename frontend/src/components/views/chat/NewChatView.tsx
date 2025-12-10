@@ -132,10 +132,12 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
         }
     };
 
-    React.useEffect(() => {
-        console.log("fullAgent :::", fullAgent);
-    }, [fullAgent]);
-
+    const heroAvatar =
+        (fullAgent as any).avatar ||
+        (fullAgent as any).logo ||
+        (fullAgent.config as any)?.avatar ||
+        (fullAgent.config as any)?.logo ||
+        "";
     return (
         <>
             <style>{`
@@ -155,9 +157,9 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
                             {/* Agent Logo and Name */}
                             <div className="animate-fade-in">
                                 <div className="flex flex-col items-center gap-4">
-                                    {fullAgent.logo && (
+                                    {heroAvatar && (
                                         <img
-                                            src={fullAgent.logo}
+                                            src={heroAvatar}
                                             alt={fullAgent.name}
                                             className="w-20 h-20 rounded-xl shadow-lg"
                                         />

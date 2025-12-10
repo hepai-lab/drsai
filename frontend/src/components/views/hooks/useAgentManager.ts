@@ -14,6 +14,7 @@ export const useAgentManager = (userEmail: string | undefined) => {
     try {
       // 如果提供了新的 agent 列表，直接使用它，否则重新获取
       const res = newAgents || await agentAPI.getAgentList(userEmail);
+      console.log('res :::', res);
       setAgents(res);
 
       // 如果用户刚登录且没有持久化的agent选择，设置默认agent

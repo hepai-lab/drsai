@@ -437,7 +437,6 @@ const CustomAgentForm: React.FC<CustomAgentFormProps> = ({
             ragflow_configs: formData.ragflow_configs || [],
         };
 
-        console.log("agent payload :::", payload);
         onSubmit(payload);
     };
 
