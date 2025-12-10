@@ -226,6 +226,14 @@ class RoundRobinGroupChatManager(DrSaiBaseGroupChatManager):
                 await self._signal_termination(stop_message)
                 await self._termination_condition.reset()
                 return
+        if message.agent_response.chat_message.source=="user_proxy":
+            if message.agent_response.chat_message.metadata.get("is_stop")=="yes":
+                stop_message = StopMessage(
+                    source="user_proxy",
+                    content=message.agent_response.chat_message.content,
+                )
+                await self._signal_termination(stop_message)
+                return
 
         # Check max turns
         self._current_turn += 1
