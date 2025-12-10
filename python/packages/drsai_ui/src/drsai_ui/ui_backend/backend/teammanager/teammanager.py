@@ -342,7 +342,8 @@ class TeamManager:
                         if internal == "yes":
                             yield message
                         else:
-                            message.metadata.update({"internal": "yes", "is_save": "yes"})
+                            if message.source not in ["user_proxy", "user"]:
+                                message.metadata.update({"internal": "yes", "is_save": "yes"})
                             yield message
                     else:
                         yield message

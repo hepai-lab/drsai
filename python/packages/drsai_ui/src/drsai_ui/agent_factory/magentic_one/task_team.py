@@ -21,7 +21,7 @@ from .approval_guard import (
 )
 from ..remote_agent.drsai_remote_agent import RemoteAgent
 # from ..magentic_one.agents.drsai_agents.drsai_agent import MagenticAgent
-from drsai.modules.baseagent import DrSaiAgent
+from drsai.modules.baseagent import DrSaiAgent, DrSaiUserProxyAgent
 from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory, RAGFlowMemoryConfig
 
 from ...ui_backend.input_func import InputFuncType, make_agentchat_input_func
@@ -155,7 +155,7 @@ async def get_task_team(
         to_save_screenshots=False,
     )
 
-    user_proxy: DummyUserProxy | MetadataUserProxy | UserProxyAgent
+    user_proxy: DummyUserProxy | MetadataUserProxy | DrSaiUserProxyAgent
 
     if magentic_ui_config.user_proxy_type == "dummy":
         user_proxy = DummyUserProxy(name="user_proxy")
@@ -179,7 +179,7 @@ async def get_task_team(
         )
     else:
         user_proxy_input_func = make_agentchat_input_func(input_func)
-        user_proxy = UserProxyAgent(
+        user_proxy = DrSaiUserProxyAgent(
             description=USER_PROXY_DESCRIPTION,
             name="user_proxy",
             input_func=user_proxy_input_func,
@@ -524,7 +524,7 @@ async def create_magentic_round_team(
 
     if isinstance(agent, ChatAgent):
         user_proxy_input_func = make_agentchat_input_func(input_func)
-        user_proxy = UserProxyAgent(
+        user_proxy = DrSaiUserProxyAgent(
             description=USER_PROXY_DESCRIPTION,
             name="user_proxy",
             input_func=user_proxy_input_func,

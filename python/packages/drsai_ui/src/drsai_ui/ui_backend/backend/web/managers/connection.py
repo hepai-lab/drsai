@@ -460,7 +460,7 @@ class WebSocketManager:
 
     async def handle_input_response(self, run_id: int, response: str) -> None:
         """Handle input response from client"""
-        if run_id in self._input_responses:
+        if run_id in self._input_responses and run_id in self._connections:
             await self._input_responses[run_id].put(response)
         else:
             logger.warning(f"Received input response for inactive run {run_id}")

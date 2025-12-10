@@ -10,6 +10,7 @@ from drsai.modules.components.model_context import DrSaiChatCompletionContext
 # Agents
 from drsai.modules.baseagent.drsaiagent import DrSaiAgent
 from drsai.modules.baseagent.drsaiagent import DrSaiAgent as AssistantAgent
+from drsai.modules.baseagent.user_proxy import DrSaiUserProxyAgent
 
 # Groupchat
 from drsai.modules.groupchat.ag_round_robin_group_chat import AGRoundRobinGroupChat, AGRoundRobinGroupChatManager

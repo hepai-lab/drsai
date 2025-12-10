@@ -69,20 +69,20 @@ async def delete_agents_mode(user_id: str, id: str, db=Depends(get_db)) -> Dict:
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-# @router.get("/config")
-# async def get_agent_mode_config_route(user_id: str, mode: str, db=Depends(get_db)) -> Dict:
-#     '''
-#     获取用户的 agent mode 配置
-#     '''
-#     try:
-#         response = db.get(AgentModeConfig, filters={"user_id": user_id, "mode": mode})
-#         if not response.status or not response.data:
-#             # create a default settings
-#             default_settings = AgentModeConfig(user_id=user_id, mode=mode, config={})
-#             db.upsert(default_settings)
-#         response = db.get(AgentModeConfig, filters={"user_id": user_id, "mode": mode})
-#         settings = response.data[0]
-#         return {"status": True, "data": settings}
+@router.get("/config")
+async def get_agent_mode_config_route(user_id: str, mode: str, db=Depends(get_db)) -> Dict:
+    '''
+    获取用户的 agent mode 配置
+    '''
+    try:
+        response = db.get(AgentModeConfig, filters={"user_id": user_id, "mode": mode})
+        if not response.status or not response.data:
+            # create a default settings
+            default_settings = AgentModeConfig(user_id=user_id, mode=mode, config={})
+            db.upsert(default_settings)
+        response = db.get(AgentModeConfig, filters={"user_id": user_id, "mode": mode})
+        settings = response.data[0]
+        return {"status": True, "data": settings}
     
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
