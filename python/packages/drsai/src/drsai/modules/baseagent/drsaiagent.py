@@ -922,9 +922,10 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         tool_call_summary = "\n".join(tool_call_summaries)
 
         if tool_call_summary_prompt:
-            yield ModelClientStreamingChunkEvent(content="<think>\n", source=agent_name)
-            yield ModelClientStreamingChunkEvent(content=tool_call_summary_format, source=agent_name)
-            yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
+            # yield ModelClientStreamingChunkEvent(content="<think>\n", source=agent_name)
+            # yield ModelClientStreamingChunkEvent(content=tool_call_summary_format, source=agent_name)
+            # yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
+            yield AgentLogEvent(source=cls.name, content=tool_call_summary, content_type="tools")
             all_messages = system_messages + await model_context.get_messages()
             all_messages.append(
                 UserMessage(

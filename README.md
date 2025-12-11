@@ -190,7 +190,7 @@ myassistant:
 
 - [ ] 感知层：正在开发默认支持可UTF-8编码的文本附件的解析和聊天上下文注入。
 
-- [ ] 记忆层：正在进一步开发DrSaiChatCompletionContext中长期记忆通过与RAGFlow进行关联并进行长期记忆的查询
+- [ ] 记忆层：正在进一步开发DrSaiChatCompletionContext中长期记忆通过与RAGFlow进行关联并进行长期记忆的查询, 需要可自动为每个没有传入document_id进行自动创建，构建记忆
 
 ~~-开发基于提示词的进行长记忆压缩的ChatCompletionContext类，具体见examples/components/model_context01.py~~
 
