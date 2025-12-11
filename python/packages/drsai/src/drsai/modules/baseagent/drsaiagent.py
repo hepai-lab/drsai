@@ -677,8 +677,8 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             source=agent_name,
             models_usage=model_result.usage,
         )
-        # logger.debug(tool_call_msg)
-        yield AgentLogEvent(source=agent_name, content=tool_call_msg.content, content_type="tools")
+        logger.debug(tool_call_msg)
+        yield AgentLogEvent(source=agent_name, content=str(tool_call_msg.content), content_type="tools")
         inner_messages.append(tool_call_msg)
         yield tool_call_msg
 
@@ -702,8 +702,8 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             content=exec_results,
             source=agent_name,
         )
-        # logger.debug(tool_call_result_msg)
-        yield AgentLogEvent(source=agent_name, content=tool_call_result_msg.content, content_type="tools")
+        logger.debug(tool_call_result_msg)
+        yield AgentLogEvent(source=agent_name, content=str(tool_call_result_msg.content), content_type="tools")
         await model_context.add_message(FunctionExecutionResultMessage(content=exec_results))
         inner_messages.append(tool_call_result_msg)
         yield tool_call_result_msg
@@ -931,7 +931,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             all_messages = system_messages + await model_context.get_messages()
             all_messages.append(
                 UserMessage(
-                    content=tool_call_summary_prompt,
+                    content=tool_call_summary_prompt+f"\n\nThese result are as following:\n {tool_call_summary}",
                     source="user",
                 )
             )
