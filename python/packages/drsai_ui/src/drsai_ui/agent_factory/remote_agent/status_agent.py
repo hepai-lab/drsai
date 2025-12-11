@@ -133,7 +133,7 @@ class StatusAgent(DrSaiAgent):
                   api_key=self.api_key,
                   base_url=self.url,
               ),
-              timeout=30.0 
+              timeout=60.0 
           )
             # print([f.__name__ for f in funcs])
             self._funcs_map = {f.__name__: f for f in funcs}
@@ -143,7 +143,7 @@ class StatusAgent(DrSaiAgent):
                   chat_id=self._chat_id,
                   api_key=self.api_key
               ),
-              timeout=30.0
+              timeout=60.0
             )
             status = result.get("status", False)
             message = result.get("message", "")
@@ -179,7 +179,7 @@ class StatusAgent(DrSaiAgent):
                       self._funcs_map['pause'],
                       chat_id=self._chat_id
                   ),
-                  timeout=30.0
+                  timeout=60.0
                 )
             status = result.get("status", False)
             message = result.get("message", "")
@@ -200,7 +200,7 @@ class StatusAgent(DrSaiAgent):
                   self._funcs_map['pause_long_task'],
                   chat_id=self._chat_id
               ),
-              timeout=30.0
+              timeout=60.0
             )
         status = result.get("status", False)
         message = result.get("message", "")
@@ -223,7 +223,7 @@ class StatusAgent(DrSaiAgent):
                         self._funcs_map['resume'],
                         chat_id=self._chat_id
                     ),
-                    timeout=30.0
+                    timeout=60.0
                 )
             status = result.get("status", False)
             message = result.get("message", "")
@@ -255,7 +255,7 @@ class StatusAgent(DrSaiAgent):
                   self._funcs_map['close'],
                   chat_id=self._chat_id
               ),
-              timeout=30.0
+              timeout=60.0
             )
         status = result.get("status", False)
         message = result.get("message", "")
@@ -264,7 +264,7 @@ class StatusAgent(DrSaiAgent):
         else:
             logger.info(f"Closed {self.name} successfully.")
 
-    async def async_stream_generator(self, stream, timeout: float = 60.0) -> AsyncGenerator[dict, None]:
+    async def async_stream_generator(self, stream, timeout: float = 120.0) -> AsyncGenerator[dict, None]:
         loop = asyncio.get_event_loop()
         queue = asyncio.Queue()
 
