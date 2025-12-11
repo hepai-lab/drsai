@@ -6,6 +6,16 @@ from .ag_selector_group_chat import AGSelectorGroupChat, AGSelectorGroupChatMana
 from .base_group_chat_runner import BaseGroupChatRunner
 from .drsai_base_group_chat_runner import DrSaiBaseGroupChatRunner, DrSaiBaseGroupChatRunnerConfig
 
+from autogen_agentchat.conditions import (
+    ExternalTermination,
+    HandoffTermination,
+    MaxMessageTermination,
+    SourceMatchTermination,
+    StopMessageTermination,
+    TextMentionTermination,
+    TimeoutTermination,
+    TokenUsageTermination,)
+
 __all__ = [
     "AGBaseGroupChatManager",
     "AGGroupChat",
@@ -20,4 +30,12 @@ __all__ = [
     "BaseGroupChatRunner",
     "DrSaiBaseGroupChatRunner",
     "DrSaiBaseGroupChatRunnerConfig",
+    "ExternalTermination",
+    "HandoffTermination",
+    "MaxMessageTermination",
+    "SourceMatchTermination",
+    "StopMessageTermination",
+    "TextMentionTermination",
+    "TimeoutTermination",
+    "TokenUsageTermination",
 ]

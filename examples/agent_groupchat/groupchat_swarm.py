@@ -1,23 +1,14 @@
-from typing import Any, Dict, List
+
 import asyncio
 import os, sys
 
-
-try:
-    import drsai
-except ImportError:
-    current_file_path = os.path.abspath(__file__)
-    current_directory = os.path.dirname(current_file_path)
-    drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
-    sys.path.append(drsai_path)
-
-from drsai import AssistantAgent, HandoffTermination, TextMentionTermination
-from drsai import run_backend, run_console, run_worker
-from drsai import HandoffMessage
-from drsai import AGSwarm
-from drsai import Console, DrSaiAPP
+from drsai.modules.baseagent import DrSaiAgent
+from drsai.modules.managers.messages import HandoffMessage
+from drsai.modules.components.model_client import HepAIChatCompletionClient
+from drsai.modules.groupchat import AGSwarm, TextMentionTermination, HandoffTermination
+from drsai.backend import run_worker, Console, DrSaiAPP
 import json
-from typing import AsyncGenerator, Union
+from typing import AsyncGenerator
 
 
 def refund_flight(flight_id: str) -> str:
@@ -27,7 +18,7 @@ def refund_flight(flight_id: str) -> str:
 # Create a factory function to ensure isolated Agent instances for concurrent access.
 def create_team() -> AGSwarm:
 
-    travel_agent = AssistantAgent(
+    travel_agent = DrSaiAgent(
         "travel_agent",
         handoffs=["flights_refunder", "user"],
         system_message="""You are a travel agent.
@@ -36,7 +27,7 @@ def create_team() -> AGSwarm:
         Use TERMINATE when the travel planning is complete.""",
     )
 
-    flights_refunder = AssistantAgent(
+    flights_refunder = DrSaiAgent(
         "flights_refunder",
         handoffs=["travel_agent", "user"],
         tools=[refund_flight],

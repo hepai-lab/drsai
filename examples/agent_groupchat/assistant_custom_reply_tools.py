@@ -1,35 +1,9 @@
-import sys
-import os
-try:
-    import drsai
-except ImportError:
-    current_file_path = os.path.abspath(__file__)
-    current_directory = os.path.dirname(current_file_path)
-    drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
-    sys.path.append(drsai_path)
-
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_console, run_backend
-from drsai.modules.managers.database import DatabaseManager
-from drsai import tools_reply_function
-
-import os, json
+from drsai.modules.components.model_client import HepAIChatCompletionClient
+from drsai.modules.baseagent import DrSaiAgent
+from drsai.backend import run_worker, run_console, DrSaiAPP
+import os, json, sys
 import asyncio
-from typing import List, Dict, Union, AsyncGenerator, Tuple, Any
-
-
-from autogen_core import CancellationToken
-from autogen_core.tools import  (
-    BaseTool, 
-    FunctionTool, 
-    StaticWorkbench, 
-    Workbench, 
-    ToolResult, 
-    TextResultContent, 
-    ToolSchema)
-from autogen_core.models import (
-    LLMMessage,
-    ChatCompletionClient,
-)
+from drsai import tools_reply_function
 
 # For this example, we use a fake weather tool for demonstration purposes.
 async def get_weather(city: str) -> str:
@@ -37,7 +11,7 @@ async def get_weather(city: str) -> str:
     return f"The weather in {city} is 73 degrees and Sunny."
 
 # Create a factory function to ensure isolated Agent instances for concurrent access.
-def create_agent() -> AssistantAgent:
+def create_agent() -> DrSaiAgent:
 
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
@@ -50,7 +24,7 @@ def create_agent() -> AssistantAgent:
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
     # The system message instructs the agent via natural language.
-    return AssistantAgent(
+    return DrSaiAgent(
         name="weather_agent",
         model_client=model_client,
         system_message="You are a helpful assistant.",

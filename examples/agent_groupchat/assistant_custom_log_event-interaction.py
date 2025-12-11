@@ -1,86 +1,40 @@
+
+
+from drsai.modules.components.tool import (
+    CancellationToken,
+)
+from drsai.modules.components.model_client import HepAIChatCompletionClient
+from drsai.modules.components.task_manager import TaskType, TaskStatus, Task
+from drsai.modules.components.model_context import BufferedChatCompletionContext
+from drsai.modules.components.memory import RAGFlowMemory, RAGFlowMemoryConfig
+from drsai.modules.managers.messages import (
+    BaseChatMessage,
+    BaseAgentEvent,
+    TaskEvent, 
+    AgentLogEvent,
+    ModelClientStreamingChunkEvent,
+    ThoughtEvent,
+    TextMessage,
+    )
+from drsai.modules.baseagent import (
+    DrSaiAgent, 
+    CreateResult,
+    Response, 
+    AssistantMessage)
+from drsai.backend import run_worker, Console, DrSaiAPP
+
 from typing import (
     AsyncGenerator, 
     List, 
     Sequence, 
-    Dict, 
-    Any, 
-    Callable, 
-    Awaitable, 
-    Union, 
-    Optional, 
-    Tuple,
-    Self,
-    Mapping,
     )
-
-import asyncio
 from loguru import logger
-import inspect
-import json
-import os
-
-from pydantic import BaseModel
-
-from autogen_core import CancellationToken, FunctionCall
-from autogen_core.tools import (
-    BaseTool, 
-    Workbench, 
-    ToolSchema)
-from autogen_core.memory import Memory
-from autogen_core.model_context import ChatCompletionContext
-from autogen_core.models import (
-    ChatCompletionClient,
-    CreateResult,
-    FunctionExecutionResultMessage,
-    FunctionExecutionResult,
-    LLMMessage,
-    UserMessage,
-    AssistantMessage,
-    SystemMessage,
-    RequestUsage,
-)
-
-from autogen_agentchat.agents import AssistantAgent
-from autogen_agentchat.state import AssistantAgentState
-from autogen_agentchat.agents._assistant_agent import AssistantAgentConfig
-from autogen_agentchat.base import Handoff as HandoffBase
-from autogen_agentchat.base import Response, TaskResult
-from autogen_agentchat.messages import (
-    BaseAgentEvent,
-    BaseChatMessage,
-    AgentEvent,
-    ChatMessage,
-    HandoffMessage,
-    MemoryQueryEvent,
-    ModelClientStreamingChunkEvent,
-    TextMessage,
-    ToolCallExecutionEvent,
-    ToolCallRequestEvent,
-    ToolCallSummaryMessage,
-    UserInputRequestedEvent,
-    ThoughtEvent,
-    StructuredMessage,
-    StructuredMessageFactory,
-    # MultiModalMessage,
-    Image,
-)
-
-from drsai.modules.managers.database import DatabaseManager
-from drsai import DrSaiStaticWorkbench
-from drsai import RAGFlowMemory, RAGFlowMemoryConfig
-from autogen_core.model_context import (
-    BufferedChatCompletionContext,)
-from drsai import AssistantAgent, HepAIChatCompletionClient
-from drsai import run_backend, run_console, run_worker
 import os, json, time
 from dotenv import load_dotenv
 load_dotenv()
 import asyncio
 
-from drsai.modules.components.task_manager.base_task_system import TaskType, TaskStatus, Task
-from drsai.modules.managers.messages.agent_messages import TaskEvent, AgentLogEvent
-
-class TaskAgent(AssistantAgent):
+class TaskAgent(DrSaiAgent):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

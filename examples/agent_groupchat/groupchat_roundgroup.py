@@ -1,20 +1,14 @@
-import sys
-import os
-try:
-    import drsai
-except ImportError:
-    current_file_path = os.path.abspath(__file__)
-    current_directory = os.path.dirname(current_file_path)
-    drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
-    sys.path.append(drsai_path)
 
 
-from drsai import  HepAIChatCompletionClient, DrSaiAPP, TextMentionTermination
-from drsai import run_backend, run_console, run_worker
+
 from drsai.modules.baseagent import DrSaiAgent
-from drsai.modules.groupchat import RoundRobinGroupChat
+from drsai.modules.components.model_client import HepAIChatCompletionClient
+from drsai.modules.groupchat import RoundRobinGroupChat, TextMentionTermination
+from drsai.backend import run_worker, Console, DrSaiAPP
 import json
 import asyncio
+import sys
+import os
 
 # Create a factory function to ensure isolated Agent instances for concurrent access.
 def create_team() -> RoundRobinGroupChat:

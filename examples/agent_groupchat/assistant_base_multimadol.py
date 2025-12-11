@@ -1,31 +1,11 @@
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_console, run_backend, run_worker
-from drsai.modules.managers.database import DatabaseManager
-import os, json
+from drsai.modules.baseagent import DrSaiAgent
+from drsai.modules.components.model_client import HepAIChatCompletionClient
+from drsai.backend import run_worker
+import os
 import asyncio
-from typing import List, Dict, Union, AsyncGenerator, Tuple, Any
+from typing import List, Dict, AsyncGenerator
 
 from openai import OpenAI
-import base64
-
-from autogen_core import CancellationToken
-from autogen_core.tools import (
-    BaseTool, 
-    FunctionTool, 
-    StaticWorkbench, 
-    Workbench, 
-    ToolResult, 
-    TextResultContent, 
-    ToolSchema)
-from autogen_core.models import (
-    LLMMessage, 
-    CreateResult,
-)
-
-from autogen_agentchat.messages import (
-    MultiModalMessage, 
-    Image,
-    ModelClientStreamingChunkEvent,
-    )
 
 async def explain_image(oai_messages: List[Dict], api_key: str = "") -> AsyncGenerator[str, None]:
     try:
@@ -48,7 +28,7 @@ async def explain_image(oai_messages: List[Dict], api_key: str = "") -> AsyncGen
         # 捕获并返回异常信息
         yield f"图片解释失败: {str(e)}"
 
-async def create_agent() -> AssistantAgent:
+async def create_agent() -> DrSaiAgent:
     # 创建模型客户端实例
     model_client = HepAIChatCompletionClient(
         model="openai/gpt-4.1",
@@ -56,7 +36,7 @@ async def create_agent() -> AssistantAgent:
         base_url="https://aiapi.ihep.ac.cn/apiv2",
     )
     # 创建AssistantAgent实例并返回
-    return AssistantAgent(
+    return DrSaiAgent(
         name="ImageExplainier",
         model_client=model_client,
         description="An agent that explains images based on user prompts.",
