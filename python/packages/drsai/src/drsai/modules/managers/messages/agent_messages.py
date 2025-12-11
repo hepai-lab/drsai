@@ -4,8 +4,14 @@ from autogen_agentchat.messages import (
     StructuredMessageFactory,
     MessageFactory,
     )
-
-from autogen_core.models import UserMessage, SystemMessage, AssistantMessage, FunctionExecutionResultMessage
+from autogen_core import FunctionCall
+from autogen_core.models import (
+    UserMessage, 
+    SystemMessage, 
+    AssistantMessage, 
+    FunctionExecutionResultMessage,
+    FunctionExecutionResult,
+    )
 from typing import Any, Dict, Generic, List, Literal, Mapping, Optional, Type, TypeVar, Sequence
 from enum import Enum 
 from pydantic import BaseModel, Field, computed_field
@@ -55,7 +61,7 @@ class Send_level(str, Enum):
 class AgentLogEvent(BaseAgentEvent):
     """An event signaling a text output chunk from a model client in streaming mode."""
 
-    content: str
+    content: str|List[FunctionCall|FunctionExecutionResult]
     content_type: str|None = None
     """The type of content, such as web search results, etc."""
     send_time_stamp: float = Field(default_factory=time.time)
