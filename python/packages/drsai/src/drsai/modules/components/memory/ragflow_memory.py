@@ -42,16 +42,17 @@ class RAGFlowMemoryConfig(BaseModel):
     name: str | None = None
     RAGFLOW_URL: str = "https://ragflow.ihep.ac.cn"
     RAGFLOW_TOKEN: str = ""
-    dataset_ids: list[str] = None
-    document_ids: list[str] = None
+    dataset_ids: list[str]|None = None
+    document_ids: list[str]|None = None
     page: int = 1
     page_size: int = 30
     similarity_threshold: float = 0.2
     vector_similarity_weight: float = 0.3
     top_k: int = 1024
-    rerank_id: str = None
+    rerank_id: int|None = None
     keyword: bool = False
     highlight: bool = False
+    cross_languages: list[str] = []
 
 
 class RAGFlowMemory(Memory, Component[RAGFlowMemoryConfig]):
@@ -104,7 +105,8 @@ class RAGFlowMemory(Memory, Component[RAGFlowMemoryConfig]):
             top_k: int = 1024,
             rerank_id: str = None,
             keyword: bool = False,
-            highlight: bool = False
+            highlight: bool = False,
+            cross_languages: list[str] = [],
         ):
             """
             Retrieve chunks from specified datasets using RAGFlow retrieval API.
@@ -145,7 +147,8 @@ class RAGFlowMemory(Memory, Component[RAGFlowMemoryConfig]):
                 "vector_similarity_weight": vector_similarity_weight,
                 "top_k": top_k,
                 "keyword": keyword,
-                "highlight": highlight
+                "highlight": highlight,
+                "cross_languages": cross_languages
             }
 
             # Add optional parameters if provided
@@ -191,7 +194,8 @@ class RAGFlowMemory(Memory, Component[RAGFlowMemoryConfig]):
                 top_k=config.top_k,
                 rerank_id=config.rerank_id,
                 keyword=config.keyword,
-                highlight=config.highlight
+                highlight=config.highlight,
+                cross_languages=config.cross_languages,
             )
             results = [MemoryContent(content=chunk["content"], mime_type =MemoryMimeType.TEXT, metadata=chunk) for chunk in data["chunks"]]
             return MemoryQueryResult(results=results)
@@ -533,7 +537,9 @@ class RAGFlowMemoryManager:
             top_k: int = 1024
             rerank_id: int
             keyword: bool 
-            highlight bool 
+            highlight: bool 
+            cross_languages: list[str]
+            rerank_id: int
         """
         params = {
             "question": question,
