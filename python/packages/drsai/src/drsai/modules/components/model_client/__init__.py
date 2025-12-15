@@ -1,11 +1,24 @@
 from .LLMClient import HepAIChatCompletionClient
 
-from autogen_core.models  import (
+from autogen_core.models._model_client import (
     ChatCompletionClient,
     ModelCapabilities,  # type: ignore
     ModelFamily,
     ModelInfo,
     validate_model_info,
+)
+from autogen_core.models._types import (
+    AssistantMessage,
+    ChatCompletionTokenLogprob,
+    CreateResult,
+    FinishReasons,
+    FunctionExecutionResult,
+    FunctionExecutionResultMessage,
+    LLMMessage,
+    RequestUsage,
+    SystemMessage,
+    TopLogprob,
+    UserMessage,
 )
 
 from autogen_ext.models.openai import OpenAIChatCompletionClient
