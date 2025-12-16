@@ -64,7 +64,8 @@ from drsai import DrSaiAgent, HepAIChatCompletionClient
 from drsai.modules.managers.messages.agent_messages import (
     AgentLogEvent,
     Send_level,
-    TaskEvent
+    TaskEvent,
+    DrSaiMessageFactory
 )
 
 class StatusAgent(DrSaiAgent):
@@ -119,9 +120,9 @@ class StatusAgent(DrSaiAgent):
         self._init_message: str|dict = ""
 
         # 消息类型
-        self._message_factory = MessageFactory()
-        self._message_factory._message_types[AgentLogEvent.__name__] = AgentLogEvent
-        self._message_factory._message_types[TaskEvent.__name__] = TaskEvent
+        self._message_factory = DrSaiMessageFactory()
+        # self._message_factory._message_types[AgentLogEvent.__name__] = AgentLogEvent
+        # self._message_factory._message_types[TaskEvent.__name__] = TaskEvent
 
     async def lazy_init(self, **kwargs) -> None:
         """Initialize the tools and models needed by the agent."""
@@ -132,6 +133,7 @@ class StatusAgent(DrSaiAgent):
                   name=self.model_name,
                   api_key=self.api_key,
                   base_url=self.url,
+                  run_info=self._run_info
               ),
               timeout=60.0 
           )
@@ -150,9 +152,11 @@ class StatusAgent(DrSaiAgent):
             if message:
                 self._init_message = message
             if not status:
-                raise Exception(message)
+                # raise Exception(message)
+                logger.error(message)
             else:
                 logger.info(f"Lazy init {self.name} successfully.")
+            return
         except asyncio.TimeoutError:
           logger.error(f"Timeout initializing worker functions for {self.model_name}")
           self._funcs_map = {}
@@ -215,6 +219,8 @@ class StatusAgent(DrSaiAgent):
         # 先取消暂停状态
         self.is_paused = False
         self._paused.clear()
+        if not self._funcs_map:
+            return
 
         # 恢复远程的模型
         try:
@@ -334,7 +340,7 @@ class StatusAgent(DrSaiAgent):
                 chat_message=TextMessage(
                     content=f"Cannot connect to the model: {self.model_name} through {self.url}. Please check the connection and try again later.",
                     source=self.name,
-                    metadata={"internal": "No"},
+                    metadata={"internal": "no"},
                 )
             )
             return
@@ -356,7 +362,23 @@ class StatusAgent(DrSaiAgent):
         #     self.is_paused = True
         # monitor_pause_task = asyncio.create_task(monitor_pause())
 
-        
+        if self._init_message:
+            init_message = ""
+            init_message_mate = {}
+            if isinstance(self._init_message, str):
+                init_message = self._init_message
+            elif isinstance(self._init_message, dict):
+                init_message = self._init_message.pop("content", "")
+                init_message_mate = self._init_message
+            else: 
+                init_message = str(self._init_message)
+            init_message_mate.update({"internal": "no"})
+            yield TextMessage(
+                    content=init_message,
+                    source=self.name,
+                    metadata=init_message_mate,
+                )
+
         try:
         ##########Your costum code here##########
         # NOTE: Can only yield TextMessage or MultiModalMessage in MagenticAgent becasue the limit in src/magentic_ui/utils.py", line 160, in thread_to_context:
@@ -447,10 +469,10 @@ class StatusAgent(DrSaiAgent):
                             "ToolCallSummaryMessage",
                             "StructuredMessage",
                             "HandoffMessage",
+                            "MultiModalMessage",
                             "StopMessage"]:
                             full_response.append({msg.source: msg.content})
-                        else:
-                            yield msg
+                        yield msg
                     if "stop_reason" in chunk:
                         # taskresult = TaskResult.model_validate(chunk)
                         break
@@ -660,7 +682,7 @@ class StatusAgent(DrSaiAgent):
                     content=model_result.content,
                     source=agent_name,
                     models_usage=model_result.usage,
-                    metadata={"internal": "no"}, # detect if it is internal message or not
+                    metadata={"internal": "yes"}, # detect if it is internal message or not
                 ),
                 inner_messages=inner_messages,
             )

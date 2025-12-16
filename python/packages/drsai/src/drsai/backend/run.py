@@ -230,14 +230,14 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         return await self.drsai.get_agents_info(agent=agent)
     
     @HRModel.remote_callable
-    async def lazy_init(self, chat_id: str, api_key: str) -> Dict[str, Any]:
+    async def lazy_init(self, chat_id: str, api_key: str, run_info: Dict[str, str]) -> Dict[str, Any]:
         try:
             agent: Team|ChatAgent = self.drsai.agent_instance.get(chat_id, None)
             if agent is None:
                 agent = await self.drsai._create_agent_instance()
                 self.drsai.agent_instance[chat_id] = agent
-            message = await agent.lazy_init(api_key=api_key)
-            return {"status": True, "message": message}
+            message = await agent.lazy_init(api_key=api_key, chat_id=chat_id, run_info=run_info)
+            return {"status": True, "message": message}run_info
         except Exception as e:
             return {"status": False, "message": f"Lazy init error: {e}"}
     
@@ -281,6 +281,24 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         except Exception as e:
             return {"status": False, "message": f"Close error: {e}"}
         
+    @HRModel.remote_callable
+    async def save_state(self, chat_id: str) -> Dict[str, Any]:
+        try:
+            agent: Team|ChatAgent = self.drsai.agent_instance[chat_id]
+            await agent.save_state()
+            return {"status": True, "message": ""}
+        except Exception as e:
+            return {"status": False, "message": f"save_state error: {e}"}
+    
+    @HRModel.remote_callable
+    async def load_state(self, chat_id: str) -> Dict[str, Any]:
+        try:
+            agent: Team|ChatAgent = self.drsai.agent_instance[chat_id]
+            await agent.load_state()
+            return {"status": True, "message": ""}
+        except Exception as e:
+            return {"status": False, "message": f"load_state error: {e}"}
+
     @HRModel.remote_callable
     async def a_chat_completions(self, *args, **kwargs) -> AsyncGenerator:
         return self.drsai.a_drsai_ui_completions(*args, **kwargs)
