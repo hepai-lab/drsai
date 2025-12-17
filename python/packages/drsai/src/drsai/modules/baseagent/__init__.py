@@ -1,5 +1,8 @@
 from .drsaiagent import DrSaiAgent
 from .user_proxy import DrSaiUserProxyAgent
+from .drsai_remote_agent import RemoteAgent
+from .drsai_worker_agent import HepAIWorkerAgent
+
 from autogen_agentchat.base import (
     ChatAgent,
     Response,
@@ -42,6 +45,8 @@ from autogen_core.models import (
 __all__ = [
     "DrSaiAgent",
     "DrSaiUserProxyAgent",
+    "RemoteAgent",
+    "HepAIWorkerAgent",
 
     "ChatAgent",
     "Response",
