@@ -1,5 +1,4 @@
 import json
-from drsai import AssistantAgent, HepAIChatCompletionClient
 import asyncio
 from typing import AsyncGenerator,Optional, List, Dict, Tuple, Sequence, Any, Awaitable, Callable, Union
 from loguru import logger
@@ -7,20 +6,12 @@ from loguru import logger
 from pydantic import BaseModel
 
 
-from autogen_core import CancellationToken, FunctionCall
-from autogen_core.model_context import (
-    ChatCompletionContext,
-)
-from autogen_agentchat.base import Response, TaskResult
-from autogen_agentchat.base import Handoff as HandoffBase
-from autogen_agentchat.messages import (
+from drsai.modules.managers import CancellationToken, FunctionCall
+
+from drsai.modules.baseagent import Response, TaskResult, HandoffBase
+from drsai.modules.managers.messages import (
     BaseAgentEvent,
     BaseChatMessage,
-    # HandoffMessage,
-    # MemoryQueryEvent,
-    # ModelClientStreamingChunkEvent,
-    # StructuredMessage,
-    # StructuredMessageFactory,
     TextMessage,
     ThoughtEvent,
     ModelClientStreamingChunkEvent,
@@ -29,9 +20,13 @@ from autogen_agentchat.messages import (
     ToolCallSummaryMessage,
     UserInputRequestedEvent,
 )
-from autogen_core.models import (
+from autogen_core.model_context import (
+    ChatCompletionContext,
+)
+from drsai.modules.components.model_client import (
     AssistantMessage,
     ChatCompletionClient,
+    HepAIChatCompletionClient,
     CreateResult,
     RequestUsage,
     FunctionExecutionResult,
@@ -40,40 +35,44 @@ from autogen_core.models import (
     # ModelFamily,
     SystemMessage,
 )
-from autogen_core.tools import (
+from drsai.modules.components.tool import (
     BaseTool, 
-    # FunctionTool, 
-    # StaticWorkbench, 
     Workbench, 
-    # ToolResult, 
-    # TextResultContent, 
-    # ToolSchema
     )
+from drsai.modules.baseagent import DrSaiAgent
 
-import aiohttp
-from aiohttp import ClientConnectionError
+from hepai.tools.get_woker_functions import get_worker_sync_functions
+from openai import Stream
 
-class RemoteAgent(AssistantAgent):
+
+from drsai.modules.managers.messages.agent_messages import (
+    AgentLogEvent,
+    Send_level,
+    TaskEvent,
+    DrSaiMessageFactory
+)
+
+class HepAIWorkerAgent(DrSaiAgent):
     '''
-    连接OpenAI格式的模型或者智能体后端
+    连接HepAI Worker 格式的模型或者智能体后端
     '''
     def __init__(
-            self, 
-            name: str,
-            model_client: HepAIChatCompletionClient|None = None,
-            model_client_stream: bool = True,
-            tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
-            description: str = "An agent that provides assistance with ability to use tools.",
-            system_message: (
-                str | None
-            ) = "You are a helpful AI assistant. Solve tasks using your tools. Reply with TERMINATE when the task has been completed.",
-            memory_function: Callable | None = None,
-            allow_reply_function: bool = False,
-            reply_function: Callable | None = None,
-            model_remote_configs: Dict[str, Any] = {},
-            chat_id: str|None = None,
-            run_info: Dict[str, Any] = {},
-            **kwargs):
+        self, 
+        name: str,
+        model_client: HepAIChatCompletionClient|None = None,
+        model_client_stream: bool = True,
+        tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
+        description: str = "An agent that provides assistance with ability to use tools.",
+        system_message: (
+            str | None
+        ) = "You are a helpful AI assistant. Solve tasks using your tools. Reply with TERMINATE when the task has been completed.",
+        memory_function: Callable | None = None,
+        allow_reply_function: bool = False,
+        reply_function: Callable | None = None,
+        model_remote_configs: Dict[str, Any] = {},
+        chat_id: str|None = None,
+        run_info: Dict[str, Any] = {},
+        **kwargs):
         
         super().__init__(
             name = name, 
@@ -89,30 +88,145 @@ class RemoteAgent(AssistantAgent):
 
         self.is_paused = False
         self._paused = asyncio.Event()
-        self._current_streaming_response = None
 
         self._chat_id = chat_id
         run_info.update(kwargs)
         self._run_info = run_info 
         
-        # initialize the async model client
+        # initialize the sync model client
         self.api_key = model_remote_configs.pop("api_key", "")
-        self.url = model_remote_configs.pop("url", "")
-        self.new_headers = {}
-        self.new_headers["Authorization"] = f"Bearer {self.api_key}"
-        self.new_headers["Content-Type"] = "application/json"
-        self._session = None
-        self._connection_timeout = 60
+        self.url = model_remote_configs.pop("url", "https://aiapi.ihep.ac.cn/apiv2")
+        self.model_name = model_remote_configs.pop("name", "hepai/drsai")
 
-    async def lazy_init(self, **kwargs: Any) -> None:
+        # worker函数
+        self._funcs_map = {}
+
+        self._init_message: str|dict = ""
+
+        # 消息类型
+        self._message_factory = DrSaiMessageFactory()
+        # self._message_factory._message_types[AgentLogEvent.__name__] = AgentLogEvent
+        # self._message_factory._message_types[TaskEvent.__name__] = TaskEvent
+
+    async def lazy_init(self, **kwargs) -> None:
         """Initialize the tools and models needed by the agent."""
-        if self._session is None:
-            self._session = aiohttp.ClientSession(
-                # base_url=self.url, 如"http://localhost:42807/apiv2"，这里直接在on_messages_stream中使用完整的url
-                headers=self.new_headers,
-                timeout=aiohttp.ClientTimeout(total=self._connection_timeout)
+        try:
+            funcs = await asyncio.wait_for(
+              asyncio.to_thread(
+                  get_worker_sync_functions,
+                  name=self.model_name,
+                  api_key=self.api_key,
+                  base_url=self.url,
+                  run_info=self._run_info
+              ),
+              timeout=60.0 
+          )
+            # print([f.__name__ for f in funcs])
+            self._funcs_map = {f.__name__: f for f in funcs}
+            result: Dict[str, Any] = await asyncio.wait_for(
+              asyncio.to_thread(
+                  self._funcs_map['lazy_init'],
+                  chat_id=self._chat_id,
+                  api_key=self.api_key
+              ),
+              timeout=60.0
             )
+            status = result.get("status", False)
+            message = result.get("message", "")
+            if message:
+                self._init_message = message
+            if not status:
+                # raise Exception(message)
+                logger.error(message)
+            else:
+                logger.info(f"Lazy init {self.name} successfully.")
+            return
+        except asyncio.TimeoutError:
+          logger.error(f"Timeout initializing worker functions for {self.model_name}")
+          self._funcs_map = {}
+        except Exception as e:
+            logger.error(f"Failed to load worker functions: {e}")
+            self._funcs_map = {}
+        
 
+    async def pause(self) -> None:
+        """Pause the agent by setting the paused state."""
+        logger.info(f"Paused {self.name}...")
+
+        # 先设置暂停状态,让流检测到并停止
+        self.is_paused = True
+        self._paused.set()
+
+        # 给流一点时间来检测暂停状态并停止
+        await asyncio.sleep(0.1)
+
+        # 停掉远程的模型
+        try:
+            result: Dict[str, Any] = await asyncio.wait_for(
+                  asyncio.to_thread(
+                      self._funcs_map['pause'],
+                      chat_id=self._chat_id
+                  ),
+                  timeout=60.0
+                )
+            status = result.get("status", False)
+            message = result.get("message", "")
+            if not status:
+                logger.warning(f"Remote pause failed: {message}")
+            else:
+                logger.info(f"Paused {self.name} successfully.")
+        except Exception as e:
+            logger.warning(f"Error pausing remote agent (local state is paused): {e}")
+    
+    async def pause_long_task(self) -> None:
+        """Pause the long task by setting the paused state."""
+
+        # 停掉远程的long task
+        # result: Dict[str, Any] = self._funcs_map['pause_long_task'](chat_id=self._chat_id)
+        result: Dict[str, Any] = await asyncio.wait_for(
+              asyncio.to_thread(
+                  self._funcs_map['pause_long_task'],
+                  chat_id=self._chat_id
+              ),
+              timeout=60.0
+            )
+        status = result.get("status", False)
+        message = result.get("message", "")
+        if not status:
+            raise Exception(message)
+        else:
+            logger.info(f"Paused long task {self.name} successfully.")
+
+    async def resume(self) -> None:
+        """Resume the agent by clearing the paused state."""
+
+        # 先取消暂停状态
+        self.is_paused = False
+        self._paused.clear()
+        if not self._funcs_map:
+            return
+
+        # 恢复远程的模型
+        try:
+            result: Dict[str, Any] = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._funcs_map['resume'],
+                        chat_id=self._chat_id
+                    ),
+                    timeout=60.0
+                )
+            status = result.get("status", False)
+            message = result.get("message", "")
+            if not status:
+                logger.warning(f"Remote resume failed: {message}")
+            else:
+                logger.info(f"Resumed {self.name} successfully.")
+                return
+        except asyncio.TimeoutError:
+            logger.warning(f"Resume timeout for {self.name}.")
+        except Exception as e:
+            logger.warning(f"Error resuming remote agent: {e}")
+        
     async def close(self) -> None:
         """Clean up resources used by the agent.
 
@@ -121,41 +235,100 @@ class RemoteAgent(AssistantAgent):
         """
         logger.info(f"Closing {self.name}...")
 
-        # 中断当前流式响应
-        if self._current_streaming_response:
-            try:
-                self._current_streaming_response.close()
-                # logger.debug(f"Force-closed streaming response for {self.name}")
-            except Exception as e:
-                logger.warning(f"Error closing response: {str(e)}")
-
         # 关闭模型客户端
         if self._model_client:
             await self._model_client.close()
-        
-        # 关闭HTTP session
-        if self._session and not self._session.closed:
-            # await asyncio.sleep(0.5)
-            await self._session.close()
-        
-        logger.info(f"Closed {self.name} successfully.")
 
-    async def pause(self) -> None:
-        """Pause the agent by setting the paused state."""
-        logger.info(f"Paused {self.name}...")
-        self.is_paused = True
-        self._paused.set()
+        # result: Dict[str, Any] = self._funcs_map['close'](chat_id=self._chat_id)
+        result: Dict[str, Any] = await asyncio.wait_for(
+              asyncio.to_thread(
+                  self._funcs_map['close'],
+                  chat_id=self._chat_id
+              ),
+              timeout=60.0
+            )
+        status = result.get("status", False)
+        message = result.get("message", "")
+        if not status:
+            raise Exception(message)
+        else:
+            logger.info(f"Closed {self.name} successfully.")
 
-    async def resume(self) -> None:
-        """Resume the agent by clearing the paused state."""
-        self.is_paused = False
-        self._paused.clear()
+    async def async_stream_generator(self, stream, timeout: float = 120.0) -> AsyncGenerator[dict, None]:
+        loop = asyncio.get_event_loop()
+        queue = asyncio.Queue()
+
+        def sync_consumer():
+            try:
+                for chunk in stream:
+                    # 检查暂停状态
+                    if self.is_paused:
+                        logger.info(f"Stream detected pause signal, stopping consumer")
+                        break
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+            except Exception as e:
+                # 如果是连接关闭错误且已暂停,不记录为错误
+                if self.is_paused and "peer closed connection" in str(e).lower():
+                    logger.info(f"Connection closed due to pause, this is expected")
+                else:
+                    logger.error(f"Error in sync consumer: {e}")
+                loop.call_soon_threadsafe(queue.put_nowait, e)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)  # 结束信号
+
+        executor_task = loop.run_in_executor(None, sync_consumer)
+
+        try:
+            while True:
+                # 检查是否被暂停
+                if self.is_paused:
+                    logger.info(f"Stream generator detected pause, stopping")
+                    break
+
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    logger.warning(f"Stream timeout after {timeout} seconds")
+                    raise asyncio.TimeoutError("Model streaming timed out")
+
+                if item is None:  # 正常结束
+                    break
+                elif isinstance(item, type) and issubclass(item, Exception):
+                    raise item()
+                elif isinstance(item, Exception):
+                    # 如果是连接错误且已暂停,不抛出异常
+                    if self.is_paused and "peer closed connection" in str(item).lower():
+                        logger.info(f"Connection closed due to pause, stopping gracefully")
+                        break
+                    raise item
+                else:
+                    yield item
+        except asyncio.CancelledError:
+            logger.info(f"Stream generator was cancelled")
+            raise
+        finally:
+            if not executor_task.done():
+                executor_task.cancel()
+            try:
+                await executor_task
+            except asyncio.CancelledError:
+                pass
 
     async def on_messages_stream(
         self, messages: Sequence[BaseChatMessage], cancellation_token: CancellationToken
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
         """Handle incoming messages and yield responses as a stream. Append the request to agents chat history."""
 
+        if not self._funcs_map:
+            yield Response(
+                chat_message=TextMessage(
+                    content=f"Cannot connect to the model: {self.model_name} through {self.url}. Please check the connection and try again later.",
+                    source=self.name,
+                    metadata={"internal": "no"},
+                )
+            )
+            return
+        
         # monitor the pause event
         if self.is_paused:
             yield Response(
@@ -167,19 +340,29 @@ class RemoteAgent(AssistantAgent):
             )
             return
 
-         # Set up the cancellation token for the this handler.
-        code_execution_token = CancellationToken()
-
-        # Cancel the task if the handler's cancellation token is set.
-        cancellation_token.add_callback(lambda: code_execution_token.cancel())
-
         # Set up background task to monitor the pause event and cancel the task if paused.
-        async def monitor_pause() -> None:
-            await self._paused.wait()
-            code_execution_token.cancel()
-        monitor_pause_task = asyncio.create_task(monitor_pause())
+        # async def monitor_pause() -> None:
+        #     await self._paused.wait()
+        #     self.is_paused = True
+        # monitor_pause_task = asyncio.create_task(monitor_pause())
 
-        
+        if self._init_message:
+            init_message = ""
+            init_message_mate = {}
+            if isinstance(self._init_message, str):
+                init_message = self._init_message
+            elif isinstance(self._init_message, dict):
+                init_message = self._init_message.pop("content", "")
+                init_message_mate = self._init_message
+            else: 
+                init_message = str(self._init_message)
+            init_message_mate.update({"internal": "no"})
+            yield TextMessage(
+                    content=init_message,
+                    source=self.name,
+                    metadata=init_message_mate,
+                )
+
         try:
         ##########Your costum code here##########
         # NOTE: Can only yield TextMessage or MultiModalMessage in MagenticAgent becasue the limit in src/magentic_ui/utils.py", line 160, in thread_to_context:
@@ -201,6 +384,19 @@ class RemoteAgent(AssistantAgent):
             format_string = self._output_content_type_format
 
             # STEP 1: Add new user/handoff messages to the model context
+            ## 将前端传入的json格式的user message转换为str
+            try:
+                input = messages[-1].content
+                data = json.loads(input)
+                if not isinstance(data, dict):
+                    raise ValueError("Input string must be a JSON object")
+                input_str = data.get("content", "")
+            except Exception as e:
+                # logger.log(f"Error parsing input string: {e}")
+                input_str = messages[-1].content
+            
+            messages[-1].content = input_str
+            
             await self._add_messages_to_context(
                 model_context=model_context,
                 messages=messages,
@@ -219,70 +415,71 @@ class RemoteAgent(AssistantAgent):
         
             # STEP 3: Run the first inference
             model_result = None
-            all_messages = await model_context.get_messages()
-            llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
-            oai_massages = await self.llm_messages2oai_messages(llm_messages)
-            body = {
-                "chat_id": self._chat_id, 
-                "user": self._run_info,
-                "model":agent_name, 
-                "messages": oai_massages
-                }
             
-            # try:
+            # NOTE: 请注意，这是一个同步的迭代器，会堵塞当前线程，直到模型返回结果
 
-            full_response = ""
-            async with self._session.post(
-                self.url,
-                headers=self.new_headers,
-                json=body
-            ) as response:
-                 
-                self._current_streaming_response = response
+            stream: Stream = self._funcs_map['a_chat_completions'](
+                messages = [message.model_dump(mode="json") for message in messages],
+                apikey = self.api_key,
+                stream=True,
+                model = agent_name,
+                chat_id = self._chat_id,
+                user = self._run_info,
+            )
+            full_response = []
+            try:
+                async for chunk in self.async_stream_generator(stream):
+                    if self.is_paused:
+                        logger.info(f"{self.name} paused during streaming")
+                        raise asyncio.CancelledError("Agent paused during streaming")
+                    message_type = chunk.get("type", None)
+                    if message_type in self._message_factory._message_types:
+                        msg: BaseChatMessage|BaseAgentEvent = self._message_factory._message_types[message_type].model_validate(chunk)
 
-                response.raise_for_status()
-                
-                buffer = b''
-                async for chunk in response.content.iter_chunked(1024):
-                    
-                    # 检查取消和暂停状态
-                    if code_execution_token.is_cancelled() or self.is_paused:
-                        raise asyncio.CancelledError()
+                        if message_type in [
+                            "TextMessage",
+                            "ToolCallSummaryMessage",
+                            "StructuredMessage",
+                            "HandoffMessage",
+                            "MultiModalMessage",
+                            "StopMessage"]:
+                            full_response.append({msg.source: msg.content})
+                        yield msg
+                    if "stop_reason" in chunk:
+                        # taskresult = TaskResult.model_validate(chunk)
+                        break
 
-                    buffer += chunk
-                    while b'\n' in buffer:
-                        line_bytes, buffer = buffer.split(b'\n', 1)
-                        line = line_bytes.decode().strip()
-                        
-                        if line.startswith("data: "):
-                            try:
-                                json_str = line[6:]  # 去掉"data: "前缀
-                                oai_json = json.loads(json_str)
-                                # 安全访问嵌套字段
-                                if "choices" in oai_json and len(oai_json["choices"]) > 0:
-                                    delta = oai_json["choices"][0].get("delta", {})
-                                    textchunck = delta.get("content", "")
-                                    if textchunck:
-                                        yield ModelClientStreamingChunkEvent(content=textchunck, source=agent_name)
-                                        full_response += textchunck
-                            except (json.JSONDecodeError, KeyError) as parse_error:
-                                logger.warning(f"Failed to parse SSE data: {str(parse_error)}")
+            except asyncio.CancelledError:
+                # 如果是由于暂停导致的取消,返回一个友好的消息
+                if self.is_paused:
+                    logger.info(f"{self.name} was paused, handling gracefully")
+                raise
+            except Exception as e:
+                # 检查是否是由于暂停导致的连接关闭
+                if self.is_paused and "peer closed connection" in str(e).lower():
+                    logger.info(f"Connection closed due to pause for {self.name}, handling as cancellation")
+                    raise asyncio.CancelledError("Agent paused")
+                else:
+                    logger.error(f"Error during streaming: {e}")
+                    raise
 
-            self._current_streaming_response = None
+            full_response_str = ""
+            if len(full_response)>1:
+                for response in full_response:
+                    for key, value in response.items():
+                        full_response_str += f"**{key}:**\n\n{value}\n\n"
+            else:
+                for response in full_response:
+                    for key, value in response.items():
+                        full_response_str += f"{value}"
+
             model_result = CreateResult(
-                content=full_response, 
+                content=full_response_str, 
                 finish_reason="stop",
-                usage = RequestUsage(prompt_tokens = 0, completion_tokens = len(full_response.split())),
+                usage = RequestUsage(prompt_tokens = 0, completion_tokens = len(full_response_str.split())),
                 cached = False
                 )
             
-            # except aiohttp.ClientError as e:
-            #     logger.debug(f"HTTP error: {str(e)}")
-            #     raise RuntimeError(f"HTTP error: {str(e)}")
-
-            # except asyncio.CancelledError:
-            #     logger.debug("Streaming request cancelled")
-            #     raise asyncio.CancelledError()
 
             assert model_result is not None, "No model result was produced."
 
@@ -325,28 +522,35 @@ class RemoteAgent(AssistantAgent):
 
         except asyncio.CancelledError:
             # If the task is cancelled, we respond with a message.
-            if self._current_streaming_response:
-                self._current_streaming_response.close()
+            # 如果是由于暂停导致的取消,使用更友好的消息
+            if self.is_paused:
+                yield Response(
+                    chat_message=TextMessage(
+                        content=f"The {self.name} was paused.",
+                        source=self.name,
+                        metadata={"internal": "yes"},
+                    ),
+                    inner_messages=inner_messages,
+                )
+            else:
+                yield Response(
+                    chat_message=TextMessage(
+                        content="The task was cancelled by the user.",
+                        source=self.name,
+                        metadata={"internal": "yes"},
+                    ),
+                    inner_messages=inner_messages,
+                )
+        except asyncio.TimeoutError:
+            # If the task times out, we respond with a message.
             yield Response(
                 chat_message=TextMessage(
-                    content="The task was cancelled by the user.",
+                    content="The task timed out.",
                     source=self.name,
                     metadata={"internal": "yes"},
                 ),
                 inner_messages=inner_messages,
             )
-        
-        except ClientConnectionError:
-            # If the task is cancelled, we respond with a message.
-            yield Response(
-                chat_message=TextMessage(
-                    content="The task was cancelled by the user.",
-                    source=self.name,
-                    metadata={"internal": "yes"},
-                ),
-                inner_messages=inner_messages,
-            )
-
         except Exception as e:
             logger.error(f"Error in {self.name}: {e}")
             # add to chat history
@@ -366,13 +570,13 @@ class RemoteAgent(AssistantAgent):
             )
         finally:
 
-            self._current_streaming_response = None
-            # Cancel the monitor task.
-            try:
-                monitor_pause_task.cancel()
-                await monitor_pause_task
-            except asyncio.CancelledError:
-                pass
+            # # Cancel the monitor task.
+            # try:
+            #     monitor_pause_task.cancel()
+            #     await monitor_pause_task
+            # except asyncio.CancelledError:
+            #     pass
+            pass
     
     @classmethod
     async def _process_model_result(
@@ -429,7 +633,7 @@ class RemoteAgent(AssistantAgent):
                     content=model_result.content,
                     source=agent_name,
                     models_usage=model_result.usage,
-                    metadata={"internal": "no"}, # detect if it is internal message or not
+                    metadata={"internal": "yes"}, # detect if it is internal message or not
                 ),
                 inner_messages=inner_messages,
             )

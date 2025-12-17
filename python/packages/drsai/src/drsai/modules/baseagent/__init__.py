@@ -1,7 +1,5 @@
-from .drsaiagent import DrSaiAgent
-from .user_proxy import DrSaiUserProxyAgent
-from .drsai_remote_agent import RemoteAgent
-from .drsai_worker_agent import HepAIWorkerAgent
+from drsai.modules.baseagent.drsaiagent import DrSaiAgent
+from drsai.modules.baseagent.user_proxy import DrSaiUserProxyAgent
 
 from autogen_agentchat.base import (
     ChatAgent,
@@ -41,12 +39,10 @@ from autogen_core.models import (
     TopLogprob,
     UserMessage,
 )
-
+from autogen_agentchat.base import Handoff as HandoffBase
 __all__ = [
     "DrSaiAgent",
     "DrSaiUserProxyAgent",
-    "RemoteAgent",
-    "HepAIWorkerAgent",
 
     "ChatAgent",
     "Response",
@@ -79,4 +75,5 @@ __all__ = [
     "RequestUsage",
     "TopLogprob",
     "UserMessage",
+    "HandoffBase",
     ]

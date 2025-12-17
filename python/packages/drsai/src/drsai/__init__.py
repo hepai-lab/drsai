@@ -174,5 +174,6 @@ from autogen_core import (
     Component,
     ComponentModel,
     ComponentBase,
+    FunctionCall,
     
 )
