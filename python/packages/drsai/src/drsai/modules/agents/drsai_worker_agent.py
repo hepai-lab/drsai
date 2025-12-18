@@ -108,51 +108,50 @@ class HepAIWorkerAgent(DrSaiAgent):
         # self._message_factory._message_types[AgentLogEvent.__name__] = AgentLogEvent
         # self._message_factory._message_types[TaskEvent.__name__] = TaskEvent
 
-    async def lazy_init(self, **kwargs) -> None:
-        """Initialize the tools and models needed by the agent."""
         try:
-            funcs = await asyncio.wait_for(
-              asyncio.to_thread(
-                  get_worker_sync_functions,
-                  name=self.model_name,
-                  api_key=self.api_key,
-                  base_url=self.url,
-                  run_info=self._run_info
-              ),
-              timeout=60.0 
-          )
-            # print([f.__name__ for f in funcs])
+            funcs = get_worker_sync_functions(name=self.model_name, api_key=self.api_key, base_url=self.url )
             self._funcs_map = {f.__name__: f for f in funcs}
+        except Exception as e:
+            self._funcs_map = {}
+            logger.error(f"Failed to load worker functions: {str(e)}")
+
+    async def lazy_init(self, **kwargs) -> Any:
+        """Initialize the tools and models needed by the agent."""
+        if not self._funcs_map:
+            return
+        try:
             result: Dict[str, Any] = await asyncio.wait_for(
               asyncio.to_thread(
                   self._funcs_map['lazy_init'],
                   chat_id=self._chat_id,
-                  api_key=self.api_key
+                  api_key=self.api_key,
+                  run_info=self._run_info
               ),
               timeout=60.0
             )
             status = result.get("status", False)
             message = result.get("message", "")
-            if message:
-                self._init_message = message
             if not status:
                 # raise Exception(message)
                 logger.error(message)
             else:
                 logger.info(f"Lazy init {self.name} successfully.")
-            return
+            if message:
+                self._init_message = message
+                return message
         except asyncio.TimeoutError:
-          logger.error(f"Timeout initializing worker functions for {self.model_name}")
-          self._funcs_map = {}
+            logger.error(f"Timeout initializing worker functions for {self.model_name}")
         except Exception as e:
             logger.error(f"Failed to load worker functions: {e}")
-            self._funcs_map = {}
         
 
     async def pause(self) -> None:
         """Pause the agent by setting the paused state."""
         logger.info(f"Paused {self.name}...")
 
+        if not self._funcs_map:
+            return
+        
         # 先设置暂停状态,让流检测到并停止
         self.is_paused = True
         self._paused.set()
@@ -180,7 +179,11 @@ class HepAIWorkerAgent(DrSaiAgent):
     
     async def pause_long_task(self) -> None:
         """Pause the long task by setting the paused state."""
+        logger.info(f"Paused long task {self.name}...")
 
+        if not self._funcs_map:
+            return
+        
         # 停掉远程的long task
         # result: Dict[str, Any] = self._funcs_map['pause_long_task'](chat_id=self._chat_id)
         result: Dict[str, Any] = await asyncio.wait_for(
@@ -234,6 +237,8 @@ class HepAIWorkerAgent(DrSaiAgent):
           ...
         """
         logger.info(f"Closing {self.name}...")
+        if not self._funcs_map:
+            return
 
         # 关闭模型客户端
         if self._model_client:
@@ -346,22 +351,22 @@ class HepAIWorkerAgent(DrSaiAgent):
         #     self.is_paused = True
         # monitor_pause_task = asyncio.create_task(monitor_pause())
 
-        if self._init_message:
-            init_message = ""
-            init_message_mate = {}
-            if isinstance(self._init_message, str):
-                init_message = self._init_message
-            elif isinstance(self._init_message, dict):
-                init_message = self._init_message.pop("content", "")
-                init_message_mate = self._init_message
-            else: 
-                init_message = str(self._init_message)
-            init_message_mate.update({"internal": "no"})
-            yield TextMessage(
-                    content=init_message,
-                    source=self.name,
-                    metadata=init_message_mate,
-                )
+        # if self._init_message:
+        #     init_message = ""
+        #     init_message_mate = {}
+        #     if isinstance(self._init_message, str):
+        #         init_message = self._init_message
+        #     elif isinstance(self._init_message, dict):
+        #         init_message = self._init_message.pop("content", "")
+        #         init_message_mate = self._init_message
+        #     else: 
+        #         init_message = str(self._init_message)
+        #     init_message_mate.update({"internal": "no"})
+        #     yield TextMessage(
+        #             content=init_message,
+        #             source=self.name,
+        #             metadata=init_message_mate,
+        #         )
 
         try:
         ##########Your costum code here##########

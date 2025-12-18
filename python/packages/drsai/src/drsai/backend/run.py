@@ -388,12 +388,13 @@ async def run_worker(agent_factory: callable, **kwargs):
     worker_args.controller_address = controller_address
 
     # TODO: ADD METADATA for worker config
-    # worker_args_metadata = {}
-    # _metadata: dict[str, Any] = kwargs.pop("_metadata", None)
-    # if
+    _metadata: dict[str, Any] = kwargs.pop("metadata", None)
+    if _metadata is not None:
+       worker_args._metadata.update(_metadata)
+
     join_topics: List[str]|None = kwargs.pop("join_topics", None)
     if join_topics is not None:
-        worker_args._metadata = {"join_topics": join_topics}
+        worker_args._metadata.update({"join_topics": join_topics})
     
 
     print(model_args)

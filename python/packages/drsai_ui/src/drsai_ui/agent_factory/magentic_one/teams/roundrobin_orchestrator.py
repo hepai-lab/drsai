@@ -388,7 +388,9 @@ class RoundRobinGroupChat(DrSaiBaseGroupChat, Component[RoundRobinGroupChatConfi
         """Initialize any lazy-loaded components."""
         for agent in self._participants:
             if hasattr(agent, "lazy_init"):
-                await agent.lazy_init()  # type: ignore
+                message = await agent.lazy_init()
+                if message:
+                    self._init_messages.append(message)
 
     async def close(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Close all resources."""
@@ -427,7 +429,7 @@ class RoundRobinGroupChat(DrSaiBaseGroupChat, Component[RoundRobinGroupChatConfi
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | TaskResult, None]:
         
         # 获取初始化的消息
-        await self.get_init_messages()
+        # await self.get_init_messages()
         for message in self._init_messages:
             if isinstance(message, str):
                 yield TextMessage(
@@ -435,11 +437,13 @@ class RoundRobinGroupChat(DrSaiBaseGroupChat, Component[RoundRobinGroupChatConfi
                         content=message,
                         metadata={
                             "internal": "no",
+                            "start_flag": "yes",
                         },
                     )
             elif isinstance(message, dict):
                 content = message.get("content", "")
                 metadata = message.get("metadata", {})
+                metadata.update({"start_flag": "yes","internal": "no"})
                 yield TextMessage(
                     source="system",
                     content=content,

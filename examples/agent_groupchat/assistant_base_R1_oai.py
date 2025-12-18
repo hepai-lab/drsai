@@ -1,12 +1,17 @@
-
+from drsai import CancellationToken
 from drsai.modules.baseagent import DrSaiAgent, AssistantAgent
 from drsai.modules.components.model_client import HepAIChatCompletionClient
 from drsai.backend import run_worker, DrSaiAPP, run_console
 import os, json, sys
 import asyncio
 
+class TestAgent(DrSaiAgent):
+    async def lazy_init(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
+        """Initialize the tools and models needed by the agent."""
+        return {"status": True, "content": "Lazy initialization testing....", "metadata": {"test": "test"}}
+
 # Create a factory function to ensure isolated Agent instances for concurrent access.
-def create_agent() -> DrSaiAgent:
+def create_agent() -> TestAgent:
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
@@ -18,7 +23,7 @@ def create_agent() -> DrSaiAgent:
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
     # The system message instructs the agent via natural language.
-    return DrSaiAgent(
+    return TestAgent(
         name="weather_agent",
         model_client=model_client,
         system_message="You are a helpful assistant.",
@@ -55,7 +60,7 @@ if __name__ == "__main__":
     # asyncio.run(main())
 
     # 命令行测试
-    asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
+    # asyncio.run(run_console(agent_factory=create_agent, task="What is the weather in New York?"))
     
     #  OpenAI Chat Completion API格式启动，同时支持 OpenWebui Pipeline
     # asyncio.run(run_backend(
@@ -68,22 +73,24 @@ if __name__ == "__main__":
     #     )
 
     #  OpenAI Chat Completion API格式启动，同时支持 OpenWebui Pipeline，并注册到和HepAI 的worker服务，支持人机交互前端调用
-    # asyncio.run(
-    #     run_worker(
-    #         # 智能体注册信息
-    #         agent_name="R1_test",
-    #         author = "xiongdb@ihep.ac.cn",
-    #         permission='groups: drsai, payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
-    #         description = "DeepSeek_R1 聊天助手.",
-    #         version = "0.1.0",
-    #         logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
-    #         # 智能体实体
-    #         agent_factory=create_agent, 
-    #         # 后端服务配置
-    #         port = 42812, 
-    #         no_register=False,
-    #         enable_openwebui_pipeline=True, 
-    #         history_mode = "backend",
-    #         # use_api_key_mode = "backend",
-    #     )
-    # )
+    asyncio.run(
+        run_worker(
+            # 智能体注册信息
+            agent_name="R1_test",
+            author = "xiongdb@ihep.ac.cn",
+            permission='groups: drsai, payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
+            description = "DeepSeek_R1 聊天助手.",
+            version = "0.1.0",
+            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            # 智能体实体
+            agent_factory=create_agent, 
+            # 后端服务配置
+            port = 42812, 
+            no_register=False,
+            enable_openwebui_pipeline=True, 
+            history_mode = "backend",
+            # use_api_key_mode = "backend",
+            join_topics = ["test"],
+            metadata={"others": "test"}
+        )
+    )

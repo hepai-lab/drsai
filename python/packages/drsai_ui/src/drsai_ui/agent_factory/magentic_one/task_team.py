@@ -30,7 +30,8 @@ from ...ui_backend.utils import get_internal_urls
 from ...ui_backend.types import RunPaths
 from ...ui_backend.backend.datamodel.types import EnvironmentVariable
 from ...ui_backend.backend.utils.utils import decompress_state
-from ...agent_factory.remote_agent import StatusAgent
+# from ...agent_factory.remote_agent import StatusAgent
+from drsai.modules.agents import HepAIWorkerAgent
 from ...agent_factory.local_agents.ragflow_agent import RAGFlowAgent
 
 import json, os
@@ -422,7 +423,7 @@ async def create_magentic_round_team(
     
     if agent_mode == "besiii":
         # raise NotImplementedError("BesIII mode not implemented yet")
-        agent = StatusAgent(
+        agent = HepAIWorkerAgent(
             name='besiii',
             model_client=get_model_client(model_client_config = model_config),
             chat_id=chat_id,
@@ -491,7 +492,7 @@ async def create_magentic_round_team(
 
     elif agent_mode == "remote" or agent_mode == "ddf":
         agent_config["api_key"] = agent_config.get("api_key", api_key)
-        agent = StatusAgent(
+        agent = HepAIWorkerAgent(
             name="RemoteAgent",
             model_client=get_model_client(model_client_config = model_config),
             model_remote_configs = agent_config,

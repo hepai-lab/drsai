@@ -324,13 +324,13 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         if task is None:
             pass
         elif isinstance(task, str):
-            # text_msg = TextMessage(content=task, source="user", metadata={"internal": "yes"})
-            text_msg = TextMessage(content=task, source="user")
+            text_msg = TextMessage(content=task, source="user", metadata={"internal": "yes"})
+            # text_msg = TextMessage(content=task, source="user")
             input_messages.append(text_msg)
             output_messages.append(text_msg)
             yield text_msg
         elif isinstance(task, BaseChatMessage):
-            # task.metadata["internal"] = "yes"
+            task.metadata["internal"] = "yes"
             input_messages.append(task)
             output_messages.append(task)
             yield task
@@ -339,7 +339,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 raise ValueError("Task list cannot be empty.")
             for msg in task:
                 if isinstance(msg, BaseChatMessage):
-                    # msg.metadata["internal"] = "yes"
+                    msg.metadata["internal"] = "yes"
                     input_messages.append(msg)
                     output_messages.append(msg)
                     yield msg
