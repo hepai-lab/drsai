@@ -6,38 +6,27 @@ from loguru import logger
 from pydantic import BaseModel
 
 
-from autogen_core import CancellationToken, FunctionCall
-from autogen_core.model_context import (
-    ChatCompletionContext,
-)
-from autogen_agentchat.base import Response, TaskResult
-from autogen_agentchat.base import Handoff as HandoffBase
-from autogen_agentchat.messages import (
-    StructuredMessageFactory,
+from drsai.modules.managers import CancellationToken, FunctionCall
+
+from drsai.modules.baseagent import Response, TaskResult, HandoffBase
+from drsai.modules.managers.messages import (
+    BaseAgentEvent,
     BaseChatMessage,
     TextMessage,
-    HandoffMessage,
-    StopMessage,
-    ToolCallSummaryMessage,
-    StructuredMessage,
-    BaseAgentEvent,
+    ThoughtEvent,
+    ModelClientStreamingChunkEvent,
     ToolCallExecutionEvent,
     ToolCallRequestEvent,
-    CodeGenerationEvent,
-    CodeExecutionEvent,
+    ToolCallSummaryMessage,
     UserInputRequestedEvent,
-    MemoryQueryEvent,
-    ModelClientStreamingChunkEvent,
-    ThoughtEvent,
-    SelectSpeakerEvent,
-    SelectorEvent,
-    MessageFactory,
-    MultiModalMessage,
-    Image,
 )
-from autogen_core.models import (
+from drsai.modules.components.model_context import (
+    ChatCompletionContext,
+)
+from drsai.modules.components.model_client import (
     AssistantMessage,
     ChatCompletionClient,
+    HepAIChatCompletionClient,
     CreateResult,
     RequestUsage,
     FunctionExecutionResult,
@@ -46,21 +35,16 @@ from autogen_core.models import (
     # ModelFamily,
     SystemMessage,
 )
-from autogen_core.tools import (
+from drsai.modules.components.tool import (
     BaseTool, 
-    # FunctionTool, 
-    # StaticWorkbench, 
     Workbench, 
-    # ToolResult, 
-    # TextResultContent, 
-    # ToolSchema
     )
+from drsai.modules.baseagent import DrSaiAgent
 
-from ..magentic_one.guarded_action import ApprovalDeniedError
 from hepai.tools.get_woker_functions import get_worker_sync_functions
 from openai import Stream
 
-from drsai import DrSaiAgent, HepAIChatCompletionClient
+
 from drsai.modules.managers.messages.agent_messages import (
     AgentLogEvent,
     Send_level,
@@ -70,25 +54,25 @@ from drsai.modules.managers.messages.agent_messages import (
 
 class StatusAgent(DrSaiAgent):
     '''
-    连接OpenAI格式的模型或者智能体后端
+    连接HepAI Worker 格式的模型或者智能体后端
     '''
     def __init__(
-            self, 
-            name: str,
-            model_client: HepAIChatCompletionClient|None = None,
-            model_client_stream: bool = True,
-            tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
-            description: str = "An agent that provides assistance with ability to use tools.",
-            system_message: (
-                str | None
-            ) = "You are a helpful AI assistant. Solve tasks using your tools. Reply with TERMINATE when the task has been completed.",
-            memory_function: Callable | None = None,
-            allow_reply_function: bool = False,
-            reply_function: Callable | None = None,
-            model_remote_configs: Dict[str, Any] = {},
-            chat_id: str|None = None,
-            run_info: Dict[str, Any] = {},
-            **kwargs):
+        self, 
+        name: str,
+        model_client: HepAIChatCompletionClient|None = None,
+        model_client_stream: bool = True,
+        tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
+        description: str = "An agent that provides assistance with ability to use tools.",
+        system_message: (
+            str | None
+        ) = "You are a helpful AI assistant. Solve tasks using your tools. Reply with TERMINATE when the task has been completed.",
+        memory_function: Callable | None = None,
+        allow_reply_function: bool = False,
+        reply_function: Callable | None = None,
+        model_remote_configs: Dict[str, Any] = {},
+        chat_id: str|None = None,
+        run_info: Dict[str, Any] = {},
+        **kwargs):
         
         super().__init__(
             name = name, 
@@ -124,51 +108,50 @@ class StatusAgent(DrSaiAgent):
         # self._message_factory._message_types[AgentLogEvent.__name__] = AgentLogEvent
         # self._message_factory._message_types[TaskEvent.__name__] = TaskEvent
 
-    async def lazy_init(self, **kwargs) -> None:
-        """Initialize the tools and models needed by the agent."""
         try:
-            funcs = await asyncio.wait_for(
-              asyncio.to_thread(
-                  get_worker_sync_functions,
-                  name=self.model_name,
-                  api_key=self.api_key,
-                  base_url=self.url,
-                  run_info=self._run_info
-              ),
-              timeout=60.0 
-          )
-            # print([f.__name__ for f in funcs])
+            funcs = get_worker_sync_functions(name=self.model_name, api_key=self.api_key, base_url=self.url )
             self._funcs_map = {f.__name__: f for f in funcs}
+        except Exception as e:
+            self._funcs_map = {}
+            logger.error(f"Failed to load worker functions: {str(e)}")
+
+    async def lazy_init(self, **kwargs) -> Any:
+        """Initialize the tools and models needed by the agent."""
+        if not self._funcs_map:
+            return
+        try:
             result: Dict[str, Any] = await asyncio.wait_for(
               asyncio.to_thread(
                   self._funcs_map['lazy_init'],
                   chat_id=self._chat_id,
-                  api_key=self.api_key
+                  api_key=self.api_key,
+                  run_info=self._run_info
               ),
               timeout=60.0
             )
             status = result.get("status", False)
             message = result.get("message", "")
-            if message:
-                self._init_message = message
             if not status:
                 # raise Exception(message)
                 logger.error(message)
             else:
                 logger.info(f"Lazy init {self.name} successfully.")
-            return
+            if message:
+                self._init_message = message
+                return message
         except asyncio.TimeoutError:
-          logger.error(f"Timeout initializing worker functions for {self.model_name}")
-          self._funcs_map = {}
+            logger.error(f"Timeout initializing worker functions for {self.model_name}")
         except Exception as e:
             logger.error(f"Failed to load worker functions: {e}")
-            self._funcs_map = {}
         
 
     async def pause(self) -> None:
         """Pause the agent by setting the paused state."""
         logger.info(f"Paused {self.name}...")
 
+        if not self._funcs_map:
+            return
+        
         # 先设置暂停状态,让流检测到并停止
         self.is_paused = True
         self._paused.set()
@@ -196,7 +179,11 @@ class StatusAgent(DrSaiAgent):
     
     async def pause_long_task(self) -> None:
         """Pause the long task by setting the paused state."""
+        logger.info(f"Paused long task {self.name}...")
 
+        if not self._funcs_map:
+            return
+        
         # 停掉远程的long task
         # result: Dict[str, Any] = self._funcs_map['pause_long_task'](chat_id=self._chat_id)
         result: Dict[str, Any] = await asyncio.wait_for(
@@ -250,6 +237,8 @@ class StatusAgent(DrSaiAgent):
           ...
         """
         logger.info(f"Closing {self.name}...")
+        if not self._funcs_map:
+            return
 
         # 关闭模型客户端
         if self._model_client:
@@ -362,22 +351,22 @@ class StatusAgent(DrSaiAgent):
         #     self.is_paused = True
         # monitor_pause_task = asyncio.create_task(monitor_pause())
 
-        if self._init_message:
-            init_message = ""
-            init_message_mate = {}
-            if isinstance(self._init_message, str):
-                init_message = self._init_message
-            elif isinstance(self._init_message, dict):
-                init_message = self._init_message.pop("content", "")
-                init_message_mate = self._init_message
-            else: 
-                init_message = str(self._init_message)
-            init_message_mate.update({"internal": "no"})
-            yield TextMessage(
-                    content=init_message,
-                    source=self.name,
-                    metadata=init_message_mate,
-                )
+        # if self._init_message:
+        #     init_message = ""
+        #     init_message_mate = {}
+        #     if isinstance(self._init_message, str):
+        #         init_message = self._init_message
+        #     elif isinstance(self._init_message, dict):
+        #         init_message = self._init_message.pop("content", "")
+        #         init_message_mate = self._init_message
+        #     else: 
+        #         init_message = str(self._init_message)
+        #     init_message_mate.update({"internal": "no"})
+        #     yield TextMessage(
+        #             content=init_message,
+        #             source=self.name,
+        #             metadata=init_message_mate,
+        #         )
 
         try:
         ##########Your costum code here##########
@@ -400,18 +389,18 @@ class StatusAgent(DrSaiAgent):
             format_string = self._output_content_type_format
 
             # STEP 1: Add new user/handoff messages to the model context
-            ## 将前端传入的json格式的user message转换为str
-            try:
-                input = messages[-1].content
-                data = json.loads(input)
-                if not isinstance(data, dict):
-                    raise ValueError("Input string must be a JSON object")
-                input_str = data.get("content", "")
-            except Exception as e:
-                # logger.log(f"Error parsing input string: {e}")
-                input_str = messages[-1].content
+            # # 将前端传入的json格式的user message转换为str
+            # try:
+            #     input = messages[-1].content
+            #     data = json.loads(input)
+            #     if not isinstance(data, dict):
+            #         raise ValueError("Input string must be a JSON object")
+            #     input_str = data.get("content", "")
+            # except Exception as e:
+            #     # logger.log(f"Error parsing input string: {e}")
+            #     input_str = messages[-1].content
             
-            messages[-1].content = input_str
+            # messages[-1].content = input_str
             
             await self._add_messages_to_context(
                 model_context=model_context,
@@ -431,11 +420,6 @@ class StatusAgent(DrSaiAgent):
         
             # STEP 3: Run the first inference
             model_result = None
-            # all_messages = await model_context.get_messages()
-            # # llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
-            # # not add system_messages to llm_messages
-            # llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=all_messages)
-            # oai_massages = await self.llm_messages2oai_messages(llm_messages)
             
             # NOTE: 请注意，这是一个同步的迭代器，会堵塞当前线程，直到模型返回结果
 
@@ -453,13 +437,6 @@ class StatusAgent(DrSaiAgent):
                     if self.is_paused:
                         logger.info(f"{self.name} paused during streaming")
                         raise asyncio.CancelledError("Agent paused during streaming")
-                    # textchunk = chunk["choices"][0]["delta"].get("content", "")
-                    # if textchunk:
-                    #     yield ModelClientStreamingChunkEvent(content=textchunk, source=agent_name)
-                    #     full_response += textchunk
-                    # else:
-                    #     if chunk["choices"][0].get("finish_reason") == "stop":
-                    #         break
                     message_type = chunk.get("type", None)
                     if message_type in self._message_factory._message_types:
                         msg: BaseChatMessage|BaseAgentEvent = self._message_factory._message_types[message_type].model_validate(chunk)
@@ -490,17 +467,6 @@ class StatusAgent(DrSaiAgent):
                 else:
                     logger.error(f"Error during streaming: {e}")
                     raise
-            # for chunk in stream:
-            #     if self.is_paused:
-            #         raise asyncio.CancelledError()
-            #     textchunck = chunk["choices"][0]["delta"]["content"]
-            #     if textchunck:
-            #         yield ModelClientStreamingChunkEvent(content=textchunck, source=agent_name)
-            #         full_response += textchunck
-            #     else:
-            #         if chunk["choices"][0]["finish_reason"]:
-            #             if chunk["choices"][0]["finish_reason"] == "stop": 
-            #                 break
 
             full_response_str = ""
             if len(full_response)>1:
@@ -559,16 +525,6 @@ class StatusAgent(DrSaiAgent):
 
         ##########Your costum code above##########
 
-        except ApprovalDeniedError:
-            # If the user denies the approval, we respond with a message.
-            yield Response(
-                chat_message=TextMessage(
-                    content="The user did not approve the task.",
-                    source=self.name,
-                    metadata={"internal": "no"},
-                ),
-                inner_messages=inner_messages,
-            )
         except asyncio.CancelledError:
             # If the task is cancelled, we respond with a message.
             # 如果是由于暂停导致的取消,使用更友好的消息

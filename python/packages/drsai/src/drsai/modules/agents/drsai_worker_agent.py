@@ -20,7 +20,7 @@ from drsai.modules.managers.messages import (
     ToolCallSummaryMessage,
     UserInputRequestedEvent,
 )
-from autogen_core.model_context import (
+from drsai.modules.components.model_context import (
     ChatCompletionContext,
 )
 from drsai.modules.components.model_client import (
@@ -390,17 +390,17 @@ class HepAIWorkerAgent(DrSaiAgent):
 
             # STEP 1: Add new user/handoff messages to the model context
             ## 将前端传入的json格式的user message转换为str
-            try:
-                input = messages[-1].content
-                data = json.loads(input)
-                if not isinstance(data, dict):
-                    raise ValueError("Input string must be a JSON object")
-                input_str = data.get("content", "")
-            except Exception as e:
-                # logger.log(f"Error parsing input string: {e}")
-                input_str = messages[-1].content
+            # try:
+            #     input = messages[-1].content
+            #     data = json.loads(input)
+            #     if not isinstance(data, dict):
+            #         raise ValueError("Input string must be a JSON object")
+            #     input_str = data.get("content", "")
+            # except Exception as e:
+            #     # logger.log(f"Error parsing input string: {e}")
+            #     input_str = messages[-1].content
             
-            messages[-1].content = input_str
+            # messages[-1].content = input_str
             
             await self._add_messages_to_context(
                 model_context=model_context,
