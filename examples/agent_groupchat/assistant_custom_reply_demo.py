@@ -1,36 +1,19 @@
-import sys
-import os
-try:
-    import drsai
-except ImportError:
-    current_file_path = os.path.abspath(__file__)
-    current_directory = os.path.dirname(current_file_path)
-    drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
-    sys.path.append(drsai_path)
-
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_console, run_backend
+from drsai.modules.components.model_client import HepAIChatCompletionClient, ChatCompletionClient
+from drsai.modules.components.tool import (
+    BaseTool,
+    ToolSchema,
+    CancellationToken,
+    Workbench,
+)
 from drsai.modules.managers.database import DatabaseManager
-import os, json
+from drsai.modules.baseagent import DrSaiAgent, LLMMessage
+from drsai.backend import run_worker, run_console, DrSaiAPP
+import os, json, sys
 import asyncio
 from typing import List, Dict, Union, AsyncGenerator, Tuple, Any
 
-
-from autogen_core import CancellationToken
-from autogen_core.tools import  (
-    BaseTool, 
-    FunctionTool, 
-    StaticWorkbench, 
-    Workbench, 
-    ToolResult, 
-    TextResultContent, 
-    ToolSchema)
-from autogen_core.models import (
-    LLMMessage,
-    ChatCompletionClient,
-)
-
 # Create a factory function to ensure isolated Agent instances for concurrent access.
-def create_agent() -> AssistantAgent:
+def create_agent() -> DrSaiAgent:
 
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
@@ -42,7 +25,7 @@ def create_agent() -> AssistantAgent:
     # model_client._client.api_key = os.environ.get("HEPAI_API_KEY")
     # Address the messages and return the response. Must accept messages and return a string, or a generator of strings.
     async def interface( 
-        agent: AssistantAgent,  # DrSai assistant agent
+        agent: DrSaiAgent,  # DrSai assistant agent
         oai_messages: List[str],  # OAI messages
         agent_name: str,  # Agent name
         llm_messages: List[LLMMessage],  # AutoGen LLM messages
@@ -61,7 +44,7 @@ def create_agent() -> AssistantAgent:
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
     # The system message instructs the agent via natural language.
-    return AssistantAgent(
+    return DrSaiAgent(
         name="weather_agent",
         model_client=model_client,
         reply_function=interface,

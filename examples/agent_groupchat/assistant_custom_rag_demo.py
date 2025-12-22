@@ -1,23 +1,14 @@
-import sys
-import os
-try:
-    import drsai
-except ImportError:
-    current_file_path = os.path.abspath(__file__)
-    current_directory = os.path.dirname(current_file_path)
-    drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
-    sys.path.append(drsai_path)
-
-
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_console, run_backend
-import os, json
+from drsai.modules.components.model_client import HepAIChatCompletionClient
+from drsai.modules.components.tool import (
+    CancellationToken,
+)
+from drsai.modules.baseagent import DrSaiAgent, LLMMessage
+from drsai.backend import run_worker, run_console, DrSaiAPP
+import os, json, sys
 import asyncio
-from typing import List, Dict, Union
-from autogen_core import CancellationToken
-from autogen_core.models import LLMMessage
-
+from typing import List, Dict
 # Create a factory function to ensure isolated Agent instances for concurrent access.
-def create_agent() -> AssistantAgent:
+def create_agent() -> DrSaiAgent:
 
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
@@ -46,7 +37,7 @@ def create_agent() -> AssistantAgent:
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
     # The system message instructs the agent via natural language.
-    return AssistantAgent(
+    return DrSaiAgent(
         name="weather_agent",
         model_client=model_client,
         memory_function=rag_demo,

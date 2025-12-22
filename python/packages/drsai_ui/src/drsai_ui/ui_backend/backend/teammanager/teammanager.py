@@ -338,11 +338,11 @@ class TeamManager:
                         and self.mode not in ["magentic-one"]
                     ):
                         # For ModelClientStreamChunk output, we need to add internal: yes to the message
-                        internal = message.metadata.get("internal")
+                        internal = message.metadata.get("internal", "unknown")
                         if internal == "yes":
                             yield message
                         else:
-                            if message.source not in ["user_proxy", "user"]:
+                            if message.source not in ["user_proxy", "user"] and internal == "unknown":
                                 message.metadata.update({"internal": "yes", "is_save": "yes"})
                             yield message
                     else:

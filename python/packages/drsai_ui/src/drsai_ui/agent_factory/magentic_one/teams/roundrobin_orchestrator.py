@@ -32,6 +32,7 @@ from autogen_agentchat.messages import (
     MessageFactory,
     StopMessage,
     TextMessage,
+    MultiModalMessage,
 )
 from autogen_agentchat.state import BaseState, TeamState
 from autogen_agentchat.teams._group_chat._base_group_chat import BaseGroupChat
@@ -44,7 +45,7 @@ from autogen_agentchat.teams._group_chat._events import (
     GroupChatStart,
     GroupChatTermination,
 )
-from ....ui_backend.types import CheckpointEvent
+from ....ui_backend.types import CheckpointEvent, HumanInputFormat, Plan
 
 from drsai.modules.managers.messages.agent_messages import (
     AgentLogEvent,
@@ -96,6 +97,7 @@ class RoundRobinGroupChatManager(DrSaiBaseGroupChatManager):
         )
         self._next_speaker_index = 0
         self._is_paused = False
+        self._user_agent_topic = "user_proxy"
 
     async def validate_group_state(
         self, messages: List[BaseChatMessage] | None
@@ -179,8 +181,27 @@ class RoundRobinGroupChatManager(DrSaiBaseGroupChatManager):
             )
             await self._signal_termination(early_stop_message)
             return
-
+        
         assert message is not None and message.messages is not None
+        
+        last_user_message = message.messages[-1]
+        assert last_user_message.source in [self._user_agent_topic, "user"]
+        message_content: str = ""
+        assert isinstance(last_user_message, TextMessage | MultiModalMessage)
+
+        if isinstance(last_user_message.content, list):
+            # iterate over the list and get the first item that is a string
+            for item in last_user_message.content:
+                if isinstance(item, str):
+                    message_content = item
+                    break
+        else:
+            message_content = last_user_message.content
+        last_user_message_format = HumanInputFormat.from_str(message_content)
+        last_user_message.content = last_user_message_format.content
+        last_user_message.metadata.update({"user_request":last_user_message_format.to_str()})
+
+        message.messages[-1] = last_user_message
 
         # Send message to all agents with initial user message
         await self.publish_message(
@@ -225,6 +246,14 @@ class RoundRobinGroupChatManager(DrSaiBaseGroupChatManager):
             if stop_message is not None:
                 await self._signal_termination(stop_message)
                 await self._termination_condition.reset()
+                return
+        if message.agent_response.chat_message.source=="user_proxy":
+            if message.agent_response.chat_message.metadata.get("is_stop")=="yes":
+                stop_message = StopMessage(
+                    source="user_proxy",
+                    content=message.agent_response.chat_message.content,
+                )
+                await self._signal_termination(stop_message)
                 return
 
         # Check max turns
@@ -380,7 +409,9 @@ class RoundRobinGroupChat(DrSaiBaseGroupChat, Component[RoundRobinGroupChatConfi
         """Initialize any lazy-loaded components."""
         for agent in self._participants:
             if hasattr(agent, "lazy_init"):
-                await agent.lazy_init()  # type: ignore
+                message = await agent.lazy_init()
+                if message:
+                    self._init_messages.append(message)
 
     async def close(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Close all resources."""
@@ -419,7 +450,7 @@ class RoundRobinGroupChat(DrSaiBaseGroupChat, Component[RoundRobinGroupChatConfi
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | TaskResult, None]:
         
         # 获取初始化的消息
-        await self.get_init_messages()
+        # await self.get_init_messages()
         for message in self._init_messages:
             if isinstance(message, str):
                 yield TextMessage(
@@ -427,11 +458,13 @@ class RoundRobinGroupChat(DrSaiBaseGroupChat, Component[RoundRobinGroupChatConfi
                         content=message,
                         metadata={
                             "internal": "no",
+                            "start_flag": "yes",
                         },
                     )
             elif isinstance(message, dict):
                 content = message.get("content", "")
                 metadata = message.get("metadata", {})
+                metadata.update({"start_flag": "yes","internal": "no"})
                 yield TextMessage(
                     source="system",
                     content=content,

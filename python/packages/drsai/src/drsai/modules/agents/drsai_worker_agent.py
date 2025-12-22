@@ -52,7 +52,7 @@ from drsai.modules.managers.messages.agent_messages import (
     DrSaiMessageFactory
 )
 
-class StatusAgent(DrSaiAgent):
+class HepAIWorkerAgent(DrSaiAgent):
     '''
     连接HepAI Worker 格式的模型或者智能体后端
     '''
@@ -389,7 +389,7 @@ class StatusAgent(DrSaiAgent):
             format_string = self._output_content_type_format
 
             # STEP 1: Add new user/handoff messages to the model context
-            # # 将前端传入的json格式的user message转换为str
+            ## 将前端传入的json格式的user message转换为str
             # try:
             #     input = messages[-1].content
             #     data = json.loads(input)

@@ -237,7 +237,7 @@ class DrSaiUserProxyAgent(BaseChatAgent, Component[UserProxyAgentConfig]):
                 chat_message=TextMessage(
                     content="The task was cancelled by the user.",
                     source=self.name,
-                    metadata={"internal": "yes"},
+                    metadata={"internal": "yes", "is_stop": "yes",},
                 ),
                 inner_messages=[],
             )
@@ -247,7 +247,7 @@ class DrSaiUserProxyAgent(BaseChatAgent, Component[UserProxyAgentConfig]):
                 chat_message=TextMessage(
                     content=f"Failed to get user input: {str(e)}",
                     source=self.name,
-                    metadata={"internal": "yes"},
+                    metadata={"internal": "yes", "is_stop": "yes", "error_message": str(e)},
                 ),
                 inner_messages=[],
             )

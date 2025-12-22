@@ -1,32 +1,21 @@
-import sys
-import os
-try:
-    import drsai
-except ImportError:
-    current_file_path = os.path.abspath(__file__)
-    current_directory = os.path.dirname(current_file_path)
-    drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
-    sys.path.append(drsai_path)
-
-
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
-from autogen_core.models import ModelFamily
-from drsai import RAGFlowMemory, RAGFlowMemoryConfig
-from autogen_core.memory import ListMemory, MemoryContent, MemoryMimeType
-from autogen_core.model_context import (
+from drsai.modules.components.model_client import HepAIChatCompletionClient, ModelFamily
+from drsai.modules.components.memory import RAGFlowMemory, RAGFlowMemoryConfig
+from drsai.modules.components.model_context import (
     BufferedChatCompletionContext,
     UnboundedChatCompletionContext,
     HeadAndTailChatCompletionContext,
     TokenLimitedChatCompletionContext,
+    DrSaiChatCompletionContext
     )
+from drsai.modules.baseagent import DrSaiAgent
 from drsai import run_backend, run_console, run_worker
-import os, json
+import os, json, sys
 import asyncio
 from dotenv import load_dotenv
 load_dotenv()
 
 # Create a factory function to ensure isolated Agent instances for concurrent access.
-async def create_agent() -> AssistantAgent:
+async def create_agent() -> DrSaiAgent:
 
     # Create model client
     model_client = HepAIChatCompletionClient(
@@ -62,7 +51,7 @@ async def create_agent() -> AssistantAgent:
     )
 
     # Create assistant agent with the model client and memory
-    assistant_agent = AssistantAgent(
+    assistant_agent = DrSaiAgent(
         name="assistant_agent",
         system_message="""你是一个问答助手，需要根据检索到的记忆内容进行回复。""",
         description="一个问答助手",

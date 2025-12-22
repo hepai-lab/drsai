@@ -31,6 +31,7 @@ from ...ui_backend.types import RunPaths
 from ...ui_backend.backend.datamodel.types import EnvironmentVariable
 from ...ui_backend.backend.utils.utils import decompress_state
 from ...agent_factory.remote_agent import StatusAgent
+# from drsai.modules.agents import HepAIWorkerAgent
 from ...agent_factory.local_agents.ragflow_agent import RAGFlowAgent
 
 import json, os

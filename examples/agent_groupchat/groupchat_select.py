@@ -1,18 +1,11 @@
-import sys
-import os
-try:
-    import drsai
-except ImportError:
-    current_file_path = os.path.abspath(__file__)
-    current_directory = os.path.dirname(current_file_path)
-    drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
-    sys.path.append(drsai_path)
+from drsai.modules.baseagent import DrSaiAgent
+from drsai.modules.components.model_client import HepAIChatCompletionClient
+from drsai.modules.groupchat import AGSelectorGroupChat, TextMentionTermination
+from drsai.backend import run_worker, Console, DrSaiAPP
 
-from drsai import AGSelectorGroupChat, TextMentionTermination
-import json
+import json, sys
 import asyncio
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP, run_worker
-from drsai import run_backend, run_console
+
 
 # Create a factory function to ensure isolated Agent instances for concurrent access.
 def create_team() -> AGSelectorGroupChat:
@@ -23,7 +16,7 @@ def create_team() -> AGSelectorGroupChat:
     )
 
     # Create the primary agent.
-    primary_agent = AssistantAgent(
+    primary_agent = DrSaiAgent(
         "primary",
         model_client=model_client,
         system_message="You are a helpful AI assistant.",
@@ -31,7 +24,7 @@ def create_team() -> AGSelectorGroupChat:
     )
 
     # Create the critic agent.
-    critic_agent = AssistantAgent(
+    critic_agent = DrSaiAgent(
         "critic",
         model_client=model_client,
         system_message="Provide constructive feedback. Respond with 'APPROVE' to when your feedbacks are addressed.",

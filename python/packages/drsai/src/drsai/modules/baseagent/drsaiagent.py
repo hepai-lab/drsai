@@ -324,13 +324,13 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         if task is None:
             pass
         elif isinstance(task, str):
-            # text_msg = TextMessage(content=task, source="user", metadata={"internal": "yes"})
-            text_msg = TextMessage(content=task, source="user")
+            text_msg = TextMessage(content=task, source="user", metadata={"internal": "yes"})
+            # text_msg = TextMessage(content=task, source="user")
             input_messages.append(text_msg)
             output_messages.append(text_msg)
             yield text_msg
         elif isinstance(task, BaseChatMessage):
-            # task.metadata["internal"] = "yes"
+            task.metadata["internal"] = "yes"
             input_messages.append(task)
             output_messages.append(task)
             yield task
@@ -339,7 +339,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 raise ValueError("Task list cannot be empty.")
             for msg in task:
                 if isinstance(msg, BaseChatMessage):
-                    # msg.metadata["internal"] = "yes"
+                    msg.metadata["internal"] = "yes"
                     input_messages.append(msg)
                     output_messages.append(msg)
                     yield msg
@@ -678,6 +678,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             models_usage=model_result.usage,
         )
         logger.debug(tool_call_msg)
+        yield AgentLogEvent(source=agent_name, content=str(tool_call_msg.content), content_type="tools")
         inner_messages.append(tool_call_msg)
         yield tool_call_msg
 
@@ -702,6 +703,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             source=agent_name,
         )
         logger.debug(tool_call_result_msg)
+        yield AgentLogEvent(source=agent_name, content=str(tool_call_result_msg.content), content_type="tools")
         await model_context.add_message(FunctionExecutionResultMessage(content=exec_results))
         inner_messages.append(tool_call_result_msg)
         yield tool_call_result_msg
@@ -922,13 +924,14 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         tool_call_summary = "\n".join(tool_call_summaries)
 
         if tool_call_summary_prompt:
-            yield ModelClientStreamingChunkEvent(content="<think>\n", source=agent_name)
-            yield ModelClientStreamingChunkEvent(content=tool_call_summary_format, source=agent_name)
-            yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
+            # yield ModelClientStreamingChunkEvent(content="<think>\n", source=agent_name)
+            # yield ModelClientStreamingChunkEvent(content=tool_call_summary_format, source=agent_name)
+            # yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
+            yield AgentLogEvent(source=agent_name, content=tool_call_summary, content_type="tools")
             all_messages = system_messages + await model_context.get_messages()
             all_messages.append(
                 UserMessage(
-                    content=tool_call_summary_prompt,
+                    content=tool_call_summary_prompt+f"\n\nThese result are as following:\n {tool_call_summary}",
                     source="user",
                 )
             )

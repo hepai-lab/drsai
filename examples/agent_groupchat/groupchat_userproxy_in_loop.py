@@ -1,21 +1,8 @@
-import sys
-import os
-try:
-    import drsai
-except ImportError:
-    current_file_path = os.path.abspath(__file__)
-    current_directory = os.path.dirname(current_file_path)
-    drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
-    sys.path.append(drsai_path)
-
-
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
-from drsai import run_backend, run_console
-from drsai import AssistantAgent, UserProxyAgent
-from drsai import TextMentionTermination
-from drsai import RoundRobinGroupChat
-from drsai import Console
-import asyncio
+from drsai.modules.baseagent import DrSaiAgent, DrSaiUserProxyAgent
+from drsai.modules.components.model_client import HepAIChatCompletionClient
+from drsai.modules.groupchat import RoundRobinGroupChat, TextMentionTermination
+from drsai.backend import run_console
+import asyncio, os
 
 # Create a factory function to ensure isolated Agent instances for concurrent access.
 def create_team() -> RoundRobinGroupChat:
@@ -27,10 +14,10 @@ def create_team() -> RoundRobinGroupChat:
         # model="openai/gpt-4o",
         # api_key="sk-...", # Optional if you have an HEPAI_API_KEY env variable set.
     )
-    assistant = AssistantAgent("assistant", model_client=model_client)
-    user_proxy = UserProxyAgent("user_proxy", input_func=input)  # Use input() to get user input from console.
+    assistant = DrSaiAgent("assistant", model_client=model_client)
+    user_proxy = DrSaiUserProxyAgent("user_proxy", input_func=input)  # Use input() to get user input from console.
 
-    user_proxy1 = UserProxyAgent("user_proxy1", input_func=input)  # Use input() to get user input from console.
+    user_proxy1 = DrSaiUserProxyAgent("user_proxy1", input_func=input)  # Use input() to get user input from console.
 
     # Create the termination condition which will end the conversation when the user says "APPROVE".
     termination = TextMentionTermination("APPROVE")

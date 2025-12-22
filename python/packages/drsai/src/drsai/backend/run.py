@@ -192,6 +192,7 @@ class DrSaiWorkerConfig(HWorkerConfig):
     daemon: bool = field(default=False, metadata={"help": "Run as daemon"})
     type: str = field(default="agent", metadata={"help": "Worker's type"})
     debug: bool = field(default=True, metadata={"help": "Debug mode"})
+    _metadata: dict = field(default_factory=dict, metadata={"help": "Additional metadata for worker/model"})
 
 
 class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from HRModel.
@@ -230,13 +231,13 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         return await self.drsai.get_agents_info(agent=agent)
     
     @HRModel.remote_callable
-    async def lazy_init(self, chat_id: str, api_key: str) -> Dict[str, Any]:
+    async def lazy_init(self, chat_id: str, api_key: str, run_info: Dict[str, str]) -> Dict[str, Any]:
         try:
             agent: Team|ChatAgent = self.drsai.agent_instance.get(chat_id, None)
             if agent is None:
                 agent = await self.drsai._create_agent_instance()
                 self.drsai.agent_instance[chat_id] = agent
-            message = await agent.lazy_init(api_key=api_key)
+            message = await agent.lazy_init(api_key=api_key, chat_id=chat_id, run_info=run_info)
             return {"status": True, "message": message}
         except Exception as e:
             return {"status": False, "message": f"Lazy init error: {e}"}
@@ -282,6 +283,24 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             return {"status": False, "message": f"Close error: {e}"}
         
     @HRModel.remote_callable
+    async def save_state(self, chat_id: str) -> Dict[str, Any]:
+        try:
+            agent: Team|ChatAgent = self.drsai.agent_instance[chat_id]
+            await agent.save_state()
+            return {"status": True, "message": ""}
+        except Exception as e:
+            return {"status": False, "message": f"save_state error: {e}"}
+    
+    @HRModel.remote_callable
+    async def load_state(self, chat_id: str) -> Dict[str, Any]:
+        try:
+            agent: Team|ChatAgent = self.drsai.agent_instance[chat_id]
+            await agent.load_state()
+            return {"status": True, "message": ""}
+        except Exception as e:
+            return {"status": False, "message": f"load_state error: {e}"}
+
+    @HRModel.remote_callable
     async def a_chat_completions(self, *args, **kwargs) -> AsyncGenerator:
         return self.drsai.a_drsai_ui_completions(*args, **kwargs)
     
@@ -296,13 +315,19 @@ async def run_worker(agent_factory: callable, **kwargs):
     args:
         agent_factory: 工厂函数，用于创建AssistantAgent/BaseGroupChat实例
         agent_name: str = , "Dr.Sai" ,  # 智能体的名称
+        description: str = , "Dr.Sai is a helpful assistant." ,  # 智能体的描述
+        version: str = , "0.1.0" ,  # 智能体的版本
+        logo: str = , "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview" ,  # 智能体的logo
         host: str = , "0.0.0.0" ,  # 后端服务host
         port: int = 42801,  # 后端服务port
         no_register: bool = False,  # 是否注册到控制器
-        controller_address: str = "https://aiapi001.ihep.ac.cn",  # 控制器地址
+        controller_address: str = "https://aiapi.ihep.ac.cn",  # 控制器地址
+        engine_uri: str = "sqlite:///~/drsai/drsai.db" # 智能体数据库地址
+        base_dir: str = "~/drsai", # 数据库目录
         history_mode: str = "backend",  # 历史消息的加载模式，可选值：backend、frontend 默认backend
         use_api_key_mode: str = "frontend",  # api key的使用模式，可选值：frontend、backend 默认frontend， 调试模式下建议设置为backend
         enable_pipeline: bool = False,  # 是否启动openwebui pipelines
+        join_topics: List[str] = [],  # 是否为智能体添加默认的join_topics
     '''
     model_args_obj: DrSaiModelConfig = DrSaiModelConfig
     worker_args_obj: DrSaiWorkerConfig = DrSaiWorkerConfig
@@ -361,6 +386,16 @@ async def run_worker(agent_factory: callable, **kwargs):
 
     controller_address: str =  kwargs.pop("controller_address", "https://aiapi.ihep.ac.cn")
     worker_args.controller_address = controller_address
+
+    # TODO: ADD METADATA for worker config
+    _metadata: dict[str, Any] = kwargs.pop("metadata", None)
+    if _metadata is not None:
+       worker_args._metadata.update(_metadata)
+
+    join_topics: List[str]|None = kwargs.pop("join_topics", None)
+    if join_topics is not None:
+        worker_args._metadata.update({"join_topics": join_topics})
+    
 
     print(model_args)
     print()

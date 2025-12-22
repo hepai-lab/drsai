@@ -1,21 +1,17 @@
-import sys
-import os
-try:
-    import drsai
-except ImportError:
-    current_file_path = os.path.abspath(__file__)
-    current_directory = os.path.dirname(current_file_path)
-    drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
-    sys.path.append(drsai_path)
-
-
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
-from drsai import run_backend, run_console, run_worker
-import os, json
+from drsai import CancellationToken
+from drsai.modules.baseagent import DrSaiAgent, AssistantAgent
+from drsai.modules.components.model_client import HepAIChatCompletionClient
+from drsai.backend import run_worker, DrSaiAPP, run_console
+import os, json, sys
 import asyncio
 
+class TestAgent(DrSaiAgent):
+    async def lazy_init(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
+        """Initialize the tools and models needed by the agent."""
+        return {"status": True, "content": "Lazy initialization testing....", "metadata": {"test": "test"}}
+
 # Create a factory function to ensure isolated Agent instances for concurrent access.
-def create_agent() -> AssistantAgent:
+def create_agent() -> TestAgent:
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
@@ -27,7 +23,7 @@ def create_agent() -> AssistantAgent:
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
     # The system message instructs the agent via natural language.
-    return AssistantAgent(
+    return TestAgent(
         name="weather_agent",
         model_client=model_client,
         system_message="You are a helpful assistant.",
@@ -94,5 +90,7 @@ if __name__ == "__main__":
             enable_openwebui_pipeline=True, 
             history_mode = "backend",
             # use_api_key_mode = "backend",
+            join_topics = ["test"],
+            metadata={"others": "test"}
         )
     )

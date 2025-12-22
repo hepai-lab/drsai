@@ -1,18 +1,10 @@
-import sys
-import os
-try:
-    import drsai
-except ImportError:
-    current_file_path = os.path.abspath(__file__)
-    current_directory = os.path.dirname(current_file_path)
-    drsai_path = os.path.abspath(os.path.join(current_directory, "../../"))
-    sys.path.append(drsai_path)
 
 
-from drsai import web_fetch
+from drsai.modules.components.tool import web_fetch
 from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
 from drsai import run_backend, run_console
 import os, json
+import sys
 import asyncio
 
 web_fetch_tool = asyncio.run(web_fetch())

@@ -18,7 +18,7 @@ class TaskStatus(str, Enum):
 class LongTaskManager:
     """A task management system for long-running tasks using multiprocessing queues and threads."""
 
-    def __init__(self, time_limit: int = 10):
+    def __init__(self, time_limit: int = 10, task_limit: int = 2):
         """Initialize the task manager.
         
         Args:
@@ -32,6 +32,8 @@ class LongTaskManager:
 
         self.task_id_to_task = {}
         self.task_id_to_result = {}
+
+        self._task_limit = task_limit  # Maximum number of tasks to track
     
     def queue_monitor_worker(self) -> None:
         """
@@ -96,7 +98,14 @@ class LongTaskManager:
                 self.cleanup_task(task_id)
 
             return result
-
+        if len(self.task_id_to_task) >= self._task_limit:
+            return {
+                "id": task_id,
+                'status': TaskStatus.TODO.value,
+                'result': "Task has reached maximum limit, please try again later",
+                'message': "Task has reached maximum limit, please try again later",
+                'elapsed_time': time.time()
+            }
         # Check if task is currently running
         if task_id in self.task_id_to_task:
             task_info = self.task_id_to_task[task_id]
@@ -190,7 +199,16 @@ class LongTaskManager:
                 self.cleanup_task(task_id)
 
             return result
-
+        
+        if len(self.task_id_to_task) >= self._task_limit:
+            return {
+                "id": task_id,
+                'status': TaskStatus.TODO.value,
+                'result': "Task has reached maximum limit, please try again later",
+                'message': "Task has reached maximum limit, please try again later",
+                'elapsed_time': time.time()
+            }
+        
         # Check if task is currently running
         if task_id in self.task_id_to_task:
             task_info = self.task_id_to_task[task_id]
