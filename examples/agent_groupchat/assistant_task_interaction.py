@@ -24,6 +24,10 @@ import json
 
 
 class testAgent(DrSaiAgent):
+
+    def __ini__(self, *arg, **kwarg):
+        super().__init__(*arg, **kwarg)
+        self.plan = {}
     async def on_messages_stream(
         self, 
         messages: Sequence[BaseChatMessage], 
@@ -52,12 +56,11 @@ class testAgent(DrSaiAgent):
         monitor_pause_task = asyncio.create_task(monitor_pause())
         inner_messages: List[BaseAgentEvent | BaseChatMessage] = []
         try:
-            plan = {}
             last_message = messages[-1]
             # 第一次刚开始做计划
             if last_message.metadata.get("user_request"):
                 last_user_message = last_message.metadata.get("user_request")
-                plan = {
+                self.plan = {
                             "response": "Test planning for drsai ui",
                             # "response": "",
                             "task": "Test planning for drsai ui",
@@ -78,11 +81,10 @@ class testAgent(DrSaiAgent):
                                 ]
                             }
                 plan_message = TextMessage(
-                    content=json.dumps(plan),
+                    content=json.dumps(self.plan),
                     source="Orchestrator",
                     metadata={"internal": "no", "type": "plan_message"},
                 )
-                yield plan_message
 
                 yield Response(
                     chat_message=plan_message,
@@ -96,19 +98,21 @@ class testAgent(DrSaiAgent):
                     is_accepted = user_feedback.get("accepted")
                     modify_plan = user_feedback.get("plan")
                     if modify_plan:
-                        plan["steps"] = json.loads(modify_plan)
+                        modify_plan = json.loads(modify_plan)
+                        if modify_plan:
+                            self.plan["steps"] = modify_plan
                     if is_accepted:
                         if self.is_paused:
                             raise asyncio.CancelledError()
-                        for i, sub_task in enumerate(plan["steps"]):
+                        for i, sub_task in enumerate(self.plan["steps"]):
                             planning_format = {
                                 "title": f"title of step {i+1}",
-                                "index": i+1,
+                                "index": i,
                                 "details":  f"rephrase the title in one short sentence remaining details of step {i+1}",
                                 "agent_name": f"Agent_{i+1}",
                                 "instruction": f"rephrase the title in one short sentence remaining details of step {i+1}",
                                 "progress_summary": f"rephrase the title in one short sentence remaining details of step {i+1}",
-                                "plan_length": len(plan["steps"])
+                                "plan_length": len(self.plan["steps"])
                             }
                             planning_message = TextMessage(
                                 content=json.dumps(planning_format),
@@ -130,11 +134,28 @@ class testAgent(DrSaiAgent):
                             inner_messages=inner_messages,
                         )
                         return
+                    else:
+                        yield Response(
+                            chat_message=TextMessage(
+                                content="All tasks have been finished!",
+                                source="Orchestrator",
+                                metadata={"internal": "no", "type": "final_answer"},
+                            ),
+                            inner_messages=inner_messages,
+                        )
+                        return
 
 
                 except:
-                    pass
-
+                    yield Response(
+                        chat_message=TextMessage(
+                            content="All tasks have been finished!",
+                            source="Orchestrator",
+                            metadata={"internal": "no", "type": "final_answer"},
+                        ),
+                        inner_messages=inner_messages,
+                    )
+                    return
         except asyncio.CancelledError:
             # If the task is cancelled, we respond with a message.
             yield Response(
