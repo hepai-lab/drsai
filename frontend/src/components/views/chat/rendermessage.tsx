@@ -687,11 +687,36 @@ export const RenderMessage: React.FC<MessageProps> = memo(
 
     // Use new plan message check
     const isPlanMsg = messageUtils.isPlanMessage(message.metadata);
-
     const orchestratorContent =
       isOrchestrator && typeof message.content === "string"
         ? parseorchestratorContent(message.content, message.metadata)
         : null;
+
+    // Derive plan content by message type, not by source
+    let planContent: any = null;
+    if (isPlanMsg) {
+      if (orchestratorContent?.content) {
+        planContent = orchestratorContent.content;
+      } else {
+        const rawContent = message.content;
+        if (typeof rawContent === "string") {
+          try {
+            planContent = JSON.parse(rawContent);
+          } catch {
+            planContent = rawContent;
+          }
+        } else {
+          planContent = rawContent;
+        }
+      }
+
+      // Basic shape guard
+      if (!planContent || typeof planContent !== "object") {
+        planContent = {};
+      } else if (!Array.isArray((planContent as any).steps)) {
+        planContent = { ...planContent, steps: [] };
+      }
+    }
 
     const startFlagValue = message.metadata?.start_flag;
     const isStartFlagActive =
@@ -751,7 +776,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
               !isUserProxy &&
               (isPlanMsg ? (
                 <RenderPlan
-                  content={orchestratorContent?.content || {}}
+                  content={planContent || {}}
                   isEditable={isEditable}
                   onSavePlan={onSavePlan}
                   onRegeneratePlan={onRegeneratePlan}
