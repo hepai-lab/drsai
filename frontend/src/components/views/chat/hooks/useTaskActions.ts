@@ -12,6 +12,7 @@ import { convertFilesToBase64 } from "../../../utils";
 import { GeneralConfig, useSettingsStore } from "../../../store";
 import { settingsAPI } from "../../api";
 import { AgentModeConfig, DEFAULT_AGENT_MODE_CONFIG } from "@/utils/agent";
+import { messageUtils } from "../rendermessage";
 
 interface UseTaskActionsProps {
   currentRun: Run | null;
@@ -93,7 +94,9 @@ export const useTaskActions = ({
           planString = convertPlanStepsToJsonString(plan.steps);
         } else if (
           lastMessage &&
-          lastMessage.config.metadata?.type === "plan"
+          // lastMessage.config.metadata?.type === "plan"
+          messageUtils.isPlanMessage(lastMessage.config.metadata)
+
         ) {
           planString = convertPlanStepsToJsonString(updatedPlan);
         }
