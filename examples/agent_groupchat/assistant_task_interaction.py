@@ -25,9 +25,11 @@ import json
 
 class testAgent(DrSaiAgent):
 
-    def __ini__(self, *arg, **kwarg):
+    def __init__(self, *arg, **kwarg):
         super().__init__(*arg, **kwarg)
+
         self.plan = {}
+        self.replan = True
     async def on_messages_stream(
         self, 
         messages: Sequence[BaseChatMessage], 
@@ -57,8 +59,9 @@ class testAgent(DrSaiAgent):
         inner_messages: List[BaseAgentEvent | BaseChatMessage] = []
         try:
             last_message = messages[-1]
+            print(last_message)
             # 第一次刚开始做计划
-            if last_message.metadata.get("user_request"):
+            if last_message.source=="user":
                 last_user_message = last_message.metadata.get("user_request")
                 self.plan = {
                             "response": "Test planning for drsai ui",
@@ -94,46 +97,79 @@ class testAgent(DrSaiAgent):
             # 后续用户的反馈
             elif last_message.source=="user_proxy":
                 try:
-                    user_feedback = json.loads(last_message.content)
-                    is_accepted = user_feedback.get("accepted")
-                    modify_plan = user_feedback.get("plan")
-                    if modify_plan:
-                        modify_plan = json.loads(modify_plan)
+                    last_user_message = last_message.metadata.get("user_request")
+                    if last_user_message:
+                        user_feedback = json.loads(last_user_message)
+                        is_accepted = user_feedback.get("accepted")
+                        modify_plan = user_feedback.get("plan")
                         if modify_plan:
-                            self.plan["steps"] = modify_plan
-                    if is_accepted:
-                        if self.is_paused:
-                            raise asyncio.CancelledError()
-                        for i, sub_task in enumerate(self.plan["steps"]):
-                            planning_format = {
-                                "title": f"title of step {i+1}",
-                                "index": i,
-                                "details":  f"rephrase the title in one short sentence remaining details of step {i+1}",
-                                "agent_name": f"Agent_{i+1}",
-                                "instruction": f"rephrase the title in one short sentence remaining details of step {i+1}",
-                                "progress_summary": f"rephrase the title in one short sentence remaining details of step {i+1}",
-                                "plan_length": len(self.plan["steps"])
-                            }
-                            planning_message = TextMessage(
-                                content=json.dumps(planning_format),
+                            modify_plan = json.loads(modify_plan)
+                            if modify_plan:
+                                self.plan["steps"] = modify_plan
+                        if is_accepted:
+                            if self.is_paused:
+                                raise asyncio.CancelledError()
+                            for i, sub_task in enumerate(self.plan["steps"]):
+                                await asyncio.sleep(3)
+                                planning_format = {
+                                    "title": sub_task["title"],
+                                    "index": i,
+                                    "details":  sub_task["details"],
+                                    "agent_name": sub_task["agent_name"],
+                                    "instruction": f"rephrase the title in one short sentence remaining details of step {i+1}",
+                                    "progress_summary": f"rephrase the title in one short sentence remaining details of step {i+1}",
+                                    "plan_length": len(self.plan["steps"])
+                                }
+                                planning_message = TextMessage(
+                                    content=json.dumps(planning_format),
+                                    source="Orchestrator",
+                                    metadata={"internal": "no", "type": "step_execution"},
+                                )
+                                yield planning_message
+                                yield ModelClientStreamingChunkEvent(source=f"Agent_{i+1}", content=f"Processing Task {i+1}...\n")
+                                yield ModelClientStreamingChunkEvent(source=f"Agent_{i+1}", content=f"Doing something in Task {i+1}...\n")
+                                yield ModelClientStreamingChunkEvent(source=f"Agent_{i+1}", content=f"```text\nDoing something now...\n```\n")
+
+                                # replan 
+                                if self.replan:
+                                    self.plan["steps"].append({
+                                            "title": "title of step n",
+                                            "details": "rephrase the title in one short sentence remaining details of step n",
+                                            "agent_name": "Agent_2n"
+                                        })  
+                                    plan_message = TextMessage(
+                                        content=json.dumps(self.plan),
+                                        source="Orchestrator",
+                                        metadata={"internal": "no", "type": "plan_message"},
+                                    )
+
+                                    self.replan = False
+                                    yield Response(
+                                        chat_message=plan_message,
+                                        inner_messages=inner_messages,
+                                    )
+                                    return
+                            
+                            final_answer = TextMessage(
+                                content="All tasks have been finished!",
                                 source="Orchestrator",
-                                metadata={"internal": "no", "type": "step_execution"},
+                                metadata={"internal": "no", "type": "final_answer"},
                             )
-                            yield planning_message
-                            yield ModelClientStreamingChunkEvent(source=f"Agent_{i+1}", content=f"Processing Task {i+1}...\n")
-                            yield ModelClientStreamingChunkEvent(source=f"Agent_{i+1}", content=f"Doing something in Task {i+1}...\n")
-                            yield ModelClientStreamingChunkEvent(source=f"Agent_{i+1}", content=f"```text\nDoing something now...\n```\n")
-                        
-                        final_answer = TextMessage(
-                            content="All tasks have been finished!",
-                            source="Orchestrator",
-                            metadata={"internal": "no", "type": "final_answer"},
-                        )
-                        yield Response(
-                            chat_message=final_answer,
-                            inner_messages=inner_messages,
-                        )
-                        return
+                            yield Response(
+                                chat_message=final_answer,
+                                inner_messages=inner_messages,
+                            )
+                            return
+                        else:
+                            yield Response(
+                                chat_message=TextMessage(
+                                    content="All tasks have been finished!",
+                                    source="Orchestrator",
+                                    metadata={"internal": "no", "type": "final_answer"},
+                                ),
+                                inner_messages=inner_messages,
+                            )
+                            return
                     else:
                         yield Response(
                             chat_message=TextMessage(
@@ -145,8 +181,8 @@ class testAgent(DrSaiAgent):
                         )
                         return
 
-
-                except:
+                except Exception as e:
+                    print(str(e))
                     yield Response(
                         chat_message=TextMessage(
                             content="All tasks have been finished!",

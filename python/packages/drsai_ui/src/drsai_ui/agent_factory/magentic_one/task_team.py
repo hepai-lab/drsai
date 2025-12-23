@@ -22,6 +22,7 @@ from .approval_guard import (
 from ..remote_agent.drsai_remote_agent import RemoteAgent
 # from ..magentic_one.agents.drsai_agents.drsai_agent import MagenticAgent
 from drsai.modules.baseagent import DrSaiAgent, DrSaiUserProxyAgent
+from .agents.user_proxy import RoundbinDrSaiUserProxyAgent
 from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory, RAGFlowMemoryConfig
 
 from ...ui_backend.input_func import InputFuncType, make_agentchat_input_func
@@ -525,7 +526,7 @@ async def create_magentic_round_team(
 
     if isinstance(agent, ChatAgent):
         user_proxy_input_func = make_agentchat_input_func(input_func)
-        user_proxy = DrSaiUserProxyAgent(
+        user_proxy = RoundbinDrSaiUserProxyAgent(
             description=USER_PROXY_DESCRIPTION,
             name="user_proxy",
             input_func=user_proxy_input_func,
