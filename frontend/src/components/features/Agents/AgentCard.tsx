@@ -1,4 +1,4 @@
-import { Mail, Network, Pencil, Plus, X, Check } from "lucide-react";
+import { Network, Pencil, X } from "lucide-react";
 import React, { useContext, useEffect } from "react";
 import { appContext } from "../../../hooks/provider";
 import { useModeConfigStore } from "@/store/modeConfig";
@@ -155,7 +155,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
   };
 
   return (
-    <div className="bg-primary border border-secondary rounded-lg px-6 pt-6 pb-0 shadow-md hover:shadow-lg transition-all duration-200 hover:border-magenta-800 group relative max-w-[350px] w-full">
+    <div className="bg-primary border border-secondary rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-200 hover:border-magenta-800 group relative">
       {mode === "remote" && (
         <div className="absolute -top-[-0.5px] left-6 flex gap-1 z-20">
           <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium shadow-sm bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
@@ -210,38 +210,42 @@ const AgentCard: React.FC<AgentCardProps> = ({
         {description}
       </p>
 
-      <div className="w-full border-t border-secondary/30 mt-4">
-        <div className="flex items-stretch divide-x divide-secondary/30">
-          <Button
-            variant="tertiary"
-            size="sm"
-            onClick={handleTryClick}
-            className="flex-1 !rounded-none bg-transparent hover:bg-white/5 text-primary gap-2 justify-center border-0 h-12"
-          >
-            <Mail className="w-4 h-4" />
-            <span>点击试用</span>
-          </Button>
-          <Button
-            variant="tertiary"
-            size="sm"
-            onClick={handleAddToSidebar}
-            disabled={isAdding || isAdded}
-            isLoading={isAdding}
-            className="flex-1 !rounded-none bg-transparent hover:bg-white/5 text-primary gap-2 justify-center border-0 h-12"
-          >
-            {isAdded ? (
-              <>
-                <Check className="w-4 h-4" />
-                <span>已添加</span>
-              </>
-            ) : (
-              <>
-                <Plus className="w-4 h-4" />
-                <span>添加到侧边栏</span>
-              </>
-            )}
-          </Button>
-        </div>
+      <div className="w-full flex flex-col gap-2">
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={handleTryClick}
+          className="w-full"
+        >
+          点击试用
+        </Button>
+        <Button
+          variant={isAdded ? "success" : "secondary"}
+          size="sm"
+          onClick={handleAddToSidebar}
+          disabled={isAdding || isAdded}
+          isLoading={isAdding}
+          className={`w-full transition-all duration-300 ${isAdded
+            ? "bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+            : "bg-black/5 dark:bg-white/5 backdrop-blur-sm border border-white/20 dark:border-white/10 text-primary hover:bg-accent/10 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/20 transform hover:-translate-y-0.5"
+            }`}
+        >
+          {isAdded ? (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+              </svg>
+              已添加
+            </span>
+          ) : (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              添加到侧边栏
+            </span>
+          )}
+        </Button>
       </div>
     </div>
   );

@@ -379,7 +379,7 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
         
         window.history.pushState({}, "", window.location.pathname);
         
-        // 触发事件，通知 manager 切换到欢迎视图
+        // 触发事件，通知 manager 切换到 NewChatView
         window.dispatchEvent(
           new CustomEvent("sessionDeleted", {
             detail: { sessionId }

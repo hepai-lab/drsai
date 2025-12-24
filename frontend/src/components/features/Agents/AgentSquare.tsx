@@ -351,10 +351,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
           size="sm"
           onClick={handleRefresh}
           disabled={isRefreshing}
-          icon={<RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />}
-          className="ml-6 flex items-center bg-blue-600 text-white text-xs font-medium border-none shadow-none hover:bg-blue-700 !rounded-0.5"
+          icon={<RefreshCw className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`} />}
+          className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white border-0 shadow-none ml-4"
         >
-          Refresh
+          刷新
         </Button>
         <div className="flex gap-2">
           <Button
@@ -391,7 +391,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         </div>
       ) : (
         <div
-          className={`pl-4 grid grid-cols-[repeat(auto-fill,minmax(310px,1fr))] gap-6 ${className}  w-full px-4 sm:px-6 lg:px-8`}
+          className={`pl-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 ${className}`}
         >
           {agentList.map((agent) => (
             <AgentCard

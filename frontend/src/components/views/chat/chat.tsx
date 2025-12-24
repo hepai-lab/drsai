@@ -23,9 +23,6 @@ import ProgressBar from "./progressbar";
 import { messageUtils } from "./rendermessage";
 import RunView from "./runview";
 import WelcomeScreen from "./WelcomeScreen";
-import ChatInput from "./chat/chatinput";
-import SampleTasks from "./sampletasks";
-import { Agent } from "../../../types/common";
 import { AgentModeConfig, DEFAULT_AGENT_MODE_CONFIG, normalizeAgentModeConfig } from "@/utils/agent";
 
 // Extend RunStatus for sidebar status reporting
@@ -40,23 +37,21 @@ const defaultTeamConfig: TeamConfig = {
 
 interface ChatViewProps {
   session: Session | null;
-  onSessionNameChange?: (sessionData: Partial<Session>) => void;
-  getSessionSocket?: (
+  onSessionNameChange: (sessionData: Partial<Session>) => void;
+  getSessionSocket: (
     sessionId: number,
     runId: string,
     fresh_socket: boolean,
     only_retrieve_existing_socket: boolean
   ) => WebSocket | null;
   visible?: boolean;
-  onRunStatusChange?: (sessionId: number, status: BaseRunStatus) => void;
+  onRunStatusChange: (sessionId: number, status: BaseRunStatus) => void;
   pendingFirstMessage?: {
     query: string;
     files: any[];
     plan?: any;
   } | null;
   onPendingMessageSent?: () => void;
-  agent?: Agent | null;
-  onCreateSession?: (agent: Agent, query: string, files: RcFile[], plan?: IPlan) => Promise<void>;
 }
 
 export default function ChatView({
@@ -67,16 +62,7 @@ export default function ChatView({
   onRunStatusChange,
   pendingFirstMessage,
   onPendingMessageSent,
-  agent,
-  onCreateSession,
 }: ChatViewProps) {
-  const safeOnSessionNameChange = onSessionNameChange ?? (() => undefined);
-  const safeGetSessionSocket =
-    getSessionSocket ??
-    (() => {
-      return null;
-    });
-  const safeOnRunStatusChange = onRunStatusChange ?? (() => undefined);
   // Context and store
   const settingsConfig = useSettingsStore((state) => state.config);
   const { user } = React.useContext(appContext);
@@ -91,7 +77,6 @@ export default function ChatView({
   const [messageApi, contextHolder] = message.useMessage();
   const [noMessagesYet, setNoMessagesYet] = React.useState(true);
   const chatContainerRef = React.useRef<HTMLDivElement | null>(null);
-  const [isCreatingSession, setIsCreatingSession] = React.useState(false);
 
   // TODO: 根据当前run的task的metadata或session的agent_mode_config来确定agent类型
   // Panel state - initialized based on agent configuration
@@ -140,7 +125,7 @@ export default function ChatView({
     inputTimeoutRef,
   } = useChatWebSocket({
     session,
-    getSessionSocket: safeGetSessionSocket,
+    getSessionSocket,
     setCurrentRun,
     setSessionRun,
     userEmail: user?.email,
@@ -165,7 +150,7 @@ export default function ChatView({
     setNoMessagesYet,
   });
 
-  const { progress, isPlanning, hasFinalAnswer } = useProgressTracking(currentRun);
+  const { progress, isPlanning, hasFinalAnswer, currentPlan } = useProgressTracking(currentRun);
 
   const {
     handleInputResponse,
@@ -191,7 +176,7 @@ export default function ChatView({
     setError,
     setupWebSocket,
     ensureWebSocketConnection,
-    onSessionNameChange: safeOnSessionNameChange,
+    onSessionNameChange,
   });
 
   const loadSessionRun = React.useCallback(async () => {
@@ -264,14 +249,7 @@ export default function ChatView({
           setNoMessagesYet(latestRun.messages.length === 0);
 
           if (latestRun.id) {
-            // 若会话最新的 run 仍处于活动状态，主动建立 WebSocket 以便状态更新和手动断开
-            const shouldForceConnect = [
-              "active",
-              "awaiting_input",
-              "pausing",
-              "paused",
-            ].includes(latestRun.status);
-            setupWebSocket(latestRun.id, false, !shouldForceConnect);
+            setupWebSocket(latestRun.id, false, true);
           }
         } else {
           setError({
@@ -321,7 +299,7 @@ export default function ChatView({
         statusToReport = "final_answer_awaiting_input";
       }
       if (statusToReport !== previousStatus.current) {
-        safeOnRunStatusChange(session.id, statusToReport as BaseRunStatus);
+        onRunStatusChange(session.id, statusToReport as BaseRunStatus);
         previousStatus.current = statusToReport; // Update the previous status
         // Clear error state when status changes
         setError(null);
@@ -331,7 +309,7 @@ export default function ChatView({
     currentRun?.status,
     currentRun?.messages,
     session?.id,
-    safeOnRunStatusChange,
+    onRunStatusChange,
   ]);
 
   // Handle pending first message - auto-send when run is ready
@@ -392,7 +370,7 @@ export default function ChatView({
             session.id
           ) {
             // Update the run status even when not visible
-            safeOnRunStatusChange(
+            onRunStatusChange(
               session.id,
               message.status as BaseRunStatus
             );
@@ -408,7 +386,7 @@ export default function ChatView({
         activeSocket.removeEventListener("message", messageHandler);
       };
     }
-  }, [session?.id, visible, activeSocket, safeOnRunStatusChange]);
+  }, [session?.id, visible, activeSocket, onRunStatusChange]);
 
 
   // Process plan when it becomes available
@@ -428,102 +406,6 @@ export default function ChatView({
 
   if (!visible) {
     return null;
-  }
-
-  // 没有现有会话时，直接在 ChatView 内展示欢迎与输入框，并在提交时创建会话
-  if (!session) {
-    const heroAvatar =
-      (agent as any)?.avatar ||
-      (agent as any)?.logo ||
-      (agent as any)?.config?.avatar ||
-      (agent as any)?.config?.logo ||
-      "";
-
-    const handleCreateSessionAndSend = async (
-      query: string,
-      files: RcFile[],
-      _accepted = false,
-      plan?: IPlan
-    ) => {
-      if (!agent || !onCreateSession || isCreatingSession) return;
-      if (!query.trim() && files.length === 0) return;
-
-      let finalQuery = query;
-      if (!query.trim() && files.length > 0) {
-        finalQuery = "请帮我分析这些文件。";
-      }
-
-      setIsCreatingSession(true);
-      try {
-        await onCreateSession(agent, finalQuery, files, plan);
-      } finally {
-        setIsCreatingSession(false);
-      }
-    };
-
-    return (
-      <div className="text-primary h-[calc(100vh-100px)] bg-primary relative rounded flex-1 scroll w-full">
-        {contextHolder}
-        <div className="flex flex-col h-full overflow-hidden">
-          <div className="flex-1 flex items-center justify-center overflow-y-auto">
-            <div className="w-full max-w-4xl py-8 px-4 text-center space-y-8">
-              <div className="space-y-4">
-                {heroAvatar && (
-                  <div className="flex justify-center">
-                    <img
-                      src={heroAvatar}
-                      alt={agent?.name || "Agent"}
-                      className="w-20 h-20 rounded-xl shadow-lg"
-                    />
-                  </div>
-                )}
-                <div className="space-y-2">
-                  <h1 className="text-4xl sm:text-5xl font-bold">
-                    <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent font-extrabold">
-                      {agent?.name || "New Session"}
-                    </span>
-                  </h1>
-                  {agent?.description && (
-                    <p className="text-lg sm:text-xl text-secondary">
-                      {agent.description}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="w-full px-2 sm:px-4">
-                <ChatInput
-                  ref={chatInputRef}
-                  onSubmit={handleCreateSessionAndSend}
-                  error={null}
-                  onCancel={() => { }}
-                  runStatus={undefined}
-                  inputRequest={undefined}
-                  isPlanMessage={false}
-                  onPause={() => { }}
-                  enable_upload={true}
-                  onExecutePlan={() => { }}
-                  sessionId={-1}
-                  disabled={isCreatingSession}
-                />
-              </div>
-
-              <div className="w-full">
-                <SampleTasks
-                  onSelect={(task: string) => {
-                    setTimeout(() => {
-                      if (chatInputRef.current) {
-                        chatInputRef.current.setValue(task);
-                      }
-                    }, 200);
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
   }
 
   return (

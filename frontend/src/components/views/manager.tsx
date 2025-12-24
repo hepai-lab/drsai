@@ -11,6 +11,7 @@ import { AgentSquare } from "../features/Agents/AgentSquare";
 import PlanList from "../features/Plans/PlanList";
 import { settingsAPI, agentAPI } from "./api";
 import ChatView from "./chat/chat";
+import NewChatView from "./chat/NewChatView";
 import { SessionEditor } from "./session_editor";
 import { Sidebar } from "./sidebar";
 import { useSessionManager } from "./hooks/useSessionManager";
@@ -234,7 +235,7 @@ export const SessionManager: React.FC = () => {
     const isDeletingCurrentSession = session?.id === sessionId;
     await deleteSession(sessionId, closeSocket);
 
-    // 如果删除的是当前会话，确保显示欢迎视图
+    // 如果删除的是当前会话，确保显示 NewChatView
     if (isDeletingCurrentSession) {
       setActiveSubMenuItem("current_session");
     }
@@ -277,9 +278,9 @@ export const SessionManager: React.FC = () => {
   // Handle selecting a session from sidebar / plan list:
   // always switch back to "current_session" view so the chat is visible.
   const handleSelectSession = useCallback(
-    async (selectedSession: Session) => {
+    (selectedSession: Session) => {
       setActiveSubMenuItem("current_session");
-      await selectSession(selectedSession);
+      selectSession(selectedSession);
     },
     [selectSession]
   );
@@ -329,7 +330,7 @@ export const SessionManager: React.FC = () => {
     };
   }, [setSelectedAgent, sessions, setSessions, setSession, saveSessionId, setConfig, clearCurrentSession]);
 
-  // Listen for sessionDeleted event and ensure welcome view is shown
+  // Listen for sessionDeleted event and ensure NewChatView is shown
   useEffect(() => {
     const handleSessionDeleted = () => {
       setActiveSubMenuItem("current_session");
@@ -348,7 +349,7 @@ export const SessionManager: React.FC = () => {
     };
   }, []);
 
-  // Ensure welcome view is shown when session becomes null
+  // Ensure NewChatView is shown when session becomes null
   useEffect(() => {
 
     if (!session && selectedAgent && selectedAgent.name) {
@@ -453,21 +454,12 @@ export const SessionManager: React.FC = () => {
               return <div className="h-full">{chatViews}</div>;
             } else if (selectedAgent && selectedAgent.name) {
               return (
-                <div className="h-full">
-                  <ChatView
-                    session={null}
-                    agent={selectedAgent as Agent}
-                    onCreateSession={async (agent, query, files, plan) => {
-                      await createNewChatSession(agent, query, files, plan);
-                    }}
-                    onSessionNameChange={updateSessionName}
-                    getSessionSocket={getSessionSocket}
-                    visible={true}
-                    onRunStatusChange={updateSessionRunStatus}
-                    pendingFirstMessage={pendingFirstMessage}
-                    onPendingMessageSent={() => setPendingFirstMessage(null)}
-                  />
-                </div>
+                <NewChatView
+                  agent={selectedAgent as Agent}
+                  onSubmit={async (agent, query, files, plan) => {
+                    await createNewChatSession(agent, query, files, plan);
+                  }}
+                />
               );
             } else {
               return (
