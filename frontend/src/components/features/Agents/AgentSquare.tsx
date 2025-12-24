@@ -351,10 +351,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
           size="sm"
           onClick={handleRefresh}
           disabled={isRefreshing}
-          icon={<RefreshCw className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`} />}
-          className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white border-0 shadow-none ml-4"
+          icon={<RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />}
+          className="ml-6 flex items-center bg-blue-600 text-white text-xs font-medium border-none shadow-none hover:bg-blue-700 !rounded-0.5"
         >
-          刷新
+          Refresh
         </Button>
         <div className="flex gap-2">
           <Button

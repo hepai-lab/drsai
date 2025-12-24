@@ -9,8 +9,7 @@ interface IModeConfig {
     setConfig: (config: Record<string, any>) => void;
     selectedAgent: Partial<Agent> | null;
     setSelectedAgent: (agent: Partial<Agent> | null) => void;
-    lastSelectedAgentMode: string;
-    setLastSelectedAgentMode: (mode: string) => void;
+    agent_mode_config: Partial<Agent> | null;
 }
 
 export const useModeConfigStore = create<IModeConfig>()(
@@ -23,9 +22,8 @@ export const useModeConfigStore = create<IModeConfig>()(
             setConfig: (config) => set({ config }),
             selectedAgent: null,
             setSelectedAgent: (selectedAgent) => set({ selectedAgent }),
-            lastSelectedAgentMode: "",
-            setLastSelectedAgentMode: (mode) =>
-                set({ lastSelectedAgentMode: mode }),
+            agent_mode_config: null,
+            setAgentModeConfig: (agent_mode_config: Partial<Agent> | null) => set({ agent_mode_config }),
         }),
         {
             name: "drsai-mode-config",
@@ -34,7 +32,6 @@ export const useModeConfigStore = create<IModeConfig>()(
                 mode: state.mode,
                 config: state.config,
                 selectedAgent: state.selectedAgent,
-                lastSelectedAgentMode: state.lastSelectedAgentMode,
             }),
         }
     )

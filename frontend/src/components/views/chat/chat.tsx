@@ -264,7 +264,14 @@ export default function ChatView({
           setNoMessagesYet(latestRun.messages.length === 0);
 
           if (latestRun.id) {
-            setupWebSocket(latestRun.id, false, true);
+            // 若会话最新的 run 仍处于活动状态，主动建立 WebSocket 以便状态更新和手动断开
+            const shouldForceConnect = [
+              "active",
+              "awaiting_input",
+              "pausing",
+              "paused",
+            ].includes(latestRun.status);
+            setupWebSocket(latestRun.id, false, !shouldForceConnect);
           }
         } else {
           setError({
