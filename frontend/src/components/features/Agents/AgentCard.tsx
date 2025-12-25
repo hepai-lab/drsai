@@ -102,13 +102,12 @@ const AgentCard: React.FC<AgentCardProps> = ({
       tags: extendConfig?.tags,
       config: runtimeConfig,
     };
-
     setSelectedAgent(agent);
-    setConfig(runtimeConfig);
+    setConfig(agent);
 
     window.dispatchEvent(
       new CustomEvent("switchToCurrentSession", {
-        detail: { agent, config: runtimeConfig, clearSession: true },
+        detail: { agent, config: agent, clearSession: true },
       })
     );
   };
@@ -155,7 +154,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
   };
 
   return (
-    <div className="bg-primary border border-secondary rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-200 hover:border-magenta-800 group relative">
+    <div className="bg-primary border border-secondary rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-200 hover:border-magenta-800 group relative w-[360px] h-[285px]">
       {mode === "remote" && (
         <div className="absolute -top-[-0.5px] left-6 flex gap-1 z-20">
           <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium shadow-sm bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
