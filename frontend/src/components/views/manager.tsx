@@ -18,6 +18,7 @@ import { useSessionManager } from "./hooks/useSessionManager";
 import { useWebSocketManager } from "./hooks/useWebSocketManager";
 import { useAgentManager } from "./hooks/useAgentManager";
 import { useSessionStorage } from "./hooks/useSessionStorage";
+import { useSettingsStore, GeneralConfig } from "../store";
 
 export const SessionManager: React.FC = () => {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -32,6 +33,7 @@ export const SessionManager: React.FC = () => {
   const { session, setSession, setSessions } = useConfigStore();
   const { selectedAgent, setSelectedAgent, setConfig } = useModeConfigStore();
   const { saveSessionId, saveSelectedAgent, getSelectedAgent } = useSessionStorage();
+  const { config: settingsConfig, updateConfig: updateSettingsConfig } = useSettingsStore();
 
   // Session management
   const {
@@ -60,22 +62,37 @@ export const SessionManager: React.FC = () => {
   // Agent management
   const { agents, fetchAgentList, deleteAgent } = useAgentManager(user?.email);
 
-  // Load settings
+  // Load settings on page refresh
   useEffect(() => {
     const loadSettings = async () => {
       if (user?.email) {
         try {
-          const settings = await settingsAPI.getSettings(user.email);
-          const parsed = parse(settings.model_configs);
-          const baseUrl = parsed.model_config.config.base_url;
-          setBaseUrl(baseUrl);
+          // 请求全局setting配置
+          const settings = await settingsAPI.getSettings(user.email) as GeneralConfig;
+
+          // 存储到store
+          updateSettingsConfig(settings);
+
+          // 更新前端页面渲染（通过store的更新自动触发）
+          // 同时提取baseUrl用于其他用途
+          if (settings.model_configs) {
+            try {
+              const parsed = parse(settings.model_configs);
+              const baseUrl = parsed.model_config?.config?.base_url;
+              if (baseUrl) {
+                setBaseUrl(baseUrl);
+              }
+            } catch (parseError) {
+              console.warn("Failed to parse model_configs for baseUrl:", parseError);
+            }
+          }
         } catch (error) {
-          console.error("Failed to load settings");
+          console.error("Failed to load settings:", error);
         }
       }
     };
     loadSettings();
-  }, [user?.email]);
+  }, [user?.email, updateSettingsConfig]);
 
   // Fetch sessions and agents on mount
   useEffect(() => {
@@ -181,16 +198,38 @@ export const SessionManager: React.FC = () => {
       ? (selectedAgent?.id !== agent.id && selectedAgent?.name !== agent.name)
       : (selectedAgent?.mode !== agent.mode);
 
-    // 获取完整的 agent 配置并设置
-    await fetchAndSetAgent(agent);
+    // 保存当前settings配置用于回滚
+    const previousSettingsConfig = { ...settingsConfig };
 
-    // 只有在切换到不同智能体时才清空当前会话（不创建新会话，会话在发送消息时创建）
-    if (isDifferentAgent) {
-      clearCurrentSession();
+    try {
+      // 乐观更新store（UI立即响应）- fetchAndSetAgent会立即更新UI
+      await fetchAndSetAgent(agent);
+
+      // 只有在切换到不同智能体时才清空当前会话（不创建新会话，会话在发送消息时创建）
+      if (isDifferentAgent) {
+        clearCurrentSession();
+      }
+
+      setActiveSubMenuItem("current_session");
+
+      // 通过API更新数据库(settingsAPI.updateSettings)
+      // 将当前的全局settings配置同步到数据库
+      try {
+        const currentSettings = useSettingsStore.getState().config;
+        await settingsAPI.updateSettings(user.email, currentSettings);
+      } catch (updateError) {
+        // 如果失败则回滚store
+        console.error("Failed to update settings:", updateError);
+        updateSettingsConfig(previousSettingsConfig);
+        messageApi.error("更新设置失败，已回滚");
+      }
+    } catch (error) {
+      // 如果fetchAndSetAgent失败，回滚settings配置
+      console.error("Failed to set agent:", error);
+      updateSettingsConfig(previousSettingsConfig);
+      messageApi.error("切换智能体失败");
     }
-
-    setActiveSubMenuItem("current_session");
-  }, [user?.email, selectedAgent, fetchAndSetAgent, clearCurrentSession]);
+  }, [user?.email, selectedAgent, fetchAndSetAgent, clearCurrentSession, settingsConfig, updateSettingsConfig, messageApi]);
 
   // Handle edit session
   const handleEditSession = useCallback(async (sessionData?: Session) => {

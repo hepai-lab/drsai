@@ -42,7 +42,7 @@ const KnowledgeConfigurationForm: React.FC<KnowledgeConfigurationFormProps> = ({
 }) => {
     const handleGetApiKey = () => {
         // 默认URL，可以根据实际需求修改
-        const defaultUrl = "https://aiweb01.ihep.ac.cn:886/user-setting/api";
+        const defaultUrl = "https://ragflow.ihep.ac.cn/user-setting/api";
         window.open(defaultUrl, "_blank");
     };
 

@@ -174,9 +174,12 @@ const parseorchestratorContent = (
   metadata?: Record<string, any>
 ) => {
   if (messageUtils.isFinalAnswer(metadata)) {
+    const prefix = "Final Answer:";
     return {
       type: "final-answer" as const,
-      content: content.substring("Final Answer:".length).trim(),
+      content: content.startsWith(prefix)
+        ? content.substring(prefix.length).trim()
+        : content,
     };
   }
 
@@ -477,7 +480,7 @@ const RenderFinalAnswer: React.FC<RenderFinalAnswerProps> = memo(
             }}
           />
         </div>
-        <div className="break-words">
+        <div className="">
           <MarkdownRenderer content={content} />
         </div>
       </div>

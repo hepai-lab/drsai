@@ -306,16 +306,19 @@ export const useTaskActions = ({
           throw new Error("Could not setup run");
         }
 
-        // Load latest settings from database
+        // 点击发送时：再请求全局setting配置 (API) - 确保获取最新配置
         let currentSettings = settingsConfig;
         if (userEmail) {
           try {
+            // 请求最新的全局settings配置
             currentSettings = (await settingsAPI.getSettings(
               userEmail
             )) as GeneralConfig;
+            // 更新store中的配置
             useSettingsStore.getState().updateConfig(currentSettings);
           } catch (error) {
             console.error("Failed to load settings:", error);
+            // 如果请求失败，使用当前的settingsConfig作为后备
           }
         }
 
@@ -353,6 +356,7 @@ export const useTaskActions = ({
           ...(planString !== "" && { plan: planString }),
         };
 
+        // 发送给后端：使用最新的settings配置
         const messageToSend = {
           type: "start",
           task: JSON.stringify(taskJson),

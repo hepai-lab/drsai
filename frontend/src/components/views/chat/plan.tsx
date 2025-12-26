@@ -146,7 +146,7 @@ const PlanView: React.FC<PlanProps> = ({
     handlePlanChange(items);
   };
 
-  const noop = () => {};
+  const noop = () => { };
 
   return (
     <>
@@ -163,7 +163,7 @@ const PlanView: React.FC<PlanProps> = ({
         {viewOnly && isCollapsed ? (
           <div
             className="flex items-center  hover:opacity-80"
-            // onClick={() => setIsCollapsed(false)}
+            onClick={() => setIsCollapsed(false)}
           >
             <ClipboardList className="h-5 w-5 mr-2 flex-shrink-0" />
             <h2 className="line-through">Plan for: {task}</h2>
@@ -214,9 +214,8 @@ const PlanView: React.FC<PlanProps> = ({
                             <div className="flex items-center">
                               <span
                                 {...(!viewOnly ? provided.dragHandleProps : {})}
-                                className={`flex items-center justify-center  font-semibold p-1.5 ${
-                                  !viewOnly ? "cursor-grab" : ""
-                                }`}
+                                className={`flex items-center justify-center  font-semibold p-1.5 ${!viewOnly ? "cursor-grab" : ""
+                                  }`}
                               >
                                 Step {index + 1}
                               </span>
@@ -232,26 +231,23 @@ const PlanView: React.FC<PlanProps> = ({
                                     ) => updateDetails(index, e.target.value)}
                                     onBlur={() => setFocusedIndex(null)}
                                     autoFocus
-                                    className={`flex-1 p-2 min-w-[100px] max-w-full resize-y bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] rounded ${
-                                      !item.details.trim()
-                                        ? "border border-orange-300"
-                                        : ""
-                                    } ${
-                                      viewOnly
+                                    className={`flex-1 p-2 min-w-[100px] max-w-full resize-y bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] rounded ${!item.details.trim()
+                                      ? "border border-orange-300"
+                                      : ""
+                                      } ${viewOnly
                                         ? "cursor-default focus:outline-none"
                                         : ""
-                                    }`}
+                                      }`}
                                     readOnly={viewOnly}
                                     placeholder="Enter step details"
                                   />
                                 }
                                 {!viewOnly && (
                                   <div
-                                    className={`flex items-center transition-opacity ${
-                                      hoveredIndex === index
-                                        ? "opacity-100"
-                                        : "opacity-0"
-                                    }`}
+                                    className={`flex items-center transition-opacity ${hoveredIndex === index
+                                      ? "opacity-100"
+                                      : "opacity-0"
+                                      }`}
                                   >
                                     <Trash2
                                       role="button"

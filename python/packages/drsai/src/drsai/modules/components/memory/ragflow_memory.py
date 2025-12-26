@@ -173,8 +173,9 @@ class RAGFlowMemory(Memory, Component[RAGFlowMemoryConfig]):
                 if "data" in response:
                     data = response["data"]
                 else:
-                    logger.warning(f"No data found in response: {response["message"]}")
-                    data = {"chunks":[]}
+                    # Log server message if available to aid debugging
+                    logger.warning(f'No data found in response: {response.get("message")}')
+                    data = {"chunks": []}
                 
 
             return data

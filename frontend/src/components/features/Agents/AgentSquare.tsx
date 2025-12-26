@@ -343,9 +343,9 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   }
 
   return (
-    <>
+    <div className={`flex flex-col h-full ${className}`}>
       {/* 连接远程/自定义智能体按钮 */}
-      <div className="flex justify-between items-center mb-4 pr-4 gap-2 flex-wrap">
+      <div className="flex justify-between items-center mb-4 pr-4 gap-2 flex-wrap flex-shrink-0">
         <Button
           variant="primary"
           size="sm"
@@ -384,14 +384,14 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       {/* 检查是否没有智能体 */}
       {agentList.length === 0 ? (
         <div
-          className={`flex flex-col items-center justify-center h-64 ${className}`}
+          className="flex flex-col items-center justify-center h-64 flex-1"
         >
           <div className="text-secondary mb-2">当前用户未部署任何智能体</div>
           <div className="text-secondary text-sm">请联系管理员部署智能体或使用默认智能体</div>
         </div>
       ) : (
         <div
-          className={`pl-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 ${className}`}
+          className="pl-4 flex flex-wrap gap-x-6 gap-y-6 overflow-y-auto flex-1 min-h-0 items-start content-start"
         >
           {agentList.map((agent) => (
             <AgentCard
@@ -427,7 +427,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         onClose={() => setIsRemoteModalOpen(false)}
         onSave={handleRemoteAgentSave}
       />
-    </>
+    </div>
   );
 };
 
