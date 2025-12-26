@@ -718,7 +718,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             agent_name=agent_name,
         )
         if handoff_output:
-            yield TextMessage(content=handoff_output.chat_message.content, source=agent_name, metadata={"internal": "no"})
+            yield ModelClientStreamingChunkEvent(content=handoff_output.chat_message.content, source=agent_name)
             yield handoff_output
             return
 
