@@ -1,11 +1,12 @@
-from drsai import HepAIChatCompletionClient
+
 import asyncio
 import os, sys
 from autogen_core import (
     CancellationToken,
     Component,
 )
-from autogen_core.models import  (
+from drsai.modules.components.model_client import  (
+    HepAIChatCompletionClient,
     ChatCompletionTokenLogprob,
     CreateResult,
     LLMMessage,

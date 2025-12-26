@@ -103,9 +103,9 @@ class testAgent(DrSaiAgent):
                         is_accepted = user_feedback.get("accepted")
                         modify_plan = user_feedback.get("plan")
                         if modify_plan:
-                            modify_plan = json.loads(modify_plan)
+                            # modify_plan = json.loads(modify_plan)
                             if modify_plan:
-                                self.plan["steps"] = modify_plan
+                                self.plan["steps"] = modify_plan["steps"]
                         if is_accepted:
                             if self.is_paused:
                                 raise asyncio.CancelledError()

@@ -208,6 +208,7 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
             if self._token_limit is not None:
                 token_count = self._model_client.count_tokens(messages, tools=self._tool_schema)
                 if token_count > self._token_limit:
+                    messages.append(UserMessage(source="user", content=self._compression_prompt))
                     compressed_response = await self._model_client.create(
                         messages=messages,
                         tools=self._tool_schema,

@@ -1,11 +1,11 @@
 
 from typing import (
-    List, 
-    Dict, 
-    Tuple, 
-    Union, 
-    AsyncGenerator, 
-    Any, 
+    List,
+    Dict,
+    Tuple,
+    Union,
+    AsyncGenerator,
+    Any,
     Optional)
 import os
 import copy
@@ -13,6 +13,7 @@ import json
 import asyncio
 import time
 import traceback
+import inspect
 
 from autogen_core import FunctionCall
 from autogen_core.model_context import (
@@ -159,12 +160,67 @@ class DrSai:
             print(f"Error closing DrSai resources: {e}")
             raise
 
-    async def _create_agent_instance(self) -> ChatAgent | Team:
-        agent: ChatAgent | Team = (
-            await self.agent_factory() 
-            if asyncio.iscoroutinefunction(self.agent_factory)
-            else (self.agent_factory())
-        )
+    async def _create_agent_instance(
+        self,
+        api_key: str = None,
+        thread_id: str = None,
+        user_id: str = None,
+        ) -> ChatAgent | Team:
+
+        sig = inspect.signature(self.agent_factory)
+        params = sig.parameters
+        if len(params) > 0:
+            kwargs = {}
+            if 'api_key' in params:
+                kwargs['api_key'] = api_key
+            if 'thread_id' in params:
+                kwargs['thread_id'] = thread_id
+            if 'user_id' in params:
+                kwargs['user_id'] = user_id
+            if 'db_manager' in params:
+                kwargs['db_manager'] = self.db_manager
+            agent: ChatAgent | Team = (
+                await self.agent_factory(**kwargs)
+                if asyncio.iscoroutinefunction(self.agent_factory)
+                else (self.agent_factory(**kwargs))
+            )
+        else:
+            agent: ChatAgent | Team = (
+                await self.agent_factory()
+                if asyncio.iscoroutinefunction(self.agent_factory)
+                else (self.agent_factory())
+            )
+        
+        # # 判断是否为智能体添加前端的API_KEY
+        # if self.use_api_key_mode == "frontend":
+        #     if hasattr(agent, "_model_client"):
+        #         agent._model_client._client.api_key = api_key
+        #     if hasattr(agent, "_participants"):
+        #         for participant in agent._participants:
+        #             if hasattr(participant, "_model_client"):
+        #                 participant._model_client._client.api_key = api_key
+
+        if hasattr(agent, "_thread_id") and agent._thread_id is None:
+            agent._thread_id = thread_id
+            if hasattr(agent, "_participants"):
+                for participant in agent._participants:
+                    if hasattr(participant, "_thread_id"):
+                        participant._thread_id = thread_id
+        if hasattr(agent, "_user_id") and agent._user_id is None:
+            agent._user_id = user_id
+            if hasattr(agent, "_participants"):
+                for participant in agent._participants:
+                    if hasattr(participant, "user_id"):
+                        participant.user_id = user_id
+        ## 为智能体添加数据库管理器
+        if hasattr(agent, "_db_manager") and agent._db_manager is None:
+            agent._db_manager = self.db_manager
+            if hasattr(agent, "_participants"):
+                for participant in agent._participants:
+                    participant._db_manager = self.db_manager
+            else:
+                agent._db_manager = self.db_manager
+
         return agent
     
     async def handle_input_info(self, **kwargs) -> UserInput:
@@ -258,7 +314,10 @@ class DrSai:
         if thread_id in self.agent_instance:
             agent = self.agent_instance[thread_id]
         else:
-            agent = await self._create_agent_instance()
+            agent = await self._create_agent_instance(api_key=api_key, thread_id=thread_id, user_id=user_id,)
+            self.agent_instance[thread_id] = agent
+
+        ## 加载历史状态
         if thread is not None:
             state = thread.state
             if state:
@@ -273,23 +332,7 @@ class DrSai:
                         await agent.load_state(state_dict)
                 else:
                     await agent.load_state(state)
-        if thread_id is None:
-            thread_id = str(uuid.uuid4())
-            self.agent_instance[thread_id] = agent
-        if hasattr(agent, "_thread_id"):
-            agent._thread_id = thread_id
-        if hasattr(agent, "_user_id"):
-            agent._user_id = user_id
-        
-        ## 为智能体添加数据库管理器
-        if hasattr(agent, "_db_manager"):
-            agent._db_manager = self.db_manager
-            if isinstance(agent, Team):
-                for participant in agent._participants:
-                    participant._db_manager = self.db_manager
-            else:
-                agent._db_manager = self.db_manager
-        
+
         ## 是否使用流式模式
         if isinstance(agent, Team) and stream:
             for participant in agent._participants:
@@ -298,16 +341,7 @@ class DrSai:
         else:
             if agent._model_client_stream != stream:
                 raise ValueError("Streaming mode is not supported when agent._model_client_stream is False")
-        
-        ## 判断是否为智能体添加前端的API_KEY
-        if self.use_api_key_mode == "frontend":
-            if hasattr(agent, "_model_client"):
-                agent._model_client._client.api_key = api_key
-            if hasattr(agent, "_participants"):
-                for participant in agent._participants:
-                    if hasattr(participant, "_model_client"):
-                        participant._model_client._client.api_key = api_key
-        
+            
         return agent, thread
 
     #### --- 关于DrSai的UI接口 --- ####

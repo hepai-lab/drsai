@@ -9,7 +9,8 @@ except ImportError:
     sys.path.append(drsai_path)
 
 
-from drsai import AssistantAgent, HepAIChatCompletionClient, DrSaiAPP
+from drsai import DrSaiAgent, HepAIChatCompletionClient, DrSaiAPP
+from drsai import DatabaseManager
 from drsai import RAGFlowMemory, RAGFlowMemoryConfig
 from autogen_core.model_context import (
     BufferedChatCompletionContext,)
@@ -24,7 +25,12 @@ RAGFLOW_TOKEN = os.getenv('RAGFLOW_TOKEN')
 
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
-async def create_agent() -> AssistantAgent:
+async def create_agent(
+    api_key: str = None, 
+    thread_id: str = None, 
+    user_id: str = None, 
+    db_manager: DatabaseManager = None
+    ) -> DrSaiAgent:
 
     model_client = HepAIChatCompletionClient(
         model="deepseek-ai/deepseek-v3-1",
@@ -40,7 +46,7 @@ async def create_agent() -> AssistantAgent:
     )
 
     # Create assistant agent with ChromaDB memory
-    assistant_agent = AssistantAgent(
+    assistant_agent = DrSaiAgent(
         name="assistant_agent",
         system_message="""你是一个高能物理BESIII实验分析软件BOSS8的问答助手， 你需要根据查询到记忆回答用户的相关问题，你的要求如下：
 1. 严格按照查询的到的记忆进行回复，禁止自己编造相关内容；

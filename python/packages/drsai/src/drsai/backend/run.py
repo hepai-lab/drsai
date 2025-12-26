@@ -27,6 +27,8 @@ from autogen_agentchat.base import (
     Team,)
 from drsai.configs import CONST
 
+from drsai.utils.utils import auto_worker_address
+
 here = Path(__file__).parent.resolve()
 
 ############################################
@@ -235,7 +237,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         try:
             agent: Team|ChatAgent = self.drsai.agent_instance.get(chat_id, None)
             if agent is None:
-                agent = await self.drsai._create_agent_instance()
+                agent = await self.drsai._create_agent_instance(api_key=api_key, thread_id=chat_id, user_id=run_info.get("email"),)
                 self.drsai.agent_instance[chat_id] = agent
             message = await agent.lazy_init(api_key=api_key, chat_id=chat_id, run_info=run_info)
             return {"status": True, "message": message}
@@ -451,9 +453,12 @@ async def run_worker(agent_factory: callable, **kwargs):
     )
     server = uvicorn.Server(config)
     # 在现有事件循环中启动服务
-    print(f"Enable HepAI worker: `http://{worker_args.host}:{worker_args.port}/apiv2`")
+    worker_address = auto_worker_address(worker_address='auto', host=worker_args.host, port=worker_args.port)
+    print(f"#####################Your Agent Server is ready!######################")
+    print(f"Enable HepAI worker URL: `{worker_address}/apiv2`")
     if enable_pipeline:
-        print(f"Enable OpenWebUI pipelines: `http://{worker_args.host}:{worker_args.port}/pipelines` with API-KEY: `{owebui_pipeline_app.api_key}`")
+        print(f"Enable OpenWebUI pipelines URL: `{worker_address}/pipelines` with API-KEY: `{owebui_pipeline_app.api_key}`")
+    print(f"#####################################################################")
     try:
         await server.serve()
     finally:
