@@ -25,7 +25,7 @@ class RAGFlowMemoryConfig(BaseModel):
     Configuration for ListMemory component.
     Args:
         name: The name of the memory instance (optional)
-        RAGFLOW_URL: The URL of the RAGFlow API (default: "https://aiweb01.ihep.ac.cn:886")
+        RAGFLOW_URL: The URL of the RAGFlow API (default: "https://ragflow.ihep.ac.cn/")
         RAGFLOW_TOKEN: The API token for RAGFlow (default: "")
         dataset_ids: The IDs of the datasets to search (optional, but either this or document_ids must be set)
         document_ids: The IDs of the documents to search (optional, but either this or dataset_ids must be set)
@@ -210,8 +210,7 @@ class RAGFlowMemory(Memory, Component[RAGFlowMemoryConfig]):
     ) -> UpdateContextResult:
         """Update the model context by appending memory content.
 
-        This method mutates the provided model_context by adding all memories as a
-        SystemMessage.
+        This method mutates the provided model_context by adding all memories as a UserMessage.
 
         Args:
             model_context: The context to update. Will be mutated if memories exist.

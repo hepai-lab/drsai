@@ -239,7 +239,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             if agent is None:
                 agent = await self.drsai._create_agent_instance(api_key=api_key, thread_id=chat_id, user_id=run_info.get("email"),)
                 self.drsai.agent_instance[chat_id] = agent
-            message = await agent.lazy_init(api_key=api_key, chat_id=chat_id, run_info=run_info)
+            message = await agent.lazy_init(api_key=api_key, thread_id=chat_id, run_info=run_info)
             return {"status": True, "message": message}
         except Exception as e:
             return {"status": False, "message": f"Lazy init error: {e}"}
