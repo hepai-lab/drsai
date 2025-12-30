@@ -1,6 +1,8 @@
 import { Dropdown, Tooltip } from "antd";
 import {
   Archive,
+  ChevronDown,
+  ChevronUp,
   Edit,
   FileText,
   InfoIcon,
@@ -74,6 +76,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { user } = React.useContext(appContext);
   const [isProfileModalOpen, setIsProfileModalOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
+  const [isAgentsExpanded, setIsAgentsExpanded] = React.useState(true);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -378,118 +381,146 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {Array.isArray(agents) && agents.length > 0 && (
             <div className="px-3 pt-2">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-primary font-medium">Agents</span>
-                <span className="text-xs text-secondary bg-tertiary/30 px-2 py-0.5 rounded">{agents.length}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-primary font-medium">Agents</span>
+                  <span className="text-xs text-secondary bg-tertiary/30 px-2 py-0.5 rounded">
+                    {agents.length}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  aria-label={isAgentsExpanded ? "Collapse agents" : "Expand agents"}
+                  className="text-secondary hover:text-primary text-sm px-2 py-0.5 rounded select-none hover:bg-tertiary/20 transition-colors"
+                  onClick={() => setIsAgentsExpanded((v) => !v)}
+                >
+                  {isAgentsExpanded ? (
+                    <ChevronUp className="w-4 h-4" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4" />
+                  )}
+                </button>
               </div>
-              <div className="grid grid-cols-1 gap-1">
-                {agents.map((agent) => {
-                  // 对于 type === "add" 的自定义智能体，使用 id 或 name 来判断选中状态
-                  // 对于其他智能体，使用 mode 来判断选中状态
-                  let isSelected = false;
-                  if (agent.type === "add") {
-                    // 自定义智能体优先使用 id，如果没有 id 则使用 name
-                    if (agent.id && selectedAgent?.id) {
-                      isSelected = agent.id === selectedAgent.id;
-                    } else if (selectedAgent?.name) {
-                      isSelected = agent.name === selectedAgent.name && selectedAgentMode === agent.mode;
+              {isAgentsExpanded && (
+                <div className="grid grid-cols-1 gap-1">
+                  {agents.map((agent) => {
+                    // 对于 type === "add" 的自定义智能体，使用 id 或 name 来判断选中状态
+                    // 对于其他智能体，使用 mode 来判断选中状态
+                    let isSelected = false;
+                    if (agent.type === "add") {
+                      // 自定义智能体优先使用 id，如果没有 id 则使用 name
+                      if (agent.id && selectedAgent?.id) {
+                        isSelected = agent.id === selectedAgent.id;
+                      } else if (selectedAgent?.name) {
+                        isSelected =
+                          agent.name === selectedAgent.name && selectedAgentMode === agent.mode;
+                      } else {
+                        isSelected = false;
+                      }
                     } else {
-                      isSelected = false;
+                      // 非自定义智能体使用 mode 判断
+                      isSelected = selectedAgentMode === agent.mode;
                     }
-                  } else {
-                    // 非自定义智能体使用 mode 判断
-                    isSelected = selectedAgentMode === agent.mode;
-                  }
-                  const icon = getAgentIcon(agent.mode || "");
-                  // 使用唯一标识作为 key：优先使用 id，其次使用 mode + name
-                  const agentKey = agent.id || (agent.mode && agent.name ? `${agent.mode}-${agent.name}` : agent.mode) || `agent-${agent.name}`;
-                  return (
-                    <div key={agentKey} className="relative group">
-                      <button
-                        type="button"
-                        onClick={() => onAgentClick && onAgentClick(agent)}
-                        className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-colors duration-150 ${isSelected ? "bg-[#e7e5f2] text-[#4d3dc3] hover:bg-[#e7e5f2]" : "text-[#4a5568] hover:bg-[#f9fafb]"}`}
-                      >
-                        {agent.logo ? (
-                          <img
-                            src={agent.logo}
-                            alt={agent.name}
-                            className="w-6 h-6 rounded"
-                            style={{
-                              padding: "2px",
-                              filter: agent.mode === "magentic-one" ? "brightness(0) saturate(100%)" : "none",
-                            }}
-                          />
-                        ) : icon ? (
-                          <img
-                            src={icon}
-                            alt={agent.name}
-                            className="w-6 h-6"
-                            style={{
-                              borderRadius: "4px",
-                              padding: "2px",
-                              filter: agent.mode === "magentic-one" ? "brightness(0) saturate(100%)" : "none",
-                            }}
-                          />
-                        ) : (
-                          <div className="w-6 h-6 rounded bg-tertiary/40 flex items-center justify-center">
-                            <span className="text-xs font-medium text-secondary">
-                              {agent.name.charAt(0).toUpperCase()}
-                            </span>
+                    const icon = getAgentIcon(agent.mode || "");
+                    // 使用唯一标识作为 key：优先使用 id，其次使用 mode + name
+                    const agentKey =
+                      agent.id ||
+                      (agent.mode && agent.name ? `${agent.mode}-${agent.name}` : agent.mode) ||
+                      `agent-${agent.name}`;
+                    return (
+                      <div key={agentKey} className="relative group">
+                        <button
+                          type="button"
+                          onClick={() => onAgentClick && onAgentClick(agent)}
+                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-colors duration-150 ${isSelected ? "bg-[#e7e5f2] text-[#4d3dc3] hover:bg-[#e7e5f2]" : "text-[#4a5568] hover:bg-[#f9fafb]"}`}
+                        >
+                          {agent.logo ? (
+                            <img
+                              src={agent.logo}
+                              alt={agent.name}
+                              className="w-6 h-6 rounded"
+                              style={{
+                                padding: "2px",
+                                filter:
+                                  agent.mode === "magentic-one"
+                                    ? "brightness(0) saturate(100%)"
+                                    : "none",
+                              }}
+                            />
+                          ) : icon ? (
+                            <img
+                              src={icon}
+                              alt={agent.name}
+                              className="w-6 h-6"
+                              style={{
+                                borderRadius: "4px",
+                                padding: "2px",
+                                filter:
+                                  agent.mode === "magentic-one"
+                                    ? "brightness(0) saturate(100%)"
+                                    : "none",
+                              }}
+                            />
+                          ) : (
+                            <div className="w-6 h-6 rounded bg-tertiary/40 flex items-center justify-center">
+                              <span className="text-xs font-medium text-secondary">
+                                {agent.name.charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex-1 text-left">
+                            <div className="truncate font-medium">{agent.name}</div>
+                          </div>
+                        </button>
+
+                        {agent.type === "add" && isSelected && (
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Dropdown
+                              trigger={["hover"]}
+                              menu={{
+                                items: [
+                                  {
+                                    key: "delete",
+                                    label: (
+                                      <>
+                                        <Trash2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />{" "}
+                                        Delete
+                                      </>
+                                    ),
+                                    onClick: (e) => {
+                                      e.domEvent.stopPropagation();
+                                      if (onDeleteAgent && agent.id) {
+                                        onDeleteAgent(agent.id);
+                                      }
+                                    },
+                                    danger: true,
+                                  },
+                                ],
+                              }}
+                              placement="bottomRight"
+                            >
+                              <Button
+                                variant="tertiary"
+                                size="sm"
+                                icon={<MoreVertical className="w-3.5 h-3.5 text-secondary" />}
+                                onClick={(e) => e.stopPropagation()}
+                                onFocus={(e) => e.target.blur()}
+                                className="!p-0 min-w-[20px] h-5 hover:bg-tertiary/30"
+                                style={{
+                                  outline: "none",
+                                  border: "none",
+                                  boxShadow: "none",
+                                  "--tw-ring-shadow": "0 0 #0000",
+                                  "--tw-ring-offset-shadow": "0 0 #0000",
+                                } as React.CSSProperties}
+                              />
+                            </Dropdown>
                           </div>
                         )}
-                        <div className="flex-1 text-left">
-                          <div className="truncate font-medium">{agent.name}</div>
-                        </div>
-                      </button>
-
-                      {agent.type === "add" && isSelected && (
-                        <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Dropdown
-                            trigger={["hover"]}
-                            menu={{
-                              items: [
-                                {
-                                  key: "delete",
-                                  label: (
-                                    <>
-                                      <Trash2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5" />{" "}
-                                      Delete
-                                    </>
-                                  ),
-                                  onClick: (e) => {
-                                    e.domEvent.stopPropagation();
-                                    if (onDeleteAgent && agent.id) {
-                                      onDeleteAgent(agent.id);
-                                    }
-                                  },
-                                  danger: true,
-                                },
-                              ],
-                            }}
-                            placement="bottomRight"
-                          >
-                            <Button
-                              variant="tertiary"
-                              size="sm"
-                              icon={<MoreVertical className="w-3.5 h-3.5 text-secondary" />}
-                              onClick={(e) => e.stopPropagation()}
-                              onFocus={(e) => e.target.blur()}
-                              className="!p-0 min-w-[20px] h-5 hover:bg-tertiary/30"
-                              style={{
-                                outline: 'none',
-                                border: 'none',
-                                boxShadow: 'none',
-                                '--tw-ring-shadow': '0 0 #0000',
-                                '--tw-ring-offset-shadow': '0 0 #0000'
-                              } as React.CSSProperties}
-                            />
-                          </Dropdown>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
           <div className="flex-shrink-0 px-3 pt-2">
