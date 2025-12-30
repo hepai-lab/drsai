@@ -104,6 +104,7 @@ class DrSaiAgentConfig(BaseModel):
     model_client_stream: bool = False
     reflect_on_tool_use: bool
     tool_call_summary_format: str
+    tool_call_summary_prompt: str| None = None,
     metadata: Dict[str, str] | None = None
     structured_message_factory: ComponentModel | None = None
     db_manager_config: DatabaseManagerConfig | None = None
@@ -717,6 +718,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             agent_name=agent_name,
         )
         if handoff_output:
+            yield ModelClientStreamingChunkEvent(content=handoff_output.chat_message.content, source=agent_name)
             yield handoff_output
             return
 
@@ -1104,6 +1106,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             model_client_stream=self._model_client_stream,
             reflect_on_tool_use=self._reflect_on_tool_use,
             tool_call_summary_format=self._tool_call_summary_format,
+            tool_call_summary_prompt=self._tool_call_summary_prompt,
             structured_message_factory=self._structured_message_factory.dump_component()
             if self._structured_message_factory
             else None,
@@ -1142,6 +1145,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             model_client_stream=config.model_client_stream,
             reflect_on_tool_use=config.reflect_on_tool_use,
             tool_call_summary_format=config.tool_call_summary_format,
+            tool_call_summary_prompt=config.tool_call_summary_prompt,
             output_content_type=output_content_type,
             output_content_type_format=format_string,
             metadata=config.metadata,

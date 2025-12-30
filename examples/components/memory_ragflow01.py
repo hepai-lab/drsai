@@ -1,5 +1,5 @@
 from drsai import RAGFlowMemory, RAGFlowMemoryConfig
-from autogen_core.memory._base_memory import (MemoryQueryResult)
+from drsai.modules.components.memory import (MemoryQueryResult)
 import os
 import asyncio
 from dotenv import load_dotenv

@@ -13,7 +13,7 @@ def create_agent(
         thread_id: str = None, 
         user_id: str = None, 
         db_manager: DatabaseManager = None
-        ) -> DrSaiAgent:
+    ) -> DrSaiAgent:
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.

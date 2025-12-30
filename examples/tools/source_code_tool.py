@@ -1,4 +1,5 @@
 from autogen_core.tools._function_tool import FunctionTool, FunctionToolConfig
+from drsai.modules.components.tool import FunctionTool, StaticWorkbench
 from autogen_core.tools import StaticWorkbench
 from autogen_core.code_executor._func_with_reqs import (
     Import, 
