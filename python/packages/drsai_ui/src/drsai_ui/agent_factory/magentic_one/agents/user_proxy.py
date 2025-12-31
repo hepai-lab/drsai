@@ -229,9 +229,9 @@ class RoundbinDrSaiUserProxyAgent(BaseChatAgent, Component[UserProxyAgentConfig]
 
             # Return appropriate message type based on handoff presence
             if handoff:
-                yield Response(chat_message=HandoffMessage(content=last_user_message_format.content, target=handoff.source, source=self.name, metadata={"user_request":last_user_message_format.to_str()}))
+                yield Response(chat_message=HandoffMessage(content=user_input, target=handoff.source, source=self.name, metadata={"content":last_user_message_format.content,"user_request":last_user_message_format.to_str()}))
             else:
-                yield Response(chat_message=TextMessage(content=last_user_message_format.content, source=self.name, metadata={"user_request":last_user_message_format.to_str()}))
+                yield Response(chat_message=TextMessage(content=user_input, source=self.name, metadata={"content":last_user_message_format.content,"user_request":last_user_message_format.to_str()}))
 
         except asyncio.CancelledError:
             # raise

@@ -15,16 +15,18 @@ from ..initialization import AppInitializer
 from ..deps import get_db
 from ...datamodel.db import UserFiles
 
+from openai import OpenAI
+from .....drsai_adapter.singleton import personal_key_config_fetcher as fetcher
+
 router = APIRouter()
 initializer=None
 
 def upload_to_filesystem(file_path: str, user_id: str) -> Dict[str, Any]:
-    from openai import OpenAI
-    from .....drsai_adapter.singleton import personal_key_config_fetcher as fetcher
-                
+
+    SERVICE_MODE = os.getenv("SERVICE_MODE", "DEV")    
     client = OpenAI(
         base_url="https://aiapi.ihep.ac.cn/apiv2",
-        api_key= fetcher.get_personal_key(username=user_id)
+        api_key= fetcher.get_personal_key(username=user_id) if SERVICE_MODE == "PROD" else os.environ.get("HEPAI_API_KEY")
     )
 
     file_obj = client.files.create(
@@ -58,7 +60,7 @@ async def upload_files(
             
             # 首先判断文件大小是否超过了10MB
             if file.size > 10485760:
-                raise HTTPException(status_code=413, detail="单个文件大小不能超过10MB，需要使用知识库进行上传：https://aiweb01.ihep.ac.cn:886/knowledge(Size limit exceeded 10MB)")
+                raise HTTPException(status_code=413, detail="单个文件大小不能超过10MB，需要使用知识库进行上传：https://ragflow.ihep.ac.cn(Size limit exceeded 10MB)")
             
             file_path = os.path.join(userfiles_path, file.filename)
             file_id = str(uuid.uuid4())
@@ -66,18 +68,18 @@ async def upload_files(
                 shutil.copyfileobj(file.file, buffer)
             
             # 顺便上传到文件系统
-            # SERVICE_MODE = os.getenv("SERVICE_MODE", None)
-            # if SERVICE_MODE == "PROD":
-            #     file_obj = upload_to_filesystem(file_path, user_id)
-            # else:
-            #     file_obj = None
+            USE_HEPAI_FILE = os.getenv("USE_HEPAI_FILE", False)
+            if USE_HEPAI_FILE:
+                file_obj = upload_to_filesystem(file_path, user_id)
+            else:
+                file_obj = None
 
             file_info[file_id] = {
                 "name": file.filename,
                 "path": file_path,
                 "suffix": os.path.splitext(file.filename)[1],
                 "size": os.path.getsize(file_path),
-                # "hepai_file_obj": file_obj
+                "hepai_file_obj": file_obj
             }
         
         # 保存文件到数据库

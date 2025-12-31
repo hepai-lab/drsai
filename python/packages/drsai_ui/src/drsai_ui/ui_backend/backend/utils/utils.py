@@ -84,29 +84,31 @@ def construct_task(
         Sequence[ChatMessage]: A list of ChatMessages that combines all files and the query.
     """
 
-    # get file system with OpenAI style
-    file_system_config = settings_config.get("file_system", {})
-    ## NOTE: currently only support hepai file system
-    if not file_system_config:
-        file_system_config = {
-            "type": "hepai",
-            "api_key": os.getenv("HEPAI_API_KEY"),
-            "base_url": "https://aiapi.ihep.ac.cn/apiv2",
-        }
-        if isinstance(settings_config.get("model_configs"), str):
-            try:
-                model_configs = yaml.safe_load(settings_config["model_configs"])
-                model_config = model_configs.get("model_config", {})
-                file_system_config["api_key"] = model_config.get("config", {}).get("api_key")
-            except Exception as e:
-                logger.error(f"Error loading model configs: {e}")
-                raise e
-    elif file_system_config.get("type") in ["hepai", "openai"]:
-        pass
-    elif file_system_config.get("type") == "local":
-        pass
-    else:
-        raise ValueError(f"Unknown file system type: {file_system_config.get('type')}")
+    # # get file system with OpenAI style
+    # file_system_config = settings_config.get("file_system", {})
+    # ## NOTE: currently only support hepai file system
+    # if not file_system_config and os.getenv("USE_HEPAI_FILE"):
+    #     file_system_config = {
+    #         "type": "hepai",
+    #         "api_key": os.getenv("HEPAI_API_KEY"),
+    #         "base_url": "https://aiapi.ihep.ac.cn/apiv2",
+    #     }
+    #     if isinstance(settings_config.get("model_configs"), str):
+    #         try:
+    #             model_configs = yaml.safe_load(settings_config["model_configs"])
+    #             model_config = model_configs.get("model_config", {})
+    #             file_system_config["api_key"] = model_config.get("config", {}).get("api_key")
+    #         except Exception as e:
+    #             logger.error(f"Error loading model configs: {e}")
+    #             raise e
+    # elif file_system_config.get("type") in ["hepai", "openai"]:
+    #     # TODO: add support for other file systems
+    #     pass
+    # elif file_system_config.get("type") == "local":
+    #     # TODO: add support for local file system
+    #     pass
+    # else:
+    #     raise ValueError(f"Unknown file system type: {file_system_config.get('type')}")
 
 
     if files is None:
@@ -145,40 +147,50 @@ def construct_task(
                         }
                     )
                 except Exception as e:
-                    # update to hepai file system
-                    if file_system_config.get("type") == "hepai":
-                        api_key = file_system_config.get("api_key")
-                        base_url = file_system_config.get("base_url")
-                        file_obj = upload_to_hepai_filesystem(
-                            api_key=api_key, 
-                            base_url=base_url,
-                            file_content=file["content"], 
-                            file_name=file.get("name", "unknown.file"), 
-                        )
-                        text_parts.append(
-                            f"Attached file: {file.get('name', 'unknown.file')} (uploaded to HepAI)"
-                        )
-                        attached_files.append(
-                            {
-                                "name": file.get("name", "unknown.file"),
-                                "type": file.get("type", "text"),
-                                "file_obj": file_obj
-                            }
-                        )
-                    # elif api_key and base_url:
-                    #     # TODO: implement other file systems
-                    #     raise NotImplementedError("Other file system is not implemented")
-                    else:
-                        logger.error(f"Error processing file content: {str(e)}")
-                        text_parts.append(
-                            f"Attached file: {file.get('name', 'unknown.file')} (failed to process content)"
-                        )
-                        attached_files.append(
-                            {
-                                "name": file.get("name", "unknown.file"),
-                                "type": file.get("type", "text"),
-                            }
-                        )
+                    logger.error(f"Error processing file content: {str(e)}")
+                    text_parts.append(
+                        f"Attached file: {file.get('name', 'unknown.file')} (failed to process content)"
+                    )
+                    attached_files.append(
+                        {
+                            "name": file.get("name", "unknown.file"),
+                            "type": file.get("type", "text"),
+                        }
+                    )
+                    # # update to hepai file system
+                    # if file_system_config.get("type") == "hepai":
+                    #     api_key = file_system_config.get("api_key")
+                    #     base_url = file_system_config.get("base_url")
+                    #     file_obj = upload_to_hepai_filesystem(
+                    #         api_key=api_key, 
+                    #         base_url=base_url,
+                    #         file_content=file["content"], 
+                    #         file_name=file.get("name", "unknown.file"), 
+                    #     )
+                    #     text_parts.append(
+                    #         f"Attached file: {file.get('name', 'unknown.file')} (uploaded to HepAI)"
+                    #     )
+                    #     attached_files.append(
+                    #         {
+                    #             "name": file.get("name", "unknown.file"),
+                    #             "type": file.get("type", "text"),
+                    #             "file_obj": file_obj
+                    #         }
+                    #     )
+                    # # elif api_key and base_url:
+                    # #     # TODO: implement other file systems
+                    # #     raise NotImplementedError("Other file system is not implemented")
+                    # else:
+                    #     logger.error(f"Error processing file content: {str(e)}")
+                    #     text_parts.append(
+                    #         f"Attached file: {file.get('name', 'unknown.file')} (failed to process content)"
+                    #     )
+                    #     attached_files.append(
+                    #         {
+                    #             "name": file.get("name", "unknown.file"),
+                    #             "type": file.get("type", "text"),
+                    #         }
+                    #     )
         except Exception as e:
             logger.error(f"Error processing file {file.get('name')}: {str(e)}")
 

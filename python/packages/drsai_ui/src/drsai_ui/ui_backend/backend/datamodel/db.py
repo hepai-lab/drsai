@@ -3,11 +3,12 @@
 from datetime import datetime
 from enum import Enum
 from typing import Any, List, Optional, Union
+import uuid
 
 from autogen_core import ComponentModel
 from pydantic import field_serializer
 from sqlalchemy import ForeignKey, Integer
-from sqlmodel import JSON, Column, DateTime, Field, SQLModel, func
+from sqlmodel import JSON, Column, DateTime, Field, SQLModel, String, func
 
 from .types import (
     GalleryConfig,
@@ -25,6 +26,10 @@ from .types import (
 class Team(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )  # pylint: disable=not-callable
@@ -40,6 +45,10 @@ class Team(SQLModel, table=True):
 class Message(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )  # pylint: disable=not-callable
@@ -69,6 +78,10 @@ class Message(SQLModel, table=True):
 class Session(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )  # pylint: disable=not-callable
@@ -113,6 +126,10 @@ class Run(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )
@@ -165,6 +182,10 @@ class Run(SQLModel, table=True):
 class Gallery(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )  # pylint: disable=not-callable
@@ -195,6 +216,10 @@ class Gallery(SQLModel, table=True):
 class Settings(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )  # pylint: disable=not-callable
@@ -212,6 +237,10 @@ class Settings(SQLModel, table=True):
 class Plan(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )  # pylint: disable=not-callable
@@ -239,6 +268,10 @@ class Plan(SQLModel, table=True):
 class AgentModeSettings(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )  # pylint: disable=not-callable
@@ -255,6 +288,10 @@ class AgentModeSettings(SQLModel, table=True):
 class AgentModeConfig(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )  # pylint: disable=not-callable
@@ -274,6 +311,10 @@ class AgentModeConfig(SQLModel, table=True):
 class UserFiles(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )  # pylint: disable=not-callable
@@ -294,6 +335,10 @@ class UserFiles(SQLModel, table=True):
 class UserAgents(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )  # pylint: disable=not-callable
@@ -310,6 +355,10 @@ class UserAgents(SQLModel, table=True):
 class UserDDFAgents(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )  # pylint: disable=not-callable

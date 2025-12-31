@@ -415,10 +415,10 @@ async def create_magentic_round_team(
     agent_config: Dict[str, Any] = agent_mode_config.get("config", {})
     
     # 配置chat_id
-    user_id = run_info.pop("user_id")
-    session_id = run_info.get("session_id")
-    chat_id = str(user_id)+str(session_id)
+    # session_id = run_info.get("session_id")
+    chat_id = run_info.get("uuid")
     # 配置用户信息
+    user_id = run_info.pop("user_id")
     run_info["name"] = user_id
     run_info["email"] = user_id
     

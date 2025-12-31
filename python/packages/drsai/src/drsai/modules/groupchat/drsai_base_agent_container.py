@@ -164,6 +164,10 @@ class DrSaiChatAgentContainer(SequentialRoutedAgent):
             # Publish the response to the group chat.
             self._message_buffer.clear()
 
+            if msg.chat_message.source=="user_proxy":
+                if msg.chat_message.metadata.get("user_request"):
+                    msg.chat_message.content = msg.chat_message.metadata.get("content")
+
             if isinstance(response.chat_message, AgentLongTaskMessage):
                 # 发布到专门的长任务 topic
                 await self.publish_message(
