@@ -8,7 +8,6 @@ import {
   Session,
 } from "../../../types/datamodel";
 import { IPlan, IPlanStep, convertPlanStepsToJsonString } from "../../../types/plan";
-import { convertFilesToBase64 } from "../../../utils";
 import { GeneralConfig, useSettingsStore } from "../../../store";
 import { settingsAPI } from "../../api";
 import { AgentModeConfig, DEFAULT_AGENT_MODE_CONFIG } from "@/utils/agent";
@@ -74,7 +73,15 @@ export const useTaskActions = ({
       response: string,
       accepted = false,
       plan?: IPlan,
-      files: RcFile[] = []
+      files: RcFile[] | Array<{
+        name: string;
+        type: string;
+        path: string;
+        suffix: string;
+        size: number;
+        uuid: string;
+        url?: string;
+      }> = []
     ) => {
       if (!currentRun) {
         handleError(new Error("No active run"));
@@ -101,7 +108,10 @@ export const useTaskActions = ({
           planString = convertPlanStepsToJsonString(updatedPlan);
         }
 
-        const processedFiles = await convertFilesToBase64(files);
+        console.log("files:::1112244", files);
+        
+        // Use files directly (already in the correct format from upload)
+        const processedFiles = files && files.length > 0 ? files : [];
 
         const responseJson = {
           accepted: accepted,
@@ -294,7 +304,15 @@ export const useTaskActions = ({
   const runTask = React.useCallback(
     async (
       query: string,
-      files: RcFile[] = [],
+      files: RcFile[] | Array<{
+        name: string;
+        type: string;
+        path: string;
+        suffix: string;
+        size: number;
+        uuid: string;
+        url?: string;
+      }> = [],
       plan?: IPlan,
       fresh_socket: boolean = false
     ) => {
@@ -345,7 +363,10 @@ export const useTaskActions = ({
           checkState();
         });
 
-        const processedFiles = await convertFilesToBase64(files);
+        console.log("files:::11122457777", files);
+        
+        // Use files directly (already in the correct format from upload)
+        const processedFiles = files && files.length > 0 ? files : [];
 
         const planString = plan
           ? convertPlanStepsToJsonString(plan.steps)

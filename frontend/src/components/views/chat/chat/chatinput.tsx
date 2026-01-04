@@ -42,7 +42,15 @@ import PlanPreview from "./components/PlanPreview";
 interface ChatInputProps {
   onSubmit: (
     text: string,
-    files: RcFile[],
+    files: RcFile[] | Array<{
+      name: string;
+      type: string;
+      path: string;
+      suffix: string;
+      size: number;
+      uuid: string;
+      url?: string;
+    }>,
     accepted?: boolean,
     plan?: IPlan
   ) => void;
@@ -105,6 +113,7 @@ const ChatInput = React.forwardRef<
       handlePaste,
       removeFile,
       clearFiles,
+      uploadedFilesInfo,
     } = useFileUpload({
       enable_upload,
       isInputDisabled,
@@ -229,14 +238,22 @@ const ChatInput = React.forwardRef<
 
     const submitInternal = (
       query: string,
-      files: RcFile[],
+      files: RcFile[] | Array<{
+        name: string;
+        type: string;
+        path: string;
+        suffix: string;
+        size: number;
+        uuid: string;
+        url?: string;
+      }>,
       accepted: boolean,
       doResetInput: boolean = true
     ) => {
       if (attachedPlan) {
-        onSubmit(query, files, accepted, attachedPlan);
+        onSubmit(query, files as any, accepted, attachedPlan);
       } else {
-        onSubmit(query, files, accepted);
+        onSubmit(query, files as any, accepted);
       }
 
       if (doResetInput) {
@@ -246,7 +263,6 @@ const ChatInput = React.forwardRef<
     };
 
     const handleSubmit = async () => {
-      console.log("handleSubmit:::111", textAreaRef.current?.value, fileList, enable_upload);
       if (
         (textAreaRef.current?.value || fileList.length > 0) &&
         !isInputDisabled
@@ -261,8 +277,6 @@ const ChatInput = React.forwardRef<
           query = "请帮我分析这些文件。";
         }
 
-        console.log("files:::111", files, enable_upload);
-
         // 注意：文件上传已经在 handleFileValidationAndAdd 中处理了
         // 这里只需要检查是否有上传失败的文件
         const hasErrorFiles = fileList.some((f) => f.status === "error");
@@ -270,8 +284,34 @@ const ChatInput = React.forwardRef<
           message.warning("部分文件上传失败，请检查后重试");
         }
 
-        // 直接提交，文件已经在上传时处理了
-        submitInternal(query, files, false);
+        // 使用上传后的文件信息（如果已上传），否则使用原始文件
+        // 只使用已成功上传的文件信息（status === "done"）
+        const successfullyUploadedFiles = fileList.filter(
+          (f) => f.status === "done" && f.originFileObj
+        );
+
+        // 优先使用 fileList 中存储的 response（上传结果），如果没有则从 uploadedFilesInfo 中匹配
+        const filesToUse = successfullyUploadedFiles.length > 0
+          ? successfullyUploadedFiles
+            .map((file) => {
+              // 优先使用 file.response（上传时存储的结果）
+              if (file.response) {
+                return file.response;
+              }
+              // 否则从 uploadedFilesInfo 中根据文件名匹配
+              return uploadedFilesInfo?.find((info) => info.name === file.name);
+            })
+            .filter((info): info is NonNullable<typeof info> => info !== undefined)
+          : [];
+
+        console.log("handleSubmit - fileList:", fileList);
+        console.log("handleSubmit - uploadedFilesInfo:", uploadedFilesInfo);
+        console.log("handleSubmit - successfullyUploadedFiles:", successfullyUploadedFiles);
+        console.log("handleSubmit - filesToUse:", filesToUse);
+        console.log("handleSubmit - enable_upload:", enable_upload);
+
+        // 直接提交，将上传后的文件信息传递给 files 参数
+        submitInternal(query, filesToUse as any, false, true);
       }
     };
 

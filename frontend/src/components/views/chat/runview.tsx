@@ -35,11 +35,27 @@ interface RunViewProps {
     query: string,
     accepted?: boolean,
     plan?: IPlan,
-    files?: RcFile[] // 添加files参数
+    files?: RcFile[] | Array<{
+      name: string;
+      type: string;
+      path: string;
+      suffix: string;
+      size: number;
+      uuid: string;
+      url?: string;
+    }>
   ) => void;
   onRunTask?: (
     query: string,
-    files: RcFile[],
+    files: RcFile[] | Array<{
+      name: string;
+      type: string;
+      path: string;
+      suffix: string;
+      size: number;
+      uuid: string;
+      url?: string;
+    }>,
     plan?: IPlan,
     fresh_socket?: boolean
   ) => void;
@@ -962,7 +978,15 @@ const RunView: React.FC<RunViewProps> = ({
             ref={chatInputRef}
             onSubmit={(
               query: string,
-              files: RcFile[],
+              files: RcFile[] | Array<{
+                name: string;
+                type: string;
+                path: string;
+                suffix: string;
+                size: number;
+                uuid: string;
+                url?: string;
+              }>,
               accepted = false,
               plan?: IPlan
             ) => {

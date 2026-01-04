@@ -118,23 +118,3 @@ export const fetchVersion = () => {
     });
 };
 
-export const convertFilesToBase64 = async (files: RcFile[] = []) => {
-  return Promise.all(
-    files.map(async (file) => {
-      return new Promise<{ name: string; content: string; type: string }>(
-        (resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            // Extract base64 content from reader result
-            const base64Content = reader.result as string;
-            // Remove the data URL prefix (e.g., "data:image/png;base64,")
-            const base64Data = base64Content.split(",")[1] || base64Content;
-            resolve({ name: file.name, content: base64Data, type: file.type });
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        }
-      );
-    })
-  );
-};

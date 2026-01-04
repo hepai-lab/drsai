@@ -28,6 +28,15 @@ interface UseFileUploadReturn {
   ) => Promise<void>;
   removeFile: (uid: string) => void;
   clearFiles: () => void;
+  uploadedFilesInfo: Array<{
+    name: string;
+    type: string;
+    path: string;
+    suffix: string;
+    size: number;
+    uuid: string;
+    url?: string;
+  }>;
 }
 
 export const useFileUpload = ({
@@ -38,6 +47,15 @@ export const useFileUpload = ({
 }: UseFileUploadProps): UseFileUploadReturn => {
   const [fileList, setFileList] = React.useState<UploadFile[]>([]);
   const [isUploading, setIsUploading] = React.useState(false);
+  const [uploadedFilesInfo, setUploadedFilesInfo] = React.useState<Array<{
+    name: string;
+    type: string;
+    path: string;
+    suffix: string;
+    size: number;
+    uuid: string;
+    url?: string;
+  }>>([]);
   const [notificationApi, notificationContextHolder] =
     notification.useNotification();
 
@@ -81,10 +99,27 @@ export const useFileUpload = ({
         const result = await fileAPI.saveFilesToServer(userId, [file], sessionId);
         console.log("result:::", result);
 
+        // Store uploaded file info
+        if (result && result.length > 0) {
+          console.log("useFileUpload - storing uploaded file info:", result);
+          setUploadedFilesInfo((prev) => {
+            const newInfo = [...prev, ...result];
+            console.log("useFileUpload - updated uploadedFilesInfo:", newInfo);
+            return newInfo;
+          });
+        }
+
         // Update file status to done after successful upload
+        // Also store the uploaded file info in the file's response field for easier matching
         setFileList((prev) =>
           prev.map((f) =>
-            f.uid === fileUid ? { ...f, status: "done" as const } : f
+            f.uid === fileUid
+              ? {
+                ...f,
+                status: "done" as const,
+                response: result && result.length > 0 ? result[0] : undefined
+              }
+              : f
           )
         );
 
@@ -270,10 +305,26 @@ export const useFileUpload = ({
                 try {
                   const result = await fileAPI.saveFilesToServer(userId, [file], sessionId);
                   console.log("result2:::", result);
+                  // Store uploaded file info
+                  if (result && result.length > 0) {
+                    console.log("useFileUpload (paste) - storing uploaded file info:", result);
+                    setUploadedFilesInfo((prev) => {
+                      const newInfo = [...prev, ...result];
+                      console.log("useFileUpload (paste) - updated uploadedFilesInfo:", newInfo);
+                      return newInfo;
+                    });
+                  }
                   // Update file status to done after successful upload
+                  // Also store the uploaded file info in the file's response field for easier matching
                   setFileList((prev) =>
                     prev.map((f) =>
-                      f.uid === fileUid ? { ...f, status: "done" as const } : f
+                      f.uid === fileUid
+                        ? {
+                          ...f,
+                          status: "done" as const,
+                          response: result && result.length > 0 ? result[0] : undefined
+                        }
+                        : f
                     )
                   );
                 } catch (error) {
@@ -326,7 +377,14 @@ export const useFileUpload = ({
    * Remove file from list
    */
   const removeFile = (uid: string) => {
+    const fileToRemove = fileList.find((item) => item.uid === uid);
     setFileList(fileList.filter((item) => item.uid !== uid));
+    // Also remove from uploadedFilesInfo if it exists
+    if (fileToRemove) {
+      setUploadedFilesInfo((prev) =>
+        prev.filter((info) => info.name !== fileToRemove.name)
+      );
+    }
   };
 
   /**
@@ -334,6 +392,7 @@ export const useFileUpload = ({
    */
   const clearFiles = () => {
     setFileList([]);
+    setUploadedFilesInfo([]);
   };
 
   return {
@@ -345,6 +404,7 @@ export const useFileUpload = ({
     handlePaste,
     removeFile,
     clearFiles,
+    uploadedFilesInfo,
   };
 };
 

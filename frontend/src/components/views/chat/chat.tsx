@@ -491,7 +491,15 @@ export default function ChatView({
               chatInputRef={chatInputRef}
               onSubmit={(
                 query: string,
-                files: RcFile[],
+                files: RcFile[] | Array<{
+                  name: string;
+                  type: string;
+                  path: string;
+                  suffix: string;
+                  size: number;
+                  uuid: string;
+                  url?: string;
+                }>,
                 accepted = false,
                 plan?: IPlan
               ) => {

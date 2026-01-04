@@ -8,7 +8,15 @@ import { useModeConfigStore } from "@/store/modeConfig";
 
 interface NewChatViewProps {
     agent: Agent;
-    onSubmit: (agent: Agent, query: string, files: RcFile[], plan?: IPlan) => Promise<void>;
+    onSubmit: (agent: Agent, query: string, files: RcFile[] | Array<{
+        name: string;
+        type: string;
+        path: string;
+        suffix: string;
+        size: number;
+        uuid: string;
+        url?: string;
+    }>, plan?: IPlan) => Promise<void>;
 }
 
 /**
@@ -110,16 +118,24 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
 
     const handleSubmit = async (
         query: string,
-        files: RcFile[],
+        files: RcFile[] | Array<{
+            name: string;
+            type: string;
+            path: string;
+            suffix: string;
+            size: number;
+            uuid: string;
+            url?: string;
+        }>,
         accepted: boolean = false,
         plan?: IPlan
     ) => {
         // 允许只发送文件（没有文本）
-        if (isSubmitting || (!query.trim() && files.length === 0)) return;
+        if (isSubmitting || (!query.trim() && (Array.isArray(files) ? files.length === 0 : false))) return;
 
         // 如果只有文件没有文字，添加默认提示
         let finalQuery = query;
-        if (!query.trim() && files.length > 0) {
+        if (!query.trim() && Array.isArray(files) && files.length > 0) {
             finalQuery = "请帮我分析这些文件。";
         }
 
