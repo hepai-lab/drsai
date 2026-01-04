@@ -125,6 +125,8 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
 
         setIsSubmitting(true);
         try {
+            // 注意：文件上传逻辑已经在 ChatInput 组件内部处理了
+            // 这里只需要调用 onSubmit，不需要再次上传文件
             // 传递完整的 agent，确保使用的是包含完整配置的 agent
             await onSubmit(fullAgent, finalQuery, files, plan);
         } finally {

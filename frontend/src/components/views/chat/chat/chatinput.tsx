@@ -13,6 +13,7 @@ import {
   Modal,
   Dropdown,
   Menu,
+  message,
 } from "antd";
 import type { UploadProps, RcFile } from "antd/es/upload/interface";
 import {
@@ -31,6 +32,7 @@ import "./chatinput.css";
 import { useFileUpload } from "./hooks/useFileUpload";
 import { usePlanSearch } from "./hooks/usePlanSearch";
 import type { UploadFile as AntUploadFile } from "antd/es/upload/interface";
+import { fileAPI } from "../../api";
 
 // Import components
 import FilePreview from "./components/FilePreview";
@@ -106,6 +108,8 @@ const ChatInput = React.forwardRef<
     } = useFileUpload({
       enable_upload,
       isInputDisabled,
+      userId,
+      sessionId,
     });
 
     const {
@@ -241,7 +245,8 @@ const ChatInput = React.forwardRef<
       textAreaRef.current?.focus();
     };
 
-    const handleSubmit = () => {
+    const handleSubmit = async () => {
+      console.log("handleSubmit:::111", textAreaRef.current?.value, fileList, enable_upload);
       if (
         (textAreaRef.current?.value || fileList.length > 0) &&
         !isInputDisabled
@@ -256,6 +261,16 @@ const ChatInput = React.forwardRef<
           query = "请帮我分析这些文件。";
         }
 
+        console.log("files:::111", files, enable_upload);
+
+        // 注意：文件上传已经在 handleFileValidationAndAdd 中处理了
+        // 这里只需要检查是否有上传失败的文件
+        const hasErrorFiles = fileList.some((f) => f.status === "error");
+        if (hasErrorFiles) {
+          message.warning("部分文件上传失败，请检查后重试");
+        }
+
+        // 直接提交，文件已经在上传时处理了
         submitInternal(query, files, false);
       }
     };
@@ -313,6 +328,7 @@ const ChatInput = React.forwardRef<
       multiple: true,
       fileList,
       beforeUpload: async (file: RcFile) => {
+        console.log("file:::", file);
         const result = await handleFileValidationAndAdd(file);
         if (result) {
           return false;

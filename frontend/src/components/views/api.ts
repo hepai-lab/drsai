@@ -724,7 +724,7 @@ export class FileAPI {
         };
     }
 
-     async uploadFiles(
+     async saveFilesToServer(
         userId: string,
         files: File[],
         sessionId: number
@@ -747,9 +747,21 @@ export class FileAPI {
             body: formData,
         });
 
+        if (!response.ok) {
+            let errorMessage = `HTTP error! status: ${response.status}`;
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.detail || errorData.message || errorMessage;
+            } catch (e) {
+                // If response is not JSON, use status text
+                errorMessage = response.statusText || errorMessage;
+            }
+            throw new Error(errorMessage);
+        }
+
         const data = await response.json();
         if (!data.status) {
-            throw new Error(data.message || "Failed to upload files");
+            throw new Error(data.message || data.detail || "Failed to upload files");
         }
         return data.data;
     }

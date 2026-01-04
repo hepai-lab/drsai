@@ -6,10 +6,13 @@ import {
   ALLOWED_FILE_TYPES,
   LARGE_TEXT_THRESHOLD,
 } from "../constants/fileConfig";
+import { fileAPI } from "../../../api";
 
 interface UseFileUploadProps {
   enable_upload: boolean;
   isInputDisabled: boolean;
+  userId?: string;
+  sessionId?: number;
 }
 
 interface UseFileUploadReturn {
@@ -30,6 +33,8 @@ interface UseFileUploadReturn {
 export const useFileUpload = ({
   enable_upload,
   isInputDisabled,
+  userId,
+  sessionId,
 }: UseFileUploadProps): UseFileUploadReturn => {
   const [fileList, setFileList] = React.useState<UploadFile[]>([]);
   const [isUploading, setIsUploading] = React.useState(false);
@@ -37,7 +42,7 @@ export const useFileUpload = ({
     notification.useNotification();
 
   /**
-   * Validate and add file to upload list (no upload to server, just local validation)
+   * Validate and add file to upload list, then upload to server immediately
    */
   const handleFileValidationAndAdd = async (
     file: File
@@ -48,21 +53,7 @@ export const useFileUpload = ({
       return false;
     }
 
-    // Check file type
-    if (!ALLOWED_FILE_TYPES.includes(file.type)) {
-      notificationApi.warning({
-        message: <span className="text-sm">Unsupported File Type</span>,
-        description: (
-          <span className="text-sm text-secondary">
-            Please upload only text (.txt), images (.jpg, .png, .gif,
-            .svg), PDF (.pdf), or Word documents (.doc, .docx) files.
-          </span>
-        ),
-        duration: 8.5,
-      });
-      return false;
-    }
-
+    console.log("file.type", file.type);
     // Check if file already exists
     const existingFile = fileList.find((f) => f.name === file.name);
     if (existingFile) {
@@ -70,11 +61,12 @@ export const useFileUpload = ({
       return false;
     }
 
-    // Add file to fileList with done status (no actual upload)
+    // Add file to fileList with uploading status
+    const fileUid = `file-${Date.now()}-${file.name}`;
     const uploadFile: UploadFile = {
-      uid: `file-${Date.now()}-${file.name}`,
+      uid: fileUid,
       name: file.name,
-      status: "done",
+      status: "uploading",
       size: file.size,
       type: file.type,
       originFileObj: file as RcFile,
@@ -82,16 +74,66 @@ export const useFileUpload = ({
 
     setFileList((prev) => [...prev, uploadFile]);
 
-    // Show success notification
-    notificationApi.success({
-      message: <span className="text-sm">File Added</span>,
-      description: (
-        <span className="text-sm text-secondary">
-          {file.name} will be sent with your message.
-        </span>
-      ),
-      duration: 3,
-    });
+    // Upload file to server immediately if enable_upload is true
+    if (enable_upload && userId && sessionId !== undefined) {
+      try {
+        setIsUploading(true);
+        const result = await fileAPI.saveFilesToServer(userId, [file], sessionId);
+        console.log("result:::", result);
+
+        // Update file status to done after successful upload
+        setFileList((prev) =>
+          prev.map((f) =>
+            f.uid === fileUid ? { ...f, status: "done" as const } : f
+          )
+        );
+
+        // Show success notification
+        notificationApi.success({
+          message: <span className="text-sm">File Uploaded</span>,
+          description: (
+            <span className="text-sm text-secondary">
+              {file.name} has been uploaded successfully.
+            </span>
+          ),
+          duration: 3,
+        });
+      } catch (error) {
+        // Update file status to error
+        setFileList((prev) =>
+          prev.map((f) =>
+            f.uid === fileUid ? { ...f, status: "error" as const } : f
+          )
+        );
+
+        const errorMessage = error instanceof Error ? error.message : "文件上传失败";
+        message.error(`${file.name}: ${errorMessage}`);
+        console.error("File upload error:", error);
+
+        // Remove file from list on error (optional, you can keep it if you want to retry)
+        // setFileList((prev) => prev.filter((f) => f.uid !== fileUid));
+      } finally {
+        setIsUploading(false);
+      }
+    } else {
+      // If upload is disabled or missing credentials, just mark as done
+      setFileList((prev) =>
+        prev.map((f) =>
+          f.uid === fileUid ? { ...f, status: "done" as const } : f
+        )
+      );
+
+      // Show success notification
+      notificationApi.success({
+        message: <span className="text-sm">File Added</span>,
+        description: (
+          <span className="text-sm text-secondary">
+            {file.name} will be sent with your message.
+          </span>
+        ),
+        duration: 3,
+      });
+    }
 
     return true;
   };
@@ -213,25 +255,68 @@ export const useFileUpload = ({
           setFileList((prev) => [...prev, textUploadFile]);
         }
 
-        // Add all files to file list (no upload to server)
+        // Upload files to server immediately if enable_upload is true
         if (filesToUpload.length > 0) {
-          // Update all file statuses to done
-          setFileList((prev) =>
-            prev.map((f) => {
-              const isUploadedFile = uploadFiles.some(
-                (uf) => uf.uid === f.uid
-              );
-              return isUploadedFile
-                ? { ...f, status: "done" as const }
-                : f;
-            })
-          );
+          if (enable_upload && userId && sessionId !== undefined) {
+            // Upload all files
+            setIsUploading(true);
+            Promise.all(
+              filesToUpload.map(async (file) => {
+                const fileUid = uploadFiles.find(
+                  (uf) => uf.name === file.name
+                )?.uid;
+                if (!fileUid) return;
 
-          const fileCount = filesToUpload.length;
-          const fileType = fileCount === 1 ? "file" : "files";
-          message.success(
-            `${fileCount} ${fileType} pasted and will be sent with your message`
-          );
+                try {
+                  const result = await fileAPI.saveFilesToServer(userId, [file], sessionId);
+                  console.log("result2:::", result);
+                  // Update file status to done after successful upload
+                  setFileList((prev) =>
+                    prev.map((f) =>
+                      f.uid === fileUid ? { ...f, status: "done" as const } : f
+                    )
+                  );
+                } catch (error) {
+                  // Update file status to error
+                  setFileList((prev) =>
+                    prev.map((f) =>
+                      f.uid === fileUid ? { ...f, status: "error" as const } : f
+                    )
+                  );
+                  const errorMessage =
+                    error instanceof Error ? error.message : "文件上传失败";
+                  message.error(`${file.name}: ${errorMessage}`);
+                  console.error("File upload error:", error);
+                }
+              })
+            ).finally(() => {
+              setIsUploading(false);
+            });
+
+            const fileCount = filesToUpload.length;
+            const fileType = fileCount === 1 ? "file" : "files";
+            message.success(
+              `${fileCount} ${fileType} pasted and uploading...`
+            );
+          } else {
+            // If upload is disabled or missing credentials, just mark as done
+            setFileList((prev) =>
+              prev.map((f) => {
+                const isUploadedFile = uploadFiles.some(
+                  (uf) => uf.uid === f.uid
+                );
+                return isUploadedFile
+                  ? { ...f, status: "done" as const }
+                  : f;
+              })
+            );
+
+            const fileCount = filesToUpload.length;
+            const fileType = fileCount === 1 ? "file" : "files";
+            message.success(
+              `${fileCount} ${fileType} pasted and will be sent with your message`
+            );
+          }
         }
       }
     }

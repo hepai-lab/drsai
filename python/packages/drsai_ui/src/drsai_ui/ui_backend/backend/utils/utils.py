@@ -70,8 +70,7 @@ def upload_to_hepai_filesystem(
 
 def construct_task(
     query: str, 
-    # files: List[Dict[str, Any]] | None = None,
-    files: Dict[Dict[str, Any]] | None = None,
+    files: List[Dict[str, Any]] | None = None,
 ) -> Sequence[ChatMessage]:
     """
     Construct a task from a query string and list of files.
