@@ -446,7 +446,7 @@ class WebSocketManager:
                         logger.warning(f"Input response timeout for run {run_id}")
                         await self.stop_run(
                             run_id,
-                            "Magentic-UI timed out while waiting for your input. To resume, please enter a follow-up message in the input box or you can simply type 'continue'.",
+                            "Dr.Sai-UI timed out while waiting for your input. To resume, please enter a follow-up message in the input box or you can simply type 'continue'.",
                         )
                         raise
                 else:

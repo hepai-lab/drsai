@@ -61,7 +61,7 @@ async def run_websocket(
                     task = construct_task(
                         query=message.get("task"), 
                         files=message.get("files"),
-                        settings_config=settings_config,
+                        # settings_config=settings_config,
                     )
                     if task and team_config:
                         # await ws_manager.start_stream(run_id, task, team_config)

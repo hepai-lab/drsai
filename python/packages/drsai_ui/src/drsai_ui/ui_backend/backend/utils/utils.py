@@ -70,8 +70,8 @@ def upload_to_hepai_filesystem(
 
 def construct_task(
     query: str, 
-    files: List[Dict[str, Any]] | None = None,
-    settings_config: dict[str, Any] = {},
+    # files: List[Dict[str, Any]] | None = None,
+    files: Dict[Dict[str, Any]] | None = None,
 ) -> Sequence[ChatMessage]:
     """
     Construct a task from a query string and list of files.
@@ -83,34 +83,6 @@ def construct_task(
     Returns:
         Sequence[ChatMessage]: A list of ChatMessages that combines all files and the query.
     """
-
-    # # get file system with OpenAI style
-    # file_system_config = settings_config.get("file_system", {})
-    # ## NOTE: currently only support hepai file system
-    # if not file_system_config and os.getenv("USE_HEPAI_FILE"):
-    #     file_system_config = {
-    #         "type": "hepai",
-    #         "api_key": os.getenv("HEPAI_API_KEY"),
-    #         "base_url": "https://aiapi.ihep.ac.cn/apiv2",
-    #     }
-    #     if isinstance(settings_config.get("model_configs"), str):
-    #         try:
-    #             model_configs = yaml.safe_load(settings_config["model_configs"])
-    #             model_config = model_configs.get("model_config", {})
-    #             file_system_config["api_key"] = model_config.get("config", {}).get("api_key")
-    #         except Exception as e:
-    #             logger.error(f"Error loading model configs: {e}")
-    #             raise e
-    # elif file_system_config.get("type") in ["hepai", "openai"]:
-    #     # TODO: add support for other file systems
-    #     pass
-    # elif file_system_config.get("type") == "local":
-    #     # TODO: add support for local file system
-    #     pass
-    # else:
-    #     raise ValueError(f"Unknown file system type: {file_system_config.get('type')}")
-
-
     if files is None:
         files = []
 
@@ -119,11 +91,11 @@ def construct_task(
     messages_return: Sequence[ChatMessage] = []
     attached_files: List[Dict[str, str]] = []
     # Process each file based on its type
-    for file in files:
+    for file_id in files:
+        file=files[file_id]
         try:
             if file.get("type", "").startswith("image/"):
-                # Handle image file using from_base64 method
-                image = Image.from_base64(file["content"])
+                image = Image.from_file(file["path"])
                 images.append(image)
                 text_parts.append(f"Attached image: {file.get('name', 'unknown.img')}")
                 # name and type
@@ -136,7 +108,9 @@ def construct_task(
             else:
                 # Handle all other files as text
                 try:
-                    text_content = base64.b64decode(file["content"]).decode("utf-8")
+                    # text_content = base64.b64decode(file["content"]).decode("utf-8")
+                    with open(file["path"], "r", encoding="utf-8") as f:
+                        text_content = f.read()
                     text_parts.append(
                         f"Attached file: {file.get('name', 'unknown.file')}\n{text_content}"
                     )
@@ -157,40 +131,7 @@ def construct_task(
                             "type": file.get("type", "text"),
                         }
                     )
-                    # # update to hepai file system
-                    # if file_system_config.get("type") == "hepai":
-                    #     api_key = file_system_config.get("api_key")
-                    #     base_url = file_system_config.get("base_url")
-                    #     file_obj = upload_to_hepai_filesystem(
-                    #         api_key=api_key, 
-                    #         base_url=base_url,
-                    #         file_content=file["content"], 
-                    #         file_name=file.get("name", "unknown.file"), 
-                    #     )
-                    #     text_parts.append(
-                    #         f"Attached file: {file.get('name', 'unknown.file')} (uploaded to HepAI)"
-                    #     )
-                    #     attached_files.append(
-                    #         {
-                    #             "name": file.get("name", "unknown.file"),
-                    #             "type": file.get("type", "text"),
-                    #             "file_obj": file_obj
-                    #         }
-                    #     )
-                    # # elif api_key and base_url:
-                    # #     # TODO: implement other file systems
-                    # #     raise NotImplementedError("Other file system is not implemented")
-                    # else:
-                    #     logger.error(f"Error processing file content: {str(e)}")
-                    #     text_parts.append(
-                    #         f"Attached file: {file.get('name', 'unknown.file')} (failed to process content)"
-                    #     )
-                    #     attached_files.append(
-                    #         {
-                    #             "name": file.get("name", "unknown.file"),
-                    #             "type": file.get("type", "text"),
-                    #         }
-                    #     )
+
         except Exception as e:
             logger.error(f"Error processing file {file.get('name')}: {str(e)}")
 
@@ -222,6 +163,162 @@ def construct_task(
         )
 
     return messages_return
+
+
+# def construct_task(
+#     query: str, 
+#     files: List[Dict[str, Any]] | None = None,
+#     # settings_config: dict[str, Any] = {},
+# ) -> Sequence[ChatMessage]:
+#     """
+#     Construct a task from a query string and list of files.
+#     Returns a list of ChatMessages that combines all files and the query.
+#     Args:
+#         query (str): The text query from the user
+#         files (List[Dict[str, Any]]): List of file objects with properties name, content, and type
+
+#     Returns:
+#         Sequence[ChatMessage]: A list of ChatMessages that combines all files and the query.
+#     """
+
+#     # # get file system with OpenAI style
+#     # file_system_config = settings_config.get("file_system", {})
+#     # ## NOTE: currently only support hepai file system
+#     # if not file_system_config and os.getenv("USE_HEPAI_FILE"):
+#     #     file_system_config = {
+#     #         "type": "hepai",
+#     #         "api_key": os.getenv("HEPAI_API_KEY"),
+#     #         "base_url": "https://aiapi.ihep.ac.cn/apiv2",
+#     #     }
+#     #     if isinstance(settings_config.get("model_configs"), str):
+#     #         try:
+#     #             model_configs = yaml.safe_load(settings_config["model_configs"])
+#     #             model_config = model_configs.get("model_config", {})
+#     #             file_system_config["api_key"] = model_config.get("config", {}).get("api_key")
+#     #         except Exception as e:
+#     #             logger.error(f"Error loading model configs: {e}")
+#     #             raise e
+#     # elif file_system_config.get("type") in ["hepai", "openai"]:
+#     #     # TODO: add support for other file systems
+#     #     pass
+#     # elif file_system_config.get("type") == "local":
+#     #     # TODO: add support for local file system
+#     #     pass
+#     # else:
+#     #     raise ValueError(f"Unknown file system type: {file_system_config.get('type')}")
+
+
+#     if files is None:
+#         files = []
+
+#     images: List[Image] = []
+#     text_parts: List[str] = []
+#     messages_return: Sequence[ChatMessage] = []
+#     attached_files: List[Dict[str, str]] = []
+#     # Process each file based on its type
+#     for file in files:
+#         try:
+#             if file.get("type", "").startswith("image/"):
+#                 # Handle image file using from_base64 method
+#                 image = Image.from_base64(file["content"])
+#                 images.append(image)
+#                 text_parts.append(f"Attached image: {file.get('name', 'unknown.img')}")
+#                 # name and type
+#                 attached_files.append(
+#                     {
+#                         "name": file.get("name", "unknown.img"),
+#                         "type": file.get("type", "image"),
+#                     }
+#                 )
+#             else:
+#                 # Handle all other files as text
+#                 try:
+#                     text_content = base64.b64decode(file["content"]).decode("utf-8")
+#                     text_parts.append(
+#                         f"Attached file: {file.get('name', 'unknown.file')}\n{text_content}"
+#                     )
+#                     attached_files.append(
+#                         {
+#                             "name": file.get("name", "unknown.file"),
+#                             "type": file.get("type", "text"),
+#                         }
+#                     )
+#                 except Exception as e:
+#                     logger.error(f"Error processing file content: {str(e)}")
+#                     text_parts.append(
+#                         f"Attached file: {file.get('name', 'unknown.file')} (failed to process content)"
+#                     )
+#                     attached_files.append(
+#                         {
+#                             "name": file.get("name", "unknown.file"),
+#                             "type": file.get("type", "text"),
+#                         }
+#                     )
+#                     # # update to hepai file system
+#                     # if file_system_config.get("type") == "hepai":
+#                     #     api_key = file_system_config.get("api_key")
+#                     #     base_url = file_system_config.get("base_url")
+#                     #     file_obj = upload_to_hepai_filesystem(
+#                     #         api_key=api_key, 
+#                     #         base_url=base_url,
+#                     #         file_content=file["content"], 
+#                     #         file_name=file.get("name", "unknown.file"), 
+#                     #     )
+#                     #     text_parts.append(
+#                     #         f"Attached file: {file.get('name', 'unknown.file')} (uploaded to HepAI)"
+#                     #     )
+#                     #     attached_files.append(
+#                     #         {
+#                     #             "name": file.get("name", "unknown.file"),
+#                     #             "type": file.get("type", "text"),
+#                     #             "file_obj": file_obj
+#                     #         }
+#                     #     )
+#                     # # elif api_key and base_url:
+#                     # #     # TODO: implement other file systems
+#                     # #     raise NotImplementedError("Other file system is not implemented")
+#                     # else:
+#                     #     logger.error(f"Error processing file content: {str(e)}")
+#                     #     text_parts.append(
+#                     #         f"Attached file: {file.get('name', 'unknown.file')} (failed to process content)"
+#                     #     )
+#                     #     attached_files.append(
+#                     #         {
+#                     #             "name": file.get("name", "unknown.file"),
+#                     #             "type": file.get("type", "text"),
+#                     #         }
+#                     #     )
+#         except Exception as e:
+#             logger.error(f"Error processing file {file.get('name')}: {str(e)}")
+
+#     # Add the user query at the end
+#     combined_text = "\n\n".join(text_parts)
+#     attached_files_json = json.dumps(attached_files)
+#     # Return a MultiModalMessage if there are images, otherwise a TextMessage
+#     if len(text_parts) > 0:
+#         messages_return.append(
+#             TextMessage(
+#                 source="user", content=combined_text, metadata={"internal": "yes"}
+#             )
+#         )
+#     if images:
+#         messages_return.append(
+#             MultiModalMessage(
+#                 source="user",
+#                 content=[query, *images],
+#                 metadata={"attached_files": attached_files_json},
+#             )
+#         )
+#     else:
+#         messages_return.append(
+#             TextMessage(
+#                 source="user",
+#                 content=query,
+#                 metadata={"attached_files": attached_files_json},
+#             )
+#         )
+
+#     return messages_return
 
 
 def get_file_type(file_path: str) -> str:

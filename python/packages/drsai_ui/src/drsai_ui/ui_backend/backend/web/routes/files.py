@@ -53,7 +53,8 @@ async def upload_files(
         if not os.path.exists(userfiles_path):
             os.makedirs(userfiles_path, exist_ok=True)
 
-        file_info = {} # 储存文件的名称、绝对路径、后缀名、byte大小
+        files_info = {} # 储存文件的名称、绝对路径、后缀名、byte大小
+        files_list = []
 
         # 保存文件到本地
         for file in files:
@@ -67,20 +68,22 @@ async def upload_files(
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
             
+            files_info[file_id] = {
+                "name": file.filename,
+                "type": file.content_type,
+                "path": file_path,
+                "suffix": os.path.splitext(file.filename)[1],
+                "size": file.size,
+                "uuid": file_id,
+            }
+
             # 顺便上传到文件系统
             USE_HEPAI_FILE = os.getenv("USE_HEPAI_FILE", False)
             if USE_HEPAI_FILE:
                 file_obj = upload_to_filesystem(file_path, user_id)
-            else:
-                file_obj = None
-
-            file_info[file_id] = {
-                "name": file.filename,
-                "path": file_path,
-                "suffix": os.path.splitext(file.filename)[1],
-                "size": os.path.getsize(file_path),
-                "hepai_file_obj": file_obj
-            }
+                files_info[file_id]["url"] = file_obj["url"]
+            
+            files_list.append(files_info[file_id])
         
         # 保存文件到数据库
         response = db.get(UserFiles, filters={"user_id": user_id, "session_id": session_id})
@@ -88,7 +91,7 @@ async def upload_files(
             userfiles = UserFiles(
                 user_id=user_id, 
                 session_id=session_id,
-                files=file_info,
+                files=files_info,
                 )
         else:
             # file_info_org: dict[str, Any] = response.data[0]["files"]
@@ -96,14 +99,13 @@ async def upload_files(
             # file_info = file_info_org
             userfiles: UserFiles = response.data[0]
             if userfiles.files:
-                userfiles.files.update(file_info)
+                userfiles.files.update(files_info)
             else:
-                userfiles.files = file_info
-
-        
-        
+                userfiles.files = files_info
         db.upsert(userfiles)
-        return {"status": True, "data": file_info}
+
+        return {"status": True, "data": files_list}
+    
     except Exception as e:
         # Clean up session if run creation failed
         raise HTTPException(status_code=500, detail=str(e)) from e
