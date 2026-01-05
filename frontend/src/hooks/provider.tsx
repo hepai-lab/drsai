@@ -33,7 +33,6 @@ const Provider = ({ children }: any) => {
   const logout = () => {
     // setUser(null);
     // eraseCookie(cookie_name);
-    console.log("Please implement your own logout logic");
     message.info("Please implement your own logout logic");
   };
 

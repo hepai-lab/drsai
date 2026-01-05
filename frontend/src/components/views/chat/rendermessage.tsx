@@ -686,8 +686,6 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       isUser || isUserProxy
         ? parseUserContent(message)
         : { text: message.content, metadata: message.metadata };
-
-
     // Use new plan message check
     const isPlanMsg = messageUtils.isPlanMessage(message.metadata);
     const orchestratorContent =

@@ -72,7 +72,6 @@ const BrowserIframe: React.FC<BrowserIframeProps> = ({
   // const vncUrl = `http://202.122.37.162:${novncPort}/vnc.html?autoconnect=true&resize=${
   // const vncUrl = `https://drsai.ihep.ac.cn:42800/api/vncapi/${novncPort}/vnc.html?autoconnect=true&resize=${
   const vncServiceUrl = process.env.GATSBY_VNC_SERVICE_URL || "/api/vncapi";
-  console.log("VNC Service URL:", vncServiceUrl);
   const vncUrl = `${vncServiceUrl}/${novncPort}/vnc.html?autoconnect=true&resize=${scaling === "remote" ? "remote" : "scale"
     }&show_dot=true&scaling=${scaling}&quality=${quality}&compression=0&view_only=${viewOnly ? 1 : 0
     }`;

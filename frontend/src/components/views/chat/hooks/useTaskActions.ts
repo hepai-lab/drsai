@@ -108,16 +108,14 @@ export const useTaskActions = ({
           planString = convertPlanStepsToJsonString(updatedPlan);
         }
 
-        console.log("files:::1112244", files);
-        
         // Use files directly (already in the correct format from upload)
         const processedFiles = files && files.length > 0 ? files : [];
 
+        // responseJson only contains accepted, content, and plan (no files)
         const responseJson = {
           accepted: accepted,
           content: response,
           ...(planString !== "" && { plan: planString }),
-          ...(processedFiles.length > 0 && { files: processedFiles }),
         };
         const responseString = JSON.stringify(responseJson);
 
@@ -143,17 +141,18 @@ export const useTaskActions = ({
                 ...currentSettings,
                 agent_mode_config: agentModeConfig,
               },
+              ...(processedFiles.length > 0 && { files: processedFiles }),
             };
 
             socket.send(JSON.stringify(continueMessage));
           }
         } else {
-          socket.send(
-            JSON.stringify({
-              type: "input_response",
-              response: responseString,
-            })
-          );
+          const inputResponseMessage = {
+            type: "input_response",
+            response: responseString,
+            ...(processedFiles.length > 0 && { files: processedFiles }),
+          };
+          socket.send(JSON.stringify(inputResponseMessage));
 
           setCurrentRun((current: Run | null) => {
             if (!current) return null;
@@ -363,8 +362,6 @@ export const useTaskActions = ({
           checkState();
         });
 
-        console.log("files:::11122457777", files);
-        
         // Use files directly (already in the correct format from upload)
         const processedFiles = files && files.length > 0 ? files : [];
 

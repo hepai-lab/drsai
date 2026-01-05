@@ -51,7 +51,7 @@ const PlanCard: React.FC<PlanCardProps> = ({
         }
       }
     } catch (error) {
-      console.log("Failed to delete plan:", error);
+      console.error("Failed to delete plan:", error);
     }
   };
 

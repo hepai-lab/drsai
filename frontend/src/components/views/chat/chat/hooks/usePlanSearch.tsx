@@ -84,8 +84,6 @@ export const usePlanSearch = ({
   // Search plans with debounce
   const searchPlans = React.useCallback(
     debounce((query: string) => {
-      console.log("Search request with query:", query);
-
       // Don't search if query is too short, no plans available, or plan is already attached
       if (
         query.length < 3 ||

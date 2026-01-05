@@ -18,7 +18,6 @@ export const useSessionValidation = (sessionId: number) => {
       typeof storeSession.id === "number" &&
       storeSession.id > 0
     ) {
-      console.log("Using sessionId from store:", storeSession.id);
       return storeSession.id;
     }
 
@@ -28,7 +27,6 @@ export const useSessionValidation = (sessionId: number) => {
       if (stored) {
         const parsedId = parseInt(stored, 10);
         if (!isNaN(parsedId) && parsedId > 0) {
-          console.log("Using sessionId from localStorage:", parsedId);
           return parsedId;
         }
       }
