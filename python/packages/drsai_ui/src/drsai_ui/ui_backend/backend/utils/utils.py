@@ -90,8 +90,7 @@ def construct_task(
     messages_return: Sequence[ChatMessage] = []
     attached_files: List[Dict[str, str]] = []
     # Process each file based on its type
-    for file_id in files:
-        file=files[file_id]
+    for file in files:
         try:
             if file.get("type", "").startswith("image/"):
                 image = Image.from_file(file["path"])

@@ -30,8 +30,8 @@ warnings.filterwarnings(
 )
 
 
-def get_env_file_path():
-    app_dir = os.path.join(os.path.expanduser("~"), ".drsai_ui")
+def get_env_file_path(app_dir: str = os.path.join(os.path.expanduser("~"), ".drsai_ui")):
+    # app_dir = os.path.join(os.path.expanduser("~"), ".drsai_ui")
     if not os.path.exists(app_dir):
         os.makedirs(app_dir, exist_ok=True)
     return os.path.join(app_dir, "temp_env_vars.env")
@@ -131,7 +131,7 @@ def ui(
         env_vars["_CONFIG"] = config
 
     # Create temporary env file to share configuration with uvicorn workers
-    env_file_path = get_env_file_path()
+    env_file_path = get_env_file_path(app_dir=appdir)
     with open(env_file_path, "w") as temp_env:
         for key, value in env_vars.items():
             temp_env.write(f"{key}={value}\n")

@@ -8,10 +8,10 @@ from fastapi import (
     Request,
     HTTPException,
     )
-from fastapi.responses import FileResponse, HTMLResponse
+# from fastapi.responses import FileResponse, HTMLResponse
 import uuid
 
-from ..initialization import AppInitializer
+# from ..initialization import AppInitializer
 from ..deps import get_db
 from ...datamodel.db import UserFiles
 
@@ -19,7 +19,11 @@ from openai import OpenAI
 from .....drsai_adapter.singleton import personal_key_config_fetcher as fetcher
 
 router = APIRouter()
-initializer=None
+
+def get_initializer():
+    """Get the initializer instance from app module"""
+    from .. import app
+    return app.initializer
 
 def upload_to_filesystem(file_path: str, user_id: str) -> Dict[str, Any]:
 
@@ -40,16 +44,16 @@ def upload_to_filesystem(file_path: str, user_id: str) -> Dict[str, Any]:
 
 @router.post("/")
 async def upload_files(
-    user_id: str, 
-    session_id: str,
-    files: List[UploadFile] = File(...), 
+    user_id: str,
+    files: List[UploadFile] = File(...),
     db=Depends(get_db)
     ) -> Dict:
     '''
     接受上传的文件列表，解析上传到本地
     '''
     try:
-        userfiles_path =  str(initializer.user_files / user_id / session_id)
+        initializer = get_initializer()
+        userfiles_path =  str(initializer.user_files / user_id)
         if not os.path.exists(userfiles_path):
             os.makedirs(userfiles_path, exist_ok=True)
 
@@ -86,11 +90,10 @@ async def upload_files(
             files_list.append(files_info[file_id])
         
         # 保存文件到数据库
-        response = db.get(UserFiles, filters={"user_id": user_id, "session_id": session_id})
+        response = db.get(UserFiles, filters={"user_id": user_id})
         if not response.status or not response.data:
             userfiles = UserFiles(
                 user_id=user_id, 
-                session_id=session_id,
                 files=files_info,
                 )
         else:

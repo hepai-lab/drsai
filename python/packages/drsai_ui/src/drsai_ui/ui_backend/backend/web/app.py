@@ -31,9 +31,10 @@ from .routes import (
 )
 import httpx
 from fastapi.responses import HTMLResponse
-# Initialize application
+
+# Initialize application - will be set in lifespan
 app_file_path = os.path.dirname(os.path.abspath(__file__))
-initializer = AppInitializer(settings, app_file_path)
+initializer = None
 
 
 @asynccontextmanager
@@ -44,6 +45,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
 
     try:
+        # Initialize AppInitializer here to ensure env vars are loaded
+        global initializer
+        initializer = AppInitializer(settings, app_file_path)
+
+        # Mount static file directories now that initializer is ready
+        app.mount(
+            "/files",
+            StaticFiles(directory=initializer.static_root, html=True),
+            name="files",
+        )
+        app.mount("/", StaticFiles(directory=initializer.ui_root, html=True), name="ui")
+
         # Load the config if provided
         config: dict[str, Any] = {}
         config_file = os.environ.get("_CONFIG")
@@ -168,7 +181,6 @@ api.include_router(
     responses={404: {"description": "Not found"}},
 )
 
-files.initializer=initializer
 api.include_router(
     files.router,
     prefix="/files",
@@ -218,7 +230,9 @@ async def health_check():
 from .vnc_router import router as vnc_router
 api.include_router(vnc_router, prefix="/vncapi", tags=["vnc"])
 
-# Mount static file directories
+# Note: Static files will be mounted in lifespan after initializer is ready
+
+# Mount API router
 app.mount("/api", api)
 
 
@@ -231,20 +245,12 @@ if SERVICE_MODE == "PROD":
     app.add_middleware(SessionMiddleware, secret_key=oauth_config.meddleware_secret)
     app.include_router(ihep_sso_router, prefix="/umt", tags=["umt"])
 
-
-app.mount(
-    "/files",
-    StaticFiles(directory=initializer.static_root, html=True),
-    name="files",
-)
-app.mount("/", StaticFiles(directory=initializer.ui_root, html=True), name="ui")
-
 # Error handlers
 
 
 
 @app.exception_handler(500)
-async def internal_error_handler(request: Request, exc: Exception):
+async def internal_error_handler(_request: Request, exc: Exception):
     logger.error(f"Internal error: {str(exc)}")
     return {
         "status": False,

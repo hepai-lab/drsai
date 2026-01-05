@@ -10,11 +10,10 @@ import yaml
 
 from .ui_backend.version import VERSION
 from .ui_backend.version import APP_NAME as UI_APP_NAME
-from .ui_backend.backend.cli import (
-    # ui, 
-    get_env_file_path,)
-from .ui_backend.backend.web.app import app as ui_app
-from .agent_factory.magentic_one.check_docker import check_docker
+# from .ui_backend.backend.cli import (
+#     # ui, 
+#     get_env_file_path,)
+# from .agent_factory.magentic_one.check_docker import check_docker
 from .agent_factory.load_agent import a_load_agent_factory_from_config
 
 from drsai.backend.run import run_backend, start_console
@@ -22,6 +21,12 @@ from drsai.backend.run import run_backend, start_console
 here = Path(__file__).parent.resolve()
 
 yaml_example = f"{here}/configs/agent_config.yaml"
+
+def get_env_file_path(app_dir: str = os.path.join(os.path.expanduser("~"), ".drsai_ui")):
+    # app_dir = os.path.join(os.path.expanduser("~"), ".drsai_ui")
+    if not os.path.exists(app_dir):
+        os.makedirs(app_dir, exist_ok=True)
+    return os.path.join(app_dir, "temp_env_vars.env")
 
 ############################################
 # Dr.Sai-UI CLI application
@@ -160,6 +165,7 @@ def ui(
         
         # TODO: 补充更多选项需要的配置项
         if Use_default_mode in ["magentic-one"]:
+            from .agent_factory.magentic_one.check_docker import check_docker
             check_docker(rebuild_docker)
     else:
         typer.echo(f"There is example agent_config file: {yaml_example}")
@@ -195,11 +201,12 @@ def ui(
         env_vars["_CONFIG"] = agent_config
 
     # Create temporary env file to share configuration with uvicorn workers
-    env_file_path = get_env_file_path()
+    env_file_path = get_env_file_path(app_dir=appdir)
     with open(env_file_path, "w") as temp_env:
         for key, value in env_vars.items():
             temp_env.write(f"{key}={value}\n")
-            
+    
+    from .ui_backend.backend.web.app import app as ui_app
     uvicorn.run(
          # "drsai.backend.ui.ui_backend.backend.web.app:app",
         ui_app,
