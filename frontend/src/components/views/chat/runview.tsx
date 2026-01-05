@@ -479,9 +479,6 @@ const RunView: React.FC<RunViewProps> = ({
   ) => {
     // If a toggle operation is already in progress, ignore this request
     if (isTogglingRef.current) {
-      console.log(
-        "Something bad: Toggle operation already in progress, ignoring request"
-      );
       return;
     }
 
@@ -999,7 +996,7 @@ const RunView: React.FC<RunViewProps> = ({
                   query,
                   accepted,
                   plan,
-                  files // 添加files参数
+                  files
                 );
               } else {
                 onRunTask?.(
@@ -1075,11 +1072,9 @@ const RunView: React.FC<RunViewProps> = ({
                   terminalOutput: terminalOutput,
                   logs: logs,
                   onTaskClick: (taskId: string) => {
-                    console.log('Task clicked:', taskId);
                     // TODO: Handle task click
                   },
                   onSubtaskClick: (taskId: string, subtaskId: string) => {
-                    console.log('Subtask clicked:', taskId, subtaskId);
                     // TODO: Handle subtask click
                   },
                 }}

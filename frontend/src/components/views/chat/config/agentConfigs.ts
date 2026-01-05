@@ -127,19 +127,16 @@ export function getAgentConfig(agentType?: string | null): AgentConfiguration {
   // Magentic One agent - 用于浏览器自动化
   // 匹配: 'magentic', 'magnetic', 'magneticone' 等
   if (normalizedType.includes('magentic') || normalizedType.includes('magnetic')) {
-    console.log(`[AgentConfig] Matched '${agentType}' to 'magentic-one'`);
     return AGENT_CONFIGS['magentic-one'];
   }
   
   // BESIII agent - 用于物理分析
   // 匹配: 'besiii', 'bes3', 'bes-iii' 等
   if (normalizedType.includes('besiii') || normalizedType.includes('bes3') || normalizedType.includes('bes-iii')) {
-    console.log(`[AgentConfig] Matched '${agentType}' to 'besiii'`);
     return AGENT_CONFIGS.besiii;
   }
   
   // 未匹配到任何已知类型，返回默认配置
-  console.log(`[AgentConfig] Unknown agent type '${agentType}', using 'default' config`);
   return AGENT_CONFIGS.default;
 }
 

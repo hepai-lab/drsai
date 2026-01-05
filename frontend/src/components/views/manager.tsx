@@ -114,7 +114,6 @@ export const SessionManager: React.FC = () => {
 
     // 对于自定义智能体（type === "add"），如果已经有完整的 config，直接使用
     if (agent.type === "add" && agent.config && Object.keys(agent.config).length > 0) {
-      console.log("Using existing config for custom agent:", agent);
       setSelectedAgent(agent);
       setConfig(agent.config);
       return;

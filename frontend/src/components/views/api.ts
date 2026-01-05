@@ -641,7 +641,6 @@ export class AgentWorkerAPI {
             }
         );
         const data = await response.json();
-        console.log("Remote agent test response:", data);
         if (!data.status)
             throw new Error(data.message || "Failed to test remote agent connection");
         return data.data;

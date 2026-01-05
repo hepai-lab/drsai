@@ -119,7 +119,6 @@ export const SSOLogin: React.FC = () => {
     } else {
       setLoginError("");
       // 跳转到 /auth?username=xxx
-      console.log(`登录用户: ${username}`);
       window.location.href = `/auth?username=${encodeURIComponent(username)}&token=local`;
       setShowModal(false);
 

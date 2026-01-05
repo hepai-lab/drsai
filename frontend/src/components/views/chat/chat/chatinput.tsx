@@ -257,7 +257,10 @@ const ChatInput = React.forwardRef<
       }
 
       if (doResetInput) {
-        resetInput();
+        // 延迟清空文件，确保文件信息已经传递
+        setTimeout(() => {
+          resetInput();
+        }, 100);
       }
       textAreaRef.current?.focus();
     };
@@ -290,27 +293,83 @@ const ChatInput = React.forwardRef<
           (f) => f.status === "done" && f.originFileObj
         );
 
-        // 优先使用 fileList 中存储的 response（上传结果），如果没有则从 uploadedFilesInfo 中匹配
-        const filesToUse = successfullyUploadedFiles.length > 0
-          ? successfullyUploadedFiles
+        // 优先使用 uploadedFilesInfo（这是最可靠的来源，因为它在文件上传成功后立即更新）
+        let filesToUse: Array<{
+          name: string;
+          type: string;
+          path: string;
+          suffix: string;
+          size: number;
+          uuid: string;
+          url?: string;
+        }> = [];
+
+        // 优先级1: 使用 uploadedFilesInfo（最可靠）
+        if (uploadedFilesInfo.length > 0) {
+          filesToUse = uploadedFilesInfo;
+        } else if (successfullyUploadedFiles.length > 0) {
+          // 优先级2: 如果 uploadedFilesInfo 为空，尝试从 successfullyUploadedFiles 中提取
+          filesToUse = successfullyUploadedFiles
             .map((file) => {
               // 优先使用 file.response（上传时存储的结果）
               if (file.response) {
                 return file.response;
               }
-              // 否则从 uploadedFilesInfo 中根据文件名匹配
-              return uploadedFilesInfo?.find((info) => info.name === file.name);
+              return undefined;
             })
-            .filter((info): info is NonNullable<typeof info> => info !== undefined)
-          : [];
+            .filter((info): info is NonNullable<typeof info> => info !== undefined);
+        } else if (fileList.length > 0) {
+          // 如果文件还没有上传完成，但 fileList 中有文件，检查是否有 response
+          const filesWithResponse = fileList
+            .filter((f) => f.response)
+            .map((f) => f.response)
+            .filter((info): info is NonNullable<typeof info> => info !== undefined);
 
-        console.log("handleSubmit - fileList:", fileList);
-        console.log("handleSubmit - uploadedFilesInfo:", uploadedFilesInfo);
-        console.log("handleSubmit - successfullyUploadedFiles:", successfullyUploadedFiles);
-        console.log("handleSubmit - filesToUse:", filesToUse);
-        console.log("handleSubmit - enable_upload:", enable_upload);
+          if (filesWithResponse.length > 0) {
+            filesToUse = filesWithResponse;
+          } else {
+            // 尝试从 fileList 中获取所有文件，即使状态不是 done
+            const allFiles = fileList
+              .filter((f) => f.response)
+              .map((f) => f.response)
+              .filter((info): info is NonNullable<typeof info> => info !== undefined);
+            if (allFiles.length > 0) {
+              filesToUse = allFiles;
+            }
+          }
+        }
 
-        // 直接提交，将上传后的文件信息传递给 files 参数
+        // 如果 filesToUse 仍然为空，但 fileList 中有文件，尝试直接使用 fileList 中的文件信息
+        if (filesToUse.length === 0 && fileList.length > 0) {
+          const allPossibleFiles = fileList
+            .map((f) => {
+              // 尝试从 response 获取
+              if (f.response) {
+                return f.response;
+              }
+              // 尝试从 uploadedFilesInfo 匹配
+              const matched = uploadedFilesInfo?.find((info) => info.name === f.name);
+              if (matched) {
+                return matched;
+              }
+              return undefined;
+            })
+            .filter((info): info is NonNullable<typeof info> => info !== undefined);
+
+          if (allPossibleFiles.length > 0) {
+            filesToUse = allPossibleFiles;
+          }
+        }
+
+        // 如果 filesToUse 为空，但 fileList 中有文件，尝试等待文件上传完成
+        if (filesToUse.length === 0 && fileList.length > 0) {
+          const uploadingFiles = fileList.filter((f) => f.status === "uploading");
+          if (uploadingFiles.length > 0) {
+            message.warning("文件正在上传中，请稍候再试");
+            return;
+          }
+        }
+
         submitInternal(query, filesToUse as any, false, true);
       }
     };
@@ -368,7 +427,6 @@ const ChatInput = React.forwardRef<
       multiple: true,
       fileList,
       beforeUpload: async (file: RcFile) => {
-        console.log("file:::", file);
         const result = await handleFileValidationAndAdd(file);
         if (result) {
           return false;

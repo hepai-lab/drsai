@@ -70,8 +70,6 @@ export const clearDrSaiStorage = (): void => {
   keysToRemove.forEach(key => {
     localStorage.removeItem(key);
   });
-
-  console.log(`Cleared ${keysToRemove.length} DrSai storage items:`, keysToRemove);
 };
 
 /**
@@ -81,7 +79,6 @@ export const clearMessageCache = (): void => {
   if (typeof window === "undefined") return;
   
   localStorage.removeItem('drsai-message-cache');
-  console.log('Message cache cleared');
 };
 
 /**
@@ -91,8 +88,6 @@ export const checkAndCleanStorage = (): boolean => {
   if (typeof window === "undefined") return false;
   
   const info = getStorageInfo();
-  
-  console.log(`localStorage usage: ${info.usedMB.toFixed(2)}MB (${info.usagePercent.toFixed(1)}%)`);
   
   // 如果使用超过80%，清理缓存
   if (info.usagePercent > 80) {

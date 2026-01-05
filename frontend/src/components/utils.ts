@@ -64,12 +64,8 @@ export function fetchJSON(
   return fetch(url, payload)
     .then(function (response) {
       if (response.status !== 200) {
-        console.log(
-          "Looks like there was a problem. Status Code: " + response.status,
-          response
-        );
         response.json().then(function (data) {
-          console.log("Error data", data);
+          console.error("Error data", data);
         });
         onError({
           status: false,
@@ -83,7 +79,7 @@ export function fetchJSON(
       });
     })
     .catch(function (err) {
-      console.log("Fetch Error :-S", err);
+      console.error("Fetch Error", err);
       onError({
         status: false,
         message: `There was an error connecting to server. (${err}) `,

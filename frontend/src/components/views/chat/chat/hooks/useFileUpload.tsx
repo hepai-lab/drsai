@@ -71,7 +71,6 @@ export const useFileUpload = ({
       return false;
     }
 
-    console.log("file.type", file.type);
     // Check if file already exists
     const existingFile = fileList.find((f) => f.name === file.name);
     if (existingFile) {
@@ -93,35 +92,69 @@ export const useFileUpload = ({
     setFileList((prev) => [...prev, uploadFile]);
 
     // Upload file to server immediately if enable_upload is true
-    if (enable_upload && userId && sessionId !== undefined) {
+    // Note: file upload no longer depends on sessionId
+    if (enable_upload && userId) {
       try {
         setIsUploading(true);
-        const result = await fileAPI.saveFilesToServer(userId, [file], sessionId);
-        console.log("result:::", result);
+        // sessionId is optional, use 0 or -1 if not provided
+        const uploadSessionId = sessionId && sessionId > 0 ? sessionId : (sessionId || 0);
+        const response = await fileAPI.saveFilesToServer(userId, [file], uploadSessionId);
 
-        // Store uploaded file info
-        if (result && result.length > 0) {
-          console.log("useFileUpload - storing uploaded file info:", result);
-          setUploadedFilesInfo((prev) => {
-            const newInfo = [...prev, ...result];
-            console.log("useFileUpload - updated uploadedFilesInfo:", newInfo);
-            return newInfo;
-          });
+        // Extract file info from response
+        // fileAPI.saveFilesToServer returns data.data which is already the files array
+        let fileInfoList: Array<{
+          name: string;
+          type: string;
+          path: string;
+          suffix: string;
+          size: number;
+          uuid: string;
+          url?: string;
+        }> = [];
+
+        if (response) {
+          if (Array.isArray(response)) {
+            // Response is directly an array (this is the expected format)
+            fileInfoList = response;
+          } else if (response.data && Array.isArray(response.data)) {
+            // Response has {status, data} format
+            fileInfoList = response.data;
+          } else if (response.status && response.data) {
+            // Response has nested data
+            fileInfoList = Array.isArray(response.data) ? response.data : [];
+          }
         }
 
-        // Update file status to done after successful upload
-        // Also store the uploaded file info in the file's response field for easier matching
-        setFileList((prev) =>
-          prev.map((f) =>
-            f.uid === fileUid
-              ? {
-                ...f,
-                status: "done" as const,
-                response: result && result.length > 0 ? result[0] : undefined
-              }
-              : f
-          )
-        );
+        // Store uploaded file info
+        if (fileInfoList.length > 0) {
+          const fileInfo = fileInfoList[0]; // Use first file info
+          setUploadedFilesInfo((prev) => {
+            const newInfo = [...prev, fileInfo];
+            return newInfo;
+          });
+
+          // Update file status to done after successful upload
+          // Also store the uploaded file info in the file's response field for easier matching
+          setFileList((prev) => {
+            const updated = prev.map((f) =>
+              f.uid === fileUid
+                ? {
+                  ...f,
+                  status: "done" as const,
+                  response: fileInfo
+                }
+                : f
+            );
+            return updated;
+          });
+        } else {
+          // Even if fileInfoList is empty, mark file as done (but without response)
+          setFileList((prev) =>
+            prev.map((f) =>
+              f.uid === fileUid ? { ...f, status: "done" as const } : f
+            )
+          );
+        }
 
         // Show success notification
         notificationApi.success({
@@ -181,7 +214,6 @@ export const useFileUpload = ({
     textAreaRef: React.RefObject<HTMLTextAreaElement>,
     setText: (text: string) => void
   ) => {
-    console.log("Paste event triggered");
     if (isInputDisabled || !enable_upload) return;
 
     // Handle multiple files paste
@@ -304,13 +336,10 @@ export const useFileUpload = ({
 
                 try {
                   const result = await fileAPI.saveFilesToServer(userId, [file], sessionId);
-                  console.log("result2:::", result);
                   // Store uploaded file info
                   if (result && result.length > 0) {
-                    console.log("useFileUpload (paste) - storing uploaded file info:", result);
                     setUploadedFilesInfo((prev) => {
                       const newInfo = [...prev, ...result];
-                      console.log("useFileUpload (paste) - updated uploadedFilesInfo:", newInfo);
                       return newInfo;
                     });
                   }
@@ -337,7 +366,6 @@ export const useFileUpload = ({
                   const errorMessage =
                     error instanceof Error ? error.message : "文件上传失败";
                   message.error(`${file.name}: ${errorMessage}`);
-                  console.error("File upload error:", error);
                 }
               })
             ).finally(() => {

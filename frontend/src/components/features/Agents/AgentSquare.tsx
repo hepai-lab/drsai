@@ -44,7 +44,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     try {
       await agentWorkerAPI.removeRemoteAgent(user.email, id);
       await loadAgentList();
-      console.log("Remote agent removed successfully");
     } catch (error) {
       console.error("Failed to remove remote agent:", error);
     }
@@ -61,13 +60,12 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     mode: agent.mode || "remote",
     apiKey: agent.apiKey,
     onRemove: (id?: string) => handleRemoveRemoteAgent(id || agent.id),
-    onClick: () => console.log("Selected remote agent:", agent.name),
+    onClick: () => {},
   }), [handleRemoveRemoteAgent]);
 
   const loadRemoteAgents = useCallback(async (userEmail: string): Promise<AgentCardProps[]> => {
     try {
       const userRemoteAgents = await agentWorkerAPI.getUserRemoteAgents(userEmail) ?? [];
-      console.log("Loaded remote agents:", userRemoteAgents);
       if (!userRemoteAgents?.length) {
         return [];
       }
@@ -203,7 +201,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
       await loadAgentList();
       setIsRemoteModalOpen(false);
-      console.log("Remote agent saved successfully");
     } catch (error) {
       console.error("Failed to save remote agent:", error);
     }
