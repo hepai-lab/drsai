@@ -1,9 +1,13 @@
 from drsai_ui.run_ui import ui
 
+import os,sys
+parent_path = os.path.dirname(os.path.abspath(__file__))
+appdir = os.path.join(parent_path, "tmp/drsai_ui")
+
 if __name__ == "__main__":
     ui(
         # reload=True,
         port=8086,
-        appdir="/home/xiongdb/tmp/drsai_ui",
-        database_uri= "sqlite:////home/xiongdb/tmp/drsai_ui/drsai_ui.db",
+        appdir=appdir,
+        database_uri= f"sqlite:////{appdir}/drsai_ui.db",
     )
