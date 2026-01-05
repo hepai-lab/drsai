@@ -764,6 +764,44 @@ const RunView: React.FC<RunViewProps> = ({
     const updatedMessages = [...run.messages];
 
     updatedMessages.forEach((msg: Message, idx: number) => {
+      // Parse and validate attached_files from metadata if present
+      console.log("msg", msg);
+      if (msg.config.metadata?.attached_files) {
+        try {
+          const attachedFilesStr = msg.config.metadata.attached_files;
+          console.log("attachedFilesStr", attachedFilesStr);
+          // If it's a string, parse it to validate and ensure it's valid JSON
+          if (typeof attachedFilesStr === "string") {
+            const parsed = JSON.parse(attachedFilesStr);
+            // Ensure it's an array, then stringify it back to keep metadata type consistent
+            const validArray = Array.isArray(parsed) ? parsed : [];
+            // Update the message with validated attached_files (as JSON string)
+            updatedMessages[idx] = {
+              ...msg,
+              config: {
+                ...msg.config,
+                metadata: {
+                  ...msg.config.metadata,
+                  attached_files: JSON.stringify(validArray),
+                },
+              },
+            };
+          }
+        } catch (e) {
+          // If parsing fails, set to empty array as JSON string
+          updatedMessages[idx] = {
+            ...msg,
+            config: {
+              ...msg.config,
+              metadata: {
+                ...msg.config.metadata,
+                attached_files: "[]",
+              },
+            },
+          };
+        }
+      }
+
       if (idx === 0) return;
 
       const userPlans = messageUtils.findUserPlan(msg.config.content);

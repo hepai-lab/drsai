@@ -41,11 +41,12 @@ const cleanMessageForStorage = (message: Message): Message => {
   //   cleanedMessage.config.content = cleanedMessage.config.content.substring(0, 1000) + '...[truncated]';
   // }
 
-  // 清理不必要的metadata
-  if (cleanedMessage.config.metadata) {
-    const { attached_files, ...essentialMetadata } = cleanedMessage.config.metadata;
-    cleanedMessage.config.metadata = essentialMetadata;
-  }
+  // 保留 attached_files 在 metadata 中，因为需要显示附件列表
+  // 清理其他不必要的metadata（如果需要的话，可以在这里添加）
+  // if (cleanedMessage.config.metadata) {
+  //   const { attached_files, ...essentialMetadata } = cleanedMessage.config.metadata;
+  //   cleanedMessage.config.metadata = essentialMetadata;
+  // }
 
   return cleanedMessage;
 };
