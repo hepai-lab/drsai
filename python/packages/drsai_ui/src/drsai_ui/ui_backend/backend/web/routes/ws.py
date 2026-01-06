@@ -96,7 +96,7 @@ async def run_websocket(
                     response = message.get("response")
                     files = message.get("files")
                     if files:
-                        response = {"response": response, "files": json.dumps(files)}
+                        response = {"response": response, "attached_files": json.dumps(files)}
                     if response is not None:
                         await ws_manager.handle_input_response(run_id, response)
                     else:

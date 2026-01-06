@@ -86,9 +86,9 @@ class DrSaiChatAgentContainer(SequentialRoutedAgent):
     async def handle_agent_response(self, message: GroupChatAgentResponse, ctx: MessageContext) -> None:
         """Handle an agent response event by appending the content to the buffer."""
         if message.agent_response.chat_message.source == "user_proxy" and \
-            message.agent_response.chat_message.metadata.get("files"):
+            message.agent_response.chat_message.metadata.get("attached_files"):
                 query=message.agent_response.chat_message.metadata.get("content")
-                files=json.loads(message.agent_response.chat_message.metadata.get("files"))
+                files=json.loads(message.agent_response.chat_message.metadata.get("attached_files"))
                 messages_return = construct_task(
                         query=query, 
                         files=files,
