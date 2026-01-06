@@ -566,19 +566,17 @@ const ChatInput = React.forwardRef<
                       <Dropdown
                         overlay={
                           <Menu>
-                            <Menu.Item
-                              key="attach-file"
-                              icon={
-                                <PaperclipIcon
-                                  className={`w-4 h-4 flex-shrink-0 ${darkMode === "dark"
-                                    ? "text-gray-300"
-                                    : "text-magenta-600"
-                                    }`}
-                                />
-                              }
-                            >
-                              <Upload {...uploadProps} showUploadList={false}>
-                                <span>Attach File</span>
+                            <Menu.Item key="attach-file">
+                              <Upload {...uploadProps} showUploadList={false} className="upload-menu-item">
+                                <div className="flex items-center gap-2">
+                                  <PaperclipIcon
+                                    className={`w-4 h-4 flex-shrink-0 ${darkMode === "dark"
+                                      ? "text-gray-300"
+                                      : "text-magenta-600"
+                                      }`}
+                                  />
+                                  <span>Attach File</span>
+                                </div>
                               </Upload>
                             </Menu.Item>
                             <Menu.SubMenu
