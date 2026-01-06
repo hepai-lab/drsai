@@ -101,6 +101,8 @@ def construct_task(
                     {
                         "name": file.get("name", "unknown.img"),
                         "type": file.get("type", "image"),
+                        "size": file.get("size", 0),
+                        "url": file.get("url", ""),
                     }
                 )
             else:
@@ -116,6 +118,8 @@ def construct_task(
                         {
                             "name": file.get("name", "unknown.file"),
                             "type": file.get("type", "text"),
+                            "size": file.get("size", 0),
+                            "url": file.get("url", ""),
                         }
                     )
                 except Exception as e:
@@ -127,6 +131,8 @@ def construct_task(
                         {
                             "name": file.get("name", "unknown.file"),
                             "type": file.get("type", "text"),
+                            "size": file.get("size", 0),
+                            "url": file.get("url", ""),
                         }
                     )
 

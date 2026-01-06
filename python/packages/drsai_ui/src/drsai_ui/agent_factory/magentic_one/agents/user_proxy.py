@@ -224,14 +224,22 @@ class RoundbinDrSaiUserProxyAgent(BaseChatAgent, Component[UserProxyAgentConfig]
             yield input_requested_event
             with RoundbinDrSaiUserProxyAgent.InputRequestContext.populate_context(request_id):
                 user_input = await self._get_input(prompt, cancellation_token)
+                metadata={}
+                if isinstance(user_input, dict):
+                    user_input_mata = user_input
+                    user_input = user_input_mata.pop("response")
+                    if not user_input:
+                        raise ValueError("User's response cannot be empty")
+                    metadata.update(user_input_mata)
 
                 last_user_message_format = HumanInputFormat.from_str(user_input)
+                metadata.update({"content":last_user_message_format.content,"user_request":last_user_message_format.to_str()})
 
             # Return appropriate message type based on handoff presence
             if handoff:
-                yield Response(chat_message=HandoffMessage(content=user_input, target=handoff.source, source=self.name, metadata={"content":last_user_message_format.content,"user_request":last_user_message_format.to_str()}))
+                yield Response(chat_message=HandoffMessage(content=user_input, target=handoff.source, source=self.name, metadata=metadata))
             else:
-                yield Response(chat_message=TextMessage(content=user_input, source=self.name, metadata={"content":last_user_message_format.content,"user_request":last_user_message_format.to_str()}))
+                yield Response(chat_message=TextMessage(content=user_input, source=self.name, metadata=metadata))
 
         except asyncio.CancelledError:
             # raise

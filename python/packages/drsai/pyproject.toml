@@ -42,7 +42,7 @@ dependencies = [
 
     # hepai
     "damei",
-    "hepai",
+    "hepai>=1.3.3",
 
     # sql
     "sqlmodel",

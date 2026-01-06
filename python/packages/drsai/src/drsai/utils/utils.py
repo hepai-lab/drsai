@@ -11,7 +11,8 @@ import zlib
 
 
 def construct_task(
-    query: str, files: List[Dict[str, Any]] | None = None
+    query: str, 
+    files: List[Dict[str, Any]] | None = None,
 ) -> Sequence[ChatMessage]:
     """
     Construct a task from a query string and list of files.
@@ -34,8 +35,7 @@ def construct_task(
     for file in files:
         try:
             if file.get("type", "").startswith("image/"):
-                # Handle image file using from_base64 method
-                image = Image.from_base64(file["content"])
+                image = Image.from_file(file["path"])
                 images.append(image)
                 text_parts.append(f"Attached image: {file.get('name', 'unknown.img')}")
                 # name and type
@@ -43,12 +43,16 @@ def construct_task(
                     {
                         "name": file.get("name", "unknown.img"),
                         "type": file.get("type", "image"),
+                        "size": file.get("size", 0),
+                        "url": file.get("url", ""),
                     }
                 )
             else:
                 # Handle all other files as text
                 try:
-                    text_content = base64.b64decode(file["content"]).decode("utf-8")
+                    # text_content = base64.b64decode(file["content"]).decode("utf-8")
+                    with open(file["path"], "r", encoding="utf-8") as f:
+                        text_content = f.read()
                     text_parts.append(
                         f"Attached file: {file.get('name', 'unknown.file')}\n{text_content}"
                     )
@@ -56,6 +60,8 @@ def construct_task(
                         {
                             "name": file.get("name", "unknown.file"),
                             "type": file.get("type", "text"),
+                            "size": file.get("size", 0),
+                            "url": file.get("url", ""),
                         }
                     )
                 except Exception as e:
@@ -67,8 +73,11 @@ def construct_task(
                         {
                             "name": file.get("name", "unknown.file"),
                             "type": file.get("type", "text"),
+                            "size": file.get("size", 0),
+                            "url": file.get("url", ""),
                         }
                     )
+
         except Exception as e:
             logger.error(f"Error processing file {file.get('name')}: {str(e)}")
 
@@ -100,6 +109,98 @@ def construct_task(
         )
 
     return messages_return
+
+
+# def construct_task(
+#     query: str, files: List[Dict[str, Any]] | None = None
+# ) -> Sequence[ChatMessage]:
+#     """
+#     Construct a task from a query string and list of files.
+#     Returns a list of ChatMessages that combines all files and the query.
+#     Args:
+#         query (str): The text query from the user
+#         files (List[Dict[str, Any]]): List of file objects with properties name, content, and type
+
+#     Returns:
+#         Sequence[ChatMessage]: A list of ChatMessages that combines all files and the query.
+#     """
+#     if files is None:
+#         files = []
+
+#     images: List[Image] = []
+#     text_parts: List[str] = []
+#     messages_return: Sequence[ChatMessage] = []
+#     attached_files: List[Dict[str, str]] = []
+#     # Process each file based on its type
+#     for file in files:
+#         try:
+#             if file.get("type", "").startswith("image/"):
+#                 # Handle image file using from_base64 method
+#                 image = Image.from_base64(file["content"])
+#                 images.append(image)
+#                 text_parts.append(f"Attached image: {file.get('name', 'unknown.img')}")
+#                 # name and type
+#                 attached_files.append(
+#                     {
+#                         "name": file.get("name", "unknown.img"),
+#                         "type": file.get("type", "image"),
+#                     }
+#                 )
+#             else:
+#                 # Handle all other files as text
+#                 try:
+#                     text_content = base64.b64decode(file["content"]).decode("utf-8")
+#                     text_parts.append(
+#                         f"Attached file: {file.get('name', 'unknown.file')}\n{text_content}"
+#                     )
+#                     attached_files.append(
+#                         {
+#                             "name": file.get("name", "unknown.file"),
+#                             "type": file.get("type", "text"),
+#                         }
+#                     )
+#                 except Exception as e:
+#                     logger.error(f"Error processing file content: {str(e)}")
+#                     text_parts.append(
+#                         f"Attached file: {file.get('name', 'unknown.file')} (failed to process content)"
+#                     )
+#                     attached_files.append(
+#                         {
+#                             "name": file.get("name", "unknown.file"),
+#                             "type": file.get("type", "text"),
+#                         }
+#                     )
+#         except Exception as e:
+#             logger.error(f"Error processing file {file.get('name')}: {str(e)}")
+
+#     # Add the user query at the end
+#     combined_text = "\n\n".join(text_parts)
+#     attached_files_json = json.dumps(attached_files)
+#     # Return a MultiModalMessage if there are images, otherwise a TextMessage
+#     if len(text_parts) > 0:
+#         messages_return.append(
+#             TextMessage(
+#                 source="user", content=combined_text, metadata={"internal": "yes"}
+#             )
+#         )
+#     if images:
+#         messages_return.append(
+#             MultiModalMessage(
+#                 source="user",
+#                 content=[query, *images],
+#                 metadata={"attached_files": attached_files_json},
+#             )
+#         )
+#     else:
+#         messages_return.append(
+#             TextMessage(
+#                 source="user",
+#                 content=query,
+#                 metadata={"attached_files": attached_files_json},
+#             )
+#         )
+
+#     return messages_return
 
 
 def get_file_type(file_path: str) -> str:

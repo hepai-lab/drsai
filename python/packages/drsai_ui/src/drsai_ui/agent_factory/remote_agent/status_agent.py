@@ -569,7 +569,7 @@ class StatusAgent(DrSaiAgent):
                 chat_message=TextMessage(
                     content="An error occurred while executing the task.",
                     source=self.name,
-                    metadata={"internal": "no"},
+                    metadata={"internal": "no", "error_message": str(e)},
                 ),
                 inner_messages=inner_messages,
             )

@@ -1,5 +1,5 @@
 from typing import Any, List, Mapping
-
+import json
 from autogen_core import AgentId,DefaultTopicId, MessageContext, event, rpc
 
 from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage, MessageFactory
@@ -27,6 +27,7 @@ from drsai.modules.managers.messages.agent_messages import (
     LongTaskQueryMessage,
     )
 from drsai.modules.baseagent.drsaiagent import DrSaiAgent
+from drsai.utils.utils import construct_task
 from autogen_agentchat.teams._group_chat._sequential_routed_agent import SequentialRoutedAgent
 from loguru import logger
 
@@ -84,7 +85,18 @@ class DrSaiChatAgentContainer(SequentialRoutedAgent):
     @event
     async def handle_agent_response(self, message: GroupChatAgentResponse, ctx: MessageContext) -> None:
         """Handle an agent response event by appending the content to the buffer."""
-        self._buffer_message(message.agent_response.chat_message)
+        if message.agent_response.chat_message.source == "user_proxy" and \
+            message.agent_response.chat_message.metadata.get("files"):
+                query=message.agent_response.chat_message.metadata.get("content")
+                files=json.loads(message.agent_response.chat_message.metadata.get("files"))
+                messages_return = construct_task(
+                        query=query, 
+                        files=files,
+                    )
+                for msg in messages_return:
+                    self._buffer_message(msg)
+        else:
+            self._buffer_message(message.agent_response.chat_message)
     
     @event
     async def handle_long_task(self, message: GroupChatAgentLongTask, ctx: MessageContext) -> None:

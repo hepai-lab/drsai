@@ -20,7 +20,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "drsai>=1.0.0",
+    "drsai>=1.0.5",
     "autogen-ext[docker,file-surfer,web-surfer,magentic-one,task-centric-memory]==0.5.7",
     "aioconsole",
     "nest_asyncio",
@@ -40,7 +40,7 @@ dependencies = [
     "psutil",
 
     # SSO
-    "hepai>=1.1.36",
+    "hepai>=1.3.3",
     "damei",
     "dotmap",
     "authlib",
