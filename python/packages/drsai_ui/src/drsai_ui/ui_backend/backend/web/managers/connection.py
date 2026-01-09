@@ -279,6 +279,8 @@ class WebSocketManager:
                             HandoffMessage,
                             ToolCallRequestEvent,
                             ToolCallExecutionEvent,
+                            AgentLogEvent,
+                            TaskEvent,
                             LLMCallEventMessage,
                         ),
                     ):

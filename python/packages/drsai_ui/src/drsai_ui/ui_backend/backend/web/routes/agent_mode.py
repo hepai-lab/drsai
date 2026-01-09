@@ -3,7 +3,6 @@ from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...datamodel.db import AgentModeSettings, AgentModeConfig
-from ...datamodel.types import AgentModeSetting, Agent_mode
 from ..deps import get_db
 from .....agent_factory.agent_mode_cofigs import get_agent_mode_config
 
