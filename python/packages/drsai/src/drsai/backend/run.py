@@ -364,7 +364,7 @@ async def run_worker(agent_factory: callable, **kwargs):
     if os.path.exists(logo):
         logo_path = Path(logo)
         if logo_path.is_file():
-            file_obj = await upload_to_hepai_filesystem(str(logo_path))
+            file_obj = upload_to_hepai_filesystem(str(logo_path))
             logo = file_obj["url"]
 
     host: str =  kwargs.pop("host", None)
