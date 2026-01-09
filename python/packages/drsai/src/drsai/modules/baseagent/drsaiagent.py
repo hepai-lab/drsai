@@ -108,6 +108,8 @@ class DrSaiAgentConfig(BaseModel):
     metadata: Dict[str, str] | None = None
     structured_message_factory: ComponentModel | None = None
     db_manager_config: DatabaseManagerConfig | None = None
+    thread_id: str | None = None
+    user_id: str | None = None
 
 class DrSaiAgentState(BaseState):
     """State for an assistant agent."""
@@ -145,12 +147,12 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         metadata: Dict[str, str] | None = None,
 
         # drsaiAgent specific
-        memory_function: Callable = None,
+        memory_function: Callable | None = None,
         # allow_reply_function: bool = False,
-        reply_function: Callable = None,
-        db_manager: DatabaseManager = None,
-        thread_id: str = None,
-        user_id: str = None,
+        reply_function: Callable | None = None,
+        db_manager: DatabaseManager | None = None,
+        thread_id: str | None = None,
+        user_id: str | None = None,
         **kwargs,
             ):
         '''

@@ -27,7 +27,7 @@ from autogen_agentchat.base import (
     Team,)
 from drsai.configs import CONST
 
-from drsai.utils.utils import auto_worker_address
+from drsai.utils.utils import auto_worker_address, upload_to_hepai_filesystem
 
 here = Path(__file__).parent.resolve()
 
@@ -361,6 +361,11 @@ async def run_worker(agent_factory: callable, **kwargs):
         model_args.version = version
     
     logo: str = kwargs.pop("logo", 'https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview')
+    if os.path.exists(logo):
+        logo_path = Path(logo)
+        if logo_path.is_file():
+            file_obj = await upload_to_hepai_filesystem(str(logo_path))
+            logo = file_obj["url"]
 
     host: str =  kwargs.pop("host", None)
     if host is not None:
