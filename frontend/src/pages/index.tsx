@@ -6,12 +6,14 @@ import MagenticUILayout from "../components/layout";
 const IndexPage = ({ data }: any) => {
 
   React.useEffect(() => {
-    // 没有token则跳转登录
+    // 根据GATSBY_SSO环境变量决定跳转逻辑
     const localToken = localStorage.getItem("token");
-    if (process.env.GATSBY_SSO === "false") {
-      navigate("/");
-    } else if (!localToken) {
-      navigate("/sso-login");
+    if (!localToken) {
+      if (process.env.GATSBY_SSO === "false") {
+        navigate("/login");
+      } else {
+        navigate("/sso-login");
+      }
     }
   }, []);
 

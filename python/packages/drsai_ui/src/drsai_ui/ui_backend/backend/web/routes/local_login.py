@@ -77,7 +77,7 @@ async def local_login(user_id: str, password: str, db=Depends(get_db)) -> Dict:
 
         # 验证密码
         hashed_password = hash_password(password)
-        if user.get("password") != hashed_password:
+        if user.password != hashed_password:
             raise HTTPException(status_code=401, detail="Invalid password")
 
         return {"status": True, "message": "Login successful", "data": {"user_id": user_id}}

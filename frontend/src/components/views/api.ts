@@ -766,4 +766,49 @@ export class FileAPI {
     }
 }
 
+export class AuthAPI {
+    private getBaseUrl(): string {
+        return getServerUrl();
+    }
+
+    private getHeaders(): HeadersInit {
+        return {
+            "Content-Type": "application/json",
+        };
+    }
+
+    async register(userId: string, password: string): Promise<any> {
+        const params = new URLSearchParams({
+            user_id: userId,
+            password: password,
+        });
+        const response = await fetch(`${this.getBaseUrl()}/umtlocal/?${params.toString()}`, {
+            method: "POST",
+            headers: this.getHeaders(),
+        });
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || "注册失败");
+        }
+        return data;
+    }
+
+    async login(userId: string, password: string): Promise<any> {
+        const params = new URLSearchParams({
+            user_id: userId,
+            password: password,
+        });
+        const response = await fetch(`${this.getBaseUrl()}/umtlocal/login?${params.toString()}`, {
+            method: "POST",
+            headers: this.getHeaders(),
+        });
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || "登录失败");
+        }
+        return data;
+    }
+}
+
+export const authAPI = new AuthAPI();
 export const fileAPI = new FileAPI();

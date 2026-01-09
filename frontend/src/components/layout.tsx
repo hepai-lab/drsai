@@ -39,7 +39,7 @@ const MagenticUILayout = ({
     // 检查用户信息是否存在
     if (!user) {
       // 如果没有用户信息，尝试从本地存储获取
-      const email = localStorage.getItem("user_email") || "guestuser@gmail.com";
+      const email = localStorage.getItem("user_email") || "";
       const name = localStorage.getItem("user_name") || email;
       if (email) {
         setUser({ ...user, email, name });
@@ -50,11 +50,16 @@ const MagenticUILayout = ({
           localStorage.removeItem("drsai-mode-config");
         }
       } else {
+        
 
         if (typeof window !== "undefined" && process.env.GATSBY_SSO === "true") {
 
           // TODO: 单点登录后续再接入
           window.location.href = "/sso-login";
+        }
+
+        if (typeof window !== "undefined" && process.env.GATSBY_SSO === "false" && !email) {
+          window.location.href = "/login";
         }
       }
     }

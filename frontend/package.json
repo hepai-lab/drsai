@@ -12,7 +12,7 @@
     "develop-clean": "gatsby clean && gatsby develop --port 8000 --host 0.0.0.0",
     "dev": "npm run develop",
     "start": "gatsby clean && gatsby develop --port 8000 --host 0.0.0.0",
-    "build": "gatsby clean && rm -rf ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ && PREFIX_PATH_VALUE='' gatsby build --prefix-paths && rsync -a --delete public/ ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/",
+    "build": "gatsby clean && rm -rf ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ && cross-env PREFIX_PATH_VALUE='' gatsby build --prefix-paths && rsync -a --delete public/ ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/",
     "serve": "gatsby serve",
     "clean": "gatsby clean",
     "typecheck": "tsc --noEmit"
@@ -59,6 +59,7 @@
     "@types/react-dom": "^18.2.19",
     "@types/react-syntax-highlighter": "^15.5.13",
     "@types/uuid": "^10.0.0",
+    "cross-env": "^10.1.0",
     "typescript": "^5.3.3"
   },
   "resolutions": {

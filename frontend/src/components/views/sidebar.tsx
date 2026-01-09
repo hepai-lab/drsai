@@ -83,7 +83,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     localStorage.removeItem("username");
     localStorage.removeItem("user_email");
     localStorage.removeItem("user_name");
-    window.location.href = "/umt/logout";
+    // 根据GATSBY_SSO环境变量决定跳转目标
+    if (process.env.GATSBY_SSO === "false") {
+      window.location.href = "/login";
+    } else {
+      window.location.href = "/umt/logout";
+    }
   };
 
   const getAgentIcon = (mode: string) => {
@@ -631,18 +636,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onClick: () => setIsSettingsOpen(true),
                   },
                   // 只在非开发模式下显示退出登录按钮
-                  ...(process.env.GATSBY_SERVICE_MODE !== "DEV" ? [
-                    {
-                      type: "divider" as const,
-                    },
-                    {
-                      key: "logout",
-                      label: "退出登录",
-                      icon: <LogOut className="w-4 h-4" />,
-                      onClick: handleLogout,
-                      danger: true,
-                    },
-                  ] : []),
+
+                  {
+                    type: "divider" as const,
+                  },
+                  {
+                    key: "logout",
+                    label: "退出登录",
+                    icon: <LogOut className="w-4 h-4" />,
+                    onClick: handleLogout,
+                    danger: true,
+                  },
+
                 ],
               }}
               placement="topLeft"
