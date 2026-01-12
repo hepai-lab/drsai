@@ -1,0 +1,14 @@
+[
+    {
+        "name": "your_Agent",
+        "url": "http://*********/apiv2",
+        "apiKey": "sk-****",
+        "mode": "remote",
+        "description": "******.",
+        "version": "0.1.0",
+        "author": "***6@ihep.ac.cn",
+        "logo": "https://aiapi.ihep.ac.cn/apiv2/files/file-61518e9f7e8f45049739d7ae58abe35a/preview",
+        "owner": "***6@ihep.ac.cn",
+        "id": "123456"
+    }
+]
