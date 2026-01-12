@@ -468,7 +468,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           ) : (
                             <div className="w-6 h-6 rounded bg-tertiary/40 flex items-center justify-center">
                               <span className="text-xs font-medium text-secondary">
-                                {agent.name.charAt(0).toUpperCase()}
+                                {String(agent.name || '').charAt(0).toUpperCase()}
                               </span>
                             </div>
                           )}
@@ -664,7 +664,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     />
                   ) : (
                     <div className="h-5 w-5 rounded-full bg-accent text-white flex items-center justify-center text-xs font-medium">
-                      {(user.name || user.email || '?').charAt(0).toUpperCase()}
+                      {String(user.name || user.email || '?').charAt(0).toUpperCase()}
                     </div>
                   )}
                 </div>

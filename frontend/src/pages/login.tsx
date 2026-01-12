@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Tabs, Form, Input, Button, message, Card } from "antd";
 import { UserOutlined, LockOutlined } from "@ant-design/icons";
+import { navigate } from "gatsby";
 import { appContext } from "../hooks/provider";
 import { authAPI } from "../components/views/api";
 
@@ -100,11 +101,13 @@ const LoginPage: React.FC = () => {
     const [activeTab, setActiveTab] = useState("login");
     const [loginForm] = Form.useForm();
 
+    // 路由保护由 RouteGuard 组件统一处理
+    // 如果已经登录，RouteGuard 会自动重定向到主页
+
     const handleLogin = async (values: any) => {
         setLoginLoading(true);
         try {
             const response = await authAPI.login(values.username, values.password);
-
             if (response.status) {
                 // 保存用户信息到本地存储
                 localStorage.setItem("token", `local_${Date.now()}`);
@@ -220,7 +223,19 @@ const LoginPage: React.FC = () => {
                                     name="username"
                                     rules={[
                                         { required: true, message: "请输入用户名!" },
-                                        { min: 3, message: "用户名至少3个字符!" }
+                                        { min: 3, message: "用户名至少3个字符!" },
+                                        {
+                                            validator: (_, value) => {
+                                                if (!value) {
+                                                    return Promise.resolve();
+                                                }
+                                                // 检查是否是纯数字
+                                                if (/^\d+$/.test(value)) {
+                                                    return Promise.reject(new Error("用户名不能是纯数字!"));
+                                                }
+                                                return Promise.resolve();
+                                            },
+                                        },
                                     ]}
                                 >
                                     <Input
