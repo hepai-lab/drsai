@@ -3,6 +3,7 @@ import "antd/dist/reset.css";
 import * as React from "react";
 import { appContext } from "../hooks/provider";
 import { SessionManager } from "./views/manager";
+import { navigate } from "gatsby";
 
 const classNames = (...classes: (string | undefined | boolean)[]) => {
   return classes.filter(Boolean).join(" ");
@@ -50,16 +51,10 @@ const MagenticUILayout = ({
           localStorage.removeItem("drsai-mode-config");
         }
       } else {
-        
-
-        if (typeof window !== "undefined" && process.env.GATSBY_SSO === "true") {
-
-          // TODO: 单点登录后续再接入
-          window.location.href = "/sso-login";
-        }
-
-        if (typeof window !== "undefined" && process.env.GATSBY_SSO === "false" && !email) {
-          window.location.href = "/login";
+        if (process.env.GATSBY_SERVICE_MODE === "DEV") {
+          navigate("/login");
+        } else {
+          navigate("/sso-login");
         }
       }
     }

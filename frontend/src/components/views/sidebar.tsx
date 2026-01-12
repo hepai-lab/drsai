@@ -84,7 +84,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     localStorage.removeItem("user_email");
     localStorage.removeItem("user_name");
     // 根据GATSBY_SSO环境变量决定跳转目标
-    if (process.env.GATSBY_SSO === "false") {
+    if (process.env.GATSBY_SERVICE_MODE === "DEV") {
       window.location.href = "/login";
     } else {
       window.location.href = "/umt/logout";

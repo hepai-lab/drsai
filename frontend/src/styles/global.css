@@ -764,48 +764,34 @@ body {
 
 /* @import "antd/dist/antd.css"; */
 
-.ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
-    @apply text-accent !important;
-    font-weight: 500;
-}
-.ant-tabs-nav::before {
-    @apply border-secondary !important;
-}
-.ant-tabs-tab:hover {
-    @apply text-accent !important;
-}
-
-.ant-tabs-tab {
-    @apply text-primary !important;
-}
-
-.ant-tabs-ink-bar {
-    @apply bg-accent !important;
-}
-
 .element.style {
     left: 0%;
     width: 100%;
 }
 .ant-slider-track {
-    @apply bg-accent !important;
+    background-color: #2a2a2a !important;
+    background: #2a2a2a !important;
 }
 .ant-slider-rail {
     @apply bg-secondary !important;
 }
 .ant-slider-handle {
-    @apply border-accent !important;
+    border-color: #2a2a2a !important;
 }
 .ant-slider-handle:hover {
-    @apply border-accent brightness-75 !important;
+    border-color: #3a3a3a !important;
+    filter: brightness(1.1) !important;
 }
 
 .ant-switch-checked {
-    @apply bg-accent !important;
+    background-color: #2a2a2a !important;
+    background: #2a2a2a !important;
+    @apply text-gray-700 !important;
 }
 .ant-switch {
     background-color: #3a3a3a;
     border: grey;
+    @apply text-gray-700 !important;
 }
 
 /* .ant-modal-content {

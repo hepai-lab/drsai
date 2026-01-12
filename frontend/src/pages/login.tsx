@@ -6,6 +6,45 @@ import { authAPI } from "../components/views/api";
 
 const { TabPane } = Tabs;
 
+// 登录页面专用的 Tabs 样式
+const loginTabsStyle = `
+    .login-page-tabs .ant-tabs-tab-btn {
+        color: #fff !important;
+        transition: none !important;
+    }
+    .login-page-tabs .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+        color: #fff !important;
+        font-weight: 500;
+    }
+    .login-page-tabs .ant-tabs-tab:hover .ant-tabs-tab-btn {
+        color: rgba(255, 255, 255, 0.8) !important;
+    }
+    .login-page-tabs .ant-tabs-ink-bar {
+        background-color: #fff !important;
+        transition: none !important;
+    }
+    .login-page-tabs .ant-tabs-nav::before {
+        border-color: rgba(255, 255, 255, 0.2) !important;
+    }
+    .login-page-button {
+        padding: 15px 30px !important;
+        font-size: 1.1rem !important;
+        background: rgba(255,255,255,0.1) !important;
+        color: #fff !important;
+        border: none !important;
+        border-radius: 25px !important;
+        cursor: pointer !important;
+        transition: all 0.3s ease !important;
+        backdrop-filter: blur(5px) !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2) !important;
+    }
+    .login-page-button:hover {
+        background: rgba(255,255,255,0.2) !important;
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.3) !important;
+    }
+`;
+
 const backgroundStyle: React.CSSProperties = {
     minHeight: "100vh",
     display: "flex",
@@ -115,6 +154,7 @@ const LoginPage: React.FC = () => {
 
     return (
         <div style={backgroundStyle}>
+            <style>{loginTabsStyle}</style>
             <div style={logoContainerStyle}>
                 IHEP计算中心
             </div>
@@ -124,7 +164,7 @@ const LoginPage: React.FC = () => {
                     欢迎探索 Dr. Sai 智能体
                 </h2>
                 <Card style={cardStyle}>
-                    <Tabs activeKey={activeTab} onChange={setActiveTab} centered>
+                    <Tabs activeKey={activeTab} onChange={setActiveTab} centered className="login-page-tabs">
                         <TabPane tab="登录" key="login">
                             <Form
                                 form={loginForm}
@@ -157,11 +197,11 @@ const LoginPage: React.FC = () => {
 
                                 <Form.Item>
                                     <Button
-                                        type="primary"
                                         htmlType="submit"
                                         size="large"
                                         block
                                         loading={loginLoading}
+                                        className="login-page-button"
                                     >
                                         登录
                                     </Button>
@@ -227,11 +267,11 @@ const LoginPage: React.FC = () => {
 
                                 <Form.Item>
                                     <Button
-                                        type="primary"
                                         htmlType="submit"
                                         size="large"
                                         block
                                         loading={registerLoading}
+                                        className="login-page-button"
                                     >
                                         注册
                                     </Button>

@@ -9,7 +9,7 @@ const IndexPage = ({ data }: any) => {
     // 根据GATSBY_SSO环境变量决定跳转逻辑
     const localToken = localStorage.getItem("token");
     if (!localToken) {
-      if (process.env.GATSBY_SSO === "false") {
+      if (process.env.GATSBY_SERVICE_MODE === "DEV") {
         navigate("/login");
       } else {
         navigate("/sso-login");
