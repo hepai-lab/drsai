@@ -493,7 +493,7 @@ async def create_magentic_round_team(
 
     elif agent_mode == "remote" or agent_mode == "ddf":
         agent_config["api_key"] = agent_config.get("api_key", api_key)
-        agent_config["url"] = agent_config.get("url", "https://aiapi.ihep.ac.cn/apiv2")
+        agent_config["url"] = agent_mode_config.get("url", "https://aiapi.ihep.ac.cn/apiv2")
         agent = StatusAgent(
             name="RemoteAgent",
             model_client=get_model_client(model_client_config = model_config),
