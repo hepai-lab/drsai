@@ -10,6 +10,11 @@ import {
   RefreshCw,
   Clock,
   Bot,
+  Copy,
+  Edit,
+  Check,
+  X,
+  Send,
 } from "lucide-react";
 import {
   AgentMessageConfig,
@@ -39,6 +44,8 @@ interface MessageProps {
   onImageClick?: (index: number) => void;
   onToggleHide?: (expanded: boolean) => void;
   onRegeneratePlan?: () => void;
+  onEditMessage?: (messageIdx: number, newContent: string) => void;
+  onResendMessage?: (content: string) => void;
   runStatus?: string;
   forceCollapsed?: boolean;
 }
@@ -580,7 +587,19 @@ export const messageUtils = {
 const RenderUserMessage: React.FC<{
   parsedContent: ParsedContent;
   isUserProxy: boolean;
-}> = memo(({ parsedContent, isUserProxy }) => {
+  messageIdx: number;
+  onEditMessage?: (messageIdx: number, newContent: string) => void;
+  onResendMessage?: (content: string) => void;
+  runStatus?: string;
+  isEditing?: boolean;
+  onStartEdit?: () => void;
+  onCancelEdit?: () => void;
+}> = memo(({ parsedContent, isUserProxy, messageIdx, onEditMessage, onResendMessage, runStatus, isEditing: externalIsEditing, onStartEdit, onCancelEdit }) => {
+  const [internalIsEditing, setInternalIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState("");
+  const isEditing = externalIsEditing !== undefined ? externalIsEditing : internalIsEditing;
+  const setIsEditing = externalIsEditing !== undefined ? (onStartEdit || (() => { })) : setInternalIsEditing;
+
   // Parse attached files from metadata if present
   const attachedFiles: AttachedFile[] = React.useMemo(() => {
     if (parsedContent.metadata?.attached_files) {
@@ -592,6 +611,55 @@ const RenderUserMessage: React.FC<{
     }
     return [];
   }, [parsedContent.metadata?.attached_files]);
+
+  // Get the text content for editing/copying
+  const getTextContent = (): string => {
+    if (messageUtils.isMultiModalContent(parsedContent.text)) {
+      return parsedContent.text
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => parseContent(item))
+        .join("\n");
+    }
+    return String(parsedContent.text);
+  };
+
+  // Initialize editValue when entering edit mode
+  React.useEffect(() => {
+    if (isEditing && !editValue) {
+      const textContent = getTextContent();
+      setEditValue(textContent);
+    }
+    // Reset editValue when exiting edit mode
+    if (!isEditing) {
+      setEditValue("");
+    }
+  }, [isEditing]);
+
+  const handleSend = () => {
+    if (onResendMessage && editValue.trim()) {
+      onResendMessage(editValue);
+    }
+    if (externalIsEditing !== undefined) {
+      // Controlled mode - parent will handle state
+      setInternalIsEditing(false);
+    } else {
+      setIsEditing(false);
+    }
+    setEditValue("");
+  };
+
+  const handleCancel = () => {
+    if (externalIsEditing !== undefined) {
+      // Controlled mode - notify parent to exit edit mode
+      if (onCancelEdit) {
+        onCancelEdit();
+      }
+      setInternalIsEditing(false);
+    } else {
+      setIsEditing(false);
+    }
+    setEditValue("");
+  };
 
   return (
     <div className="space-y-2">
@@ -615,42 +683,89 @@ const RenderUserMessage: React.FC<{
         </div>
       )}
 
-      {/* Existing content rendering */}
-      {messageUtils.isMultiModalContent(parsedContent.text) ? (
+      {/* Edit mode */}
+      {isEditing ? (
         <div className="space-y-2">
-          {parsedContent.text.map((item, index) => (
-            <div key={index}>
-              {typeof item === "string" ? (
-                <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
-                  {parseContent(item)}
-                </div>
-              ) : (
-                <ClickableImage
-                  src={getImageSource(item)}
-                  alt={item.alt || `Attachment ${index + 1}`}
-                  className="max-w-[400px] max-h-[30vh] rounded-lg"
-                />
-              )}
-            </div>
-          ))}
+          <textarea
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            className="w-full p-2 border border-secondary rounded-lg bg-background text-primary resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+            rows={Math.min(editValue.split('\n').length + 2, 10)}
+            autoFocus
+            onKeyDown={(e) => {
+              // Allow Ctrl/Cmd+Enter to send
+              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                handleSend();
+              }
+              // Allow Escape to cancel
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                handleCancel();
+              }
+            }}
+          />
+          <div className="flex items-center gap-2">
+            {onResendMessage && (
+              <button
+                onClick={handleSend}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary rounded-lg hover:bg-primary/90 transition-colors"
+                title="Send edited message"
+              >
+                <Send size={14} />
+                <span className="text-sm">Send</span>
+              </button>
+            )}
+            <button
+              onClick={handleCancel}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary text-primary rounded-lg hover:bg-secondary/80 transition-colors"
+              title="Cancel editing"
+            >
+              <X size={14} />
+              <span className="text-sm">Cancel</span>
+            </button>
+          </div>
         </div>
       ) : (
-        <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
-          {String(parsedContent.text)}
-        </div>
-      )}
+        <>
+          {/* Existing content rendering */}
+          {messageUtils.isMultiModalContent(parsedContent.text) ? (
+            <div className="space-y-2">
+              {parsedContent.text.map((item, index) => (
+                <div key={index}>
+                  {typeof item === "string" ? (
+                    <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
+                      {parseContent(item)}
+                    </div>
+                  ) : (
+                    <ClickableImage
+                      src={getImageSource(item)}
+                      alt={item.alt || `Attachment ${index + 1}`}
+                      className="max-w-[400px] max-h-[30vh] rounded-lg"
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
+              {String(parsedContent.text)}
+            </div>
+          )}
 
-      {parsedContent.plan &&
-        Array.isArray(parsedContent.plan) &&
-        parsedContent.plan.length > 0 && (
-          <PlanView
-            task={""}
-            plan={parsedContent.plan}
-            setPlan={() => { }} // No-op since it's read-only
-            viewOnly={true}
-            onSavePlan={() => { }} // No-op since it's read-only
-          />
-        )}
+          {parsedContent.plan &&
+            Array.isArray(parsedContent.plan) &&
+            parsedContent.plan.length > 0 && (
+              <PlanView
+                task={""}
+                plan={parsedContent.plan}
+                setPlan={() => { }} // No-op since it's read-only
+                viewOnly={true}
+                onSavePlan={() => { }} // No-op since it's read-only
+              />
+            )}
+        </>
+      )}
     </div>
   );
 });
@@ -674,8 +789,14 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     onImageClick,
     onToggleHide,
     onRegeneratePlan,
+    onEditMessage,
+    onResendMessage,
     forceCollapsed = false,
   }) => {
+    const [isEditing, setIsEditing] = useState(false);
+    const [isCopied, setIsCopied] = useState(false);
+    const editTriggerRef = React.useRef<(() => void) | null>(null);
+
     if (!message) return null;
     if (message.metadata?.type === "browser_address") return null;
 
@@ -739,9 +860,40 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       return null;
     }
 
+    // Helper functions for user message actions
+    const getTextContent = (): string => {
+      if (messageUtils.isMultiModalContent(parsedContent.text)) {
+        return parsedContent.text
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => parseContent(item))
+          .join("\n");
+      }
+      return String(parsedContent.text);
+    };
+
+    const handleCopy = async () => {
+      const textToCopy = getTextContent();
+      if (textToCopy.trim()) {
+        try {
+          await navigator.clipboard.writeText(textToCopy);
+          setIsCopied(true);
+          // Reset after 2 seconds
+          setTimeout(() => {
+            setIsCopied(false);
+          }, 2000);
+        } catch (err) {
+          console.error('Failed to copy text:', err);
+        }
+      }
+    };
+
+    const canEditUserMessage = (isUser || isUserProxy) &&
+      !messageUtils.isMultiModalContent(parsedContent.text) &&
+      !parsedContent.plan;
+
     return (
       <div
-        className={`relative group mb-3 ${className} w-full break-words ${hidden &&
+        className={`relative mb-8 ${className} w-full break-words ${hidden &&
           (!orchestratorContent ||
             orchestratorContent.type !== "step-execution")
           ? "hidden"
@@ -749,126 +901,134 @@ export const RenderMessage: React.FC<MessageProps> = memo(
           }`}
       >
         <div
-          className={`flex ${isUser || isUserProxy ? "justify-end" : "justify-start"
+          className={`flex group ${isUser || isUserProxy ? "justify-end" : "justify-start"
             } items-start w-full transition-all duration-200`}
         >
-          <div
-            className={`${isUser || isUserProxy
-              ? `text-primary rounded-2xl bg-tertiary rounded-tr-sm px-4 py-2 ${parsedContent.plan && parsedContent.plan.length > 0
-                ? "w-[80%]"
-                : "max-w-[80%]"
-              }`
-              : "w-full text-primary"
-              } break-words overflow-hidden`}
-          >
-            {/* Show user message content first */}
-            {(isUser || isUserProxy) && (
-              <RenderUserMessage
-                parsedContent={parsedContent}
-                isUserProxy={isUserProxy}
-              />
-            )}
-            {!isUser && !isUserProxy && shouldShowSourceBadge && (
-              <div className="relative mb-2 inline-flex items-center py-1.5 text-base font-semibold text-primary gap-2">
-                <span className=""><Bot /></span>
-                <span>{sourceBadgeText}</span>
+          <div className="relative flex flex-col items-end">
+            <div
+              className={`${isUser || isUserProxy
+                ? `text-primary rounded-2xl bg-tertiary rounded-tr-sm px-4 py-2 ${parsedContent.plan && parsedContent.plan.length > 0
+                  ? "w-[100%]"
+                  : "max-w-[100%]"
+                }`
+                : "w-full text-primary"
+                } break-words overflow-hidden`}
+            >
+              {/* Show user message content first */}
+              {(isUser || isUserProxy) && (
+                <RenderUserMessage
+                  parsedContent={parsedContent}
+                  isUserProxy={isUserProxy}
+                  messageIdx={messageIdx}
+                  onEditMessage={(idx, content) => {
+                    onEditMessage?.(idx, content);
+                    setIsEditing(false);
+                  }}
+                  onResendMessage={(content) => {
+                    onResendMessage?.(content);
+                    setIsEditing(false);
+                  }}
+                  runStatus={runStatus}
+                  isEditing={isEditing}
+                  onStartEdit={() => setIsEditing(true)}
+                  onCancelEdit={() => setIsEditing(false)}
+                />
+              )}
+            </div>
+
+            {/* Action buttons - absolutely positioned at bottom of message bubble */}
+            {(isUser || isUserProxy) && !isEditing && (
+              <div className={`flex items-center gap-1 absolute ${isUser || isUserProxy ? 'right-0' : 'left-0'} top-full z-10 px-1 py-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto`}>
+                <button
+                  onClick={handleCopy}
+                  className="p-1.5 text-secondary hover:text-primary transition-colors rounded hover:bg-secondary/50"
+                  title={isCopied ? "Copied!" : "Copy message"}
+                >
+                  {isCopied ? (
+                    <Check size={14} />
+                  ) : (
+                    <Copy size={14} />
+                  )}
+                </button>
+                {canEditUserMessage && (onEditMessage || onResendMessage) && (
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="p-1.5 text-secondary hover:text-primary transition-colors rounded hover:bg-secondary/50"
+                    title="Edit message"
+                  >
+                    <Edit size={14} />
+                  </button>
+                )}
               </div>
             )}
-            {/* Handle other content types */}
-            {!isUser &&
-              !isUserProxy &&
-              (isPlanMsg ? (
-                <RenderPlan
-                  content={planContent || {}}
-                  isEditable={isEditable}
-                  onSavePlan={onSavePlan}
-                  onRegeneratePlan={onRegeneratePlan}
-                  forceCollapsed={forceCollapsed}
-                />
-              ) : orchestratorContent?.type === "step-execution" ? (
-                <RenderStepExecution
-                  content={orchestratorContent.content}
-                  hidden={hidden}
-                  is_step_repeated={is_step_repeated}
-                  is_step_failed={is_step_failed}
-                  runStatus={runStatus || ""}
-                  onToggleHide={onToggleHide}
-                />
-              ) : orchestratorContent?.type === "final-answer" ? (
-                <RenderFinalAnswer
-                  content={orchestratorContent.content}
-                  sessionId={sessionId}
-                  messageIdx={messageIdx}
-                />
-              ) : messageUtils.isToolCallContent(parsedContent.text) ? (
-                <RenderToolCall content={parsedContent.text} />
-              ) : messageUtils.isMultiModalContent(parsedContent.text) ? (
-                message.metadata?.type === "browser_screenshot" ? (
-                  <RenderMultiModalBrowserStep
-                    content={parsedContent.text}
-                    onImageClick={onImageClick}
-                  />
-                ) : (
-                  <RenderMultiModal content={parsedContent.text} />
-                )
-              ) : messageUtils.isFunctionExecutionResult(parsedContent.text) ? (
-                <RenderToolResult content={parsedContent.text} />
-              ) : (
-                <div className="break-words">
-                  {message.metadata?.type === "file" ? (
-                    <RenderFile message={message} />
-                  ) : (
-                    <MarkdownRenderer
-                      content={String(parsedContent.text)}
-                      indented={
-                        !orchestratorContent ||
-                        orchestratorContent.type !== "default"
-                      }
-                    />
-                  )}
-                </div>
-              ))}
-            {/* {!isUser &&
-              !isUserProxy &&
-              typeof parsedContent.text === "string" &&
-              String(parsedContent.text).trim() && (
-                <div className="flex justify-end mt-2">
-                  <button
-                    onClick={() => {
-                      const textToCopy = parseContent(
-                        parsedContent.text
-                      );
-                      if (
-                        typeof textToCopy ===
-                        "string" &&
-                        textToCopy.trim()
-                      ) {
-                        navigator.clipboard.writeText(
-                          textToCopy
-                        );
-                      }
-                    }}
-                    className="p-1 text-secondary hover:text-primary transition-colors"
-                    title="Copy message"
-                  >
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                      />
-                    </svg>
-                  </button>
-                </div>
-              )} */}
-
           </div>
+
+          {/* Non-user message content */}
+          {!isUser && !isUserProxy && (
+            <div className="w-full text-primary break-words overflow-hidden">
+              {shouldShowSourceBadge && (
+                <div className="relative mb-2 inline-flex items-center py-1.5 text-base font-semibold text-primary gap-2">
+                  <span className=""><Bot /></span>
+                  <span>{sourceBadgeText}</span>
+                </div>
+              )}
+              {/* Handle other content types */}
+              {!isUser &&
+                !isUserProxy &&
+                (isPlanMsg ? (
+                  <RenderPlan
+                    content={planContent || {}}
+                    isEditable={isEditable}
+                    onSavePlan={onSavePlan}
+                    onRegeneratePlan={onRegeneratePlan}
+                    forceCollapsed={forceCollapsed}
+                  />
+                ) : orchestratorContent?.type === "step-execution" ? (
+                  <RenderStepExecution
+                    content={orchestratorContent.content}
+                    hidden={hidden}
+                    is_step_repeated={is_step_repeated}
+                    is_step_failed={is_step_failed}
+                    runStatus={runStatus || ""}
+                    onToggleHide={onToggleHide}
+                  />
+                ) : orchestratorContent?.type === "final-answer" ? (
+                  <RenderFinalAnswer
+                    content={orchestratorContent.content}
+                    sessionId={sessionId}
+                    messageIdx={messageIdx}
+                  />
+                ) : messageUtils.isToolCallContent(parsedContent.text) ? (
+                  <RenderToolCall content={parsedContent.text} />
+                ) : messageUtils.isMultiModalContent(parsedContent.text) ? (
+                  message.metadata?.type === "browser_screenshot" ? (
+                    <RenderMultiModalBrowserStep
+                      content={parsedContent.text}
+                      onImageClick={onImageClick}
+                    />
+                  ) : (
+                    <RenderMultiModal content={parsedContent.text} />
+                  )
+                ) : messageUtils.isFunctionExecutionResult(parsedContent.text) ? (
+                  <RenderToolResult content={parsedContent.text} />
+                ) : (
+                  <div className="break-words">
+                    {message.metadata?.type === "file" ? (
+                      <RenderFile message={message} />
+                    ) : (
+                      <MarkdownRenderer
+                        content={String(parsedContent.text)}
+                        indented={
+                          !orchestratorContent ||
+                          orchestratorContent.type !== "default"
+                        }
+                      />
+                    )}
+                  </div>
+                )
+                )}
+            </div>
+          )}
         </div>
       </div>
     );

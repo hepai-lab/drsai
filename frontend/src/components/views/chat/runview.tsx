@@ -969,6 +969,14 @@ const RunView: React.FC<RunViewProps> = ({
                         ? handleRegeneratePlan
                         : undefined
                     }
+                    onResendMessage={(content: string) => {
+                      // 根据当前状态决定调用哪个函数
+                      if (run.status === "awaiting_input" || run.status === "paused") {
+                        onInputResponse?.(content, false, undefined, []);
+                      } else {
+                        onRunTask?.(content, [], undefined, true);
+                      }
+                    }}
                     forceCollapsed={shouldForceCollapse}
                   />
                 </div>
