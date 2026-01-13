@@ -1,5 +1,5 @@
 from typing import Dict
-import asyncio
+import asyncio, os, json
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
@@ -176,13 +176,21 @@ async def get_user_remote_agents(user_id: str, db=Depends(get_db)) -> Dict:
     获取用户保存的远程智能体列表
     '''
     try:
+        agents_list = []
+        DEFAULT_REMOTE_AGENTS = os.getenv("DEFAULT_REMOTE_AGENTS", None)
+        if DEFAULT_REMOTE_AGENTS:
+            with open(DEFAULT_REMOTE_AGENTS, 'r', encoding='utf-8') as f:
+                default_agents =  json.load(f)
+                agents_list.extend(default_agents)
+
         response = db.get(UserAgents, filters={"user_id": user_id})
 
         if response.status and response.data:
             user_agents = response.data[0]
-            return {"status": True, "data": user_agents.agents or {}}
+            agents_list.extend(user_agents.agents or [])
+            return {"status": True, "data":  agents_list}
         else:
-            return {"status": True, "data": {}}
+            return {"status": True, "data": agents_list}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
