@@ -29,7 +29,7 @@ export const SessionManager: React.FC = () => {
   const [activeSubMenuItem, setActiveSubMenuItem] = useState("current_session");
   const [baseUrl, setBaseUrl] = useState<string | undefined>();
 
-  const { user } = useContext(appContext);
+  const { user, darkMode } = useContext(appContext);
   const { session, setSession, setSessions } = useConfigStore();
   const { selectedAgent, setSelectedAgent, setConfig } = useModeConfigStore();
   const { saveSessionId, saveSelectedAgent, getSelectedAgent } = useSessionStorage();
@@ -447,7 +447,7 @@ export const SessionManager: React.FC = () => {
 
       {/* Sidebar */}
       <div
-        className={`fixed lg:relative left-0 top-0 h-full transition-smooth z-50 lg:z-auto overflow-hidden bg-gray-50/95 dark:bg-secondary/80 border-r border-gray-200/50 dark:border-border-primary/50 ${isSidebarOpen
+        className={`fixed lg:relative left-0 top-0 h-full transition-smooth z-50 lg:z-auto overflow-hidden ${darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-gray-50/95"} border-r ${darkMode === "dark" ? "border-border-primary/50" : "border-gray-200/50"} ${isSidebarOpen
           ? "w-72 lg:w-56 translate-x-0"
           : "w-72 lg:w-0 -translate-x-full lg:translate-x-0"
           }`}

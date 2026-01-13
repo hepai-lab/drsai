@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { ChevronDown, ChevronUp, CheckCircle, Clock, Circle } from "lucide-react";
 import { BESIIIPanelProps, BESIIITask, BESIIISubTask } from "./types";
+import { appContext } from "../../../../hooks/provider";
 
 /**
  * BESIII Panel - 用于显示 BESIII Agent 的任务执行状态
@@ -19,6 +20,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     logs = [],
     onMinimize,
 }) => {
+    const { darkMode } = React.useContext(appContext);
     const [activeTab, setActiveTab] = useState<TabType>('taskmanager');
     const [localTasks, setLocalTasks] = useState<BESIIITask[]>(tasks);
     const logContainerRef = useRef<HTMLDivElement>(null);
@@ -56,14 +58,14 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                 return <CheckCircle size={20} className="text-green-500" />;
             case 'running':
                 return (
-                    <div className="flex items-center gap-1 px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs">
+                    <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${darkMode === "dark" ? "bg-yellow-500/20 text-yellow-400" : "bg-yellow-100 text-yellow-800"}`}>
                         <Clock size={14} />
                         <span>执行中</span>
                     </div>
                 );
             case 'waiting':
                 return (
-                    <div className="flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-500 rounded-full text-xs">
+                    <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${darkMode === "dark" ? "bg-gray-700 text-gray-400" : "bg-gray-100 text-gray-500"}`}>
                         <Circle size={14} />
                         <span>等待中</span>
                     </div>
@@ -75,34 +77,34 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     const renderTaskManager = () => (
         <div className="flex flex-col gap-2 overflow-y-auto">
             {localTasks.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-gray-500">
+                <div className={`flex items-center justify-center h-full ${darkMode === "dark" ? "text-gray-400" : "text-gray-500"}`}>
                     暂无任务
                 </div>
             ) : (
                 localTasks.map(task => (
-                    <div key={task.id} className="border rounded-lg overflow-hidden">
+                    <div key={task.id} className={`border rounded-lg overflow-hidden ${darkMode === "dark" ? "border-gray-700" : ""}`}>
                         {/* Task Header */}
                         <div
-                            className="flex items-center justify-between px-4 py-3 bg-purple-100 cursor-pointer hover:bg-purple-200 transition-colors"
+                            className={`flex items-center justify-between px-4 py-3 cursor-pointer transition-colors ${darkMode === "dark" ? "bg-purple-500/20 hover:bg-purple-500/30" : "bg-purple-100 hover:bg-purple-200"}`}
                             onClick={() => toggleTask(task.id)}
                         >
-                            <span className="font-medium text-gray-800">{task.name}</span>
+                            <span className={`font-medium ${darkMode === "dark" ? "text-gray-200" : "text-gray-800"}`}>{task.name}</span>
                             {task.isExpanded ? (
-                                <ChevronDown size={20} />
+                                <ChevronDown size={20} className={darkMode === "dark" ? "text-gray-300" : ""} />
                             ) : (
-                                <ChevronUp size={20} />
+                                <ChevronUp size={20} className={darkMode === "dark" ? "text-gray-300" : ""} />
                             )}
                         </div>
 
                         {/* Subtasks */}
                         {task.isExpanded && (
-                            <div className="bg-white">
+                            <div className={darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-white"}>
                                 {task.subtasks.map(subtask => (
                                     <div
                                         key={subtask.id}
-                                        className="flex items-center justify-between px-4 py-3 border-b last:border-b-0 hover:bg-gray-50"
+                                        className={`flex items-center justify-between px-4 py-3 border-b last:border-b-0 ${darkMode === "dark" ? "border-gray-700 hover:bg-gray-800" : "hover:bg-gray-50"}`}
                                     >
-                                        <span className="text-gray-700">{subtask.name}</span>
+                                        <span className={darkMode === "dark" ? "text-gray-300" : "text-gray-700"}>{subtask.name}</span>
                                         {renderStatusIcon(subtask.status)}
                                     </div>
                                 ))}
@@ -225,14 +227,18 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     );
 
     return (
-        <div className="bg-white rounded-lg shadow-lg h-full flex flex-col">
+        <div className={`${darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-white"} rounded-lg shadow-lg h-full flex flex-col`}>
             {/* Tab Headers */}
-            <div className="flex bg-gray-50 border-b border-gray-200">
+            <div className={`flex border-b ${darkMode === "dark" ? "bg-[#1a1a1a] border-gray-700" : "bg-gray-50 border-gray-200"}`}>
 
                 <button
                     className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'taskmanager'
-                        ? 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                        ? darkMode === "dark"
+                            ? 'bg-[#0f0f0f] text-purple-400 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
+                            : 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
+                        : darkMode === "dark"
+                            ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                         }`}
                     onClick={() => setActiveTab('taskmanager')}
                 >
@@ -240,8 +246,12 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                 </button>
                 <button
                     className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'logs'
-                        ? 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                        ? darkMode === "dark"
+                            ? 'bg-[#0f0f0f] text-purple-400 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
+                            : 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
+                        : darkMode === "dark"
+                            ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                         }`}
                     onClick={() => setActiveTab('logs')}
                 >
@@ -249,8 +259,12 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                 </button>
                 <button
                     className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'terminal'
-                        ? 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                        ? darkMode === "dark"
+                            ? 'bg-[#0f0f0f] text-purple-400 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
+                            : 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
+                        : darkMode === "dark"
+                            ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
+                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                         }`}
                     onClick={() => setActiveTab('terminal')}
                 >
@@ -261,7 +275,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                 {onMinimize && (
                     <button
                         onClick={onMinimize}
-                        className="ml-auto px-4 text-gray-500 hover:text-gray-700"
+                        className={`ml-auto px-4 ${darkMode === "dark" ? "text-gray-400 hover:text-gray-200" : "text-gray-500 hover:text-gray-700"}`}
                         title="最小化"
                     >
                         ✕
@@ -270,7 +284,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
             </div>
 
             {/* Tab Content */}
-            <div className="flex-1 overflow-hidden">
+            <div className={`flex-1 overflow-hidden ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
                 {activeTab === 'logs' && <div className="h-full p-4">{renderLogs()}</div>}
                 {activeTab === 'taskmanager' && <div className="h-full p-4 overflow-y-auto">{renderTaskManager()}</div>}
                 {activeTab === 'terminal' && renderTerminal()}

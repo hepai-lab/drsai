@@ -28,6 +28,7 @@ import PlanView from "./plan";
 import { IPlanStep, convertToIPlanSteps } from "../../types/plan";
 import RenderFile from "../../common/filerenderer";
 import LearnPlanButton from "../../features/Plans/LearnPlanButton";
+import { appContext } from "../../../hooks/provider";
 
 // Types
 interface MessageProps {
@@ -595,6 +596,7 @@ const RenderUserMessage: React.FC<{
   onStartEdit?: () => void;
   onCancelEdit?: () => void;
 }> = memo(({ parsedContent, isUserProxy, messageIdx, onEditMessage, onResendMessage, runStatus, isEditing: externalIsEditing, onStartEdit, onCancelEdit }) => {
+  const { darkMode } = React.useContext(appContext);
   const [internalIsEditing, setInternalIsEditing] = useState(false);
   const [editValue, setEditValue] = useState("");
   const isEditing = externalIsEditing !== undefined ? externalIsEditing : internalIsEditing;
@@ -689,7 +691,7 @@ const RenderUserMessage: React.FC<{
           <textarea
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
-            className="w-full p-2 border border-secondary rounded-lg bg-background text-primary resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+            className={`w-full p-2 border border-secondary rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary ${darkMode === "dark" ? "bg-[#0f0f0f] text-gray-200 border-gray-700" : "bg-background text-primary"}`}
             rows={Math.min(editValue.split('\n').length + 2, 10)}
             autoFocus
             onKeyDown={(e) => {
@@ -793,6 +795,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     onResendMessage,
     forceCollapsed = false,
   }) => {
+    const { darkMode } = React.useContext(appContext);
     const [isEditing, setIsEditing] = useState(false);
     const [isCopied, setIsCopied] = useState(false);
     const editTriggerRef = React.useRef<(() => void) | null>(null);

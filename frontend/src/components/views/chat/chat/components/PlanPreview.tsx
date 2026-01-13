@@ -33,7 +33,10 @@ const PlanPreview: React.FC<PlanPreviewProps> = ({
             <Button
                 type="text"
                 size="small"
-                className="p-0 ml-1 flex items-center justify-center"
+                className={`p-0 ml-1 flex items-center justify-center rounded-full ${darkMode === "dark"
+                        ? "hover:bg-red-500/20 hover:text-red-400"
+                        : "hover:bg-red-100 hover:text-red-600"
+                    }`}
                 onClick={(e: { stopPropagation: () => void }) => {
                     e.stopPropagation();
                     onRemove();
