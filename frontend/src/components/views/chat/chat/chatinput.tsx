@@ -543,7 +543,7 @@ const ChatInput = React.forwardRef<
               : ""
               } ${darkMode === "dark"
                 ? "bg-tertiary/30 backdrop-blur-sm"
-                : "bg-white/80 backdrop-blur-sm shadow-modern"
+                : "bg-white/80 backdrop-blur-sm "
               }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}

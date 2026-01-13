@@ -9,6 +9,7 @@ import {
   CheckCircle,
   RefreshCw,
   Clock,
+  Bot,
 } from "lucide-react";
 import {
   AgentMessageConfig,
@@ -768,8 +769,9 @@ export const RenderMessage: React.FC<MessageProps> = memo(
               />
             )}
             {!isUser && !isUserProxy && shouldShowSourceBadge && (
-              <div className="relative mb-2 inline-flex items-center rounded-2xl rounded-bl-none bg-gradient-to-r from-[#d8b4fe] via-[#c084fc] to-[#a855f7] px-4 py-1.5 text-base font-semibold text-primary shadow-md">
-                {sourceBadgeText}
+              <div className="relative mb-2 inline-flex items-center py-1.5 text-base font-semibold text-primary gap-2">
+                <span className=""><Bot /></span>
+                <span>{sourceBadgeText}</span>
               </div>
             )}
             {/* Handle other content types */}
