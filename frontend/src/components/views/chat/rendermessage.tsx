@@ -890,13 +890,53 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       }
     };
 
+    // Get text content for non-user messages
+    const getNonUserTextContent = (): string => {
+      if (orchestratorContent?.type === "final-answer") {
+        return orchestratorContent.content;
+      }
+      if (orchestratorContent?.type === "step-execution") {
+        const stepContent = orchestratorContent.content;
+        return stepContent.details || stepContent.progress_summary || "";
+      }
+      if (messageUtils.isToolCallContent(parsedContent.text)) {
+        return JSON.stringify(parsedContent.text, null, 2);
+      }
+      if (messageUtils.isMultiModalContent(parsedContent.text)) {
+        return parsedContent.text
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => parseContent(item))
+          .join("\n");
+      }
+      if (messageUtils.isFunctionExecutionResult(parsedContent.text)) {
+        return parsedContent.text.map((result) => result.content).join("\n\n");
+      }
+      return String(parsedContent.text);
+    };
+
+    const handleNonUserCopy = async () => {
+      const textToCopy = getNonUserTextContent();
+      if (textToCopy.trim()) {
+        try {
+          await navigator.clipboard.writeText(textToCopy);
+          setIsCopied(true);
+          // Reset after 2 seconds
+          setTimeout(() => {
+            setIsCopied(false);
+          }, 2000);
+        } catch (err) {
+          console.error('Failed to copy text:', err);
+        }
+      }
+    };
+
     const canEditUserMessage = (isUser || isUserProxy) &&
       !messageUtils.isMultiModalContent(parsedContent.text) &&
       !parsedContent.plan;
 
     return (
       <div
-        className={`relative mb-8 ${className} w-full break-words ${hidden &&
+        className={`relative ${isUser || isUserProxy ? "mb-8" : "mb-3"} ${className} w-full break-words ${hidden &&
           (!orchestratorContent ||
             orchestratorContent.type !== "step-execution")
           ? "hidden"
@@ -1030,6 +1070,22 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                   </div>
                 )
                 )}
+              {/* Copy button for non-user messages (excluding plan messages) */}
+              {!isPlanMsg && (
+                <div className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={handleNonUserCopy}
+                    className="p-1.5 text-secondary hover:text-primary transition-colors rounded hover:bg-secondary/50"
+                    title={isCopied ? "Copied!" : "Copy message"}
+                  >
+                    {isCopied ? (
+                      <Check size={14} />
+                    ) : (
+                      <Copy size={14} />
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
