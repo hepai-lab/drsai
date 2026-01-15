@@ -11,6 +11,7 @@ import { RcFile } from "antd/es/upload";
 import AgentPanel from "./panels/AgentPanel";
 import { AgentConfiguration } from "./config/agentConfigs";
 import { BESIIITask } from "./panels/types";
+import { appContext } from "../../../hooks/provider";
 
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 const CHAT_INPUT_BASE_HEIGHT_PX = 78;
@@ -88,6 +89,7 @@ const RunView: React.FC<RunViewProps> = ({
   onExecutePlan,
   enable_upload = false,
 }) => {
+  const { darkMode } = React.useContext(appContext);
   const threadContainerRef = useRef<HTMLDivElement | null>(null);
   const autoScrollLockedRef = useRef(false);
   const [autoScrollLocked, setAutoScrollLocked] = useState(false);
@@ -969,6 +971,14 @@ const RunView: React.FC<RunViewProps> = ({
                         ? handleRegeneratePlan
                         : undefined
                     }
+                    onResendMessage={(content: string) => {
+                      // 根据当前状态决定调用哪个函数
+                      if (run.status === "awaiting_input" || run.status === "paused") {
+                        onInputResponse?.(content, false, undefined, []);
+                      } else {
+                        onRunTask?.(content, [], undefined, true);
+                      }
+                    }}
                     forceCollapsed={shouldForceCollapse}
                   />
                 </div>
@@ -1074,9 +1084,9 @@ const RunView: React.FC<RunViewProps> = ({
         !isPanelMinimized && (
           <div
             className={`${detailViewerExpanded ? "w-full" : "w-[60%]"
-              } self-start sticky top-0 h-full`}
+              } self-start sticky top-0 h-full ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}
           >
-            <div className="h-full flex-1">
+            <div className={`h-full flex-1 ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
               {/* Dynamic Agent Panel - renders different panels based on agent type */}
               <AgentPanel
                 panelConfig={agentConfig.panel}

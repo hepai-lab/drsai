@@ -495,7 +495,7 @@ const ChatInput = React.forwardRef<
         {/* Attached Items Preview */}
         {(attachedPlan || fileList.length > 0) && (
           <div
-            className={`-mb-2 mx-1 ${darkMode === "dark" ? "bg-[#333333]" : "bg-magenta-50"
+            className={`-mb-2 mx-1 ${darkMode === "dark" ? "bg-[#333333] border-gray-600" : "bg-magenta-50 border-magenta-200"
               } rounded-t border-b-0 p-2 flex border flex-wrap gap-2`}
           >
             {/* Attached Plan */}
@@ -542,8 +542,8 @@ const ChatInput = React.forwardRef<
               ? "ring-2 ring-accent ring-opacity-50 bg-accent/5"
               : ""
               } ${darkMode === "dark"
-                ? "bg-tertiary/30 backdrop-blur-sm"
-                : "bg-white/80 backdrop-blur-sm shadow-modern"
+                ? "bg-[#0f0f0f] backdrop-blur-sm"
+                : "bg-white/80 backdrop-blur-sm "
               }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -565,7 +565,7 @@ const ChatInput = React.forwardRef<
                     >
                       <Dropdown
                         overlay={
-                          <Menu>
+                          <Menu className={darkMode === "dark" ? "dark-menu" : ""}>
                             <Menu.Item key="attach-file">
                               <Upload {...uploadProps} showUploadList={false} className="upload-menu-item">
                                 <div className="flex items-center gap-2">
@@ -575,13 +575,13 @@ const ChatInput = React.forwardRef<
                                       : "text-magenta-600"
                                       }`}
                                   />
-                                  <span>Attach File</span>
+                                  <span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Attach File</span>
                                 </div>
                               </Upload>
                             </Menu.Item>
                             <Menu.SubMenu
                               key="attach-plan"
-                              title="Attach Plan"
+                              title={<span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Attach Plan</span>}
                               icon={
                                 <FileTextIcon
                                   className={`w-4 h-4 flex-shrink-0 ${darkMode === "dark"
@@ -592,16 +592,17 @@ const ChatInput = React.forwardRef<
                               }
                             >
                               {allPlans.length === 0 ? (
-                                <Menu.Item disabled key="no-plans">
-                                  No plans available
+                                <Menu.Item disabled key="no-plans" className={darkMode === "dark" ? "text-gray-500" : ""}>
+                                  <span className={darkMode === "dark" ? "text-gray-500" : ""}>No plans available</span>
                                 </Menu.Item>
                               ) : (
                                 allPlans.map((plan: any) => (
                                   <Menu.Item
                                     key={plan.id || plan.task}
                                     onClick={() => handleUsePlan(plan)}
+                                    className={darkMode === "dark" ? "text-gray-300 hover:text-white" : ""}
                                   >
-                                    {plan.task}
+                                    <span className={darkMode === "dark" ? "text-gray-300" : ""}>{plan.task}</span>
                                   </Menu.Item>
                                 ))
                               )}
@@ -652,7 +653,7 @@ const ChatInput = React.forwardRef<
                     className={`input-enhanced flex items-center w-full resize-none p-4 ${enable_upload ? "pl-14" : "pl-6"
                       } ${runStatus === "active" ? "pr-32" : "pr-24"
                       } rounded-full transition-smooth border-2 ${darkMode === "dark"
-                        ? "bg-tertiary/50 border-border-primary backdrop-blur-sm hover:bg-tertiary/70 focus:bg-tertiary/80 focus:border-accent"
+                        ? "bg-[#0f0f0f] border-border-primary backdrop-blur-sm hover:bg-[#1a1a1a] focus:bg-[#1a1a1a] focus:border-accent"
                         : "bg-white/80 border-border-primary backdrop-blur-sm hover:bg-white/90 focus:bg-white focus:border-accent shadow-modern"
                       } ${isInputDisabled
                         ? "cursor-not-allowed opacity-50"

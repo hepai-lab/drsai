@@ -68,7 +68,7 @@ export const getStatusIcon = (
       );
     case "stopped":
       return (
-        <div className="text-sm mb-2 mt-4">
+        <div className="text-sm mb-2">
           <StopCircle size={20} className="inline-block mr-2 text-red-500" />
           Task was stopped: {stopReason}
         </div>

@@ -73,7 +73,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onAgentClick,
   onDeleteAgent,
 }) => {
-  const { user } = React.useContext(appContext);
+  const { user, darkMode } = React.useContext(appContext);
   const [isProfileModalOpen, setIsProfileModalOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [isAgentsExpanded, setIsAgentsExpanded] = React.useState(true);
@@ -326,7 +326,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     return (
-      <div className="h-full flex flex-col bg-secondary/80 dark:bg-secondary/80 light:bg-gray-50/90">
+      <div className={`h-full flex flex-col ${darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-gray-50/90"}`}>
         {/* 固定头部 */}
         <div className="flex-shrink-0 p-3">
           <div className="flex items-center justify-between mb-2">

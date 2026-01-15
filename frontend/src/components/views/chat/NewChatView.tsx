@@ -169,7 +169,7 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
             `}</style>
 
             <div className="flex flex-col h-full overflow-hidden">
-                <div className="flex-1 flex items-center justify-center overflow-y-auto hide-scrollbar">
+                <div className="flex-1 flex items-start justify-center overflow-y-auto hide-scrollbar pt-[15vh]">
                     <div className="w-full max-w-4xl py-8 px-4">
                         <div className="text-center space-y-8">
                             {/* Agent Logo and Name */}
