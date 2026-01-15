@@ -1,12 +1,18 @@
 from .LLMClient import HepAIChatCompletionClient
+from .anthropic import HepAIAnthropicChatCompletionClient
 
 from autogen_core.models._model_client import (
     ChatCompletionClient,
     ModelCapabilities,  # type: ignore
-    ModelFamily,
+    # ModelFamily,
     ModelInfo,
     validate_model_info,
 )
+
+from ._model_client import (
+    ModelFamily,
+)
+
 from autogen_core.models._types import (
     AssistantMessage,
     ChatCompletionTokenLogprob,

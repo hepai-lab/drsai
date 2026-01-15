@@ -10,6 +10,8 @@ from fastapi import (
     )
 # from fastapi.responses import FileResponse, HTMLResponse
 import uuid
+from dotenv import load_dotenv
+load_dotenv()
 
 # from ..initialization import AppInitializer
 from ..deps import get_db

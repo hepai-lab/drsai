@@ -203,6 +203,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             config: DrSaiModelConfig,
             worker_config: DrSaiWorkerConfig,
             logo: str = "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            examples: List[str] = [],
             drsaiapp: DrSaiAPP = None # 传入DrSaiAPP实例
             ):
         super().__init__(config=config)
@@ -219,6 +220,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             "version": config.version, 
             "author": worker_config.author, 
             "logo": logo,
+            "examples": examples,
             } 
         self.drsai._info = self._info
 
@@ -366,7 +368,8 @@ async def run_worker(agent_factory: callable, **kwargs):
         if logo_path.is_file():
             file_obj = upload_to_hepai_filesystem(str(logo_path))
             logo = file_obj["url"]
-
+    examples: List[str] = kwargs.pop("examples", [])
+    
     host: str =  kwargs.pop("host", None)
     if host is not None:
         worker_args.host = host
@@ -418,6 +421,7 @@ async def run_worker(agent_factory: callable, **kwargs):
         config=model_args, 
         worker_config=worker_args, 
         logo=logo, 
+        examples=examples,
         drsaiapp=drsaiapp)
 
     enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)

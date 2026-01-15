@@ -39,7 +39,9 @@ from autogen_core.models import (
     ModelFamily,
     RequestUsage,
     TopLogprob,
-    UserMessage
+    UserMessage,
+    SystemMessage,
+    AssistantMessage,
 )
 from autogen_core.logging import LLMCallEvent, LLMStreamEndEvent, LLMStreamStartEvent
 from autogen_core.tools import Tool, ToolSchema
@@ -253,6 +255,19 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             json_output,
             extra_create_args,
         )
+
+        # Remove tool_calls
+        new_oai_messages = []
+        for message in create_params.messages:
+            if message.get("role") == "tool":
+                # message["role"] = "assistant"
+                # message.pop("tool_call_id")
+                continue
+            if message.get("tool_calls") is not None:
+                tool_calls = message.pop("tool_calls")
+                message["content"] += str(tool_calls)
+            new_oai_messages.append(message)
+        create_params.messages = new_oai_messages
 
         if max_consecutive_empty_chunk_tolerance != 0:
             warnings.warn(

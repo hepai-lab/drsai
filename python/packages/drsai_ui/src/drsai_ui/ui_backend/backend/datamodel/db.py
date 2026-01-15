@@ -352,6 +352,26 @@ class UserAgents(SQLModel, table=True):
         default_factory=list, sa_column=Column(JSON)
     )
 
+class UserRemoteAgents(SQLModel, table=True):
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )  # pylint: disable=not-callable
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )  # pylint: disable=not-callable
+    user_id: Optional[str] = None
+    version: Optional[str] = "0.0.1"
+    agents: Optional[list[dict[str, Any]]] = Field(
+        default_factory=list, sa_column=Column(JSON)
+    )
+
 class UserDDFAgents(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -410,6 +430,7 @@ DatabaseModel = (
     | AgentModeSettings 
     | AgentModeConfig 
     | UserAgents 
+    | UserRemoteAgents
     | UserDDFAgents
     | Userinfo
 )
