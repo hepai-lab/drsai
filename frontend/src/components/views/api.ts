@@ -608,7 +608,7 @@ export class AgentWorkerAPI {
         };
     }
 
-    async getAgentList(userId: string, apiKey: string, is_refresh=false): Promise<any[]> {
+    async getAgentList(userId: string, apiKey: string, is_refresh = false): Promise<any[]> {
         let url = `${this.getBaseUrl()}/agentworker/ddf_agents?user_id=${encodeURIComponent(userId)}&is_refresh=${is_refresh}`;
 
         const response = await fetch(
@@ -700,6 +700,17 @@ export class AgentWorkerAPI {
         if (!data.status)
             throw new Error(data.message || "Failed to remove remote agent");
         return data;
+    }
+
+    async getUserAgents(userId: string, apiKey: string, is_refresh = false): Promise<any[]> {
+        const url = `${this.getBaseUrl()}/agentworker/user_agents/list?user_id=${encodeURIComponent(userId)}&is_refresh=${is_refresh}`;
+        const response = await fetch(url, {
+            headers: this.getHeaders(apiKey),
+        });
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.message || "Failed to fetch user agents");
+        return data.data || [];
     }
 }
 

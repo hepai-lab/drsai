@@ -82,6 +82,10 @@ if __name__ == "__main__":
             description = "DeepSeek_R1 聊天助手.",
             version = "0.1.0",
             logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            examples=[
+                "What is the weather in New York?",
+                "I want to write a python script to print hello world and run it in a shell. please plan before executing",
+            ],
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务配置

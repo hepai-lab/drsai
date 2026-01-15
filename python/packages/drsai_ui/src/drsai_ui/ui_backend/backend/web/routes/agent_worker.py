@@ -9,6 +9,7 @@ from hepai import HRModel
 from hepai.components.haiddf.worker._related_class import WorkerInfo
 from ...datamodel.db import UserAgents, UserRemoteAgents, UserDDFAgents
 from ..deps import get_db
+from drsai_ui.ui_backend.backend.database import DatabaseManager
 
 import uuid
 from dotenv import load_dotenv
@@ -33,8 +34,10 @@ async def get_default_agent_mode_config() -> List[Dict[str, Any]]:
                     agent.update({"id": str(uuid.uuid4())})
             agents_list.extend(default_agents)
     return agents_list
-@router.get("/ddf_agents")
-async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
+
+# @router.get("/ddf_agents")
+# async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
+async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db: DatabaseManager = None) -> Dict:
     '''
     获取后端的mode种类设置
     '''
@@ -85,6 +88,7 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                     else:
                         agent_info.update({"mode": "ddf"})
                         agent_info.update({"owner": agent_info["author"]})
+                        agent_info.update({"id": str(uuid.uuid4())})
                         agents.append(agent_info)
                 except Exception as e:
                     pass
@@ -186,8 +190,9 @@ async def save_remote_agent(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-@router.get("/remote_agent/list")
-async def get_user_remote_agents(user_id: str, db=Depends(get_db)) -> Dict:
+# @router.get("/remote_agent/list")
+# async def get_user_remote_agents(user_id: str, db=Depends(get_db)) -> Dict:
+async def get_user_remote_agents(user_id: str, db: DatabaseManager = None) -> Dict:
     '''
     获取用户保存的远程智能体列表
     '''
@@ -325,7 +330,8 @@ async def get_user_agents(user_id: str, authorization: str = Header(...), is_ref
         agents_list.extend(await get_default_agent_mode_config())
 
         # 获取用户的DDF智能体
-        agents = await get_ddf_agents(user_id = user_id, authorization = authorization, is_refresh = is_refresh)["data"]
+        agents = await get_ddf_agents(user_id = user_id, authorization = authorization, is_refresh = is_refresh, db=db)
+        agents = agents["data"]
         for agent in agents:
             if not agent.get("config"):
                 agent.update(
@@ -338,7 +344,8 @@ async def get_user_agents(user_id: str, authorization: str = Header(...), is_ref
         agents_list.extend(agents)
 
         # 获取用户的remote/custom智能体
-        agents = await get_user_remote_agents(user_id = user_id)
+        agents = await get_user_remote_agents(user_id = user_id, db=db)
+        agents = agents["data"]
         for agent in agents:
             if agent.get("mode")=="remote" and not agent.get("config"):
                 agent.update(
