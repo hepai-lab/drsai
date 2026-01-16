@@ -20,6 +20,9 @@ interface IModeConfig {
     setAgentInfo: (agentInfo: Partial<Agent> | null) => void;
 }
 
+// 默认的 agentId，用于首次登录时设置
+const DEFAULT_AGENT_ID = "010022126sdfnjsdnqw";
+
 export const useModeConfigStore = create<IModeConfig>()(
     persist(
         (set) => ({
@@ -45,6 +48,14 @@ export const useModeConfigStore = create<IModeConfig>()(
             partialize: (state) => ({
                 agentId: state.agentId,
             }),
+            onRehydrateStorage: () => (state) => {
+                // 检查是否是第一次登录（localStorage 中没有 agentId）
+                if (state && !state.agentId) {
+                    // 设置默认的 agentId
+                    state.setAgentId(DEFAULT_AGENT_ID);
+                    console.log(`首次登录，设置默认 agentId: ${DEFAULT_AGENT_ID}`);
+                }
+            },
         }
     )
 );
