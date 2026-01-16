@@ -97,7 +97,9 @@ const AgentCard: React.FC<AgentCardProps> = ({
 
     window.dispatchEvent(
       new CustomEvent("switchToCurrentSession", {
-
+        detail: {
+          clearSession: true,
+        },
       })
     );
   };

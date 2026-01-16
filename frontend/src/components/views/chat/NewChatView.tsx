@@ -1,12 +1,11 @@
-import * as React from "react";
-import { RcFile } from "antd/es/upload";
-import { IPlan } from "../../types/plan";
-import { Agent } from "../../../types/common";
-import ChatInput from "./chat/chatinput";
-import SampleTasks from "./sampletasks";
-import { useModeConfigStore } from "@/store/modeConfig";
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 import { appContext } from "@/hooks/provider";
+import { RcFile } from "antd/es/upload";
+import * as React from "react";
+import { Agent } from "../../../types/common";
+import { IPlan } from "../../types/plan";
+import ChatInput from "./chat/chatinput";
+import SampleTasks from "./sampletasks";
 
 interface NewChatViewProps {
     agent: Agent;

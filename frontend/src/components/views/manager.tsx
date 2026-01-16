@@ -33,7 +33,7 @@ export const SessionManager: React.FC = () => {
   const { user, darkMode } = useContext(appContext);
   const { session, setSession, setSessions } = useConfigStore();
   const { selectedAgent, setSelectedAgent, setConfig } = useModeConfigStore();
-  const { saveSessionId, saveSelectedAgent, getSelectedAgent } = useSessionStorage();
+  const { saveSessionId } = useSessionStorage();
   const { config: settingsConfig, updateConfig: updateSettingsConfig } = useSettingsStore();
 
   // Session management
@@ -184,11 +184,11 @@ export const SessionManager: React.FC = () => {
   // }, [agents, selectedAgent, getSelectedAgent, fetchAndSetAgent, user?.email]);
 
   // Save selected agent to localStorage when it changes
-  useEffect(() => {
-    if (selectedAgent) {
-      saveSelectedAgent(selectedAgent);
-    }
-  }, [selectedAgent, saveSelectedAgent]);
+  // useEffect(() => {
+  //   if (selectedAgent) {
+  //     saveSelectedAgent(selectedAgent);
+  //   }
+  // }, [selectedAgent, saveSelectedAgent]);
   const { setAgentId } = useModeConfigStore();
   // Handle agent click
   const handleAgentClick = useCallback(async (agent: Agent) => {
@@ -499,10 +499,10 @@ export const SessionManager: React.FC = () => {
           (() => {
             if (session) {
               return <div className="h-full">{chatViews}</div>;
-            } else if (selectedAgent && selectedAgent.name) {
+            } else if (agentInfo) {
               return (
                 <NewChatView
-                  agent={selectedAgent as Agent}
+                  agent={agentInfo as Agent}
                   onSubmit={async (agent, query, files, plan) => {
                     await createNewChatSession(agent, query, files, plan);
                   }}

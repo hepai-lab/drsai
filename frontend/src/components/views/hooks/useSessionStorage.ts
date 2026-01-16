@@ -24,24 +24,6 @@ export const useSessionStorage = () => {
     return null;
   };
 
-  const saveSelectedAgent = (agent: any | null) => {
-    if (typeof window !== "undefined") {
-      if (agent) {
-        localStorage.setItem(SELECTED_AGENT_KEY, JSON.stringify(agent));
-      } else {
-        localStorage.removeItem(SELECTED_AGENT_KEY);
-      }
-    }
-  };
-
-  const getSelectedAgent = (): any | null => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem(SELECTED_AGENT_KEY);
-      return stored ? JSON.parse(stored) : null;
-    }
-    return null;
-  };
-
-  return { saveSessionId, getSessionId, saveSelectedAgent, getSelectedAgent };
+  return { saveSessionId, getSessionId };
 };
 

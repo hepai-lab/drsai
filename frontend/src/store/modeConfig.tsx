@@ -43,10 +43,6 @@ export const useModeConfigStore = create<IModeConfig>()(
             name: "drsai-mode-config",
             storage: createJSONStorage(() => localStorage),
             partialize: (state) => ({
-                mode: state.mode,
-                config: state.config,
-                selectedAgent: state.selectedAgent,
-                lastSelectedAgentMode: state.lastSelectedAgentMode,
                 agentId: state.agentId,
             }),
         }
