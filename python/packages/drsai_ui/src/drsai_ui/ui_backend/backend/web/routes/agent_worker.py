@@ -10,14 +10,14 @@ from hepai.components.haiddf.worker._related_class import WorkerInfo
 from ...datamodel.db import UserAgents, UserRemoteAgents, UserDDFAgents
 from ..deps import get_db
 from drsai_ui.ui_backend.backend.database import DatabaseManager
-
+from .....agent_factory.agent_mode_cofigs import get_agent_mode_config
 import uuid
 from dotenv import load_dotenv
 load_dotenv()
 
 router = APIRouter()
 
-async def get_default_agent_mode_config() -> List[Dict[str, Any]]:
+async def get_default_agent_mode_config(user_id: str) -> List[Dict[str, Any]]:
     agents_list = []
     DEFAULT_REMOTE_AGENTS = os.getenv("DEFAULT_REMOTE_AGENTS", None)
     if DEFAULT_REMOTE_AGENTS:
@@ -33,6 +33,12 @@ async def get_default_agent_mode_config() -> List[Dict[str, Any]]:
                 if not agent.get("id"):
                     agent.update({"id": str(uuid.uuid4())})
             agents_list.extend(default_agents)
+    
+    default_agents_mode = get_agent_mode_config(user_id=user_id)
+    for agent_mode in default_agents_mode:
+        if not agent_mode.get("id"):
+            agent_mode["id"] = str(uuid.uuid4())
+    agents_list.extend(default_agents_mode) 
     return agents_list
 
 # @router.get("/ddf_agents")
@@ -327,7 +333,7 @@ async def get_user_agents(user_id: str, authorization: str = Header(...), is_ref
         agents_list = []
 
         # 获取默认的远程智能体
-        agents_list.extend(await get_default_agent_mode_config())
+        agents_list.extend(await get_default_agent_mode_config(user_id=user_id))
 
         # 获取用户的DDF智能体
         agents = await get_ddf_agents(user_id = user_id, authorization = authorization, is_refresh = is_refresh, db=db)
@@ -367,7 +373,7 @@ async def get_user_agents(user_id: str, authorization: str = Header(...), is_ref
                 user_id=user_id,
                 agents=agents_list
             )
-            db.upsert(user_agents)
+        db.upsert(user_agents)
         return {"status": True, "data": agents_list}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

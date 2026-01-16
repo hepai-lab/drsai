@@ -4,7 +4,7 @@ import { appContext } from "../../../hooks/provider";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { Button } from "../../common/Button";
 import { agentAPI } from "../../views/api";
-import type { Agent, AgentMode } from "@/types/common";
+import type { AgentMode } from "@/types/common";
 
 interface AgentCardData {
   logo: string;
@@ -43,7 +43,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
   handleAgentList,
   existingAgents = [],
 }) => {
-  const { setSelectedAgent, setConfig } = useModeConfigStore();
+  const { setSelectedAgent, setConfig, setAgentId } = useModeConfigStore();
   const { user } = useContext(appContext);
 
   // 添加状态跟踪
@@ -83,19 +83,21 @@ const AgentCard: React.FC<AgentCardProps> = ({
   }, [existingAgents, checkIfAgentExists]);
 
   const handleTryClick = async () => {
-    const runtimeConfig = createAgentConfig(agent.name, agent.url, agent.apiKey || "", agent.mode, agent.config);
+    console.log("agent", agent);
+    setAgentId(agent.id || "");
+    // const runtimeConfig = createAgentConfig(agent.name, agent.url, agent.apiKey || "", agent.mode, agent.config);
 
-    const agentToSet: Partial<Agent> = {
-      ...agent,
-      tags: agent.config?.tags,
-      config: runtimeConfig,
-    };
-    setSelectedAgent(agentToSet);
-    setConfig(agentToSet);
+    // const agentToSet: Partial<Agent> = {
+    //   ...agent,
+    //   tags: agent.config?.tags,
+    //   config: runtimeConfig,
+    // };
+    // setSelectedAgent(agentToSet);
+    // setConfig(agentToSet);
 
     window.dispatchEvent(
       new CustomEvent("switchToCurrentSession", {
-        detail: { agent: agentToSet, config: agentToSet, clearSession: true },
+
       })
     );
   };

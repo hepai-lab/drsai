@@ -79,6 +79,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [isAgentsExpanded, setIsAgentsExpanded] = React.useState(true);
 
+
+
+  useEffect(() => {
+    console.log("selectedAgent", selectedAgent);
+  }, [selectedAgent]);
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("username");
@@ -411,28 +416,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     // 对于 type === "add" 的自定义智能体，使用 id 或 name 来判断选中状态
                     // 对于其他智能体，使用 mode 来判断选中状态
                     let isSelected = false;
-                    if (agent.type === "add") {
-                      // 自定义智能体优先使用 id，如果没有 id 则使用 name
-                      if (agent.id && selectedAgent?.id) {
-                        isSelected = agent.id === selectedAgent.id;
-                      } else if (selectedAgent?.name) {
-                        isSelected =
-                          agent.name === selectedAgent.name && selectedAgentMode === agent.mode;
-                      } else {
-                        isSelected = false;
-                      }
-                    } else {
-                      // 非自定义智能体使用 mode 判断
-                      isSelected = selectedAgentMode === agent.mode;
+                    // 自定义智能体优先使用 id，如果没有 id 则使用 name
+                    if (agent.id && selectedAgent?.id) {
+                      isSelected = agent.id === selectedAgent.id;
                     }
                     const icon = getAgentIcon(agent.mode || "");
-                    // 使用唯一标识作为 key：优先使用 id，其次使用 mode + name
-                    const agentKey =
-                      agent.id ||
-                      (agent.mode && agent.name ? `${agent.mode}-${agent.name}` : agent.mode) ||
-                      `agent-${agent.name}`;
                     return (
-                      <div key={agentKey} className="relative group">
+                      <div key={agent.id} className="relative group">
                         <button
                           type="button"
                           onClick={() => onAgentClick && onAgentClick(agent)}
@@ -480,7 +470,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           </div>
                         </button>
 
-                        {agent.type === "add" && isSelected && (
+                        {isSelected && (
                           <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
                             <Dropdown
                               trigger={["hover"]}

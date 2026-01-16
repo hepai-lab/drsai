@@ -4,8 +4,8 @@ def get_agent_mode_config(
         user_id: str,
 ) -> list[dict[str, str]]:
     return [
-        {"mode": "magentic-one", "name": "Dr.Sai General", "description": "Dr.Sai通用智能体，适用于多种任务", "config":{}, "type": "default"},
-        {"mode": "besiii", "name": "Dr.Sai BESIII", "description": "BESIII实验专用智能体，专为高能物理实验优化", "config":{}, "type": "default"},
+        { "id": "010022126sdfnjsdnqw","mode": "magentic-one", "name": "Dr.Sai General", "description": "Dr.Sai通用智能体，适用于多种任务", "config":{}, "type": "default",},
+        {"id": "121532415mlnmjhg","mode": "besiii", "name": "Dr.Sai BESIII", "description": "BESIII实验专用智能体，专为高能物理实验优化", "config":{}, "type": "default"},
         # {"mode": "besiii", "name": "Dr.Sai BESIII", "description": "BESIII实验专用智能体，专为高能物理实验优化"},
         # {"mode": "custom", "name": "Custom Agent", "description": "自定义智能体，可根据需求进行个性化配置"},
         # {"mode": "drsai", "name": "Dr.Sai Agent", "description": "Dr.Sai通用智能体，适用于多种科学计算任务"},

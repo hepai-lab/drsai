@@ -712,6 +712,20 @@ export class AgentWorkerAPI {
             throw new Error(data.message || "Failed to fetch user agents");
         return data.data || [];
     }
+
+    // 在 AgentWorkerAPI 类中添加这个方法
+    async getUserAgentById(userId: string, agentId: string): Promise<any> {
+        const url = `${this.getBaseUrl()}/agentworker/user_agents/${encodeURIComponent(agentId)}?user_id=${encodeURIComponent(userId)}`;
+        const response = await fetch(url, {
+            headers: {
+                "Content-Type": "application/json",
+            },
+        });
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.message || "Failed to fetch agent");
+        return data.data;
+    }
 }
 
 export const agentWorkerAPI = new AgentWorkerAPI();

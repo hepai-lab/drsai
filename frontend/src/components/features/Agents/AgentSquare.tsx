@@ -384,15 +384,17 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         <div
           className="pl-4 flex flex-wrap gap-x-6 gap-y-6 overflow-y-auto flex-1 min-h-0 items-start content-start"
         >
-          {agentList.map((agent) => (
-            <AgentCard
-              key={agent.id || agent.name}
-              agent={agent}
-              handleAgentList={handleAgentList}
-              existingAgents={existingAgents}
-              onEdit={agent.mode === "custom" ? () => handleEditCustomAgent(agent) : undefined}
-            />
-          ))}
+          {agentList
+            .filter((agent) => agent.mode !== "magentic-one" && agent.mode !== "besiii")
+            .map((agent) => (
+              <AgentCard
+                key={agent.id || agent.name}
+                agent={agent}
+                handleAgentList={handleAgentList}
+                existingAgents={existingAgents}
+                onEdit={agent.mode === "custom" ? () => handleEditCustomAgent(agent) : undefined}
+              />
+            ))}
         </div>
       )}
 

@@ -21,6 +21,9 @@ async def get_agents_mode(user_id: str, db=Depends(get_db)) -> Dict:
         if not response.status or not response.data:
             # create a default agents_mode
             default_agents_mode = get_agent_mode_config(user_id=user_id)
+            for agent_mode in default_agents_mode:
+                if not agent_mode.get("id"):
+                    agent_mode["id"] = str(uuid.uuid4())
             settings = AgentModeSettings(user_id=user_id, agents_mode=default_agents_mode)
             db.upsert(settings)
         settings = response.data[0]
@@ -40,7 +43,7 @@ async def update_agents_mode(user_id: str, agent_mode_config: dict, db=Depends(g
         if not response.status or not response.data:
             raise HTTPException(status_code=404, detail="User's AgentModeSettings not found")
         AgentsMode: AgentModeSettings = response.data[0]
-        agent_mode_config["agent_mode_config"]["id"] = str(uuid.uuid4())
+        # agent_mode_config["agent_mode_config"]["id"] = str(uuid.uuid4())
         AgentsMode.agents_mode.append(agent_mode_config["agent_mode_config"])
         response = db.upsert(AgentsMode)
         if not response.status:
