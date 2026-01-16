@@ -15,5 +15,5 @@ class Settings(BaseSettings):
 
     model_config = {"env_prefix": "DRSAI_UI_"}
 
-
+# TODO: 通过.env设置Settings
 settings = Settings()

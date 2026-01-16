@@ -626,7 +626,7 @@ export class AgentWorkerAPI {
 
     async testRemoteAgent(userId: string, baseUrl: string, modelName: string, apiKey: string): Promise<any> {
         const response = await fetch(
-            `${this.getBaseUrl()}/agentworker/remote_url/test`,
+            `${this.getBaseUrl()}/agentworker/remote_agent/test`,
             {
                 method: 'POST',
                 headers: {

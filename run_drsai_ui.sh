@@ -12,6 +12,9 @@ if [ ! -f "./frontend/.env.development" ]; then
     exit 1
 fi
 
+source ~/.bashrc
+conda activate drsai
+
 pm2 start -n drsai_backend "drsai ui"
 
 cd ./frontend

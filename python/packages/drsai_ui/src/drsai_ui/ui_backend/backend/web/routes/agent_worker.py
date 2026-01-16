@@ -33,6 +33,7 @@ async def get_default_agent_mode_config() -> List[Dict[str, Any]]:
                     agent.update({"id": str(uuid.uuid4())})
             agents_list.extend(default_agents)
     return agents_list
+
 @router.get("/ddf_agents")
 async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
     '''
@@ -41,15 +42,17 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
     try:
         # Check cache first
         response = db.get(UserDDFAgents, filters={"user_id": user_id})
+        agents = []
         if response.status and response.data:
             user_ddf_agents: UserDDFAgents = response.data[0]
+            agents = user_ddf_agents.agents or []
             if not is_refresh:
                 # Check if cache is still valid (less than 2 hours old)
                 if user_ddf_agents.updated_at:
                     time_diff = datetime.now() - user_ddf_agents.updated_at.replace(tzinfo=None)
                     if time_diff < timedelta(hours=2):
                         # Return cached data
-                        return {"status": True, "data": user_ddf_agents.agents or []}
+                        return {"status": True, "data": agents}
 
         # Extract API key from Authorization header (Bearer format)
         if not authorization.startswith("Bearer "):
@@ -62,7 +65,7 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
             base_url="https://aiapi.ihep.ac.cn/apiv2"
         )
         models = client.agents.list()
-        agents = []
+        
         for model in models.data:
             if model.id != "hepai/custom-model":
                 try:
