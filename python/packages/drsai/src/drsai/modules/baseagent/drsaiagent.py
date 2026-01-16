@@ -1193,7 +1193,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             if isinstance(llm_message, AssistantMessage):
                 messages.append({"role": "assistant", "content": llm_message.content, "name": llm_message.source})
             if isinstance(llm_message, FunctionExecutionResultMessage):
-                messages.append({"role": "function", "content": json.dumps(llm_message.content)}) 
+                messages.append({"role": "function", "content": "\n".join([f"{function_call.name}: {function_call.content}" for function_call in llm_message.content])})
 
             
         
