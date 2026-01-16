@@ -9,50 +9,39 @@ from hepai import HRModel
 from hepai.components.haiddf.worker._related_class import WorkerInfo
 from ...datamodel.db import UserAgents, UserRemoteAgents, UserDDFAgents
 from ..deps import get_db
-
+from drsai_ui.ui_backend.backend.database import DatabaseManager
 import uuid
 from dotenv import load_dotenv
 load_dotenv()
 
+from .....agent_factory.agent_mode_cofigs import (
+    get_agent_mode_config, 
+    get_default_agent_mode_config)
+
 router = APIRouter()
 
-async def get_default_agent_mode_config() -> List[Dict[str, Any]]:
-    agents_list = []
-    DEFAULT_REMOTE_AGENTS = os.getenv("DEFAULT_REMOTE_AGENTS", None)
-    if DEFAULT_REMOTE_AGENTS:
-        with open(DEFAULT_REMOTE_AGENTS, 'r', encoding='utf-8') as f:
-            default_agents = json.load(f)
-            for agent in default_agents:
-                if not agent.get("config"):
-                    agent.update({"config": {
-                        "name": agent.get("name"),
-                        "url": agent.get("url"),
-                        "apiKey": agent.get("apiKey"),
-                        }})
-                if not agent.get("id"):
-                    agent.update({"id": str(uuid.uuid4())})
-            agents_list.extend(default_agents)
-    return agents_list
-
-@router.get("/ddf_agents")
-async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
+# @router.get("/ddf_agents")
+# async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
+async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db: DatabaseManager = None) -> Dict:
     '''
     获取后端的mode种类设置
     '''
     try:
         # Check cache first
         response = db.get(UserDDFAgents, filters={"user_id": user_id})
-        agents = []
+        
+        agents_name_old = {}
         if response.status and response.data:
             user_ddf_agents: UserDDFAgents = response.data[0]
-            agents = user_ddf_agents.agents or []
+            agents_old = user_ddf_agents.agents or []
+            agents_name_old = {agent["name"]: agent for agent in agents_old}
             if not is_refresh:
                 # Check if cache is still valid (less than 2 hours old)
                 if user_ddf_agents.updated_at:
                     time_diff = datetime.now() - user_ddf_agents.updated_at.replace(tzinfo=None)
                     if time_diff < timedelta(hours=2):
                         # Return cached data
-                        return {"status": True, "data": agents}
+                        return {"status": True, "data": agents_old}
 
         # Extract API key from Authorization header (Bearer format)
         if not authorization.startswith("Bearer "):
@@ -66,6 +55,7 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
         )
         models = client.agents.list()
         
+        agents = []
         for model in models.data:
             if model.id != "hepai/custom-model":
                 try:
@@ -88,6 +78,10 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                     else:
                         agent_info.update({"mode": "ddf"})
                         agent_info.update({"owner": agent_info["author"]})
+                        if agent_info.get("name") in agents_name_old:
+                            agent_info.update({"id": agents_name_old["name"]["id"]})
+                        else:
+                            agent_info.update({"id": str(uuid.uuid4())})
                         agents.append(agent_info)
                 except Exception as e:
                     pass
@@ -189,8 +183,9 @@ async def save_remote_agent(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-@router.get("/remote_agent/list")
-async def get_user_remote_agents(user_id: str, db=Depends(get_db)) -> Dict:
+# @router.get("/remote_agent/list")
+# async def get_user_remote_agents(user_id: str, db=Depends(get_db)) -> Dict:
+async def get_user_remote_agents(user_id: str, db: DatabaseManager = None) -> Dict:
     '''
     获取用户保存的远程智能体列表
     '''
@@ -325,10 +320,11 @@ async def get_user_agents(user_id: str, authorization: str = Header(...), is_ref
         agents_list = []
 
         # 获取默认的远程智能体
-        agents_list.extend(await get_default_agent_mode_config())
+        agents_list.extend(await get_default_agent_mode_config(user_id=user_id))
 
         # 获取用户的DDF智能体
-        agents = await get_ddf_agents(user_id = user_id, authorization = authorization, is_refresh = is_refresh)["data"]
+        agents = await get_ddf_agents(user_id = user_id, authorization = authorization, is_refresh = is_refresh, db=db)
+        agents = agents["data"]
         for agent in agents:
             if not agent.get("config"):
                 agent.update(
@@ -341,13 +337,14 @@ async def get_user_agents(user_id: str, authorization: str = Header(...), is_ref
         agents_list.extend(agents)
 
         # 获取用户的remote/custom智能体
-        agents = await get_user_remote_agents(user_id = user_id)
+        agents = await get_user_remote_agents(user_id = user_id, db=db)
+        agents = agents["data"]
         for agent in agents:
             if agent.get("mode")=="remote" and not agent.get("config"):
                 agent.update(
                     {"config": {
                         "name": agent.get("name"),
-                        "url": "https://aiapi.ihep.ac.cn/apiv2",
+                        "url": agent.get("url"),
                     }})
             if not agent.get("id"):
                 agent.update({"id": str(uuid.uuid4())})
@@ -363,7 +360,7 @@ async def get_user_agents(user_id: str, authorization: str = Header(...), is_ref
                 user_id=user_id,
                 agents=agents_list
             )
-            db.upsert(user_agents)
+        db.upsert(user_agents)
         return {"status": True, "data": agents_list}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

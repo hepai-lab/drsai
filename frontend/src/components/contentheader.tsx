@@ -1,10 +1,12 @@
-import React, { useEffect } from "react";
+import React, { useContext, useEffect } from "react";
 import { Plus, PanelLeftOpen } from "lucide-react";
 import { Tooltip } from "antd";
 import { useConfigStore } from "../hooks/store";
 import { useModeConfigStore } from "../store/modeConfig";
 
 import { Button } from "./common/Button";
+import { useAgentInfo } from "./features/Agents/useAgentInfo";
+import { appContext } from "@/hooks/provider";
 
 type ContentHeaderProps = {
   onMobileMenuToggle: () => void;
@@ -26,7 +28,13 @@ const ContentHeader = ({
   activeSubMenuItem
 }: ContentHeaderProps) => {
   useConfigStore();
-  const { selectedAgent } = useModeConfigStore();
+  const { agentId } = useModeConfigStore();
+  const { user } = useContext(appContext);
+  const { agentInfo } = useAgentInfo(user?.email);
+
+  useEffect(() => {
+    console.log("agentId", agentId);
+  }, [agentId]);
 
   return (
     <div className="bg-primary z-[70] pr-4">
@@ -66,11 +74,11 @@ const ContentHeader = ({
             </div>
           )}
           {/* Current Agent Name - show whenever an agent is selected */}
-          {activeSubMenuItem==="current_session"&&selectedAgent?.name && (
+          {activeSubMenuItem === "current_session" && agentInfo?.name && (
             <div className="ml-2 px-2 py-1 rounded-md text-lg text-accent bg-tertiary/30">
               <div className="ml-2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-tertiary/30">
                 <span className="text-lg font-medium">
-                  {selectedAgent.name}
+                  {agentInfo.name}
                 </span>
               </div>
             </div>

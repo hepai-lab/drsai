@@ -5,6 +5,10 @@ import hashlib
 
 from ...datamodel.db import Userinfo
 from ..deps import get_db
+from ...datamodel.db import UserAgents, AgentModeSettings
+
+from .....agent_factory.agent_mode_cofigs import (
+    get_default_agent_mode_config)
 
 router = APIRouter()
 
@@ -81,7 +85,11 @@ async def local_login(user_id: str, password: str, db=Depends(get_db)) -> Dict:
         hashed_password = hash_password(password)
         if user.password != hashed_password:
             raise HTTPException(status_code=401, detail="Invalid password")
-
+        
+        # 将默认的配置存储进入对应的数据库
+        agents_list = await get_default_agent_mode_config(user_id)
+        db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
+        db.upsert(UserAgents(user_id=user_id, agents=agents_list))
         return {"status": True, "message": "Login successful", "data": {"user_id": user_id}}
 
     except HTTPException:

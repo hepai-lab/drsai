@@ -9,6 +9,7 @@ import {
   LogOut,
   MoreVertical,
   PanelLeftClose,
+  PenLine,
   Plus,
   RefreshCcw,
   Sailboat,
@@ -78,6 +79,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [isAgentsExpanded, setIsAgentsExpanded] = React.useState(true);
 
+
+
+  useEffect(() => {
+    console.log("selectedAgent", selectedAgent);
+  }, [selectedAgent]);
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("username");
@@ -169,20 +175,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return (
           <div key={s.id} className="relative mb-0.5">
             <div
-              className={`group flex items-center justify-between px-3 py-1.5 rounded-lg transition-all duration-200 ${isLoading
+              className={`group flex items-center justify-between pl-1 py-1.5 rounded-lg transition-all duration-200 ${isLoading
                 ? "pointer-events-none opacity-50"
                 : "cursor-pointer hover:bg-tertiary/20"
                 } ${currentSession?.id === s.id
-                  ? "bg-purple-100/50"
+                  ? ""
                   : ""
                 }`}
               onClick={() => !isLoading && onSelectSession(s)}
             >
               <div className="flex items-center gap-2 flex-1 min-w-0">
-                <div className={`rounded-full flex-shrink-0 ${currentSession?.id === s.id
-                  ? "bg-accent"
-                  : "bg-secondary/50"
-                  }`} />
+                <div className={`rounded-full flex-shrink-0`} />
+                {currentSession?.id === s.id && (
+                  <div className="w-[3px] h-4 bg-[#851fe773] rounded-full"></div>
+                )}
                 <div className="session-title-container">
                   <Tooltip
                     title={s.name}
@@ -190,23 +196,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     mouseEnterDelay={0.5}
                   >
                     <span
-                      className={`text-sm font-medium session-title ${currentSession?.id === s.id
-                        ? "text-primary font-semibold"
-                        : "text-primary"
-                        } ${s.id && sessionRunStatuses[s.id] ? 'session-title-with-status' : ''
+                      className={`text-sm font-medium session-title !inline-flex items-center gap-1.5  ${s.id && sessionRunStatuses[s.id] ? 'session-title-with-status' : ''
                         }`}
                     >
                       {s.name}
                     </span>
                   </Tooltip>
                 </div>
-                {s.id && (
-                  <div className="flex-shrink-0 transition-all session-status-indicator">
-                    <SessionRunStatusIndicator
-                      status={sessionRunStatuses[s.id]}
-                    />
-                  </div>
-                )}
+                {
+                  s.id && (
+                    <div className="flex-shrink-0 transition-all session-status-indicator">
+                      <SessionRunStatusIndicator
+                        status={sessionRunStatuses[s.id]}
+                      />
+                    </div>
+                  )
+                }
               </div>
               <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-2">
                 <Dropdown
@@ -287,8 +292,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   />
                 </Dropdown>
               </div>
-            </div>
-          </div>
+            </div >
+          </div >
         );
       })}
     </>
@@ -411,32 +416,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     // 对于 type === "add" 的自定义智能体，使用 id 或 name 来判断选中状态
                     // 对于其他智能体，使用 mode 来判断选中状态
                     let isSelected = false;
-                    if (agent.type === "add") {
-                      // 自定义智能体优先使用 id，如果没有 id 则使用 name
-                      if (agent.id && selectedAgent?.id) {
-                        isSelected = agent.id === selectedAgent.id;
-                      } else if (selectedAgent?.name) {
-                        isSelected =
-                          agent.name === selectedAgent.name && selectedAgentMode === agent.mode;
-                      } else {
-                        isSelected = false;
-                      }
-                    } else {
-                      // 非自定义智能体使用 mode 判断
-                      isSelected = selectedAgentMode === agent.mode;
+                    // 自定义智能体优先使用 id，如果没有 id 则使用 name
+                    if (agent.id && selectedAgent?.id) {
+                      isSelected = agent.id === selectedAgent.id;
                     }
                     const icon = getAgentIcon(agent.mode || "");
-                    // 使用唯一标识作为 key：优先使用 id，其次使用 mode + name
-                    const agentKey =
-                      agent.id ||
-                      (agent.mode && agent.name ? `${agent.mode}-${agent.name}` : agent.mode) ||
-                      `agent-${agent.name}`;
                     return (
-                      <div key={agentKey} className="relative group">
+                      <div key={agent.id} className="relative group">
                         <button
                           type="button"
                           onClick={() => onAgentClick && onAgentClick(agent)}
-                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-colors duration-150 ${isSelected ? "bg-[#e7e5f2] text-[#4d3dc3] hover:bg-[#e7e5f2]" : "text-[#4a5568] hover:bg-[#f9fafb]"}`}
+                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 ${isSelected
+                            ? "bg-accent/10 text-accent hover:bg-accent/15 dark:bg-accent/15 dark:hover:bg-accent/20"
+                            : "text-secondary hover:text-primary hover:bg-tertiary/20"
+                            }`}
                         >
                           {agent.logo ? (
                             <img
@@ -477,7 +470,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           </div>
                         </button>
 
-                        {agent.type === "add" && isSelected && (
+                        {isSelected && (
                           <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
                             <Dropdown
                               trigger={["hover"]}
@@ -547,9 +540,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="mb-3">
               <Tooltip title="Create new session">
                 <Button
-                  className="w-full bg-accent hover:bg-accent/90"
+                  className="w-full bg-[#7c0fe4bf] hover:bg-accent/90 !shadow-none !text-base !font-normal"
                   variant="primary"
-                  size="sm"
+                  size="xs"
                   icon={<Plus className="w-4 h-4" />}
                   onClick={() => onEditSession()}
                   disabled={isLoading}

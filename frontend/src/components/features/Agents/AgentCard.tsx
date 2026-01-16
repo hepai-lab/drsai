@@ -4,9 +4,9 @@ import { appContext } from "../../../hooks/provider";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { Button } from "../../common/Button";
 import { agentAPI } from "../../views/api";
-import type { Agent, AgentMode } from "@/types/common";
+import type { AgentMode } from "@/types/common";
 
-interface AgentCardProps {
+interface AgentCardData {
   logo: string;
   name: string;
   description: string;
@@ -17,9 +17,13 @@ interface AgentCardProps {
   mode?: AgentMode;
   apiKey?: string;
   onRemove?: (id?: string) => void;
+  id?: string;
+}
+
+interface AgentCardProps {
+  agent: AgentCardData;
   onEdit?: (id?: string) => void;
   handleAgentList?: (agents: any[]) => Promise<void>;
-  id?: string;
   existingAgents?: any[]; // 现有的侧边栏智能体列表
 }
 
@@ -34,21 +38,12 @@ const createAgentConfig = (name: string, url: string, apiKey: string, mode?: Age
 });
 
 const AgentCard: React.FC<AgentCardProps> = ({
-  logo,
-  name,
-  description,
-  owner,
-  url,
-  mode,
-  apiKey,
-  onRemove,
+  agent,
   onEdit,
   handleAgentList,
-  id,
   existingAgents = [],
-  config: extendConfig,
 }) => {
-  const { setSelectedAgent, setConfig } = useModeConfigStore();
+  const { setSelectedAgent, setConfig, setAgentId } = useModeConfigStore();
   const { user } = useContext(appContext);
 
   // 添加状态跟踪
@@ -60,25 +55,25 @@ const AgentCard: React.FC<AgentCardProps> = ({
   const checkIfAgentExists = React.useCallback(() => {
     return existingAgents.some(existingAgent => {
       // 对于 remote agent，优先通过 id 检查
-      if (id && mode === "remote" && existingAgent.id === id) {
+      if (agent.id && agent.mode === "remote" && existingAgent.id === agent.id) {
         return true;
       }
       // 优先检查名称是否相同
-      if (existingAgent.name === name) {
+      if (existingAgent.name === agent.name) {
         return true;
       }
       // 对于非 remote agent，如果 mode 相同且配置相同，且 name 也匹配，认为是同一个
       // 这里确保 name 必须匹配，避免因为配置相同而误判不同的 agent
-      if (mode && mode !== "remote" &&
-        existingAgent.mode === mode &&
-        existingAgent.name === name &&
-        existingAgent.config?.url === url &&
-        existingAgent.config?.apiKey === apiKey) {
+      if (agent.mode && agent.mode !== "remote" &&
+        existingAgent.mode === agent.mode &&
+        existingAgent.name === agent.name &&
+        existingAgent.config?.url === agent.url &&
+        existingAgent.config?.apiKey === agent.apiKey) {
         return true;
       }
       return false;
     });
-  }, [existingAgents, name, mode, url, apiKey, id]);
+  }, [existingAgents, agent]);
 
   // 组件初始化时检查是否已存在
   React.useEffect(() => {
@@ -88,26 +83,23 @@ const AgentCard: React.FC<AgentCardProps> = ({
   }, [existingAgents, checkIfAgentExists]);
 
   const handleTryClick = async () => {
-    const runtimeConfig = createAgentConfig(name, url, apiKey || "", mode, extendConfig);
+    console.log("agent", agent);
+    setAgentId(agent.id || "");
+    // const runtimeConfig = createAgentConfig(agent.name, agent.url, agent.apiKey || "", agent.mode, agent.config);
 
-    const agent: Partial<Agent> = {
-      id,
-      name,
-      mode,
-      description,
-      logo,
-      owner,
-      url,
-      apiKey,
-      tags: extendConfig?.tags,
-      config: runtimeConfig,
-    };
-    setSelectedAgent(agent);
-    setConfig(agent);
+    // const agentToSet: Partial<Agent> = {
+    //   ...agent,
+    //   tags: agent.config?.tags,
+    //   config: runtimeConfig,
+    // };
+    // setSelectedAgent(agentToSet);
+    // setConfig(agentToSet);
 
     window.dispatchEvent(
       new CustomEvent("switchToCurrentSession", {
-        detail: { agent, config: agent, clearSession: true },
+        detail: {
+          clearSession: true,
+        },
       })
     );
   };
@@ -116,15 +108,12 @@ const AgentCard: React.FC<AgentCardProps> = ({
     if (!user?.email || isAdding || isAdded) return;
     setIsAdding(true);
     try {
-      const runtimeConfig = createAgentConfig(name, url, apiKey || "", mode, extendConfig);
+      const runtimeConfig = createAgentConfig(agent.name, agent.url, agent.apiKey || "", agent.mode, agent.config);
 
       const agentNewList = await agentAPI.updateAgentList(
         user.email,
         {
-          mode,
-          name,
-          logo,
-          description,
+          ...agent,
           config: runtimeConfig,
           type: "add",
         }
@@ -145,17 +134,17 @@ const AgentCard: React.FC<AgentCardProps> = ({
 
   const handleRemoveClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onRemove?.(id);
+    agent.onRemove?.(agent.id);
   };
 
   const handleEditClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onEdit?.(id);
+    onEdit?.(agent.id);
   };
 
   return (
     <div className="bg-primary border border-secondary rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-200 hover:border-magenta-800 group relative w-[360px] h-[285px]">
-      {mode === "remote" && (
+      {agent.mode === "remote" && (
         <div className="absolute -top-[-0.5px] left-6 flex gap-1 z-20">
           <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium shadow-sm bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
             <Network className="w-2.5 h-2.5 mr-0.5" />
@@ -164,7 +153,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
         </div>
       )}
 
-      {(mode === "remote" || mode === "custom") && onRemove && (
+      {(agent.mode === "remote" || agent.mode === "custom") && agent.onRemove && (
         <button
           onClick={handleRemoveClick}
           className="absolute top-2 right-2 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
@@ -174,7 +163,7 @@ const AgentCard: React.FC<AgentCardProps> = ({
         </button>
       )}
 
-      {mode === "custom" && onEdit && (
+      {agent.mode === "custom" && onEdit && (
         <button
           onClick={handleEditClick}
           className="absolute top-2 right-8 w-5 h-5 bg-blue-500 hover:bg-blue-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
@@ -187,8 +176,8 @@ const AgentCard: React.FC<AgentCardProps> = ({
       <div className="flex items-start mb-4">
         <div className="flex-shrink-0 w-16 h-16 bg-secondary rounded-lg overflow-hidden mr-3 relative">
           <img
-            src={logo}
-            alt={`${name} logo`}
+            src={agent.logo}
+            alt={`${agent.name} logo`}
             className="w-full h-full object-cover"
             onError={(e) => {
               const target = e.target as HTMLImageElement;
@@ -199,14 +188,14 @@ const AgentCard: React.FC<AgentCardProps> = ({
 
         <div className="flex-1 min-w-0">
           <h3 className="text-lg font-semibold text-primary mb-1 truncate">
-            {name}
+            {agent.name}
           </h3>
-          <div className="text-xs text-secondary">by {owner}</div>
+          <div className="text-xs text-secondary">by {agent.owner}</div>
         </div>
       </div>
 
       <p className="text-sm text-secondary text-left mb-4 line-clamp-3 min-h-[3rem]">
-        {description}
+        {agent.description}
       </p>
 
       <div className="w-full flex flex-col gap-2">
@@ -251,4 +240,4 @@ const AgentCard: React.FC<AgentCardProps> = ({
 };
 
 export { AgentCard };
-export type { AgentCardProps };
+export type { AgentCardProps, AgentCardData };

@@ -1,6 +1,7 @@
 import { useModeConfigStore } from "@/store/modeConfig";
 import React, { useContext, useEffect, useState } from "react";
 import { appContext } from "@/hooks/provider";
+import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 
 interface SampleTasksProps {
   onSelect: (task: string) => void;
@@ -8,34 +9,14 @@ interface SampleTasksProps {
 
 // 定义任务和对应的模型配置
 const BESIII_TASKS = [
-  {
-    text: "帮我测量psi(4260) -> pi+ pi- [J/psi -> mu+ mu-]过程在4.26 GeV能量点上的截面，并且绘制Jpsi（mumu）的不变质量。先规划后执行。",
-    model: "besiii",
-    name: "Dr.Sai BESIII",
-  },
-  {
-    text: "帮我测量Psip -> pi+ pi- [J/psi -> Lambda Lambdabar]过程在3.686GeV能量点上的截面,并且绘制Lambda的能量分布。先规划后执行。",
-    model: "besiii",
-    name: "Dr.Sai BESIII",
-  },
-  {
-    text: "帮我测量Jpsi to eta [phi -> K+ K-]过程在3.097 GeV能量点上的截面,并且绘制eta的动量分布。先规划后执行。",
-    model: "besiii",
-    name: "Dr.Sai BESIII",
-  }
+  "帮我测量psi(4260) -> pi+ pi- [J/psi -> mu+ mu-]过程在4.26 GeV能量点上的截面，并且绘制Jpsi（mumu）的不变质量。先规划后执行。",
+  "帮我测量Psip -> pi+ pi- [J/psi -> Lambda Lambdabar]过程在3.686GeV能量点上的截面,并且绘制Lambda的能量分布。先规划后执行。",
+  "帮我测量Jpsi to eta [phi -> K+ K-]过程在3.097 GeV能量点上的截面,并且绘制eta的动量分布。先规划后执行。",
 ];
 
 const MAGENTIC_ONE_TASKS = [
-  {
-    text: "Search arXiv for the latest papers on computer use agents",
-    model: "magentic-one",
-    name: "Dr.Sai General",
-  },
-  {
-    text: "检索arXiv上关于高能物理人工智能智能体的最新进展",
-    model: "magentic-one",
-    name: "Dr.Sai General",
-  },
+  "Search arXiv for the latest papers on computer use agents",
+  "检索arXiv上关于高能物理人工智能智能体的最新进展",
 ];
 
 // 合并所有任务类型
@@ -48,9 +29,7 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
 
   // 获取用户上下文
   const { user } = useContext(appContext);
-
-  // 获取模式配置存储和会话管理
-  const { selectedAgent } = useModeConfigStore();
+  const { agentInfo } = useAgentInfo(user?.email);
 
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -64,12 +43,12 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
 
     try {
       setIsLoading(true);
-      onSelect(task.text);
+      onSelect(task);
 
     } catch (e) {
       console.error("Failed to create session for task:", e);
       // 即使会话创建失败，也要填充任务文本
-      onSelect(task.text);
+      onSelect(task);
     } finally {
       setIsLoading(false);
     }
@@ -77,48 +56,26 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
 
   // 检查当前选中的agent是否支持sample tasks
   const shouldShowSampleTasks = () => {
-    if (!selectedAgent?.name) {
-      return true; // 没有选择agent时显示所有任务
-    }
+    // if (!selectedAgent?.name) {
+    //   return true; // 没有选择agent时显示所有任务
+    // }
 
-    // 只在这两个特定agent名称时显示sample tasks
-    return selectedAgent.name === "Dr.Sai General" || selectedAgent.name === "Dr.Sai BESIII";
+    // // 只在这两个特定agent名称时显示sample tasks
+    // return selectedAgent.name === "Dr.Sai General" || selectedAgent.name === "Dr.Sai BESIII";
   };
 
-  if (!shouldShowSampleTasks()) {
-    return null;
-  }
+  // if (!shouldShowSampleTasks()) {
+  //   return null;
+  // }
 
-  // 根据选中的agent过滤任务
-  const getFilteredTasks = () => {
-    if (!selectedAgent?.name) {
-      return SAMPLE_TASKS;
-    }
 
-    // 根据选中的agent名字过滤对应的任务
-    return SAMPLE_TASKS.filter(task => task.name === selectedAgent.name);
-  };
-
-  const filteredTasks = getFilteredTasks();
-
-  const isLargeScreen = windowWidth >= 1024; // lg breakpoint
-  const tasksPerRow = windowWidth >= 640 ? 2 : 1; // 2 columns on sm, 1 on mobile
-  const defaultVisibleTasks = tasksPerRow * 2;
-  const maxVisibleTasks = isLargeScreen
-    ? filteredTasks.length
-    : isExpanded
-      ? filteredTasks.length
-      : defaultVisibleTasks;
-  const visibleTasks = filteredTasks.slice(0, maxVisibleTasks);
-  const shouldShowToggle =
-    !isLargeScreen && SAMPLE_TASKS.length > defaultVisibleTasks;
 
   return (
     <div className="mb-8">
       <div className="mb-4 text-center"></div>
       <div className="flex flex-col gap-3 w-full">
         <div className="flex flex-wrap justify-center gap-3 w-full">
-          {visibleTasks.map((task, idx) => (
+          {agentInfo?.examples?.map((task: string, idx: number) => (
             <button
               key={idx}
               className="flex-1 min-w-[280px] max-w-[400px] rounded-2xl px-6 py-4 text-left transition-smooth text-primary hover:text-accent bg-tertiary/50 hover:bg-tertiary/70 backdrop-blur-sm border border-border-primary hover:border-accent/50 shadow-modern hover:shadow-modern-lg hover-lift animate-fade-in group"
@@ -129,12 +86,9 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
               title="点击创建会话并填充到输入框，可编辑后发送"
             >
               <div className="text-sm leading-relaxed">
-                {task.text}
+                {task}
               </div>
               <div className="flex items-center justify-between mt-2">
-                <div className="text-xs text-secondary font-medium">
-                  {task.name}
-                </div>
                 <div className="text-xs text-secondary opacity-0 group-hover:opacity-100 transition-opacity">
                   {isLoading ? "创建会话中..." : "点击创建会话"}
                 </div>
@@ -142,17 +96,6 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
             </button>
           ))}
         </div>
-        {shouldShowToggle && (
-          <button
-            className="text-secondary hover:text-accent transition-smooth text-sm font-medium mt-2 px-4 py-2 rounded-xl hover:bg-tertiary/30 mx-auto"
-            onClick={() => setIsExpanded(!isExpanded)}
-            type="button"
-          >
-            {isExpanded
-              ? "Show less..."
-              : "Show more sample tasks..."}
-          </button>
-        )}
       </div>
     </div>
   );

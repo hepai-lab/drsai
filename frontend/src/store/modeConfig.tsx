@@ -11,12 +11,18 @@ interface IModeConfig {
     setSelectedAgent: (agent: Partial<Agent> | null) => void;
     lastSelectedAgentMode: string;
     setLastSelectedAgentMode: (mode: string) => void;
+
+
+    // update by yqsun
+    agentId: string | null;
+    setAgentId: (agentId: string | null) => void;
+    agentInfo: Partial<Agent> | null;
+    setAgentInfo: (agentInfo: Partial<Agent> | null) => void;
 }
 
 export const useModeConfigStore = create<IModeConfig>()(
     persist(
         (set) => ({
-            // Existing state
             mode: "",
             setMode: (mode) => set({ mode }),
             config: {},
@@ -26,15 +32,18 @@ export const useModeConfigStore = create<IModeConfig>()(
             lastSelectedAgentMode: "",
             setLastSelectedAgentMode: (mode) =>
                 set({ lastSelectedAgentMode: mode }),
+
+            // update by yqsun
+            agentId: null,
+            setAgentId: (agentId) => set({ agentId }),
+            agentInfo: null,
+            setAgentInfo: (agentInfo) => set({ agentInfo }),
         }),
         {
             name: "drsai-mode-config",
             storage: createJSONStorage(() => localStorage),
             partialize: (state) => ({
-                mode: state.mode,
-                config: state.config,
-                selectedAgent: state.selectedAgent,
-                lastSelectedAgentMode: state.lastSelectedAgentMode,
+                agentId: state.agentId,
             }),
         }
     )

@@ -7,13 +7,13 @@ import { Agent } from "../../../types/common";
 import { Button } from "../../common/Button";
 import { CustomAgentData } from "../../common/agent-form/CustomAgentForm";
 import { agentWorkerAPI, settingsAPI, agentAPI } from "../../views/api";
-import { AgentCard, AgentCardProps } from "./AgentCard";
+import { AgentCard, AgentCardData } from "./AgentCard";
 import CustomAgentModal from "./CustomAgentModal";
 import RemoteAgentModal from "./RemoteAgentModal";
 import { getServerUrl } from "../../utils";
 
 interface AgentSquareProps {
-  agents: AgentCardProps[];
+  agents: AgentCardData[];
   className?: string;
   handleAgentList?: (agents: any[]) => Promise<void>;
   existingAgents?: any[]; // 现有的侧边栏智能体列表
@@ -25,7 +25,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   existingAgents = [],
 }) => {
   const { user } = useContext(appContext);
-  const [agentList, setAgentList] = useState<AgentCardProps[]>([]);
+  const [agentList, setAgentList] = useState<AgentCardData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isRemoteModalOpen, setIsRemoteModalOpen] = useState(false);
@@ -49,7 +49,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     }
   }, [user?.email]);
 
-  const createRemoteAgentCard = useCallback((agent: Agent): AgentCardProps => ({
+  const createRemoteAgentCard = useCallback((agent: Agent): AgentCardData => ({
     id: agent.id,
     logo: agent.logo || "/api/placeholder/64/64",
     name: agent.name,
@@ -60,21 +60,28 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     mode: agent.mode || "remote",
     apiKey: agent.apiKey,
     onRemove: (id?: string) => handleRemoveRemoteAgent(id || agent.id),
-    onClick: () => {},
+    onClick: () => { },
   }), [handleRemoveRemoteAgent]);
 
-  const loadRemoteAgents = useCallback(async (userEmail: string): Promise<AgentCardProps[]> => {
-    try {
-      const userRemoteAgents = await agentWorkerAPI.getUserRemoteAgents(userEmail) ?? [];
-      if (!userRemoteAgents?.length) {
-        return [];
-      }
-      return userRemoteAgents?.map(createRemoteAgentCard) || [];
-    } catch (error) {
-      console.error("Failed to load remote agents:", error);
-      return [];
-    }
-  }, [createRemoteAgentCard]);
+  // 转换统一格式的 agent 为 AgentCardData
+  const transformUnifiedAgentToCardData = useCallback((agent: any): AgentCardData => {
+    const config = agent.config || {};
+    return {
+      id: agent.id,
+      logo: agent.logo || "/api/placeholder/64/64",
+      name: agent.name || config.name || "未知智能体",
+      description: agent.description || "智能体",
+      owner: agent.owner || user?.email || "未知",
+      url: agent.url || config.url || config.base_url || "",
+      config: agent.config,
+      mode: agent.mode || "remote",
+      apiKey: agent.apiKey || config.api_key || config.apiKey,
+      onRemove: (agent.mode === "remote" || agent.mode === "custom")
+        ? (id?: string) => handleRemoveRemoteAgent(id || agent.id)
+        : undefined,
+      onClick: () => { },
+    };
+  }, [user?.email, handleRemoveRemoteAgent]);
 
   // 提取获取 API Key 和 BaseUrl 的逻辑
   const getApiKeyFromSettings = useCallback(async (userEmail: string) => {
@@ -85,22 +92,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     const baseUrl = modelConfig.base_url;
     return { apiKey, baseUrl };
   }, []);
-
-  // 提取加载并合并 agents 的逻辑
-  const fetchAndMergeAgents = useCallback(async (
-    userEmail: string,
-    apiKey: string,
-    isRefresh: boolean = false
-  ): Promise<AgentCardProps[]> => {
-    const [standardAgents, remoteAgents] = await Promise.all([
-      agentWorkerAPI.getAgentList(userEmail, apiKey, isRefresh),
-      loadRemoteAgents(userEmail)
-    ]);
-
-    return Array.isArray(standardAgents) && standardAgents.length > 0
-      ? [...standardAgents, ...remoteAgents]
-      : remoteAgents;
-  }, [loadRemoteAgents]);
 
   const loadAgentList = useCallback(async () => {
 
@@ -121,7 +112,8 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
       setModelSourceApiKey(apiKey);
 
-      const agents = await fetchAndMergeAgents(user.email, apiKey, false);
+      const agentsData = await agentWorkerAPI.getUserAgents(user.email, apiKey, false);
+      const agents = agentsData.map(transformUnifiedAgentToCardData);
       setAgentList(agents);
     } catch (err) {
       console.error("Error loading agent list:", err);
@@ -129,7 +121,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [user?.email, getApiKeyFromSettings, fetchAndMergeAgents]);
+  }, [user?.email, getApiKeyFromSettings, transformUnifiedAgentToCardData]);
 
   const loadAvailableModels = useCallback(async () => {
     if (!user?.email || !modelSourceApiKey) {
@@ -296,8 +288,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         return;
       }
 
-      // 刷新标准智能体列表（is_refresh=true 会跳过缓存，获取最新数据）
-      const agents = await fetchAndMergeAgents(user.email, apiKey, true);
+      // 刷新智能体列表（is_refresh=true 会跳过缓存，获取最新数据）
+      const agentsData = await agentWorkerAPI.getUserAgents(user.email, apiKey, true);
+      console.log("agentsData", agentsData);
+      const agents = agentsData.map(transformUnifiedAgentToCardData);
       setAgentList(agents);
       message.success("刷新成功");
     } catch (err) {
@@ -306,7 +300,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     } finally {
       setIsRefreshing(false);
     }
-  }, [user?.email, getApiKeyFromSettings, fetchAndMergeAgents]);
+  }, [user?.email, getApiKeyFromSettings, transformUnifiedAgentToCardData]);
 
   useEffect(() => {
     loadAgentList();
@@ -390,15 +384,17 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         <div
           className="pl-4 flex flex-wrap gap-x-6 gap-y-6 overflow-y-auto flex-1 min-h-0 items-start content-start"
         >
-          {agentList.map((agent) => (
-            <AgentCard
-              key={agent.id || agent.name}
-              {...agent}
-              handleAgentList={handleAgentList}
-              existingAgents={existingAgents}
-              onEdit={agent.mode === "custom" ? () => handleEditCustomAgent(agent) : undefined}
-            />
-          ))}
+          {agentList
+            .filter((agent) => agent.mode !== "magentic-one" && agent.mode !== "besiii")
+            .map((agent) => (
+              <AgentCard
+                key={agent.id || agent.name}
+                agent={agent}
+                handleAgentList={handleAgentList}
+                existingAgents={existingAgents}
+                onEdit={agent.mode === "custom" ? () => handleEditCustomAgent(agent) : undefined}
+              />
+            ))}
         </div>
       )}
 

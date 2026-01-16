@@ -1,14 +1,17 @@
 [
     {
-        "name": "your_Agent",
-        "url": "http://*********/apiv2",
-        "apiKey": "sk-****",
         "mode": "remote",
+        "config": {
+            "name": "your_Agent",
+            "url": "http://*********/apiv2",
+            "apiKey": "sk-****"
+        },
         "description": "******.",
         "version": "0.1.0",
         "author": "***6@ihep.ac.cn",
         "logo": "https://aiapi.ihep.ac.cn/apiv2/files/file-61518e9f7e8f45049739d7ae58abe35a/preview",
         "owner": "***6@ihep.ac.cn",
-        "id": "123456"
+        "id": "1hxiubhysdijih23456",
+        "examples": ["Search arXiv for the latest papers on computer use agents","检索arXiv上关于高能物理人工智能智能体的最新进展"]
     }
 ]
