@@ -175,7 +175,7 @@ class DrSai:
         params = sig.parameters
         if len(params) > 0:
             kwargs = {}
-            if 'api_key' in params:
+            if 'api_key' in params and self.use_api_key_mode == "frontend":
                 kwargs['api_key'] = api_key
             if 'thread_id' in params:
                 kwargs['thread_id'] = thread_id
