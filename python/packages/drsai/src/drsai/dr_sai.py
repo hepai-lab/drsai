@@ -74,7 +74,7 @@ from drsai.modules.managers.datamodel import (
 from drsai.modules.managers.datamodel.db import RunStatus
 from drsai.modules.managers.datamodel.types import Response, TeamResult
 from drsai.configs import CONST
-from drsai.utils.utils import decompress_state
+from drsai.utils.utils import decompress_state, compress_state
 from drsai.utils.oai_stream_event import (
     chatcompletionchunk, 
     chatcompletionchunkend,
@@ -191,14 +191,14 @@ class DrSai:
                 else (self.agent_factory())
             )
         
-        # # 判断是否为智能体添加前端的API_KEY
-        # if self.use_api_key_mode == "frontend":
-        #     if hasattr(agent, "_model_client"):
-        #         agent._model_client._client.api_key = api_key
-        #     if hasattr(agent, "_participants"):
-        #         for participant in agent._participants:
-        #             if hasattr(participant, "_model_client"):
-        #                 participant._model_client._client.api_key = api_key
+        # 判断是否为智能体添加前端的API_KEY
+        if self.use_api_key_mode == "frontend":
+            if hasattr(agent, "_model_client"):
+                agent._model_client._client.api_key = api_key
+            if hasattr(agent, "_participants"):
+                for participant in agent._participants:
+                    if hasattr(participant, "_model_client"):
+                        participant._model_client._client.api_key = api_key
 
         if hasattr(agent, "_thread_id") and agent._thread_id is None:
             agent._thread_id = thread_id
@@ -450,8 +450,13 @@ class DrSai:
             if not response.status or not response.data:
                 raise RuntimeError(f"Failed to get thread: {response.message}")
             else:
+                thread: Thread = response.data[0]
+                # 保存智能体/多智能体实例中的状态
+                if hasattr(agent, "save_state"):
+                    state_dict = await agent.save_state()
+                    state = compress_state(state_dict)
+                    thread.state = state
                 if agent_result:
-                    thread: Thread = response.data[0]
                     thread.status = RunStatus.COMPLETE
                     thread.messages.extend([rely_message.model_dump(mode="json") for rely_message in rely_messages]) # 已经存在的Thread只添加最后一条消息
                     if thread.team_result is None:
@@ -465,6 +470,7 @@ class DrSai:
             response: Response = self.db_manager.upsert(thread)
             if not response.status:
                 raise RuntimeError(f"Failed to create thread: {response.message}")
+            
 
     #### --- 关于OpenAI Chat/Completions --- ####
     async def a_start_chat_completions(self, **kwargs) -> AsyncGenerator:
