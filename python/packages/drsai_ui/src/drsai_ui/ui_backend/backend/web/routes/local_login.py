@@ -87,7 +87,7 @@ async def local_login(user_id: str, password: str, db=Depends(get_db)) -> Dict:
             raise HTTPException(status_code=401, detail="Invalid password")
         
         # 将默认的配置存储进入对应的数据库
-        agents_list = await get_default_agent_mode_config(user_id)
+        agents_list = get_default_agent_mode_config(user_id)
         db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
         db.upsert(UserAgents(user_id=user_id, agents=agents_list))
         return {"status": True, "message": "Login successful", "data": {"user_id": user_id}}

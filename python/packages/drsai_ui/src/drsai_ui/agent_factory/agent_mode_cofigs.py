@@ -33,7 +33,7 @@ def get_agent_mode_config(
     ]
 
 
-async def get_default_agent_mode_config(user_id: str) -> List[Dict[str, Any]]:
+def get_default_agent_mode_config(user_id: str) -> List[Dict[str, Any]]:
     agents_list = []
     DEFAULT_REMOTE_AGENTS = os.getenv("DEFAULT_REMOTE_AGENTS", None)
     if DEFAULT_REMOTE_AGENTS:

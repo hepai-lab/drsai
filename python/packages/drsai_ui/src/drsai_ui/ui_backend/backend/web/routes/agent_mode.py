@@ -28,7 +28,8 @@ async def get_agents_mode(user_id: str, db=Depends(get_db)) -> Dict:
                     agent_mode["id"] = str(uuid.uuid4())
             settings = AgentModeSettings(user_id=user_id, agents_mode=default_agents_mode)
             db.upsert(settings)
-        settings = response.data[0]
+        else:
+            settings = response.data[0]
         return {"status": True, "data": settings}
     
     except Exception as e:
