@@ -165,7 +165,11 @@ class DrSai:
         api_key: str = None,
         thread_id: str = None,
         user_id: str = None,
-        ) -> ChatAgent | Team:
+        stream: bool = True,
+        ) -> Union[ChatAgent, Team] :
+        """
+        创建智能体/多智能体系统实例，加载状态
+        """
 
         sig = inspect.signature(self.agent_factory)
         params = sig.parameters
@@ -179,6 +183,8 @@ class DrSai:
                 kwargs['user_id'] = user_id
             if 'db_manager' in params:
                 kwargs['db_manager'] = self.db_manager
+            if 'stream' in params:
+                kwargs['stream'] = stream
             agent: ChatAgent | Team = (
                 await self.agent_factory(**kwargs)
                 if asyncio.iscoroutinefunction(self.agent_factory)
@@ -191,36 +197,67 @@ class DrSai:
                 else (self.agent_factory())
             )
         
-        # 判断是否为智能体添加前端的API_KEY
-        if self.use_api_key_mode == "frontend":
-            if hasattr(agent, "_model_client"):
-                agent._model_client._client.api_key = api_key
-            if hasattr(agent, "_participants"):
-                for participant in agent._participants:
-                    if hasattr(participant, "_model_client"):
-                        participant._model_client._client.api_key = api_key
-
-        if hasattr(agent, "_thread_id") and agent._thread_id is None:
-            agent._thread_id = thread_id
-            if hasattr(agent, "_participants"):
-                for participant in agent._participants:
-                    if hasattr(participant, "_thread_id"):
-                        participant._thread_id = thread_id
-        if hasattr(agent, "_user_id") and agent._user_id is None:
-            agent._user_id = user_id
-            if hasattr(agent, "_participants"):
-                for participant in agent._participants:
-                    if hasattr(participant, "user_id"):
-                        participant.user_id = user_id
-        ## 为智能体添加数据库管理器
-        if hasattr(agent, "_db_manager") and agent._db_manager is None:
-            agent._db_manager = self.db_manager
-            if hasattr(agent, "_participants"):
-                for participant in agent._participants:
-                    participant._db_manager = self.db_manager
-            else:
+            # 判断是否为智能体添加前端的API_KEY
+            if self.use_api_key_mode == "frontend":
+                if hasattr(agent, "_model_client"):
+                    agent._model_client._client.api_key = api_key
+                if hasattr(agent, "_participants"):
+                    for participant in agent._participants:
+                        if hasattr(participant, "_model_client"):
+                            participant._model_client._client.api_key = api_key
+            if hasattr(agent, "_thread_id") and agent._thread_id is None:
+                agent._thread_id = thread_id
+                if hasattr(agent, "_participants"):
+                    for participant in agent._participants:
+                        if hasattr(participant, "_thread_id"):
+                            participant._thread_id = thread_id
+            if hasattr(agent, "_user_id") and agent._user_id is None:
+                agent._user_id = user_id
+                if hasattr(agent, "_participants"):
+                    for participant in agent._participants:
+                        if hasattr(participant, "user_id"):
+                            participant.user_id = user_id
+            ## 为智能体添加数据库管理器
+            if hasattr(agent, "_db_manager") and agent._db_manager is None:
                 agent._db_manager = self.db_manager
+                if hasattr(agent, "_participants"):
+                    for participant in agent._participants:
+                        participant._db_manager = self.db_manager
+                else:
+                    agent._db_manager = self.db_manager
+    
+            ## 是否使用流式模式
+            if isinstance(agent, Team) and stream:
+                for participant in agent._participants:
+                    if not participant._model_client_stream:
+                        raise ValueError("Streaming mode is not supported when participant._model_client_stream is False")
+            else:
+                if agent._model_client_stream != stream:
+                    raise ValueError("Streaming mode is not supported when agent._model_client_stream is False")
+        
+        # 加载历史状态
+        response: Response = self.db_manager.get(
+            Thread, 
+            filters={"user_id": user_id,"thread_id": thread_id},
+            return_json=False
+        )
+        if response.status and response.data:
+            thread: Thread = response.data[0]
+            state = thread.state
+            if state:
+                if isinstance(state, str):
+                    try:
+                        # Try to decompress if it's compressed
+                        state_dict = decompress_state(state)
+                        await agent.load_state(state_dict)
+                    except Exception:
+                        # If decompression fails, assume it's a regular JSON string
+                        state_dict = json.loads(state)
+                        await agent.load_state(state_dict)
+                else:
+                    await agent.load_state(state)
 
+        self.agent_instance[thread_id] = agent
         return agent
     
     async def handle_input_info(self, **kwargs) -> UserInput:
@@ -290,60 +327,6 @@ class DrSai:
         else:
             return user_input
 
-    async def get_agent_and_thread(
-            self,
-            user_id: str,
-            thread_id: str,
-            stream: bool,
-            api_key: str,
-            ) -> Tuple[ChatAgent | Team, Thread|None]:
-
-        # 加载/检查Thread
-
-        thread : Thread | None = None
-        response: Response = self.db_manager.get(
-            Thread, 
-            filters={"user_id": user_id,"thread_id": thread_id},
-            return_json=False
-            )
-        if response.status and response.data:
-            thread: Thread = response.data[0]
-        
-        # 创建或者获取智能体实例
-        
-        if thread_id in self.agent_instance:
-            agent = self.agent_instance[thread_id]
-        else:
-            agent = await self._create_agent_instance(api_key=api_key, thread_id=thread_id, user_id=user_id,)
-            self.agent_instance[thread_id] = agent
-
-        ## 加载历史状态
-        if thread is not None:
-            state = thread.state
-            if state:
-                if isinstance(state, str):
-                    try:
-                        # Try to decompress if it's compressed
-                        state_dict = decompress_state(state)
-                        await agent.load_state(state_dict)
-                    except Exception:
-                        # If decompression fails, assume it's a regular JSON string
-                        state_dict = json.loads(state)
-                        await agent.load_state(state_dict)
-                else:
-                    await agent.load_state(state)
-
-        ## 是否使用流式模式
-        if isinstance(agent, Team) and stream:
-            for participant in agent._participants:
-                if not participant._model_client_stream:
-                    raise ValueError("Streaming mode is not supported when participant._model_client_stream is False")
-        else:
-            if agent._model_client_stream != stream:
-                raise ValueError("Streaming mode is not supported when agent._model_client_stream is False")
-            
-        return agent, thread
-
     #### --- 关于DrSai的UI接口 --- ####
     async def a_drsai_ui_completions(self, **kwargs) -> AsyncGenerator:
         """
@@ -359,11 +342,12 @@ class DrSai:
             api_key = user_input.api_key
             messages = user_input.user_messages
 
-            # 加载智能体实例和状态，检查thread状态
-            agent, thread = await self.get_agent_and_thread(user_id, thread_id, stream, api_key)
+            # 加载智能体实例和状态
+            if thread_id in self.agent_instance:
+                agent = self.agent_instance[thread_id]
+            else:
+                agent = await self._create_agent_instance(api_key=api_key, thread_id=thread_id, user_id=user_id, stream=stream)
                 
-            # TODO:历史消息处理
-
             ## 将前端传入的BaseChatMessage.model_dump(mode="json")消息整理为BaseChatMessage格式
             task: list[BaseChatMessage] = []
             for message in messages:
@@ -381,8 +365,18 @@ class DrSai:
                     raise ValueError(f"Unsupported message type: {message['type']}")
 
             # 创建或者更新thread
-
-            if thread is None:
+            thread: Thread|None = None
+            response: Response = self.db_manager.get(
+                Thread, 
+                filters={"user_id": user_id,"thread_id": thread_id},
+                return_json=False
+            )
+            if response.status and response.data:
+                thread: Thread = response.data[0]
+                thread.user_input = user_input.model_dump(mode="json")
+                thread.status = RunStatus.ACTIVE
+                thread.messages.append(task[-1].model_dump(mode="json")) # 已经存在的Thread只添加最后一条消息
+            else:
                 thread = Thread(
                     user_id = user_id,
                     thread_id = thread_id,
@@ -390,10 +384,6 @@ class DrSai:
                     status = RunStatus.CREATED,
                     messages = [message.model_dump(mode="json") for message in task],
                 )
-            else:
-                thread.user_input = user_input.model_dump(mode="json")
-                thread.status = RunStatus.ACTIVE
-                thread.messages.append(task[-1].model_dump(mode="json")) # 已经存在的Thread只添加最后一条消息
             response: Response = self.db_manager.upsert(thread)
             if not response.status:
                 raise RuntimeError(f"Failed to create thread: {response.message}")
@@ -497,8 +487,11 @@ class DrSai:
             api_key = user_input.api_key
             messages = user_input.user_messages
 
-            # 加载智能体实例和状态，检查thread状态
-            agent, thread = await self.get_agent_and_thread(user_id, thread_id, stream, api_key)
+            # 加载智能体实例和状态
+            if thread_id in self.agent_instance:
+                agent = self.agent_instance[thread_id]
+            else:
+                agent = await self._create_agent_instance(api_key=api_key, thread_id=thread_id, user_id=user_id, stream=stream)
                 
             # 历史消息处理
             
@@ -541,8 +534,18 @@ class DrSai:
             
 
             # 创建或者更新thread
-
-            if thread is None:
+            thread: Thread|None = None
+            response: Response = self.db_manager.get(
+                Thread, 
+                filters={"user_id": user_id,"thread_id": thread_id},
+                return_json=False
+            )
+            if response.status and response.data:
+                thread: Thread = response.data[0]
+                thread.user_input = user_input.model_dump(mode="json")
+                thread.status = RunStatus.ACTIVE
+                thread.messages.append(task[-1].model_dump(mode="json")) # 已经存在的Thread只添加最后一条消息
+            else:
                 thread = Thread(
                     user_id = user_id,
                     thread_id = thread_id,
@@ -550,17 +553,6 @@ class DrSai:
                     status = RunStatus.CREATED,
                     messages = [message.model_dump(mode="json") for message in task],
                 )
-                # if hasattr(agent, "_db_manager"):
-                #     agent._db_manager = self.db_manager
-                #     if isinstance(agent, BaseGroupChat):
-                #         for participant in agent._participants:
-                #             participant._db_manager = self.db_manager
-                #     else:
-                #         agent._db_manager = self.db_manager
-            else:
-                thread.user_input = user_input.model_dump(mode="json")
-                thread.status = RunStatus.ACTIVE
-                thread.messages.append(task[-1].model_dump(mode="json")) # 已经存在的Thread只添加最后一条消息
             response: Response = self.db_manager.upsert(thread)
             if not response.status:
                 raise RuntimeError(f"Failed to create thread: {response.message}")
