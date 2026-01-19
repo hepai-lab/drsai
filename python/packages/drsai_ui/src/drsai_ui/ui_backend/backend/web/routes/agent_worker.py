@@ -79,7 +79,7 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                         agent_info.update({"mode": "ddf"})
                         agent_info.update({"owner": agent_info["author"]})
                         if agent_info.get("name") in agents_name_old:
-                            agent_info.update({"id": agents_name_old["name"]["id"]})
+                            agent_info.update({"id": agents_name_old[agent_info.get("name")]["id"]})
                         else:
                             agent_info.update({"id": str(uuid.uuid4())})
                         agents.append(agent_info)
