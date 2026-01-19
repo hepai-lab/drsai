@@ -878,7 +878,22 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       const textToCopy = getTextContent();
       if (textToCopy.trim()) {
         try {
-          await navigator.clipboard.writeText(textToCopy);
+          // Check if clipboard API is available
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(textToCopy);
+          } else {
+            // Fallback for environments where clipboard API is not available
+            const textArea = document.createElement('textarea');
+            textArea.value = textToCopy;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            document.execCommand('copy');
+            textArea.remove();
+          }
           setIsCopied(true);
           // Reset after 2 seconds
           setTimeout(() => {
@@ -918,7 +933,22 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       const textToCopy = getNonUserTextContent();
       if (textToCopy.trim()) {
         try {
-          await navigator.clipboard.writeText(textToCopy);
+          // Check if clipboard API is available
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(textToCopy);
+          } else {
+            // Fallback for environments where clipboard API is not available
+            const textArea = document.createElement('textarea');
+            textArea.value = textToCopy;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            document.execCommand('copy');
+            textArea.remove();
+          }
           setIsCopied(true);
           // Reset after 2 seconds
           setTimeout(() => {
