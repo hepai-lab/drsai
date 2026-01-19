@@ -235,13 +235,12 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         return await self.drsai.get_agents_info(agent=agent)
     
     @HRModel.remote_callable
-    async def lazy_init(self, chat_id: str, api_key: str, run_info: Dict[str, str]) -> Dict[str, Any]:
+    async def lazy_init(self, chat_id: str, api_key: str, run_info: Dict[str, str], stream: bool = True, **kwargs) -> Dict[str, Any]:
         try:
             agent: Team|ChatAgent = self.drsai.agent_instance.get(chat_id, None)
             if agent is None:
-                agent = await self.drsai._create_agent_instance(api_key=api_key, thread_id=chat_id, user_id=run_info.get("email"),)
-                self.drsai.agent_instance[chat_id] = agent
-            message = await agent.lazy_init(api_key=api_key, thread_id=chat_id, run_info=run_info)
+                agent = await self.drsai._create_agent_instance(api_key=api_key, thread_id=chat_id, user_id=run_info.get("email"), stream=stream)
+            message = await agent.lazy_init(api_key=api_key, thread_id=chat_id, run_info=run_info, **kwargs)
             return {"status": True, "message": message}
         except Exception as e:
             return {"status": False, "message": f"Lazy init error: {e}"}
