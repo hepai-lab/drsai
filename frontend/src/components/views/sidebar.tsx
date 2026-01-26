@@ -375,7 +375,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 },
                 {
                   id: "agent_square",
-                  label: "Dr.Sai Hub",
+                  label: "Agents Hub",
                   icon: <Sailboat className="w-4 h-4" />
                 }
               ]}
@@ -453,9 +453,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 borderRadius: "4px",
                                 padding: "2px",
                                 filter:
-                                  agent.mode === "magentic-one"
-                                    ? "brightness(0) saturate(100%)"
-                                    : "none",
+                                  darkMode === "dark"
+                                    ? "brightness(0) saturate(100%) invert(1)"
+                                    : agent.mode === "magentic-one"
+                                      ? "brightness(0) saturate(100%)"
+                                      : "none",
                               }}
                             />
                           ) : (
