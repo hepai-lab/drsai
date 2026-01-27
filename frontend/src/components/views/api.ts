@@ -526,13 +526,12 @@ export class Agent {
     // update main agent list
     async updateAgentList(
         userId: string,
-        agent_mode_config: Record<string, any>): Promise<any[]> {
+        id: string): Promise<any[]> {
         const response = await fetch(
-            `${this.getBaseUrl()}/agentmode/?user_id=${userId}`,
+            `${this.getBaseUrl()}/agentmode/?user_id=${userId}&id=${id}`,
             {
                 method: "PUT",
                 headers: this.getHeaders(),
-                body: JSON.stringify({"agent_mode_config": agent_mode_config}),
             }
         );
 

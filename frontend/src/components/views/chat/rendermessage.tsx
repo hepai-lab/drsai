@@ -387,7 +387,7 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
 
     if (is_step_repeated && !hidden) {
       return (
-        <div className="">
+        <div id={`step-execution-${content.index}`} className="">
           {isUserProxyInstruction && content.instruction && (
             <div className="flex items-start">
               <MarkdownRenderer content={content.instruction} />
@@ -409,7 +409,7 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
     // if hidden add success green thingy
 
     return (
-      <div className="flex flex-col">
+      <div id={`step-execution-${content.index}`} className="flex flex-col">
         {!isUserProxyInstruction &&
           content.instruction &&
           content.index !== 0 && (

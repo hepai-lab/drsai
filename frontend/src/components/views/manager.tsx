@@ -58,12 +58,12 @@ export const SessionManager: React.FC = () => {
   });
 
   // WebSocket management
-  const { sessionSockets, getSessionSocket, closeSocket, stopSession } = useWebSocketManager();
+  const { getSessionSocket, closeSocket, stopSession } = useWebSocketManager();
 
   // Agent management
   const { agents, fetchAgentList, deleteAgent } = useAgentManager(user?.email);
 
-  const { agentId, agentInfo } = useAgentInfo(user?.email);
+  const { agentInfo } = useAgentInfo(user?.email);
 
   // Load settings on page refresh
   useEffect(() => {
@@ -108,87 +108,6 @@ export const SessionManager: React.FC = () => {
     fetchSessions();
   }, [fetchSessions]);
 
-  // // Helper function to fetch and merge agent config
-  // const fetchAndSetAgent = useCallback(async (agent: Agent) => {
-  //   if (!user?.email || !agent.mode) {
-  //     setSelectedAgent(agent);
-  //     return;
-  //   }
-
-  //   // 对于自定义智能体（type === "add"），如果已经有完整的 config，直接使用
-  //   if (agent.type === "add" && agent.config && Object.keys(agent.config).length > 0) {
-  //     setSelectedAgent(agent);
-  //     setConfig(agent.config);
-  //     return;
-  //   }
-
-  //   try {
-  //     const agentConfig = await agentAPI.getAgentConfig(user.email, agent.mode);
-  //     if (agentConfig) {
-  //       const fullAgent = {
-  //         ...agent,
-  //         config: agentConfig.config,
-  //         mode: agentConfig.mode || agent.mode,
-  //         logo: agent.logo,
-  //       };
-  //       setSelectedAgent(fullAgent);
-  //       setConfig(agentConfig.config);
-  //     } else {
-  //       // 如果 API 返回空，但 agent 本身有 config，使用 agent 的 config
-  //       if (agent.config && Object.keys(agent.config).length > 0) {
-  //         setSelectedAgent(agent);
-  //         setConfig(agent.config);
-  //       } else {
-  //         setSelectedAgent(agent);
-  //         setConfig({ mode: agent.mode });
-  //       }
-  //     }
-  //   } catch (error) {
-  //     console.warn("Failed to load agent config:", error);
-  //     // 如果 API 调用失败，但 agent 本身有 config，使用 agent 的 config
-  //     if (agent.config && Object.keys(agent.config).length > 0) {
-  //       setSelectedAgent(agent);
-  //       setConfig(agent.config);
-  //     } else {
-  //       setSelectedAgent(agent);
-  //       setConfig({ mode: agent.mode });
-  //     }
-  //   }
-  // }, [user?.email, setSelectedAgent, setConfig]);
-
-  // Restore selected agent from localStorage on mount
-  // useEffect(() => {
-  //   if (!selectedAgent && agents && agents.length > 0 && user?.email) {
-  //     const storedAgent = getSelectedAgent();
-  //     if (storedAgent) {
-  //       // Verify the stored agent still exists in the agent list
-  //       const agentExists = agents.find(a => a.mode === storedAgent.mode);
-  //       if (agentExists) {
-  //         // Fetch and set agent with full config
-  //         fetchAndSetAgent(storedAgent);
-  //       } else {
-  //         // Stored agent no longer exists, use default
-  //         const defaultAgent = agents.find(agent => agent.mode === "magentic-one");
-  //         if (defaultAgent) {
-  //           fetchAndSetAgent(defaultAgent);
-  //         }
-  //       }
-  //     } else {
-  //       // No stored agent, use default
-  //       const defaultAgent = agents.find(agent => agent.mode === "magentic-one");
-  //       if (defaultAgent) {
-  //         fetchAndSetAgent(defaultAgent);
-  //       }
-  //     }
-  //   }
-  // }, [agents, selectedAgent, getSelectedAgent, fetchAndSetAgent, user?.email]);
-
-  // Save selected agent to localStorage when it changes
-  // useEffect(() => {
-  //   if (selectedAgent) {
-  //     saveSelectedAgent(selectedAgent);
-  //   }
-  // }, [selectedAgent, saveSelectedAgent]);
   const { setAgentId } = useModeConfigStore();
   // Handle agent click
   const handleAgentClick = useCallback(async (agent: Agent) => {
@@ -206,38 +125,12 @@ export const SessionManager: React.FC = () => {
     const isDifferentAgent = agent.type === "add"
       ? (selectedAgent?.id !== agent.id && selectedAgent?.name !== agent.name)
       : (selectedAgent?.mode !== agent.mode);
-
-    // // 保存当前settings配置用于回滚
-    // const previousSettingsConfig = { ...settingsConfig };
-
-    // try {
-    // 乐观更新store（UI立即响应）- fetchAndSetAgent会立即更新UI
-    // await fetchAndSetAgent(agent);
-
-    // 只有在切换到不同智能体时才清空当前会话（不创建新会话，会话在发送消息时创建）
     if (isDifferentAgent) {
       clearCurrentSession();
     }
 
     setActiveSubMenuItem("current_session");
 
-    //   // 通过API更新数据库(settingsAPI.updateSettings)
-    //   // 将当前的全局settings配置同步到数据库
-    //   try {
-    //     const currentSettings = useSettingsStore.getState().config;
-    //     await settingsAPI.updateSettings(user.email, currentSettings);
-    //   } catch (updateError) {
-    //     // 如果失败则回滚store
-    //     console.error("Failed to update settings:", updateError);
-    //     updateSettingsConfig(previousSettingsConfig);
-    //     messageApi.error("更新设置失败，已回滚");
-    //   }
-    // } catch (error) {
-    //   // 如果fetchAndSetAgent失败，回滚settings配置
-    //   console.error("Failed to set agent:", error);
-    //   updateSettingsConfig(previousSettingsConfig);
-    //   messageApi.error("切换智能体失败");
-    // }
   }, [user?.email, selectedAgent, clearCurrentSession, settingsConfig, updateSettingsConfig, messageApi]);
 
   // Handle edit session
@@ -258,15 +151,6 @@ export const SessionManager: React.FC = () => {
   // Handle logo click
   const handleLogoClick = useCallback(async () => {
     setActiveSubMenuItem("current_session");
-
-    // 设置默认agent为 Dr.Sai General (magentic-one)
-    // if (Array.isArray(agents) && agents.length > 0) {
-    //   const defaultAgent = agents.find(agent => agent.mode === "magentic-one");
-    //   if (defaultAgent) {
-    //     await fetchAndSetAgent(defaultAgent);
-    //   }
-    // }
-
     // 创建新会话
     handleEditSession();
   }, [agents, handleEditSession]);

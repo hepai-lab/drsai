@@ -85,15 +85,6 @@ const AgentCard: React.FC<AgentCardProps> = ({
   const handleTryClick = async () => {
     console.log("agent", agent);
     setAgentId(agent.id || "");
-    // const runtimeConfig = createAgentConfig(agent.name, agent.url, agent.apiKey || "", agent.mode, agent.config);
-
-    // const agentToSet: Partial<Agent> = {
-    //   ...agent,
-    //   tags: agent.config?.tags,
-    //   config: runtimeConfig,
-    // };
-    // setSelectedAgent(agentToSet);
-    // setConfig(agentToSet);
 
     window.dispatchEvent(
       new CustomEvent("switchToCurrentSession", {
@@ -108,15 +99,10 @@ const AgentCard: React.FC<AgentCardProps> = ({
     if (!user?.email || isAdding || isAdded) return;
     setIsAdding(true);
     try {
-      const runtimeConfig = createAgentConfig(agent.name, agent.url, agent.apiKey || "", agent.mode, agent.config);
 
       const agentNewList = await agentAPI.updateAgentList(
         user.email,
-        {
-          ...agent,
-          config: runtimeConfig,
-          type: "add",
-        }
+        agent.id || ""
       );
 
       if (handleAgentList) {

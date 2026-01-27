@@ -108,7 +108,6 @@ export default function ChatView({
   );
 
   const [teamConfig, setTeamConfig] = React.useState<TeamConfig | null>(defaultTeamConfig);
-  const [currentSessionConfig, setCurrentSessionConfig] = React.useState<AgentModeConfig>(DEFAULT_AGENT_MODE_CONFIG);
 
   // ChatInput ref
   const chatInputRef = React.useRef<{
@@ -152,6 +151,57 @@ export default function ChatView({
 
   const { progress, isPlanning, hasFinalAnswer, currentPlan } = useProgressTracking(currentRun);
 
+  // 添加滚动到指定 step 的函数
+  const scrollToStep = React.useCallback((stepIndex: number) => {
+    // 查找对应的 step execution 元素
+    const selector = `#step-execution-${stepIndex}`;
+    const stepElement = document.querySelector(selector) as HTMLElement;
+
+    if (!stepElement) {
+      console.warn(`[scrollToStep] Step element not found for index ${stepIndex}`);
+      return;
+    }
+
+    // 查找实际的滚动容器 - 向上查找父元素，找到有 overflow-y-auto 或 scroll 类的元素
+    let scrollContainer: HTMLElement | null = stepElement.parentElement;
+    while (scrollContainer) {
+      const style = window.getComputedStyle(scrollContainer);
+      const hasOverflow = style.overflowY === 'auto' || style.overflowY === 'scroll' ||
+        scrollContainer.classList.contains('scroll') ||
+        scrollContainer.classList.contains('overflow-y-auto');
+
+      if (hasOverflow || scrollContainer.scrollHeight > scrollContainer.clientHeight) {
+        break;
+      }
+
+      scrollContainer = scrollContainer.parentElement;
+    }
+
+    if (scrollContainer) {
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const elementRect = stepElement.getBoundingClientRect();
+
+      // 计算滚动位置：元素相对于容器的位置，居中显示
+      const scrollTop =
+        scrollContainer.scrollTop +
+        elementRect.top -
+        containerRect.top -
+        containerRect.height / 2 +
+        elementRect.height / 2;
+
+      scrollContainer.scrollTo({
+        top: Math.max(0, scrollTop), // 确保不为负数
+        behavior: "smooth",
+      });
+    } else {
+      // 如果找不到滚动容器，使用标准的 scrollIntoView
+      stepElement.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+  }, []);
+
   const {
     handleInputResponse,
     handleRegeneratePlan,
@@ -166,7 +216,6 @@ export default function ChatView({
     session,
     teamConfig,
     settingsConfig,
-    currentSessionConfig,
     updatedPlan,
     userEmail: user?.email,
     activeSocketRef,
@@ -209,30 +258,6 @@ export default function ChatView({
     }
   }, [session?.id, user?.email, getSessionRun, setSessionRun, messageApi]);
 
-
-  React.useEffect(() => {
-    const loadCurrentSession = async () => {
-      if (session?.id && user?.email) {
-        try {
-          const res = await sessionAPI.getSession(session?.id, user?.email)
-          const normalizedConfig =
-            normalizeAgentModeConfig(res.agent_mode_config) || DEFAULT_AGENT_MODE_CONFIG;
-          setCurrentSessionConfig(normalizedConfig);
-        } catch (error) {
-          console.error("Error loading current session:", error);
-          // 如果获取session失败，清除可能无效的session状态
-          if (error instanceof Error && error.message.includes("Failed to fetch session")) {
-            console.warn("Session not found, it may have been deleted");
-            // 可以在这里添加清理逻辑，比如清除localStorage等
-          }
-        }
-      } else {
-        setCurrentSessionConfig(DEFAULT_AGENT_MODE_CONFIG);
-      }
-    };
-
-    loadCurrentSession();
-  }, [session?.id, user?.email]);
 
   React.useEffect(() => {
     const initializeSession = async () => {
@@ -433,6 +458,7 @@ export default function ChatView({
               isPlanning={isPlanning}
               progress={progress}
               hasFinalAnswer={hasFinalAnswer}
+              onStepClick={scrollToStep}
             />
           </div>
         </div>
