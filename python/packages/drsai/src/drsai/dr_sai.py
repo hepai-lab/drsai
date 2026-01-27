@@ -162,10 +162,11 @@ class DrSai:
 
     async def _create_agent_instance(
         self,
-        api_key: str = None,
-        thread_id: str = None,
-        user_id: str = None,
+        api_key: str|None = None,
+        thread_id: str|None = None,
+        user_id: str|None = None,
         stream: bool = True,
+        defult_mode: str|None = None,
         ) -> Union[ChatAgent, Team] :
         """
         创建智能体/多智能体系统实例，加载状态
@@ -185,6 +186,8 @@ class DrSai:
                 kwargs['db_manager'] = self.db_manager
             if 'stream' in params:
                 kwargs['stream'] = stream
+            if 'defult_mode' in params:
+                kwargs['defult_mode'] = defult_mode
             agent: ChatAgent | Team = (
                 await self.agent_factory(**kwargs)
                 if asyncio.iscoroutinefunction(self.agent_factory)
@@ -277,14 +280,13 @@ class DrSai:
             ## 用户信息 从DDF2传入的
             user_info: Dict = extra_body.get("user", {})
             username = user_info.get('email', None) or user_info.get('name', "anonymous")
-            # chat_id = extra_body.get("chat_id", None) # 获取前端聊天界面的chat_id
             api_key = user_info.pop('api_key', None) 
         else:
             #  {'model': 'drsai_pipeline', 'user': {'name': '888', 'id': '888', 'email': 888', 'role': 'admin'}, 'metadata': {}, 'base_models': 'openai/gpt-4o', 'apikey': 'sk-88'}
             user_info = kwargs.get('user', {})
             username = user_info.get('email', None) or user_info.get('name', "anonymous")
         chat_id = kwargs.pop('chat_id', None) # 获取前端聊天端口的chat_id
-            # history_mode = kwargs.pop('history_mode', None) or self.history_mode # backend or frontend
+            
         ## 保存用户的extra_requests
         extra_requests: Dict = copy.deepcopy(kwargs)
         ## 保存用户的参数
@@ -492,7 +494,28 @@ class DrSai:
                 agent = self.agent_instance[thread_id]
             else:
                 agent = await self._create_agent_instance(api_key=api_key, thread_id=thread_id, user_id=user_id, stream=stream)
-                
+            
+            # 创建或者更新thread
+            thread: Thread|None = None
+            response: Response = self.db_manager.get(
+                Thread, 
+                filters={"user_id": user_id,"thread_id": thread_id},
+                return_json=False
+            )
+            if response.status and response.data:
+                thread: Thread = response.data[0]
+                thread.user_input = user_input.model_dump(mode="json"),
+                thread.status = RunStatus.ACTIVE
+                # thread.messages.append(task[-1]) # 已经存在的Thread只添加最后一条消息
+            else:
+                thread = Thread(
+                    user_id = user_id,
+                    thread_id = thread_id,
+                    user_input = user_input.model_dump(mode="json"),
+                    status = RunStatus.CREATED,
+                    # messages = task,
+                )
+            
             # 历史消息处理
             
             ## 将前端消息整理为autogen BaseChatMessage格式
@@ -532,31 +555,13 @@ class DrSai:
                 else:
                     task.append(TextMessage(content=last_message["content"], source=last_message["role"], metadata={"internal": "no"}))  
             
-
-            # 创建或者更新thread
-            thread: Thread|None = None
-            response: Response = self.db_manager.get(
-                Thread, 
-                filters={"user_id": user_id,"thread_id": thread_id},
-                return_json=False
-            )
-            if response.status and response.data:
-                thread: Thread = response.data[0]
-                thread.user_input = user_input.model_dump(mode="json")
-                thread.status = RunStatus.ACTIVE
-                thread.messages.append(task[-1].model_dump(mode="json")) # 已经存在的Thread只添加最后一条消息
+            if thread.messages:
+                thread.messages.append(task[-1].model_dump(mode="json"))
             else:
-                thread = Thread(
-                    user_id = user_id,
-                    thread_id = thread_id,
-                    user_input = user_input.model_dump(mode="json"),
-                    status = RunStatus.CREATED,
-                    messages = [message.model_dump(mode="json") for message in task],
-                )
+                thread.messages = [message.model_dump(mode="json") for message in task]
             response: Response = self.db_manager.upsert(thread)
             if not response.status:
                 raise RuntimeError(f"Failed to create thread: {response.message}")
-                
             # 开始聊天
 
             tool_flag = 0
@@ -703,7 +708,9 @@ class DrSai:
                     pass
 
         except Exception as e:
-            raise traceback.print_exc()
+            logger.error(f"Error: {e}")
+            traceback.print_exc()
+            
         finally:
             # 更新thread状态
             response: Response = self.db_manager.get(

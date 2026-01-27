@@ -6,7 +6,8 @@ from typing import (
     List, 
     Dict, 
     Any,
-    AsyncGenerator
+    AsyncGenerator,
+    Mapping,
     )
 from dataclasses import dataclass, field
 from fastapi import FastAPI
@@ -204,6 +205,8 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             worker_config: DrSaiWorkerConfig,
             logo: str = "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
             examples: List[str] = [],
+            llm_mode_config: Dict[str, Any] = {},
+            defult_llm_mode: str|None = None,
             drsaiapp: DrSaiAPP = None # 传入DrSaiAPP实例
             ):
         super().__init__(config=config)
@@ -221,6 +224,8 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             "author": worker_config.author, 
             "logo": logo,
             "examples": examples,
+            "llm_mode_config": llm_mode_config,
+            "defult_llm_mode": defult_llm_mode,
             } 
         self.drsai._info = self._info
 
@@ -239,7 +244,13 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         try:
             agent: Team|ChatAgent = self.drsai.agent_instance.get(chat_id, None)
             if agent is None:
-                agent = await self.drsai._create_agent_instance(api_key=api_key, thread_id=chat_id, user_id=run_info.get("email"), stream=stream)
+                agent = await self.drsai._create_agent_instance(
+                    api_key=api_key, 
+                    thread_id=chat_id, 
+                    user_id=run_info.get("email"), 
+                    stream=stream,
+                    defult_mode=kwargs.get("defult_mode", None),
+                    )
             message = await agent.lazy_init(api_key=api_key, thread_id=chat_id, run_info=run_info, **kwargs)
             return {"status": True, "message": message}
         except Exception as e:
@@ -295,10 +306,10 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             return {"status": False, "message": f"save_state error: {e}"}
     
     @HRModel.remote_callable
-    async def load_state(self, chat_id: str) -> Dict[str, Any]:
+    async def load_state(self, chat_id: str, state: Mapping[str, Any]) -> Dict[str, Any]:
         try:
             agent: Team|ChatAgent = self.drsai.agent_instance[chat_id]
-            await agent.load_state()
+            await agent.load_state(state=state)
             return {"status": True, "message": ""}
         except Exception as e:
             return {"status": False, "message": f"load_state error: {e}"}
@@ -319,6 +330,8 @@ async def run_worker(agent_factory: callable, **kwargs):
         agent_factory: 工厂函数，用于创建AssistantAgent/BaseGroupChat实例
         agent_name: str = , "Dr.Sai" ,  # 智能体的名称
         description: str = , "Dr.Sai is a helpful assistant." ,  # 智能体的描述
+        examples: List[str] = [],  # 智能体的示例
+        llm_mode_config: Dict[str, Any] = {},# LLM模式配置
         version: str = , "0.1.0" ,  # 智能体的版本
         logo: str = , "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview" ,  # 智能体的logo
         host: str = , "0.0.0.0" ,  # 后端服务host
@@ -368,6 +381,8 @@ async def run_worker(agent_factory: callable, **kwargs):
             file_obj = upload_to_hepai_filesystem(str(logo_path))
             logo = file_obj["url"]
     examples: List[str] = kwargs.pop("examples", [])
+    llm_mode_config: Dict[str, Any] = kwargs.pop("llm_mode_config", {})
+    defult_llm_mode: str|None = kwargs.pop("defult_llm_mode", None)
     
     host: str =  kwargs.pop("host", None)
     if host is not None:
@@ -421,6 +436,8 @@ async def run_worker(agent_factory: callable, **kwargs):
         worker_config=worker_args, 
         logo=logo, 
         examples=examples,
+        llm_mode_config = llm_mode_config,
+        defult_llm_mode = defult_llm_mode,
         drsaiapp=drsaiapp)
 
     enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
