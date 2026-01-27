@@ -41,13 +41,6 @@ const Provider = ({ children }: any) => {
     setLocalStorage("darkmode", darkMode, false);
   };
 
-  // Modify logic here to add your own authentication
-  const initUser = {
-    name: "Guest User",
-    email: getLocalStorage("user_email") || "guestuser@gmail.com",
-    username: "guestuser",
-  };
-
   const setUser = (user: IUser | null) => {
     if (user?.email) {
       setLocalStorage("user_email", user.email, false);
