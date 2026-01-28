@@ -48,7 +48,6 @@ interface SidebarProps {
   onStopSession: (sessionId: number) => void;
   onLogoClick?: () => void;
   agents?: Agent[];
-  selectedAgentMode?: string;
   selectedAgent?: Partial<Agent> | null;
   onAgentClick?: (agent: Agent) => void;
   onDeleteAgent?: (id: string) => void;
@@ -69,7 +68,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onStopSession,
   onLogoClick,
   agents = [],
-  selectedAgentMode,
   selectedAgent,
   onAgentClick,
   onDeleteAgent,
@@ -79,11 +77,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [isAgentsExpanded, setIsAgentsExpanded] = React.useState(true);
 
-
-
-  useEffect(() => {
-    console.log("selectedAgent", selectedAgent);
-  }, [selectedAgent]);
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("username");

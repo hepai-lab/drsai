@@ -1,42 +1,44 @@
 import {
-  PaperAirplaneIcon,
   ExclamationTriangleIcon,
+  PaperAirplaneIcon,
   PauseCircleIcon,
 } from "@heroicons/react/24/outline";
-import * as React from "react";
-import { appContext } from "../../../../hooks/provider";
-import { IStatus } from "../../../types/app";
 import {
-  Upload,
-  Button,
-  Tooltip,
-  Modal,
   Dropdown,
   Menu,
   message,
+  Modal,
+  Tooltip,
+  Upload
 } from "antd";
-import type { UploadProps, RcFile } from "antd/es/upload/interface";
+import type { RcFile, UploadProps } from "antd/es/upload/interface";
 import {
+  Bot,
+  BotIcon,
   FileTextIcon,
   PaperclipIcon,
+  PlusIcon,
+  SparklesIcon,
 } from "lucide-react";
+import * as React from "react";
+import { appContext } from "../../../../hooks/provider";
+import { useVoiceSettingsStore } from "../../../../store/voiceSettings";
+import VoiceInput from "../../../common/VoiceInput";
+import { IStatus } from "../../../types/app";
 import { InputRequest } from "../../../types/datamodel";
-import RelevantPlans from "../relevant_plans";
 import { IPlan } from "../../../types/plan";
 import PlanView from "../plan";
-import VoiceInput from "../../../common/VoiceInput";
-import { useVoiceSettingsStore } from "../../../../store/voiceSettings";
+import RelevantPlans from "../relevant_plans";
 import "./chatinput.css";
 
 // Import custom hooks
 import { useFileUpload } from "./hooks/useFileUpload";
 import { usePlanSearch } from "./hooks/usePlanSearch";
-import type { UploadFile as AntUploadFile } from "antd/es/upload/interface";
-import { fileAPI } from "../../api";
 
 // Import components
-import FilePreview from "./components/FilePreview";
+import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 import DragDropOverlay from "./components/DragDropOverlay";
+import FilePreview from "./components/FilePreview";
 import PlanPreview from "./components/PlanPreview";
 
 interface ChatInputProps {
@@ -87,7 +89,6 @@ const ChatInput = React.forwardRef<
     ref
   ) => {
     const textAreaRef = React.useRef<HTMLTextAreaElement>(null);
-    const textAreaDivRef = React.useRef<HTMLDivElement>(null);
     const [text, setText] = React.useState("");
     const [dragOver, setDragOver] = React.useState(false);
     const [isDragActive, setIsDragActive] = React.useState(false);
@@ -96,8 +97,22 @@ const ChatInput = React.forwardRef<
       user: { email: string };
     };
     const { settings: voiceSettings } = useVoiceSettingsStore();
-    const textAreaDefaultHeight = "52px";
     const userId = user?.email || "default_user";
+    const { agentInfo } = useAgentInfo();
+    const [llmList, setLlmList] = React.useState<{ label: string; value: string }[]>([]);
+    React.useEffect(() => {
+      if (agentInfo && agentInfo.llm_mode_config) {
+        const llmList = Object.entries(agentInfo.llm_mode_config).map(([key, value]) => {
+          return {
+            label: key,
+            value: value,
+          };
+        });
+        setLlmList(llmList);
+      } else
+        setLlmList([]);
+
+    }, [agentInfo]);
 
     const isInputDisabled =
       disabled ||
@@ -140,19 +155,18 @@ const ChatInput = React.forwardRef<
       runStatus,
       isPlanMessage,
     });
-
+    const getTextAreaDefaultHeight = () => {
+      const baseHeight = 52; // 基础高度 52px
+      return `${baseHeight}px`;
+    };
     // Handle textarea auto-resize
     React.useEffect(() => {
       if (textAreaRef.current) {
-        textAreaRef.current.style.height = textAreaDefaultHeight;
+        textAreaRef.current.style.height = getTextAreaDefaultHeight();
         const scrollHeight = textAreaRef.current.scrollHeight;
         textAreaRef.current.style.height = `${scrollHeight}px`;
       }
-      if (textAreaDivRef.current) {
-        textAreaDivRef.current.style.height = textAreaDefaultHeight;
-        const scrollHeight = textAreaDivRef.current.scrollHeight;
-        textAreaDivRef.current.style.height = `${scrollHeight}px`;
-      }
+
     }, [text, inputRequest]);
 
     React.useEffect(() => {
@@ -206,15 +220,13 @@ const ChatInput = React.forwardRef<
     const resetInput = () => {
       if (textAreaRef.current) {
         textAreaRef.current.value = "";
-        textAreaRef.current.style.height = textAreaDefaultHeight;
+        textAreaRef.current.style.height = getTextAreaDefaultHeight();
         setText("");
         clearFiles();
         setRelevantPlans([]);
         clearAttachedPlan();
       }
-      if (textAreaDivRef.current) {
-        textAreaDivRef.current.style.height = textAreaDefaultHeight;
-      }
+
     };
 
     const handleTextChange = (
@@ -580,6 +592,44 @@ const ChatInput = React.forwardRef<
                               </Upload>
                             </Menu.Item>
                             <Menu.SubMenu
+                              key="llm-options"
+                              title={<span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>LLM Options</span>}
+                              icon={
+                                <BotIcon
+                                  className={`w-4 h-4 flex-shrink-0 ${darkMode === "dark"
+                                    ? "text-gray-300"
+                                    : "text-magenta-600"
+                                    }`}
+                                />
+                              }
+                            >
+                              {llmList.length === 0 ? (
+                                <Menu.Item
+                                  disabled
+                                  key="no-llm-options"
+                                  className={darkMode === "dark" ? "text-gray-500" : ""}
+                                >
+                                  <span className={darkMode === "dark" ? "text-gray-500" : ""}>
+                                    No LLM options
+                                  </span>
+                                </Menu.Item>
+                              ) : (
+                                llmList.map((llm) => (
+                                  <Menu.Item
+                                    key={llm.value}
+                                    onClick={() => {
+                                      console.log("Selected LLM:", llm);
+                                    }}
+                                    className={darkMode === "dark" ? "text-gray-300 hover:text-white" : ""}
+                                  >
+                                    <span className={darkMode === "dark" ? "text-gray-300" : ""}>
+                                      {llm.label}
+                                    </span>
+                                  </Menu.Item>
+                                ))
+                              )}
+                            </Menu.SubMenu>
+                            <Menu.SubMenu
                               key="attach-plan"
                               title={<span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Attach Plan</span>}
                               icon={
@@ -631,7 +681,7 @@ const ChatInput = React.forwardRef<
                                 : "text-secondary hover:text-accent hover:bg-accent/10"
                               }`}
                           >
-                            <PaperclipIcon className="h-4 w-4" />
+                            <PlusIcon className="h-4 w-4" />
                             {fileList.length > 0 && (
                               <span className="absolute -top-1 -right-1 bg-accent text-white text-xs rounded-full w-4 h-4 flex items-center justify-center animate-bounce-in">
                                 {fileList.length}
