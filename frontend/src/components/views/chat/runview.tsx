@@ -1119,6 +1119,7 @@ const RunView: React.FC<RunViewProps> = ({
                   tasks: besiiiTasks,
                   terminalOutput: terminalOutput,
                   logs: logs,
+                  fileEvents: run.file_events || [],
                   onTaskClick: (taskId: string) => {
                     // TODO: Handle task click
                   },

@@ -1,29 +1,32 @@
-import React, { useState, useEffect, useRef } from "react";
-import { ChevronDown, ChevronUp, CheckCircle, Clock, Circle } from "lucide-react";
-import { BESIIIPanelProps, BESIIITask, BESIIISubTask } from "./types";
+import { CheckCircle, Circle, Clock, Download, FileText, ChevronDown, ChevronRight } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
 import { appContext } from "../../../../hooks/provider";
+import { FilesEvent, MessageFileItem } from "../../../types/datamodel";
+import { BESIIIPanelProps, BESIIISubTask, BESIIITask } from "./types";
 
 /**
  * BESIII Panel - 用于显示 BESIII Agent 的任务执行状态
  * 
  * 功能：
  * 1. 全局任务执行 - 总览
- * 2. TaskManager - 任务管理和状态跟踪
+ * 2. Files - 文件列表和下载
  * 3. Terminal - 终端输出
  */
 
-type TabType = 'logs' | 'taskmanager' | 'terminal';
+type TabType = 'logs' | 'files' | 'terminal';
 
 const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     tasks = [],
     terminalOutput = '',
     logs = [],
+    fileEvents = [],
     onMinimize,
 }) => {
     const { darkMode } = React.useContext(appContext);
-    const [activeTab, setActiveTab] = useState<TabType>('taskmanager');
+    const [activeTab, setActiveTab] = useState<TabType>('files');
     const [localTasks, setLocalTasks] = useState<BESIIITask[]>(tasks);
     const logContainerRef = useRef<HTMLDivElement>(null);
+    const [expandedEvents, setExpandedEvents] = useState<Record<number, boolean>>({});
 
     // 同步 tasks prop 到 localTasks 状态
     useEffect(() => {
@@ -73,48 +76,176 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
         }
     };
 
-    // 渲染 TaskManager 标签页
-    const renderTaskManager = () => (
-        <div className="flex flex-col gap-2 overflow-y-auto">
-            {localTasks.length === 0 ? (
+    // 处理文件下载
+    const handleFileDownload = (file: MessageFileItem) => {
+        if (file.download_method === "url" && file.url) {
+            // URL 下载：直接打开链接
+            window.open(file.url, '_blank');
+        } else if (file.download_method === "base64" && file.base64_content) {
+            // Base64 下载：转换为 Blob 并下载
+            try {
+                // 解码 base64
+                const binaryString = atob(file.base64_content);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                const blob = new Blob([bytes], { type: file.mime_type || 'application/octet-stream' });
+
+                // 创建下载链接
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = file.name;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('Failed to download file:', error);
+                alert('下载文件失败');
+            }
+        }
+    };
+
+    // 渲染 Files 标签页
+    const renderFiles = () => {
+        // 收集所有文件事件中的文件
+        const allFiles: Array<{ file: MessageFileItem; event: FilesEvent }> = [];
+        fileEvents.forEach(event => {
+            if (event.content?.files && Array.isArray(event.content.files)) {
+                event.content.files.forEach(file => {
+                    allFiles.push({ file, event });
+                });
+            }
+        });
+
+        if (allFiles.length === 0) {
+            return (
                 <div className={`flex items-center justify-center h-full ${darkMode === "dark" ? "text-gray-400" : "text-gray-500"}`}>
-                    暂无任务
+                    <div className="text-center">
+                        <FileText size={48} className={`mx-auto mb-4 ${darkMode === "dark" ? "text-gray-600" : "text-gray-400"}`} />
+                        <div>暂无文件</div>
+                    </div>
                 </div>
-            ) : (
-                localTasks.map(task => (
-                    <div key={task.id} className={`border rounded-lg overflow-hidden ${darkMode === "dark" ? "border-gray-700" : ""}`}>
-                        {/* Task Header */}
-                        <div
-                            className={`flex items-center justify-between px-4 py-3 cursor-pointer transition-colors ${darkMode === "dark" ? "bg-purple-500/20 hover:bg-purple-500/30" : "bg-purple-100 hover:bg-purple-200"}`}
-                            onClick={() => toggleTask(task.id)}
-                        >
-                            <span className={`font-medium ${darkMode === "dark" ? "text-gray-200" : "text-gray-800"}`}>{task.name}</span>
-                            {task.isExpanded ? (
-                                <ChevronDown size={20} className={darkMode === "dark" ? "text-gray-300" : ""} />
-                            ) : (
-                                <ChevronUp size={20} className={darkMode === "dark" ? "text-gray-300" : ""} />
+            );
+        }
+
+        return (
+            <div className="flex flex-col gap-4 overflow-y-auto h-full p-4">
+                {fileEvents.map((event, eventIndex) => {
+                    if (!event.content?.files || event.content.files.length === 0) {
+                        return null;
+                    }
+
+                    const isExpanded = expandedEvents[eventIndex] ?? true;
+
+                    const toggleEvent = () => {
+                        setExpandedEvents(prev => ({
+                            ...prev,
+                            [eventIndex]: !isExpanded,
+                        }));
+                    };
+
+                    return (
+                        <div key={eventIndex} className={`border rounded-lg overflow-hidden ${darkMode === "dark" ? "border-gray-700 bg-gray-900" : "border-gray-200 bg-white"}`}>
+                            {/* Event Header */}
+                            {(event.content.title || event.content.description) && (
+                                <button
+                                    type="button"
+                                    onClick={toggleEvent}
+                                    className={`w-full px-4 py-3 border-b flex items-center justify-between text-left ${darkMode === "dark" ? "border-gray-700 bg-gray-800 hover:bg-gray-700" : "border-gray-200 bg-gray-50 hover:bg-gray-100"}`}
+                                >
+                                    <div>
+
+
+                                        {event.content.title && (
+                                            <h3 className={`font-semibold mb-1 ${darkMode === "dark" ? "text-gray-200" : "text-gray-800"}`}>
+                                                {event.content.title}
+                                            </h3>
+                                        )}
+                                        {event.content.description && (
+                                            <p className={`text-sm ${darkMode === "dark" ? "text-gray-400" : "text-gray-600"}`}>
+                                                {event.content.description}
+                                            </p>
+                                        )}
+                                        {(() => {
+                                            const ts = (event.content as any)?.send_time_stamp;
+                                            if (ts === undefined || ts === null) return null;
+                                            return (
+                                                <div className={`text-xs mb-1 ${darkMode === "dark" ? "text-gray-300" : "text-gray-600"}`}>
+                                                    {formatTimestamp(ts)}
+                                                </div>
+                                            );
+                                        })()}
+                                    </div>
+                                    <div className={`ml-4 flex-shrink-0 ${darkMode === "dark" ? "text-gray-400" : "text-gray-500"}`}>
+                                        {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                                    </div>
+                                </button>
+                            )}
+
+                            {/* Files List */}
+                            {isExpanded && (
+                                <div className="divide-y divide-gray-200 dark:divide-gray-700">
+                                    {event.content.files.map((file, fileIndex) => (
+                                        <div
+                                            key={fileIndex}
+                                            className={`px-4 py-3 hover:bg-opacity-50 transition-colors ${darkMode === "dark"
+                                                ? "hover:bg-gray-800"
+                                                : "hover:bg-gray-50"
+                                                }`}
+                                        >
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex items-center gap-3 flex-1 min-w-0">
+                                                    <FileText
+                                                        size={20}
+                                                        className={`flex-shrink-0 ${darkMode === "dark" ? "text-gray-400" : "text-gray-500"}`}
+                                                    />
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className={`font-medium truncate ${darkMode === "dark" ? "text-gray-200" : "text-gray-800"}`}>
+                                                            {file.name}
+                                                        </div>
+                                                        {file.description && (
+                                                            <div className={`text-xs mt-1 ${darkMode === "dark" ? "text-gray-500" : "text-gray-500"}`}>
+                                                                {file.description}
+                                                            </div>
+                                                        )}
+                                                        <div className={`text-xs mt-1 flex items-center gap-2 ${darkMode === "dark" ? "text-gray-500" : "text-gray-500"}`}>
+                                                            <span className={`px-2 py-0.5 rounded ${darkMode === "dark" ? "bg-purple-500/20 text-purple-300" : "bg-purple-100 text-purple-700"}`}>
+                                                                {file.download_method === "url" ? "URL" : "Base64"}
+                                                            </span>
+                                                            {file.size && (
+                                                                <span>{(file.size / 1024).toFixed(2)} KB</span>
+                                                            )}
+                                                            {file.mime_type && (
+                                                                <span>{file.mime_type}</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => handleFileDownload(file)}
+                                                    className={`ml-4 px-3 py-2 rounded-lg flex items-center gap-2 transition-colors ${darkMode === "dark"
+                                                        ? "bg-purple-600 hover:bg-purple-700 text-white"
+                                                        : "bg-purple-600 hover:bg-purple-700 text-white"
+                                                        }`}
+                                                    title={`下载 ${file.name}`}
+                                                >
+                                                    <Download size={16} />
+                                                    <span className="text-sm">下载</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
                             )}
                         </div>
-
-                        {/* Subtasks */}
-                        {task.isExpanded && (
-                            <div className={darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-white"}>
-                                {task.subtasks.map(subtask => (
-                                    <div
-                                        key={subtask.id}
-                                        className={`flex items-center justify-between px-4 py-3 border-b last:border-b-0 ${darkMode === "dark" ? "border-gray-700 hover:bg-gray-800" : "hover:bg-gray-50"}`}
-                                    >
-                                        <span className={darkMode === "dark" ? "text-gray-300" : "text-gray-700"}>{subtask.name}</span>
-                                        {renderStatusIcon(subtask.status)}
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                ))
-            )}
-        </div>
-    );
+                    );
+                })}
+            </div>
+        );
+    };
 
     const formatTimestamp = (timestamp?: number | string) => {
         if (timestamp === undefined || timestamp === null) {
@@ -232,7 +363,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
             <div className={`flex border-b ${darkMode === "dark" ? "bg-[#1a1a1a] border-gray-700" : "bg-gray-50 border-gray-200"}`}>
 
                 <button
-                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'taskmanager'
+                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'files'
                         ? darkMode === "dark"
                             ? 'bg-[#0f0f0f] text-purple-400 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
                             : 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
@@ -240,9 +371,9 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                             ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
                             : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                         }`}
-                    onClick={() => setActiveTab('taskmanager')}
+                    onClick={() => setActiveTab('files')}
                 >
-                    TaskManager
+                    Files
                 </button>
                 <button
                     className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'logs'
@@ -286,7 +417,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
             {/* Tab Content */}
             <div className={`flex-1 overflow-hidden ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
                 {activeTab === 'logs' && <div className="h-full p-4">{renderLogs()}</div>}
-                {activeTab === 'taskmanager' && <div className="h-full p-4 overflow-y-auto">{renderTaskManager()}</div>}
+                {activeTab === 'files' && <div className="h-full overflow-y-auto">{renderFiles()}</div>}
                 {activeTab === 'terminal' && renderTerminal()}
             </div>
         </div>

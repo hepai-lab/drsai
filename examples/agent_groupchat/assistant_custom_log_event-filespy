@@ -211,6 +211,7 @@ class TaskAgent(DrSaiAgent):
                 model_client_stream=model_client_stream,
                 reflect_on_tool_use=reflect_on_tool_use,
                 tool_call_summary_format=tool_call_summary_format,
+                tool_call_summary_prompt=self._tool_call_summary_prompt,
                 output_content_type=output_content_type,
                 format_string=format_string,
             ):
@@ -256,7 +257,7 @@ class TaskAgent(DrSaiAgent):
 async def create_agent() -> TaskAgent:
 
     model_client = HepAIChatCompletionClient(
-        model="deepseek-ai/deepseek-v3-1",
+        model="deepseek-ai/deepseek-v3.2",
     )
 
     # Create assistant agent with ChromaDB memory

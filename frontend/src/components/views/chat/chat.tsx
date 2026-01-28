@@ -228,12 +228,73 @@ export default function ChatView({
     onSessionNameChange,
   });
 
+  // 从 messages 中提取 FilesEvent 类型的消息
+  const extractFileEventsFromMessages = React.useCallback((run: Run | null): any[] => {
+    if (!run || !run.messages || !Array.isArray(run.messages)) {
+      return [];
+    }
+
+    const fileEvents: any[] = [];
+
+    run.messages.forEach((message: any) => {
+      const config = message.config || {};
+      const content = config.content as any;
+      const rawTimestamp = config.send_time_stamp ?? content?.send_time_stamp ?? message.created_at;
+
+      // 检查是否是 FilesEvent 类型：content 是对象且包含 files 数组
+      if (
+        content &&
+        typeof content === 'object' &&
+        !Array.isArray(content) &&
+        content.files &&
+        Array.isArray(content.files)
+      ) {
+        // 转换为 FilesEvent 格式
+        const filesEvent: any = {
+          source: config.source,
+          models_usage: config.models_usage || null,
+          metadata: config.metadata || {},
+          content: {
+            files: content.files,
+            title: content.title,
+            description: content.description,
+            send_time_stamp:
+              typeof rawTimestamp === "number"
+                ? rawTimestamp
+                : typeof rawTimestamp === "string"
+                  ? Number(rawTimestamp) || Date.parse(rawTimestamp) / 1000
+                  : undefined,
+          },
+          // 优先使用后端发送的 send_time_stamp；如果没有则回退到 message.created_at
+          send_time_stamp:
+            typeof rawTimestamp === "number"
+              ? rawTimestamp
+              : typeof rawTimestamp === "string"
+                ? Number(rawTimestamp) || Date.parse(rawTimestamp) / 1000
+                : undefined,
+          type: config.type || 'FilesEvent',
+        };
+        fileEvents.push(filesEvent);
+      }
+    });
+
+    return fileEvents;
+  }, []);
+
   const loadSessionRun = React.useCallback(async () => {
     if (!session?.id || !user?.email) return null;
 
     // 首先尝试从缓存加载
     const cachedRun = getSessionRun(session.id);
     if (cachedRun) {
+      // 如果缓存中没有 file_events，从 messages 中提取
+      if (!cachedRun.file_events || cachedRun.file_events.length === 0) {
+        cachedRun.file_events = extractFileEventsFromMessages(cachedRun);
+        // 更新缓存
+        if (cachedRun.file_events.length > 0) {
+          setSessionRun(session.id, cachedRun);
+        }
+      }
       return cachedRun;
     }
 
@@ -244,6 +305,11 @@ export default function ChatView({
         user?.email
       );
       const latestRun = response.runs[response.runs.length - 1];
+
+      // 从 messages 中提取 FilesEvent 类型的消息
+      if (latestRun) {
+        latestRun.file_events = extractFileEventsFromMessages(latestRun);
+      }
 
       // 将从数据库加载的数据存入缓存
       if (latestRun) {
@@ -256,7 +322,7 @@ export default function ChatView({
       messageApi.error("Failed to load chat history");
       return null;
     }
-  }, [session?.id, user?.email, getSessionRun, setSessionRun, messageApi]);
+  }, [session?.id, user?.email, getSessionRun, setSessionRun, messageApi, extractFileEventsFromMessages]);
 
 
   React.useEffect(() => {

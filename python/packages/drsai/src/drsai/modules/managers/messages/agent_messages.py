@@ -57,10 +57,10 @@ class FilesContent(BaseModel):
     files: List[FileInfo]  # 文件列表
     title: Optional[str] = None  # 文件集合标题
     description: Optional[str] = None  # 集合描述
+    send_time_stamp: float = Field(default_factory=time.time)
 
 class FilesEvent(BaseAgentEvent):
     content: Union[str, FilesContent]
-    send_time_stamp: float = Field(default_factory=time.time)
     type: Literal["FilesEvent"] = "FilesEvent"
     def to_text(self) -> str:
         if isinstance(self.content, str):

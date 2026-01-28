@@ -20,7 +20,8 @@ from autogen_agentchat.messages import (
 from drsai.modules.managers.messages.agent_messages import (
     AgentLogEvent,
     Send_level,
-    TaskEvent
+    TaskEvent,
+    FilesEvent,
 )
 from ....input_func import InputFuncType, InputRequestType
 from autogen_core import CancellationToken
@@ -289,6 +290,7 @@ class WebSocketManager:
                             AgentLogEvent,
                             TaskEvent,
                             LLMCallEventMessage,
+                            FilesEvent,
                         ),
                     ):
                         await self._save_message(run_id, message)
@@ -663,6 +665,11 @@ class WebSocketManager:
             elif isinstance(message, TaskEvent):
                 return {
                     "type": "message_task",
+                    "data": message.model_dump(),
+                }
+            elif isinstance(message, FilesEvent):
+                return {
+                    "type": "message_files",
                     "data": message.model_dump(),
                 }
             return None

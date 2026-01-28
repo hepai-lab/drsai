@@ -9,6 +9,7 @@ import {
   InputRequest,
   InputRequestMessage,
   TeamResult,
+  FilesEvent,
 } from "../../../types/datamodel";
 import { createMessage } from "../chatHelpers";
 
@@ -244,6 +245,16 @@ export const useChatWebSocket = ({
               return updatedRun;
             }
             return current;
+
+          case "message_files":
+            if (!wsMessage.data) return current;
+            const filesEvent = wsMessage.data as FilesEvent;
+            updatedRun = {
+              ...current,
+              file_events: [...(current.file_events || []), filesEvent],
+            };
+            setSessionRun(session.id, updatedRun);
+            return updatedRun;
           case "input_request":
             let input_request: InputRequest;
             switch (wsMessage.input_type) {
