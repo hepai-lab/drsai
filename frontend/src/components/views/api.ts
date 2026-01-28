@@ -725,6 +725,26 @@ export class AgentWorkerAPI {
             throw new Error(data.message || "Failed to fetch agent");
         return data.data;
     }
+
+    async updateUserAgent(userId: string, agentConfig: any): Promise<any> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/agentworker/user_agent/save`,
+            {
+                method: 'PUT',
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    user_id: userId,
+                    agent_config: agentConfig
+                })
+            }
+        );
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.message || "Failed to update user agent");
+        return data;
+    }
 }
 
 export const agentWorkerAPI = new AgentWorkerAPI();

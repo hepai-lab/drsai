@@ -37,6 +37,7 @@ import { usePlanSearch } from "./hooks/usePlanSearch";
 
 // Import components
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
+import { agentWorkerAPI } from "@/components/views/api";
 import DragDropOverlay from "./components/DragDropOverlay";
 import FilePreview from "./components/FilePreview";
 import PlanPreview from "./components/PlanPreview";
@@ -98,7 +99,7 @@ const ChatInput = React.forwardRef<
     };
     const { settings: voiceSettings } = useVoiceSettingsStore();
     const userId = user?.email || "default_user";
-    const { agentInfo } = useAgentInfo();
+    const { agentInfo, agentId } = useAgentInfo();
     const [llmList, setLlmList] = React.useState<{ label: string; value: string }[]>([]);
     React.useEffect(() => {
       if (agentInfo && agentInfo.agent_config) {
@@ -406,6 +407,31 @@ const ChatInput = React.forwardRef<
       }
     };
 
+    const handleLLMSelect = async (llm: { label: string; value: string }) => {
+      try {
+        if (!agentId || !agentInfo) {
+          message.warning("请先选择智能体");
+          return;
+        }
+
+        // 只更新默认模型名：不要把整个 agent_config 列表回传给后端
+        // 后端字段拼写为 defult_config_name（与后端保持一致）
+        const updatedAgentConfig = {
+          id: agentId,
+          defult_config_name: llm.label,
+        };
+
+        // 调用后端 API 更新 agent
+        await agentWorkerAPI.updateUserAgent(userId, updatedAgentConfig);
+        message.success(`已选择模型: ${llm.label}`);
+        console.log("Selected LLM:", llm);
+      } catch (error) {
+        console.error("Failed to update agent LLM:", error);
+        const errorMessage = error instanceof Error ? error.message : "更新模型选择失败";
+        message.error(errorMessage);
+      }
+    };
+
     const handleKeyDown = (
       event: React.KeyboardEvent<HTMLTextAreaElement>
     ) => {
@@ -618,7 +644,7 @@ const ChatInput = React.forwardRef<
                                   <Menu.Item
                                     key={llm.value}
                                     onClick={() => {
-                                      console.log("Selected LLM:", llm);
+                                      handleLLMSelect(llm);
                                     }}
                                     className={darkMode === "dark" ? "text-gray-300 hover:text-white" : ""}
                                   >
