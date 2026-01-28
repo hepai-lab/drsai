@@ -380,7 +380,8 @@ export const useTaskActions = ({
           team_config: teamConfig,
           settings_config: {
             ...currentSettings,
-            agent_mode_config: agentInfo,
+            // agent_mode_config: agentInfo,
+            agent_id: agentInfo?.id || "",
           },
         };
 

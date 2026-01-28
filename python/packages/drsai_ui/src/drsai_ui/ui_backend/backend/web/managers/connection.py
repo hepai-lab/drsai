@@ -693,7 +693,7 @@ class WebSocketManager:
             Optional[Run]: Run object if found, None otherwise
         """
         updated_agent = None
-        response = self.db_manager.get(UserAgents, filters={"id": user_id}, return_json=False)
+        response = self.db_manager.get(UserAgents, filters={"user_id": user_id}, return_json=False)
         if response.status and response.data:
             # 用户已有配置，更新现有配置
             user_agents: UserAgents = response.data[0]

@@ -306,7 +306,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             return {"status": False, "message": f"save_state error: {e}"}
     
     @HRModel.remote_callable
-    async def load_state(self, chat_id: str, state: Mapping[str, Any]) -> Dict[str, Any]:
+    async def load_state(self, chat_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
         try:
             agent: Team|ChatAgent = self.drsai.agent_instance[chat_id]
             await agent.load_state(state=state)
