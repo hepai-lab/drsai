@@ -10,7 +10,7 @@ export type AgentType =
     | "add";
 
 export interface Agent {
-    llm_mode_config?: Record<string, string>;
+    agent_config?: Record<string, string>;
     id?: string;
     name: string;
     mode?: AgentMode;

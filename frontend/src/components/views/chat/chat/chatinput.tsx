@@ -101,8 +101,8 @@ const ChatInput = React.forwardRef<
     const { agentInfo } = useAgentInfo();
     const [llmList, setLlmList] = React.useState<{ label: string; value: string }[]>([]);
     React.useEffect(() => {
-      if (agentInfo && agentInfo.llm_mode_config) {
-        const llmList = Object.entries(agentInfo.llm_mode_config).map(([key, value]) => {
+      if (agentInfo && agentInfo.agent_config) {
+        const llmList = Object.entries(agentInfo.agent_config).map(([key, value]) => {
           return {
             label: key,
             value: value,

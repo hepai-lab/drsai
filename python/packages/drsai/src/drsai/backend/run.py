@@ -205,8 +205,8 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             worker_config: DrSaiWorkerConfig,
             logo: str = "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
             examples: List[str] = [],
-            llm_mode_config: Dict[str, Any] = {},
-            defult_llm_mode: str|None = None,
+            agent_config: Dict[str, Any] = {},
+            defult_config_name: str|None = None,
             drsaiapp: DrSaiAPP = None # 传入DrSaiAPP实例
             ):
         super().__init__(config=config)
@@ -224,8 +224,8 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             "author": worker_config.author, 
             "logo": logo,
             "examples": examples,
-            "llm_mode_config": llm_mode_config,
-            "defult_llm_mode": defult_llm_mode,
+            "agent_config": agent_config,
+            "defult_config_name": defult_config_name,
             } 
         self.drsai._info = self._info
 
@@ -381,8 +381,8 @@ async def run_worker(agent_factory: callable, **kwargs):
             file_obj = upload_to_hepai_filesystem(str(logo_path))
             logo = file_obj["url"]
     examples: List[str] = kwargs.pop("examples", [])
-    llm_mode_config: Dict[str, Any] = kwargs.pop("llm_mode_config", {})
-    defult_llm_mode: str|None = kwargs.pop("defult_llm_mode", None)
+    agent_config: Dict[str, Any] = kwargs.pop("agent_config", {})
+    defult_config_name: str|None = kwargs.pop("defult_config_name", None)
     
     host: str =  kwargs.pop("host", None)
     if host is not None:
@@ -436,8 +436,8 @@ async def run_worker(agent_factory: callable, **kwargs):
         worker_config=worker_args, 
         logo=logo, 
         examples=examples,
-        llm_mode_config = llm_mode_config,
-        defult_llm_mode = defult_llm_mode,
+        agent_config = agent_config,
+        defult_config_name = defult_config_name,
         drsaiapp=drsaiapp)
 
     enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
