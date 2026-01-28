@@ -13,7 +13,7 @@ from typing import (
     Mapping,
     )
 
-import asyncio
+import asyncio, traceback
 from loguru import logger
 import warnings
 import inspect
@@ -497,6 +497,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             )
         except Exception as e:
             logger.error(f"Error in {self.name}: {e}")
+            logger.error(traceback.format_exc())
             # add to chat history
             await model_context.add_message(
                 AssistantMessage(

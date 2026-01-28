@@ -16,7 +16,7 @@ router = APIRouter()
 @router.get("/")
 async def get_agents_mode(user_id: str, db=Depends(get_db)) -> Dict:
     '''
-    获取后端的mode种类设置
+    获取侧边栏的 mode 配置
     '''
     try:
         response = db.get(AgentModeSettings, filters={"user_id": user_id})

@@ -314,8 +314,8 @@ class RoundRobinGroupChat(DrSaiBaseGroupChat, Component[RoundRobinGroupChatConfi
 
         self._init_messages = []
 
-        self._message_factory._message_types[AgentLogEvent.__name__] = AgentLogEvent
-        self._message_factory._message_types[TaskEvent.__name__] = TaskEvent
+        # self._message_factory._message_types[AgentLogEvent.__name__] = AgentLogEvent
+        # self._message_factory._message_types[TaskEvent.__name__] = TaskEvent
 
     def _create_group_chat_manager_factory(
         self,

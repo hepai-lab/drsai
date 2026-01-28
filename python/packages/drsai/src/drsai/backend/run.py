@@ -249,7 +249,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
                     thread_id=chat_id, 
                     user_id=run_info.get("email"), 
                     stream=stream,
-                    defult_mode=kwargs.get("defult_mode", None),
+                    defult_config_name=kwargs.get("defult_config_name", None),
                     )
             message = await agent.lazy_init(api_key=api_key, thread_id=chat_id, run_info=run_info, **kwargs)
             return {"status": True, "message": message}

@@ -35,7 +35,10 @@ from .agent_messages import (
     AgentLogEvent,
     DrSaiMessageFactory,
     TaskEvent,
-    Send_level
+    Send_level,
+    FileInfo,
+    FilesContent,
+    FilesEvent,
     )
 
 from .groupchat_messages import (

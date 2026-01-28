@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from hepai import HepAI
 from hepai import HRModel
 from hepai.components.haiddf.worker._related_class import WorkerInfo
-from ...datamodel.db import UserAgents, UserRemoteAgents, UserDDFAgents
+from ...datamodel.db import UserAgents, UserRemoteAgents, UserDDFAgents, AgentModeSettings
 from ..deps import get_db
 from drsai_ui.ui_backend.backend.database import DatabaseManager
 import uuid
@@ -183,8 +183,6 @@ async def save_remote_agent(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-# @router.get("/remote_agent/list")
-# async def get_user_remote_agents(user_id: str, db=Depends(get_db)) -> Dict:
 async def get_user_remote_agents(user_id: str, db: DatabaseManager = None) -> Dict:
     '''
     获取用户保存的远程智能体列表
@@ -381,3 +379,52 @@ async def get_user_agent_by_id(user_id: str, agent_id: str, db=Depends(get_db)) 
             raise HTTPException(status_code=404, detail="User agents not found")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/user_agent/save")
+async def update_user_agent(
+    request: SaveRemoteAgentRequest,
+    db=Depends(get_db)) -> Dict:
+    '''
+    保存用户的远程智能体配置
+    '''
+    try:
+        saved_agent_config = request.agent_config
+        agent_id: str|None = saved_agent_config.get("id")
+        if agent_id is None:
+            raise HTTPException(status_code=500, detail="Please to provide agent id")
+        updated_agent = None
+
+        response = db.get(UserAgents, filters={"user_id": request.user_id})
+        if response.status and response.data:
+            # 用户已有配置，更新现有配置
+            user_agents: UserAgents = response.data[0]
+            agents_list = user_agents.agents or []
+            for agent in agents_list:
+                if agent["id"] == agent_id:
+                    updated_agent = agent
+                    agents_list.remove(agent)
+                    updated_agent.update(saved_agent_config)
+                    agents_list.append(updated_agent)
+                    user_agents.agents = agents_list
+                    db.upsert(user_agents)
+                    break
+        
+        response = db.get(AgentModeSettings, filters={"user_id": request.user_id}, return_json = False)
+        if response.status and response.data:
+            # 用户已有配置，更新现有配置
+            user_agents: AgentModeSettings = response.data[0]
+            agents_list = user_agents.agents_mode or []
+            for agent in agents_list:
+                if agent["id"] == agent_id:
+                    updated_agent = agent
+                    agents_list.remove(agent)
+                    updated_agent.update(saved_agent_config)
+                    agents_list.append(updated_agent)
+                    user_agents.agents_mode = agents_list
+                    db.upsert(user_agents)
+                    break
+
+        return {"status": True, "message": "智能体配置保存/更新成功"}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e

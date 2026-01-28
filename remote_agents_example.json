@@ -1,11 +1,9 @@
 [
     {
         "mode": "remote",
-        "config": {
-            "name": "your_Agent",
-            "url": "http://*********/apiv2",
-            "apiKey": "sk-****"
-        },
+        "name": "your_Agent",
+        "url": "http://*********/apiv2",
+        "apiKey": "sk-****",
         "description": "******.",
         "version": "0.1.0",
         "author": "***6@ihep.ac.cn",

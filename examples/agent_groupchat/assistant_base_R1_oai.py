@@ -15,6 +15,8 @@ class TestAgent(DrSaiAgent):
 llm_mode_config = {
     "gpt-4o": "openai/gpt-4o",
     "deepseek-r1": "deepseek-ai/deepseek-r1",
+    "深度思考": "deepseek-r1",
+    "多模态模式": "gpt-4o",
 }
 
 # Create a factory function to ensure isolated Agent instances for concurrent access.
@@ -23,14 +25,14 @@ def create_agent(
         thread_id: str|None = None, 
         user_id: str|None = None, 
         db_manager: DatabaseManager|None = None,
-        defult_mode: str|None = "deepseek-r1",
+        defult_config_name: str|None = "deepseek-r1",
 ) -> TestAgent:
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
     model_client = HepAIChatCompletionClient(
         # model="deepseek-ai/deepseek-r1",
-        model=llm_mode_config.get(defult_mode, "openai/gpt-4o"),
+        model=llm_mode_config.get(defult_config_name, "openai/gpt-4o"),
         api_key=api_key or os.environ.get("HEPAI_API_KEY"),
         base_url="https://aiapi.ihep.ac.cn/apiv2",
     )
@@ -103,8 +105,8 @@ if __name__ == "__main__":
                     "What is the weather in New York?",
                     "I want to write a python script to print hello world and run it in a shell. please plan before executing",
                 ],
-            llm_mode_config = llm_mode_config,
-            defult_llm_mode="deepseek-r1",
+            agent_config = llm_mode_config,
+            defult_config_name="deepseek-r1",
             # 智能体给前端展示的描述信息
             version = "0.1.0",
             # 智能体logo图像的url，使用git源码安装的目前支持png/jpg的logo_path

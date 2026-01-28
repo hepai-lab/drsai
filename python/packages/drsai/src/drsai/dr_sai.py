@@ -166,7 +166,7 @@ class DrSai:
         thread_id: str|None = None,
         user_id: str|None = None,
         stream: bool = True,
-        defult_mode: str|None = None,
+        defult_config_name: str|None = None,
         ) -> Union[ChatAgent, Team] :
         """
         创建智能体/多智能体系统实例，加载状态
@@ -186,8 +186,8 @@ class DrSai:
                 kwargs['db_manager'] = self.db_manager
             if 'stream' in params:
                 kwargs['stream'] = stream
-            if 'defult_mode' in params:
-                kwargs['defult_mode'] = defult_mode
+            if 'defult_config_name' in params:
+                kwargs['defult_config_name'] = defult_config_name
             agent: ChatAgent | Team = (
                 await self.agent_factory(**kwargs)
                 if asyncio.iscoroutinefunction(self.agent_factory)
