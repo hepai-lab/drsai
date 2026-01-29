@@ -138,6 +138,7 @@ class TaskAgent(AssistantAgent):
                 inner_messages.append(event_msg)
                 # yield event_msg
                 yield AgentLogEvent(
+                    title="I'm searching the memory.",
                     source=self.name,
                     content_type = event_msg.type,
                     content=str(event_msg.content),
@@ -165,6 +166,7 @@ class TaskAgent(AssistantAgent):
                     # Streaming chunk event
                     yield inference_output
                     yield AgentLogEvent(
+                        title="Testing streaming chunk.",
                         source=self.name,
                         content_type="streaming_chunk",
                         content=str(inference_output.content) if hasattr(inference_output, 'content') else str(inference_output),

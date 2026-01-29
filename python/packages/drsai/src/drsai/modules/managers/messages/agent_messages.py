@@ -39,7 +39,7 @@ class TaskEvent(BaseAgentEvent):
         if isinstance(self.content, str):
             return self.content
         else:
-            return self.content.model_dump_json()
+            return str(self.content)
 
 ## Files
 class FileInfo(BaseModel):
@@ -79,8 +79,8 @@ class Send_level(str, Enum):
     
 class AgentLogEvent(BaseAgentEvent):
     """An event signaling a text output chunk from a model client in streaming mode."""
-
-    content: str|List[FunctionCall|FunctionExecutionResult]
+    title: str
+    content: str|List[FunctionCall|FunctionExecutionResult] = ""
     content_type: str|None = None
     """The type of content, such as web search results, etc."""
     send_time_stamp: float = Field(default_factory=time.time)

@@ -20,13 +20,6 @@ from autogen_core.model_context import (
     ChatCompletionContext,
 )
 from autogen_agentchat.messages import (
-    StructuredMessageFactory,
-    BaseChatMessage,
-    TextMessage,
-    HandoffMessage,
-    StopMessage,
-    ToolCallSummaryMessage,
-    StructuredMessage,
     BaseAgentEvent,
     ToolCallExecutionEvent,
     ToolCallRequestEvent,
@@ -38,12 +31,31 @@ from autogen_agentchat.messages import (
     ThoughtEvent,
     SelectSpeakerEvent,
     SelectorEvent,
-    MessageFactory,
+    
+    BaseChatMessage,
+    TextMessage,
+    HandoffMessage,
+    StopMessage,
+    ToolCallSummaryMessage,
+    StructuredMessage,
     MultiModalMessage,
     Image,
-    # UserInputRequestedEvent,
+    MessageFactory,
+    StructuredMessageFactory,
 )
-# from autogen_agentchat.teams import BaseGroupChat
+from drsai.modules.managers.messages import (
+    AgentLongTaskMessage, 
+    LongTaskQueryMessage,
+    ToolLongTaskEvent,
+    AgentLogEvent,
+    DrSaiMessageFactory,
+    TaskEvent,
+    Send_level,
+    FileInfo,
+    FilesContent,
+    FilesEvent,
+)
+
 from autogen_agentchat.base import ChatAgent, TaskResult, Team
 from autogen_agentchat.ui import Console
 
@@ -408,18 +420,14 @@ class DrSai:
                         message_str = json.dumps(message.model_dump(mode="json"))
                         yield f"data: {message_str}\n\n"
 
-                        if isinstance(message, TextMessage):
-                            rely_messages.append(message)
-                        elif isinstance(message, ToolCallSummaryMessage):
-                            rely_messages.append(message)
-                        elif isinstance(message, HandoffMessage):
-                            rely_messages.append(message)
-                        elif isinstance(message, StructuredMessage):
-                            rely_messages.append(message)
-                        elif isinstance(message, StopMessage):
-                            rely_messages.append(message)
-                        else:
-                            pass
+                if isinstance(message, BaseChatMessage):
+                    rely_messages.append(message)
+                elif isinstance(message, AgentLogEvent):
+                    rely_messages.append(message)
+                elif isinstance(message, FilesEvent):
+                    rely_messages.append(message)
+                else:
+                    pass
                 if isinstance(message, TaskResult):
                     agent_result = message
                     message_str = json.dumps(message.model_dump(mode="json"))

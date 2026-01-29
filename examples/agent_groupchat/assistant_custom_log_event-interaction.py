@@ -131,9 +131,10 @@ class TaskAgent(DrSaiAgent):
             )
 
             yield AgentLogEvent(
-                    source=self.name,
-                    content_type = "log",
-                    content="Adding the memory to the model context",
+                title="I'm searching the memory.",
+                source=self.name,
+                content_type = "log",
+                content="Adding the memory to the model context",
                 )
             
             # STEP 2: Update model context with any relevant memory
@@ -145,6 +146,7 @@ class TaskAgent(DrSaiAgent):
                 inner_messages.append(event_msg)
                 # yield event_msg
                 yield AgentLogEvent(
+                    title="I'm searching the memory.",
                     source=self.name,
                     content_type = event_msg.type,
                     content=str(event_msg.content),

@@ -15,9 +15,11 @@ from drsai.modules.managers.messages import (
     ModelClientStreamingChunkEvent,
     ThoughtEvent,
     TextMessage,
+    MultiModalMessage,
     FileInfo,
     FilesContent,
     FilesEvent,
+    Image,
     )
 from drsai.modules.baseagent import (
     DrSaiAgent, 
@@ -34,6 +36,7 @@ from typing import (
     )
 from loguru import logger
 import os, json, time, base64
+from pathlib import Path
 # from dotenv import load_dotenv
 # load_dotenv()
 import asyncio, traceback
@@ -111,9 +114,10 @@ class TaskAgent(DrSaiAgent):
 
             # test: yield agent log
             yield AgentLogEvent(
+                title="I'm searching the memory.",
+                content="Adding the memory to the model context",
                 source=self.name,
                 content_type = "log",
-                content="Adding the memory to the model context",
             )
 
             # test: yield file list
@@ -142,6 +146,21 @@ class TaskAgent(DrSaiAgent):
                 content=files.model_dump(),
             )
 
+            # # click event
+            # yield MultiModalMessage(
+            #         content=[f"The tool: <test1> is running."],
+            #         source=self.name,
+            #         metadata={"internal": "no", "type": "browser_screenshot"},
+            #     ) 
+            # # click event
+            # png_path = Path(os.path.join(parent_dir_abs_path, 'Your_specific_konwledge.png'))
+            # image = Image.from_file(file_path=png_path)
+            # yield MultiModalMessage(
+            #         content=[f"The tool: <test2> is running.", image],
+            #         source=self.name,
+            #         metadata={"internal": "no", "type": "browser_screenshot"},
+            #     )
+            
             # STEP 1: Add new user/handoff messages to the model context
             await self._add_messages_to_context(
                 model_context=model_context,

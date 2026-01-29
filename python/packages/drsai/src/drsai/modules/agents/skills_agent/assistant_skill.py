@@ -386,7 +386,11 @@ detailed instructions and access to resources.""",
                     models_usage=model_result.usage,
                 )
                 logger.debug(tool_call_msg)
-                yield AgentLogEvent(source=agent_name, content=str(tool_call_msg.content), content_type="tools")
+                yield AgentLogEvent(
+                    title="I'm calling a tool.",
+                    source=agent_name, 
+                    content=str(tool_call_msg.content), 
+                    content_type="tools")
                 inner_messages.append(tool_call_msg)
                 yield tool_call_msg
 

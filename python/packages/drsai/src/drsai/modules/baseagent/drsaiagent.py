@@ -681,10 +681,15 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             source=agent_name,
             models_usage=model_result.usage,
         )
-        logger.debug(tool_call_msg)
-        yield AgentLogEvent(source=agent_name, content=str(tool_call_msg.content), content_type="tools")
         inner_messages.append(tool_call_msg)
+        logger.debug(tool_call_msg)
         yield tool_call_msg
+        tools_name = [tool.name for tool in model_result.content] 
+        yield AgentLogEvent(
+            title="I am using tools: " + " ".join(tools_name),
+            source=agent_name, 
+            content=str(tool_call_msg.content), 
+            content_type="tools")
 
         # STEP 4B: Execute tool calls
         executed_calls_and_results = await asyncio.gather(
@@ -707,7 +712,11 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             source=agent_name,
         )
         logger.debug(tool_call_result_msg)
-        yield AgentLogEvent(source=agent_name, content=str(tool_call_result_msg.content), content_type="tools")
+        yield AgentLogEvent(
+            title="Result of tool calls for " + " ".join(tools_name),
+            source=agent_name, 
+            content=str(tool_call_result_msg.content), 
+            content_type="tools")
         await model_context.add_message(FunctionExecutionResultMessage(content=exec_results))
         inner_messages.append(tool_call_result_msg)
         yield tool_call_result_msg
@@ -932,7 +941,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             # yield ModelClientStreamingChunkEvent(content="<think>\n", source=agent_name)
             # yield ModelClientStreamingChunkEvent(content=tool_call_summary_format, source=agent_name)
             # yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
-            yield AgentLogEvent(source=agent_name, content=tool_call_summary, content_type="tools")
+            # yield AgentLogEvent(source=agent_name, content=tool_call_summary, content_type="tools")
             all_messages = system_messages + await model_context.get_messages()
             all_messages.append(
                 UserMessage(
