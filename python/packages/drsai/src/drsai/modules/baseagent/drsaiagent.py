@@ -712,11 +712,11 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             source=agent_name,
         )
         logger.debug(tool_call_result_msg)
-        yield AgentLogEvent(
-            title="Result of tool calls for " + " ".join(tools_name),
-            source=agent_name, 
-            content=str(tool_call_result_msg.content), 
-            content_type="tools")
+        # yield AgentLogEvent(
+        #     title="Result of tool calls for " + " ".join(tools_name),
+        #     source=agent_name, 
+        #     content=str(tool_call_result_msg.content), 
+        #     content_type="tools")
         await model_context.add_message(FunctionExecutionResultMessage(content=exec_results))
         inner_messages.append(tool_call_result_msg)
         yield tool_call_result_msg
