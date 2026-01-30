@@ -36,6 +36,8 @@ export interface BESIIIPanelProps {
   onMinimize?: () => void;
   onTaskClick?: (taskId: string) => void;
   onSubtaskClick?: (taskId: string, subtaskId: string) => void;
+  activeTab?: 'logs' | 'files' | 'terminal';
+  onTabChange?: (tab: 'logs' | 'files' | 'terminal') => void;
 }
 
 // VNC Panel Props (原 DetailViewer)

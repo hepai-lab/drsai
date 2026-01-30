@@ -162,6 +162,7 @@ export interface TaskResult {
 
 export interface RunLogEntry {
   content: string;
+  title?: string;
   source?: string;
   send_time_stamp?: number;
   send_level?: string;

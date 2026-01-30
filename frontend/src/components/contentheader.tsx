@@ -28,14 +28,8 @@ const ContentHeader = ({
   activeSubMenuItem
 }: ContentHeaderProps) => {
   useConfigStore();
-  const { agentId } = useModeConfigStore();
   const { user } = useContext(appContext);
   const { agentInfo } = useAgentInfo(user?.email);
-
-  useEffect(() => {
-    console.log("agentId", agentId);
-  }, [agentId]);
-
   return (
     <div className="bg-primary z-[70] pr-4">
       <div className="flex h-16 items-center justify-between">

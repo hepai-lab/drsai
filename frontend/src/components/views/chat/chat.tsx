@@ -8,6 +8,7 @@ import { IStatus } from "../../types/app";
 import {
   RunStatus as BaseRunStatus,
   Run,
+  RunLogEntry,
   Session,
   TeamConfig,
   WebSocketMessage,
@@ -281,6 +282,74 @@ export default function ChatView({
     return fileEvents;
   }, []);
 
+  // 从 messages 中提取 AgentLogEvent 类型的消息并转换为 RunLogEntry
+  const extractLogEventsFromMessages = React.useCallback((run: Run | null): RunLogEntry[] => {
+    if (!run || !run.messages || !Array.isArray(run.messages)) {
+      return [];
+    }
+
+    const logEntries: RunLogEntry[] = [];
+
+    run.messages.forEach((message: any) => {
+      const config = message.config || {};
+      const messageAny = config as any;
+      const rawTimestamp = config.send_time_stamp ?? message.created_at;
+
+      // 检查是否是 AgentLogEvent 类型
+      const isAgentLogEvent =
+        messageAny.type === "AgentLogEvent" ||
+        message.metadata?.type === "AgentLogEvent" ||
+        messageAny.content_type === "log";
+
+      if (isAgentLogEvent) {
+        // 提取 content（参考 rendermessage.tsx 的处理方式）
+        // content 可能在 messageAny.content 中（直接在 config 对象中）
+        let contentValue: string = "";
+
+        // 优先使用 messageAny.content（在 config 对象中）
+        if (messageAny.content) {
+          if (typeof messageAny.content === "string") {
+            contentValue = messageAny.content;
+          } else if (typeof messageAny.content === "object" && messageAny.content !== null) {
+            // 如果是对象，尝试提取文本内容
+            contentValue = messageAny.content.content ||
+              messageAny.content.text ||
+              JSON.stringify(messageAny.content);
+          } else {
+            contentValue = String(messageAny.content);
+          }
+        }
+        // 回退到 message.content
+        else if (message.content) {
+          if (typeof message.content === "string") {
+            contentValue = message.content;
+          } else {
+            contentValue = String(message.content);
+          }
+        }
+
+        // 提取其他字段
+        const logEntry: RunLogEntry = {
+          content: contentValue,
+          title: messageAny.title,
+          source: messageAny.source || config.source,
+          send_time_stamp:
+            typeof rawTimestamp === "number"
+              ? rawTimestamp
+              : typeof rawTimestamp === "string"
+                ? Number(rawTimestamp) || Date.parse(rawTimestamp) / 1000
+                : undefined,
+          send_level: messageAny.send_level,
+          content_type: messageAny.content_type || "log",
+        };
+
+        logEntries.push(logEntry);
+      }
+    });
+
+    return logEntries;
+  }, []);
+
   const loadSessionRun = React.useCallback(async () => {
     if (!session?.id || !user?.email) return null;
 
@@ -292,6 +361,14 @@ export default function ChatView({
         cachedRun.file_events = extractFileEventsFromMessages(cachedRun);
         // 更新缓存
         if (cachedRun.file_events.length > 0) {
+          setSessionRun(session.id, cachedRun);
+        }
+      }
+      // 如果缓存中没有 logs 或 logs 为空，从 messages 中提取 AgentLogEvent
+      if (!cachedRun.logs || cachedRun.logs.length === 0) {
+        const extractedLogs = extractLogEventsFromMessages(cachedRun);
+        if (extractedLogs.length > 0) {
+          cachedRun.logs = extractedLogs;
           setSessionRun(session.id, cachedRun);
         }
       }
@@ -309,6 +386,26 @@ export default function ChatView({
       // 从 messages 中提取 FilesEvent 类型的消息
       if (latestRun) {
         latestRun.file_events = extractFileEventsFromMessages(latestRun);
+        // 从 messages 中提取 AgentLogEvent 类型的消息
+        const extractedLogs = extractLogEventsFromMessages(latestRun);
+        if (extractedLogs.length > 0) {
+          // 如果 run.logs 已存在，合并；否则直接赋值
+          if (latestRun.logs && Array.isArray(latestRun.logs)) {
+            // 合并日志，避免重复（基于时间戳和内容）
+            const existingLogs = latestRun.logs.map(log =>
+              typeof log === "string" ? { content: log } : log
+            );
+            const existingKeys = new Set(
+              existingLogs.map(log => `${log.send_time_stamp}-${log.content}`)
+            );
+            const newLogs = extractedLogs.filter(log =>
+              !existingKeys.has(`${log.send_time_stamp}-${log.content}`)
+            );
+            latestRun.logs = [...existingLogs, ...newLogs];
+          } else {
+            latestRun.logs = extractedLogs;
+          }
+        }
       }
 
       // 将从数据库加载的数据存入缓存
@@ -322,7 +419,7 @@ export default function ChatView({
       messageApi.error("Failed to load chat history");
       return null;
     }
-  }, [session?.id, user?.email, getSessionRun, setSessionRun, messageApi, extractFileEventsFromMessages]);
+  }, [session?.id, user?.email, getSessionRun, setSessionRun, messageApi, extractFileEventsFromMessages, extractLogEventsFromMessages]);
 
 
   React.useEffect(() => {

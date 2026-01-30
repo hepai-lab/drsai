@@ -15,6 +15,8 @@ import {
   Check,
   X,
   Send,
+  Zap,
+  Settings,
 } from "lucide-react";
 import {
   AgentMessageConfig,
@@ -49,6 +51,7 @@ interface MessageProps {
   onResendMessage?: (content: string) => void;
   runStatus?: string;
   forceCollapsed?: boolean;
+  onLogMessageClick?: () => void;
 }
 
 interface RenderPlanProps {
@@ -136,7 +139,16 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
 
     // Handle case where content is in content field
     if (parsedContent.content) {
-      const text = parsedContent.content?.content || parsedContent.content;
+      // If parsedContent.content is an object, extract text from it
+      // Otherwise, use it directly (it's already a string or array)
+      let text: string | (string | ImageContent)[];
+      if (typeof parsedContent.content === "object" && parsedContent.content !== null && !Array.isArray(parsedContent.content)) {
+        // Object: try to extract content/text field, or stringify if not found
+        text = parsedContent.content.content || parsedContent.content.text || JSON.stringify(parsedContent.content);
+      } else {
+        // String or array: use directly
+        text = parsedContent.content;
+      }
       // If text is an array, it might contain images
       if (Array.isArray(text)) {
         return { text, metadata: content.metadata };
@@ -156,8 +168,28 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
     }
 
     // Return both the content and plan if they exist
+    // Ensure text is always a string
+    let textValue: string | (string | ImageContent)[];
+    if (parsedContent.content) {
+      if (typeof parsedContent.content === "string") {
+        textValue = parsedContent.content;
+      } else if (Array.isArray(parsedContent.content)) {
+        textValue = parsedContent.content;
+      } else if (typeof parsedContent.content === "object") {
+        // If it's an object, try to extract text or stringify
+        textValue = parsedContent.content.content ||
+          parsedContent.content.text ||
+          JSON.stringify(parsedContent.content);
+      } else {
+        textValue = String(parsedContent.content);
+      }
+    } else {
+      // Fallback to original content, ensuring it's a string
+      textValue = typeof content === "string" ? content : String(content);
+    }
+
     return {
-      text: parsedContent.content || content,
+      text: textValue,
       plan: planSteps.length > 0 ? planSteps : undefined,
       metadata: content.metadata,
     };
@@ -172,7 +204,17 @@ const parseContent = (content: any): string => {
 
   try {
     const parsedContent = JSON.parse(content);
-    return parsedContent.content?.content || parsedContent.content || content;
+    // If parsedContent has a content field
+    if (parsedContent.content !== undefined) {
+      // If content is an object, extract text from it
+      if (typeof parsedContent.content === "object" && parsedContent.content !== null && !Array.isArray(parsedContent.content)) {
+        return parsedContent.content.content || parsedContent.content.text || JSON.stringify(parsedContent.content);
+      }
+      // Otherwise, use content directly (string or array)
+      return typeof parsedContent.content === "string" ? parsedContent.content : String(parsedContent.content);
+    }
+    // If no content field, return original content
+    return content;
   } catch {
     return content;
   }
@@ -794,6 +836,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     onEditMessage,
     onResendMessage,
     forceCollapsed = false,
+    onLogMessageClick,
   }) => {
     const { darkMode } = React.useContext(appContext);
     const [isEditing, setIsEditing] = useState(false);
@@ -803,19 +846,123 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     if (!message) return null;
     if (message.metadata?.type === "browser_address") return null;
 
+    // Check if this is a FilesEvent - these should only be shown in panel, not in main chat
+    const messageAny = message as any;
+    if (messageAny.type === "FilesEvent" || message.metadata?.type === "FilesEvent") {
+      return null;
+    }
+
     const isUser = messageUtils.isUser(message.source);
     const isUserProxy = message.source === "user_proxy";
     const isOrchestrator = ["Orchestrator"].includes(message.source);
 
-    const parsedContent =
+    // Check if this is a log message (from historical data or WebSocket)
+    // Historical messages may have content_type="log" or type="AgentLogEvent" in config
+    const isLogMessage =
+      message.metadata?.type === "log" ||
+      messageAny.content_type === "log" ||
+      messageAny.type === "AgentLogEvent" ||
+      message.metadata?.type === "AgentLogEvent";
+
+    // For historical log messages, extract title and content, and normalize metadata
+    let normalizedMessage = message;
+    if (isLogMessage && !message.metadata?.type) {
+      // Historical message: normalize to have metadata.type = "log"
+      let contentValue: string;
+
+      // 处理 title（优先使用 title 作为显示内容）
+      if (messageAny.title) {
+        contentValue = typeof messageAny.title === "string"
+          ? messageAny.title
+          : String(messageAny.title);
+      }
+      // 处理 content（可能是对象或字符串）
+      else if (messageAny.content) {
+        if (typeof messageAny.content === "string") {
+          contentValue = messageAny.content;
+        } else if (typeof messageAny.content === "object" && messageAny.content !== null) {
+          // 如果是对象，尝试提取文本内容或序列化
+          contentValue = messageAny.content.content ||
+            messageAny.content.text ||
+            JSON.stringify(messageAny.content);
+        } else {
+          contentValue = String(messageAny.content);
+        }
+      }
+      // 回退到 message.content
+      else if (message.content) {
+        contentValue = typeof message.content === "string"
+          ? message.content
+          : String(message.content);
+      }
+      else {
+        contentValue = "";
+      }
+
+      // 处理 log_content（保存原始的 content 用于 logExecution 面板）
+      let logContentValue: string | undefined;
+      if (messageAny.content) {
+        if (typeof messageAny.content === "string") {
+          logContentValue = messageAny.content;
+        } else if (typeof messageAny.content === "object" && messageAny.content !== null) {
+          logContentValue = messageAny.content.content ||
+            messageAny.content.text ||
+            JSON.stringify(messageAny.content);
+        } else {
+          logContentValue = String(messageAny.content);
+        }
+      } else if (message.content && typeof message.content === "string") {
+        logContentValue = message.content;
+      }
+
+      normalizedMessage = {
+        ...message,
+        metadata: {
+          ...message.metadata,
+          type: "log",
+          log_content: logContentValue,
+        },
+        content: contentValue,
+      } as AgentMessageConfig;
+    }
+
+    const parsedContent: ParsedContent =
       isUser || isUserProxy
-        ? parseUserContent(message)
-        : { text: message.content, metadata: message.metadata };
+        ? parseUserContent(normalizedMessage)
+        : (() => {
+          // For non-user messages, ensure text is always a string or array
+          let textValue: ParsedContent['text'];
+          const contentValue = normalizedMessage.content;
+
+          if (Array.isArray(contentValue)) {
+            textValue = contentValue;
+          } else if (typeof contentValue === "string") {
+            textValue = contentValue;
+          } else if (typeof contentValue === "object" && contentValue !== null) {
+            // If it's an object, try to extract text or stringify
+            const extracted = (contentValue as any).content ||
+              (contentValue as any).text;
+            if (typeof extracted === "string") {
+              textValue = extracted;
+            } else if (Array.isArray(extracted)) {
+              textValue = extracted;
+            } else {
+              textValue = JSON.stringify(contentValue);
+            }
+          } else {
+            textValue = String(contentValue || "");
+          }
+
+          return {
+            text: textValue,
+            metadata: normalizedMessage.metadata
+          } as ParsedContent;
+        })();
     // Use new plan message check
-    const isPlanMsg = messageUtils.isPlanMessage(message.metadata);
+    const isPlanMsg = messageUtils.isPlanMessage(normalizedMessage.metadata);
     const orchestratorContent =
-      isOrchestrator && typeof message.content === "string"
-        ? parseorchestratorContent(message.content, message.metadata)
+      isOrchestrator && typeof normalizedMessage.content === "string"
+        ? parseorchestratorContent(normalizedMessage.content, normalizedMessage.metadata)
         : null;
 
     // Derive plan content by message type, not by source
@@ -824,7 +971,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       if (orchestratorContent?.content) {
         planContent = orchestratorContent.content;
       } else {
-        const rawContent = message.content;
+        const rawContent = normalizedMessage.content;
         if (typeof rawContent === "string") {
           try {
             planContent = JSON.parse(rawContent);
@@ -844,16 +991,30 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       }
     }
 
-    const startFlagValue = message.metadata?.start_flag;
+    const startFlagValue = normalizedMessage.metadata?.start_flag;
     const isStartFlagActive =
       typeof startFlagValue === "string" &&
       startFlagValue.toLowerCase() === "yes";
     const streamSourceLabel =
-      typeof message.metadata?.stream_source_label === "string"
-        ? message.metadata.stream_source_label
+      typeof normalizedMessage.metadata?.stream_source_label === "string"
+        ? normalizedMessage.metadata.stream_source_label
         : undefined;
-    const sourceBadgeText = streamSourceLabel || message.source;
-    const shouldShowSourceBadge = !isUser && !isUserProxy && isStartFlagActive;
+    const sourceBadgeText = streamSourceLabel || normalizedMessage.source;
+
+    // 判断是否是 TextMessage 类型（使用已存在的 messageAny）
+    const normalizedMessageAny = normalizedMessage as any;
+    const isTextMessage = normalizedMessageAny.type === "TextMessage";
+
+    // 判断是否是历史消息（没有 start_flag 或 metadata.is_save === "yes"）
+    const isHistoricalMessage =
+      !startFlagValue ||
+      normalizedMessage.metadata?.is_save === "yes" ||
+      normalizedMessage.metadata?.internal === "yes";
+
+    // 对于 TextMessage 类型的历史消息，直接显示 source badge；对于流式消息，需要 start_flag 判断
+    const shouldShowSourceBadge = !isUser && !isUserProxy && (
+      (isTextMessage && isHistoricalMessage) || isStartFlagActive
+    );
 
     // Hide regeneration request messages
     if (
@@ -1074,7 +1235,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                 ) : messageUtils.isToolCallContent(parsedContent.text) ? (
                   <RenderToolCall content={parsedContent.text} />
                 ) : messageUtils.isMultiModalContent(parsedContent.text) ? (
-                  message.metadata?.type === "browser_screenshot" ? (
+                  normalizedMessage.metadata?.type === "browser_screenshot" ? (
                     <RenderMultiModalBrowserStep
                       content={parsedContent.text}
                       onImageClick={onImageClick}
@@ -1086,11 +1247,76 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                   <RenderToolResult content={parsedContent.text} />
                 ) : (
                   <div className="break-words">
-                    {message.metadata?.type === "file" ? (
-                      <RenderFile message={message} />
+                    {normalizedMessage.metadata?.type === "file" ? (
+                      <RenderFile message={normalizedMessage} />
+                    ) : isLogMessage ? (
+                      <div
+                        className={`flex items-start gap-2 ${onLogMessageClick ? "cursor-pointer hover:opacity-80 transition-opacity" : ""}`}
+                        onClick={onLogMessageClick ? (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (onLogMessageClick) {
+                            onLogMessageClick();
+                          }
+                        } : undefined}
+                        title={onLogMessageClick ? "点击查看详细日志" : undefined}
+                      >
+                        <Settings size={18}
+                          className="text-purple-500 flex-shrink-0 mt-0.5"
+                          onClick={onLogMessageClick ? (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onLogMessageClick();
+                          } : undefined} />
+
+                        <div
+                          className="flex-1"
+                          onClick={onLogMessageClick ? (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onLogMessageClick();
+                          } : undefined}
+                        >
+                          <div style={{ pointerEvents: onLogMessageClick ? 'none' : 'auto' }}>
+                            <MarkdownRenderer
+                              content={(() => {
+                                if (typeof parsedContent.text === "string") {
+                                  return parsedContent.text;
+                                } else if (Array.isArray(parsedContent.text)) {
+                                  // Filter out non-string items and join
+                                  const textArray = parsedContent.text as any[];
+                                  const stringItems = textArray.filter(
+                                    (item: any): item is string => typeof item === "string"
+                                  );
+                                  return stringItems.join("\n");
+                                } else {
+                                  return String(parsedContent.text || "");
+                                }
+                              })()}
+                              indented={
+                                !orchestratorContent ||
+                                orchestratorContent.type !== "default"
+                              }
+                            />
+                          </div>
+                        </div>
+                      </div>
                     ) : (
                       <MarkdownRenderer
-                        content={String(parsedContent.text)}
+                        content={(() => {
+                          if (typeof parsedContent.text === "string") {
+                            return parsedContent.text;
+                          } else if (Array.isArray(parsedContent.text)) {
+                            // Filter out non-string items and join
+                            const textArray = parsedContent.text as any[];
+                            const stringItems = textArray.filter(
+                              (item: any): item is string => typeof item === "string"
+                            );
+                            return stringItems.join("\n");
+                          } else {
+                            return String(parsedContent.text || "");
+                          }
+                        })()}
                         indented={
                           !orchestratorContent ||
                           orchestratorContent.type !== "default"

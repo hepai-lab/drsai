@@ -41,6 +41,8 @@ interface AgentPanelProps {
         fileEvents?: FilesEvent[];
         onTaskClick?: (taskId: string) => void;
         onSubtaskClick?: (taskId: string, subtaskId: string) => void;
+        activeTab?: 'logs' | 'files' | 'terminal';
+        onTabChange?: (tab: 'logs' | 'files' | 'terminal') => void;
     };
 
     // 其他扩展 props
@@ -97,6 +99,8 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                         onMinimize={onMinimize}
                         onTaskClick={besiiiProps?.onTaskClick}
                         onSubtaskClick={besiiiProps?.onSubtaskClick}
+                        activeTab={besiiiProps?.activeTab}
+                        onTabChange={besiiiProps?.onTabChange}
                     />
                 );
 

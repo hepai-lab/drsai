@@ -619,7 +619,7 @@ const ChatInput = React.forwardRef<
                             </Menu.Item>
                             <Menu.SubMenu
                               key="llm-options"
-                              title={<span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>LLM Options</span>}
+                              title={<span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Agent Mode</span>}
                               icon={
                                 <BotIcon
                                   className={`w-4 h-4 flex-shrink-0 ${darkMode === "dark"
@@ -636,7 +636,7 @@ const ChatInput = React.forwardRef<
                                   className={darkMode === "dark" ? "text-gray-500" : ""}
                                 >
                                   <span className={darkMode === "dark" ? "text-gray-500" : ""}>
-                                    No LLM options
+                                    No Agent Mode
                                   </span>
                                 </Menu.Item>
                               ) : (

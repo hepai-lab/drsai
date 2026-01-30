@@ -1,10 +1,12 @@
 import { Dropdown, Tooltip } from "antd";
 import {
   Archive,
+  BookOpen,
   ChevronDown,
   ChevronUp,
   Edit,
   FileText,
+  Github,
   InfoIcon,
   LogOut,
   MoreVertical,
@@ -330,7 +332,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="flex items-center justify-between mb-2">
             {/* Logo */}
             <div
-              className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+              className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
               onClick={onLogoClick}
             >
               <img
@@ -338,7 +340,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 alt="Dr.Sai Logo"
                 className="w-6 h-6 rounded-md object-cover"
               />
+            </div>
 
+            {/* GitHub and Docs Links - 靠右侧 */}
+            <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
+              <Tooltip title="GitHub Repository">
+                <a
+                  href="https://github.com/hepai-lab/drsai"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center w-9 h-9 rounded-lg  text-primary hover:text-accent  transition-all    "
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Github className="w-5 h-5 stroke-[2.5]" />
+                </a>
+              </Tooltip>
+              <Tooltip title="Documentation">
+                <a
+                  href="https://docs-drsai.ihep.ac.cn/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center w-9 h-9 rounded-lg  text-primary hover:text-accent  transition-all    "
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <BookOpen className="w-5 h-5 stroke-[2.5]" />
+                </a>
+              </Tooltip>
             </div>
 
             {/* 侧边栏切换按钮 */}
@@ -348,7 +375,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 size="sm"
                 icon={<PanelLeftClose strokeWidth={1.5} className="h-4 w-4" />}
                 onClick={onToggle}
-                className="!px-1 transition-colors hover:text-accent"
+                className="!px-1 transition-colors hover:text-accent ml-2 flex-shrink-0"
               />
             </Tooltip>
           </div>

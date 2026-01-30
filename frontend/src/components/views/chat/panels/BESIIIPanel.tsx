@@ -21,9 +21,20 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     logs = [],
     fileEvents = [],
     onMinimize,
+    activeTab: controlledActiveTab,
+    onTabChange,
 }) => {
     const { darkMode } = React.useContext(appContext);
-    const [activeTab, setActiveTab] = useState<TabType>('files');
+    const [internalActiveTab, setInternalActiveTab] = useState<TabType>('files');
+    // 使用受控的 activeTab（如果提供），否则使用内部状态
+    const activeTab = controlledActiveTab !== undefined ? controlledActiveTab : internalActiveTab;
+    const setActiveTab = (tab: TabType) => {
+        if (onTabChange) {
+            onTabChange(tab);
+        } else {
+            setInternalActiveTab(tab);
+        }
+    };
     const [localTasks, setLocalTasks] = useState<BESIIITask[]>(tasks);
     const logContainerRef = useRef<HTMLDivElement>(null);
     const [expandedEvents, setExpandedEvents] = useState<Record<number, boolean>>({});
