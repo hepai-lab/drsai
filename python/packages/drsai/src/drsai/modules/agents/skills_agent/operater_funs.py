@@ -2,7 +2,7 @@ from pathlib import Path
 import subprocess
 
 
-def get_operator_funcs(worker_dir: str )->list[callable]:
+def get_operator_funcs(worker_dir: str|Path )->list[callable]:
 
     WORKDIR = Path(worker_dir)
 
