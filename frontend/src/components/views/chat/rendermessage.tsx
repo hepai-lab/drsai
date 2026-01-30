@@ -1280,18 +1280,29 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                           <div style={{ pointerEvents: onLogMessageClick ? 'none' : 'auto' }}>
                             <MarkdownRenderer
                               content={(() => {
+                                let contentText: string;
                                 if (typeof parsedContent.text === "string") {
-                                  return parsedContent.text;
+                                  contentText = parsedContent.text;
                                 } else if (Array.isArray(parsedContent.text)) {
                                   // Filter out non-string items and join
                                   const textArray = parsedContent.text as any[];
                                   const stringItems = textArray.filter(
                                     (item: any): item is string => typeof item === "string"
                                   );
-                                  return stringItems.join("\n");
+                                  contentText = stringItems.join("\n");
                                 } else {
-                                  return String(parsedContent.text || "");
+                                  contentText = String(parsedContent.text || "");
                                 }
+                                // Ensure log message content ends with double newline to separate from chunk message
+                                // Markdown requires double newline for paragraph break
+                                if (contentText && !contentText.endsWith("\n\n")) {
+                                  if (contentText.endsWith("\n")) {
+                                    contentText += "\n";
+                                  } else {
+                                    contentText += "\n\n";
+                                  }
+                                }
+                                return contentText;
                               })()}
                               indented={
                                 !orchestratorContent ||

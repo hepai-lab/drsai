@@ -943,6 +943,27 @@ const RunView: React.FC<RunViewProps> = ({
               const shouldForceCollapse =
                 isCurrentMessagePlan && idx !== lastPlanIndex;
 
+              // Check if current message is log message
+              const isLogMessage =
+                msg.config.metadata?.type === "log" ||
+                (msg.config as any).content_type === "log" ||
+                (msg.config as any).type === "AgentLogEvent" ||
+                msg.config.metadata?.type === "AgentLogEvent";
+
+              // Check if next message is chunk message (streaming message)
+              const nextMessage = idx < localMessages.length - 1 ? localMessages[idx + 1] : null;
+              const isNextChunkMessage = nextMessage && (
+                // Chunk messages typically have start_flag or are streaming messages from assistant
+                (nextMessage.config.metadata?.start_flag?.toLowerCase() === "yes") ||
+                // Or it's an assistant message that's not a log message and has stream_source_label
+                ((nextMessage.config.source === "assistant" || 
+                  nextMessage.config.metadata?.stream_source_label) &&
+                 !messageUtils.isUser(nextMessage.config.source) &&
+                 nextMessage.config.metadata?.type !== "log" &&
+                 (nextMessage.config as any).type !== "AgentLogEvent" &&
+                 nextMessage.config.metadata?.type !== "AgentLogEvent")
+              );
+
               return (
                 <div
                   key={`message-${idx}-${run.id}`}
@@ -999,6 +1020,7 @@ const RunView: React.FC<RunViewProps> = ({
                     }}
                     forceCollapsed={shouldForceCollapse}
                     onLogMessageClick={handleSwitchToLogExecution}
+                    className={isLogMessage && isNextChunkMessage ? "!mb-8" : ""}
                   />
                 </div>
               );

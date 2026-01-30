@@ -142,10 +142,18 @@ export const useChatWebSocket = ({
 
               if (lastMsgIndex >= 0) {
                 const lastMessage = current.messages[lastMsgIndex];
+                
+                // Check if last message is a log message - don't append chunk to log messages
+                const isLastMessageLog = 
+                  lastMessage.config.metadata?.type === "log" ||
+                  (lastMessage.config as any).content_type === "log" ||
+                  (lastMessage.config as any).type === "AgentLogEvent" ||
+                  lastMessage.config.metadata?.type === "AgentLogEvent";
 
                 if (
-                  lastMessage.config.source === "assistant" ||
-                  lastMessage.config.source === chunkSource
+                  !isLastMessageLog &&
+                  (lastMessage.config.source === "assistant" ||
+                  lastMessage.config.source === chunkSource)
                 ) {
                   const updatedMessages = [...current.messages];
                   const newContent = (lastMessage.config.content as string) + processedContent;
