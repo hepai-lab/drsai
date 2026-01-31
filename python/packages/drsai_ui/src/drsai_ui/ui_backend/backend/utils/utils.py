@@ -92,6 +92,13 @@ def construct_task(
     # Process each file based on its type
     for file in files:
         try:
+            url = file.get("url", "")
+            file_base64 = ""
+            if not url:
+                with open(file["path"], "rb") as f:
+                    file_content = f.read()
+                    file_base64 = base64.b64encode(file_content).decode("utf-8")
+
             if file.get("type", "").startswith("image/"):
                 image = Image.from_file(file["path"])
                 images.append(image)
@@ -102,7 +109,8 @@ def construct_task(
                         "name": file.get("name", "unknown.img"),
                         "type": file.get("type", "image"),
                         "size": file.get("size", 0),
-                        "url": file.get("url", ""),
+                        "url": url,
+                        "base64": file_base64
                     }
                 )
             else:
@@ -119,7 +127,8 @@ def construct_task(
                             "name": file.get("name", "unknown.file"),
                             "type": file.get("type", "text"),
                             "size": file.get("size", 0),
-                            "url": file.get("url", ""),
+                            "url": url,
+                            "base64": file_base64
                         }
                     )
                 except Exception as e:
@@ -132,7 +141,8 @@ def construct_task(
                             "name": file.get("name", "unknown.file"),
                             "type": file.get("type", "text"),
                             "size": file.get("size", 0),
-                            "url": file.get("url", ""),
+                            "url": url,
+                            "base64": file_base64
                         }
                     )
 

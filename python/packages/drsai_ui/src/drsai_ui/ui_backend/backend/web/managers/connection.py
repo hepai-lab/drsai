@@ -14,13 +14,15 @@ from autogen_agentchat.messages import (
     MultiModalMessage,
     StopMessage,
     TextMessage,
+    ToolCallSummaryMessage,
     ToolCallExecutionEvent,
     ToolCallRequestEvent,
 )
 from drsai.modules.managers.messages.agent_messages import (
     AgentLogEvent,
     Send_level,
-    TaskEvent
+    TaskEvent,
+    FilesEvent,
 )
 from ....input_func import InputFuncType, InputRequestType
 from autogen_core import CancellationToken
@@ -37,6 +39,7 @@ from ...datamodel import (
     Settings,
     SettingsConfig,
     TeamResult,
+    UserAgents,
 )
 from ...teammanager import TeamManager
 from ...utils.utils import compress_state, decompress_state
@@ -194,6 +197,12 @@ class WebSocketManager:
                 #     if 'RemoteAgent' in state_dict_decompress["agent_states"]:
                 #         state_dict_decompress = None
 
+            agent_id = settings_config.get("agent_id")
+            agent_mode_config = await self._get_agent_mode_config(user_id=run.user_id, agent_id = agent_id)
+            if agent_mode_config:
+                settings_config["agent_mode_config"] = agent_mode_config
+            else:
+                raise ValueError(f"No agent mode config for agent_id {agent_id}")
 
             # add task as message
             if isinstance(task, str):
@@ -254,7 +263,13 @@ class WebSocketManager:
                         run.state = compress_state(state_dict)
                         self.db_manager.upsert(run)
                     continue
-
+                
+                if isinstance(message, ToolCallSummaryMessage):
+                    message = TextMessage(
+                        content=message.content,
+                        source=message.source,
+                    )
+                    
                 # do not show internal messages
                 if (
                     hasattr(message, "metadata")
@@ -279,7 +294,10 @@ class WebSocketManager:
                             HandoffMessage,
                             ToolCallRequestEvent,
                             ToolCallExecutionEvent,
+                            AgentLogEvent,
+                            TaskEvent,
                             LLMCallEventMessage,
+                            FilesEvent,
                         ),
                     ):
                         await self._save_message(run_id, message)
@@ -656,6 +674,11 @@ class WebSocketManager:
                     "type": "message_task",
                     "data": message.model_dump(),
                 }
+            elif isinstance(message, FilesEvent):
+                return {
+                    "type": "message_files",
+                    "data": message.model_dump(),
+                }
             return None
 
         except Exception as e:
@@ -674,6 +697,26 @@ class WebSocketManager:
         response = self.db_manager.get(Run, filters={"id": run_id}, return_json=False)
         return response.data[0] if response.status and response.data else None
 
+    async def _get_agent_mode_config(self, user_id: str, agent_id: str) -> Optional[Dict]:
+        """Get run from database
+
+        Args:
+            run_id (int): int of the run to retrieve
+
+        Returns:
+            Optional[Run]: Run object if found, None otherwise
+        """
+        updated_agent = None
+        response = self.db_manager.get(UserAgents, filters={"user_id": user_id}, return_json=False)
+        if response.status and response.data:
+            # 用户已有配置，更新现有配置
+            user_agents: UserAgents = response.data[0]
+            agents_list = user_agents.agents or []
+            for agent in agents_list:
+                if agent["id"] == agent_id:
+                    updated_agent = agent
+                    break
+        return updated_agent
     async def _get_settings(self, user_id: str) -> Optional[Settings]:
         """Get user settings from database
         Args:

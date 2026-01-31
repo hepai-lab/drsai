@@ -8,6 +8,7 @@ import { IStatus } from "../../types/app";
 import {
   RunStatus as BaseRunStatus,
   Run,
+  RunLogEntry,
   Session,
   TeamConfig,
   WebSocketMessage,
@@ -108,7 +109,6 @@ export default function ChatView({
   );
 
   const [teamConfig, setTeamConfig] = React.useState<TeamConfig | null>(defaultTeamConfig);
-  const [currentSessionConfig, setCurrentSessionConfig] = React.useState<AgentModeConfig>(DEFAULT_AGENT_MODE_CONFIG);
 
   // ChatInput ref
   const chatInputRef = React.useRef<{
@@ -152,6 +152,57 @@ export default function ChatView({
 
   const { progress, isPlanning, hasFinalAnswer, currentPlan } = useProgressTracking(currentRun);
 
+  // 添加滚动到指定 step 的函数
+  const scrollToStep = React.useCallback((stepIndex: number) => {
+    // 查找对应的 step execution 元素
+    const selector = `#step-execution-${stepIndex}`;
+    const stepElement = document.querySelector(selector) as HTMLElement;
+
+    if (!stepElement) {
+      console.warn(`[scrollToStep] Step element not found for index ${stepIndex}`);
+      return;
+    }
+
+    // 查找实际的滚动容器 - 向上查找父元素，找到有 overflow-y-auto 或 scroll 类的元素
+    let scrollContainer: HTMLElement | null = stepElement.parentElement;
+    while (scrollContainer) {
+      const style = window.getComputedStyle(scrollContainer);
+      const hasOverflow = style.overflowY === 'auto' || style.overflowY === 'scroll' ||
+        scrollContainer.classList.contains('scroll') ||
+        scrollContainer.classList.contains('overflow-y-auto');
+
+      if (hasOverflow || scrollContainer.scrollHeight > scrollContainer.clientHeight) {
+        break;
+      }
+
+      scrollContainer = scrollContainer.parentElement;
+    }
+
+    if (scrollContainer) {
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const elementRect = stepElement.getBoundingClientRect();
+
+      // 计算滚动位置：元素相对于容器的位置，居中显示
+      const scrollTop =
+        scrollContainer.scrollTop +
+        elementRect.top -
+        containerRect.top -
+        containerRect.height / 2 +
+        elementRect.height / 2;
+
+      scrollContainer.scrollTo({
+        top: Math.max(0, scrollTop), // 确保不为负数
+        behavior: "smooth",
+      });
+    } else {
+      // 如果找不到滚动容器，使用标准的 scrollIntoView
+      stepElement.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+  }, []);
+
   const {
     handleInputResponse,
     handleRegeneratePlan,
@@ -166,7 +217,6 @@ export default function ChatView({
     session,
     teamConfig,
     settingsConfig,
-    currentSessionConfig,
     updatedPlan,
     userEmail: user?.email,
     activeSocketRef,
@@ -179,12 +229,149 @@ export default function ChatView({
     onSessionNameChange,
   });
 
+  // 从 messages 中提取 FilesEvent 类型的消息
+  const extractFileEventsFromMessages = React.useCallback((run: Run | null): any[] => {
+    if (!run || !run.messages || !Array.isArray(run.messages)) {
+      return [];
+    }
+
+    const fileEvents: any[] = [];
+
+    run.messages.forEach((message: any) => {
+      const config = message.config || {};
+      const content = config.content as any;
+      const rawTimestamp = config.send_time_stamp ?? content?.send_time_stamp ?? message.created_at;
+
+      // 检查是否是 FilesEvent 类型：content 是对象且包含 files 数组
+      if (
+        content &&
+        typeof content === 'object' &&
+        !Array.isArray(content) &&
+        content.files &&
+        Array.isArray(content.files)
+      ) {
+        // 转换为 FilesEvent 格式
+        const filesEvent: any = {
+          source: config.source,
+          models_usage: config.models_usage || null,
+          metadata: config.metadata || {},
+          content: {
+            files: content.files,
+            title: content.title,
+            description: content.description,
+            send_time_stamp:
+              typeof rawTimestamp === "number"
+                ? rawTimestamp
+                : typeof rawTimestamp === "string"
+                  ? Number(rawTimestamp) || Date.parse(rawTimestamp) / 1000
+                  : undefined,
+          },
+          // 优先使用后端发送的 send_time_stamp；如果没有则回退到 message.created_at
+          send_time_stamp:
+            typeof rawTimestamp === "number"
+              ? rawTimestamp
+              : typeof rawTimestamp === "string"
+                ? Number(rawTimestamp) || Date.parse(rawTimestamp) / 1000
+                : undefined,
+          type: config.type || 'FilesEvent',
+        };
+        fileEvents.push(filesEvent);
+      }
+    });
+
+    return fileEvents;
+  }, []);
+
+  // 从 messages 中提取 AgentLogEvent 类型的消息并转换为 RunLogEntry
+  const extractLogEventsFromMessages = React.useCallback((run: Run | null): RunLogEntry[] => {
+    if (!run || !run.messages || !Array.isArray(run.messages)) {
+      return [];
+    }
+
+    const logEntries: RunLogEntry[] = [];
+
+    run.messages.forEach((message: any) => {
+      const config = message.config || {};
+      const messageAny = config as any;
+      const rawTimestamp = config.send_time_stamp ?? message.created_at;
+
+      // 检查是否是 AgentLogEvent 类型
+      const isAgentLogEvent =
+        messageAny.type === "AgentLogEvent" ||
+        message.metadata?.type === "AgentLogEvent" ||
+        messageAny.content_type === "log";
+
+      if (isAgentLogEvent) {
+        // 提取 content（参考 rendermessage.tsx 的处理方式）
+        // content 可能在 messageAny.content 中（直接在 config 对象中）
+        let contentValue: string = "";
+
+        // 优先使用 messageAny.content（在 config 对象中）
+        if (messageAny.content) {
+          if (typeof messageAny.content === "string") {
+            contentValue = messageAny.content;
+          } else if (typeof messageAny.content === "object" && messageAny.content !== null) {
+            // 如果是对象，尝试提取文本内容
+            contentValue = messageAny.content.content ||
+              messageAny.content.text ||
+              JSON.stringify(messageAny.content);
+          } else {
+            contentValue = String(messageAny.content);
+          }
+        }
+        // 回退到 message.content
+        else if (message.content) {
+          if (typeof message.content === "string") {
+            contentValue = message.content;
+          } else {
+            contentValue = String(message.content);
+          }
+        }
+
+        // 提取其他字段
+        const logEntry: RunLogEntry = {
+          content: contentValue,
+          title: messageAny.title,
+          source: messageAny.source || config.source,
+          send_time_stamp:
+            typeof rawTimestamp === "number"
+              ? rawTimestamp
+              : typeof rawTimestamp === "string"
+                ? Number(rawTimestamp) || Date.parse(rawTimestamp) / 1000
+                : undefined,
+          send_level: messageAny.send_level,
+          content_type: messageAny.content_type || "log",
+        };
+
+        logEntries.push(logEntry);
+      }
+    });
+
+    return logEntries;
+  }, []);
+
   const loadSessionRun = React.useCallback(async () => {
     if (!session?.id || !user?.email) return null;
 
     // 首先尝试从缓存加载
     const cachedRun = getSessionRun(session.id);
     if (cachedRun) {
+      // 如果缓存中没有 file_events，从 messages 中提取
+      if (!cachedRun.file_events || cachedRun.file_events.length === 0) {
+        cachedRun.file_events = extractFileEventsFromMessages(cachedRun);
+        // 更新缓存
+        if (cachedRun.file_events.length > 0) {
+          setSessionRun(session.id, cachedRun);
+        }
+      }
+      // 如果缓存中没有 logs 或 logs 为空，从 messages 中提取 AgentLogEvent
+      if (!cachedRun.logs || cachedRun.logs.length === 0) {
+        const extractedLogs = extractLogEventsFromMessages(cachedRun);
+        if (extractedLogs.length > 0) {
+          cachedRun.logs = extractedLogs;
+          setSessionRun(session.id, cachedRun);
+        }
+      }
       return cachedRun;
     }
 
@@ -195,6 +382,31 @@ export default function ChatView({
         user?.email
       );
       const latestRun = response.runs[response.runs.length - 1];
+
+      // 从 messages 中提取 FilesEvent 类型的消息
+      if (latestRun) {
+        latestRun.file_events = extractFileEventsFromMessages(latestRun);
+        // 从 messages 中提取 AgentLogEvent 类型的消息
+        const extractedLogs = extractLogEventsFromMessages(latestRun);
+        if (extractedLogs.length > 0) {
+          // 如果 run.logs 已存在，合并；否则直接赋值
+          if (latestRun.logs && Array.isArray(latestRun.logs)) {
+            // 合并日志，避免重复（基于时间戳和内容）
+            const existingLogs = latestRun.logs.map(log =>
+              typeof log === "string" ? { content: log } : log
+            );
+            const existingKeys = new Set(
+              existingLogs.map(log => `${log.send_time_stamp}-${log.content}`)
+            );
+            const newLogs = extractedLogs.filter(log =>
+              !existingKeys.has(`${log.send_time_stamp}-${log.content}`)
+            );
+            latestRun.logs = [...existingLogs, ...newLogs];
+          } else {
+            latestRun.logs = extractedLogs;
+          }
+        }
+      }
 
       // 将从数据库加载的数据存入缓存
       if (latestRun) {
@@ -207,32 +419,8 @@ export default function ChatView({
       messageApi.error("Failed to load chat history");
       return null;
     }
-  }, [session?.id, user?.email, getSessionRun, setSessionRun, messageApi]);
+  }, [session?.id, user?.email, getSessionRun, setSessionRun, messageApi, extractFileEventsFromMessages, extractLogEventsFromMessages]);
 
-
-  React.useEffect(() => {
-    const loadCurrentSession = async () => {
-      if (session?.id && user?.email) {
-        try {
-          const res = await sessionAPI.getSession(session?.id, user?.email)
-          const normalizedConfig =
-            normalizeAgentModeConfig(res.agent_mode_config) || DEFAULT_AGENT_MODE_CONFIG;
-          setCurrentSessionConfig(normalizedConfig);
-        } catch (error) {
-          console.error("Error loading current session:", error);
-          // 如果获取session失败，清除可能无效的session状态
-          if (error instanceof Error && error.message.includes("Failed to fetch session")) {
-            console.warn("Session not found, it may have been deleted");
-            // 可以在这里添加清理逻辑，比如清除localStorage等
-          }
-        }
-      } else {
-        setCurrentSessionConfig(DEFAULT_AGENT_MODE_CONFIG);
-      }
-    };
-
-    loadCurrentSession();
-  }, [session?.id, user?.email]);
 
   React.useEffect(() => {
     const initializeSession = async () => {
@@ -433,6 +621,7 @@ export default function ChatView({
               isPlanning={isPlanning}
               progress={progress}
               hasFinalAnswer={hasFinalAnswer}
+              onStepClick={scrollToStep}
             />
           </div>
         </div>

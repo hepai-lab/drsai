@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "description": "Dr.Sai",
-  "author": "Microsoft",
+  "author": "HepAI",
   "keywords": [
     "gatsby"
   ],
@@ -13,6 +13,7 @@
     "dev": "npm run develop",
     "start": "gatsby clean && gatsby develop --port 8000 --host 0.0.0.0",
     "build": "gatsby clean && rm -rf ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ && PREFIX_PATH_VALUE='' gatsby build --prefix-paths && rsync -a --delete public/ ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/",
+    "build:dev": "gatsby clean && rm -rf ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ && NODE_ENV=development GATSBY_SERVICE_MODE=DEV PREFIX_PATH_VALUE='' gatsby build --prefix-paths --no-uglify && rsync -a --delete public/ ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/",
     "serve": "gatsby serve",
     "clean": "gatsby clean",
     "typecheck": "tsc --noEmit"

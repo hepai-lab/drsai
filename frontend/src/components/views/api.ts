@@ -526,13 +526,12 @@ export class Agent {
     // update main agent list
     async updateAgentList(
         userId: string,
-        agent_mode_config: Record<string, any>): Promise<any[]> {
+        id: string): Promise<any[]> {
         const response = await fetch(
-            `${this.getBaseUrl()}/agentmode/?user_id=${userId}`,
+            `${this.getBaseUrl()}/agentmode/?user_id=${userId}&id=${id}`,
             {
                 method: "PUT",
                 headers: this.getHeaders(),
-                body: JSON.stringify({"agent_mode_config": agent_mode_config}),
             }
         );
 
@@ -608,7 +607,7 @@ export class AgentWorkerAPI {
         };
     }
 
-    async getAgentList(userId: string, apiKey: string, is_refresh=false): Promise<any[]> {
+    async getAgentList(userId: string, apiKey: string, is_refresh = false): Promise<any[]> {
         let url = `${this.getBaseUrl()}/agentworker/ddf_agents?user_id=${encodeURIComponent(userId)}&is_refresh=${is_refresh}`;
 
         const response = await fetch(
@@ -626,7 +625,7 @@ export class AgentWorkerAPI {
 
     async testRemoteAgent(userId: string, baseUrl: string, modelName: string, apiKey: string): Promise<any> {
         const response = await fetch(
-            `${this.getBaseUrl()}/agentworker/remote_url/test`,
+            `${this.getBaseUrl()}/agentworker/remote_agent/test`,
             {
                 method: 'POST',
                 headers: {
@@ -701,6 +700,51 @@ export class AgentWorkerAPI {
             throw new Error(data.message || "Failed to remove remote agent");
         return data;
     }
+
+    async getUserAgents(userId: string, apiKey: string, is_refresh = false): Promise<any[]> {
+        const url = `${this.getBaseUrl()}/agentworker/user_agents/list?user_id=${encodeURIComponent(userId)}&is_refresh=${is_refresh}`;
+        const response = await fetch(url, {
+            headers: this.getHeaders(apiKey),
+        });
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.message || "Failed to fetch user agents");
+        return data.data || [];
+    }
+
+    // 在 AgentWorkerAPI 类中添加这个方法
+    async getUserAgentById(userId: string, agentId: string): Promise<any> {
+        const url = `${this.getBaseUrl()}/agentworker/user_agents/${encodeURIComponent(agentId)}?user_id=${encodeURIComponent(userId)}`;
+        const response = await fetch(url, {
+            headers: {
+                "Content-Type": "application/json",
+            },
+        });
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.message || "Failed to fetch agent");
+        return data.data;
+    }
+
+    async updateUserAgent(userId: string, agentConfig: any): Promise<any> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/agentworker/user_agent/save`,
+            {
+                method: 'PUT',
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    user_id: userId,
+                    agent_config: agentConfig
+                })
+            }
+        );
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.message || "Failed to update user agent");
+        return data;
+    }
 }
 
 export const agentWorkerAPI = new AgentWorkerAPI();
@@ -766,4 +810,49 @@ export class FileAPI {
     }
 }
 
+export class AuthAPI {
+    private getBaseUrl(): string {
+        return getServerUrl();
+    }
+
+    private getHeaders(): HeadersInit {
+        return {
+            "Content-Type": "application/json",
+        };
+    }
+
+    async register(userId: string, password: string): Promise<any> {
+        const params = new URLSearchParams({
+            user_id: userId,
+            password: password,
+        });
+        const response = await fetch(`${this.getBaseUrl()}/umtlocal/?${params.toString()}`, {
+            method: "POST",
+            headers: this.getHeaders(),
+        });
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || "注册失败");
+        }
+        return data;
+    }
+
+    async login(userId: string, password: string): Promise<any> {
+        const params = new URLSearchParams({
+            user_id: userId,
+            password: password,
+        });
+        const response = await fetch(`${this.getBaseUrl()}/umtlocal/login?${params.toString()}`, {
+            method: "POST",
+            headers: this.getHeaders(),
+        });
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || "登录失败");
+        }
+        return data;
+    }
+}
+
+export const authAPI = new AuthAPI();
 export const fileAPI = new FileAPI();

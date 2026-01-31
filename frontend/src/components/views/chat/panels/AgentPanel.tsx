@@ -2,7 +2,7 @@ import React from "react";
 import VNCPanel from "./VNCPanel";
 import BESIIIPanel from "./BESIIIPanel";
 import { AgentPanelConfig } from "../config/agentConfigs";
-import { RunLogEntry } from "../../../types/datamodel";
+import { RunLogEntry, FilesEvent } from "../../../types/datamodel";
 
 /**
  * AgentPanel - 通用 Panel 容器组件
@@ -38,8 +38,11 @@ interface AgentPanelProps {
         logs?: RunLogEntry[];
         tasks?: any[];
         terminalOutput?: string;
+        fileEvents?: FilesEvent[];
         onTaskClick?: (taskId: string) => void;
         onSubtaskClick?: (taskId: string, subtaskId: string) => void;
+        activeTab?: 'logs' | 'files' | 'terminal';
+        onTabChange?: (tab: 'logs' | 'files' | 'terminal') => void;
     };
 
     // 其他扩展 props
@@ -92,9 +95,12 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                         tasks={besiiiProps?.tasks}
                         terminalOutput={besiiiProps?.terminalOutput}
                         logs={besiiiProps?.logs}
+                        fileEvents={besiiiProps?.fileEvents}
                         onMinimize={onMinimize}
                         onTaskClick={besiiiProps?.onTaskClick}
                         onSubtaskClick={besiiiProps?.onSubtaskClick}
+                        activeTab={besiiiProps?.activeTab}
+                        onTabChange={besiiiProps?.onTabChange}
                     />
                 );
 

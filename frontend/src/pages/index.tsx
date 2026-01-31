@@ -1,23 +1,10 @@
-import { graphql, navigate } from "gatsby";
+import { graphql } from "gatsby";
 import * as React from "react";
 import MagenticUILayout from "../components/layout";
 
 // markup
 const IndexPage = ({ data }: any) => {
-
-  React.useEffect(() => {
-    // 没有token则跳转登录
-    const localToken = localStorage.getItem("token");
-    if (process.env.GATSBY_SSO === "false") {
-      navigate("/");
-    } else if (!localToken) {
-      navigate("/sso-login");
-    }
-  }, []);
-
-  // 读取本地token和username
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : "";
-  const username = typeof window !== "undefined" ? localStorage.getItem("username") : "";
+  // 路由保护由 RouteGuard 组件统一处理
 
   // return (
   //   <MagenticUILayout meta={data.site.siteMetadata} title="Home" link={"/"}>

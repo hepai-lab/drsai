@@ -8,7 +8,24 @@ from loguru import logger
 import shutil
 from typing import Optional
 import zlib
+from openai import OpenAI
+import requests
 
+def upload_to_hepai_filesystem(file_path: str, api_key: str|None = None) -> Dict[str, Any]:
+ 
+    client = OpenAI(
+        base_url="https://aiapi.ihep.ac.cn/apiv2",
+        api_key= api_key or os.environ.get("HEPAI_API_KEY")
+    )
+
+    file_obj = client.files.create(
+        file=open(file_path, "rb"),
+        purpose="user_data"
+    )
+    url = f"https://aiapi.ihep.ac.cn/apiv2/files/{file_obj.id}/preview"
+    file_obj = file_obj.model_dump()
+    file_obj["url"] = url
+    return file_obj
 
 def construct_task(
     query: str, 
@@ -438,3 +455,59 @@ def auto_worker_address(worker_address, host, port):
         return f'http://{ip}:{port}'
     else:
         raise ValueError(f'host {host} is not supported')
+    
+
+
+def download_file_from_url_or_base64(file_info: dict, save_path: str) -> str:
+    """
+    根据文件的URL或base64编码下载文件到指定路径
+    
+    Args:
+        file_info (dict): 包含文件信息的字典，应包含'url'或'base64'键
+        save_path (str): 文件保存的完整路径（包括文件名）
+        
+    Returns:
+        str: 下载成功返回保存的文件路径，失败返回None
+    """
+    url = file_info.get("url")
+    base64_data = file_info.get("base64")
+    filename = file_info.get("name", "unknown.file")
+    # 创建目录（如果不存在）
+    directory = os.path.dirname(save_path)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory, exist_ok=True)
+    
+    try:
+        if url:
+            # 从URL下载文件
+            response = requests.get(url)
+            response.raise_for_status()  # 检查请求是否成功
+            
+            with open(save_path, 'wb') as file:
+                file.write(response.content)
+                
+            logger.info(f"{filename} has been saved into: {save_path}")
+            return save_path
+            
+        elif base64_data:
+            # 解码base64数据并保存为文件
+            # 如果base64字符串包含data前缀，需要先移除
+            if ',' in base64_data:
+                header, base64_data = base64_data.split(',', 1)
+            
+            # 解码base64并写入文件
+            file_data = base64.b64decode(base64_data)
+            with open(save_path, 'wb') as file:
+                file.write(file_data)
+                
+            logger.info(f"{filename} has been saved into: {save_path}")
+            return save_path
+        else:
+            pass
+            
+    except requests.RequestException as e:
+        logger.debug(f"An error occurred while saving the file {filename}: {e}")
+        return None
+    except Exception as e:
+        logger.debug(f"An error occurred while saving the file {filename}: {e}")
+        return None

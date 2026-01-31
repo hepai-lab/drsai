@@ -11,6 +11,7 @@ import { RcFile } from "antd/es/upload";
 import AgentPanel from "./panels/AgentPanel";
 import { AgentConfiguration } from "./config/agentConfigs";
 import { BESIIITask } from "./panels/types";
+import { appContext } from "../../../hooks/provider";
 
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 const CHAT_INPUT_BASE_HEIGHT_PX = 78;
@@ -88,6 +89,7 @@ const RunView: React.FC<RunViewProps> = ({
   onExecutePlan,
   enable_upload = false,
 }) => {
+  const { darkMode } = React.useContext(appContext);
   const threadContainerRef = useRef<HTMLDivElement | null>(null);
   const autoScrollLockedRef = useRef(false);
   const [autoScrollLocked, setAutoScrollLocked] = useState(false);
@@ -96,6 +98,9 @@ const RunView: React.FC<RunViewProps> = ({
   const [detailViewerTab, setDetailViewerTab] = useState<
     "screenshots" | "live"
   >("live");
+  const [besiiiActiveTab, setBesiiiActiveTab] = useState<
+    "logs" | "files" | "terminal"
+  >("files");
   const [hiddenMessageIndices, setHiddenMessageIndices] = useState<
     Set<number>
   >(new Set());
@@ -371,12 +376,15 @@ const RunView: React.FC<RunViewProps> = ({
   useEffect(() => {
     if (agentConfig.panel.type !== 'besiii') return;
 
-    // 从 run.logs 更新日志数据
+    // 规范化 logs：处理可能的 string 类型，转换为 RunLogEntry[]
     if (run.logs && Array.isArray(run.logs)) {
-      const normalizedLogs = (run.logs as Array<RunLogEntry | string>).map((entry) =>
-        typeof entry === "string" ? { content: entry } : entry
+      const normalizedLogs: RunLogEntry[] = run.logs.map((log) =>
+        typeof log === "string" ? { content: log } : log
       );
       setLogs(normalizedLogs);
+    } else {
+      // 如果 run.logs 不存在或为空，清空日志列表
+      setLogs([]);
     }
   }, [run.logs, agentConfig.panel.type]);
 
@@ -454,6 +462,20 @@ const RunView: React.FC<RunViewProps> = ({
     setIsPanelMinimized(false);
     setShowPanel(true);
   };
+
+  // Handle switching to logExecution panel when clicking log messages
+  const handleSwitchToLogExecution = React.useCallback(() => {
+
+    if (agentConfig.panel.type === 'besiii') {
+      setBesiiiActiveTab('logs');
+      setIsPanelMinimized(false);
+      setShowPanel(true);
+    }
+  }, [agentConfig.panel.type]);
+
+  useEffect(() => {
+    console.log("besiiiTasks112345", logs);
+  }, [besiiiTasks]);
 
   // Update handleImageClick to use the correct image index
   const handleImageClick = (messageIndex: number) => {
@@ -765,11 +787,9 @@ const RunView: React.FC<RunViewProps> = ({
 
     updatedMessages.forEach((msg: Message, idx: number) => {
       // Parse and validate attached_files from metadata if present
-      console.log("msg", msg);
       if (msg.config.metadata?.attached_files) {
         try {
           const attachedFilesStr = msg.config.metadata.attached_files;
-          console.log("attachedFilesStr", attachedFilesStr);
           // If it's a string, parse it to validate and ensure it's valid JSON
           if (typeof attachedFilesStr === "string") {
             const parsed = JSON.parse(attachedFilesStr);
@@ -923,6 +943,27 @@ const RunView: React.FC<RunViewProps> = ({
               const shouldForceCollapse =
                 isCurrentMessagePlan && idx !== lastPlanIndex;
 
+              // Check if current message is log message
+              const isLogMessage =
+                msg.config.metadata?.type === "log" ||
+                (msg.config as any).content_type === "log" ||
+                (msg.config as any).type === "AgentLogEvent" ||
+                msg.config.metadata?.type === "AgentLogEvent";
+
+              // Check if next message is chunk message (streaming message)
+              const nextMessage = idx < localMessages.length - 1 ? localMessages[idx + 1] : null;
+              const isNextChunkMessage = nextMessage && (
+                // Chunk messages typically have start_flag or are streaming messages from assistant
+                (nextMessage.config.metadata?.start_flag?.toLowerCase() === "yes") ||
+                // Or it's an assistant message that's not a log message and has stream_source_label
+                ((nextMessage.config.source === "assistant" || 
+                  nextMessage.config.metadata?.stream_source_label) &&
+                 !messageUtils.isUser(nextMessage.config.source) &&
+                 nextMessage.config.metadata?.type !== "log" &&
+                 (nextMessage.config as any).type !== "AgentLogEvent" &&
+                 nextMessage.config.metadata?.type !== "AgentLogEvent")
+              );
+
               return (
                 <div
                   key={`message-${idx}-${run.id}`}
@@ -969,7 +1010,17 @@ const RunView: React.FC<RunViewProps> = ({
                         ? handleRegeneratePlan
                         : undefined
                     }
+                    onResendMessage={(content: string) => {
+                      // 根据当前状态决定调用哪个函数
+                      if (run.status === "awaiting_input" || run.status === "paused") {
+                        onInputResponse?.(content, false, undefined, []);
+                      } else {
+                        onRunTask?.(content, [], undefined, true);
+                      }
+                    }}
                     forceCollapsed={shouldForceCollapse}
+                    onLogMessageClick={handleSwitchToLogExecution}
+                    className={isLogMessage && isNextChunkMessage ? "!mb-8" : ""}
                   />
                 </div>
               );
@@ -1074,9 +1125,9 @@ const RunView: React.FC<RunViewProps> = ({
         !isPanelMinimized && (
           <div
             className={`${detailViewerExpanded ? "w-full" : "w-[60%]"
-              } self-start sticky top-0 h-full`}
+              } self-start sticky top-0 h-full ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}
           >
-            <div className="h-full flex-1">
+            <div className={`h-full flex-1 ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
               {/* Dynamic Agent Panel - renders different panels based on agent type */}
               <AgentPanel
                 panelConfig={agentConfig.panel}
@@ -1109,6 +1160,9 @@ const RunView: React.FC<RunViewProps> = ({
                   tasks: besiiiTasks,
                   terminalOutput: terminalOutput,
                   logs: logs,
+                  fileEvents: run.file_events || [],
+                  activeTab: besiiiActiveTab,
+                  onTabChange: setBesiiiActiveTab,
                   onTaskClick: (taskId: string) => {
                     // TODO: Handle task click
                   },

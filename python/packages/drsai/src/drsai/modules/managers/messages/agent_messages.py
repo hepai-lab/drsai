@@ -12,35 +12,26 @@ from autogen_core.models import (
     FunctionExecutionResultMessage,
     FunctionExecutionResult,
     )
-from typing import Any, Dict, Generic, List, Literal, Mapping, Optional, Type, TypeVar, Sequence
+from typing import (
+    Any, 
+    Dict, 
+    Union, 
+    Generic, 
+    List, 
+    Literal, 
+    Mapping, 
+    Optional, 
+    Type, 
+    TypeVar, 
+    Sequence)
 from enum import Enum 
 from pydantic import BaseModel, Field, computed_field
 import time
 from drsai.modules.components.task_manager.base_task_system import TaskStatus
 
-# StructuredContentType = TypeVar("StructuredContentType", bound=BaseModel, covariant=True)
-# class TaskEvent(BaseAgentEvent, Generic[StructuredContentType]):
-#     """An event signaling a text output chunk from a model client in streaming mode."""
+# Events
 
-#     content: StructuredContentType
-#     """A string chunk from the model client."""
-#     format_string: Optional[str] = None
-
-#     type: Literal["TaskEvent"] = "TaskEvent"
-
-#     def to_text(self) -> str:
-#         if self.format_string is not None:
-#             return self.format_string.format(**self.content.model_dump())
-#         else:
-#             return self.content.model_dump_json()
-
-#     def to_model_text(self) -> str:
-#         if self.format_string is not None:
-#             return self.format_string.format(**self.content.model_dump())
-#         else:
-#             return self.content.model_dump_json()
-
-
+## Task
 class TaskEvent(BaseAgentEvent):
     content: str|Dict[str, Any]
     type: Literal["TaskEvent"] = "TaskEvent"
@@ -48,8 +39,36 @@ class TaskEvent(BaseAgentEvent):
         if isinstance(self.content, str):
             return self.content
         else:
+            return str(self.content)
+
+## Files
+class FileInfo(BaseModel):
+    """A file info"""
+    name: str
+    url: Optional[str] = None
+    base64_content: Optional[str] = None
+    size: Optional[int] = None
+    mime_type: Optional[str] = None
+    description: Optional[str] = None
+    download_method: Literal["url", "base64", "none"] = "url"
+
+class FilesContent(BaseModel):
+    """FilesEvent structure"""
+    files: List[FileInfo]  # 文件列表
+    title: Optional[str] = None  # 文件集合标题
+    description: Optional[str] = None  # 集合描述
+    send_time_stamp: float = Field(default_factory=time.time)
+
+class FilesEvent(BaseAgentEvent):
+    content: Union[str, FilesContent]
+    type: Literal["FilesEvent"] = "FilesEvent"
+    def to_text(self) -> str:
+        if isinstance(self.content, str):
+            return self.content
+        else:
             return self.content.model_dump_json()
 
+## Log
 class Send_level(str, Enum):
     INFO = "INFO"
     WARNING = "WARNING"
@@ -60,8 +79,8 @@ class Send_level(str, Enum):
     
 class AgentLogEvent(BaseAgentEvent):
     """An event signaling a text output chunk from a model client in streaming mode."""
-
-    content: str|List[FunctionCall|FunctionExecutionResult]
+    title: str
+    content: str|List[FunctionCall|FunctionExecutionResult] = ""
     content_type: str|None = None
     """The type of content, such as web search results, etc."""
     send_time_stamp: float = Field(default_factory=time.time)
@@ -71,6 +90,7 @@ class AgentLogEvent(BaseAgentEvent):
     def to_text(self) -> str:
         return f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.send_time_stamp))}] [{self.send_level.value}] {self.content}"
 
+## Tool Long Task
 class ToolLongTaskEvent(BaseAgentEvent):
     """An event signaling a text output chunk from a model client in streaming mode."""
 
@@ -82,6 +102,9 @@ class ToolLongTaskEvent(BaseAgentEvent):
     type: Literal["ToolLongTaskEvent"] = "ToolLongTaskEvent"
     def to_text(self) -> str:
         return f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.send_time_stamp))}] [{self.tool_name}] [{self.task_status}] {self.content}"
+
+
+# Messages
 
 class LongTaskQueryMessage(BaseChatMessage):
     """An Agent level message that can be used to send long task messages to the user"""
@@ -141,12 +164,15 @@ class AgentLongTaskMessage(BaseChatMessage):
     
     type: Literal["AgentLongTaskMessage"] = "AgentLongTaskMessage"
 
+# Message Factory
+
 class DrSaiMessageFactory(MessageFactory):
 
     def __init__(self, custom_message_types: Sequence[BaseAgentEvent|BaseChatMessage]|None = None):
         super().__init__()
 
         self.register(TaskEvent)
+        self.register(FilesEvent)
         self.register(AgentLogEvent)
         self.register(ToolLongTaskEvent)
         self.register(AgentLongTaskMessage)

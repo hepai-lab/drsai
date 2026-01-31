@@ -1,14 +1,17 @@
 import { Dropdown, Tooltip } from "antd";
 import {
   Archive,
+  BookOpen,
   ChevronDown,
   ChevronUp,
   Edit,
   FileText,
+  Github,
   InfoIcon,
   LogOut,
   MoreVertical,
   PanelLeftClose,
+  PenLine,
   Plus,
   RefreshCcw,
   Sailboat,
@@ -47,7 +50,6 @@ interface SidebarProps {
   onStopSession: (sessionId: number) => void;
   onLogoClick?: () => void;
   agents?: Agent[];
-  selectedAgentMode?: string;
   selectedAgent?: Partial<Agent> | null;
   onAgentClick?: (agent: Agent) => void;
   onDeleteAgent?: (id: string) => void;
@@ -68,12 +70,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onStopSession,
   onLogoClick,
   agents = [],
-  selectedAgentMode,
   selectedAgent,
   onAgentClick,
   onDeleteAgent,
 }) => {
-  const { user } = React.useContext(appContext);
+  const { user, darkMode } = React.useContext(appContext);
   const [isProfileModalOpen, setIsProfileModalOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [isAgentsExpanded, setIsAgentsExpanded] = React.useState(true);
@@ -83,7 +84,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
     localStorage.removeItem("username");
     localStorage.removeItem("user_email");
     localStorage.removeItem("user_name");
-    window.location.href = "/umt/logout";
+    // 根据GATSBY_SSO环境变量决定跳转目标
+    if (process.env.GATSBY_SERVICE_MODE === "DEV") {
+      window.location.href = "/login";
+    } else {
+      window.location.href = "/umt/logout";
+    }
   };
 
   const getAgentIcon = (mode: string) => {
@@ -164,20 +170,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return (
           <div key={s.id} className="relative mb-0.5">
             <div
-              className={`group flex items-center justify-between px-3 py-1.5 rounded-lg transition-all duration-200 ${isLoading
+              className={`group flex items-center justify-between pl-1 py-1.5 rounded-lg transition-all duration-200 ${isLoading
                 ? "pointer-events-none opacity-50"
                 : "cursor-pointer hover:bg-tertiary/20"
                 } ${currentSession?.id === s.id
-                  ? "bg-purple-100/50"
+                  ? ""
                   : ""
                 }`}
               onClick={() => !isLoading && onSelectSession(s)}
             >
               <div className="flex items-center gap-2 flex-1 min-w-0">
-                <div className={`rounded-full flex-shrink-0 ${currentSession?.id === s.id
-                  ? "bg-accent"
-                  : "bg-secondary/50"
-                  }`} />
+                <div className={`rounded-full flex-shrink-0`} />
+                {currentSession?.id === s.id && (
+                  <div className="w-[3px] h-4 bg-[#851fe773] rounded-full"></div>
+                )}
                 <div className="session-title-container">
                   <Tooltip
                     title={s.name}
@@ -185,23 +191,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     mouseEnterDelay={0.5}
                   >
                     <span
-                      className={`text-sm font-medium session-title ${currentSession?.id === s.id
-                        ? "text-primary font-semibold"
-                        : "text-primary"
-                        } ${s.id && sessionRunStatuses[s.id] ? 'session-title-with-status' : ''
+                      className={`text-sm font-medium session-title !inline-flex items-center gap-1.5  ${s.id && sessionRunStatuses[s.id] ? 'session-title-with-status' : ''
                         }`}
                     >
                       {s.name}
                     </span>
                   </Tooltip>
                 </div>
-                {s.id && (
-                  <div className="flex-shrink-0 transition-all session-status-indicator">
-                    <SessionRunStatusIndicator
-                      status={sessionRunStatuses[s.id]}
-                    />
-                  </div>
-                )}
+                {
+                  s.id && (
+                    <div className="flex-shrink-0 transition-all session-status-indicator">
+                      <SessionRunStatusIndicator
+                        status={sessionRunStatuses[s.id]}
+                      />
+                    </div>
+                  )
+                }
               </div>
               <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-2">
                 <Dropdown
@@ -282,8 +287,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   />
                 </Dropdown>
               </div>
-            </div>
-          </div>
+            </div >
+          </div >
         );
       })}
     </>
@@ -321,13 +326,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     return (
-      <div className="h-full flex flex-col bg-secondary/80 dark:bg-secondary/80 light:bg-gray-50/90">
+      <div className={`h-full flex flex-col ${darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-gray-50/90"}`}>
         {/* 固定头部 */}
         <div className="flex-shrink-0 p-3">
           <div className="flex items-center justify-between mb-2">
             {/* Logo */}
             <div
-              className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+              className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
               onClick={onLogoClick}
             >
               <img
@@ -335,7 +340,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 alt="Dr.Sai Logo"
                 className="w-6 h-6 rounded-md object-cover"
               />
+            </div>
 
+            {/* GitHub and Docs Links - 靠右侧 */}
+            <div className="flex items-center gap-2 flex-shrink-0 ml-auto">
+              <Tooltip title="GitHub Repository">
+                <a
+                  href="https://github.com/hepai-lab/drsai"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center w-9 h-9 rounded-lg  text-primary hover:text-accent  transition-all    "
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Github className="w-5 h-5 stroke-[2.5]" />
+                </a>
+              </Tooltip>
+              <Tooltip title="Documentation">
+                <a
+                  href="https://docs-drsai.ihep.ac.cn/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center w-9 h-9 rounded-lg  text-primary hover:text-accent  transition-all    "
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <BookOpen className="w-5 h-5 stroke-[2.5]" />
+                </a>
+              </Tooltip>
             </div>
 
             {/* 侧边栏切换按钮 */}
@@ -345,7 +375,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 size="sm"
                 icon={<PanelLeftClose strokeWidth={1.5} className="h-4 w-4" />}
                 onClick={onToggle}
-                className="!px-1 transition-colors hover:text-accent"
+                className="!px-1 transition-colors hover:text-accent ml-2 flex-shrink-0"
               />
             </Tooltip>
           </div>
@@ -365,7 +395,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 },
                 {
                   id: "agent_square",
-                  label: "Dr.Sai Hub",
+                  label: "Agents Hub",
                   icon: <Sailboat className="w-4 h-4" />
                 }
               ]}
@@ -406,32 +436,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     // 对于 type === "add" 的自定义智能体，使用 id 或 name 来判断选中状态
                     // 对于其他智能体，使用 mode 来判断选中状态
                     let isSelected = false;
-                    if (agent.type === "add") {
-                      // 自定义智能体优先使用 id，如果没有 id 则使用 name
-                      if (agent.id && selectedAgent?.id) {
-                        isSelected = agent.id === selectedAgent.id;
-                      } else if (selectedAgent?.name) {
-                        isSelected =
-                          agent.name === selectedAgent.name && selectedAgentMode === agent.mode;
-                      } else {
-                        isSelected = false;
-                      }
-                    } else {
-                      // 非自定义智能体使用 mode 判断
-                      isSelected = selectedAgentMode === agent.mode;
+                    // 自定义智能体优先使用 id，如果没有 id 则使用 name
+                    if (agent.id && selectedAgent?.id) {
+                      isSelected = agent.id === selectedAgent.id;
                     }
                     const icon = getAgentIcon(agent.mode || "");
-                    // 使用唯一标识作为 key：优先使用 id，其次使用 mode + name
-                    const agentKey =
-                      agent.id ||
-                      (agent.mode && agent.name ? `${agent.mode}-${agent.name}` : agent.mode) ||
-                      `agent-${agent.name}`;
                     return (
-                      <div key={agentKey} className="relative group">
+                      <div key={agent.id} className="relative group">
                         <button
                           type="button"
                           onClick={() => onAgentClick && onAgentClick(agent)}
-                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-colors duration-150 ${isSelected ? "bg-[#e7e5f2] text-[#4d3dc3] hover:bg-[#e7e5f2]" : "text-[#4a5568] hover:bg-[#f9fafb]"}`}
+                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 ${isSelected
+                            ? "bg-accent/10 text-accent hover:bg-accent/15 dark:bg-accent/15 dark:hover:bg-accent/20"
+                            : "text-secondary hover:text-primary hover:bg-tertiary/20"
+                            }`}
                         >
                           {agent.logo ? (
                             <img
@@ -455,15 +473,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 borderRadius: "4px",
                                 padding: "2px",
                                 filter:
-                                  agent.mode === "magentic-one"
-                                    ? "brightness(0) saturate(100%)"
-                                    : "none",
+                                  darkMode === "dark"
+                                    ? "brightness(0) saturate(100%) invert(1)"
+                                    : agent.mode === "magentic-one"
+                                      ? "brightness(0) saturate(100%)"
+                                      : "none",
                               }}
                             />
                           ) : (
                             <div className="w-6 h-6 rounded bg-tertiary/40 flex items-center justify-center">
                               <span className="text-xs font-medium text-secondary">
-                                {agent.name.charAt(0).toUpperCase()}
+                                {String(agent.name || '').charAt(0).toUpperCase()}
                               </span>
                             </div>
                           )}
@@ -472,7 +492,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           </div>
                         </button>
 
-                        {agent.type === "add" && isSelected && (
+                        {isSelected && (
                           <div className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
                             <Dropdown
                               trigger={["hover"]}
@@ -542,9 +562,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="mb-3">
               <Tooltip title="Create new session">
                 <Button
-                  className="w-full bg-accent hover:bg-accent/90"
+                  className="w-full bg-[#7c0fe4bf] hover:bg-accent/90 !shadow-none !text-base !font-normal"
                   variant="primary"
-                  size="sm"
+                  size="xs"
                   icon={<Plus className="w-4 h-4" />}
                   onClick={() => onEditSession()}
                   disabled={isLoading}
@@ -631,18 +651,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onClick: () => setIsSettingsOpen(true),
                   },
                   // 只在非开发模式下显示退出登录按钮
-                  ...(process.env.GATSBY_SERVICE_MODE !== "DEV" ? [
-                    {
-                      type: "divider" as const,
-                    },
-                    {
-                      key: "logout",
-                      label: "退出登录",
-                      icon: <LogOut className="w-4 h-4" />,
-                      onClick: handleLogout,
-                      danger: true,
-                    },
-                  ] : []),
+
+                  {
+                    type: "divider" as const,
+                  },
+                  {
+                    key: "logout",
+                    label: "退出登录",
+                    icon: <LogOut className="w-4 h-4" />,
+                    onClick: handleLogout,
+                    danger: true,
+                  },
+
                 ],
               }}
               placement="topLeft"
@@ -659,7 +679,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     />
                   ) : (
                     <div className="h-5 w-5 rounded-full bg-accent text-white flex items-center justify-center text-xs font-medium">
-                      {(user.name || user.email || '?').charAt(0).toUpperCase()}
+                      {String(user.name || user.email || '?').charAt(0).toUpperCase()}
                     </div>
                   )}
                 </div>

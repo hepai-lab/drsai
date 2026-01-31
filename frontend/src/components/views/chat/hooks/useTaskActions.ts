@@ -12,13 +12,13 @@ import { GeneralConfig, useSettingsStore } from "../../../store";
 import { settingsAPI } from "../../api";
 import { AgentModeConfig, DEFAULT_AGENT_MODE_CONFIG } from "@/utils/agent";
 import { messageUtils } from "../rendermessage";
+import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 
 interface UseTaskActionsProps {
   currentRun: Run | null;
   session: Session | null;
   teamConfig: TeamConfig | null;
   settingsConfig: GeneralConfig;
-  currentSessionConfig: AgentModeConfig;
   updatedPlan: IPlanStep[];
   userEmail?: string;
   activeSocketRef: React.MutableRefObject<WebSocket | null>;
@@ -40,7 +40,6 @@ export const useTaskActions = ({
   session,
   teamConfig,
   settingsConfig,
-  currentSessionConfig,
   updatedPlan,
   userEmail,
   activeSocketRef,
@@ -52,8 +51,8 @@ export const useTaskActions = ({
   ensureWebSocketConnection,
   onSessionNameChange,
 }: UseTaskActionsProps) => {
-  const agentModeConfig = currentSessionConfig || DEFAULT_AGENT_MODE_CONFIG;
 
+   const { agentInfo } = useAgentInfo(userEmail);
   const handleError = React.useCallback(
     (error: any) => {
       console.error("Error:", error);
@@ -139,7 +138,7 @@ export const useTaskActions = ({
               team_config: teamConfig,
               settings_config: {
                 ...currentSettings,
-                agent_mode_config: agentModeConfig,
+                agent_mode_config: agentInfo,
               },
               ...(processedFiles.length > 0 && { files: processedFiles }),
             };
@@ -175,7 +174,6 @@ export const useTaskActions = ({
       settingsConfig,
       userEmail,
       teamConfig,
-      agentModeConfig,
       setCurrentRun,
       handleError,
     ]
@@ -382,7 +380,8 @@ export const useTaskActions = ({
           team_config: teamConfig,
           settings_config: {
             ...currentSettings,
-            agent_mode_config: agentModeConfig,
+            // agent_mode_config: agentInfo,
+            agent_id: agentInfo?.id || "",
           },
         };
 
@@ -407,7 +406,6 @@ export const useTaskActions = ({
       userEmail,
       setupWebSocket,
       teamConfig,
-      agentModeConfig,
       session?.id,
       setError,
       setNoMessagesYet,

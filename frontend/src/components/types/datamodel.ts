@@ -110,16 +110,43 @@ export interface WebSocketMessage {
   | "message_task"
   | "message_chunk"
   | "message_log"
+  | "message_files"
     | "result"
     | "completion"
     | "input_request"
     | "error"
     | "system";
-  data?: AgentMessageConfig | TaskResult;
+  data?: AgentMessageConfig | TaskResult | FilesEvent;
   input_type?: InputType;
   status?: RunStatus;
   error?: string;
   timestamp?: string;
+}
+
+export type FileDownloadMethod = "base64" | "url";
+
+export interface MessageFileItem {
+  name: string;
+  url: string | null;
+  base64_content: string | null;
+  size: number | null;
+  mime_type: string | null;
+  description?: string | null;
+  download_method: FileDownloadMethod;
+}
+
+export interface FilesEvent {
+  source?: string;
+  models_usage?: RequestUsage | null;
+  metadata?: Record<string, any>;
+  content: {
+    files: MessageFileItem[];
+    title?: string;
+    description?: string;
+    send_time_stamp?: number;
+  };
+  send_time_stamp?: number;
+  type?: string; // backend event class name, e.g. "FilesEvent"
 }
 
 export interface InputRequestMessage extends WebSocketMessage {
@@ -135,6 +162,7 @@ export interface TaskResult {
 
 export interface RunLogEntry {
   content: string;
+  title?: string;
   source?: string;
   send_time_stamp?: number;
   send_level?: string;
@@ -316,6 +344,7 @@ export interface Run {
   input_request?: InputRequest;
   task: AgentMessageConfig;
   logs?: RunLogEntry[];
+  file_events?: FilesEvent[];
   team_result: TeamResult | null;
   messages: Message[]; // Change to Message[]
   error_message?: string;

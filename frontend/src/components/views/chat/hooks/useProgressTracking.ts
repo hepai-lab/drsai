@@ -11,6 +11,7 @@ interface StepProgress {
       title: string;
       details: string;
       agent_name?: string;
+      index?: number;
     }>;
     response?: string;
     plan_summary?: string;
@@ -40,10 +41,14 @@ export const useProgressTracking = (currentRun: Run | null) => {
     if (lastPlanMessage && typeof lastPlanMessage.config.content === "string") {
       try {
         const content = JSON.parse(lastPlanMessage.config.content);
+        console.log("content 2026-01-26", content);
         if (messageUtils.isPlanMessage(lastPlanMessage.config.metadata)) {
           setCurrentPlan({
             task: content.task,
-            steps: content.steps,
+            steps: content.steps?.map((step: any, index: number) => ({
+              ...step,
+              index: index, // 添加 index 字段
+            })) || [],
             response: content.response,
             plan_summary: content.plan_summary,
           });

@@ -23,14 +23,17 @@ DEFAULT_USERNAME = "anonymous"  # for 创建assistant和获取assistant
 
 ## Paths
 REPO_ROOT = f'{here.parent.parent}'  # 项目根目录
-RUNS_DIR = f'{REPO_ROOT}/runs'  # 运行目录
-CONFIG_DIR = f'{REPO_ROOT}/DrSai/configs'  # 配置目录
-
 FS_DIR = f'{Path.home()}/.{APPNAME}'  # 文件系统目录
+RUNS_DIR = f'{FS_DIR}/runs'  # 运行目录
 CONFIG_DIR = f'{FS_DIR}/configs'  # 配置目录
 FILE_DIR = f'{FS_DIR}/files'   # 文件目录
 
-
+directories = [FS_DIR, RUNS_DIR, CONFIG_DIR, FILE_DIR]
+for directory in directories:
+    path = Path(directory)
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
+            
 
 ## logger
 LOGGER_DIR = f'{FS_DIR}/logs'  # 日志目录

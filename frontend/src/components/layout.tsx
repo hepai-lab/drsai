@@ -35,30 +35,27 @@ const MagenticUILayout = ({
 
 
   React.useEffect(() => {
-
-    // 检查用户信息是否存在
+    // 恢复用户状态（路由保护由 RouteGuard 统一处理）
     if (!user) {
       // 如果没有用户信息，尝试从本地存储获取
-      const email = localStorage.getItem("user_email") || "guestuser@gmail.com";
+      const email = localStorage.getItem("user_email") || "";
       const name = localStorage.getItem("user_name") || email;
       if (email) {
-        setUser({ ...user, email, name });
+        // 修复：user 可能是 null，不能使用展开运算符
+        setUser({
+          email,
+          name,
+          username: email
+        });
 
         // 如果是新用户登录（没有持久化的agent选择），清除之前的agent选择
         const hasPersistedAgent = localStorage.getItem("drsai-mode-config");
         if (!hasPersistedAgent) {
           localStorage.removeItem("drsai-mode-config");
         }
-      } else {
-
-        if (typeof window !== "undefined" && process.env.GATSBY_SSO === "true") {
-
-          // TODO: 单点登录后续再接入
-          window.location.href = "/sso-login";
-        }
       }
+      // 移除了路由重定向逻辑，因为 RouteGuard 已经统一处理
     }
-
   }, [user, setUser]);
 
   // Close mobile menu on route change

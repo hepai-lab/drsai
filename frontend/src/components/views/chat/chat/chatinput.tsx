@@ -1,42 +1,45 @@
 import {
-  PaperAirplaneIcon,
   ExclamationTriangleIcon,
+  PaperAirplaneIcon,
   PauseCircleIcon,
 } from "@heroicons/react/24/outline";
-import * as React from "react";
-import { appContext } from "../../../../hooks/provider";
-import { IStatus } from "../../../types/app";
 import {
-  Upload,
-  Button,
-  Tooltip,
-  Modal,
   Dropdown,
   Menu,
   message,
+  Modal,
+  Tooltip,
+  Upload
 } from "antd";
-import type { UploadProps, RcFile } from "antd/es/upload/interface";
+import type { RcFile, UploadProps } from "antd/es/upload/interface";
 import {
+  Bot,
+  BotIcon,
   FileTextIcon,
   PaperclipIcon,
+  PlusIcon,
+  SparklesIcon,
 } from "lucide-react";
+import * as React from "react";
+import { appContext } from "../../../../hooks/provider";
+import { useVoiceSettingsStore } from "../../../../store/voiceSettings";
+import VoiceInput from "../../../common/VoiceInput";
+import { IStatus } from "../../../types/app";
 import { InputRequest } from "../../../types/datamodel";
-import RelevantPlans from "../relevant_plans";
 import { IPlan } from "../../../types/plan";
 import PlanView from "../plan";
-import VoiceInput from "../../../common/VoiceInput";
-import { useVoiceSettingsStore } from "../../../../store/voiceSettings";
+import RelevantPlans from "../relevant_plans";
 import "./chatinput.css";
 
 // Import custom hooks
 import { useFileUpload } from "./hooks/useFileUpload";
 import { usePlanSearch } from "./hooks/usePlanSearch";
-import type { UploadFile as AntUploadFile } from "antd/es/upload/interface";
-import { fileAPI } from "../../api";
 
 // Import components
-import FilePreview from "./components/FilePreview";
+import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
+import { agentWorkerAPI } from "@/components/views/api";
 import DragDropOverlay from "./components/DragDropOverlay";
+import FilePreview from "./components/FilePreview";
 import PlanPreview from "./components/PlanPreview";
 
 interface ChatInputProps {
@@ -87,7 +90,6 @@ const ChatInput = React.forwardRef<
     ref
   ) => {
     const textAreaRef = React.useRef<HTMLTextAreaElement>(null);
-    const textAreaDivRef = React.useRef<HTMLDivElement>(null);
     const [text, setText] = React.useState("");
     const [dragOver, setDragOver] = React.useState(false);
     const [isDragActive, setIsDragActive] = React.useState(false);
@@ -96,8 +98,22 @@ const ChatInput = React.forwardRef<
       user: { email: string };
     };
     const { settings: voiceSettings } = useVoiceSettingsStore();
-    const textAreaDefaultHeight = "52px";
     const userId = user?.email || "default_user";
+    const { agentInfo, agentId } = useAgentInfo();
+    const [llmList, setLlmList] = React.useState<{ label: string; value: string }[]>([]);
+    React.useEffect(() => {
+      if (agentInfo && agentInfo.agent_config) {
+        const llmList = Object.entries(agentInfo.agent_config).map(([key, value]) => {
+          return {
+            label: key,
+            value: value,
+          };
+        });
+        setLlmList(llmList);
+      } else
+        setLlmList([]);
+
+    }, [agentInfo]);
 
     const isInputDisabled =
       disabled ||
@@ -140,19 +156,18 @@ const ChatInput = React.forwardRef<
       runStatus,
       isPlanMessage,
     });
-
+    const getTextAreaDefaultHeight = () => {
+      const baseHeight = 52; // 基础高度 52px
+      return `${baseHeight}px`;
+    };
     // Handle textarea auto-resize
     React.useEffect(() => {
       if (textAreaRef.current) {
-        textAreaRef.current.style.height = textAreaDefaultHeight;
+        textAreaRef.current.style.height = getTextAreaDefaultHeight();
         const scrollHeight = textAreaRef.current.scrollHeight;
         textAreaRef.current.style.height = `${scrollHeight}px`;
       }
-      if (textAreaDivRef.current) {
-        textAreaDivRef.current.style.height = textAreaDefaultHeight;
-        const scrollHeight = textAreaDivRef.current.scrollHeight;
-        textAreaDivRef.current.style.height = `${scrollHeight}px`;
-      }
+
     }, [text, inputRequest]);
 
     React.useEffect(() => {
@@ -206,15 +221,13 @@ const ChatInput = React.forwardRef<
     const resetInput = () => {
       if (textAreaRef.current) {
         textAreaRef.current.value = "";
-        textAreaRef.current.style.height = textAreaDefaultHeight;
+        textAreaRef.current.style.height = getTextAreaDefaultHeight();
         setText("");
         clearFiles();
         setRelevantPlans([]);
         clearAttachedPlan();
       }
-      if (textAreaDivRef.current) {
-        textAreaDivRef.current.style.height = textAreaDefaultHeight;
-      }
+
     };
 
     const handleTextChange = (
@@ -394,6 +407,31 @@ const ChatInput = React.forwardRef<
       }
     };
 
+    const handleLLMSelect = async (llm: { label: string; value: string }) => {
+      try {
+        if (!agentId || !agentInfo) {
+          message.warning("请先选择智能体");
+          return;
+        }
+
+        // 只更新默认模型名：不要把整个 agent_config 列表回传给后端
+        // 后端字段拼写为 defult_config_name（与后端保持一致）
+        const updatedAgentConfig = {
+          id: agentId,
+          defult_config_name: llm.label,
+        };
+
+        // 调用后端 API 更新 agent
+        await agentWorkerAPI.updateUserAgent(userId, updatedAgentConfig);
+        message.success(`已选择模型: ${llm.label}`);
+        console.log("Selected LLM:", llm);
+      } catch (error) {
+        console.error("Failed to update agent LLM:", error);
+        const errorMessage = error instanceof Error ? error.message : "更新模型选择失败";
+        message.error(errorMessage);
+      }
+    };
+
     const handleKeyDown = (
       event: React.KeyboardEvent<HTMLTextAreaElement>
     ) => {
@@ -495,7 +533,7 @@ const ChatInput = React.forwardRef<
         {/* Attached Items Preview */}
         {(attachedPlan || fileList.length > 0) && (
           <div
-            className={`-mb-2 mx-1 ${darkMode === "dark" ? "bg-[#333333]" : "bg-magenta-50"
+            className={`-mb-2 mx-1 ${darkMode === "dark" ? "bg-[#333333] border-gray-600" : "bg-magenta-50 border-magenta-200"
               } rounded-t border-b-0 p-2 flex border flex-wrap gap-2`}
           >
             {/* Attached Plan */}
@@ -542,8 +580,8 @@ const ChatInput = React.forwardRef<
               ? "ring-2 ring-accent ring-opacity-50 bg-accent/5"
               : ""
               } ${darkMode === "dark"
-                ? "bg-tertiary/30 backdrop-blur-sm"
-                : "bg-white/80 backdrop-blur-sm shadow-modern"
+                ? "bg-[#0f0f0f] backdrop-blur-sm"
+                : "bg-white/80 backdrop-blur-sm "
               }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -565,7 +603,7 @@ const ChatInput = React.forwardRef<
                     >
                       <Dropdown
                         overlay={
-                          <Menu>
+                          <Menu className={darkMode === "dark" ? "dark-menu" : ""}>
                             <Menu.Item key="attach-file">
                               <Upload {...uploadProps} showUploadList={false} className="upload-menu-item">
                                 <div className="flex items-center gap-2">
@@ -575,13 +613,51 @@ const ChatInput = React.forwardRef<
                                       : "text-magenta-600"
                                       }`}
                                   />
-                                  <span>Attach File</span>
+                                  <span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Attach File</span>
                                 </div>
                               </Upload>
                             </Menu.Item>
                             <Menu.SubMenu
+                              key="llm-options"
+                              title={<span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Agent Mode</span>}
+                              icon={
+                                <BotIcon
+                                  className={`w-4 h-4 flex-shrink-0 ${darkMode === "dark"
+                                    ? "text-gray-300"
+                                    : "text-magenta-600"
+                                    }`}
+                                />
+                              }
+                            >
+                              {llmList.length === 0 ? (
+                                <Menu.Item
+                                  disabled
+                                  key="no-llm-options"
+                                  className={darkMode === "dark" ? "text-gray-500" : ""}
+                                >
+                                  <span className={darkMode === "dark" ? "text-gray-500" : ""}>
+                                    No Agent Mode
+                                  </span>
+                                </Menu.Item>
+                              ) : (
+                                llmList.map((llm) => (
+                                  <Menu.Item
+                                    key={llm.value}
+                                    onClick={() => {
+                                      handleLLMSelect(llm);
+                                    }}
+                                    className={darkMode === "dark" ? "text-gray-300 hover:text-white" : ""}
+                                  >
+                                    <span className={darkMode === "dark" ? "text-gray-300" : ""}>
+                                      {llm.label}
+                                    </span>
+                                  </Menu.Item>
+                                ))
+                              )}
+                            </Menu.SubMenu>
+                            <Menu.SubMenu
                               key="attach-plan"
-                              title="Attach Plan"
+                              title={<span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Attach Plan</span>}
                               icon={
                                 <FileTextIcon
                                   className={`w-4 h-4 flex-shrink-0 ${darkMode === "dark"
@@ -592,16 +668,17 @@ const ChatInput = React.forwardRef<
                               }
                             >
                               {allPlans.length === 0 ? (
-                                <Menu.Item disabled key="no-plans">
-                                  No plans available
+                                <Menu.Item disabled key="no-plans" className={darkMode === "dark" ? "text-gray-500" : ""}>
+                                  <span className={darkMode === "dark" ? "text-gray-500" : ""}>No plans available</span>
                                 </Menu.Item>
                               ) : (
                                 allPlans.map((plan: any) => (
                                   <Menu.Item
                                     key={plan.id || plan.task}
                                     onClick={() => handleUsePlan(plan)}
+                                    className={darkMode === "dark" ? "text-gray-300 hover:text-white" : ""}
                                   >
-                                    {plan.task}
+                                    <span className={darkMode === "dark" ? "text-gray-300" : ""}>{plan.task}</span>
                                   </Menu.Item>
                                 ))
                               )}
@@ -630,7 +707,7 @@ const ChatInput = React.forwardRef<
                                 : "text-secondary hover:text-accent hover:bg-accent/10"
                               }`}
                           >
-                            <PaperclipIcon className="h-4 w-4" />
+                            <PlusIcon className="h-4 w-4" />
                             {fileList.length > 0 && (
                               <span className="absolute -top-1 -right-1 bg-accent text-white text-xs rounded-full w-4 h-4 flex items-center justify-center animate-bounce-in">
                                 {fileList.length}
@@ -652,7 +729,7 @@ const ChatInput = React.forwardRef<
                     className={`input-enhanced flex items-center w-full resize-none p-4 ${enable_upload ? "pl-14" : "pl-6"
                       } ${runStatus === "active" ? "pr-32" : "pr-24"
                       } rounded-full transition-smooth border-2 ${darkMode === "dark"
-                        ? "bg-tertiary/50 border-border-primary backdrop-blur-sm hover:bg-tertiary/70 focus:bg-tertiary/80 focus:border-accent"
+                        ? "bg-[#0f0f0f] border-border-primary backdrop-blur-sm hover:bg-[#1a1a1a] focus:bg-[#1a1a1a] focus:border-accent"
                         : "bg-white/80 border-border-primary backdrop-blur-sm hover:bg-white/90 focus:bg-white focus:border-accent shadow-modern"
                       } ${isInputDisabled
                         ? "cursor-not-allowed opacity-50"

@@ -15,7 +15,8 @@ from drsai.modules.managers.messages import (
     BaseAgentEvent,
     TextMessage,
     StopMessage,
-    ModelClientStreamingChunkEvent
+    ModelClientStreamingChunkEvent,
+    AgentLogEvent,
 )
 from drsai.modules.components.model_context import DrSaiChatCompletionContext
 from drsai.modules.groupchat import AGSwarm, TextMentionTermination, HandoffTermination
@@ -127,6 +128,11 @@ class testAgent(DrSaiAgent):
                                 )
                                 yield planning_message
                                 yield ModelClientStreamingChunkEvent(source=f"Agent_{i+1}", content=f"Processing Task {i+1}...\n")
+                                yield AgentLogEvent(
+                                    title="I am using tools: " + f"tool_{i+1}",
+                                    source=sub_task["agent_name"], 
+                                    content="I am using tools: " + f"tool_{i+1}",
+                                    content_type="tools")
                                 yield ModelClientStreamingChunkEvent(source=f"Agent_{i+1}", content=f"Doing something in Task {i+1}...\n")
                                 yield ModelClientStreamingChunkEvent(source=f"Agent_{i+1}", content=f"```text\nDoing something now...\n```\n")
 

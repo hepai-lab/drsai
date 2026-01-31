@@ -97,6 +97,7 @@ class StatusAgent(DrSaiAgent):
         self.api_key = model_remote_configs.pop("api_key", "")
         self.url = model_remote_configs.pop("url", "https://aiapi.ihep.ac.cn/apiv2")
         self.model_name = model_remote_configs.pop("name", "hepai/drsai")
+        self.defult_config_name = model_remote_configs.pop("defult_config_name", None)
 
         # worker函数
         self._funcs_map = {}
@@ -125,7 +126,8 @@ class StatusAgent(DrSaiAgent):
                   self._funcs_map['lazy_init'],
                   chat_id=self._chat_id,
                   api_key=self.api_key,
-                  run_info=self._run_info
+                  run_info=self._run_info,
+                  defult_config_name=self.defult_config_name,
               ),
               timeout=60.0
             )

@@ -13,13 +13,13 @@ from typing import (
     Mapping,
     )
 
-import asyncio
+import asyncio, traceback
 from loguru import logger
 import warnings
 import inspect
 import json
 import os
-
+import uuid
 from pydantic import BaseModel, Field
 
 from autogen_core import (
@@ -87,7 +87,8 @@ from drsai.modules.managers.messages.agent_messages import(
     ToolLongTaskEvent,
 )
 from drsai.modules.components.task_manager.base_task_system import TaskStatus
-
+from drsai.utils.utils import download_file_from_url_or_base64
+from drsai.configs.constant import FILE_DIR, DEFAULT_USERNAME
 
 class DrSaiAgentConfig(BaseModel):
     """The declarative configuration for the assistant agent."""
@@ -108,6 +109,8 @@ class DrSaiAgentConfig(BaseModel):
     metadata: Dict[str, str] | None = None
     structured_message_factory: ComponentModel | None = None
     db_manager_config: DatabaseManagerConfig | None = None
+    thread_id: str | None = None
+    user_id: str | None = None
 
 class DrSaiAgentState(BaseState):
     """State for an assistant agent."""
@@ -145,12 +148,12 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         metadata: Dict[str, str] | None = None,
 
         # drsaiAgent specific
-        memory_function: Callable = None,
+        memory_function: Callable | None = None,
         # allow_reply_function: bool = False,
-        reply_function: Callable = None,
-        db_manager: DatabaseManager = None,
-        thread_id: str = None,
-        user_id: str = None,
+        reply_function: Callable | None = None,
+        db_manager: DatabaseManager | None = None,
+        thread_id: str | None = None,
+        user_id: str | None = None,
         **kwargs,
             ):
         '''
@@ -281,8 +284,8 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         self._cancellation_token: CancellationToken | None = None
 
         # For user's customization
-        self._thread_id: str = thread_id
-        self._user_id: str = user_id
+        self._thread_id: str = thread_id or str(uuid.uuid4())
+        self._user_id: str = user_id or DEFAULT_USERNAME
         self._db_manager: DatabaseManager = db_manager
 
         # custom arguments for _reply_function
@@ -333,7 +336,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         elif isinstance(task, BaseChatMessage):
             task.metadata["internal"] = "yes"
             input_messages.append(task)
-            output_messages.append(task)
+            output_messages.append(task)  
             yield task
         else:
             if not task:
@@ -343,6 +346,14 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                     msg.metadata["internal"] = "yes"
                     input_messages.append(msg)
                     output_messages.append(msg)
+                    attached_files_json = msg.metadata.get("attached_files")
+                    if attached_files_json:
+                        attached_files = json.loads(attached_files_json)
+                        for file in attached_files:
+                            download_file_from_url_or_base64(
+                                file_info = file, 
+                                save_path = f"{FILE_DIR}/{self._user_id}/{self._thread_id}/{file['name']}")
+
                     yield msg
                 else:
                     raise ValueError(f"Invalid message type in sequence: {type(msg)}")
@@ -495,6 +506,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             )
         except Exception as e:
             logger.error(f"Error in {self.name}: {e}")
+            logger.error(traceback.format_exc())
             # add to chat history
             await model_context.add_message(
                 AssistantMessage(
@@ -678,10 +690,15 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             source=agent_name,
             models_usage=model_result.usage,
         )
-        logger.debug(tool_call_msg)
-        yield AgentLogEvent(source=agent_name, content=str(tool_call_msg.content), content_type="tools")
         inner_messages.append(tool_call_msg)
+        logger.debug(tool_call_msg)
         yield tool_call_msg
+        tools_name = [tool.name for tool in model_result.content] 
+        yield AgentLogEvent(
+            title="I am using tools: " + " ".join(tools_name),
+            source=agent_name, 
+            content=str(tool_call_msg.content), 
+            content_type="tools")
 
         # STEP 4B: Execute tool calls
         executed_calls_and_results = await asyncio.gather(
@@ -704,7 +721,11 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             source=agent_name,
         )
         logger.debug(tool_call_result_msg)
-        yield AgentLogEvent(source=agent_name, content=str(tool_call_result_msg.content), content_type="tools")
+        # yield AgentLogEvent(
+        #     title="Result of tool calls for " + " ".join(tools_name),
+        #     source=agent_name, 
+        #     content=str(tool_call_result_msg.content), 
+        #     content_type="tools")
         await model_context.add_message(FunctionExecutionResultMessage(content=exec_results))
         inner_messages.append(tool_call_result_msg)
         yield tool_call_result_msg
@@ -929,7 +950,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             # yield ModelClientStreamingChunkEvent(content="<think>\n", source=agent_name)
             # yield ModelClientStreamingChunkEvent(content=tool_call_summary_format, source=agent_name)
             # yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
-            yield AgentLogEvent(source=agent_name, content=tool_call_summary, content_type="tools")
+            # yield AgentLogEvent(source=agent_name, content=tool_call_summary, content_type="tools")
             all_messages = system_messages + await model_context.get_messages()
             all_messages.append(
                 UserMessage(
@@ -1191,7 +1212,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             if isinstance(llm_message, AssistantMessage):
                 messages.append({"role": "assistant", "content": llm_message.content, "name": llm_message.source})
             if isinstance(llm_message, FunctionExecutionResultMessage):
-                messages.append({"role": "function", "content": json.dumps(llm_message.content)}) 
+                messages.append({"role": "function", "content": "\n".join([f"{function_call.name}: {function_call.content}" for function_call in llm_message.content])})
 
             
         

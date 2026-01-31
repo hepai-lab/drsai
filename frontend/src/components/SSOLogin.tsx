@@ -1,4 +1,5 @@
 import React from "react";
+import { navigate } from "gatsby";
 
 const backgroundStyle: React.CSSProperties = {
   minHeight: "100vh",
@@ -107,6 +108,9 @@ export const SSOLogin: React.FC = () => {
   const [password, setPassword] = React.useState("");
   const [loginError, setLoginError] = React.useState("");
 
+  // 路由保护由 RouteGuard 组件统一处理
+  // 如果已经登录，RouteGuard 会自动重定向到主页
+
   const handleLogin = () => {
     window.location.href = "/umt/login";
   };
@@ -128,14 +132,10 @@ export const SSOLogin: React.FC = () => {
   return (
     <div style={backgroundStyle}>
       <div style={logoContainerStyle}>
-          IHEP计算中心&实验物理中心
+        IHEP计算中心
       </div>
       <div style={containerStyle}>
-        <h2
-          style={{ ...h2Style, cursor: "pointer" }}
-          onClick={() => setShowModal(true)}
-          title="点击使用本地用户登录"
-        >
+        <h2 style={h2Style}>
           欢迎探索 Dr. Sai 智能体
         </h2>
         <button

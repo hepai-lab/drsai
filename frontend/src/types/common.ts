@@ -10,6 +10,7 @@ export type AgentType =
     | "add";
 
 export interface Agent {
+    agent_config?: Record<string, string>;
     id?: string;
     name: string;
     mode?: AgentMode;
@@ -23,4 +24,5 @@ export interface Agent {
     apiKey?: string;
     baseUrl?: string;
     type?: AgentType;
+    examples?: string[];
 }

@@ -24,8 +24,8 @@ function SubMenu<T extends string>({
           <button
             key={item.id}
             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${activeItem === item.id
-              ? "bg-accent text-white"
-              : "text-secondary hover:text-accent hover:bg-tertiary/20"
+                ? "bg-accent/10 text-accent hover:bg-accent/15 dark:bg-accent/15 dark:hover:bg-accent/20"
+                : "text-secondary hover:text-accent hover:bg-tertiary/20"
               }`}
             onClick={() => onClick(item.id)}
           >

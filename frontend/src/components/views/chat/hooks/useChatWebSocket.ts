@@ -9,6 +9,7 @@ import {
   InputRequest,
   InputRequestMessage,
   TeamResult,
+  FilesEvent,
 } from "../../../types/datamodel";
 import { createMessage } from "../chatHelpers";
 
@@ -141,10 +142,18 @@ export const useChatWebSocket = ({
 
               if (lastMsgIndex >= 0) {
                 const lastMessage = current.messages[lastMsgIndex];
+                
+                // Check if last message is a log message - don't append chunk to log messages
+                const isLastMessageLog = 
+                  lastMessage.config.metadata?.type === "log" ||
+                  (lastMessage.config as any).content_type === "log" ||
+                  (lastMessage.config as any).type === "AgentLogEvent" ||
+                  lastMessage.config.metadata?.type === "AgentLogEvent";
 
                 if (
-                  lastMessage.config.source === "assistant" ||
-                  lastMessage.config.source === chunkSource
+                  !isLastMessageLog &&
+                  (lastMessage.config.source === "assistant" ||
+                  lastMessage.config.source === chunkSource)
                 ) {
                   const updatedMessages = [...current.messages];
                   const newContent = (lastMessage.config.content as string) + processedContent;
@@ -201,49 +210,86 @@ export const useChatWebSocket = ({
           case "message_log":
             if (!wsMessage.data) return current;
             const logData = wsMessage.data as any;
-            // 提取 content 字段并追加到日志数组
-            if (logData.content && typeof logData.content === "string") {
-              const timestamp =
-                typeof logData.send_time_stamp === "number"
-                  ? logData.send_time_stamp
-                  : typeof logData.send_time_stamp === "string"
-                  ? Number(logData.send_time_stamp)
-                  : undefined;
-              const level =
-                typeof logData.send_level === "string"
-                  ? logData.send_level
-                  : typeof logData.send_level?.value === "string"
-                  ? logData.send_level.value
-                  : undefined;
-              const logEntry: RunLogEntry = {
-                content: logData.content,
-                source: typeof logData.source === "string" ? logData.source : undefined,
-                send_time_stamp:
-                  typeof timestamp === "number" && Number.isFinite(timestamp)
-                    ? timestamp
-                    : undefined,
-                send_level: level,
-                content_type:
-                  typeof logData.content_type === "string"
-                    ? logData.content_type
-                    : undefined,
-              };
-              // 确保 logs 数组存在，如果不存在则初始化为空数组
-              const currentLogsRaw = Array.isArray(current.logs)
-                ? (current.logs as Array<RunLogEntry | string>)
-                : [];
-              const normalizedLogs: RunLogEntry[] = currentLogsRaw.map((log) =>
-                typeof log === "string" ? { content: log } : log
+            // 提取 content 和 title 字段
+            const hasContent = logData.content && typeof logData.content === "string";
+            const hasTitle = logData.title && typeof logData.title === "string";
+            
+            // 至少需要有 content 或 title 之一
+            if (!hasContent && !hasTitle) return current;
+            
+            const timestamp =
+              typeof logData.send_time_stamp === "number"
+                ? logData.send_time_stamp
+                : typeof logData.send_time_stamp === "string"
+                ? Number(logData.send_time_stamp)
+                : undefined;
+            const level =
+              typeof logData.send_level === "string"
+                ? logData.send_level
+                : typeof logData.send_level?.value === "string"
+                ? logData.send_level.value
+                : undefined;
+            // 创建日志条目，无论是否有 title 都添加到 run.logs
+            const logEntry: RunLogEntry = {
+              content: hasContent ? logData.content : "",
+              title: hasTitle ? logData.title : undefined,
+              source: typeof logData.source === "string" ? logData.source : undefined,
+              send_time_stamp:
+                typeof timestamp === "number" && Number.isFinite(timestamp)
+                  ? timestamp
+                  : undefined,
+              send_level: level,
+              content_type:
+                typeof logData.content_type === "string"
+                  ? logData.content_type
+                  : undefined,
+            };
+            
+            // 确保 logs 数组存在，如果不存在则初始化为空数组
+            const currentLogsRaw = Array.isArray(current.logs)
+              ? (current.logs as Array<RunLogEntry | string>)
+              : [];
+            const normalizedLogs: RunLogEntry[] = currentLogsRaw.map((log) =>
+              typeof log === "string" ? { content: log } : log
+            );
+            const updatedLogs = [...normalizedLogs, logEntry];            
+            // 如果有 title，在聊天区创建消息显示 title（用于聊天界面显示）
+            let updatedMessages = current.messages;
+            if (hasTitle) {
+              const logSource = typeof logData.source === "string" ? logData.source : "assistant";
+              const logMessage = createMessage(
+                {
+                  source: logSource,
+                  content: logData.title,
+                  metadata: {
+                    type: "log",
+                    log_content: hasContent ? logData.content : undefined,
+                  },
+                } as AgentMessageConfig,
+                current.id,
+                session.id,
+                userEmail
               );
-              const updatedLogs = [...normalizedLogs, logEntry];
-              updatedRun = {
-                ...current,
-                logs: updatedLogs,
-              };
-              setSessionRun(session.id, updatedRun);
-              return updatedRun;
+              updatedMessages = [...current.messages, logMessage];
             }
-            return current;
+            
+            updatedRun = {
+              ...current,
+              messages: updatedMessages,
+              logs: updatedLogs,
+            };
+            setSessionRun(session.id, updatedRun);
+            return updatedRun;
+
+          case "message_files":
+            if (!wsMessage.data) return current;
+            const filesEvent = wsMessage.data as FilesEvent;
+            updatedRun = {
+              ...current,
+              file_events: [...(current.file_events || []), filesEvent],
+            };
+            setSessionRun(session.id, updatedRun);
+            return updatedRun;
           case "input_request":
             let input_request: InputRequest;
             switch (wsMessage.input_type) {

@@ -21,12 +21,14 @@ interface ProgressBarProps {
     plan?: Plan;
   };
   hasFinalAnswer: boolean;
+  onStepClick?: (stepIndex: number) => void;
 }
 
 export default function ProgressBar({
   isPlanning,
   progress,
   hasFinalAnswer,
+  onStepClick,
 }: ProgressBarProps) {
   // Adjust progress when we have final answer
   const adjustedProgress = React.useMemo(() => {
@@ -64,11 +66,10 @@ export default function ProgressBar({
                       style={{
                         width: hasFinalAnswer
                           ? "100%"
-                          : `${
-                              (adjustedProgress.currentStep /
-                                adjustedProgress.totalSteps) *
-                              100
-                            }%`,
+                          : `${(adjustedProgress.currentStep /
+                            adjustedProgress.totalSteps) *
+                          100
+                          }%`,
                       }}
                     />
                     {/* Current section - hidden when hasFinalAnswer */}
@@ -76,11 +77,10 @@ export default function ProgressBar({
                       <div
                         className="absolute bg-magenta-800 h-1 transition-all duration-300"
                         style={{
-                          left: `${
-                            (adjustedProgress.currentStep /
+                          left: `${(adjustedProgress.currentStep /
                               adjustedProgress.totalSteps) *
                             100
-                          }%`,
+                            }%`,
                           width: `${(1 / adjustedProgress.totalSteps) * 100}%`,
                         }}
                       />
@@ -90,18 +90,16 @@ export default function ProgressBar({
                       <div
                         className="absolute bg-gray-300 h-1 rounded-r-full transition-all duration-300"
                         style={{
-                          left: `${
-                            ((adjustedProgress.currentStep + 1) /
+                          left: `${((adjustedProgress.currentStep + 1) /
                               adjustedProgress.totalSteps) *
                             100
-                          }%`,
-                          width: `${
-                            ((adjustedProgress.totalSteps -
+                            }%`,
+                          width: `${((adjustedProgress.totalSteps -
                               adjustedProgress.currentStep -
                               1) /
                               adjustedProgress.totalSteps) *
                             100
-                          }%`,
+                            }%`,
                         }}
                       />
                     )}
@@ -136,15 +134,15 @@ export default function ProgressBar({
                           overlayStyle={{ maxWidth: "300px" }}
                         >
                           <div
-                            className="absolute h-full cursor-help"
+                            className={`absolute h-full ${onStepClick ? "cursor-pointer" : "cursor-help"
+                              }`}
                             style={{
-                              left: `${
-                                (index / adjustedProgress.totalSteps) * 100
-                              }%`,
-                              width: `${
-                                (1 / adjustedProgress.totalSteps) * 100
-                              }%`,
+                              left: `${(index / adjustedProgress.totalSteps) * 100
+                                }%`,
+                              width: `${(1 / adjustedProgress.totalSteps) * 100
+                                }%`,
                             }}
+                            onClick={() => onStepClick?.(index)}
                           />
                         </Tooltip>
                       );
@@ -177,10 +175,9 @@ export default function ProgressBar({
                           key={index}
                           className="absolute"
                           style={{
-                            left: `${
-                              ((index + 0.5) / adjustedProgress.totalSteps) *
+                            left: `${((index + 0.5) / adjustedProgress.totalSteps) *
                               100
-                            }%`,
+                              }%`,
                             transform: "translateX(-50%)",
                           }}
                         >
@@ -190,18 +187,19 @@ export default function ProgressBar({
                             overlayStyle={{ maxWidth: "300px" }}
                           >
                             <div
-                              className={`w-5 h-5 rounded-full flex items-center justify-center cursor-help
-                              ${
-                                hasFinalAnswer ||
-                                index < adjustedProgress.currentStep
+                              className={`w-5 h-5 rounded-full flex items-center justify-center ${onStepClick ? "cursor-pointer" : "cursor-help"
+                                }
+                              ${hasFinalAnswer ||
+                                  index < adjustedProgress.currentStep
                                   ? "bg-green-600 text-white"
                                   : index === adjustedProgress.currentStep
-                                  ? "bg-magenta-800 text-white"
-                                  : "bg-gray-400 text-white"
-                              }`}
+                                    ? "bg-magenta-800 text-white"
+                                    : "bg-gray-400 text-white"
+                                }`}
+                              onClick={() => onStepClick?.(index)}
                             >
                               {hasFinalAnswer ||
-                              index < adjustedProgress.currentStep ? (
+                                index < adjustedProgress.currentStep ? (
                                 <CheckCircle2 className="w-4 h-4" />
                               ) : index === adjustedProgress.currentStep ? (
                                 <RotateCw className="w-4 h-4 animate-spin" />

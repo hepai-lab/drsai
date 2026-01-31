@@ -11,12 +11,21 @@ interface IModeConfig {
     setSelectedAgent: (agent: Partial<Agent> | null) => void;
     lastSelectedAgentMode: string;
     setLastSelectedAgentMode: (mode: string) => void;
+
+
+    // update by yqsun
+    agentId: string | null;
+    setAgentId: (agentId: string | null) => void;
+    agentInfo: Partial<Agent> | null;
+    setAgentInfo: (agentInfo: Partial<Agent> | null) => void;
 }
+
+// 默认的 agentId，用于首次登录时设置
+const DEFAULT_AGENT_ID = "010022126sdfnjsdnqw";
 
 export const useModeConfigStore = create<IModeConfig>()(
     persist(
         (set) => ({
-            // Existing state
             mode: "",
             setMode: (mode) => set({ mode }),
             config: {},
@@ -26,16 +35,27 @@ export const useModeConfigStore = create<IModeConfig>()(
             lastSelectedAgentMode: "",
             setLastSelectedAgentMode: (mode) =>
                 set({ lastSelectedAgentMode: mode }),
+
+            // update by yqsun
+            agentId: null,
+            setAgentId: (agentId) => set({ agentId }),
+            agentInfo: null,
+            setAgentInfo: (agentInfo) => set({ agentInfo }),
         }),
         {
             name: "drsai-mode-config",
             storage: createJSONStorage(() => localStorage),
             partialize: (state) => ({
-                mode: state.mode,
-                config: state.config,
-                selectedAgent: state.selectedAgent,
-                lastSelectedAgentMode: state.lastSelectedAgentMode,
+                agentId: state.agentId,
             }),
+            onRehydrateStorage: () => (state) => {
+                // 检查是否是第一次登录（localStorage 中没有 agentId）
+                if (state && !state.agentId) {
+                    // 设置默认的 agentId
+                    state.setAgentId(DEFAULT_AGENT_ID);
+                    console.log(`首次登录，设置默认 agentId: ${DEFAULT_AGENT_ID}`);
+                }
+            },
         }
     )
 );

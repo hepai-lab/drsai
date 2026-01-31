@@ -6,7 +6,8 @@ from typing import (
     List, 
     Dict, 
     Any,
-    AsyncGenerator
+    AsyncGenerator,
+    Mapping,
     )
 from dataclasses import dataclass, field
 from fastapi import FastAPI
@@ -27,7 +28,7 @@ from autogen_agentchat.base import (
     Team,)
 from drsai.configs import CONST
 
-from drsai.utils.utils import auto_worker_address
+from drsai.utils.utils import auto_worker_address, upload_to_hepai_filesystem
 
 here = Path(__file__).parent.resolve()
 
@@ -203,6 +204,9 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             config: DrSaiModelConfig,
             worker_config: DrSaiWorkerConfig,
             logo: str = "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            examples: List[str] = [],
+            agent_config: Dict[str, Any] = {},
+            defult_config_name: str|None = None,
             drsaiapp: DrSaiAPP = None # 传入DrSaiAPP实例
             ):
         super().__init__(config=config)
@@ -219,6 +223,9 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             "version": config.version, 
             "author": worker_config.author, 
             "logo": logo,
+            "examples": examples,
+            "agent_config": agent_config,
+            "defult_config_name": defult_config_name,
             } 
         self.drsai._info = self._info
 
@@ -233,13 +240,18 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         return await self.drsai.get_agents_info(agent=agent)
     
     @HRModel.remote_callable
-    async def lazy_init(self, chat_id: str, api_key: str, run_info: Dict[str, str]) -> Dict[str, Any]:
+    async def lazy_init(self, chat_id: str, api_key: str, run_info: Dict[str, str], stream: bool = True, **kwargs) -> Dict[str, Any]:
         try:
             agent: Team|ChatAgent = self.drsai.agent_instance.get(chat_id, None)
             if agent is None:
-                agent = await self.drsai._create_agent_instance(api_key=api_key, thread_id=chat_id, user_id=run_info.get("email"),)
-                self.drsai.agent_instance[chat_id] = agent
-            message = await agent.lazy_init(api_key=api_key, thread_id=chat_id, run_info=run_info)
+                agent = await self.drsai._create_agent_instance(
+                    api_key=api_key, 
+                    thread_id=chat_id, 
+                    user_id=run_info.get("email"), 
+                    stream=stream,
+                    defult_config_name=kwargs.get("defult_config_name", None),
+                    )
+            message = await agent.lazy_init(api_key=api_key, thread_id=chat_id, run_info=run_info, **kwargs)
             return {"status": True, "message": message}
         except Exception as e:
             return {"status": False, "message": f"Lazy init error: {e}"}
@@ -294,10 +306,10 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             return {"status": False, "message": f"save_state error: {e}"}
     
     @HRModel.remote_callable
-    async def load_state(self, chat_id: str) -> Dict[str, Any]:
+    async def load_state(self, chat_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
         try:
             agent: Team|ChatAgent = self.drsai.agent_instance[chat_id]
-            await agent.load_state()
+            await agent.load_state(state=state)
             return {"status": True, "message": ""}
         except Exception as e:
             return {"status": False, "message": f"load_state error: {e}"}
@@ -318,6 +330,8 @@ async def run_worker(agent_factory: callable, **kwargs):
         agent_factory: 工厂函数，用于创建AssistantAgent/BaseGroupChat实例
         agent_name: str = , "Dr.Sai" ,  # 智能体的名称
         description: str = , "Dr.Sai is a helpful assistant." ,  # 智能体的描述
+        examples: List[str] = [],  # 智能体的示例
+        llm_mode_config: Dict[str, Any] = {},# LLM模式配置
         version: str = , "0.1.0" ,  # 智能体的版本
         logo: str = , "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview" ,  # 智能体的logo
         host: str = , "0.0.0.0" ,  # 后端服务host
@@ -361,7 +375,15 @@ async def run_worker(agent_factory: callable, **kwargs):
         model_args.version = version
     
     logo: str = kwargs.pop("logo", 'https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview')
-
+    if os.path.exists(logo):
+        logo_path = Path(logo)
+        if logo_path.is_file():
+            file_obj = upload_to_hepai_filesystem(str(logo_path))
+            logo = file_obj["url"]
+    examples: List[str] = kwargs.pop("examples", [])
+    agent_config: Dict[str, Any] = kwargs.pop("agent_config", {})
+    defult_config_name: str|None = kwargs.pop("defult_config_name", None)
+    
     host: str =  kwargs.pop("host", None)
     if host is not None:
         worker_args.host = host
@@ -413,6 +435,9 @@ async def run_worker(agent_factory: callable, **kwargs):
         config=model_args, 
         worker_config=worker_args, 
         logo=logo, 
+        examples=examples,
+        agent_config = agent_config,
+        defult_config_name = defult_config_name,
         drsaiapp=drsaiapp)
 
     enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)

@@ -75,24 +75,30 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册的名称
-            agent_name="weather_agent",
+            agent_name="ToolAgent",
             # 智能体如果注册到HepAI智能体平台需要的权限设置
             permission='groups: drsai; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             # 智能体给前端展示的描述信息
             description = "一个可以使用城市天气查询工具的助手。",
+            # 前端的展示的试用案例
+            examples=[
+                    "What is the weather in New York?",
+                    "I want to write a python script to print hello world and run it in a shell. please plan before executing",
+                ],
             # 智能体给前端展示的描述信息
             version = "0.1.0",
-            # 智能体logo图像的url
+            # 智能体logo图像的url，使用git源码安装的目前支持png/jpg的logo_path
             logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务端口
-            port = 42810, 
+            port = 42815, 
             # 是否注册到HepAI智能体平台
             no_register=False,
             # 是否注册为OpenWebUI的pipeline
             enable_openwebui_pipeline=True, 
-            # 使用后端的api_key
-            use_api_key_mode = "backend",
+            # 使用backend/frontend的api_key
+            # use_api_key_mode = "backend",
+            # use_api_key_mode = "frontend",
         )
     )

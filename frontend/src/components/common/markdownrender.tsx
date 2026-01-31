@@ -52,9 +52,28 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
   const [expanded, setExpanded] = useState(false);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      // Check if clipboard API is available
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        // Fallback for environments where clipboard API is not available
+        const textArea = document.createElement('textarea');
+        textArea.value = value;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        textArea.remove();
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy text:', err);
+    }
   };
 
   // Split code into lines
@@ -345,105 +364,117 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
         </div>
       </div>
       {isExpanded && (
-        <div
-          className="think-bubble-content"
-          style={{
-            position: "relative",
-            padding: "12px 12px 12px 20px",
-            backgroundColor: "var(--color-bg-primary)",
-            border: "1px solid var(--color-border-secondary)",
-            borderTop: "none",
-            borderTopLeftRadius: "0",
-            borderTopRightRadius: "0",
-            borderBottomLeftRadius: "6px",
-            borderBottomRightRadius: "6px",
-            marginTop: "-1px",
-            overflow: "hidden",
-            willChange: "transform, opacity",
-            transition: "all 0.2s ease-out",
-          }}
-        >
-          {/* Left border line - DeepSeek style */}
+        <>
+          {/* Separator line between header and content */}
           <div
             style={{
-              position: "absolute",
-              left: "8px",
-              top: "0",
-              bottom: "0",
-              width: "2px",
-              backgroundColor: isDone
-                ? "var(--color-magenta-600)"
-                : "var(--color-border-secondary)",
-              borderRadius: "1px",
-              transition: "background-color 0.3s ease",
+              height: "1px",
+              backgroundColor: "var(--color-border-secondary)",
+              marginTop: "4px",
+              marginBottom: "4px",
               opacity: 0.3,
             }}
           />
-
-          <div style={{ position: "relative" }}>
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                p: ({ children }) => (
-                  <p style={{
-                    color: "var(--color-text-secondary)",
-                    fontSize: "0.85rem",
-                    lineHeight: "1.5",
-                    margin: "0 0 8px 0"
-                  }}>
-                    {children}
-                  </p>
-                ),
-                code: ({ children, className }) => {
-                  const match = /language-(\w+)/.exec(className || "");
-                  const language = match ? match[1] : "";
-                  const inline = !language;
-
-                  if (inline) {
-                    return (
-                      <code
-                        style={{
-                          backgroundColor: "var(--color-bg-secondary)",
-                          color: "var(--color-text-secondary)",
-                          padding: "2px 4px",
-                          borderRadius: "3px",
-                          fontSize: "0.8rem",
-                        }}
-                      >
-                        {children}
-                      </code>
-                    );
-                  }
-
-                  return (
-                    <CodeBlock
-                      language={language}
-                      value={String(children).replace(/\n$/, "")}
-                    />
-                  );
-                },
-                // 其他元素也使用浅色
-                li: ({ children }) => (
-                  <li style={{ color: "var(--color-text-secondary)" }}>
-                    {children}
-                  </li>
-                ),
-                strong: ({ children }) => (
-                  <strong style={{ color: "var(--color-text-secondary)", fontWeight: "600" }}>
-                    {children}
-                  </strong>
-                ),
-                em: ({ children }) => (
-                  <em style={{ color: "var(--color-text-secondary)" }}>
-                    {children}
-                  </em>
-                ),
+          <div
+            className="think-bubble-content"
+            style={{
+              position: "relative",
+              padding: "12px 12px 12px 20px",
+              backgroundColor: "var(--color-bg-primary)",
+              border: "1px solid var(--color-border-secondary)",
+              borderTop: "none",
+              borderTopLeftRadius: "0",
+              borderTopRightRadius: "0",
+              borderBottomLeftRadius: "6px",
+              borderBottomRightRadius: "6px",
+              marginTop: "0",
+              overflow: "hidden",
+              willChange: "transform, opacity",
+              transition: "all 0.2s ease-out",
+            }}
+          >
+            {/* Left border line - DeepSeek style */}
+            <div
+              style={{
+                position: "absolute",
+                left: "8px",
+                top: "0",
+                bottom: "0",
+                width: "2px",
+                backgroundColor: isDone
+                  ? "var(--color-magenta-600)"
+                  : "var(--color-border-secondary)",
+                borderRadius: "1px",
+                transition: "background-color 0.3s ease",
+                opacity: 0.3,
               }}
-            >
-              {content}
-            </ReactMarkdown>
+            />
+
+            <div style={{ position: "relative" }}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  p: ({ children }) => (
+                    <p style={{
+                      color: "var(--color-text-secondary)",
+                      fontSize: "0.85rem",
+                      lineHeight: "1.5",
+                      margin: "0 0 8px 0"
+                    }}>
+                      {children}
+                    </p>
+                  ),
+                  code: ({ children, className }) => {
+                    const match = /language-(\w+)/.exec(className || "");
+                    const language = match ? match[1] : "";
+                    const inline = !language;
+
+                    if (inline) {
+                      return (
+                        <code
+                          style={{
+                            backgroundColor: "var(--color-bg-secondary)",
+                            color: "var(--color-text-secondary)",
+                            padding: "2px 4px",
+                            borderRadius: "3px",
+                            fontSize: "0.8rem",
+                          }}
+                        >
+                          {children}
+                        </code>
+                      );
+                    }
+
+                    return (
+                      <CodeBlock
+                        language={language}
+                        value={String(children).replace(/\n$/, "")}
+                      />
+                    );
+                  },
+                  // 其他元素也使用浅色
+                  li: ({ children }) => (
+                    <li style={{ color: "var(--color-text-secondary)" }}>
+                      {children}
+                    </li>
+                  ),
+                  strong: ({ children }) => (
+                    <strong style={{ color: "var(--color-text-secondary)", fontWeight: "600" }}>
+                      {children}
+                    </strong>
+                  ),
+                  em: ({ children }) => (
+                    <em style={{ color: "var(--color-text-secondary)" }}>
+                      {children}
+                    </em>
+                  ),
+                }}
+              >
+                {content}
+              </ReactMarkdown>
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

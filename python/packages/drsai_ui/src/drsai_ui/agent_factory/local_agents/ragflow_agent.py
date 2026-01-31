@@ -584,7 +584,7 @@ class RAGFlowAgent(DrSaiAgent):
             #     yield ModelClientStreamingChunkEvent(content="<think>\n", source=agent_name)
             # yield ModelClientStreamingChunkEvent(content=tool_call_summary+"\n", source=agent_name)
             # yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
-            yield AgentLogEvent(source=user_agenty_name, content=tool_call_summary, content_type="tools")
+            # yield AgentLogEvent(source=user_agenty_name, content=tool_call_summary, content_type="tools")
             all_messages = system_messages + await model_context.get_messages()
             all_messages.append(
                 UserMessage(

@@ -9,6 +9,14 @@ import {
   CheckCircle,
   RefreshCw,
   Clock,
+  Bot,
+  Copy,
+  Edit,
+  Check,
+  X,
+  Send,
+  Zap,
+  Settings,
 } from "lucide-react";
 import {
   AgentMessageConfig,
@@ -22,6 +30,7 @@ import PlanView from "./plan";
 import { IPlanStep, convertToIPlanSteps } from "../../types/plan";
 import RenderFile from "../../common/filerenderer";
 import LearnPlanButton from "../../features/Plans/LearnPlanButton";
+import { appContext } from "../../../hooks/provider";
 
 // Types
 interface MessageProps {
@@ -38,8 +47,11 @@ interface MessageProps {
   onImageClick?: (index: number) => void;
   onToggleHide?: (expanded: boolean) => void;
   onRegeneratePlan?: () => void;
+  onEditMessage?: (messageIdx: number, newContent: string) => void;
+  onResendMessage?: (content: string) => void;
   runStatus?: string;
   forceCollapsed?: boolean;
+  onLogMessageClick?: () => void;
 }
 
 interface RenderPlanProps {
@@ -127,7 +139,16 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
 
     // Handle case where content is in content field
     if (parsedContent.content) {
-      const text = parsedContent.content?.content || parsedContent.content;
+      // If parsedContent.content is an object, extract text from it
+      // Otherwise, use it directly (it's already a string or array)
+      let text: string | (string | ImageContent)[];
+      if (typeof parsedContent.content === "object" && parsedContent.content !== null && !Array.isArray(parsedContent.content)) {
+        // Object: try to extract content/text field, or stringify if not found
+        text = parsedContent.content.content || parsedContent.content.text || JSON.stringify(parsedContent.content);
+      } else {
+        // String or array: use directly
+        text = parsedContent.content;
+      }
       // If text is an array, it might contain images
       if (Array.isArray(text)) {
         return { text, metadata: content.metadata };
@@ -147,8 +168,28 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
     }
 
     // Return both the content and plan if they exist
+    // Ensure text is always a string
+    let textValue: string | (string | ImageContent)[];
+    if (parsedContent.content) {
+      if (typeof parsedContent.content === "string") {
+        textValue = parsedContent.content;
+      } else if (Array.isArray(parsedContent.content)) {
+        textValue = parsedContent.content;
+      } else if (typeof parsedContent.content === "object") {
+        // If it's an object, try to extract text or stringify
+        textValue = parsedContent.content.content ||
+          parsedContent.content.text ||
+          JSON.stringify(parsedContent.content);
+      } else {
+        textValue = String(parsedContent.content);
+      }
+    } else {
+      // Fallback to original content, ensuring it's a string
+      textValue = typeof content === "string" ? content : String(content);
+    }
+
     return {
-      text: parsedContent.content || content,
+      text: textValue,
       plan: planSteps.length > 0 ? planSteps : undefined,
       metadata: content.metadata,
     };
@@ -163,7 +204,17 @@ const parseContent = (content: any): string => {
 
   try {
     const parsedContent = JSON.parse(content);
-    return parsedContent.content?.content || parsedContent.content || content;
+    // If parsedContent has a content field
+    if (parsedContent.content !== undefined) {
+      // If content is an object, extract text from it
+      if (typeof parsedContent.content === "object" && parsedContent.content !== null && !Array.isArray(parsedContent.content)) {
+        return parsedContent.content.content || parsedContent.content.text || JSON.stringify(parsedContent.content);
+      }
+      // Otherwise, use content directly (string or array)
+      return typeof parsedContent.content === "string" ? parsedContent.content : String(parsedContent.content);
+    }
+    // If no content field, return original content
+    return content;
   } catch {
     return content;
   }
@@ -378,7 +429,7 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
 
     if (is_step_repeated && !hidden) {
       return (
-        <div className="">
+        <div id={`step-execution-${content.index}`} className="">
           {isUserProxyInstruction && content.instruction && (
             <div className="flex items-start">
               <MarkdownRenderer content={content.instruction} />
@@ -400,7 +451,7 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
     // if hidden add success green thingy
 
     return (
-      <div className="flex flex-col">
+      <div id={`step-execution-${content.index}`} className="flex flex-col">
         {!isUserProxyInstruction &&
           content.instruction &&
           content.index !== 0 && (
@@ -579,7 +630,20 @@ export const messageUtils = {
 const RenderUserMessage: React.FC<{
   parsedContent: ParsedContent;
   isUserProxy: boolean;
-}> = memo(({ parsedContent, isUserProxy }) => {
+  messageIdx: number;
+  onEditMessage?: (messageIdx: number, newContent: string) => void;
+  onResendMessage?: (content: string) => void;
+  runStatus?: string;
+  isEditing?: boolean;
+  onStartEdit?: () => void;
+  onCancelEdit?: () => void;
+}> = memo(({ parsedContent, isUserProxy, messageIdx, onEditMessage, onResendMessage, runStatus, isEditing: externalIsEditing, onStartEdit, onCancelEdit }) => {
+  const { darkMode } = React.useContext(appContext);
+  const [internalIsEditing, setInternalIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState("");
+  const isEditing = externalIsEditing !== undefined ? externalIsEditing : internalIsEditing;
+  const setIsEditing = externalIsEditing !== undefined ? (onStartEdit || (() => { })) : setInternalIsEditing;
+
   // Parse attached files from metadata if present
   const attachedFiles: AttachedFile[] = React.useMemo(() => {
     if (parsedContent.metadata?.attached_files) {
@@ -591,6 +655,55 @@ const RenderUserMessage: React.FC<{
     }
     return [];
   }, [parsedContent.metadata?.attached_files]);
+
+  // Get the text content for editing/copying
+  const getTextContent = (): string => {
+    if (messageUtils.isMultiModalContent(parsedContent.text)) {
+      return parsedContent.text
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => parseContent(item))
+        .join("\n");
+    }
+    return String(parsedContent.text);
+  };
+
+  // Initialize editValue when entering edit mode
+  React.useEffect(() => {
+    if (isEditing && !editValue) {
+      const textContent = getTextContent();
+      setEditValue(textContent);
+    }
+    // Reset editValue when exiting edit mode
+    if (!isEditing) {
+      setEditValue("");
+    }
+  }, [isEditing]);
+
+  const handleSend = () => {
+    if (onResendMessage && editValue.trim()) {
+      onResendMessage(editValue);
+    }
+    if (externalIsEditing !== undefined) {
+      // Controlled mode - parent will handle state
+      setInternalIsEditing(false);
+    } else {
+      setIsEditing(false);
+    }
+    setEditValue("");
+  };
+
+  const handleCancel = () => {
+    if (externalIsEditing !== undefined) {
+      // Controlled mode - notify parent to exit edit mode
+      if (onCancelEdit) {
+        onCancelEdit();
+      }
+      setInternalIsEditing(false);
+    } else {
+      setIsEditing(false);
+    }
+    setEditValue("");
+  };
 
   return (
     <div className="space-y-2">
@@ -614,42 +727,89 @@ const RenderUserMessage: React.FC<{
         </div>
       )}
 
-      {/* Existing content rendering */}
-      {messageUtils.isMultiModalContent(parsedContent.text) ? (
+      {/* Edit mode */}
+      {isEditing ? (
         <div className="space-y-2">
-          {parsedContent.text.map((item, index) => (
-            <div key={index}>
-              {typeof item === "string" ? (
-                <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
-                  {parseContent(item)}
-                </div>
-              ) : (
-                <ClickableImage
-                  src={getImageSource(item)}
-                  alt={item.alt || `Attachment ${index + 1}`}
-                  className="max-w-[400px] max-h-[30vh] rounded-lg"
-                />
-              )}
-            </div>
-          ))}
+          <textarea
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            className={`w-full p-2 border border-secondary rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary ${darkMode === "dark" ? "bg-[#0f0f0f] text-gray-200 border-gray-700" : "bg-background text-primary"}`}
+            rows={Math.min(editValue.split('\n').length + 2, 10)}
+            autoFocus
+            onKeyDown={(e) => {
+              // Allow Ctrl/Cmd+Enter to send
+              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                handleSend();
+              }
+              // Allow Escape to cancel
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                handleCancel();
+              }
+            }}
+          />
+          <div className="flex items-center gap-2">
+            {onResendMessage && (
+              <button
+                onClick={handleSend}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-primary rounded-lg hover:bg-primary/90 transition-colors"
+                title="Send edited message"
+              >
+                <Send size={14} />
+                <span className="text-sm">Send</span>
+              </button>
+            )}
+            <button
+              onClick={handleCancel}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary text-primary rounded-lg hover:bg-secondary/80 transition-colors"
+              title="Cancel editing"
+            >
+              <X size={14} />
+              <span className="text-sm">Cancel</span>
+            </button>
+          </div>
         </div>
       ) : (
-        <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
-          {String(parsedContent.text)}
-        </div>
-      )}
+        <>
+          {/* Existing content rendering */}
+          {messageUtils.isMultiModalContent(parsedContent.text) ? (
+            <div className="space-y-2">
+              {parsedContent.text.map((item, index) => (
+                <div key={index}>
+                  {typeof item === "string" ? (
+                    <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
+                      {parseContent(item)}
+                    </div>
+                  ) : (
+                    <ClickableImage
+                      src={getImageSource(item)}
+                      alt={item.alt || `Attachment ${index + 1}`}
+                      className="max-w-[400px] max-h-[30vh] rounded-lg"
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
+              {String(parsedContent.text)}
+            </div>
+          )}
 
-      {parsedContent.plan &&
-        Array.isArray(parsedContent.plan) &&
-        parsedContent.plan.length > 0 && (
-          <PlanView
-            task={""}
-            plan={parsedContent.plan}
-            setPlan={() => { }} // No-op since it's read-only
-            viewOnly={true}
-            onSavePlan={() => { }} // No-op since it's read-only
-          />
-        )}
+          {parsedContent.plan &&
+            Array.isArray(parsedContent.plan) &&
+            parsedContent.plan.length > 0 && (
+              <PlanView
+                task={""}
+                plan={parsedContent.plan}
+                setPlan={() => { }} // No-op since it's read-only
+                viewOnly={true}
+                onSavePlan={() => { }} // No-op since it's read-only
+              />
+            )}
+        </>
+      )}
     </div>
   );
 });
@@ -673,24 +833,136 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     onImageClick,
     onToggleHide,
     onRegeneratePlan,
+    onEditMessage,
+    onResendMessage,
     forceCollapsed = false,
+    onLogMessageClick,
   }) => {
+    const { darkMode } = React.useContext(appContext);
+    const [isEditing, setIsEditing] = useState(false);
+    const [isCopied, setIsCopied] = useState(false);
+    const editTriggerRef = React.useRef<(() => void) | null>(null);
+
     if (!message) return null;
     if (message.metadata?.type === "browser_address") return null;
+
+    // Check if this is a FilesEvent - these should only be shown in panel, not in main chat
+    const messageAny = message as any;
+    if (messageAny.type === "FilesEvent" || message.metadata?.type === "FilesEvent") {
+      return null;
+    }
 
     const isUser = messageUtils.isUser(message.source);
     const isUserProxy = message.source === "user_proxy";
     const isOrchestrator = ["Orchestrator"].includes(message.source);
 
-    const parsedContent =
+    // Check if this is a log message (from historical data or WebSocket)
+    // Historical messages may have content_type="log" or type="AgentLogEvent" in config
+    const isLogMessage =
+      message.metadata?.type === "log" ||
+      messageAny.content_type === "log" ||
+      messageAny.type === "AgentLogEvent" ||
+      message.metadata?.type === "AgentLogEvent";
+
+    // For historical log messages, extract title and content, and normalize metadata
+    let normalizedMessage = message;
+    if (isLogMessage && !message.metadata?.type) {
+      // Historical message: normalize to have metadata.type = "log"
+      let contentValue: string;
+
+      // 处理 title（优先使用 title 作为显示内容）
+      if (messageAny.title) {
+        contentValue = typeof messageAny.title === "string"
+          ? messageAny.title
+          : String(messageAny.title);
+      }
+      // 处理 content（可能是对象或字符串）
+      else if (messageAny.content) {
+        if (typeof messageAny.content === "string") {
+          contentValue = messageAny.content;
+        } else if (typeof messageAny.content === "object" && messageAny.content !== null) {
+          // 如果是对象，尝试提取文本内容或序列化
+          contentValue = messageAny.content.content ||
+            messageAny.content.text ||
+            JSON.stringify(messageAny.content);
+        } else {
+          contentValue = String(messageAny.content);
+        }
+      }
+      // 回退到 message.content
+      else if (message.content) {
+        contentValue = typeof message.content === "string"
+          ? message.content
+          : String(message.content);
+      }
+      else {
+        contentValue = "";
+      }
+
+      // 处理 log_content（保存原始的 content 用于 logExecution 面板）
+      let logContentValue: string | undefined;
+      if (messageAny.content) {
+        if (typeof messageAny.content === "string") {
+          logContentValue = messageAny.content;
+        } else if (typeof messageAny.content === "object" && messageAny.content !== null) {
+          logContentValue = messageAny.content.content ||
+            messageAny.content.text ||
+            JSON.stringify(messageAny.content);
+        } else {
+          logContentValue = String(messageAny.content);
+        }
+      } else if (message.content && typeof message.content === "string") {
+        logContentValue = message.content;
+      }
+
+      normalizedMessage = {
+        ...message,
+        metadata: {
+          ...message.metadata,
+          type: "log",
+          log_content: logContentValue,
+        },
+        content: contentValue,
+      } as AgentMessageConfig;
+    }
+
+    const parsedContent: ParsedContent =
       isUser || isUserProxy
-        ? parseUserContent(message)
-        : { text: message.content, metadata: message.metadata };
+        ? parseUserContent(normalizedMessage)
+        : (() => {
+          // For non-user messages, ensure text is always a string or array
+          let textValue: ParsedContent['text'];
+          const contentValue = normalizedMessage.content;
+
+          if (Array.isArray(contentValue)) {
+            textValue = contentValue;
+          } else if (typeof contentValue === "string") {
+            textValue = contentValue;
+          } else if (typeof contentValue === "object" && contentValue !== null) {
+            // If it's an object, try to extract text or stringify
+            const extracted = (contentValue as any).content ||
+              (contentValue as any).text;
+            if (typeof extracted === "string") {
+              textValue = extracted;
+            } else if (Array.isArray(extracted)) {
+              textValue = extracted;
+            } else {
+              textValue = JSON.stringify(contentValue);
+            }
+          } else {
+            textValue = String(contentValue || "");
+          }
+
+          return {
+            text: textValue,
+            metadata: normalizedMessage.metadata
+          } as ParsedContent;
+        })();
     // Use new plan message check
-    const isPlanMsg = messageUtils.isPlanMessage(message.metadata);
+    const isPlanMsg = messageUtils.isPlanMessage(normalizedMessage.metadata);
     const orchestratorContent =
-      isOrchestrator && typeof message.content === "string"
-        ? parseorchestratorContent(message.content, message.metadata)
+      isOrchestrator && typeof normalizedMessage.content === "string"
+        ? parseorchestratorContent(normalizedMessage.content, normalizedMessage.metadata)
         : null;
 
     // Derive plan content by message type, not by source
@@ -699,7 +971,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       if (orchestratorContent?.content) {
         planContent = orchestratorContent.content;
       } else {
-        const rawContent = message.content;
+        const rawContent = normalizedMessage.content;
         if (typeof rawContent === "string") {
           try {
             planContent = JSON.parse(rawContent);
@@ -719,16 +991,30 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       }
     }
 
-    const startFlagValue = message.metadata?.start_flag;
+    const startFlagValue = normalizedMessage.metadata?.start_flag;
     const isStartFlagActive =
       typeof startFlagValue === "string" &&
       startFlagValue.toLowerCase() === "yes";
     const streamSourceLabel =
-      typeof message.metadata?.stream_source_label === "string"
-        ? message.metadata.stream_source_label
+      typeof normalizedMessage.metadata?.stream_source_label === "string"
+        ? normalizedMessage.metadata.stream_source_label
         : undefined;
-    const sourceBadgeText = streamSourceLabel || message.source;
-    const shouldShowSourceBadge = !isUser && !isUserProxy && isStartFlagActive;
+    const sourceBadgeText = streamSourceLabel || normalizedMessage.source;
+
+    // 判断是否是 TextMessage 类型（使用已存在的 messageAny）
+    const normalizedMessageAny = normalizedMessage as any;
+    const isTextMessage = normalizedMessageAny.type === "TextMessage";
+
+    // 判断是否是历史消息（没有 start_flag 或 metadata.is_save === "yes"）
+    const isHistoricalMessage =
+      !startFlagValue ||
+      normalizedMessage.metadata?.is_save === "yes" ||
+      normalizedMessage.metadata?.internal === "yes";
+
+    // 对于 TextMessage 类型的历史消息，直接显示 source badge；对于流式消息，需要 start_flag 判断
+    const shouldShowSourceBadge = !isUser && !isUserProxy && (
+      (isTextMessage && isHistoricalMessage) || isStartFlagActive
+    );
 
     // Hide regeneration request messages
     if (
@@ -738,9 +1024,110 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       return null;
     }
 
+    // Helper functions for user message actions
+    const getTextContent = (): string => {
+      if (messageUtils.isMultiModalContent(parsedContent.text)) {
+        return parsedContent.text
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => parseContent(item))
+          .join("\n");
+      }
+      return String(parsedContent.text);
+    };
+
+    const handleCopy = async () => {
+      const textToCopy = getTextContent();
+      if (textToCopy.trim()) {
+        try {
+          // Check if clipboard API is available
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(textToCopy);
+          } else {
+            // Fallback for environments where clipboard API is not available
+            const textArea = document.createElement('textarea');
+            textArea.value = textToCopy;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            document.execCommand('copy');
+            textArea.remove();
+          }
+          setIsCopied(true);
+          // Reset after 2 seconds
+          setTimeout(() => {
+            setIsCopied(false);
+          }, 2000);
+        } catch (err) {
+          console.error('Failed to copy text:', err);
+        }
+      }
+    };
+
+    // Get text content for non-user messages
+    const getNonUserTextContent = (): string => {
+      if (orchestratorContent?.type === "final-answer") {
+        return orchestratorContent.content;
+      }
+      if (orchestratorContent?.type === "step-execution") {
+        const stepContent = orchestratorContent.content;
+        return stepContent.details || stepContent.progress_summary || "";
+      }
+      if (messageUtils.isToolCallContent(parsedContent.text)) {
+        return JSON.stringify(parsedContent.text, null, 2);
+      }
+      if (messageUtils.isMultiModalContent(parsedContent.text)) {
+        return parsedContent.text
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => parseContent(item))
+          .join("\n");
+      }
+      if (messageUtils.isFunctionExecutionResult(parsedContent.text)) {
+        return parsedContent.text.map((result) => result.content).join("\n\n");
+      }
+      return String(parsedContent.text);
+    };
+
+    const handleNonUserCopy = async () => {
+      const textToCopy = getNonUserTextContent();
+      if (textToCopy.trim()) {
+        try {
+          // Check if clipboard API is available
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(textToCopy);
+          } else {
+            // Fallback for environments where clipboard API is not available
+            const textArea = document.createElement('textarea');
+            textArea.value = textToCopy;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            document.execCommand('copy');
+            textArea.remove();
+          }
+          setIsCopied(true);
+          // Reset after 2 seconds
+          setTimeout(() => {
+            setIsCopied(false);
+          }, 2000);
+        } catch (err) {
+          console.error('Failed to copy text:', err);
+        }
+      }
+    };
+
+    const canEditUserMessage = (isUser || isUserProxy) &&
+      !messageUtils.isMultiModalContent(parsedContent.text) &&
+      !parsedContent.plan;
+
     return (
       <div
-        className={`relative group mb-3 ${className} w-full break-words ${hidden &&
+        className={`relative ${isUser || isUserProxy ? "mb-8" : "mb-3"} ${className} w-full break-words ${hidden &&
           (!orchestratorContent ||
             orchestratorContent.type !== "step-execution")
           ? "hidden"
@@ -748,125 +1135,226 @@ export const RenderMessage: React.FC<MessageProps> = memo(
           }`}
       >
         <div
-          className={`flex ${isUser || isUserProxy ? "justify-end" : "justify-start"
+          className={`flex group ${isUser || isUserProxy ? "justify-end" : "justify-start"
             } items-start w-full transition-all duration-200`}
         >
-          <div
-            className={`${isUser || isUserProxy
-              ? `text-primary rounded-2xl bg-tertiary rounded-tr-sm px-4 py-2 ${parsedContent.plan && parsedContent.plan.length > 0
-                ? "w-[80%]"
-                : "max-w-[80%]"
-              }`
-              : "w-full text-primary"
-              } break-words overflow-hidden`}
-          >
-            {/* Show user message content first */}
-            {(isUser || isUserProxy) && (
-              <RenderUserMessage
-                parsedContent={parsedContent}
-                isUserProxy={isUserProxy}
-              />
-            )}
-            {!isUser && !isUserProxy && shouldShowSourceBadge && (
-              <div className="relative mb-2 inline-flex items-center rounded-2xl rounded-bl-none bg-gradient-to-r from-[#d8b4fe] via-[#c084fc] to-[#a855f7] px-4 py-1.5 text-base font-semibold text-primary shadow-md">
-                {sourceBadgeText}
+          <div className="relative flex flex-col items-end">
+            <div
+              className={`${isUser || isUserProxy
+                ? `text-primary rounded-2xl bg-tertiary rounded-tr-sm px-4 py-2 ${parsedContent.plan && parsedContent.plan.length > 0
+                  ? "w-[100%]"
+                  : "max-w-[100%]"
+                }`
+                : "w-full text-primary"
+                } break-words overflow-hidden`}
+            >
+              {/* Show user message content first */}
+              {(isUser || isUserProxy) && (
+                <RenderUserMessage
+                  parsedContent={parsedContent}
+                  isUserProxy={isUserProxy}
+                  messageIdx={messageIdx}
+                  onEditMessage={(idx, content) => {
+                    onEditMessage?.(idx, content);
+                    setIsEditing(false);
+                  }}
+                  onResendMessage={(content) => {
+                    onResendMessage?.(content);
+                    setIsEditing(false);
+                  }}
+                  runStatus={runStatus}
+                  isEditing={isEditing}
+                  onStartEdit={() => setIsEditing(true)}
+                  onCancelEdit={() => setIsEditing(false)}
+                />
+              )}
+            </div>
+
+            {/* Action buttons - absolutely positioned at bottom of message bubble */}
+            {(isUser || isUserProxy) && !isEditing && (
+              <div className={`flex items-center gap-1 absolute ${isUser || isUserProxy ? 'right-0' : 'left-0'} top-full z-10 px-1 py-1 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto`}>
+                <button
+                  onClick={handleCopy}
+                  className="p-1.5 text-secondary hover:text-primary transition-colors rounded hover:bg-secondary/50"
+                  title={isCopied ? "Copied!" : "Copy message"}
+                >
+                  {isCopied ? (
+                    <Check size={14} />
+                  ) : (
+                    <Copy size={14} />
+                  )}
+                </button>
+                {canEditUserMessage && (onEditMessage || onResendMessage) && (
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="p-1.5 text-secondary hover:text-primary transition-colors rounded hover:bg-secondary/50"
+                    title="Edit message"
+                  >
+                    <Edit size={14} />
+                  </button>
+                )}
               </div>
             )}
-            {/* Handle other content types */}
-            {!isUser &&
-              !isUserProxy &&
-              (isPlanMsg ? (
-                <RenderPlan
-                  content={planContent || {}}
-                  isEditable={isEditable}
-                  onSavePlan={onSavePlan}
-                  onRegeneratePlan={onRegeneratePlan}
-                  forceCollapsed={forceCollapsed}
-                />
-              ) : orchestratorContent?.type === "step-execution" ? (
-                <RenderStepExecution
-                  content={orchestratorContent.content}
-                  hidden={hidden}
-                  is_step_repeated={is_step_repeated}
-                  is_step_failed={is_step_failed}
-                  runStatus={runStatus || ""}
-                  onToggleHide={onToggleHide}
-                />
-              ) : orchestratorContent?.type === "final-answer" ? (
-                <RenderFinalAnswer
-                  content={orchestratorContent.content}
-                  sessionId={sessionId}
-                  messageIdx={messageIdx}
-                />
-              ) : messageUtils.isToolCallContent(parsedContent.text) ? (
-                <RenderToolCall content={parsedContent.text} />
-              ) : messageUtils.isMultiModalContent(parsedContent.text) ? (
-                message.metadata?.type === "browser_screenshot" ? (
-                  <RenderMultiModalBrowserStep
-                    content={parsedContent.text}
-                    onImageClick={onImageClick}
-                  />
-                ) : (
-                  <RenderMultiModal content={parsedContent.text} />
-                )
-              ) : messageUtils.isFunctionExecutionResult(parsedContent.text) ? (
-                <RenderToolResult content={parsedContent.text} />
-              ) : (
-                <div className="break-words">
-                  {message.metadata?.type === "file" ? (
-                    <RenderFile message={message} />
-                  ) : (
-                    <MarkdownRenderer
-                      content={String(parsedContent.text)}
-                      indented={
-                        !orchestratorContent ||
-                        orchestratorContent.type !== "default"
-                      }
-                    />
-                  )}
+          </div>
+
+          {/* Non-user message content */}
+          {!isUser && !isUserProxy && (
+            <div className="w-full text-primary break-words overflow-hidden">
+              {shouldShowSourceBadge && (
+                <div className="relative mb-2 inline-flex items-center py-1.5 text-base font-semibold text-primary gap-2">
+                  <span className=""><Bot /></span>
+                  <span>{sourceBadgeText}</span>
                 </div>
-              ))}
-            {/* {!isUser &&
-              !isUserProxy &&
-              typeof parsedContent.text === "string" &&
-              String(parsedContent.text).trim() && (
-                <div className="flex justify-end mt-2">
-                  <button
-                    onClick={() => {
-                      const textToCopy = parseContent(
-                        parsedContent.text
-                      );
-                      if (
-                        typeof textToCopy ===
-                        "string" &&
-                        textToCopy.trim()
-                      ) {
-                        navigator.clipboard.writeText(
-                          textToCopy
-                        );
-                      }
-                    }}
-                    className="p-1 text-secondary hover:text-primary transition-colors"
-                    title="Copy message"
-                  >
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+              )}
+              {/* Handle other content types */}
+              {!isUser &&
+                !isUserProxy &&
+                (isPlanMsg ? (
+                  <RenderPlan
+                    content={planContent || {}}
+                    isEditable={isEditable}
+                    onSavePlan={onSavePlan}
+                    onRegeneratePlan={onRegeneratePlan}
+                    forceCollapsed={forceCollapsed}
+                  />
+                ) : orchestratorContent?.type === "step-execution" ? (
+                  <RenderStepExecution
+                    content={orchestratorContent.content}
+                    hidden={hidden}
+                    is_step_repeated={is_step_repeated}
+                    is_step_failed={is_step_failed}
+                    runStatus={runStatus || ""}
+                    onToggleHide={onToggleHide}
+                  />
+                ) : orchestratorContent?.type === "final-answer" ? (
+                  <RenderFinalAnswer
+                    content={orchestratorContent.content}
+                    sessionId={sessionId}
+                    messageIdx={messageIdx}
+                  />
+                ) : messageUtils.isToolCallContent(parsedContent.text) ? (
+                  <RenderToolCall content={parsedContent.text} />
+                ) : messageUtils.isMultiModalContent(parsedContent.text) ? (
+                  normalizedMessage.metadata?.type === "browser_screenshot" ? (
+                    <RenderMultiModalBrowserStep
+                      content={parsedContent.text}
+                      onImageClick={onImageClick}
+                    />
+                  ) : (
+                    <RenderMultiModal content={parsedContent.text} />
+                  )
+                ) : messageUtils.isFunctionExecutionResult(parsedContent.text) ? (
+                  <RenderToolResult content={parsedContent.text} />
+                ) : (
+                  <div className="break-words">
+                    {normalizedMessage.metadata?.type === "file" ? (
+                      <RenderFile message={normalizedMessage} />
+                    ) : isLogMessage ? (
+                      <div
+                        className={`flex items-start gap-2 ${onLogMessageClick ? "cursor-pointer hover:opacity-80 transition-opacity" : ""}`}
+                        onClick={onLogMessageClick ? (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (onLogMessageClick) {
+                            onLogMessageClick();
+                          }
+                        } : undefined}
+                        title={onLogMessageClick ? "点击查看详细日志" : undefined}
+                      >
+                        <Settings size={18}
+                          className="text-purple-500 flex-shrink-0 mt-0.5"
+                          onClick={onLogMessageClick ? (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onLogMessageClick();
+                          } : undefined} />
+
+                        <div
+                          className="flex-1"
+                          onClick={onLogMessageClick ? (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onLogMessageClick();
+                          } : undefined}
+                        >
+                          <div style={{ pointerEvents: onLogMessageClick ? 'none' : 'auto' }}>
+                            <MarkdownRenderer
+                              content={(() => {
+                                let contentText: string;
+                                if (typeof parsedContent.text === "string") {
+                                  contentText = parsedContent.text;
+                                } else if (Array.isArray(parsedContent.text)) {
+                                  // Filter out non-string items and join
+                                  const textArray = parsedContent.text as any[];
+                                  const stringItems = textArray.filter(
+                                    (item: any): item is string => typeof item === "string"
+                                  );
+                                  contentText = stringItems.join("\n");
+                                } else {
+                                  contentText = String(parsedContent.text || "");
+                                }
+                                // Ensure log message content ends with double newline to separate from chunk message
+                                // Markdown requires double newline for paragraph break
+                                if (contentText && !contentText.endsWith("\n\n")) {
+                                  if (contentText.endsWith("\n")) {
+                                    contentText += "\n";
+                                  } else {
+                                    contentText += "\n\n";
+                                  }
+                                }
+                                return contentText;
+                              })()}
+                              indented={
+                                !orchestratorContent ||
+                                orchestratorContent.type !== "default"
+                              }
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <MarkdownRenderer
+                        content={(() => {
+                          if (typeof parsedContent.text === "string") {
+                            return parsedContent.text;
+                          } else if (Array.isArray(parsedContent.text)) {
+                            // Filter out non-string items and join
+                            const textArray = parsedContent.text as any[];
+                            const stringItems = textArray.filter(
+                              (item: any): item is string => typeof item === "string"
+                            );
+                            return stringItems.join("\n");
+                          } else {
+                            return String(parsedContent.text || "");
+                          }
+                        })()}
+                        indented={
+                          !orchestratorContent ||
+                          orchestratorContent.type !== "default"
+                        }
                       />
-                    </svg>
+                    )}
+                  </div>
+                )
+                )}
+              {/* Copy button for non-user messages (excluding plan messages) */}
+              {!isPlanMsg && (
+                <div className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={handleNonUserCopy}
+                    className="p-1.5 text-secondary hover:text-primary transition-colors rounded hover:bg-secondary/50"
+                    title={isCopied ? "Copied!" : "Copy message"}
+                  >
+                    {isCopied ? (
+                      <Check size={14} />
+                    ) : (
+                      <Copy size={14} />
+                    )}
                   </button>
                 </div>
-              )} */}
-
-          </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
