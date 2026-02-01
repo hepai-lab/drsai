@@ -894,8 +894,8 @@ async def run_worker(agent_factory: callable, **kwargs):
     # uvicorn.run(self.app, host=self.app.host, port=self.app.port)
     # 创建uvicorn配置和服务实例
     config = uvicorn.Config(
-        app, 
-        host=worker_args.host, 
+        app,
+        host=worker_args.host,
         port=worker_args.port
     )
     server = uvicorn.Server(config)
