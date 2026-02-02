@@ -1,11 +1,7 @@
 from drsai.modules.components.model_client import HepAIChatCompletionClient, ModelFamily
 from drsai.modules.components.memory import RAGFlowMemory, RAGFlowMemoryConfig
 from drsai.modules.components.model_context import (
-    BufferedChatCompletionContext,
-    UnboundedChatCompletionContext,
-    HeadAndTailChatCompletionContext,
     TokenLimitedChatCompletionContext,
-    DrSaiChatCompletionContext
     )
 from drsai.modules.baseagent import DrSaiAgent
 from drsai import run_backend, run_console, run_worker
@@ -40,7 +36,16 @@ async def create_agent() -> DrSaiAgent:
             RAGFLOW_URL=RAGFLOW_URL,
             RAGFLOW_TOKEN=RAGFLOW_TOKEN,
             dataset_ids=["28e3ad8499b311f0a65d0242ac120006"],
-            keyword=True,
+            document_ids = None,
+            page = 1,
+            page_size = 30,
+            similarity_threshold = 0.2,
+            vector_similarity_weight = 0.3,
+            top_k = 1024,
+            rerank_id = None,
+            keyword = True,
+            highlight = False,
+            cross_languages=["en", "zh"],
         )
     )
 
