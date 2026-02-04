@@ -567,7 +567,7 @@ if __name__ == "__main__":
     import asyncio
 
     base_url = "https://ragflow.ihep.ac.cn"
-    api_key = "ragflow-I1OWE2N2U0NTE5ODExZjA5NzgyMDI0Mm" 
+    api_key = "ragflow-*********" 
     ragflow_memory = RAGFlowMemoryManager(base_url, api_key)
 
     # list the datasets

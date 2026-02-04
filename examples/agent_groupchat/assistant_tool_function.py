@@ -75,7 +75,7 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册的名称
-            agent_name="weather_agent",
+            agent_name="ToolAgent",
             # 智能体如果注册到HepAI智能体平台需要的权限设置
             permission='groups: drsai; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             # 智能体给前端展示的描述信息
@@ -92,12 +92,13 @@ if __name__ == "__main__":
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务端口
-            port = 42810, 
+            port = 42815, 
             # 是否注册到HepAI智能体平台
             no_register=False,
             # 是否注册为OpenWebUI的pipeline
             enable_openwebui_pipeline=True, 
             # 使用backend/frontend的api_key
-            use_api_key_mode = "backend",
+            # use_api_key_mode = "backend",
+            # use_api_key_mode = "frontend",
         )
     )

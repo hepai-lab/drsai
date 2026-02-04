@@ -18,20 +18,30 @@ class TaskStatus(str, Enum):
 class LongTaskManager:
     """A task management system for long-running tasks using multiprocessing queues and threads."""
 
-    def __init__(self, time_limit: int = 10, task_limit: int = 2):
+    def __init__(self, time_limit: int = 10, task_limit: int = 2, cleanup_interval: int = 5):
         """Initialize the task manager.
-        
+
         Args:
             time_limit: Time limit in seconds for async operations to wait before returning IN_PROGRESS status
+            task_limit: Maximum number of concurrent tasks to track
+            cleanup_interval: Interval in seconds for auto-cleanup of completed tasks (default: 5s)
         """
         self.task_queue = multiprocessing.Queue()
         self.result_queue = multiprocessing.Queue()
         self.time_limit = time_limit
-        self.thread = threading.Thread(target=self.queue_monitor_worker, daemon=True)
-        self.thread.start()
+        self.cleanup_interval = cleanup_interval
+
+        # Start queue monitor thread
+        self.queue_monitor_thread = threading.Thread(target=self.queue_monitor_worker, daemon=True)
+        self.queue_monitor_thread.start()
+
+        # Start auto-cleanup thread
+        self.cleanup_thread = threading.Thread(target=self.auto_cleanup_worker, daemon=True)
+        self.cleanup_thread.start()
 
         self.task_id_to_task = {}
         self.task_id_to_result = {}
+        self.task_id_to_result_cleanup = []
 
         self._task_limit = task_limit  # Maximum number of tasks to track
     
@@ -47,10 +57,41 @@ class LongTaskManager:
                     task_id = result_json.get('id')
                     if task_id:
                         self.task_id_to_result[task_id] = result_json
+                        self.task_id_to_result_cleanup.append(task_id)
                         print(f"[Queue Monitor] Updated result for task {task_id}: {result_json['status']}")
             except Exception as e:
                 print(f"[Queue Monitor] Error: {e}")
             time.sleep(0.5)  # Check every 0.5 seconds
+
+    def auto_cleanup_worker(self) -> None:
+        """
+        Background thread to automatically cleanup completed tasks (DONE or ERROR status).
+        Monitors task_id_to_result and cleans up tasks at regular intervals.
+        """
+        while True:
+            try:
+                time.sleep(self.cleanup_interval)
+
+                # Get a snapshot of task_ids to avoid dictionary size change during iteration
+                # task_ids_to_check = list(self.task_id_to_result.keys())
+                task_id_to_result_cleanup = self.task_id_to_result_cleanup.copy()
+
+                for task_id in task_id_to_result_cleanup:
+                    # Check if task still exists in results (might have been cleaned up by another call)
+                    if task_id in self.task_id_to_result:
+                        result = self.task_id_to_result[task_id]
+                        status = result.get('status')
+
+                        # Auto-cleanup completed or failed tasks
+                        if status in [TaskStatus.DONE.value, TaskStatus.ERROR.value]:
+                            print(f"[Auto-Cleanup] Task {task_id} has status {status}, cleaning up...")
+                            # # Remove from result dict
+                            self.task_id_to_result_cleanup.remove(task_id)
+                            # Cleanup task resources
+                            self.cleanup_task(task_id)
+
+            except Exception as e:
+                print(f"[Auto-Cleanup] Error: {e}")
     
     def cleanup_task(self, task_id: str) -> None:
         """

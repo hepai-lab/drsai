@@ -12,7 +12,7 @@ from typing import (
     Self,
     Mapping,
     )
-import os, json, sys
+import os, json, sys, uuid
 import asyncio
 from pydantic import BaseModel
 from pathlib import Path
@@ -33,6 +33,9 @@ from drsai.modules.baseagent import (
     )
 from drsai.modules.baseagent.drsaiagent import DrSaiAgentConfig
 from drsai.modules.baseagent import CodeExecutorAgent, CodeExecutor
+from drsai.modules.components import (
+    ComponentModel,
+)
 from drsai.modules.components.model_client import ChatCompletionClient
 from drsai.modules.components.model_context import (
     ChatCompletionContext,
@@ -71,9 +74,13 @@ from drsai.modules.managers.database import DatabaseManager
 from .skill_loader import SkillLoader
 from .operater_funs import get_operator_funcs
 from .todo_manager import TodoManager
+from drsai.configs.constant import RUNS_DIR
 
 class SkillAgentConfig(DrSaiAgentConfig):
     skills_dir: str
+    executor: ComponentModel
+    work_dir: str
+    sub_agent_config: Dict | None
 
 class SkillAgent(DrSaiAgent):
 
@@ -136,6 +143,9 @@ class SkillAgent(DrSaiAgent):
             user_id=user_id,
         )
         self._work_dir = work_dir
+        if not self._work_dir:
+            self._work_dir = Path(RUNS_DIR) / self._thread_id / self._user_id
+            self._work_dir.mkdir(parents=True, exist_ok=True)
 
         # basic tools
         self._basic_funcs: List[Callable] = get_operator_funcs(work_dir)
@@ -386,8 +396,9 @@ detailed instructions and access to resources.""",
                     models_usage=model_result.usage,
                 )
                 logger.debug(tool_call_msg)
+                tools_name = [tool.name for tool in model_result.content] 
                 yield AgentLogEvent(
-                    title="I'm calling a tool.",
+                    title="I am using tools: " + " ".join(tools_name),
                     source=agent_name, 
                     content=str(tool_call_msg.content), 
                     content_type="tools")

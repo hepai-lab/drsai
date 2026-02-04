@@ -14,6 +14,7 @@ from autogen_agentchat.messages import (
     MultiModalMessage,
     StopMessage,
     TextMessage,
+    ToolCallSummaryMessage,
     ToolCallExecutionEvent,
     ToolCallRequestEvent,
 )
@@ -262,7 +263,13 @@ class WebSocketManager:
                         run.state = compress_state(state_dict)
                         self.db_manager.upsert(run)
                     continue
-
+                
+                if isinstance(message, ToolCallSummaryMessage):
+                    message = TextMessage(
+                        content=message.content,
+                        source=message.source,
+                    )
+                    
                 # do not show internal messages
                 if (
                     hasattr(message, "metadata")
