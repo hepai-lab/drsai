@@ -13,12 +13,10 @@ import {
 } from "antd";
 import type { RcFile, UploadProps } from "antd/es/upload/interface";
 import {
-  Bot,
   BotIcon,
   FileTextIcon,
   PaperclipIcon,
-  PlusIcon,
-  SparklesIcon,
+  PlusIcon
 } from "lucide-react";
 import * as React from "react";
 import { appContext } from "../../../../hooks/provider";
