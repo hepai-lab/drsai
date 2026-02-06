@@ -13,7 +13,7 @@ async def create_agent() -> DrSaiAgent:
 
     # Create model client
     model_client = HepAIChatCompletionClient(
-        model="deepseek-ai/deepseek-v3-1",
+        model="deepseek-ai/deepseek-v3.2",
         base_url="https://aiapi.ihep.ac.cn/apiv2",
         api_key=os.getenv('HEPAI_API_KEY'),
         model_info={
@@ -44,29 +44,29 @@ async def create_agent() -> DrSaiAgent:
 
 if __name__ == "__main__":
     
-    asyncio.run(
-        run_console(
-            agent_factory=create_agent, 
-            task="-5+20=?"
-        )
-    )
-
     # asyncio.run(
-    #     run_worker(
-    #         # 智能体注册信息
-    #         agent_name="Calculate_Assistant",
-    #         author = "xiongdb@ihep.ac.cn",
-    #         permission='groups: drsai, payg, ddf_free; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
-    #         description = "一个简单计算器助手",
-    #         version = "0.1.0",
-    #         logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
-    #         # 智能体实体
+    #     run_console(
     #         agent_factory=create_agent, 
-    #         # 后端服务配置
-    #         port = 42816, 
-    #         no_register=False,
-    #         enable_openwebui_pipeline=True, 
-    #         history_mode = "backend",
-    #         # use_api_key_mode = "backend",
+    #         task="-5+20=?"
     #     )
     # )
+
+    asyncio.run(
+        run_worker(
+            # 智能体注册信息
+            agent_name="Calculate_Assistant",
+            author = "xiongdb@ihep.ac.cn",
+            permission='groups: drsai, payg, ddf_free; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
+            description = "一个简单计算器助手",
+            version = "0.1.0",
+            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            # 智能体实体
+            agent_factory=create_agent, 
+            # 后端服务配置
+            port = 42816, 
+            no_register=False,
+            enable_openwebui_pipeline=True, 
+            history_mode = "backend",
+            # use_api_key_mode = "backend",
+        )
+    )

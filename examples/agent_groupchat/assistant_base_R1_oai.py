@@ -95,7 +95,7 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册的名称
-            agent_name="R1_test",
+            agent_name="weather_agent",
             # 智能体如果注册到HepAI智能体平台需要的权限设置
             permission='groups: drsai; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             # 智能体给前端展示的描述信息

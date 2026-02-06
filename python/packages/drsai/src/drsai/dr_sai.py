@@ -220,13 +220,13 @@ class DrSai:
                     for participant in agent._participants:
                         if hasattr(participant, "_model_client"):
                             participant._model_client._client.api_key = api_key
-            if hasattr(agent, "_thread_id") and agent._thread_id is None:
+            if hasattr(agent, "_thread_id"):
                 agent._thread_id = thread_id
                 if hasattr(agent, "_participants"):
                     for participant in agent._participants:
                         if hasattr(participant, "_thread_id"):
                             participant._thread_id = thread_id
-            if hasattr(agent, "_user_id") and agent._user_id is None:
+            if hasattr(agent, "_user_id"):
                 agent._user_id = user_id
                 if hasattr(agent, "_participants"):
                     for participant in agent._participants:

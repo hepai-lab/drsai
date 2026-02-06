@@ -21,6 +21,7 @@ from drsai.modules.managers.messages import (
     FilesEvent,
     Image,
     )
+from drsai.modules.managers.database import DatabaseManager
 from drsai.modules.baseagent import (
     DrSaiAgent, 
     CreateResult,
@@ -273,7 +274,12 @@ class TaskAgent(DrSaiAgent):
                 pass
 
 # 创建一个工厂函数，用于并发访问时确保后端使用的Agent实例是隔离的。
-async def create_agent() -> TaskAgent:
+async def create_agent(
+        api_key: str|None = None, 
+        thread_id: str|None = None, 
+        user_id: str|None = None, 
+        db_manager: DatabaseManager|None = None,
+) -> TaskAgent:
 
     model_client = HepAIChatCompletionClient(
         model="deepseek-ai/deepseek-v3.2",
@@ -286,7 +292,10 @@ async def create_agent() -> TaskAgent:
         description="一个高能物理BESIII实验分析软件BOSS8的一个问答助手",
         model_client=model_client,
         model_client_stream=True,
-        model_context=BufferedChatCompletionContext(buffer_size = 20) # 限制最多20条消息
+        model_context=BufferedChatCompletionContext(buffer_size = 20), # 限制最多20条消息,
+        thread_id=thread_id,
+        db_manager=db_manager,
+        user_id=user_id,
     )
 
     return assistant_agent

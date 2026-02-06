@@ -237,8 +237,9 @@ async def retrieve_chunks(
 if __name__ == "__main__":
     # 查询 dataset_id: 28e3ad8499b311f0a65d0242ac120006，问题是"BOSS8 使用的C++版本"
     chunks = asyncio.run(retrieve_chunks(
-        question="BOSS8 使用的C++版本",
-        dataset_ids=["28e3ad8499b311f0a65d0242ac120006"],
+        question="合肥的报销标准",
+        dataset_ids=["70722df8519011f08a170242ac120006"],
+        document_ids = ["85bfcf5cc4f011f0ab140242ac120006"],
         page=1,
         page_size=10,
         similarity_threshold=0.2,

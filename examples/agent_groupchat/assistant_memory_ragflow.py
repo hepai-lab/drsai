@@ -15,7 +15,7 @@ async def create_agent() -> DrSaiAgent:
 
     # Create model client
     model_client = HepAIChatCompletionClient(
-        model="deepseek-ai/deepseek-v3-1",
+        model="deepseek-ai/deepseek-v3.2",
         base_url="https://aiapi.ihep.ac.cn/apiv2",
         api_key=os.getenv('HEPAI_API_KEY'),
         model_info={
@@ -35,8 +35,8 @@ async def create_agent() -> DrSaiAgent:
         RAGFlowMemoryConfig(
             RAGFLOW_URL=RAGFLOW_URL,
             RAGFLOW_TOKEN=RAGFLOW_TOKEN,
-            dataset_ids=["28e3ad8499b311f0a65d0242ac120006"],
-            document_ids = None,
+            dataset_ids=["70722df8519011f08a170242ac120006"],
+            document_ids = ["85bfcf5cc4f011f0ab140242ac120006"],
             page = 1,
             page_size = 30,
             similarity_threshold = 0.2,

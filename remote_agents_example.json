@@ -1,15 +1,15 @@
 [
     {
         "mode": "remote",
-        "name": "your_Agent",
-        "url": "http://*********/apiv2",
+        "name": "Calculate_Assistant",
+        "url": "http://192.168.32.148:42816/apiv2",
         "apiKey": "sk-****",
-        "description": "******.",
+        "description": "一个简单计算器助手",
         "version": "0.1.0",
-        "author": "***6@ihep.ac.cn",
+        "author": "xiongdb@ihep.ac.cn",
         "logo": "https://aiapi.ihep.ac.cn/apiv2/files/file-61518e9f7e8f45049739d7ae58abe35a/preview",
-        "owner": "***6@ihep.ac.cn",
-        "id": "1hxiubhysdijih23456",
-        "examples": ["Search arXiv for the latest papers on computer use agents","检索arXiv上关于高能物理人工智能智能体的最新进展"]
+        "owner": "xiongdb@ihep.ac.cn",
+        "id": "da246051-9970-4793-bf12-d03b94c107fe",
+        "examples": ["1+1=?"]
     }
 ]
