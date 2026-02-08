@@ -9,6 +9,8 @@ from typing import (
     AsyncGenerator,
     Mapping,
     )
+from loguru import logger
+import traceback
 from dataclasses import dataclass, field
 from fastapi import FastAPI
 import uvicorn, asyncio
@@ -40,7 +42,9 @@ async def start_console(
         task: str,
         agent_factory: callable = None, 
         agent: ChatAgent|Team = None, 
-        **kwargs) -> Union[None, TaskResult]:
+        init_kwargs: Dict = {},
+        close_kwargs: Dict = {},
+        ) -> Union[None, TaskResult]:
     """
     启动aotugen原生多智能体运行方式和多智能体逻辑
     args:
@@ -49,21 +53,29 @@ async def start_console(
         agent: AssistantAgent|BaseGroupChat, 已创建的AssistantAgent/BaseGroupChat实例
         **kwargs: 其他参数
     """
+    try:
+        if agent is None:
+            agent: ChatAgent|Team = (
+                await agent_factory() 
+                if asyncio.iscoroutinefunction(agent_factory)
+                else agent_factory()
+            )
+        if hasattr(agent, "lazy_init"):
+            await agent.lazy_init(**init_kwargs)
+        stream = agent._model_client_stream if not isinstance(agent, Team) else agent._participants[0]._model_client_stream
+        if stream:
+            await Console(agent.run_stream(task=task))
+            return 
+        else:
+            result:TaskResult = await agent.run(task=task)
+            return result
+    except Exception as e:
+        logger.error(f"Error in a_drsai_ui_completions: {e}")
+        traceback.print_exc()
+    finally:
+        if hasattr(agent, "close"):
+            await agent.close(**close_kwargs)
 
-    if agent is None:
-        agent: ChatAgent|Team = (
-            await agent_factory() 
-            if asyncio.iscoroutinefunction(agent_factory)
-            else agent_factory()
-        )
-
-    stream = agent._model_client_stream if not isinstance(agent, Team) else agent._participants[0]._model_client_stream
-    if stream:
-        await Console(agent.run_stream(task=task))
-        return 
-    else:
-        result:TaskResult = await agent.run(task=task)
-        return result
 
 async def run_console(agent_factory: callable, task: str, **kwargs) -> Union[None, TaskResult]:
     '''
@@ -344,6 +356,7 @@ async def run_worker(agent_factory: callable, **kwargs):
         use_api_key_mode: str = "frontend",  # api key的使用模式，可选值：frontend、backend 默认frontend， 调试模式下建议设置为backend
         enable_pipeline: bool = False,  # 是否启动openwebui pipelines
         join_topics: List[str] = [],  # 是否为智能体添加默认的join_topics
+        close_kwargs: 
     '''
     model_args_obj: DrSaiModelConfig = DrSaiModelConfig
     worker_args_obj: DrSaiWorkerConfig = DrSaiWorkerConfig
@@ -420,6 +433,7 @@ async def run_worker(agent_factory: callable, **kwargs):
     if join_topics is not None:
         worker_args._metadata.update({"join_topics": join_topics})
     
+    close_kwargs: dict[str, Any] = kwargs.pop("close_kwargs", {})
 
     print(model_args)
     print()
@@ -489,5 +503,8 @@ async def run_worker(agent_factory: callable, **kwargs):
     finally:
         # 关闭数据库连接
         await db_manager.close()
+        for agent in model.drsai.agent_instance:
+            if hasattr(agent, "close"):
+                await agent.close(**close_kwargs)
 
 
