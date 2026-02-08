@@ -1,0 +1,163 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.2.1",
+    "lastTouchedAt": "2026-02-08T03:11:00.067Z"
+  },
+  "wizard": {
+    "lastRunAt": "2026-02-08T03:11:00.063Z",
+    "lastRunVersion": "2026.2.1",
+    "lastRunCommand": "onboard",
+    "lastRunMode": "local"
+  },
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "custom-1": {
+        "baseUrl": "https://aiapi.ihep.ac.cn/apiv2/anthropic",
+        "apiKey": "sk-***",
+        "auth": "api-key",
+        "api": "anthropic-messages",
+        "authHeader": true,
+        "models": [
+          {
+            "id": "anthropic/claude-sonnet-4-5",
+            "name": "claude-sonnet-4-5",
+            "api": "anthropic-messages",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 15,
+              "output": 0,
+              "cacheRead": 2,
+              "cacheWrite": 10
+            },
+            "contextWindow": 100000,
+            "maxTokens": 8192,
+            "compat": {
+              "maxTokensField": "max_tokens"
+            }
+          },
+          {
+            "id": "anthropic/claude-opus-4-5-20251101-thinking",
+            "name": "claude-opus-4-5-20251101-thinking",
+            "api": "anthropic-messages",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 15,
+              "output": 0,
+              "cacheRead": 2,
+              "cacheWrite": 10
+            },
+            "contextWindow": 100000,
+            "maxTokens": 8192,
+            "compat": {
+              "maxTokensField": "max_tokens"
+            }
+          }
+        ]
+      },
+      "custom-2": {
+        "baseUrl": "https://aiapi.ihep.ac.cn/apiv2",
+        "apiKey": "sk-***",
+        "api": "openai-completions",
+        "authHeader": true,
+        "models": [
+          {
+            "id": "openai/gpt-4.1",
+            "name": "gpt-4.1",
+            "api": "openai-completions",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 15,
+              "output": 60,
+              "cacheRead": 2,
+              "cacheWrite": 10
+            },
+            "contextWindow": 200000,
+            "maxTokens": 8192
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "custom-1/anthropic/claude-sonnet-4-5"
+      },
+      "models": {
+        "custom-1/claude-opus-4-5-20251101-thinking": {
+          "alias": "custom-1"
+        },
+        "custom-1/anthropic/claude-sonnet-4-5": {
+          "alias": "custom-1"
+        },
+        "custom-2/openai/gpt-4.1": {
+          "alias": "custom-2"
+        },
+        "custom/anthropic/claude-sonnet-4-5": {}
+      },
+      "workspace": "/home/xiongdb/.openclaw/workspace",
+      "compaction": {
+        "mode": "safeguard"
+      },
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
+      }
+    }
+  },
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto"
+  },
+  "hooks": {
+    "internal": {
+      "enabled": true,
+      "entries": {
+        "session-memory": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "loopback",
+    "auth": {
+      "mode": "password",
+      "password": "***"
+    },
+    "tailscale": {
+      "mode": "serve",
+      "resetOnExit": false
+    },
+    "remote": {
+      "url": "ws://127.0.0.1:18789"
+    },
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": true
+        }
+      }
+    }
+  },
+  "skills": {
+    "install": {
+      "nodeManager": "npm"
+    }
+  }
+}
