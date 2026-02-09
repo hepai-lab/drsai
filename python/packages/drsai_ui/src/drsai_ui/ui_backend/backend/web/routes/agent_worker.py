@@ -251,6 +251,29 @@ async def remove_remote_agent(
         raise HTTPException(status_code=500, detail=str(e)) from e
     
 
+@router.get("/user_default_agents/list")
+async def user_default_agents(user_id: str, db=Depends(get_db)) -> Dict:
+    '''
+    获取drsai ui默认的智能体列表
+    '''
+    try:
+        # 刷新进入UserAgents
+        response = db.get(UserAgents, filters={"user_id": user_id})
+        if response.status and response.data:
+            pass
+        else:
+            agents_list = []
+            # 获取默认的远程智能体
+            agents_list.extend(get_default_agent_mode_config(user_id=user_id))
+            user_agents = UserAgents(
+                user_id=user_id,
+                agents=agents_list
+            )
+        db.upsert(user_agents)
+        return {"status": True, "message": "Get user's default agents successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
 # TODO: 所有智能体使用统一的数据格式传入统一的接口-为所有类型智能体提供统一的增删改查
 @router.get("/user_agents/list")
 async def get_user_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
@@ -317,8 +340,8 @@ async def get_user_agents(user_id: str, authorization: str = Header(...), is_ref
     try:
         agents_list = []
 
-        # 获取默认的远程智能体
-        agents_list.extend(get_default_agent_mode_config(user_id=user_id))
+        # # 获取默认的远程智能体
+        # agents_list.extend(get_default_agent_mode_config(user_id=user_id))
 
         # 获取用户的DDF智能体
         agents = await get_ddf_agents(user_id = user_id, authorization = authorization, is_refresh = is_refresh, db=db)
