@@ -3,6 +3,7 @@
 import * as React from "react";
 import { navigate } from "gatsby";
 import { appContext } from "../hooks/provider";
+import { agentWorkerAPI } from "../components/views/api";
 
 
 const AuthPage = () => {
@@ -26,8 +27,18 @@ const AuthPage = () => {
         email: username,
         username: username,
       });
-      // 跳转到主页
-      navigate("/");
+
+      // 登录成功后立即初始化用户默认智能体列表（在所有接口之前）
+      agentWorkerAPI.getUserDefaultAgents(username)
+        .then(() => {
+          // 初始化完成后跳转到主页
+          navigate("/");
+        })
+        .catch((error) => {
+          console.error("Failed to initialize user default agents:", error);
+          // 即使失败也跳转到主页，避免阻塞用户
+          navigate("/");
+        });
     } else {
       // 没有参数，跳转到登录
       navigate("/sso-login");

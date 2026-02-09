@@ -260,8 +260,10 @@ async def user_default_agents(user_id: str, db=Depends(get_db)) -> Dict:
         # 刷新进入UserAgents
         response = db.get(UserAgents, filters={"user_id": user_id})
         if response.status and response.data:
-            pass
+            # 用户已存在，直接返回成功
+            return {"status": True, "message": "Get user's default agents successfully"}
         else:
+            # 用户不存在，创建默认智能体列表
             agents_list = []
             # 获取默认的远程智能体
             agents_list.extend(get_default_agent_mode_config(user_id=user_id))

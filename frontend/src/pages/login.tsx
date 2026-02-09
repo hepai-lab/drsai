@@ -3,7 +3,7 @@ import { Tabs, Form, Input, Button, message, Card } from "antd";
 import { UserOutlined, LockOutlined } from "@ant-design/icons";
 import { navigate } from "gatsby";
 import { appContext } from "../hooks/provider";
-import { authAPI } from "../components/views/api";
+import { authAPI, agentWorkerAPI } from "../components/views/api";
 
 const { TabPane } = Tabs;
 
@@ -121,6 +121,16 @@ const LoginPage: React.FC = () => {
                     email: values.username,
                     username: values.username,
                 });
+
+                // 清除之前的agent选择，确保新用户登录后使用默认agent
+                localStorage.removeItem("drsai-mode-config");
+                // 登录成功后立即初始化用户默认智能体列表（在所有接口之前）
+                try {
+                    await agentWorkerAPI.getUserDefaultAgents(values.username);
+                } catch (error) {
+                    console.error("Failed to initialize user default agents:", error);
+                    // 即使失败也继续，避免阻塞用户登录
+                }
 
                 message.success("登录成功！");
                 window.location.href = "/";

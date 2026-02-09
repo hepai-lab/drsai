@@ -745,6 +745,19 @@ export class AgentWorkerAPI {
             throw new Error(data.message || "Failed to update user agent");
         return data;
     }
+
+    async getUserDefaultAgents(userId: string): Promise<any> {
+        const url = `${this.getBaseUrl()}/agentworker/user_default_agents/list?user_id=${encodeURIComponent(userId)}`;
+        const response = await fetch(url, {
+            headers: {
+                "Content-Type": "application/json",
+            },
+        });
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.message || "Failed to fetch user default agents");
+        return data;
+    }
 }
 
 export const agentWorkerAPI = new AgentWorkerAPI();
