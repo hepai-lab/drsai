@@ -151,6 +151,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         memory_function: Callable | None = None,
         # allow_reply_function: bool = False,
         reply_function: Callable | None = None,
+        file_save_dir: str | None = None,
         db_manager: DatabaseManager | None = None,
         thread_id: str | None = None,
         user_id: str | None = None,
@@ -278,6 +279,9 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         # custom memory function in call_llm
         self._memory_function: Callable = memory_function
        
+        # File save
+        self._file_save_dir = file_save_dir or FILE_DIR
+
         # For state
         self.is_paused = False
         self._paused = asyncio.Event()
@@ -352,8 +356,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                         for file in attached_files:
                             download_file_from_url_or_base64(
                                 file_info = file, 
-                                save_path = f"{FILE_DIR}/{self._user_id}/{self._thread_id}/{file['name']}")
-
+                                save_path = f"{self._file_save_dir}/{self._user_id}/{self._thread_id}/{file['name']}")
                     yield msg
                 else:
                     raise ValueError(f"Invalid message type in sequence: {type(msg)}")

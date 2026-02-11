@@ -260,8 +260,7 @@ async def user_default_agents(user_id: str, db=Depends(get_db)) -> Dict:
         # 刷新进入UserAgents
         response = db.get(UserAgents, filters={"user_id": user_id})
         if response.status and response.data:
-            # 用户已存在，直接返回成功
-            return {"status": True, "message": "Get user's default agents successfully"}
+            pass
         else:
             # 用户不存在，创建默认智能体列表
             agents_list = []
@@ -271,7 +270,7 @@ async def user_default_agents(user_id: str, db=Depends(get_db)) -> Dict:
                 user_id=user_id,
                 agents=agents_list
             )
-        db.upsert(user_agents)
+            db.upsert(user_agents)
         return {"status": True, "message": "Get user's default agents successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
