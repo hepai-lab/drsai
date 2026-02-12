@@ -296,8 +296,11 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             DEFAULT_FILE_DIR: Path = self._db_manager.schema_manager.base_dir / "files"
             if not DEFAULT_FILE_DIR.exists():
                 DEFAULT_FILE_DIR.mkdir(parents=True)
-            FILE_DIR = str(DEFAULT_FILE_DIR)
-        self._file_save_dir = file_save_dir or FILE_DIR
+            file_dir = str(DEFAULT_FILE_DIR)
+        else:
+            # Use the imported FILE_DIR constant when db_manager is None
+            file_dir = FILE_DIR
+        self._file_save_dir = file_save_dir or file_dir
 
         # custom arguments for _reply_function
         self._user_params: Dict[str, Any] = {}
