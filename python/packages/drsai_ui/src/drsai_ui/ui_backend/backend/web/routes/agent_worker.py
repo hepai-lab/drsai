@@ -342,7 +342,7 @@ async def get_user_agents(user_id: str, authorization: str = Header(...), is_ref
         agents_list = []
 
         # # 获取默认的远程智能体
-        # agents_list.extend(get_default_agent_mode_config(user_id=user_id))
+        agents_list.extend(get_default_agent_mode_config(user_id=user_id))
 
         # 获取用户的DDF智能体
         agents = await get_ddf_agents(user_id = user_id, authorization = authorization, is_refresh = is_refresh, db=db)
