@@ -89,6 +89,7 @@ from drsai.modules.managers.messages.agent_messages import(
 from drsai.modules.components.task_manager.base_task_system import TaskStatus
 from drsai.utils.utils import download_file_from_url_or_base64
 from drsai.configs.constant import FILE_DIR, DEFAULT_USERNAME
+from pathlib import Path
 
 class DrSaiAgentConfig(BaseModel):
     """The declarative configuration for the assistant agent."""
@@ -279,8 +280,6 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         # custom memory function in call_llm
         self._memory_function: Callable = memory_function
        
-        # File save
-        self._file_save_dir = file_save_dir or FILE_DIR
 
         # For state
         self.is_paused = False
@@ -291,6 +290,17 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         self._thread_id: str = thread_id or str(uuid.uuid4())
         self._user_id: str = user_id or DEFAULT_USERNAME
         self._db_manager: DatabaseManager = db_manager
+
+        # File save
+        if self._db_manager:
+            DEFAULT_FILE_DIR: Path = self._db_manager.schema_manager.base_dir / "files"
+            if not DEFAULT_FILE_DIR.exists():
+                DEFAULT_FILE_DIR.mkdir(parents=True)
+            file_dir = str(DEFAULT_FILE_DIR)
+        else:
+            # Use the imported FILE_DIR constant when db_manager is None
+            file_dir = FILE_DIR
+        self._file_save_dir = file_save_dir or file_dir
 
         # custom arguments for _reply_function
         self._user_params: Dict[str, Any] = {}
