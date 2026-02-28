@@ -5,7 +5,7 @@ from drsai.modules.components import ComponentBase, Component
 
 class SkillLoaderConfig(BaseModel):
     """Configuration for SkillLoader."""
-    skills_dir: str
+    skills_dir: str | list[str]
 
 class SkillLoader(Component[SkillLoaderConfig], ComponentBase[BaseModel]):
     """
@@ -39,14 +39,13 @@ class SkillLoader(Component[SkillLoaderConfig], ComponentBase[BaseModel]):
     """
 
     component_config_schema = SkillLoaderConfig
-    component_provider_override = "drsai.modules.agents.skills_agent.skill_loader.SkillLoader"
+    component_provider_override = "drsai.modules.components.skills.SkillLoader"
     component_type =  "skill_loader"
 
-    def __init__(self, skills_dir: str):
-        skills_dir_p = self.safe_path(skills_dir)
-        self.skills_dir = skills_dir_p
+    def __init__(self, skills_dir: str | list[str],):
+
         self.skills = {}
-        self.load_skills()
+        self.add_skills_by_dir(skills_dir=skills_dir)
 
     def safe_path(self, path: str) -> Path:
         """Make sure path is safe and exists."""
@@ -96,17 +95,17 @@ class SkillLoader(Component[SkillLoaderConfig], ComponentBase[BaseModel]):
             "dir": path.parent,
         }
 
-    def load_skills(self):
+    def load_skills(self, skills_dir: Path):
         """
         Scan skills directory and load all valid SKILL.md files.
 
         Only loads metadata at startup - body is loaded on-demand.
         This keeps the initial context lean.
         """
-        if not self.skills_dir.exists():
+        if not skills_dir.exists():
             return
 
-        for skill_dir in self.skills_dir.iterdir():
+        for skill_dir in skills_dir.iterdir():
             if not skill_dir.is_dir():
                 continue
 
@@ -117,6 +116,19 @@ class SkillLoader(Component[SkillLoaderConfig], ComponentBase[BaseModel]):
             skill = self.parse_skill_md(skill_md)
             if skill:
                 self.skills[skill["name"]] = skill
+
+    def add_skills_by_dir(self, skills_dir: str | list[str]):
+        """
+        add skills from a directory
+        """
+        if isinstance(skills_dir, str):
+            skills_dirs = [skills_dir]
+        else:
+            skills_dirs = skills_dir
+        
+        for skills_dir in skills_dirs:
+            skills_dir_p = self.safe_path(skills_dir)
+            self.load_skills(skills_dir=skills_dir_p)
 
     def get_descriptions(self) -> str:
         """
