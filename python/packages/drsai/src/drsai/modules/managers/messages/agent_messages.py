@@ -79,7 +79,7 @@ class Send_level(str, Enum):
     
 class AgentLogEvent(BaseAgentEvent):
     """An event signaling a text output chunk from a model client in streaming mode."""
-    title: str
+    title: str 
     content: str|List[FunctionCall|FunctionExecutionResult] = ""
     content_type: str|None = None
     """The type of content, such as web search results, etc."""

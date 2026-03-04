@@ -176,7 +176,7 @@ const ChatInput = React.forwardRef<
 
     React.useEffect(() => {
       if (!isInputDisabled && textAreaRef.current) {
-        textAreaRef.current.focus();
+        // textAreaRef.current.focus();
       }
     }, [isInputDisabled]);
 

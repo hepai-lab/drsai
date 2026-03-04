@@ -41,7 +41,6 @@ export const useProgressTracking = (currentRun: Run | null) => {
     if (lastPlanMessage && typeof lastPlanMessage.config.content === "string") {
       try {
         const content = JSON.parse(lastPlanMessage.config.content);
-        console.log("content 2026-01-26", content);
         if (messageUtils.isPlanMessage(lastPlanMessage.config.metadata)) {
           setCurrentPlan({
             task: content.task,
