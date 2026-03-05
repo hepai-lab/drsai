@@ -26,7 +26,7 @@ class Tools:
                     "drsai",
                     "--live-stream",
                     "python",
-                    "examples/oai_client/MCP_tools/mcp_server.py"
+                    "examples/agent_groupchat/MCP_tools/mcp_server.py"
                     ],
             }
             

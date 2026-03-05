@@ -2,7 +2,12 @@ from drsai.modules.components.tool import (
     ToolSchema,
     ParametersSchema,
     )
-
+from drsai.modules.baseagent import (
+    # DockerCommandLineCodeExecutor,
+    LocalCommandLineCodeExecutor,
+)
+from pathlib import Path
+import venv
 def get_agent_skills_tool(descriptions: str, strict: bool = False,) -> ToolSchema:
     """Get the skills' tools available to this agent."""
     
@@ -93,3 +98,13 @@ def get_subagent_tools(sub_agents: list[str], description: str, strict: bool = F
         strict=strict,
     )
     return tool_schema
+
+
+def create_local_venv(work_dir: str|Path) -> LocalCommandLineCodeExecutor:
+    work_dir = Path(work_dir)
+    work_dir.mkdir(exist_ok=True)
+    venv_dir = Path(work_dir) / ".venv"
+    venv_builder = venv.EnvBuilder(with_pip=True)
+    venv_builder.create(venv_dir)
+    venv_context = venv_builder.ensure_directories(venv_dir)
+    return LocalCommandLineCodeExecutor(work_dir=work_dir, virtual_env_context=venv_context)

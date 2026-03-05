@@ -2,14 +2,14 @@ from pathlib import Path
 import subprocess
 
 
-def get_operator_funcs(worker_dir: str|Path )->list[callable]:
+def get_operator_funcs(worker_dir: str|Path, only_in_workspace: bool = True )->list[callable]:
 
     WORKDIR = Path(worker_dir)
 
     def safe_path(p: str) -> Path:
         """Ensure path stays within workspace."""
         path = (WORKDIR / p).resolve()
-        if not path.is_relative_to(WORKDIR):
+        if only_in_workspace and not path.is_relative_to(WORKDIR):
             raise ValueError(f"Path escapes workspace: {p}")
         return path
 

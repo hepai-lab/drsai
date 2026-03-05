@@ -13,7 +13,7 @@ from typing import (
     Mapping,
     )
 import os, json, sys, uuid
-import asyncio
+import asyncio, traceback
 from pydantic import BaseModel
 from pathlib import Path
 from loguru import logger
@@ -33,12 +33,14 @@ from drsai.modules.baseagent import (
     )
 from drsai.modules.baseagent.drsaiagent import DrSaiAgentConfig
 from drsai.modules.baseagent import CodeExecutorAgent, CodeExecutor
+from ..drsai_worker_agent import HepAIWorkerAgent
 from drsai.modules.components import (
     ComponentModel,
 )
 from drsai.modules.components.model_client import ChatCompletionClient
 from drsai.modules.components.model_context import (
     ChatCompletionContext,
+    DrSaiChatCompletionContext,
 )
 from drsai.modules.components.memory import Memory
 from drsai.modules.components.tool import (
@@ -47,6 +49,9 @@ from drsai.modules.components.tool import (
     Workbench,
     ToolSchema,
     ParametersSchema,
+    StdioServerParams,
+    SseServerParams,
+    mcp_server_tools
     )
 from drsai.modules.managers.messages import (
     BaseAgentEvent,
@@ -71,7 +76,7 @@ from drsai.modules.managers.messages import (
 )
 from drsai.modules.managers.database import DatabaseManager
 from drsai.configs.constant import RUNS_DIR
-from drsai.modules.agents.skills_agent import (
+from .managers import (
     UserProfileManager,
     TodoManager,
     get_operator_funcs,
@@ -81,14 +86,17 @@ from .managers.get_managers_tools import (
     get_agent_skills_tool,
     get_subagent_tools,
     get_todo_manager_tool,
+    create_local_venv,
 )
 
 class DrSaiAssistantConfig(DrSaiAgentConfig):
     skills_dir: Optional[str | List[str]]
     executor: ComponentModel
     work_dir: str
+    only_in_workspace: bool
     sub_agent_config: Dict | None
     max_turn_count: int
+    
 
 class DrSaiAssistant(DrSaiAgent):
     """
@@ -133,10 +141,10 @@ class DrSaiAssistant(DrSaiAgent):
         user_id: str | None = None,
         # skills and executor
         skills_dir: Optional[str | List[str]] = None,
-        skills_loader: SkillLoader | None = None,
         work_dir: str | None = None,
+        only_in_workspace: bool = True,
         executor: CodeExecutor | None = None,
-        sub_agent_config: Dict | None = None,
+        sub_agent_config: Dict = {},
         max_turn_count: int = 20,
     ):
         super().__init__(
@@ -163,6 +171,8 @@ class DrSaiAssistant(DrSaiAgent):
             user_id=user_id,
         )
 
+        self._developer_system_message = system_message
+
         # === workspace for assistant ===
         if not work_dir:
             if self._db_manager:
@@ -171,7 +181,7 @@ class DrSaiAssistant(DrSaiAgent):
             else:
                 self._work_dir = Path(RUNS_DIR) / self._user_id
         else:
-            self._work_dir = Path(work_dir)
+            self._work_dir = Path(work_dir) / self._user_id
         if not self._work_dir.exists():
             self._work_dir.mkdir(parents=True)
 
@@ -180,61 +190,29 @@ class DrSaiAssistant(DrSaiAgent):
             agent_name=self._name,
             work_dir=self._work_dir,
             user_id=self._user_id,
+            thread_id=self._thread_id,
         )
-        # self.user_config_tools = [self._user_profile_manager.get_update_user_profile_tool()]
-        self.update_user_config_tools = [self._user_profile_manager.get_user_config_tool()]
-        # 获取agent描述、用户画像并更新系统消息
-        user_context = self._user_profile_manager.get_agent_system_prompt()
-        if user_context and system_message:
-            # 合并系统消息和用户上下文
-            enhanced_system_message = f"""{system_message}
-
-{user_context}
-"""
-            self._system_messages = [SystemMessage(content=enhanced_system_message)]
-
+        self._update_user_config_tools = [self._user_profile_manager.get_user_config_tool()]
+        
         # === basic tools ===
-        self._basic_funcs: List[Callable] = get_operator_funcs(work_dir)
+        self._only_in_workspace = only_in_workspace
+        self._basic_funcs: List[Callable] = get_operator_funcs(work_dir, only_in_workspace=self._only_in_workspace)
         self._basic_funcs_names = [func.__name__ for func in self._basic_funcs]
         for func in self._basic_funcs:
             self._tools.append(FunctionTool(func, description=func.__doc__))
-        self._workbench._tools = self._tools
 
         # === skills ===
-        self._skills_loader: Optional[SkillLoader] = None
-        if skills_loader:
-            self._skills_loader = skills_loader
-        else:
-            # 首先尝试从用户的skills目录加载
-            user_skills_dir = self._user_profile_manager.skills_dir
-            if user_skills_dir.exists() and list(user_skills_dir.glob("*/SKILL.md")):
-                self._skills_loader = SkillLoader(skills_dir=str(user_skills_dir))
-            # 再从指定的skills目录加载
-            if skills_dir:
-                if not self._skills_loader:
-                    self._skills_loader = SkillLoader(skills_dir=skills_dir)
-                else:
-                    self._skills_loader.add_skills_by_dir(skills_dir=skills_dir)
-        # 获取技能描述
-        if self._skills_loader.skills:
-            self._agent_skills_tools = [get_agent_skills_tool(descriptions=self._skills_loader.get_descriptions())]
-        else:
-            self._agent_skills_tools = []
+        self._skills_dir = skills_dir
+        self._agent_skills_tools = []
 
         # === executor ===
         self._executor = executor
         
         # === sub_agent_config ===
         self._sub_agent_config = sub_agent_config
-        if self._sub_agent_config:
-            self._subagent_descriptions = self.get_subagent_descriptions()
-            self._subagent_tools = [
-                get_subagent_tools(
-                    sub_agents=list(self._sub_agent_config.keys()),
-                    description=self._subagent_descriptions)]
-        else:
-            self._subagent_descriptions = ""
-            self._subagent_tools = []
+        self._user_sub_agents = {}
+        self._user_sub_agents.update(sub_agent_config)
+        self._subagent_tools = []
 
         # === todo manager ===
         self._todo_manager = TodoManager()
@@ -245,18 +223,119 @@ class DrSaiAssistant(DrSaiAgent):
         # self._task_planner = None
         # self._memory_manager = None
 
-        # === manager ToolSchema ===
-        self.manager_tools = self.update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools
-
         # max_turn_count
         self._max_turn_count = max_turn_count
 
-    def get_subagent_descriptions(self) -> str:
+        # config file mtime cache for lazy reloading
+        self._config_mtimes: Dict[str, float] = {}
+        self._cached_tools_prompt: str = ""
+        self._cached_skills_loader = None
+
+    def _file_changed(self, path: Path) -> bool:
+        """Check if a file/dir has been modified since last check, updating the cached mtime."""
+        try:
+            mtime = path.stat().st_mtime
+        except FileNotFoundError:
+            return True
+        key = str(path)
+        if self._config_mtimes.get(key) != mtime:
+            self._config_mtimes[key] = mtime
+            return True
+        return False
+
+    def update_system_prompt(self, additional_prompt: str = "") -> str:
+        """获取agent描述、用户画像并更新系统消息"""
+        user_context = self._user_profile_manager.get_agent_system_prompt()
+        enhanced_system_message = self._developer_system_message
+        if user_context and self._developer_system_message:
+            # 合并系统消息和用户上下文
+            enhanced_system_message = f"""{self._developer_system_message}
+
+{user_context}
+
+"""
+        enhanced_system_message += additional_prompt
+        self._system_messages = [SystemMessage(content=enhanced_system_message)]
+    
+    def update_user_skills(self) -> SkillLoader:
+        """加载/更新用户技能"""
+        skills_loader = None
+        # 首先尝试从用户的skills目录加载
+        user_skills_dir = self._user_profile_manager.skills_dir
+        if user_skills_dir.exists() and list(user_skills_dir.glob("*/SKILL.md")):
+            skills_loader = SkillLoader(skills_dir=str(user_skills_dir))
+        # 再从指定的skills目录加载
+        if self._skills_dir:
+            if not skills_loader:
+                skills_loader = SkillLoader(skills_dir=self._skills_dir)
+            else:
+                skills_loader.add_skills_by_dir(skills_dir=self._skills_dir)
+        # 获取技能描述
+        if skills_loader.skills:
+            self._agent_skills_tools = [get_agent_skills_tool(descriptions=skills_loader.get_descriptions())]
+        else:
+            self._agent_skills_tools = []
+        return skills_loader
+    
+    async def update_user_tools(self) -> str:
+        """将用户的自定义配置工具接入到agent中"""
+        user_mcp_tools = []
+        user_local_tools = []
+        tools_config = self._user_profile_manager.load_user_tools_config()
+        for tool in tools_config:
+            if tool.get("type") == "mcp-std":
+                config = tool.get("config")
+                if "command" in config and "args" in config:
+                    std_mcp_tools = await mcp_server_tools(StdioServerParams(
+                        command=config["command"],
+                        args=config["args"]
+                    ))
+                    user_mcp_tools.extend(std_mcp_tools)
+            elif tool.get("type") == "mcp-sse":
+                config = tool.get("config")
+                if "url" in config:
+                    sse_mcp_tools = await mcp_server_tools(SseServerParams(
+                        url=config["url"],
+                        headers = config.get("headers"),
+                        timeout=config.get("timeout", 20),
+                        sse_read_timeout=config.get("sse_read_timeout", 300),
+                    ))
+                    user_mcp_tools.extend(sse_mcp_tools)
+            else:
+                user_local_tools.append(str(config)+"\n")
+
+        self._workbench._tools = self._tools + user_mcp_tools
+        self._tools_names = [tool.name for tool in self._workbench._tools ]
+
+        if user_local_tools:
+            user_local_tools_prompt = "The info about the user's local function is as follows. When needed, you can execute it on the command line using `run_bash` tool\n\n"
+            user_local_tools_prompt += "\n".join(user_local_tools)
+        else:
+            user_local_tools_prompt = ""
+        return user_local_tools_prompt
+    
+    def get_subagent_descriptions(self, sub_agent_config: dict) -> str:
         """Generate agent type descriptions for system prompt."""
         return "\n".join(
             f"- {name}: {cfg['description']}"
-            for name, cfg in self._sub_agent_config.items()
+            for name, cfg in sub_agent_config.items()
         )
+    
+    def update_user_subagents(self):
+        """Update user subagents."""
+        subagents_config = self._user_profile_manager.load_subagents_config()
+        self._user_sub_agents.update(subagents_config)
+
+        if self._user_sub_agents:
+            self._sub_agent_descriptions = self.get_subagent_descriptions(sub_agent_config = self._user_sub_agents)
+            self._subagent_tools = [
+                get_subagent_tools(
+                    sub_agents=list(self._user_sub_agents.keys()),
+                    description=self._sub_agent_descriptions)]
+        else:
+            self._sub_agent_descriptions = ""
+            self._subagent_tools = []
+
     async def on_messages_stream(
         self, messages: Sequence[BaseChatMessage], cancellation_token: CancellationToken
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
@@ -277,6 +356,36 @@ class DrSaiAssistant(DrSaiAgent):
 
         inner_messages: List[BaseAgentEvent | BaseChatMessage] = []
         try:
+            # load/update tools only if TOOLS_CONFIG.json changed
+            tools_changed = self._file_changed(self._user_profile_manager.tools_config_path)
+            if tools_changed:
+                self._cached_tools_prompt = await self.update_user_tools()
+
+            # update system prompt if AGENTS.md or tools prompt changed
+            if tools_changed or self._file_changed(self._user_profile_manager.agents_md):
+                self.update_system_prompt(additional_prompt=self._cached_tools_prompt)
+
+            # load/update skills only if skills directories changed
+            skills_changed = self._file_changed(self._user_profile_manager.skills_dir)
+            if self._skills_dir:
+                extra_dirs = self._skills_dir if isinstance(self._skills_dir, list) else [self._skills_dir]
+                skills_changed = skills_changed or any(self._file_changed(Path(d)) for d in extra_dirs)
+            if skills_changed or self._cached_skills_loader is None:
+                self._cached_skills_loader = self.update_user_skills()
+            skills_loader = self._cached_skills_loader
+
+            # load/update subagents only if SUBAGENT_CONFIG.json changed
+            if self._file_changed(self._user_profile_manager.subagent_config_path):
+                self.update_user_subagents()
+
+            # manager ToolSchema
+            manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools
+
+            # count the number of tools
+            if isinstance(self._model_context, DrSaiChatCompletionContext):
+                self._model_context._tool_schema = await self._workbench.list_tools()
+                self._model_context._tool_schema += manager_tools
+
             # Gather all relevant state here
             agent_name = self._user_profile_manager.agent_name
             model_context = self._model_context
@@ -285,7 +394,6 @@ class DrSaiAssistant(DrSaiAgent):
             workbench = self._workbench
             handoff_tools = self._handoff_tools
             handoffs = self._handoffs
-            manager_tools = self.manager_tools
             model_client = self._model_client
             model_client_stream = self._model_client_stream
             reflect_on_tool_use = self._reflect_on_tool_use
@@ -351,31 +459,21 @@ class DrSaiAssistant(DrSaiAgent):
                             format_string = format_string,
                             inner_messages = inner_messages,
                             output_content_type = output_content_type,)
-                    
+                    if self._user_profile_manager.first_time_setup:
+                        yield TextMessage(
+                            content="\n\n(●'◡'●)如果您需要调整我的名称、我对您的称呼、您涉及领域，请告诉我，我来调整(If you need to adjust my name, how I address you, or your field of expertise, please let me know, and I will make the changes).",
+                            source=agent_name,
+                            metadata={"internal": "no"},
+                        )
+                        self._user_profile_manager.first_time_setup = False
                     yield reponse
-                    return
+                    break
 
                 # Otherwise, we have function calls
                 assert isinstance(model_result.content, list) and all(
                     isinstance(item, FunctionCall) for item in model_result.content
                 )
                 
-                # Log ToolCallRequestEvent
-                tool_call_msg = ToolCallRequestEvent(
-                    content=model_result.content,
-                    source=agent_name,
-                    models_usage=model_result.usage,
-                )
-                logger.debug(tool_call_msg)
-                tools_name = [tool.name for tool in model_result.content] 
-                yield AgentLogEvent(
-                    title="I am using tools: " + " ".join(tools_name),
-                    source=agent_name, 
-                    content=str(tool_call_msg.content), 
-                    content_type="tools")
-                inner_messages.append(tool_call_msg)
-                yield tool_call_msg
-
                 # handle tool call
                 for i in range(len(model_result.content)):
                     argument = json.loads(model_result.content[i].arguments)
@@ -386,7 +484,10 @@ class DrSaiAssistant(DrSaiAgent):
                             agent_name = agent_name, 
                             model_context = model_context):
                             if isinstance(message, StopMessage):
-                                yield message
+                                yield Response(
+                                    chat_message=message,
+                                    inner_messages=inner_messages,
+                                )
                                 return
                             yield message
                     elif tool_name == "Task":
@@ -400,18 +501,26 @@ class DrSaiAssistant(DrSaiAgent):
                             output_content_type = output_content_type,
                         ):
                             if isinstance(message, StopMessage):
-                                yield message
+                                yield Response(
+                                    chat_message=message,
+                                    inner_messages=inner_messages,
+                                )
                                 return
                             yield message
                     elif tool_name == "Skill":
-                        skill_content = self._skills_loader.run_skill(argument["skill"])
+                        skill_content = skills_loader.run_skill(argument["skill"])
                         await model_context.add_message(
                             UserMessage(
                                 content=f"Skill for {argument["skill"]}: {skill_content}",
                                 source="user",
                             )
                         )
-                    elif tool_name in self._basic_funcs_names:
+                        yield AgentLogEvent(
+                            title=f"I am reading skill: {argument["skill"]}.",
+                            source=agent_name, 
+                            content=str(argument), 
+                            content_type="tools")
+                    elif tool_name in self._tools_names:
                         async for message in self._process_model_result(
                             model_result=model_result,
                             inner_messages=inner_messages,
@@ -433,66 +542,76 @@ class DrSaiAssistant(DrSaiAgent):
                             if self.is_paused:
                                 raise asyncio.CancelledError()
                             if isinstance(message, Response):
-                                yield message.chat_message
-                                # repetitive addition
-                                # await model_context.add_message(
-                                #     UserMessage(
-                                #         content=message.chat_message.content,
-                                #         source="user",
-                                #     )
-                                # )
+                                yield ModelClientStreamingChunkEvent(content="<think>", source=agent_name)
+                                yield ModelClientStreamingChunkEvent(content=str(message.chat_message.content), source=agent_name)
+                                yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
                             else:
                                 yield message
                     elif tool_name == "UpdateUserConfig":
-                        self._user_profile_manager.update_user_config(**argument)
+                        update_message = self._user_profile_manager.update_user_config(**argument)
+                        await model_context.add_message(
+                            UserMessage(
+                                content=update_message,
+                                source="user",
+                            )
+                        )
+                        yield AgentLogEvent(
+                            title=f"I am updating user's config.",
+                            source=agent_name, 
+                            content=str(argument), 
+                            content_type="tools")
                     else:
                         await model_context.add_message(
                             UserMessage(
-                                content=f"Unknown tool: {argument["name"]}",
+                                content=f"Unknown tool: {model_result.content[i].name}",
                                 source="user",
                             )
                         )
 
                 turn_count += 1
-            
-            if self._user_profile_manager.first_time_setup:
-                yield TextMessage(
-                    content="\n\n(●'◡'●)如果您需要调整我的名称、我对您的称呼、您涉及领域，请告诉我，我来调整(If you need to adjust my name, how I address you, or your field of expertise, please let me know, and I will make the changes).",
-                    source=agent_name,
-                    metadata={"internal": "no"},
-                )
-                self._user_profile_manager.first_time_setup = False
+                if turn_count > self._max_turn_count:
+                    yield Response(
+                        chat_message=TextMessage(
+                            content="\n\n(●'◡'●)抱歉，已达最大的任务循环次数，触发了保护措施，请重新调整您的询问方式或者更具体的告诉您的助手应该怎么做。",
+                            source=agent_name,
+                            metadata={"internal": "no"},
+                        inner_messages=inner_messages,
+                    ))
+                    return
 
         except asyncio.CancelledError:
             # If the task is cancelled, we respond with a message.
             yield Response(
                 chat_message=TextMessage(
                     content="The task was cancelled by the user.",
-                    source=self._user_profile_manager.agent_name,
+                    source=self.name,
                     metadata={"internal": "yes"},
                 ),
                 inner_messages=inner_messages,
             )
         except Exception as e:
-            # logger.error(f"Error in {self.name}: {e}")
-            logger.exception(f"Error in {self.name}")
+            logger.error(f"Error in {self.name}: {e}")
+            logger.error(traceback.format_exc())
             # add to chat history
-            await model_context.add_message(
+            await self._model_context.add_message(
                 AssistantMessage(
                     content=f"An error occurred while executing the task: {e}",
-                    source=self._user_profile_manager.agent_name
+                    source=self.name
                 )
             )
             yield Response(
                 chat_message=TextMessage(
                     content=f"An error occurred while executing the task: {e}",
-                    source=self._user_profile_manager.agent_name,
+                    source=self.name,
                     metadata={"internal": "no"},
                 ),
                 inner_messages=inner_messages,
             )
         finally:
-            pass
+            # save/update the conversation to {worker_dir}/memories
+            if isinstance(self._model_context, DrSaiChatCompletionContext):
+                current_session_memory = self._model_context._history_messages
+                self._user_profile_manager.save_session_memory(current_session_memory)
 
     async def _call_llm(
         self,
@@ -510,7 +629,11 @@ class DrSaiAssistant(DrSaiAgent):
         """
         Perform a model inference and yield either streaming chunk events or the final CreateResult.
         """
-        all_messages = await model_context.get_messages()
+
+        if isinstance(model_client, DrSaiChatCompletionContext):
+            all_messages = await model_context.get_messages(cancellation_token = cancellation_token)
+        else:
+            all_messages = await model_context.get_messages()
         
         llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
 
@@ -579,10 +702,10 @@ class DrSaiAssistant(DrSaiAgent):
     
     def get_tools_for_agent(self, agent_type: str) -> list:
         """Filter tools based on agent type."""
-        allowed = self._sub_agent_config.get(agent_type, {}).get("tools", "*")
+        allowed = self._user_sub_agents.get(agent_type, {}).get("tools", "*")
         if allowed == "*":
             return self._tools
-        return [t for t in self._tools if t.name in allowed]
+        return [t for t in self._workbench._tools if t.name in allowed]
 
     async def handle_subagent_repsonse(
         self,
@@ -600,56 +723,84 @@ class DrSaiAssistant(DrSaiAgent):
         The types of sub agent:
         1. code_executor
         2. normal drsai agent
+        3. worker agent
         """
         try:
-            description, prompt, agent_type = argument["description"], argument["prompt"], argument["agent_type"]
+            description, prompt, sub_agent_name = argument["description"], argument["prompt"], argument["agent_type"]
 
             # get sub agent system prompt
-            sub_system = f"""You are a {agent_type} subagent at {self._work_dir}.
+            sub_system = f"""You are a {sub_agent_name} subagent at {self._work_dir}.
 
-    {self._sub_agent_config[agent_type].get("prompt", "")}
+    {self._user_sub_agents[sub_agent_name].get("prompt", "")}
 
     Complete the task and return a clear, concise summary."""
             
             # construct task messages
             task_messages: Sequence[BaseChatMessage] = []
-            task_messages.append(TextMessage(content=f"Current task: \n\n{prompt}", source="user"))
             llm_messages = await model_context.get_messages()
+            # TODO: compress the background messages using  LLM
             backgroud_message = "Below are the historical chat records between the user and various intelligent assistants, which can be referenced when executing the current task.\n\n"
             for llm_message in llm_messages:
                 if isinstance(llm_message, UserMessage) or isinstance(llm_message, AssistantMessage):
                     backgroud_message += f"{llm_message.source}: {llm_message.content}\n\n"
             task_messages.append(TextMessage(content=backgroud_message, source="user"))
+            task_messages.append(TextMessage(content=f"Current task: \n\n{prompt}", source="user"))
 
+            # Get agent
+            if sub_agent_name in self._user_sub_agents:
+                sub_agent = self._user_sub_agents[sub_agent_name]
+                description=self._sub_agent_config[sub_agent_name].get("description", "")
+                sub_agent_type = sub_agent.get("type")
+                if sub_agent_type == "CodeExecutorAgent":
+                    venv_path = sub_agent.get("venv_path")
+                    if venv_path:
+                        executor = create_local_venv(work_dir=venv_path)
+                    else:
+                        executor = self._local_executor
+                    subagent = CodeExecutorAgent(
+                        name=sub_agent_name,
+                        code_executor=executor,
+                        model_client_stream=model_client_stream,
+                    )
+                elif sub_agent_type == "DrSaiAgent":
+                    tools = self.get_tools_for_agent(sub_agent_name)
+                    subagent = DrSaiAgent(
+                        name=sub_agent_name,
+                        system_message=sub_system,
+                        description=description,
+                        tools=tools,
+                        model_client=model_client,
+                        model_client_stream=model_client_stream,
+                        output_content_type=output_content_type,)
+                elif sub_agent_type == "HepAIWorkerAgent":
+                    model_remote_configs = sub_agent.get("model_remote_configs")
+                    url = model_remote_configs.get("url", "https://aiapi.ihep.ac.cn/apiv2")
+                    name = model_remote_configs.get("name")
+                    subagent = HepAIWorkerAgent(
+                        name=sub_agent_name,
+                        description=description,
+                        model_remote_configs={
+                            "url": url,
+                            "api_key": self._model_client._client.api_key,
+                            "name": name
+                        },
+                        chat_id=self._thread_id,
+                        run_info={"name": self._user_profile_manager.user_name, "email": self._user_id},
+
+                    )
+
+            
+            # Process task
             #  TODO: handle turn count fro multi-turn task.
             # turn_count = 0
             # while turn_count < self._max_turn_count:
             #     turn_count += 1
-        
-            if agent_type == "coder_executor":
-                subagent = CodeExecutorAgent(
-                    name=agent_type,
-                    code_executor=self._executor,
-                    model_client_stream=model_client_stream,
-                )
-            else:
-                tools = self.get_tools_for_agent(agent_type)
-                description=self._sub_agent_config[agent_type].get("description", "")
-                subagent = DrSaiAgent(
-                    name=agent_type,
-                    system_message=sub_system,
-                    description=description,
-                    tools=tools,
-                    model_client=model_client,
-                    model_client_stream=model_client_stream,
-                    output_content_type=output_content_type,)
-            
             async for message in subagent.on_messages_stream(messages=task_messages, cancellation_token=cancellation_token):
                 if isinstance(message, Response):
                     yield message.chat_message
                     await model_context.add_message(
                         UserMessage(
-                            content=message.chat_message.content,
+                            content=str(message.chat_message.content),
                             source="user",
                         )
                     )
@@ -682,10 +833,10 @@ class DrSaiAssistant(DrSaiAgent):
         try:
             todo_list = self._todo_manager.update(argument["items"])
             # send stream message
-            yield ModelClientStreamingChunkEvent(
-                content=todo_list+"\n\n",
-                source=self.name,
-            )
+            # yield ModelClientStreamingChunkEvent(
+            #     content=todo_list+"\n\n",
+            #     source=self._user_profile_manager.agent_name,
+            # )
             # add message to model_context with user source
             await model_context.add_message(
                 UserMessage(
@@ -696,13 +847,15 @@ class DrSaiAssistant(DrSaiAgent):
             # send text message to save to db in drsai ui
             yield TextMessage(
                 content=todo_list,
-                source=agent_name,
+                source=self._user_profile_manager.agent_name,
+                metadata={"interal": "no"},
             )
         except Exception as e:
             logger.exception(f"Error in {self.name}")
-            yield ModelClientStreamingChunkEvent(
+            yield TextMessage(
                 content=str(e)+"\n\n",
-                source=self.name,
+                source=self._user_profile_manager.agent_name,
+                metadata={"interal": "no"},
             )
             await model_context.add_message(
                 UserMessage(
@@ -724,75 +877,89 @@ class DrSaiAssistant(DrSaiAgent):
     # TODO: handle skills and self-learning -> # TODO: 支持动态获取skills
 
     # TODO: fixed the config
-    # def _to_config(self) -> DrSaiAssistantConfig:
-    #     """Convert the assistant agent to a declarative config."""
+    def _to_config(self) -> DrSaiAssistantConfig:
+        """Convert the assistant agent to a declarative config."""
 
-    #     return DrSaiAssistantConfig(
-    #         name=self.name,
-    #         model_client=self._model_client.dump_component(),
-    #         tools=None,  # versionchanged:: v0.5.5  Now tools are not serialized, Cause they are part of the workbench.
-    #         workbench=self._workbench.dump_component() if self._workbench else None,
-    #         handoffs=list(self._handoffs.values()) if self._handoffs else None,
-    #         model_context=self._model_context.dump_component(),
-    #         memory=[memory.dump_component() for memory in self._memory] if self._memory else None,
-    #         description=self.description,
-    #         system_message=self._system_messages[0].content
-    #         if self._system_messages and isinstance(self._system_messages[0].content, str)
-    #         else None,
-    #         model_client_stream=self._model_client_stream,
-    #         reflect_on_tool_use=self._reflect_on_tool_use,
-    #         tool_call_summary_format=self._tool_call_summary_format,
-    #         tool_call_summary_prompt=self._tool_call_summary_prompt,
-    #         structured_message_factory=self._structured_message_factory.dump_component()
-    #         if self._structured_message_factory
-    #         else None,
-    #         metadata=self._metadata,
-    #         db_manager_config=self._db_manager.dump_component(),
-    #         thread_id=self._thread_id,
-    #         user_id=self._user_id,
-    #         skills_dir=self._skills_dir,
-    #     )
+        return DrSaiAssistantConfig(
+            name=self.name,
+            model_client=self._model_client.dump_component(),
+            tools=None,  # versionchanged:: v0.5.5  Now tools are not serialized, Cause they are part of the workbench.
+            workbench=self._workbench.dump_component() if self._workbench else None,
+            handoffs=list(self._handoffs.values()) if self._handoffs else None,
+            model_context=self._model_context.dump_component(),
+            memory=[memory.dump_component() for memory in self._memory] if self._memory else None,
+            description=self.description,
+            system_message=self._system_messages[0].content
+            if self._system_messages and isinstance(self._system_messages[0].content, str)
+            else None,
+            model_client_stream=self._model_client_stream,
+            reflect_on_tool_use=self._reflect_on_tool_use,
+            tool_call_summary_format=self._tool_call_summary_format,
+            tool_call_summary_prompt=self._tool_call_summary_prompt,
+            structured_message_factory=self._structured_message_factory.dump_component()
+            if self._structured_message_factory
+            else None,
+            metadata=self._metadata,
+            # drsaiAgent specific
+            db_manager_config=self._db_manager.dump_component(),
+            thread_id=self._thread_id,
+            user_id=self._user_id,
+            # skills and executor
+            skills_dir=self.skills_dir,
+            work_dir=self._work_dir,
+            only_in_workspace=self._only_in_workspace,
+            executor=self._executor.dump_component(),
+            sub_agent_config = self._sub_agent_config,
+            max_turn_count = self._max_turn_count,
+        )
     
-    # @classmethod
-    # def _from_config(
-    #     cls, config: DrSaiAssistantConfig, 
-    #     db_manager: DatabaseManager,
-    #     memory_function: Callable = None,
-    #     reply_function: Callable = None,
-    #     **kwargs,
-    #     ) -> Self:
-    #     """Create an assistant agent from a declarative config."""
-    #     if config.structured_message_factory:
-    #         structured_message_factory = StructuredMessageFactory.load_component(config.structured_message_factory)
-    #         format_string = structured_message_factory.format_string
-    #         output_content_type = structured_message_factory.ContentModel
+    @classmethod
+    def _from_config(
+        cls, config: DrSaiAssistantConfig, 
+        db_manager: DatabaseManager,
+        memory_function: Callable = None,
+        reply_function: Callable = None,
+        **kwargs,
+        ) -> Self:
+        """Create an assistant agent from a declarative config."""
+        if config.structured_message_factory:
+            structured_message_factory = StructuredMessageFactory.load_component(config.structured_message_factory)
+            format_string = structured_message_factory.format_string
+            output_content_type = structured_message_factory.ContentModel
 
-    #     else:
-    #         format_string = None
-    #         output_content_type = None
+        else:
+            format_string = None
+            output_content_type = None
 
-    #     return cls(
-    #         name=config.name,
-    #         model_client=ChatCompletionClient.load_component(config.model_client),
-    #         workbench=Workbench.load_component(config.workbench) if config.workbench else None,
-    #         handoffs=config.handoffs,
-    #         model_context=ChatCompletionContext.load_component(config.model_context) if config.model_context else None,
-    #         tools=[BaseTool.load_component(tool) for tool in config.tools] if config.tools else None,
-    #         memory=[Memory.load_component(memory) for memory in config.memory] if config.memory else None,
-    #         description=config.description,
-    #         system_message=config.system_message,
-    #         model_client_stream=config.model_client_stream,
-    #         reflect_on_tool_use=config.reflect_on_tool_use,
-    #         tool_call_summary_format=config.tool_call_summary_format,
-    #         tool_call_summary_prompt=config.tool_call_summary_prompt,
-    #         output_content_type=output_content_type,
-    #         output_content_type_format=format_string,
-    #         metadata=config.metadata,
-    #         memory_function=memory_function,
-    #         reply_function=reply_function,
-    #         db_manager=db_manager,
-    #         thread_id=config.thread_id,
-    #         user_id=config.user_id,
-    #         skills_dir=config.skills_dir,
-    #         **kwargs,
-    #     )
+        return cls(
+            name=config.name,
+            model_client=ChatCompletionClient.load_component(config.model_client),
+            workbench=Workbench.load_component(config.workbench) if config.workbench else None,
+            handoffs=config.handoffs,
+            model_context=ChatCompletionContext.load_component(config.model_context) if config.model_context else None,
+            tools=[BaseTool.load_component(tool) for tool in config.tools] if config.tools else None,
+            memory=[Memory.load_component(memory) for memory in config.memory] if config.memory else None,
+            description=config.description,
+            system_message=config.system_message,
+            model_client_stream=config.model_client_stream,
+            reflect_on_tool_use=config.reflect_on_tool_use,
+            tool_call_summary_format=config.tool_call_summary_format,
+            tool_call_summary_prompt=config.tool_call_summary_prompt,
+            output_content_type=output_content_type,
+            output_content_type_format=format_string,
+            metadata=config.metadata,
+            # drsaiAgent specific
+            memory_function=memory_function,
+            reply_function=reply_function,
+            db_manager=db_manager,
+            thread_id=config.thread_id,
+            user_id=config.user_id,
+            # skills and executor
+            skills_dir=config.skills_dir,
+            work_dir=config.work_dir,
+            only_in_workspace=config.only_in_workspace,
+            executor=CodeExecutor.load_component(config.executor),
+            sub_agent_config = config.sub_agent_config,
+            max_turn_count = config.max_turn_count,
+            **kwargs,
+        )

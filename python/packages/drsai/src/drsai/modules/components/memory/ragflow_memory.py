@@ -17,6 +17,7 @@ from autogen_core.memory._base_memory import (
     UpdateContextResult,
     MemoryMimeType
     )
+import traceback
 from loguru import logger
 
 
@@ -276,7 +277,8 @@ class RAGFlowMemoryManager:
     def __init__(
             self,
             rag_flow_url: str,
-            rag_flow_token: str
+            rag_flow_token: str,
+            timeout: httpx.Timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
     ):
         self.base_url = rag_flow_url
         self.api_key = rag_flow_token
@@ -284,10 +286,11 @@ class RAGFlowMemoryManager:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+        self.timeout = timeout
 
     async def list_datasets(self) -> list[dict[str, Any]]:
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(f"{self.base_url}/api/v1/datasets", headers=self.headers)
                 return response.json()["data"]
         except:
@@ -295,9 +298,9 @@ class RAGFlowMemoryManager:
     
     async def list_documents(self, dataset_id: str) -> list[dict[str, Any]]:
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(f"{self.base_url}/api/v1/datasets/{dataset_id}/documents", headers=self.headers)
-                return response.json()["data"]
+                return response.json()["data"]["docs"]
         except:
             return []
     
@@ -338,7 +341,7 @@ class RAGFlowMemoryManager:
                 files.append(('file', (os.path.basename(abs_file_path), file_handle, 'application/octet-stream')))
             
             # Upload all files in a single request
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(url, headers=headers, files=files)
                 response.raise_for_status()
                 return response.json()
@@ -367,7 +370,7 @@ class RAGFlowMemoryManager:
         url = f"{self.base_url}/api/v1/datasets/{dataset_id}/chunks"
         
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     url, 
                     headers=self.headers, 
@@ -441,7 +444,7 @@ class RAGFlowMemoryManager:
             body["parser_config"] = parser_config
         
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.put(
                     url,
                     headers=self.headers,
@@ -508,7 +511,7 @@ class RAGFlowMemoryManager:
             body["questions"] = questions
         
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     url, 
                     headers=self.headers, 
@@ -532,14 +535,19 @@ class RAGFlowMemoryManager:
         """
         Retrieve chunks by question.
         kwargs:
-            page: int = 1
-            page_size: int = 30
+            question: str
+            dataset_ids: list[str]
+            document_ids: list[str]
+            page: int
+            page_size: int
+            similarity_threshold: float = 0.2
+            vector_similarity_weight: float = 0.3
             top_k: int = 1024
-            rerank_id: int
-            keyword: bool 
-            highlight: bool 
-            cross_languages: list[str]
-            rerank_id: int
+            rerank_id: str = "hepai/bge-reranker-v2-m3___OpenAI-API@OpenAI-API-Compatible"
+            keyword: bool
+            highlight: bool
+            cross_languages: list[str] = ["English", "Chinese"]
+            metadata_condition: dict[str, Any]
         """
         params = {
             "question": question,
@@ -552,14 +560,16 @@ class RAGFlowMemoryManager:
         try:
             if not dataset_ids and not document_ids:
                 raise
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     f"{self.base_url}/api/v1/retrieval", 
                     headers=self.headers,
                     json=params
                 )
             return response.json()["data"]
-        except:
+        except Exception as e:
+            logger.error("Error in retrieve_chunks:")
+            logger.error(traceback.format_exc())
             return {}
 if __name__ == "__main__":
 
