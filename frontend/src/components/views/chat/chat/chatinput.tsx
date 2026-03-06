@@ -760,9 +760,9 @@ const ChatInput = React.forwardRef<
                     defaultValue={""}
                     onChange={handleTextChange}
                     onKeyDown={handleKeyDown}
-                    className={`input-enhanced flex items-center w-full resize-none p-4 ${enable_upload ? "pl-14" : "pl-6"
+                    className={`input-enhanced chat-input-scrollbar-hide flex items-center w-full resize-none p-4 ${enable_upload ? "pl-14" : "pl-6"
                       } ${runStatus === "active" ? "pr-36" : "pr-28"
-                      } rounded-full transition-smooth border-2 ${darkMode === "dark"
+                      } rounded-[28px] transition-smooth border-2 ${darkMode === "dark"
                         ? "bg-[#0f0f0f] border-border-primary backdrop-blur-sm hover:bg-[#1a1a1a] focus:bg-[#1a1a1a] focus:border-accent"
                         : "bg-white/80 border-border-primary backdrop-blur-sm hover:bg-white/90 focus:bg-white focus:border-accent shadow-modern"
                       } ${isInputDisabled
@@ -771,7 +771,7 @@ const ChatInput = React.forwardRef<
                       } focus:outline-none focus:ring-2 focus:ring-accent/20`}
                     style={{
                       maxHeight: "120px",
-                      overflowY: "hidden",
+                      overflowY: "auto",
                       minHeight: "52px",
                     }}
                     placeholder={
@@ -786,7 +786,7 @@ const ChatInput = React.forwardRef<
                     disabled={isInputDisabled}
                   />
                   {/* Right button group */}
-                  <div className="absolute right-2 top-1/2 transform -translate-y-1/2 flex items-center space-x-2">
+                  <div className="absolute right-2 bottom-2 flex items-center space-x-2">
                     {/* Clear text button */}
                     {text.trim().length > 0 && !isInputDisabled && (
                       <button

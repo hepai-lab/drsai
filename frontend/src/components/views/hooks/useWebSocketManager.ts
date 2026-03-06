@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { getServerUrl } from '../../utils';
 
 interface SessionWebSocket {
@@ -12,6 +12,8 @@ type SessionWebSockets = {
 
 export const useWebSocketManager = () => {
   const [sessionSockets, setSessionSockets] = useState<SessionWebSockets>({});
+  // Ref to avoid stale closure when closing existing sockets (React setState is async)
+  const sessionSocketsRef = useRef<SessionWebSockets>({});
 
   const getBaseUrl = useCallback((url: string): string => {
     try {
@@ -31,9 +33,14 @@ export const useWebSocketManager = () => {
   }, []);
 
   const setupWebSocket = useCallback((sessionId: number, runId: string): WebSocket => {
-    // Close existing socket for this session if it exists
-    if (sessionSockets[sessionId]) {
-      sessionSockets[sessionId].socket.close();
+    // Use ref to get current socket - avoids stale closure when called rapidly (setState is async)
+    const existing = sessionSocketsRef.current[sessionId];
+    if (existing) {
+      try {
+        existing.socket.close();
+      } catch (e) {
+        console.warn("Error closing existing socket:", e);
+      }
     }
 
     const serverUrl = getServerUrl();
@@ -42,15 +49,21 @@ export const useWebSocketManager = () => {
     const wsUrl = `${wsProtocol}//${baseUrl}/api/ws/runs/${runId}`;
 
     const socket = new WebSocket(wsUrl);
+    const entry: SessionWebSocket = { socket, runId };
 
-    // Store the new socket
+    // Update ref immediately so subsequent rapid calls see the latest socket
+    sessionSocketsRef.current = {
+      ...sessionSocketsRef.current,
+      [sessionId]: entry,
+    };
+
     setSessionSockets((prev) => ({
       ...prev,
-      [sessionId]: { socket, runId },
+      [sessionId]: entry,
     }));
 
     return socket;
-  }, [sessionSockets, getBaseUrl]);
+  }, [getBaseUrl]);
 
   const getSessionSocket = useCallback((
     sessionId: number,
@@ -61,7 +74,8 @@ export const useWebSocketManager = () => {
     if (fresh_socket) {
       return setupWebSocket(sessionId, runId);
     } else {
-      const existingSocket = sessionSockets[sessionId];
+      // Use ref for up-to-date socket reference
+      const existingSocket = sessionSocketsRef.current[sessionId];
 
       if (
         existingSocket?.socket.readyState === WebSocket.OPEN &&
@@ -74,21 +88,25 @@ export const useWebSocketManager = () => {
       }
       return setupWebSocket(sessionId, runId);
     }
-  }, [sessionSockets, setupWebSocket]);
+  }, [setupWebSocket]);
 
   const closeSocket = useCallback((sessionId: number) => {
-    if (sessionSockets[sessionId]) {
-      sessionSockets[sessionId].socket.close();
-      setSessionSockets((prev) => {
-        const updated = { ...prev };
-        delete updated[sessionId];
-        return updated;
-      });
+    const existing = sessionSocketsRef.current[sessionId];
+    if (existing) {
+      try {
+        existing.socket.close();
+      } catch (e) {
+        console.warn("Error closing socket:", e);
+      }
+      const updated = { ...sessionSocketsRef.current };
+      delete updated[sessionId];
+      sessionSocketsRef.current = updated;
+      setSessionSockets(updated);
     }
-  }, [sessionSockets]);
+  }, []);
 
   const stopSession = useCallback((sessionId: number) => {
-    const ws = sessionSockets[sessionId]?.socket;
+    const ws = sessionSocketsRef.current[sessionId]?.socket;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(
         JSON.stringify({
@@ -98,12 +116,12 @@ export const useWebSocketManager = () => {
       );
       ws.close();
     }
-  }, [sessionSockets]);
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
     const closeAllSockets = () => {
-      Object.values(sessionSockets).forEach(({ socket }) => {
+      Object.values(sessionSocketsRef.current).forEach(({ socket }) => {
         try {
           if (socket.readyState === WebSocket.OPEN) {
             socket.close();
@@ -122,7 +140,7 @@ export const useWebSocketManager = () => {
       window.removeEventListener("offline", closeAllSockets);
       closeAllSockets();
     };
-  }, [sessionSockets]);
+  }, []);
 
   return {
     sessionSockets,
