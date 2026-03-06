@@ -29,6 +29,7 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
         setValue: (value: string) => void;
     }>(null);
     const [isSubmitting, setIsSubmitting] = React.useState(false);
+    const [hasInputValue, setHasInputValue] = React.useState(false);
     const { user } = React.useContext(appContext);
     const { agentInfo } = useAgentInfo(user?.email);
 
@@ -116,12 +117,16 @@ export default function NewChatView({ agent, onSubmit }: NewChatViewProps) {
                                     enable_upload={true}
                                     onExecutePlan={() => { }}
                                     sessionId={-1}
+                                    onTextChange={(text) => {
+                                        setHasInputValue(text.trim().length > 0);
+                                    }}
                                 />
                             </div>
 
                             {/* Sample Tasks */}
                             <div className="w-full">
                                 <SampleTasks
+                                    hasInputValue={hasInputValue}
                                     onSelect={(task: string) => {
                                         setTimeout(() => {
                                             if (chatInputRef.current) {

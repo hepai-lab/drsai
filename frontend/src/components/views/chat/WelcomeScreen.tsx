@@ -37,6 +37,8 @@ export default function WelcomeScreen({
     onPause,
     onExecutePlan,
 }: WelcomeScreenProps) {
+    const [hasInputValue, setHasInputValue] = React.useState(false);
+
     return (
         <div
             className="text-center w-full mx-auto px-2 sm:px-3 md:px-4"
@@ -78,10 +80,14 @@ export default function WelcomeScreen({
                     enable_upload={true}
                     onExecutePlan={onExecutePlan}
                     sessionId={sessionId}
+                    onTextChange={(text) => {
+                        setHasInputValue(text.trim().length > 0);
+                    }}
                 />
             </div>
 
             <SampleTasks
+                hasInputValue={hasInputValue}
                 onSelect={(task: string) => {
                     setTimeout(() => {
                         if (chatInputRef.current) {
