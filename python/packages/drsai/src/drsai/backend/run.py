@@ -206,7 +206,7 @@ class DrSaiWorkerConfig(HWorkerConfig):
     author: str = field(default=None, metadata={"help": "Model's author"})
     daemon: bool = field(default=False, metadata={"help": "Run as daemon"})
     type: str = field(default="agent", metadata={"help": "Worker's type"})
-    debug: bool = field(default=True, metadata={"help": "Debug mode"})
+    debug: bool = field(default=False, metadata={"help": "Debug mode"})
     _metadata: dict = field(default_factory=dict, metadata={"help": "Additional metadata for worker/model"})
 
 
@@ -219,6 +219,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             examples: List[str] = [],
             agent_config: Dict[str, Any] = {},
             defult_config_name: str|None = None,
+            close_agent_on_finish: bool = False,
             drsaiapp: DrSaiAPP = None # 传入DrSaiAPP实例
             ):
         super().__init__(config=config)
@@ -240,6 +241,8 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             "defult_config_name": defult_config_name,
             } 
         self.drsai._info = self._info
+
+        self._close_agent_on_finish = close_agent_on_finish
 
         
     @HRModel.remote_callable
@@ -302,8 +305,9 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
     async def close(self, chat_id: str) -> Dict[str, Any]:
         try:
             agent: Team|ChatAgent = self.drsai.agent_instance[chat_id]
-            await agent.close()
-            self.drsai.agent_instance.pop(chat_id, None)
+            if self._close_agent_on_finish:
+                await agent.close()
+                self.drsai.agent_instance.pop(chat_id, None)
             return {"status": True, "message": ""}
         except Exception as e:
             return {"status": False, "message": f"Close error: {e}"}
@@ -424,6 +428,8 @@ async def run_worker(agent_factory: callable, **kwargs):
     controller_address: str =  kwargs.pop("controller_address", "https://aiapi.ihep.ac.cn")
     worker_args.controller_address = controller_address
 
+    close_agent_on_finish: bool = kwargs.pop("close_agent_on_finish", False)
+
     # TODO: ADD METADATA for worker config
     _metadata: dict[str, Any] = kwargs.pop("metadata", None)
     if _metadata is not None:
@@ -452,6 +458,7 @@ async def run_worker(agent_factory: callable, **kwargs):
         examples=examples,
         agent_config = agent_config,
         defult_config_name = defult_config_name,
+        close_agent_on_finish = close_agent_on_finish,
         drsaiapp=drsaiapp)
 
     enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)

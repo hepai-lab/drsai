@@ -8,7 +8,7 @@ from typing import (
     Any,
     Self,
     Literal,
-
+    Optional
 )
 
 from autogen_core import(
@@ -16,7 +16,8 @@ from autogen_core import(
     ComponentModel
 )
 from autogen_core.tools import ( 
-    ToolSchema
+    ToolSchema,
+    ParametersSchema,
 )
 from autogen_core import CancellationToken
 from autogen_core.models import (
@@ -35,6 +36,7 @@ from drsai.modules.components.memory.ragflow_memory import RAGFlowMemoryManager
 from loguru import logger
 from datetime import datetime
 import json
+import os
 from dataclasses import asdict
 
 class LocalMesssage(BaseModel):
@@ -92,11 +94,50 @@ Additional instructions:
 Output the final result as a structured bullet-point summary.
 """
 
+def get_judgment_tool(strict: bool = False,) -> ToolSchema:
+    parameters = ParametersSchema(
+        type="object",
+        properties={
+            "be_documented": {
+                "type": "boolean",
+                "description":  "The conversation should be documented or not."
+            }
+        },
+        required=["be_documented"],
+        additionalProperties=False,
+    )
+    tool_schema = ToolSchema(
+        name="judgment_documented",
+        description=f"Determine whether the aforementioned conversation should be recorded",
+        parameters=parameters,
+        strict=strict,
+    )
+    return tool_schema
+
+SUMMARY_PROMPT_EN = """You need to analyze the following dialogue and summarize them in bullet points according to the requirements below:
+
+- What is the user's task?
+- How does the intelligent assistant: {name} respond to user questions? What tools/skills are used, and what steps are taken?
+- What errors occurred in the middle, were they corrected through feedback, how were they corrected, and what were the results of the correction?
+- What kind of reply did the intelligent assistant: {name} finally give?
+
+If the user's question is merely a greeting or an inquiry about identity, call the `judgment_documented` tool to respond with false, indicating that no record is needed.
+
+**NOTE:**
+
+- If documenting is need, do not call the `judgment_documented` tool.
+
+"""
+
 class DrSaiChatCompletionContextConfig(BaseModel):
     agent_name: str
     model_client: ComponentModel
+    user_id: str
+    thread_id: str
+    work_dir: str
     token_limit: int | None = None
     compression_prompt: str|None = None
+    summary_task_prompt: str|None = None
     rag_flow_url: str | None = None
     rag_flow_token: str | None = None
     dataset_id: str|None = None,
@@ -121,13 +162,18 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         agent_name: str,
         model_client: ChatCompletionClient,
         *,
+        user_id: str | None = None,
+        thread_id: str | None = None,
+        work_dir: str | None = None, 
         token_limit: int | None = None,
         compression_prompt: str|None = None,
+        summary_task_prompt: str|None = None,
         rag_flow_url: str | None = None,
         rag_flow_token: str | None = None,
         dataset_id: str|None = None,
         document_id: str|None = None,
-        tool_schema: List[ToolSchema] | None = None,
+        # upload_memory: bool = False,
+        tool_schema: List[ToolSchema] = [],
         initial_messages: List[LLMMessage] | None = None,
     ) -> None:
         """
@@ -137,6 +183,7 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         compression_prompt: The prompt to use for compressing the conversation.
         rag_flow_url: The url of ragflow.
         rag_flow_token: The token of ragflow.
+        // upload_memory: update memory to ragflow when add_message is called.
         dataset_id: The id of dataset for memory storage.
         document_id: The id of document for memory storage. 
         tool_schema: The schema of tools.
@@ -151,25 +198,36 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         self._token_limit = token_limit
         self._model_client = model_client
 
+        self._thread_id = thread_id
+        self._user_id = user_id
+        self._work_dir = work_dir
+
         self._compression_prompt = compression_prompt or COMPRESSION_PROMPT_EN.format(name=agent_name)
+        self._summary_task_prompt = summary_task_prompt or SUMMARY_PROMPT_EN.format(name=agent_name)
+
+        self._dataset_id = dataset_id
+        self._document_id = document_id
 
         self._rag_flow_manager = None
         if rag_flow_url is not None and rag_flow_token is not None:
             self._rag_flow_manager = RAGFlowMemoryManager(rag_flow_url, rag_flow_token)
-            if dataset_id is None or document_id is None:
-                raise ValueError("dataset_id and document_id must be provided when rag_flow_url and rag_flow_token are provided.")
-            self._dataset_id = dataset_id
-            self._document_id = document_id
-            
-        self._tool_schema = tool_schema or []
+            if dataset_id is None:
+                raise ValueError("dataset_id must be provided when rag_flow_url and rag_flow_token are provided.")
+        
+        # self._is_upload_memory = upload_memory 
+
+        self._tool_schema = tool_schema
 
         self._history_messages: list[dict] = []
+
+        self._current_messages: list[LLMMessage] = []
 
     async def add_message(
             self, 
             message: LLMMessage, 
-            important_keywords: List[str] = None,
-            questions: List[str] = None
+            # important_keywords: List[str] = None,
+            # questions: List[str] = None,
+            # document_id: str = None
             ) -> None:
         """
         Add a message to the context and store the content to ragflow memory manager.
@@ -177,14 +235,15 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         questions: If there is a given question, the embedded chunks will be based on them.
         """
 
-        if self._rag_flow_manager is not None:
-            await self._rag_flow_manager.add_chunks_to_dataset(
-                dataset_id = self._dataset_id,
-                document_id = self._document_id,
-                content = message.content,
-                important_keywords = important_keywords,
-                questions = questions)
+        # if self._rag_flow_manager is not None and self._is_upload_memory:
+        #     await self._rag_flow_manager.add_chunks_to_dataset(
+        #         dataset_id = self._dataset_id,
+        #         document_id = document_id or self._document_id,
+        #         content = message.content,
+        #         important_keywords = important_keywords,
+        #         questions = questions)
         self._messages.append(message)
+        self._current_messages.append(message)
 
         if isinstance(message, SystemMessage):
             local_messages = LocalMesssage(
@@ -298,6 +357,222 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
             # Update messages
             self._messages = messages
             return messages
+
+    async def create_new_session_document(
+        self,
+        user_id: Optional[str] = None,
+        thread_id: Optional[str] = None,
+        work_dir: Optional[str] = None,
+        ) -> str:
+        """
+        Create a temporary file named {user_id}_{thread_id}.txt in work_dir,
+        upload it to RAGFlow, then attach user_id and thread_id as meta_fields.
+
+        Returns:
+            The document_id of the newly created document.
+        """
+        if self._rag_flow_manager is None:
+            raise ValueError("RAGFlow manager is not configured.")
+
+        user_id = user_id or self._user_id
+        thread_id = thread_id or self._thread_id
+        work_dir = work_dir or self._work_dir
+
+        # 1. cerate session document
+        file_name = f"{user_id}_{thread_id}.txt"
+        file_path = os.path.join(work_dir, file_name)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(f"user_id: {user_id}\nthread_id: {thread_id}\n")
+
+        try:
+            # 2. upload to RAGFlow and get document_id
+            document_ids = await self._rag_flow_manager.add_files_to_dataset_and_parse(
+                dataset_id=self._dataset_id,
+                files_path=file_path,
+            )
+            document_id = document_ids[0]
+
+            # 3. write user_id / thread_id to document meta
+            await self._rag_flow_manager.update_document(
+                dataset_id=self._dataset_id,
+                document_id=document_id,
+                meta_fields={"user_id": user_id, "thread_id": thread_id},
+            )
+        finally:
+            # 4. delete the temporary file
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+        self._document_id = document_id
+
+        logger.info(f"Session document: {document_id} created for user_id: {user_id}, thread_id: {thread_id}")
+
+        return document_id
+
+    async def upload_conversation_to_ragflow(
+            self, 
+            current_messages: Optional[List[LLMMessage]] = None,
+            document_id: Optional[str] = None,
+            important_keywords: Optional[List[str]] = None,
+            questions: Optional[List[str]] = None
+            ) -> str:
+        """Upload the conversation to RAGFlow."""
+
+        current_messages = current_messages or self._current_messages
+        if self._rag_flow_manager:
+            for message in current_messages:
+                if isinstance(message, UserMessage):
+                    questions = [message.content]
+                    continue
+                await self._rag_flow_manager.add_chunks_to_dataset(
+                    dataset_id = self._dataset_id,
+                    document_id = document_id or self._document_id,
+                    content = message.content,
+                    important_keywords = important_keywords,
+                    questions = questions)
+
+    async def summry_conversation_to_ragflow(
+            self, 
+            current_messages: Optional[List[LLMMessage]] = None,
+            summary_task_prompt: Optional[str] = None,
+            thread_id: Optional[str] = None,
+            cancellation_token: Optional[CancellationToken] = None,
+            ) -> str:
+        """Summarize the conversation."""
+        
+        if self._rag_flow_manager is None:
+            raise ValueError("RAGFlow manager is not configured.")
+        current_messages = current_messages or self._current_messages
+        questions = [message.content for message in current_messages if message.source == "user" or message.source == "user_proxy"]
+        summry_prompt = summary_task_prompt or self._summary_task_prompt
+        judgment_tools = [get_judgment_tool()]
+        messages_str = self.format_messages_str(current_messages)
+        summry_response = await self._model_client.create(
+            messages=[
+                UserMessage(source="user", content=summry_prompt+messages_str)
+            ],
+            tools=judgment_tools,
+            cancellation_token=cancellation_token,
+        )
+        summry_content = summry_response.content
+
+        thread_id = thread_id or self._thread_id
+
+        if isinstance(summry_content, list):
+            arguments = json.loads(summry_content[0].arguments)
+            if arguments.get("be_documented", False):
+                summry_response = await self._model_client.create(
+                    messages=[
+                        UserMessage(source="user", content=summry_prompt+messages_str)
+                    ],
+                    cancellation_token=cancellation_token,
+                )
+                summry_content = summry_response.content
+            else:
+                return "The conversation is not summarized."
+            
+        await self._rag_flow_manager.add_chunks_to_dataset(
+            dataset_id = self._dataset_id,
+            document_id = self._document_id,
+            content = summry_content,
+            questions = questions,
+            important_keywords = [f"thread_id:{thread_id}"]
+            )
+        logger.info(f"Summarized conversation added to RAGFlow for thread_id: {thread_id}")
+        return str(summry_content)
+    
+    async def summry_conversation_to_memory(
+            self,
+            summary_task_prompt: Optional[str] = None
+            ) -> None:
+        """Summarize the conversation by user's prompt.
+        
+        Arguments:
+            summary_task_prompt: The user's request for summarizing the conversation.
+        
+        Note:
+            If the specific summarizing request is not provided , the default prompt will be used.
+        """
+
+        try:
+            summry_content = await self.summry_conversation_to_ragflow(summary_task_prompt=summary_task_prompt)
+            return f"Summarized conversation added to RAGFlow, The summry_content is: \n{summry_content}"
+        except Exception as e:
+            logger.error(f"Failed to summarize conversation: {e}")
+            return "Failed to summarize conversation"
+
+    def _extract_thread_id(self, chunk: Dict[str, Any]) -> Optional[str]:
+        """ extract the type of 'thread_id:...' from the chunk"""
+        for kw in chunk.get('important_keywords', []):
+            if isinstance(kw, str) and kw.startswith('thread_id:'):
+                return kw[10:]
+        return "null"
+
+    async def retreve_from_memory(
+        self, 
+        question: str,
+        document_ids: List[str] = [],
+        page_size: int = 10,
+        similarity_threshold: float = 0.2,
+        vector_similarity_weight: float = 0.3,
+        top_k: int = 1024,
+        rerank_id: str = "hepai/bge-reranker-v2-m3___OpenAI-API@OpenAI-API-Compatible",
+        keyword: bool = True,
+        cross_languages: list[str] = ["English", "Chinese"],
+        metadata_condition: Optional[Dict[str, str]] = None,
+        # user_id: Optional[str] = None,
+        # thread_id: Optional[str] = None,
+        ) -> str:
+        """Retrieve relevant information from memory. No special requirements, just input the question.
+        
+        Arguments:
+            question: The question to retrieve relevant information.
+            document_ids: The document_ids to retrieve relevant information. Default is [].
+            page_size: The number of chunks to retrieve. Default is 10.
+            similarity_threshold: The similarity threshold. Default is 0.2.
+            vector_similarity_weight: The vector similarity weight. Default is 0.3.
+            top_k: The top_k. Default is 1024.
+            rerank_id: The rerank_id. Default is "hepai/bge-reranker-v2-m3___OpenAI-API@OpenAI-API-Compatible".
+            keyword: Whether to use keyword. Default is True.
+            cross_languages: The cross_languages. Default is ["English", "Chinese"].
+        
+        Return:
+                The string of relevant information.
+        """
+        kwargs: Dict[str, Any] = dict(
+            question=question,
+            dataset_ids=[self._dataset_id],
+            similarity_threshold=similarity_threshold,
+            vector_similarity_weight=vector_similarity_weight,
+            page_size=page_size,
+            top_k=top_k,
+            rerank_id=rerank_id,
+            keyword=keyword,
+            cross_languages=cross_languages,
+        )
+
+        if document_ids:
+            kwargs["document_ids"] = document_ids
+            
+        if metadata_condition:
+            kwargs["metadata_condition"] = metadata_condition
+        else:
+            # user_id = user_id or self._user_id
+            # thread_id = thread_id or self._thread_id , "thread_id": self._thread_id
+            kwargs["metadata_condition"] = {"user_id": self._user_id}
+        
+        raw = await self._rag_flow_manager.retrieve_chunks_by_content(**kwargs)
+        chunks = raw.get('chunks', []) if raw else []
+        for chunk in chunks:
+            thread_id = self._extract_thread_id(chunk)
+            chunk["thread_id"] = thread_id
+
+        if len(chunks) > 0:
+            return "**Relevant information:** \n" + "\n".join(
+                [f'Session_ID: {chunk["thread_id"]}\n{chunk["content"]}' for chunk in chunks]
+            )
+        else:
+            return "No relevant information found."
 
     def _to_config(self) -> DrSaiChatCompletionContextConfig:
         return DrSaiChatCompletionContextConfig(

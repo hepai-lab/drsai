@@ -103,6 +103,7 @@ class UserProfileManager:
         self.agents_md = self.work_dir / "AGENTS.md"
         self.subagent_config_path = self.work_dir / "SUBAGENT_CONFIG.json"
         self.memories_dir = self.work_dir / "memories"
+        self.memories_document_ids = self.memories_dir / "document_ids.json"
         self.skills_md = self.work_dir / "SKILLS.md"
         self.skills_dir = self.work_dir / "skills"
         self.tools_md = self.work_dir / "TOOLS.md"
@@ -156,6 +157,9 @@ class UserProfileManager:
         # 创建目录
         if not self.memories_dir.exists():
             self.memories_dir.mkdir(exist_ok=True)
+        with self.memories_document_ids.open("w", encoding='utf-8') as f:
+            json.dump({}, f, indent=4, ensure_ascii=False)
+
         if not self.skills_dir.exists():
             self.skills_dir.mkdir(exist_ok=True)
 
@@ -550,6 +554,26 @@ You can update one or multiple fields at once. Only provide the fields that need
             return str(filepath)
         except Exception as e:
             logger.error(f"Failed to save session memory: {e}")
+    
+    def update_document_ids(self, thread_id: str, document_id: str):
+         
+        memories_document_ids = json.loads(self.memories_document_ids.read_text(encoding='utf-8'))
+        memories_document_ids[thread_id] = document_id
+        self.memories_document_ids.write_text(
+            json.dumps(memories_document_ids, indent=4, ensure_ascii=False),
+            encoding='utf-8'
+        )
+    
+    def get_document_ids(self, thread_id: str) -> str|None:
+        """
+        获取document_id
+        Args:
+            thread_id: 会话ID
+        Returns:
+            document_id
+        """
+        memories_document_ids = json.loads(self.memories_document_ids.read_text(encoding='utf-8'))
+        return memories_document_ids.get(thread_id)
 
     # def create_session_memory(
     #     self,

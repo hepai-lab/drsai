@@ -460,7 +460,7 @@ class RAGFlowMemoryManager:
             self,
             dataset_id: str,
             files_path: str|List[str],
-            ) -> dict[str, Any]:
+            ) -> List[str]:
         """
         add files to dataset and parse
         Args:
@@ -474,7 +474,10 @@ class RAGFlowMemoryManager:
         if result["code"] != 0:
             raise result["message"]
         document_ids = [datai["id"] for datai in result["data"]]
-        return await self.parse_files(dataset_id, document_ids)
+        result = await self.parse_files(dataset_id, document_ids)
+        if result["code"] != 0:
+            raise result["message"]
+        return document_ids
     
     async def add_chunks_to_dataset(
             self,

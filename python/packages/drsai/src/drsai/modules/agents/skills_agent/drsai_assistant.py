@@ -96,6 +96,7 @@ class DrSaiAssistantConfig(DrSaiAgentConfig):
     only_in_workspace: bool
     sub_agent_config: Dict | None
     max_turn_count: int
+    token_limit: int
     
 
 class DrSaiAssistant(DrSaiAgent):
@@ -146,6 +147,11 @@ class DrSaiAssistant(DrSaiAgent):
         executor: CodeExecutor | None = None,
         sub_agent_config: Dict = {},
         max_turn_count: int = 20,
+        token_limit: int = 50000,
+        rag_flow_url: str | None = None,
+        rag_flow_token: str | None = None,
+        memory_dataset_id: str | None = None,
+
     ):
         super().__init__(
             name=name,
@@ -201,12 +207,37 @@ class DrSaiAssistant(DrSaiAgent):
         for func in self._basic_funcs:
             self._tools.append(FunctionTool(func, description=func.__doc__))
 
+        # === model context ===
+        self._token_limit = token_limit
+        self._rag_flow_url = rag_flow_url
+        self._rag_flow_token = rag_flow_token
+        self._memory_dataset_id = memory_dataset_id
+        self._memory_document_id = self._user_profile_manager.get_document_ids(self._thread_id)
+        # memory manager
+        self._model_context = DrSaiChatCompletionContext(
+            agent_name=self._user_profile_manager.agent_name,
+            model_client=self._model_client,
+            user_id=self._user_id,
+            thread_id=self._thread_id,
+            work_dir=self._work_dir,
+            token_limit=self._token_limit,
+            rag_flow_url=self._rag_flow_url,
+            rag_flow_token=self._rag_flow_token,
+            dataset_id=self._memory_dataset_id,
+            document_id=self._memory_document_id,
+        )
+        if not self._model_context._rag_flow_manager:
+            raise ValueError("RAGFlowManager is not initialized in DrSaiChatCompletionContext")
+        funcs = [self._model_context.retreve_from_memory, self._model_context.summry_conversation_to_memory]
+        for func in funcs:
+            self._tools.append(FunctionTool(func, description=func.__doc__))
+                
         # === skills ===
         self._skills_dir = skills_dir
         self._agent_skills_tools = []
 
         # === executor ===
-        self._executor = executor
+        self._local_executor = executor
         
         # === sub_agent_config ===
         self._sub_agent_config = sub_agent_config
@@ -253,6 +284,7 @@ class DrSaiAssistant(DrSaiAgent):
 
 {user_context}
 
+Current Session_ID is {self._thread_id}
 """
         enhanced_system_message += additional_prompt
         self._system_messages = [SystemMessage(content=enhanced_system_message)]
@@ -356,6 +388,18 @@ class DrSaiAssistant(DrSaiAgent):
 
         inner_messages: List[BaseAgentEvent | BaseChatMessage] = []
         try:
+
+            # create the new session document
+            if self._memory_document_id is None:
+                self._memory_document_id = await self._model_context.create_new_session_document(
+                    user_id = self._user_id,
+                    thread_id = self._thread_id,
+                    work_dir = self._work_dir,
+                )
+                self._user_profile_manager.update_document_ids(thread_id=self._thread_id, document_id=self._memory_document_id)
+                self._model_context._document_id = self._memory_document_id
+
+
             # load/update tools only if TOOLS_CONFIG.json changed
             tools_changed = self._file_changed(self._user_profile_manager.tools_config_path)
             if tools_changed:
@@ -610,8 +654,13 @@ class DrSaiAssistant(DrSaiAgent):
         finally:
             # save/update the conversation to {worker_dir}/memories
             if isinstance(self._model_context, DrSaiChatCompletionContext):
+                if self._model_context._rag_flow_manager:
+                    await self._model_context.upload_conversation_to_ragflow()
+                self._model_context._current_messages = []
                 current_session_memory = self._model_context._history_messages
+                # TODO: use updates instead of full writes
                 self._user_profile_manager.save_session_memory(current_session_memory)
+                
 
     async def _call_llm(
         self,
@@ -630,7 +679,7 @@ class DrSaiAssistant(DrSaiAgent):
         Perform a model inference and yield either streaming chunk events or the final CreateResult.
         """
 
-        if isinstance(model_client, DrSaiChatCompletionContext):
+        if isinstance(model_context, DrSaiChatCompletionContext):
             all_messages = await model_context.get_messages(cancellation_token = cancellation_token)
         else:
             all_messages = await model_context.get_messages()
@@ -670,6 +719,85 @@ class DrSaiAssistant(DrSaiAgent):
            ):
                yield chunk
     
+    @classmethod
+    async def _process_model_result(
+        cls,
+        model_result: CreateResult,
+        inner_messages: List[BaseAgentEvent | BaseChatMessage],
+        cancellation_token: CancellationToken,
+        agent_name: str,
+        system_messages: List[SystemMessage],
+        model_context: ChatCompletionContext,
+        workbench: Workbench,
+        handoff_tools: List[BaseTool[Any, Any]],
+        handoffs: Dict[str, HandoffBase],
+        model_client: ChatCompletionClient,
+        model_client_stream: bool,
+        reflect_on_tool_use: bool,
+        tool_call_summary_format: str,
+        tool_call_summary_prompt: str | None,
+        output_content_type: type[BaseModel] | None,
+        format_string: str | None = None,
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
+        """
+        Handle final or partial responses from model_result, including tool calls, handoffs,
+        and reflection if needed.
+        """
+        
+        tool_call_msg = ToolCallRequestEvent(
+            content=model_result.content,
+            source=agent_name,
+            models_usage=model_result.usage,
+        )
+        inner_messages.append(tool_call_msg)
+        logger.debug(tool_call_msg)
+        yield tool_call_msg
+        tools_name = [tool.name for tool in model_result.content] 
+        yield AgentLogEvent(
+            title="I am using tools: " + " ".join(tools_name),
+            source=agent_name, 
+            content=str(tool_call_msg.content), 
+            content_type="tools")
+
+        # STEP 4B: Execute tool calls
+        executed_calls_and_results = await asyncio.gather(
+            *[
+                cls._execute_tool_call(
+                    tool_call=call,
+                    workbench=workbench,
+                    handoff_tools=handoff_tools,
+                    agent_name=agent_name,
+                    cancellation_token=cancellation_token,
+                )
+                for call in model_result.content
+            ]
+        )
+        # exec_results = [result for _, result in executed_calls_and_results]
+        normal_tool_calls = [(call, result) for call, result in executed_calls_and_results if call.name not in handoffs]
+        tool_call_summaries: List[str] = []
+        for tool_call, tool_call_result in normal_tool_calls:
+            tool_call_summaries.append(
+                tool_call_summary_format.format(
+                    tool_name=tool_call.name,
+                    arguments=tool_call.arguments,
+                    result=tool_call_result.content,
+                )
+            )
+        tool_call_summary = "\n".join(tool_call_summaries)
+        await model_context.add_message(
+            UserMessage(
+                content=tool_call_summary,
+                source="tool",
+            )
+        )
+        yield Response(
+                chat_message=ToolCallSummaryMessage(
+                    content=tool_call_summary,
+                    source=agent_name,
+                ),
+                inner_messages=inner_messages,
+            )
+
     async def handle_str_reponse(
             self,
             model_result: CreateResult,
@@ -908,7 +1036,7 @@ class DrSaiAssistant(DrSaiAgent):
             skills_dir=self.skills_dir,
             work_dir=self._work_dir,
             only_in_workspace=self._only_in_workspace,
-            executor=self._executor.dump_component(),
+            executor=self._local_executor.dump_component(),
             sub_agent_config = self._sub_agent_config,
             max_turn_count = self._max_turn_count,
         )
