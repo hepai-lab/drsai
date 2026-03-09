@@ -88,8 +88,8 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
   // Split code into lines
   const lines = value.split("\n");
   const isLong = lines.length > 20;
-  const displayedValue =
-    !expanded && isLong ? lines.slice(0, 20).join("\n") : value;
+  // const displayedValue =
+  const displayedValue = value;
 
   const handleExpandToggle = () => setExpanded((prev) => !prev);
 
@@ -141,8 +141,8 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
       <div
         style={{
           backgroundColor: "#000",
-          maxHeight: expanded && isLong ? "min(60vh, 500px)" : undefined,
-          overflowY: expanded && isLong ? "auto" : undefined,
+          // maxHeight: expanded && isLong ? "min(60vh, 500px)" : undefined,
+          // overflowY: expanded && isLong ? "auto" : undefined,
           borderBottomLeftRadius: "0.375rem",
           borderBottomRightRadius: "0.375rem",
         }}
@@ -154,8 +154,8 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
           customStyle={{
             backgroundColor: "#000",
             margin: 0,
-            borderBottomLeftRadius: expanded && isLong ? 0 : "0.375rem",
-            borderBottomRightRadius: expanded && isLong ? 0 : "0.375rem",
+            // borderBottomLeftRadius: expanded && isLong ? 0 : "0.375rem",
+            // borderBottomRightRadius: expanded && isLong ? 0 : "0.375rem",
             padding: "1rem",
           }}
         >
@@ -181,9 +181,9 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
                 (e.currentTarget.style.color = "var(--color-text-secondary)")
               }
             >
-              {expanded
+              {/* {expanded
                 ? "Show less"
-                : `Show ${lines.length - 20} more lines`}
+                : `Show ${lines.length - 20} more lines`} */}
             </button>
           </div>
         )}
