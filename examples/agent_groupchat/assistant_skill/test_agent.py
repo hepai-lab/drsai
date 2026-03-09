@@ -15,8 +15,7 @@ from drsai.modules.baseagent import (
 from pathlib import Path
 import venv
 import asyncio, os
-from drsai.modules.agents.skills_agent.skill_loader import SkillLoader
-from drsai.modules.agents.skills_agent.operater_funs import get_operator_funcs
+from drsai.modules.components.skills import SkillLoader
 
 def create_agent() -> SkillAgent:
     

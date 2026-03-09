@@ -2,14 +2,14 @@ from pathlib import Path
 import subprocess
 
 
-def get_operator_funcs(worker_dir: str|Path )->list[callable]:
+def get_operator_funcs(worker_dir: str|Path, only_in_workspace: bool = True )->list[callable]:
 
     WORKDIR = Path(worker_dir)
 
     def safe_path(p: str) -> Path:
         """Ensure path stays within workspace."""
         path = (WORKDIR / p).resolve()
-        if not path.is_relative_to(WORKDIR):
+        if only_in_workspace and not path.is_relative_to(WORKDIR):
             raise ValueError(f"Path escapes workspace: {p}")
         return path
 
@@ -28,18 +28,19 @@ def get_operator_funcs(worker_dir: str|Path )->list[callable]:
             return f"Error: {e}"
 
 
-    def run_read(path: str, limit: int = None) -> str:
+    def run_read(path: str, minilimit: int = None, maxlimit: int = -1) -> str:
         """
         Read file contents.
         
         Args:
             path : Path to file.
-            limit : Maximum number of lines to read.
+            minilimit : The start of  Maximum number of lines to read.
+            maxlimit : The end of  Maximum number of lines to read.
         """
         try:
             lines = safe_path(path).read_text().splitlines()
-            if limit:
-                lines = lines[:limit]
+            if minilimit:
+                lines = lines[minilimit:maxlimit]
             return "\n".join(lines)[:50000]
         except Exception as e:
             return f"Error: {e}"

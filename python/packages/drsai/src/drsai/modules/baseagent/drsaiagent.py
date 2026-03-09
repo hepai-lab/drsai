@@ -521,7 +521,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             logger.error(f"Error in {self.name}: {e}")
             logger.error(traceback.format_exc())
             # add to chat history
-            await model_context.add_message(
+            await self._model_context.add_message(
                 AssistantMessage(
                     content=f"An error occurred while executing the task: {e}",
                     source=self.name

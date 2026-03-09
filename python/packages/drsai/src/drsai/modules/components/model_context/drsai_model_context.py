@@ -1,7 +1,7 @@
 '''
 A Model_Context component that keep agent's memory using RAGFlow and LLM
 '''
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_serializer
 from typing import (
     List, 
     Dict, 
@@ -12,53 +12,44 @@ from typing import (
 )
 
 from autogen_core import(
-    ComponentBase,
     Component, 
     ComponentModel
 )
-from autogen_core.tools import (
-    BaseTool, 
-    FunctionTool, 
-    StaticWorkbench, 
-    Workbench, 
+from autogen_core.tools import ( 
     ToolSchema
 )
-from autogen_agentchat.messages import (
-    BaseAgentEvent,
-    BaseChatMessage,
-    AgentEvent,
-    ChatMessage,
-    HandoffMessage,
-    MemoryQueryEvent,
-    ModelClientStreamingChunkEvent,
-    TextMessage,
-    ToolCallExecutionEvent,
-    ToolCallRequestEvent,
-    ToolCallSummaryMessage,
-    UserInputRequestedEvent,
-    ThoughtEvent,
-    StructuredMessage,
-    StructuredMessageFactory,
-    # MultiModalMessage,
-    Image,
-)
+from autogen_core import CancellationToken
 from autogen_core.models import (
     ChatCompletionClient,
-    CreateResult,
     FunctionExecutionResultMessage,
-    FunctionExecutionResult,
     LLMMessage,
     UserMessage,
     AssistantMessage,
+    FunctionExecutionResult,
     SystemMessage,
-    RequestUsage,
-    ModelFamily,
 )
 from autogen_core.model_context import ChatCompletionContext
 
 from drsai.modules.components.memory.ragflow_memory import RAGFlowMemoryManager
 
 from loguru import logger
+from datetime import datetime
+import json
+from dataclasses import asdict
+
+class LocalMesssage(BaseModel):
+    """
+    A message in a local memory.
+    """
+    role: Literal["user", "assistant", "system"]
+    content: str
+    source: str | None = None
+    is_tool_call: bool = False # json.dumps(tool_call)->content
+    create_time: datetime = Field(default_factory=datetime.now)
+
+    @field_serializer('create_time')
+    def serialize_dt(self, dt: datetime) -> str:
+        return dt.strftime('%Y-%m-%d %H:%M:%S')
 
 COMPRESSION_PROMPT_ZN = """
 你是一个负责压缩长对话记忆的助手。现在给你一段包含用户、智能助手{name}以及其他助手多轮对话的记录。你的任务是从中提取长期有价值的信息，并输出高度压缩、结构清晰的摘要。
@@ -99,8 +90,6 @@ Additional instructions:
 - Do not infer or invent any information that is not explicitly stated.
 
 Output the final result as a structured bullet-point summary.
-
-
 """
 
 class DrSaiChatCompletionContextConfig(BaseModel):
@@ -162,7 +151,7 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         self._token_limit = token_limit
         self._model_client = model_client
 
-        self._compression_prompt = compression_prompt or COMPRESSION_PROMPT_ZN.format(name=agent_name)
+        self._compression_prompt = compression_prompt or COMPRESSION_PROMPT_EN.format(name=agent_name)
 
         self._rag_flow_manager = None
         if rag_flow_url is not None and rag_flow_token is not None:
@@ -174,7 +163,7 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
             
         self._tool_schema = tool_schema or []
 
-        self._history_messages = []
+        self._history_messages: list[dict] = []
 
     async def add_message(
             self, 
@@ -196,22 +185,67 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
                 important_keywords = important_keywords,
                 questions = questions)
         self._messages.append(message)
-        self._history_messages.append(message)
 
-    async def get_messages(self) -> List[LLMMessage]:
+        if isinstance(message, SystemMessage):
+            local_messages = LocalMesssage(
+                role="system",
+                content=message.content
+            )
+        elif isinstance(message, UserMessage):
+            local_messages = LocalMesssage(
+                role="user",
+                content=message.content,
+                name=message.source
+            )
+        elif isinstance(message, AssistantMessage):
+            content = message.content
+            if isinstance(message.content, list):
+                content = json.dumps([asdict(tool_call) for tool_call in message.content])
+            local_messages = LocalMesssage(
+                role="assistant",
+                content=content,
+                name=message.source
+            )
+        elif isinstance(message, FunctionExecutionResultMessage): 
+            tool_call_list = [tool_call.model_dump() for tool_call in message.content]
+            local_messages = LocalMesssage(
+                role="assistant",
+                content=json.dumps(tool_call_list),
+                is_tool_call=True
+            )
+        self._history_messages.append(local_messages.model_dump())
+
+    def format_messages_str(self, messages: List[LLMMessage]) -> str:
+        """Summarize current messages."""
+        content_str = "The conversations:\n\n"
+        for message in messages:
+            if isinstance(message, SystemMessage):
+                content_str += f"System: {message.content}\n"
+            elif isinstance(message, UserMessage):
+                content_str += f"{message.source}: {message.content}\n"
+            elif isinstance(message, AssistantMessage):
+                content_str += f"{message.source}: {message.content}\n"
+            elif isinstance(message, FunctionExecutionResultMessage):
+                content_str += f"Tool Calling: {str(message.content)}\n"
+        return content_str
+    
+    async def get_messages(
+            self, 
+            cancellation_token: CancellationToken = None) -> List[LLMMessage]:
         """Get at most `token_limit` tokens in recent messages. If the token limit is not
         provided, then return as many messages as the remaining token allowed by the model client."""
         messages = list(self._messages)
        
-        # TODO: 判断token>85%limit后开始压缩，保留最后一条消息用户的任务消息！！
         try:
             if self._token_limit is not None:
                 token_count = self._model_client.count_tokens(messages, tools=self._tool_schema)
                 if token_count > self._token_limit:
-                    messages.append(UserMessage(source="user", content=self._compression_prompt))
+                    messages_str = self.format_messages_str(messages)
                     compressed_response = await self._model_client.create(
-                        messages=messages,
-                        tools=self._tool_schema,
+                        messages=[
+                            UserMessage(source="user", content=self._compression_prompt+messages_str)
+                        ],
+                        cancellation_token=cancellation_token,
                     )
                     compressed_content = compressed_response.content
                     
@@ -234,6 +268,9 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
                         if user_message.source == "user":
                             remaining_messages.append(user_message)
                             break
+                    
+                    # Update messages
+                    self._messages = remaining_messages
                     return remaining_messages
                 else:
                     return messages
@@ -258,6 +295,8 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
                 # Handle the first message is a function call result message.
                 # Remove the first message from the list.
                 messages = messages[1:]
+            # Update messages
+            self._messages = messages
             return messages
 
     def _to_config(self) -> DrSaiChatCompletionContextConfig:

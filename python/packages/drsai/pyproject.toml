@@ -23,7 +23,7 @@ dependencies = [
     # drsai-core
     "autogen-agentchat==0.5.7",
     "autogen-core==0.5.7",
-    "autogen-ext[openai, mcp, docker]==0.5.7",
+    "autogen-ext[openai, mcp, docker, chromadb]==0.5.7",
     "pydantic",
     "pydantic-settings",
     "schedule",
