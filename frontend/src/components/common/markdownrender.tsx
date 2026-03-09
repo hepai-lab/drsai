@@ -17,6 +17,15 @@ interface MarkdownRendererProps {
   allowHtml?: boolean;
 }
 
+// Stable key for CodeBlock to prevent remount on parent re-renders (avoids collapse on scroll)
+function getCodeBlockKey(language: string, value: string, node?: { position?: { start?: { offset?: number } } }): string {
+  const offset = node?.position?.start?.offset;
+  if (typeof offset === "number") {
+    return `code-${language}-${offset}`;
+  }
+  return `code-${language}-${value.length}-${value.slice(0, 50).replace(/\s/g, "_")}`;
+}
+
 // Map file extensions to syntax highlighting languages
 const extensionToLanguage: Record<string, string> = {
   js: "javascript",
@@ -82,6 +91,8 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
   const displayedValue =
     !expanded && isLong ? lines.slice(0, 20).join("\n") : value;
 
+  const handleExpandToggle = () => setExpanded((prev) => !prev);
+
   return (
     <div style={{ position: "relative", marginBottom: "1rem" }}>
       <div
@@ -127,7 +138,15 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
           {copied ? "Copied!" : "Copy"}
         </button>
       </div>
-      <div style={{ backgroundColor: "#000" }}>
+      <div
+        style={{
+          backgroundColor: "#000",
+          maxHeight: expanded && isLong ? "min(60vh, 500px)" : undefined,
+          overflowY: expanded && isLong ? "auto" : undefined,
+          borderBottomLeftRadius: "0.375rem",
+          borderBottomRightRadius: "0.375rem",
+        }}
+      >
         <SyntaxHighlighter
           style={tomorrow}
           language={language || "text"}
@@ -135,17 +154,17 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
           customStyle={{
             backgroundColor: "#000",
             margin: 0,
-            borderBottomLeftRadius: "0.375rem",
-            borderBottomRightRadius: "0.375rem",
+            borderBottomLeftRadius: expanded && isLong ? 0 : "0.375rem",
+            borderBottomRightRadius: expanded && isLong ? 0 : "0.375rem",
             padding: "1rem",
           }}
         >
           {displayedValue}
         </SyntaxHighlighter>
         {isLong && (
-          <div style={{ textAlign: "center", marginTop: "0.5rem" }}>
+          <div style={{ textAlign: "center", padding: "0.5rem 0" }}>
             <button
-              onClick={() => setExpanded((prev) => !prev)}
+              onClick={handleExpandToggle}
               style={{
                 background: "transparent",
                 border: "none",
@@ -156,12 +175,10 @@ const CodeBlock: React.FC<{ language: string; value: string }> = ({
                 transition: "color 0.2s",
               }}
               onMouseEnter={(e) =>
-              (e.currentTarget.style.color =
-                "var(--color-text-primary)")
+                (e.currentTarget.style.color = "var(--color-text-primary)")
               }
               onMouseLeave={(e) =>
-              (e.currentTarget.style.color =
-                "var(--color-text-secondary)")
+                (e.currentTarget.style.color = "var(--color-text-secondary)")
               }
             >
               {expanded
@@ -424,10 +441,11 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
                       {children}
                     </p>
                   ),
-                  code: ({ children, className }) => {
+                  code: ({ node, children, className }) => {
                     const match = /language-(\w+)/.exec(className || "");
                     const language = match ? match[1] : "";
                     const inline = !language;
+                    const value = String(children).replace(/\n$/, "");
 
                     if (inline) {
                       return (
@@ -447,8 +465,9 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
 
                     return (
                       <CodeBlock
+                        key={getCodeBlockKey(language, value, node)}
                         language={language}
-                        value={String(children).replace(/\n$/, "")}
+                        value={value}
                       />
                     );
                   },
@@ -758,6 +777,8 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                     );
                     const language = match ? match[1] : "";
                     const inline = !language;
+                    const value = String(children).replace(/\n$/, "");
+
                     if (inline) {
                       return (
                         <code
@@ -780,11 +801,9 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
                     return (
                       <CodeBlock
+                        key={getCodeBlockKey(language, value, node)}
                         language={language}
-                        value={String(children).replace(
-                          /\n$/,
-                          ""
-                        )}
+                        value={value}
                       />
                     );
                   },
@@ -870,6 +889,8 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             const match = /language-(\w+)/.exec(className || "");
             const language = match ? match[1] : "";
             const inline = !language;
+            const value = String(children).replace(/\n$/, "");
+
             if (inline) {
               return (
                 <code
@@ -891,8 +912,9 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
             return (
               <CodeBlock
+                key={getCodeBlockKey(language, value, node)}
                 language={language}
-                value={String(children).replace(/\n$/, "")}
+                value={value}
               />
             );
           },

@@ -1,25 +1,25 @@
+import { appContext } from "@/hooks/provider";
 import { message, Spin } from "antd";
 import React, { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { parse } from "yaml";
-import { appContext } from "@/hooks/provider";
 import { useConfigStore } from "../../hooks/store";
 import { useModeConfigStore } from "../../store/modeConfig";
 import { Agent } from "../../types/common";
-import type { Session } from "../types/datamodel";
 import ContentHeader from "../contentheader";
 import { AgentSquare } from "../features/Agents/AgentSquare";
+import { useAgentInfo } from "../features/Agents/useAgentInfo";
 import PlanList from "../features/Plans/PlanList";
-import { settingsAPI, agentAPI } from "./api";
+import { GeneralConfig, useSettingsStore } from "../store";
+import type { Session } from "../types/datamodel";
+import { settingsAPI } from "./api";
 import ChatView from "./chat/chat";
 import NewChatView from "./chat/NewChatView";
+import { useAgentManager } from "./hooks/useAgentManager";
+import { useSessionManager } from "./hooks/useSessionManager";
+import { useSessionStorage } from "./hooks/useSessionStorage";
+import { useWebSocketManager } from "./hooks/useWebSocketManager";
 import { SessionEditor } from "./session_editor";
 import { Sidebar } from "./sidebar";
-import { useSessionManager } from "./hooks/useSessionManager";
-import { useWebSocketManager } from "./hooks/useWebSocketManager";
-import { useAgentManager } from "./hooks/useAgentManager";
-import { useSessionStorage } from "./hooks/useSessionStorage";
-import { useSettingsStore, GeneralConfig } from "../store";
-import { useAgentInfo } from "../features/Agents/useAgentInfo";
 
 export const SessionManager: React.FC = () => {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
