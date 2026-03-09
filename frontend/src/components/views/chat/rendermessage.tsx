@@ -854,7 +854,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
 
     const isUser = messageUtils.isUser(message.source);
     const isUserProxy = message.source === "user_proxy";
-    const isOrchestrator = ["Orchestrator"].includes(message.source);
+    // const isOrchestrator = ["Orchestrator"].includes(message.source);
 
     // Check if this is a log message (from historical data or WebSocket)
     // Historical messages may have content_type="log" or type="AgentLogEvent" in config
@@ -961,7 +961,8 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     // Use new plan message check
     const isPlanMsg = messageUtils.isPlanMessage(normalizedMessage.metadata);
     const orchestratorContent =
-      isOrchestrator && typeof normalizedMessage.content === "string"
+      // isOrchestrator && typeof normalizedMessage.content === "string"
+      typeof normalizedMessage.content === "string"
         ? parseorchestratorContent(normalizedMessage.content, normalizedMessage.metadata)
         : null;
 
@@ -1073,6 +1074,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       }
       if (orchestratorContent?.type === "step-execution") {
         const stepContent = orchestratorContent.content;
+        console.log("stepContent", stepContent);
         return stepContent.details || stepContent.progress_summary || "";
       }
       if (messageUtils.isToolCallContent(parsedContent.text)) {

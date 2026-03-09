@@ -2,6 +2,7 @@ import {
   ExclamationTriangleIcon,
   PaperAirplaneIcon,
   PauseCircleIcon,
+  XMarkIcon,
 } from "@heroicons/react/24/outline";
 import {
   Dropdown,
@@ -65,6 +66,7 @@ interface ChatInputProps {
   enable_upload?: boolean;
   onExecutePlan?: (plan: IPlan) => void;
   sessionId: number;
+  onTextChange?: (text: string) => void;
 }
 
 const ChatInput = React.forwardRef<
@@ -84,6 +86,7 @@ const ChatInput = React.forwardRef<
       enable_upload = false,
       onExecutePlan,
       sessionId,
+      onTextChange,
     },
     ref
   ) => {
@@ -176,7 +179,7 @@ const ChatInput = React.forwardRef<
 
     React.useEffect(() => {
       if (!isInputDisabled && textAreaRef.current) {
-        textAreaRef.current.focus();
+        // textAreaRef.current.focus();
       }
     }, [isInputDisabled]);
 
@@ -226,6 +229,10 @@ const ChatInput = React.forwardRef<
         clearAttachedPlan();
       }
 
+      if (onTextChange) {
+        onTextChange("");
+      }
+
     };
 
     const handleTextChange = (
@@ -233,6 +240,10 @@ const ChatInput = React.forwardRef<
     ) => {
       const newText = event.target.value;
       setText(newText);
+
+      if (onTextChange) {
+        onTextChange(newText);
+      }
 
       setRelevantPlans([]);
 
@@ -393,6 +404,10 @@ const ChatInput = React.forwardRef<
         const newHeight = Math.min(scrollHeight, 120);
         textAreaRef.current.style.height = `${newHeight}px`;
       }
+
+      if (onTextChange) {
+        onTextChange(transcript);
+      }
     };
 
     const handleVoiceError = (error: string) => {
@@ -454,6 +469,10 @@ const ChatInput = React.forwardRef<
           textAreaRef.current.focus();
           textAreaRef.current.setSelectionRange(value.length, value.length);
         }
+
+        if (onTextChange) {
+          onTextChange(value);
+        }
       },
     }));
 
@@ -508,6 +527,23 @@ const ChatInput = React.forwardRef<
       const droppedFiles = Array.from(e.dataTransfer.files) as File[];
       for (const file of droppedFiles) {
         await handleFileValidationAndAdd(file);
+      }
+    };
+
+    const clearText = () => {
+      setText("");
+      if (textAreaRef.current) {
+        textAreaRef.current.value = "";
+        textAreaRef.current.style.height = getTextAreaDefaultHeight();
+        textAreaRef.current.focus();
+        textAreaRef.current.setSelectionRange(0, 0);
+      }
+
+      setRelevantPlans([]);
+      clearAttachedPlan();
+
+      if (onTextChange) {
+        onTextChange("");
       }
     };
 
@@ -724,9 +760,9 @@ const ChatInput = React.forwardRef<
                     defaultValue={""}
                     onChange={handleTextChange}
                     onKeyDown={handleKeyDown}
-                    className={`input-enhanced flex items-center w-full resize-none p-4 ${enable_upload ? "pl-14" : "pl-6"
-                      } ${runStatus === "active" ? "pr-32" : "pr-24"
-                      } rounded-full transition-smooth border-2 ${darkMode === "dark"
+                    className={`input-enhanced chat-input-scrollbar-hide flex items-center w-full resize-none p-4 ${enable_upload ? "pl-14" : "pl-6"
+                      } ${runStatus === "active" ? "pr-36" : "pr-28"
+                      } rounded-[28px] transition-smooth border-2 ${darkMode === "dark"
                         ? "bg-[#0f0f0f] border-border-primary backdrop-blur-sm hover:bg-[#1a1a1a] focus:bg-[#1a1a1a] focus:border-accent"
                         : "bg-white/80 border-border-primary backdrop-blur-sm hover:bg-white/90 focus:bg-white focus:border-accent shadow-modern"
                       } ${isInputDisabled
@@ -735,7 +771,7 @@ const ChatInput = React.forwardRef<
                       } focus:outline-none focus:ring-2 focus:ring-accent/20`}
                     style={{
                       maxHeight: "120px",
-                      overflowY: "hidden",
+                      overflowY: "auto",
                       minHeight: "52px",
                     }}
                     placeholder={
@@ -750,7 +786,18 @@ const ChatInput = React.forwardRef<
                     disabled={isInputDisabled}
                   />
                   {/* Right button group */}
-                  <div className="absolute right-2 top-1/2 transform -translate-y-1/2 flex items-center space-x-2">
+                  <div className="absolute right-2 bottom-2 flex items-center space-x-2">
+                    {/* Clear text button */}
+                    {text.trim().length > 0 && !isInputDisabled && (
+                      <button
+                        type="button"
+                        onClick={clearText}
+                        className="rounded-full flex justify-center items-center h-8 transition-smooth hover-lift text-secondary hover:text-accent hover:bg-accent/10"
+                        aria-label="Clear input"
+                      >
+                        <XMarkIcon className="h-4 w-4" />
+                      </button>
+                    )}
                     {/* Voice input button */}
                     <VoiceInput
                       onTranscript={handleVoiceTranscript}

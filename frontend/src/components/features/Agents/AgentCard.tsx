@@ -29,13 +29,6 @@ interface AgentCardProps {
 
 const DEFAULT_AVATAR = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRkM2RjMyIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyNCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPkE8L3RleHQ+Cjwvc3ZnPgo=";
 
-const createAgentConfig = (name: string, url: string, apiKey: string, mode?: AgentMode, extendConfig?: any) => ({
-  name,
-  url,
-  apiKey,
-  mode,
-  ...extendConfig,
-});
 
 const AgentCard: React.FC<AgentCardProps> = ({
   agent,
@@ -55,22 +48,22 @@ const AgentCard: React.FC<AgentCardProps> = ({
   const checkIfAgentExists = React.useCallback(() => {
     return existingAgents.some(existingAgent => {
       // 对于 remote agent，优先通过 id 检查
-      if (agent.id && agent.mode === "remote" && existingAgent.id === agent.id) {
+      if (agent.id && existingAgent.id === agent.id) {
         return true;
       }
       // 优先检查名称是否相同
-      if (existingAgent.name === agent.name) {
-        return true;
-      }
+      // if (existingAgent.name === agent.name) {
+      //   return true;
+      // }
       // 对于非 remote agent，如果 mode 相同且配置相同，且 name 也匹配，认为是同一个
       // 这里确保 name 必须匹配，避免因为配置相同而误判不同的 agent
-      if (agent.mode && agent.mode !== "remote" &&
-        existingAgent.mode === agent.mode &&
-        existingAgent.name === agent.name &&
-        existingAgent.config?.url === agent.url &&
-        existingAgent.config?.apiKey === agent.apiKey) {
-        return true;
-      }
+      // if (agent.mode && agent.mode !== "remote" &&
+      //   existingAgent.mode === agent.mode &&
+      //   existingAgent.name === agent.name &&
+      //   existingAgent.config?.url === agent.url &&
+      //   existingAgent.config?.apiKey === agent.apiKey) {
+      //   return true;
+      // }
       return false;
     });
   }, [existingAgents, agent]);

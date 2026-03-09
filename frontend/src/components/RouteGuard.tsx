@@ -1,8 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import { useLocation, useNavigate } from "../hooks/useRouter";
 
 // 公开路由列表（不需要登录即可访问）
 const PUBLIC_ROUTES = ["/login", "/sso-login"];
+
+// 标准化路径，兼容 Gatsby 的 trailing slash（/login 与 /login/ 视为同一路由）
+const normalizePath = (path: string) => path.replace(/\/$/, "") || "/";
 
 interface RouteGuardProps {
     children: React.ReactNode;
@@ -25,12 +28,13 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
             const user_email = localStorage.getItem("user_email");
             const isAuthenticated = !!user_email;
             const currentPath = location.pathname;
-            const isPublicRoute = PUBLIC_ROUTES.includes(currentPath);
+            const normalizedPath = normalizePath(currentPath);
+            const isPublicRoute = PUBLIC_ROUTES.some((r) => normalizePath(r) === normalizedPath);
 
             if (isAuthenticated) {
                 // 已登录态
                 // 如果访问登录页，重定向到首页
-                if (currentPath === "/login" || currentPath === "/sso-login") {
+                if (normalizedPath === "/login" || normalizedPath === "/sso-login") {
                     navigate("/", { replace: true });
                     return;
                 }
@@ -39,8 +43,8 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                 // 如果访问非公开路由，重定向到登录页
                 if (!isPublicRoute) {
                     const loginPath = process.env.GATSBY_SERVICE_MODE === "DEV" ? "/login" : "/sso-login";
-                    // 避免重复重定向
-                    if (currentPath !== loginPath) {
+                    // 避免重复重定向（标准化后比较，兼容 /login 与 /login/）
+                    if (normalizedPath !== normalizePath(loginPath)) {
                         navigate(loginPath, { replace: true });
                         return;
                     }

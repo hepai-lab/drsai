@@ -3,6 +3,15 @@
     position: relative;
 }
 
+/* 隐藏滚动条但保留滚动功能 */
+.chat-input-scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+}
+.chat-input-scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+
 /* 修复 Ant Design Upload 组件的对齐问题 - 使用更高优先级的选择器 */
 .chat-input-wrapper .ant-dropdown .ant-dropdown-menu .ant-dropdown-menu-item .ant-upload,
 .chat-input-wrapper .ant-upload.ant-upload,

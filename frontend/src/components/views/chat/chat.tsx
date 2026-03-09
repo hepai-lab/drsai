@@ -78,6 +78,7 @@ export default function ChatView({
   const [messageApi, contextHolder] = message.useMessage();
   const [noMessagesYet, setNoMessagesYet] = React.useState(true);
   const chatContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const pendingMessageSentRef = React.useRef(false);
 
   // TODO: 根据当前run的task的metadata或session的agent_mode_config来确定agent类型
   // Panel state - initialized based on agent configuration
@@ -425,6 +426,8 @@ export default function ChatView({
   React.useEffect(() => {
     const initializeSession = async () => {
       if (session?.id) {
+        // Reset pending message sent guard for new session
+        pendingMessageSentRef.current = false;
         // Reset plan state via hook
         setLocalPlan(null);
         setPlanProcessed(false);
@@ -503,21 +506,24 @@ export default function ChatView({
   // Handle pending first message - auto-send when run is ready
   React.useEffect(() => {
     if (
-      pendingFirstMessage &&
-      currentRun &&
-      noMessagesYet &&
-      (currentRun.status === "created" || currentRun.status === "connected")
+      !pendingFirstMessage ||
+      !currentRun ||
+      !noMessagesYet ||
+      (currentRun.status !== "created" && currentRun.status !== "connected")
     ) {
-      // Auto-send the pending first message
-      const { query, files, plan } = pendingFirstMessage;
+      return;
+    }
+    // Guard: prevent duplicate sends (e.g. from Strict Mode or rapid effect runs)
+    if (pendingMessageSentRef.current) {
+      return;
+    }
+    pendingMessageSentRef.current = true;
 
-      // Send the message
-      runTask(query, files as any[], plan, true);
+    const { query, files, plan } = pendingFirstMessage;
+    runTask(query, files as any[], plan, true);
 
-      // Clear the pending message
-      if (onPendingMessageSent) {
-        onPendingMessageSent();
-      }
+    if (onPendingMessageSent) {
+      onPendingMessageSent();
     }
   }, [
     pendingFirstMessage,

@@ -473,9 +473,6 @@ const RunView: React.FC<RunViewProps> = ({
     }
   }, [agentConfig.panel.type]);
 
-  useEffect(() => {
-    console.log("besiiiTasks112345", logs);
-  }, [besiiiTasks]);
 
   // Update handleImageClick to use the correct image index
   const handleImageClick = (messageIndex: number) => {
@@ -956,12 +953,12 @@ const RunView: React.FC<RunViewProps> = ({
                 // Chunk messages typically have start_flag or are streaming messages from assistant
                 (nextMessage.config.metadata?.start_flag?.toLowerCase() === "yes") ||
                 // Or it's an assistant message that's not a log message and has stream_source_label
-                ((nextMessage.config.source === "assistant" || 
+                ((nextMessage.config.source === "assistant" ||
                   nextMessage.config.metadata?.stream_source_label) &&
-                 !messageUtils.isUser(nextMessage.config.source) &&
-                 nextMessage.config.metadata?.type !== "log" &&
-                 (nextMessage.config as any).type !== "AgentLogEvent" &&
-                 nextMessage.config.metadata?.type !== "AgentLogEvent")
+                  !messageUtils.isUser(nextMessage.config.source) &&
+                  nextMessage.config.metadata?.type !== "log" &&
+                  (nextMessage.config as any).type !== "AgentLogEvent" &&
+                  nextMessage.config.metadata?.type !== "AgentLogEvent")
               );
 
               return (

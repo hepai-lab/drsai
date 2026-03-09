@@ -4,6 +4,7 @@ import React, { useContext, useEffect, useRef, useState } from "react";
 
 interface SampleTasksProps {
   onSelect: (task: string) => void;
+  hasInputValue: boolean;
 }
 
 // 定义任务和对应的模型配置
@@ -21,7 +22,7 @@ const MAGENTIC_ONE_TASKS = [
 // 合并所有任务类型
 const SAMPLE_TASKS = [...BESIII_TASKS, ...MAGENTIC_ONE_TASKS];
 
-const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
+const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect, hasInputValue }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
@@ -234,7 +235,7 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
       `}</style>
       <div className="mb-4 text-center"></div>
       <div className="flex flex-col gap-3 w-full">
-        {shouldShowDropdown && isInputFocused && (
+        {shouldShowDropdown && isInputFocused && !hasInputValue && (
           // 超过3个时显示为下拉列表形式（仅在输入框聚焦时显示）
           <div
             ref={dropdownRef}
