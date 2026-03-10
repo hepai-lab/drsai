@@ -157,8 +157,8 @@ class UserProfileManager:
         # 创建目录
         if not self.memories_dir.exists():
             self.memories_dir.mkdir(exist_ok=True)
-        with self.memories_document_ids.open("w", encoding='utf-8') as f:
-            json.dump({}, f, indent=4, ensure_ascii=False)
+            with self.memories_document_ids.open("w", encoding='utf-8') as f:
+                json.dump({}, f, indent=4, ensure_ascii=False)
 
         if not self.skills_dir.exists():
             self.skills_dir.mkdir(exist_ok=True)

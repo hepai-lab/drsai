@@ -143,6 +143,8 @@ class DrSaiChatCompletionContextConfig(BaseModel):
     dataset_id: str|None = None,
     document_id: str|None = None,
     tool_schema: List[ToolSchema] | None = None
+    learning_dataset_id: str|None = None
+    learning_document_id: str|None = None
     initial_messages: List[LLMMessage] | None = None
     history_messages: List[LLMMessage] | None = None
 
@@ -172,6 +174,8 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         rag_flow_token: str | None = None,
         dataset_id: str|None = None,
         document_id: str|None = None,
+        learning_dataset_id: str|None = None,
+        learning_document_id: str|None = None,
         # upload_memory: bool = False,
         tool_schema: List[ToolSchema] = [],
         initial_messages: List[LLMMessage] | None = None,
@@ -207,6 +211,8 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
 
         self._dataset_id = dataset_id
         self._document_id = document_id
+        self._learning_dataset_id = learning_dataset_id
+        self._learning_document_id = learning_document_id
 
         self._rag_flow_manager = None
         if rag_flow_url is not None and rag_flow_token is not None:
@@ -361,8 +367,10 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
     async def create_new_session_document(
         self,
         user_id: Optional[str] = None,
+        dataset_id: Optional[str] = None,
         thread_id: Optional[str] = None,
         work_dir: Optional[str] = None,
+        create_type: str = "session" # or learning_memory
         ) -> str:
         """
         Create a temporary file named {user_id}_{thread_id}.txt in work_dir,
@@ -373,13 +381,19 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         """
         if self._rag_flow_manager is None:
             raise ValueError("RAGFlow manager is not configured.")
-
+        
         user_id = user_id or self._user_id
+        dataset_id = dataset_id or self._dataset_id
         thread_id = thread_id or self._thread_id
         work_dir = work_dir or self._work_dir
 
         # 1. cerate session document
-        file_name = f"{user_id}_{thread_id}.txt"
+        if create_type == "learning_memory":
+            file_name = f"{user_id}_learning_memory.txt"
+            meta_fields = {"user_id": user_id, "learning_dataset_id": dataset_id}
+        else:
+            file_name = f"{user_id}_{thread_id}.txt"
+            meta_fields={"user_id": user_id, "thread_id": thread_id},
         file_path = os.path.join(work_dir, file_name)
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(f"user_id: {user_id}\nthread_id: {thread_id}\n")
@@ -387,23 +401,26 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         try:
             # 2. upload to RAGFlow and get document_id
             document_ids = await self._rag_flow_manager.add_files_to_dataset_and_parse(
-                dataset_id=self._dataset_id,
+                dataset_id=dataset_id,
                 files_path=file_path,
             )
             document_id = document_ids[0]
 
             # 3. write user_id / thread_id to document meta
             await self._rag_flow_manager.update_document(
-                dataset_id=self._dataset_id,
+                dataset_id=dataset_id,
                 document_id=document_id,
-                meta_fields={"user_id": user_id, "thread_id": thread_id},
+                meta_fields=meta_fields,
             )
         finally:
             # 4. delete the temporary file
             if os.path.exists(file_path):
                 os.remove(file_path)
 
-        self._document_id = document_id
+        if create_type == "learning_memory":
+            self._learning_document_id = document_id
+        else:
+            self._document_id = document_id
 
         logger.info(f"Session document: {document_id} created for user_id: {user_id}, thread_id: {thread_id}")
 
@@ -435,6 +452,8 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
             self, 
             current_messages: Optional[List[LLMMessage]] = None,
             summary_task_prompt: Optional[str] = None,
+            dataset_id: Optional[str] = None,
+            document_id: Optional[str] = None,
             thread_id: Optional[str] = None,
             cancellation_token: Optional[CancellationToken] = None,
             ) -> str:
@@ -445,35 +464,43 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         current_messages = current_messages or self._current_messages
         questions = [message.content for message in current_messages if message.source == "user" or message.source == "user_proxy"]
         summry_prompt = summary_task_prompt or self._summary_task_prompt
-        judgment_tools = [get_judgment_tool()]
         messages_str = self.format_messages_str(current_messages)
         summry_response = await self._model_client.create(
             messages=[
                 UserMessage(source="user", content=summry_prompt+messages_str)
             ],
-            tools=judgment_tools,
             cancellation_token=cancellation_token,
         )
         summry_content = summry_response.content
+        # judgment_tools = [get_judgment_tool()]
+        # messages_str = self.format_messages_str(current_messages)
+        # summry_response = await self._model_client.create(
+        #     messages=[
+        #         UserMessage(source="user", content=summry_prompt+messages_str)
+        #     ],
+        #     tools=judgment_tools,
+        #     cancellation_token=cancellation_token,
+        # )
+        # summry_content = summry_response.content
 
-        thread_id = thread_id or self._thread_id
+        # thread_id = thread_id or self._thread_id
 
-        if isinstance(summry_content, list):
-            arguments = json.loads(summry_content[0].arguments)
-            if arguments.get("be_documented", False):
-                summry_response = await self._model_client.create(
-                    messages=[
-                        UserMessage(source="user", content=summry_prompt+messages_str)
-                    ],
-                    cancellation_token=cancellation_token,
-                )
-                summry_content = summry_response.content
-            else:
-                return "The conversation is not summarized."
-            
+        # if isinstance(summry_content, list):
+        #     arguments = json.loads(summry_content[0].arguments)
+        #     if arguments.get("be_documented", False):
+        #         summry_response = await self._model_client.create(
+        #             messages=[
+        #                 UserMessage(source="user", content=summry_prompt+messages_str)
+        #             ],
+        #             cancellation_token=cancellation_token,
+        #         )
+        #         summry_content = summry_response.content
+        #     else:
+        #         return "The conversation is not summarized."
+        
         await self._rag_flow_manager.add_chunks_to_dataset(
-            dataset_id = self._dataset_id,
-            document_id = self._document_id,
+            dataset_id = dataset_id,
+            document_id = document_id,
             content = summry_content,
             questions = questions,
             important_keywords = [f"thread_id:{thread_id}"]
@@ -495,7 +522,11 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         """
 
         try:
-            summry_content = await self.summry_conversation_to_ragflow(summary_task_prompt=summary_task_prompt)
+            summry_content = await self.summry_conversation_to_ragflow(
+                summary_task_prompt=summary_task_prompt,
+                dataset_id=self._learning_dataset_id,
+                document_id=self._learning_document_id
+                )
             return f"Summarized conversation added to RAGFlow, The summry_content is: \n{summry_content}"
         except Exception as e:
             logger.error(f"Failed to summarize conversation: {e}")

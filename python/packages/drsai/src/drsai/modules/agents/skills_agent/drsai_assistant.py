@@ -151,7 +151,7 @@ class DrSaiAssistant(DrSaiAgent):
         rag_flow_url: str | None = None,
         rag_flow_token: str | None = None,
         memory_dataset_id: str | None = None,
-
+        learning_dataset_id: str| None = None,
     ):
         super().__init__(
             name=name,
@@ -212,7 +212,9 @@ class DrSaiAssistant(DrSaiAgent):
         self._rag_flow_url = rag_flow_url
         self._rag_flow_token = rag_flow_token
         self._memory_dataset_id = memory_dataset_id
+        self._learning_dataset_id = learning_dataset_id or memory_dataset_id
         self._memory_document_id = self._user_profile_manager.get_document_ids(self._thread_id)
+        self._learning_document_id = self._user_profile_manager.get_document_ids(self._user_id)
         # memory manager
         self._model_context = DrSaiChatCompletionContext(
             agent_name=self._user_profile_manager.agent_name,
@@ -225,6 +227,8 @@ class DrSaiAssistant(DrSaiAgent):
             rag_flow_token=self._rag_flow_token,
             dataset_id=self._memory_dataset_id,
             document_id=self._memory_document_id,
+            learning_dataset_id=self._learning_dataset_id,
+            learning_document_id=self._learning_document_id,
         )
         if not self._model_context._rag_flow_manager:
             raise ValueError("RAGFlowManager is not initialized in DrSaiChatCompletionContext")
@@ -389,6 +393,10 @@ Current Session_ID is {self._thread_id}
         inner_messages: List[BaseAgentEvent | BaseChatMessage] = []
         try:
 
+            # initialize the learning memory document
+            if self._user_profile_manager.first_time_setup:
+                self._learning_document_id = await self._model_context.create_new_session_document(dataset_id = self._learning_dataset_id, create_type="learning_memory" )
+                self._user_profile_manager.update_document_ids(thread_id=self._user_id, document_id=self._learning_document_id)
             # create the new session document
             if self._memory_document_id is None:
                 self._memory_document_id = await self._model_context.create_new_session_document(
