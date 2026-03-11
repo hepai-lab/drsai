@@ -398,9 +398,11 @@ async def get_user_agent_by_id(user_id: str, agent_id: str, db=Depends(get_db)) 
             if agent:
                 return {"status": True, "data": agent}
             else:
-                raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+                # raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+                {"status": False, "message": "该智能体已经下线或更新，请删除图标，联系智能体开发者或者刷新后重新添加"}
         else:
-            raise HTTPException(status_code=404, detail="User agents not found")
+            # raise HTTPException(status_code=404, detail="User agents not found")
+            {"status": False, "message": "该智能体已经下线或更新，请删除图标，联系智能体开发者或者刷新后重新添加"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

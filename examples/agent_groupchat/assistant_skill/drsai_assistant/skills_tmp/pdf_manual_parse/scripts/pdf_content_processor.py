@@ -71,23 +71,32 @@ def parse_toc_file(toc_file_path: str) -> List[TocItem]:
         if not line:
             continue
 
-        # 匹配标题格式: ### Title 123 或 ## Title 123 或 # Title 123
-        match = re.match(r'^(#{1,3})\s+(.+?)\s+(\d+)\s*$', line)
-        if match:
-            level_marks, title, page_str = match.groups()
+        # 优先匹配带页码的格式: ### Title 123 或 ## Title 123 或 # Title 123
+        match_with_page = re.match(r'^(#{1,3})\s+(.+?)\s+(\d+)\s*$', line)
+        # 其次匹配普通 markdown 标题（无页码）
+        match_plain = re.match(r'^(#{1,3})\s+(.+?)\s*$', line)
+
+        if match_with_page:
+            level_marks, title, page_str = match_with_page.groups()
             level = len(level_marks)
             page = int(page_str)
+        elif match_plain:
+            level_marks, title = match_plain.groups()
+            level = len(level_marks)
+            page = -1
+        else:
+            continue
 
-            toc_item = TocItem(
-                title=title.strip(),
-                level=level,
-                page_in_toc=page,
-                page_range=[],
-                markdown_files=[],
-                parent_title=None,
-                children_titles=[]
-            )
-            toc_items.append(toc_item)
+        toc_item = TocItem(
+            title=title.strip(),
+            level=level,
+            page_in_toc=page,
+            page_range=[],
+            markdown_files=[],
+            parent_title=None,
+            children_titles=[]
+        )
+        toc_items.append(toc_item)
 
     return toc_items
 
@@ -113,7 +122,10 @@ def build_hierarchy(toc_items: List[TocItem]) -> List[TocItem]:
     return toc_items
 
 
-def calculate_page_ranges(toc_items: List[TocItem]) -> List[TocItem]:
+def calculate_page_ranges(
+        toc_items: List[TocItem],
+        redundancy_page: int = 1
+        ) -> List[TocItem]:
     """
     计算每个标题的页面范围
 
@@ -133,7 +145,7 @@ def calculate_page_ranges(toc_items: List[TocItem]) -> List[TocItem]:
 
         # 查找下一个同级或更高级标题
         end_page = None
-        for j in range(i + 1, len(toc_items)):
+        for j in range(i + redundancy_page, len(toc_items)):
             if toc_items[j].level <= item.level:
                 # +1 冗余页（因为内容可能跨页）
                 end_page = toc_items[j].page_in_toc
@@ -170,7 +182,8 @@ def map_to_markdown_files(
     for item in toc_items:
         start_page, end_page = item.page_range
         markdown_files = []
-
+        if start_page == -1:
+            continue
         for page in range(start_page, end_page + 1):
             actual_file_num = page + page_offset
             filename = f"{file_prefix}{actual_file_num}.md"
@@ -470,7 +483,10 @@ def process_pdf_content(
 
     # 3. 计算页面范围
     print("\n步骤3: 计算页面范围...")
-    toc_items = calculate_page_ranges(toc_items)
+    toc_items = calculate_page_ranges(
+        toc_items,
+        redundancy_page=0,
+        )
     print(f"  页面范围计算完成")
 
     # 4. 映射到markdown文件
@@ -496,11 +512,11 @@ def process_pdf_content(
 
 if __name__ == "__main__":
     # 配置参数
-    TOC_FILE = "/mnt/d/work/synchrotron_agent/docs_and_refs/spec_man_pages/spec_man__content.md"
-    MARKDOWN_DIR = "/mnt/d/work/synchrotron_agent/docs_and_refs/spec_man_pages"
-    OUTPUT_JSON = "/home/xiongdb/work/synchrotron_agent/data_clear/pdf_doc/spec_man_index.json"
-    FILE_PREFIX = "spec_man__"
-    PAGE_OFFSET = 10  # 根据实际情况调整
+    TOC_FILE = "/home/xiongdb/drsai_dev/docs/manual/opendrsai-manual-content.md"
+    MARKDOWN_DIR = "/home/xiongdb/drsai_dev/docs/manual/"
+    OUTPUT_JSON = "/home/xiongdb/drsai_dev/docs/manual/opendrsai-manual_index.json"
+    FILE_PREFIX = "opendrsai-manual-0"
+    PAGE_OFFSET = 0  # 根据实际情况调整
 
     # 执行处理流程
     process_pdf_content(
