@@ -1,7 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
+import { Modal, message } from 'antd';
 import { useModeConfigStore } from '@/store/modeConfig';
-import { agentWorkerAPI } from '@/components/views/api';
+import { agentAPI, agentWorkerAPI } from '@/components/views/api';
 import type { Agent } from '@/types/common';
+
+const pendingAgentInfoRequests = new Map<string, Promise<Partial<Agent>>>();
+const shownOfflineModalAgentKeys = new Set<string>();
 
 /**
  * 全局 agent_info 管理 Hook
@@ -11,17 +15,14 @@ export const useAgentInfo = (userId?: string) => {
   const {
     agentId,
     agentInfo,
+    setAgentId,
     setAgentInfo,
   } = useModeConfigStore();
-
-  // 使用 ref 来避免重复请求
-  const fetchingRef = useRef<string | null>(null);
 
   useEffect(() => {
     // 如果没有 agentId，清空 agentInfo
     if (!agentId) {
       setAgentInfo(null);
-      fetchingRef.current = null;
       return;
     }
 
@@ -31,30 +32,61 @@ export const useAgentInfo = (userId?: string) => {
       return;
     }
 
-    // 如果正在获取相同的 agentId，跳过
-    if (fetchingRef.current === agentId) {
-      return;
-    }
-
     // 从后端获取 agent 信息
     const fetchAgentInfo = async () => {
-      fetchingRef.current = agentId;
+      const requestKey = `${userId}:${agentId}`;
       try {
-        const agentData = await agentWorkerAPI.getUserAgentById(userId, agentId);
+        let pendingRequest = pendingAgentInfoRequests.get(requestKey);
+        if (!pendingRequest) {
+          pendingRequest = agentWorkerAPI
+            .getUserAgentById(userId, agentId)
+            .finally(() => {
+              pendingAgentInfoRequests.delete(requestKey);
+            });
+          pendingAgentInfoRequests.set(requestKey, pendingRequest);
+        }
+
+        const agentData = await pendingRequest;
         setAgentInfo(agentData as Partial<Agent>);
       } catch (error) {
         console.error('Failed to fetch agent info:', error);
         setAgentInfo(null);
-      } finally {
-        // 如果 agentId 没有变化，清除 fetching 标记
-        if (fetchingRef.current === agentId) {
-          fetchingRef.current = null;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const isOfflineAgentError = errorMessage.includes('该智能体已经下线或更新');
+
+        if (isOfflineAgentError && !shownOfflineModalAgentKeys.has(requestKey)) {
+          shownOfflineModalAgentKeys.add(requestKey);
+          Modal.confirm({
+            title: '智能体不可用',
+            content: errorMessage,
+            okText: '删除',
+            closable: false,
+            maskClosable: false,
+            keyboard: false,
+            cancelButtonProps: {
+              style: { display: 'none' },
+            },
+            onOk: async () => {
+              await agentAPI.deleteMainAgent(userId, agentId);
+              setAgentId(null);
+              setAgentInfo(null);
+              window.dispatchEvent(new CustomEvent('agentListChanged'));
+              window.dispatchEvent(
+                new CustomEvent('switchToCurrentSession', {
+                  detail: {
+                    clearSession: true,
+                  },
+                })
+              );
+              message.success('已删除不可用智能体');
+            },
+          });
         }
       }
     };
 
     fetchAgentInfo();
-  }, [agentId, userId, setAgentInfo]);
+  }, [agentId, userId, setAgentId, setAgentInfo]);
 
   return {
     agentId,

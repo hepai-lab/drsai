@@ -721,8 +721,16 @@ export class AgentWorkerAPI {
             },
         });
         const data = await response.json();
-        if (!data.status)
-            throw new Error(data.message || "Failed to fetch agent");
+        if (!data.status) {
+            const error = new Error(data.message || "Failed to fetch agent") as Error & {
+                code?: string;
+                payload?: any;
+            };
+            error.name = "ApiStatusError";
+            error.code = data.error_code;
+            error.payload = data;
+            throw error;
+        }
         return data.data;
     }
 

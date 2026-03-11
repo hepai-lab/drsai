@@ -105,6 +105,24 @@ export const SessionManager: React.FC = () => {
   }, [user?.email, fetchAgentList]);
 
   useEffect(() => {
+    const handleAgentListChanged = () => {
+      fetchAgentList();
+    };
+
+    window.addEventListener(
+      "agentListChanged",
+      handleAgentListChanged as unknown as EventListener
+    );
+
+    return () => {
+      window.removeEventListener(
+        "agentListChanged",
+        handleAgentListChanged as unknown as EventListener
+      );
+    };
+  }, [fetchAgentList]);
+
+  useEffect(() => {
     fetchSessions();
   }, [fetchSessions]);
 
