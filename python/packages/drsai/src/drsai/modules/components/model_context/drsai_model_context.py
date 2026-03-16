@@ -265,7 +265,8 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         elif isinstance(message, AssistantMessage):
             content = message.content
             if isinstance(message.content, list):
-                content = json.dumps([asdict(tool_call) for tool_call in message.content])
+                # content = json.dumps([asdict(tool_call) for tool_call in message.content])
+                content = str(message.content)
             local_messages = LocalMesssage(
                 role="assistant",
                 content=content,

@@ -64,6 +64,7 @@ async def pdf_manual_search(
         question=question,
         page_size=max_items,
         similarity_threshold=similarity_threshold,
+        document_ids=["da82759e184c11f198850242ac120006", "4a37cf7e1c8f11f187230242ac120006"]
     )
     
     return searcher.format_results(results, is_detailed=True)
@@ -73,7 +74,7 @@ def create_agent(
         thread_id: str|None = None, 
         user_id: str|None = None, 
         db_manager: DatabaseManager|None = None,
-        defult_config_name: str|None = "claude-haiku-4-5",
+        defult_config_name: str|None = "deepseek-v3.2(No image)",
 ) -> DrSaiAssistant:
     
     # Define a model client. You can use other model client that implements
@@ -111,18 +112,8 @@ def create_agent(
                 }
         )
 
-    # Code executor and working directory
+    # # Code executor and working directory
     WORKDIR=os.getenv("WORKDIR")
-    work_dir = Path(WORKDIR)
-    work_dir.mkdir(exist_ok=True)
-    venv_dir = work_dir / ".venv"
-    venv_builder = venv.EnvBuilder(with_pip=True)
-    venv_builder.create(venv_dir)
-    venv_context = venv_builder.ensure_directories(venv_dir)
-    local_executor = LocalCommandLineCodeExecutor(work_dir=work_dir, virtual_env_context=venv_context)
-
-    #Agent skills 
-    # skills_loader = SkillLoader(skills_dir=os.getenv("SKILLS_DIR"))
 
     # Sub-agents configuration
     SUB_AGENTS = {
@@ -201,9 +192,13 @@ your_code
         user_id=user_id,
         # skills and executor
         skills_dir=os.getenv("SYSTEM_SKILLS_DIR"),
-        executor=local_executor,
+        # executor=local_executor,
         work_dir=WORKDIR,
-        only_in_workspace=False,
+        only_in_workspace=True,
+        extra_work_dirs=[
+            "/home/xiongdb/drsai_dev/docs/manual", 
+            "/home/xiongdb/b9agent/test",
+            ],
         sub_agent_config = SUB_AGENTS,
         max_turn_count=20,
         token_limit=50000,
@@ -236,12 +231,12 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册信息
-            agent_name="DrSaiAssistant",
+            agent_name="Dr.Sai Assistant",
             author = "xiongdb@ihep.ac.cn",
             # permission='groups: drsai, payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             permission={
                 "groups": "drsai, payg", 
-                "users": ["admin", "xiongdb@ihep.ac.cn", ], 
+                "users": ["admin", "xiongdb@ihep.ac.cn", "yqsun@ihep.ac.cn", "chen_yu@ihep.ac.cn", "wangzhen96@ihep.ac.cn", "shenzb@ihep.ac.cn", "wengxr@ihep.ac.cn", "guowg@ihep.ac.cn"], 
                 "owner": "xiongdb@ihep.ac.cn"
                 },
             description = "A general assistant for PDF QA,writing code, implementing features, and fixing bugs.",
@@ -253,11 +248,11 @@ if __name__ == "__main__":
                 "I want to write a python script to print hello world and run it in a shell. please plan before executing",
             ],
             agent_config = llm_mode_config,
-            defult_config_name="claude-haiku-4-5",
+            defult_config_name="deepseek-v3.2(No image)",
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务配置
-            port = 42810, 
+            port = 42812, 
             no_register=False,
             enable_openwebui_pipeline=True, 
             history_mode = "backend",
@@ -266,8 +261,3 @@ if __name__ == "__main__":
             metadata={"others": "test"},
         )
     )
-
-    # format_results = asyncio.run(
-    #    pdf_manual_search(question="spec 控制软件spec中scan和dscan命令的区别是什么？")
-    # )
-    # print(format_results)

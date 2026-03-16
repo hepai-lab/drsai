@@ -22,6 +22,7 @@ class SkillLoader(Component[SkillLoaderConfig], ComponentBase[BaseModel]):
         ---
         name: pdf
         description: Process PDF files. Use when reading, creating, or merging PDFs.
+        compatibility: pdftotext, pypdf
         ---
 
         # PDF Processing Skill
@@ -34,7 +35,7 @@ class SkillLoader(Component[SkillLoaderConfig], ComponentBase[BaseModel]):
         ```
         ...
 
-    The YAML frontmatter provides metadata (name, description).
+    The YAML frontmatter provides metadata (name, description, compatibility).
     The markdown body provides detailed instructions.
     """
 
@@ -64,7 +65,7 @@ class SkillLoader(Component[SkillLoaderConfig], ComponentBase[BaseModel]):
         """
         Parse a SKILL.md file into metadata and body.
 
-        Returns dict with: name, description, body, path, dir
+        Returns dict with: name, description, compatibility, body, path, dir
         Returns None if file doesn't match format.
         """
         content = path.read_text()
@@ -90,6 +91,7 @@ class SkillLoader(Component[SkillLoaderConfig], ComponentBase[BaseModel]):
         return {
             "name": metadata["name"],
             "description": metadata["description"],
+            "compatibility": metadata.get("compatibility"),
             "body": body.strip(),
             "path": path,
             "dir": path.parent,
@@ -140,10 +142,13 @@ class SkillLoader(Component[SkillLoaderConfig], ComponentBase[BaseModel]):
         if not self.skills:
             return "(no skills available)"
 
-        return "\n".join(
-            f"- {name}: {skill['description']}"
-            for name, skill in self.skills.items()
-        )
+        lines = []
+        for name, skill in self.skills.items():
+            line = f"- {name}: {skill['description']}"
+            if skill.get("compatibility"):
+                line += f" [requires: {skill['compatibility']}]"
+            lines.append(line)
+        return "\n".join(lines)
 
     def get_skill_content(self, name: str) -> str:
         """

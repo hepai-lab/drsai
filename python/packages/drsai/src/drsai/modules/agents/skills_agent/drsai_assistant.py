@@ -12,7 +12,7 @@ from typing import (
     Self,
     Mapping,
     )
-import os, json, sys, uuid
+import os, json, sys, uuid, shutil
 import asyncio, traceback
 from pydantic import BaseModel
 from pathlib import Path
@@ -82,6 +82,7 @@ from .managers import (
     get_operator_funcs,
 )
 from drsai.modules.components.skills import SkillLoader
+from drsai.utils.utils import download_file_from_url_or_base64
 from .managers.get_managers_tools import (
     get_agent_skills_tool,
     get_subagent_tools,
@@ -91,12 +92,17 @@ from .managers.get_managers_tools import (
 
 class DrSaiAssistantConfig(DrSaiAgentConfig):
     skills_dir: Optional[str | List[str]]
-    executor: ComponentModel
-    work_dir: str
+    work_dir: str | None
     only_in_workspace: bool
-    sub_agent_config: Dict | None
+    extra_work_dirs: List[str]
+    executor: ComponentModel
+    sub_agent_config: Dict
     max_turn_count: int
     token_limit: int
+    rag_flow_url: str
+    rag_flow_token: str
+    memory_dataset_id: str
+    learning_dataset_id: str
     
 
 class DrSaiAssistant(DrSaiAgent):
@@ -144,6 +150,7 @@ class DrSaiAssistant(DrSaiAgent):
         skills_dir: Optional[str | List[str]] = None,
         work_dir: str | None = None,
         only_in_workspace: bool = True,
+        extra_work_dirs: List[str] | None = None,
         executor: CodeExecutor | None = None,
         sub_agent_config: Dict = {},
         max_turn_count: int = 20,
@@ -202,7 +209,12 @@ class DrSaiAssistant(DrSaiAgent):
         
         # === basic tools ===
         self._only_in_workspace = only_in_workspace
-        self._basic_funcs: List[Callable] = get_operator_funcs(work_dir, only_in_workspace=self._only_in_workspace)
+        self._extra_work_dirs = extra_work_dirs
+        self._basic_funcs: List[Callable] = get_operator_funcs(
+            work_dir, 
+            only_in_workspace=self._only_in_workspace,
+            extra_dirs = self._extra_work_dirs,
+            )
         self._basic_funcs_names = [func.__name__ for func in self._basic_funcs]
         for func in self._basic_funcs:
             self._tools.append(FunctionTool(func, description=func.__doc__))
@@ -238,6 +250,16 @@ class DrSaiAssistant(DrSaiAgent):
                 
         # === skills ===
         self._skills_dir = skills_dir
+        if self._user_profile_manager.first_time_setup and self._skills_dir:
+            src_dirs = self._skills_dir if isinstance(self._skills_dir, list) else [self._skills_dir]
+            dst_root = self._user_profile_manager.skills_dir
+            for src_dir in src_dirs:
+                src_path = Path(src_dir)
+                for skill_folder in src_path.iterdir():
+                    if skill_folder.is_dir():
+                        dst = dst_root / skill_folder.name
+                        if not dst.exists():
+                            shutil.copytree(skill_folder, dst)
         self._agent_skills_tools = []
 
         # === executor ===
@@ -300,12 +322,12 @@ Current Session_ID is {self._thread_id}
         user_skills_dir = self._user_profile_manager.skills_dir
         if user_skills_dir.exists() and list(user_skills_dir.glob("*/SKILL.md")):
             skills_loader = SkillLoader(skills_dir=str(user_skills_dir))
-        # 再从指定的skills目录加载
-        if self._skills_dir:
-            if not skills_loader:
-                skills_loader = SkillLoader(skills_dir=self._skills_dir)
-            else:
-                skills_loader.add_skills_by_dir(skills_dir=self._skills_dir)
+        # # 再从指定的skills目录加载
+        # if self._skills_dir:
+        #     if not skills_loader:
+        #         skills_loader = SkillLoader(skills_dir=self._skills_dir)
+        #     else:
+        #         skills_loader.add_skills_by_dir(skills_dir=self._skills_dir)
         # 获取技能描述
         if skills_loader.skills:
             self._agent_skills_tools = [get_agent_skills_tool(descriptions=skills_loader.get_descriptions())]
@@ -372,6 +394,63 @@ Current Session_ID is {self._thread_id}
             self._sub_agent_descriptions = ""
             self._subagent_tools = []
 
+    async def run_stream(
+        self,
+        *,
+        task: str | BaseChatMessage | Sequence[BaseChatMessage] | None = None,
+        cancellation_token: CancellationToken | None = None,
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | TaskResult, None]:
+        """Run the agent with the given task and return a stream of messages
+        and the final task result as the last item in the stream."""
+        if cancellation_token is None:
+            cancellation_token = CancellationToken()
+        self._cancellation_token = cancellation_token
+        input_messages: List[BaseChatMessage] = []
+        output_messages: List[BaseAgentEvent | BaseChatMessage] = []
+        if task is None:
+            pass
+        elif isinstance(task, str):
+            text_msg = TextMessage(content=task, source="user", metadata={"internal": "yes"})
+            # text_msg = TextMessage(content=task, source="user")
+            input_messages.append(text_msg)
+            output_messages.append(text_msg)
+            yield text_msg
+        elif isinstance(task, BaseChatMessage):
+            task.metadata["internal"] = "yes"
+            input_messages.append(task)
+            output_messages.append(task)  
+            yield task
+        else:
+            if not task:
+                raise ValueError("Task list cannot be empty.")
+            for msg in task:
+                if isinstance(msg, BaseChatMessage):
+                    msg.metadata["internal"] = "yes"
+                    input_messages.append(msg)
+                    output_messages.append(msg)
+                    # save attached files
+                    attached_files_json = msg.metadata.get("attached_files")
+                    if attached_files_json:
+                        attached_files = json.loads(attached_files_json)
+                        for file in attached_files:
+                            download_file_from_url_or_base64(
+                                file_info = file, 
+                                save_path = f"{self._user_profile_manager.download_dir}/{file['name']}")
+                    yield msg
+                else:
+                    raise ValueError(f"Invalid message type in sequence: {type(msg)}")
+        async for message in self.on_messages_stream(input_messages, cancellation_token):
+            if isinstance(message, Response):
+                yield message.chat_message
+                output_messages.append(message.chat_message)
+                yield TaskResult(messages=output_messages)
+            else:
+                yield message
+                if isinstance(message, ModelClientStreamingChunkEvent):
+                    # Skip the model client streaming chunk events.
+                    continue
+                output_messages.append(message)
+                
     async def on_messages_stream(
         self, messages: Sequence[BaseChatMessage], cancellation_token: CancellationToken
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
@@ -498,7 +577,7 @@ Current Session_ID is {self._thread_id}
                 await model_context.add_message(
                     AssistantMessage(
                         content=model_result.content,
-                        source=agent_name,
+                        source=self._name,
                         thought=getattr(model_result, "thought", None),
                     )
                 )
@@ -607,6 +686,7 @@ Current Session_ID is {self._thread_id}
                                 source="user",
                             )
                         )
+                        agent_name = self._user_profile_manager.agent_name
                         yield AgentLogEvent(
                             title=f"I am updating user's config.",
                             source=agent_name, 
@@ -636,25 +716,25 @@ Current Session_ID is {self._thread_id}
             yield Response(
                 chat_message=TextMessage(
                     content="The task was cancelled by the user.",
-                    source=self.name,
+                    source=self._user_profile_manager.agent_name,
                     metadata={"internal": "yes"},
                 ),
                 inner_messages=inner_messages,
             )
         except Exception as e:
-            logger.error(f"Error in {self.name}: {e}")
+            logger.error(f"Error in {self._user_profile_manager.agent_name}: {e}")
             logger.error(traceback.format_exc())
             # add to chat history
             await self._model_context.add_message(
                 AssistantMessage(
                     content=f"An error occurred while executing the task: {e}",
-                    source=self.name
+                    source=self._name
                 )
             )
             yield Response(
                 chat_message=TextMessage(
                     content=f"An error occurred while executing the task: {e}",
-                    source=self.name,
+                    source=self._user_profile_manager.agent_name,
                     metadata={"internal": "no"},
                 ),
                 inner_messages=inner_messages,
@@ -892,7 +972,7 @@ Current Session_ID is {self._thread_id}
                     if venv_path:
                         executor = create_local_venv(work_dir=venv_path)
                     else:
-                        executor = self._local_executor
+                        executor = self._local_executor or create_local_venv(work_dir=self._user_profile_manager.tmp_dir)
                     subagent = CodeExecutorAgent(
                         name=sub_agent_name,
                         code_executor=executor,
@@ -1004,10 +1084,6 @@ Current Session_ID is {self._thread_id}
                 source=agent_name,
             )
 
-    # TODO: handle system messages update
-
-    # TODO: handle user profile update
-
     # TODO: handle user tools and evenroment
 
     # TODO: handle skills and self-learning -> # TODO: 支持动态获取skills
@@ -1041,12 +1117,18 @@ Current Session_ID is {self._thread_id}
             thread_id=self._thread_id,
             user_id=self._user_id,
             # skills and executor
-            skills_dir=self.skills_dir,
+            skills_dir=self._skills_dir,
             work_dir=self._work_dir,
             only_in_workspace=self._only_in_workspace,
+            extra_work_dirs=self._extra_work_dirs,
             executor=self._local_executor.dump_component(),
-            sub_agent_config = self._sub_agent_config,
-            max_turn_count = self._max_turn_count,
+            sub_agent_config=self._sub_agent_config,
+            max_turn_count=self._max_turn_count,
+            token_limit=self._token_limit,
+            rag_flow_url=self._rag_flow_url,
+            rag_flow_token=self._rag_flow_token,
+            memory_dataset_id=self._memory_dataset_id,
+            learning_dataset_id=self._learning_dataset_id,
         )
     
     @classmethod
@@ -1094,8 +1176,14 @@ Current Session_ID is {self._thread_id}
             skills_dir=config.skills_dir,
             work_dir=config.work_dir,
             only_in_workspace=config.only_in_workspace,
+            extra_work_dirs=config.extra_work_dirs,
             executor=CodeExecutor.load_component(config.executor),
             sub_agent_config = config.sub_agent_config,
             max_turn_count = config.max_turn_count,
+            token_limit = config.token_limit,
+            rag_flow_url = config.rag_flow_url,
+            rag_flow_token = config.rag_flow_token,
+            memory_dataset_id = config.memory_dataset_id,
+            learning_dataset_id = config.learning_dataset_id,
             **kwargs,
         )
