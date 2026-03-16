@@ -626,10 +626,9 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
     if (hasThinkTags) {
       const { parts } = parseThinkTags(content);
-
       return (
         <div
-          className="prose w-full"
+          className="prose prose-code:before:content-[''] prose-code:after:content-[''] w-full"
           style={{
             color,
             fontSize: "0.85rem",
@@ -664,7 +663,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     } else {
       return (
         <div
-          className="prose w-full"
+          className="prose prose-code:before:content-[''] prose-code:after:content-[''] w-full"
           style={{
             color,
             fontSize: "0.85rem",
@@ -687,7 +686,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     const { parts } = parseThinkTags(content);
     return (
       <div
-        className="prose w-full"
+        className="prose prose-code:before:content-[''] prose-code:after:content-[''] w-full"
         style={{
           color,
           fontSize: "0.85rem",
@@ -778,7 +777,6 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                     const language = match ? match[1] : "";
                     const inline = !language;
                     const value = String(children).replace(/\n$/, "");
-
                     if (inline) {
                       return (
                         <code
@@ -834,7 +832,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
   return (
     <div
-      className="prose w-full "
+      className="prose prose-code:before:content-[''] prose-code:after:content-[''] w-full"
       style={{
         color,
         fontSize: "0.85rem",
@@ -890,7 +888,6 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             const language = match ? match[1] : "";
             const inline = !language;
             const value = String(children).replace(/\n$/, "");
-
             if (inline) {
               return (
                 <code

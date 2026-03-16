@@ -101,6 +101,24 @@ const getImageSource = (item: ImageContent): string => {
   return "/api/placeholder/400/320";
 };
 
+const stringifyForDisplay = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return String(value);
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+};
+
 const getStepIcon = (
   status: string,
   runStatus: string,
@@ -131,7 +149,7 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
 
   // If content is not a string, convert it to string
   if (typeof message_content !== "string") {
-    return { text: String(message_content), metadata: content.metadata };
+    return { text: stringifyForDisplay(message_content), metadata: content.metadata };
   }
 
   try {
@@ -181,11 +199,13 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
           parsedContent.content.text ||
           JSON.stringify(parsedContent.content);
       } else {
-        textValue = String(parsedContent.content);
+        textValue = stringifyForDisplay(parsedContent.content);
       }
     } else {
       // Fallback to original content, ensuring it's a string
-      textValue = typeof content === "string" ? content : String(content);
+      textValue = typeof message_content === "string"
+        ? message_content
+        : stringifyForDisplay(message_content);
     }
 
     return {
@@ -200,7 +220,7 @@ const parseUserContent = (content: AgentMessageConfig): ParsedContent => {
 };
 
 const parseContent = (content: any): string => {
-  if (typeof content !== "string") return String(content);
+  if (typeof content !== "string") return stringifyForDisplay(content);
 
   try {
     const parsedContent = JSON.parse(content);
@@ -211,7 +231,9 @@ const parseContent = (content: any): string => {
         return parsedContent.content.content || parsedContent.content.text || JSON.stringify(parsedContent.content);
       }
       // Otherwise, use content directly (string or array)
-      return typeof parsedContent.content === "string" ? parsedContent.content : String(parsedContent.content);
+      return typeof parsedContent.content === "string"
+        ? parsedContent.content
+        : stringifyForDisplay(parsedContent.content);
     }
     // If no content field, return original content
     return content;
@@ -664,7 +686,7 @@ const RenderUserMessage: React.FC<{
         .map((item) => parseContent(item))
         .join("\n");
     }
-    return String(parsedContent.text);
+    return stringifyForDisplay(parsedContent.text);
   };
 
   // Initialize editValue when entering edit mode
@@ -793,7 +815,7 @@ const RenderUserMessage: React.FC<{
             </div>
           ) : (
             <div className="break-words whitespace-pre-wrap overflow-wrap-anywhere">
-              {String(parsedContent.text)}
+              {stringifyForDisplay(parsedContent.text)}
             </div>
           )}
 
@@ -874,7 +896,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       if (messageAny.title) {
         contentValue = typeof messageAny.title === "string"
           ? messageAny.title
-          : String(messageAny.title);
+          : stringifyForDisplay(messageAny.title);
       }
       // 处理 content（可能是对象或字符串）
       else if (messageAny.content) {
@@ -886,14 +908,14 @@ export const RenderMessage: React.FC<MessageProps> = memo(
             messageAny.content.text ||
             JSON.stringify(messageAny.content);
         } else {
-          contentValue = String(messageAny.content);
+          contentValue = stringifyForDisplay(messageAny.content);
         }
       }
       // 回退到 message.content
       else if (message.content) {
         contentValue = typeof message.content === "string"
           ? message.content
-          : String(message.content);
+          : stringifyForDisplay(message.content);
       }
       else {
         contentValue = "";
@@ -909,7 +931,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
             messageAny.content.text ||
             JSON.stringify(messageAny.content);
         } else {
-          logContentValue = String(messageAny.content);
+          logContentValue = stringifyForDisplay(messageAny.content);
         }
       } else if (message.content && typeof message.content === "string") {
         logContentValue = message.content;
@@ -947,9 +969,11 @@ export const RenderMessage: React.FC<MessageProps> = memo(
             } else if (Array.isArray(extracted)) {
               textValue = extracted;
             } else {
-              textValue = JSON.stringify(contentValue);
+              // textValue = stringifyForDisplay(contentValue);
+              textValue = String(contentValue || "");
             }
           } else {
+            // textValue = stringifyForDisplay(contentValue);
             textValue = String(contentValue || "");
           }
 
@@ -965,6 +989,14 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       typeof normalizedMessage.content === "string"
         ? parseorchestratorContent(normalizedMessage.content, normalizedMessage.metadata)
         : null;
+    const isEmptyFinalAnswerMessage =
+      orchestratorContent?.type === "final-answer" &&
+      typeof orchestratorContent.content === "string" &&
+      orchestratorContent.content.trim().length === 0;
+
+    if (isEmptyFinalAnswerMessage) {
+      return null;
+    }
 
     // Derive plan content by message type, not by source
     let planContent: any = null;
@@ -1033,7 +1065,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
           .map((item) => parseContent(item))
           .join("\n");
       }
-      return String(parsedContent.text);
+      return stringifyForDisplay(parsedContent.text);
     };
 
     const handleCopy = async () => {
@@ -1089,7 +1121,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       if (messageUtils.isFunctionExecutionResult(parsedContent.text)) {
         return parsedContent.text.map((result) => result.content).join("\n\n");
       }
-      return String(parsedContent.text);
+      return stringifyForDisplay(parsedContent.text);
     };
 
     const handleNonUserCopy = async () => {
@@ -1293,7 +1325,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                                   );
                                   contentText = stringItems.join("\n");
                                 } else {
-                                  contentText = String(parsedContent.text || "");
+                                  contentText = stringifyForDisplay(parsedContent.text);
                                 }
                                 // Ensure log message content ends with double newline to separate from chunk message
                                 // Markdown requires double newline for paragraph break
@@ -1327,7 +1359,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                             );
                             return stringItems.join("\n");
                           } else {
-                            return String(parsedContent.text || "");
+                            return stringifyForDisplay(parsedContent.text);
                           }
                         })()}
                         indented={

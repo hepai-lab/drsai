@@ -43,6 +43,7 @@ export const useAgentInfo = (userId?: string) => {
             .finally(() => {
               pendingAgentInfoRequests.delete(requestKey);
             });
+          console.log('pendingRequest', pendingRequest);
           pendingAgentInfoRequests.set(requestKey, pendingRequest);
         }
 

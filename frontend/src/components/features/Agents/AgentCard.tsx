@@ -76,7 +76,6 @@ const AgentCard: React.FC<AgentCardProps> = ({
   }, [existingAgents, checkIfAgentExists]);
 
   const handleTryClick = async () => {
-    console.log("agent", agent);
     setAgentId(agent.id || "");
 
     window.dispatchEvent(

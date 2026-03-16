@@ -2,7 +2,6 @@ import { message } from "antd";
 import { RcFile } from "antd/es/upload";
 import * as React from "react";
 import { appContext } from "../../../hooks/provider";
-import { useMessageCacheStore } from "../../../store/messageCache";
 import { useSettingsStore } from "../../store";
 import { IStatus } from "../../types/app";
 import {
@@ -67,7 +66,6 @@ export default function ChatView({
   // Context and store
   const settingsConfig = useSettingsStore((state) => state.config);
   const { user } = React.useContext(appContext);
-  const { getSessionRun, setSessionRun } = useMessageCacheStore();
 
   // Local state
   const [error, setError] = React.useState<IStatus | null>({
@@ -128,7 +126,6 @@ export default function ChatView({
     session,
     getSessionSocket,
     setCurrentRun,
-    setSessionRun,
     userEmail: user?.email,
   });
 
@@ -354,29 +351,6 @@ export default function ChatView({
   const loadSessionRun = React.useCallback(async () => {
     if (!session?.id || !user?.email) return null;
 
-    // 首先尝试从缓存加载
-    const cachedRun = getSessionRun(session.id);
-    if (cachedRun) {
-      // 如果缓存中没有 file_events，从 messages 中提取
-      if (!cachedRun.file_events || cachedRun.file_events.length === 0) {
-        cachedRun.file_events = extractFileEventsFromMessages(cachedRun);
-        // 更新缓存
-        if (cachedRun.file_events.length > 0) {
-          setSessionRun(session.id, cachedRun);
-        }
-      }
-      // 如果缓存中没有 logs 或 logs 为空，从 messages 中提取 AgentLogEvent
-      if (!cachedRun.logs || cachedRun.logs.length === 0) {
-        const extractedLogs = extractLogEventsFromMessages(cachedRun);
-        if (extractedLogs.length > 0) {
-          cachedRun.logs = extractedLogs;
-          setSessionRun(session.id, cachedRun);
-        }
-      }
-      return cachedRun;
-    }
-
-    // 如果缓存中没有，则从数据库加载
     try {
       const response = await sessionAPI.getSessionRuns(
         session.id,
@@ -409,18 +383,13 @@ export default function ChatView({
         }
       }
 
-      // 将从数据库加载的数据存入缓存
-      if (latestRun) {
-        setSessionRun(session.id, latestRun);
-      }
-
       return latestRun;
     } catch (error) {
       console.error("Error loading session runs:", error);
       messageApi.error("Failed to load chat history");
       return null;
     }
-  }, [session?.id, user?.email, getSessionRun, setSessionRun, messageApi, extractFileEventsFromMessages, extractLogEventsFromMessages]);
+  }, [session?.id, user?.email, messageApi, extractFileEventsFromMessages, extractLogEventsFromMessages]);
 
 
   React.useEffect(() => {

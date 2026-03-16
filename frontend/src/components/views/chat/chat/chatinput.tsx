@@ -102,6 +102,7 @@ const ChatInput = React.forwardRef<
     const userId = user?.email || "default_user";
     const { agentInfo, agentId } = useAgentInfo();
     const [llmList, setLlmList] = React.useState<{ label: string; value: string }[]>([]);
+    const [selectedLlmLabel, setSelectedLlmLabel] = React.useState<string>("");
     React.useEffect(() => {
       if (agentInfo && agentInfo.agent_config) {
         const llmList = Object.entries(agentInfo.agent_config).map(([key, value]) => {
@@ -115,6 +116,15 @@ const ChatInput = React.forwardRef<
         setLlmList([]);
 
     }, [agentInfo]);
+
+    React.useEffect(() => {
+      const defaultConfigName = (agentInfo as any)?.defult_config_name || "";
+      if (defaultConfigName && llmList.some((llm) => llm.label === defaultConfigName)) {
+        setSelectedLlmLabel(defaultConfigName);
+      } else {
+        setSelectedLlmLabel("");
+      }
+    }, [agentInfo, llmList]);
 
     const isInputDisabled =
       disabled ||
@@ -436,6 +446,7 @@ const ChatInput = React.forwardRef<
 
         // 调用后端 API 更新 agent
         await agentWorkerAPI.updateUserAgent(userId, updatedAgentConfig);
+        setSelectedLlmLabel(llm.label);
         message.success(`已选择模型: ${llm.label}`);
         console.log("Selected LLM:", llm);
       } catch (error) {
@@ -682,8 +693,13 @@ const ChatInput = React.forwardRef<
                                     }}
                                     className={darkMode === "dark" ? "text-gray-300 hover:text-white" : ""}
                                   >
-                                    <span className={darkMode === "dark" ? "text-gray-300" : ""}>
-                                      {llm.label}
+                                    <span className="flex w-full items-center justify-between">
+                                      <span className={darkMode === "dark" ? "text-gray-300" : ""}>
+                                        {llm.label}
+                                      </span>
+                                      {llm.label === selectedLlmLabel && (
+                                        <span className="ml-2 text-green-500 font-bold">√</span>
+                                      )}
                                     </span>
                                   </Menu.Item>
                                 ))

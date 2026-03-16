@@ -11,6 +11,7 @@ export type AgentType =
 
 export interface Agent {
     agent_config?: Record<string, string>;
+    defult_config_name?: string;
     id?: string;
     name: string;
     mode?: AgentMode;

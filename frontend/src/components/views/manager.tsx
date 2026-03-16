@@ -132,7 +132,6 @@ export const SessionManager: React.FC = () => {
     if (!user?.email) return;
 
     // 更新 agentId（在函数开始时就设置，确保及时触发 useAgentInfo）
-    console.log("agent", agent);
     if (agent.id) {
       setAgentId(agent.id);
     } else {
