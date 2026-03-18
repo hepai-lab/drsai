@@ -23,7 +23,6 @@ import ProgressBar from "./progressbar";
 import { messageUtils } from "./rendermessage";
 import RunView from "./runview";
 import WelcomeScreen from "./WelcomeScreen";
-import { AgentModeConfig, DEFAULT_AGENT_MODE_CONFIG, normalizeAgentModeConfig } from "@/utils/agent";
 
 // Extend RunStatus for sidebar status reporting
 type SidebarRunStatus = BaseRunStatus | "final_answer_awaiting_input";
@@ -148,7 +147,7 @@ export default function ChatView({
     setNoMessagesYet,
   });
 
-  const { progress, isPlanning, hasFinalAnswer, currentPlan } = useProgressTracking(currentRun);
+  const { progress, isPlanning, hasFinalAnswer } = useProgressTracking(currentRun);
 
   // 添加滚动到指定 step 的函数
   const scrollToStep = React.useCallback((stepIndex: number) => {
@@ -665,15 +664,16 @@ export default function ChatView({
                   url?: string;
                 }>,
                 accepted = false,
-                plan?: IPlan
+                plan?: IPlan,
+                llm?: { label: string; value: string }
               ) => {
                 if (
                   currentRun?.status === "awaiting_input" ||
                   currentRun?.status === "paused"
                 ) {
-                  handleInputResponse(query, accepted, plan, files);
+                  handleInputResponse(query, accepted, plan, files, llm);
                 } else {
-                  runTask(query, files, plan, true);
+                  runTask(query, files, plan, true, llm);
                 }
               }}
               onCancel={handleCancel}

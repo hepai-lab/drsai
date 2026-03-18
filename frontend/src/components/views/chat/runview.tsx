@@ -44,7 +44,8 @@ interface RunViewProps {
       size: number;
       uuid: string;
       url?: string;
-    }>
+    }>,
+    llm?: { label: string; value: string }
   ) => void;
   onRunTask?: (
     query: string,
@@ -58,7 +59,8 @@ interface RunViewProps {
       url?: string;
     }>,
     plan?: IPlan,
-    fresh_socket?: boolean
+    fresh_socket?: boolean,
+    llm?: { label: string; value: string }
   ) => void;
   onCancel?: () => void;
   error?: IStatus | null;
@@ -1071,7 +1073,8 @@ const RunView: React.FC<RunViewProps> = ({
                 url?: string;
               }>,
               accepted = false,
-              plan?: IPlan
+              plan?: IPlan,
+              llm?: { label: string; value: string }
             ) => {
               scrollToBottom("smooth");
               if (
@@ -1082,14 +1085,16 @@ const RunView: React.FC<RunViewProps> = ({
                   query,
                   accepted,
                   plan,
-                  files
+                  files,
+                  llm
                 );
               } else {
                 onRunTask?.(
                   query,
                   files,
                   plan,
-                  true
+                  true,
+                  llm
                 );
               }
             }}

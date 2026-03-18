@@ -17,9 +17,18 @@ interface WelcomeScreenProps {
     }>;
     onSubmit: (
         query: string,
-        files: RcFile[],
+        files: RcFile[] | Array<{
+            name: string;
+            type: string;
+            path: string;
+            suffix: string;
+            size: number;
+            uuid: string;
+            url?: string;
+        }>,
         accepted: boolean,
-        plan?: IPlan
+        plan?: IPlan,
+        llm?: { label: string; value: string }
     ) => void;
     onCancel: () => void;
     onPause: () => void;
@@ -65,11 +74,20 @@ export default function WelcomeScreen({
                     ref={chatInputRef}
                     onSubmit={(
                         query: string,
-                        files: RcFile[],
+                        files: RcFile[] | Array<{
+                            name: string;
+                            type: string;
+                            path: string;
+                            suffix: string;
+                            size: number;
+                            uuid: string;
+                            url?: string;
+                        }>,
                         accepted = false,
-                        plan?: IPlan
+                        plan?: IPlan,
+                        llm?: { label: string; value: string }
                     ) => {
-                        onSubmit(query, files, accepted, plan);
+                        onSubmit(query, files, accepted, plan, llm);
                     }}
                     error={error}
                     onCancel={onCancel}
