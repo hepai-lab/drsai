@@ -476,9 +476,11 @@ class WebSocketManager:
 
         return input_handler
 
-    async def handle_input_response(self, run_id: int, response: str) -> None:
+    async def handle_input_response(self, run_id: int, response: str|dict) -> None:
         """Handle input response from client"""
         if run_id in self._input_responses and run_id in self._connections:
+            # TODO: 使用Session的配置进行metadata更新
+            # agent_mode_config = await self._get_agent_mode_config(user_id=run.user_id, agent_id = agent_id)
             await self._input_responses[run_id].put(response)
         else:
             logger.warning(f"Received input response for inactive run {run_id}")

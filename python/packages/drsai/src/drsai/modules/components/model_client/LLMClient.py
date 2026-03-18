@@ -265,6 +265,8 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
                 continue
             if message.get("tool_calls") is not None:
                 tool_calls = message.pop("tool_calls")
+                if message.get("content") is None:
+                    message["content"] = ""
                 message["content"] += str(tool_calls)
             new_oai_messages.append(message)
         create_params.messages = new_oai_messages

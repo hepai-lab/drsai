@@ -94,22 +94,28 @@ class UserProfileManager:
         
         self.agent_name = agent_name
         self.user_name = user_id
-        self.work_dir = Path(work_dir)/ "configs"
+        self.work_dir = Path(work_dir)
         self.work_dir.mkdir(exist_ok=True)
+        self.tmp_dir = self.work_dir / "tmp"
+        self.tmp_dir.mkdir(exist_ok=True)
+        self.download_dir = self.work_dir / "downloads"
+        self.download_dir.mkdir(exist_ok=True)
+        self.config_path = self.work_dir / "configs"
+        self.config_path.mkdir(exist_ok=True)
         self.user_id = user_id
         self.thread_id = thread_id
 
         # 定义各个文件路径
-        self.agents_md = self.work_dir / "AGENTS.md"
-        self.subagent_config_path = self.work_dir / "SUBAGENT_CONFIG.json"
-        self.memories_dir = self.work_dir / "memories"
+        self.agents_md = self.config_path / "AGENTS.md"
+        self.subagent_config_path = self.config_path / "SUBAGENT_CONFIG.json"
+        self.memories_dir = self.config_path / "memories"
         self.memories_document_ids = self.memories_dir / "document_ids.json"
-        self.skills_md = self.work_dir / "SKILLS.md"
-        self.skills_dir = self.work_dir / "skills"
-        self.tools_md = self.work_dir / "TOOLS.md"
-        self.tools_config_path = self.work_dir / "TOOLS_CONFIG.json"
-        self.user_md = self.work_dir / "USER.md"
-        self.user_config_path = self.work_dir / "USER_CONFIG.json"
+        self.skills_md = self.config_path / "SKILLS.md"
+        self.skills_dir = self.config_path / "skills"
+        self.tools_md = self.config_path / "TOOLS.md"
+        self.tools_config_path = self.config_path / "TOOLS_CONFIG.json"
+        self.user_md = self.config_path / "USER.md"
+        self.user_config_path = self.config_path / "USER_CONFIG.json"
             
         # user's user profile
         self.first_time_setup = True
@@ -185,7 +191,7 @@ class UserProfileManager:
 ## Basic Information
 - **User ID:** {self.user_id}
 - **User Name:** {self.user_name}
-- **What does the user call you:** 
+- **What does the user call you:** {self.agent_name}
 - **Pronouns:** *(optional)*
 - **Timezone:** 
 - **Notes:** 
@@ -213,18 +219,24 @@ The more you know, the better you can help. But remember — you're learning abo
 ### Working Directory: 
     - {self.work_dir}
 
+### Temporary Directory
+    - {self.tmp_dir}
+
+### Download Directory
+    - {self.download_dir}
+
 ### Congiguration Files
-    - {self.work_dir}/AGENTS.md
-    - {self.work_dir}/SUBAGENT_CONFIG.json
-    - {self.work_dir}/SKILLS.md
-    - {self.work_dir}/TOOLS.md
-    - {self.work_dir}/TOOLS_CONFIG.json
-    - {self.work_dir}/USER.md"
-    - {self.work_dir}/USER_CONFIG.json
+    - {self.config_path}/AGENTS.md
+    - {self.config_path}/SUBAGENT_CONFIG.json
+    - {self.config_path}/SKILLS.md
+    - {self.config_path}/TOOLS.md
+    - {self.config_path}/TOOLS_CONFIG.json
+    - {self.config_path}/USER.md"
+    - {self.config_path}/USER_CONFIG.json
 
 ### Personal Skills and Memory dirs: 
-    - {self.work_dir}/skills
-    - {self.work_dir}/memories
+    - {self.config_path}/skills
+    - {self.config_path}/memories
 
 ### SSH setup: 
     - home-server → 192.168.1.100, user: admin
@@ -234,6 +246,10 @@ The more you know, the better you can help. But remember — you're learning abo
 
 ## Frequently Used Tools and Skills
 [To be tracked automatically]
+
+**Note:** 
+
+- Remember to perform operations such as downloading files in the Download Directory, and avoid interfering with the contents of other configured files.
 """
         self.tools_md.write_text(content, encoding='utf-8')
 
