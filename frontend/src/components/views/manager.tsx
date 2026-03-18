@@ -315,11 +315,8 @@ export const SessionManager: React.FC = () => {
     return sessions.map((s: Session) => {
       if (!s.id) return null;
 
-      const status = sessionRunStatuses[s.id];
-      const isSessionPotentiallyActive = ["active", "awaiting_input", "pausing", "paused"].includes(status);
-
-      if (!isSessionPotentiallyActive && session?.id !== s.id) return null;
-
+      // Always render ChatView for all sessions to preserve streamed messages when switching.
+      // Non-current sessions are hidden via CSS (className="hidden").
       return (
         <div key={s.id} className={`${session?.id === s.id ? "block" : "hidden"} relative`}>
           <ChatView
@@ -337,7 +334,6 @@ export const SessionManager: React.FC = () => {
   }, [
     sessions,
     session,
-    sessionRunStatuses,
     updateSessionName,
     getSessionSocket,
     updateSessionRunStatus,
