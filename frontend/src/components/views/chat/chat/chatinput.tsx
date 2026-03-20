@@ -54,7 +54,8 @@ interface ChatInputProps {
       url?: string;
     }>,
     accepted?: boolean,
-    plan?: IPlan
+    plan?: IPlan,
+    llm?: { label: string; value: string }
   ) => void;
   error: IStatus | null;
   disabled?: boolean;
@@ -282,10 +283,11 @@ const ChatInput = React.forwardRef<
       accepted: boolean,
       doResetInput: boolean = true
     ) => {
+      const selectedLlm = llmList.find((llm) => llm.label === selectedLlmLabel);
       if (attachedPlan) {
-        onSubmit(query, files as any, accepted, attachedPlan);
+        onSubmit(query, files as any, accepted, attachedPlan, selectedLlm);
       } else {
-        onSubmit(query, files as any, accepted);
+        onSubmit(query, files as any, accepted, undefined, selectedLlm);
       }
 
       if (doResetInput) {

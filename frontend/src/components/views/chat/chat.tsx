@@ -2,6 +2,7 @@ import { message } from "antd";
 import { RcFile } from "antd/es/upload";
 import * as React from "react";
 import { appContext } from "../../../hooks/provider";
+import { useMessageCacheStore } from "../../../store/messageCache";
 import { useSettingsStore } from "../../store";
 import { IStatus } from "../../types/app";
 import {
@@ -23,7 +24,6 @@ import ProgressBar from "./progressbar";
 import { messageUtils } from "./rendermessage";
 import RunView from "./runview";
 import WelcomeScreen from "./WelcomeScreen";
-import { AgentModeConfig, DEFAULT_AGENT_MODE_CONFIG, normalizeAgentModeConfig } from "@/utils/agent";
 
 // Extend RunStatus for sidebar status reporting
 type SidebarRunStatus = BaseRunStatus | "final_answer_awaiting_input";
@@ -66,6 +66,8 @@ export default function ChatView({
   // Context and store
   const settingsConfig = useSettingsStore((state) => state.config);
   const { user } = React.useContext(appContext);
+  const setSessionRunCache = useMessageCacheStore((state) => state.setSessionRun);
+  const getSessionRunCache = useMessageCacheStore((state) => state.getSessionRun);
 
   // Local state
   const [error, setError] = React.useState<IStatus | null>({
@@ -126,6 +128,7 @@ export default function ChatView({
     session,
     getSessionSocket,
     setCurrentRun,
+    setSessionRun: setSessionRunCache,
     userEmail: user?.email,
   });
 
@@ -148,7 +151,7 @@ export default function ChatView({
     setNoMessagesYet,
   });
 
-  const { progress, isPlanning, hasFinalAnswer, currentPlan } = useProgressTracking(currentRun);
+  const { progress, isPlanning, hasFinalAnswer } = useProgressTracking(currentRun);
 
   // 添加滚动到指定 step 的函数
   const scrollToStep = React.useCallback((stepIndex: number) => {
@@ -351,36 +354,45 @@ export default function ChatView({
   const loadSessionRun = React.useCallback(async () => {
     if (!session?.id || !user?.email) return null;
 
+    const applyExtractions = (run: Run): Run => {
+      run.file_events = extractFileEventsFromMessages(run);
+      const extractedLogs = extractLogEventsFromMessages(run);
+      if (extractedLogs.length > 0) {
+        if (run.logs && Array.isArray(run.logs)) {
+          const existingLogs = run.logs.map(log =>
+            typeof log === "string" ? { content: log } : log
+          );
+          const existingKeys = new Set(
+            existingLogs.map(log => `${log.send_time_stamp}-${log.content}`)
+          );
+          const newLogs = extractedLogs.filter(log =>
+            !existingKeys.has(`${log.send_time_stamp}-${log.content}`)
+          );
+          run.logs = [...existingLogs, ...newLogs];
+        } else {
+          run.logs = extractedLogs;
+        }
+      }
+      return run;
+    };
+
     try {
+      // Prefer cache when it has more messages (streamed content preserved from before switch)
+      const cachedRun = getSessionRunCache(session.id);
       const response = await sessionAPI.getSessionRuns(
         session.id,
         user?.email
       );
-      const latestRun = response.runs[response.runs.length - 1];
+      let latestRun = response.runs[response.runs.length - 1];
 
-      // 从 messages 中提取 FilesEvent 类型的消息
-      if (latestRun) {
-        latestRun.file_events = extractFileEventsFromMessages(latestRun);
-        // 从 messages 中提取 AgentLogEvent 类型的消息
-        const extractedLogs = extractLogEventsFromMessages(latestRun);
-        if (extractedLogs.length > 0) {
-          // 如果 run.logs 已存在，合并；否则直接赋值
-          if (latestRun.logs && Array.isArray(latestRun.logs)) {
-            // 合并日志，避免重复（基于时间戳和内容）
-            const existingLogs = latestRun.logs.map(log =>
-              typeof log === "string" ? { content: log } : log
-            );
-            const existingKeys = new Set(
-              existingLogs.map(log => `${log.send_time_stamp}-${log.content}`)
-            );
-            const newLogs = extractedLogs.filter(log =>
-              !existingKeys.has(`${log.send_time_stamp}-${log.content}`)
-            );
-            latestRun.logs = [...existingLogs, ...newLogs];
-          } else {
-            latestRun.logs = extractedLogs;
-          }
+      if (cachedRun && latestRun && cachedRun.id === latestRun.id) {
+        if (cachedRun.messages.length >= latestRun.messages.length) {
+          latestRun = { ...cachedRun };
         }
+      }
+
+      if (latestRun) {
+        applyExtractions(latestRun);
       }
 
       return latestRun;
@@ -389,19 +401,33 @@ export default function ChatView({
       messageApi.error("Failed to load chat history");
       return null;
     }
-  }, [session?.id, user?.email, messageApi, extractFileEventsFromMessages, extractLogEventsFromMessages]);
+  }, [session?.id, user?.email, messageApi, getSessionRunCache, extractFileEventsFromMessages, extractLogEventsFromMessages]);
 
 
   React.useEffect(() => {
     const initializeSession = async () => {
       if (session?.id) {
-        // Reset pending message sent guard for new session
+        // When not visible, skip load to avoid overwriting streamed messages in currentRun
+        if (!visible) return;
+
+        // When switching back: we already have currentRun (preserved when we switched away),
+        // don't overwrite with API data - just ensure WebSocket is connected for further chunks
+        let skipLoad = false;
+        setCurrentRun((prev) => {
+          if (prev?.id) {
+            setupWebSocket(prev.id, false, true);
+            skipLoad = true;
+            return prev;
+          }
+          return prev;
+        });
+        if (skipLoad) return;
+
+        // Initial load: currentRun is null
         pendingMessageSentRef.current = false;
-        // Reset plan state via hook
         setLocalPlan(null);
         setPlanProcessed(false);
 
-        // Only load data if component is visible
         const latestRun = await loadSessionRun();
 
         if (latestRun) {
@@ -665,15 +691,16 @@ export default function ChatView({
                   url?: string;
                 }>,
                 accepted = false,
-                plan?: IPlan
+                plan?: IPlan,
+                llm?: { label: string; value: string }
               ) => {
                 if (
                   currentRun?.status === "awaiting_input" ||
                   currentRun?.status === "paused"
                 ) {
-                  handleInputResponse(query, accepted, plan, files);
+                  handleInputResponse(query, accepted, plan, files, llm);
                 } else {
-                  runTask(query, files, plan, true);
+                  runTask(query, files, plan, true, llm);
                 }
               }}
               onCancel={handleCancel}
