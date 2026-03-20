@@ -26,6 +26,7 @@ from drsai.modules.baseagent import (
     TaskResult, 
     CreateResult,
     FunctionExecutionResultMessage,
+    FunctionExecutionResult,
     AssistantMessage,
     UserMessage,
     SystemMessage,
@@ -73,6 +74,7 @@ from drsai.modules.managers.messages import (
     StructuredMessageFactory,
     MultiModalMessage,
     Image,
+    
 )
 from drsai.modules.managers.database import DatabaseManager
 from drsai.configs.constant import RUNS_DIR
@@ -244,7 +246,7 @@ class DrSaiAssistant(DrSaiAgent):
         )
         if not self._model_context._rag_flow_manager:
             raise ValueError("RAGFlowManager is not initialized in DrSaiChatCompletionContext")
-        funcs = [self._model_context.retreve_from_memory, self._model_context.summry_conversation_to_memory]
+        funcs = [self._model_context.retrieve_from_memory, self._model_context.summry_conversation_to_memory]
         for func in funcs:
             self._tools.append(FunctionTool(func, description=func.__doc__))
                 
@@ -329,7 +331,7 @@ Current Session_ID is {self._thread_id}
         #     else:
         #         skills_loader.add_skills_by_dir(skills_dir=self._skills_dir)
         # 获取技能描述
-        if skills_loader.skills:
+        if skills_loader and skills_loader.skills:
             self._agent_skills_tools = [get_agent_skills_tool(descriptions=skills_loader.get_descriptions())]
         else:
             self._agent_skills_tools = []
@@ -573,7 +575,7 @@ Current Session_ID is {self._thread_id}
                     yield thought_event
                     inner_messages.append(thought_event)
 
-                # Add the assistant message to the model context (including thought if present)
+                # Add the assistant message to the model context (including thought if present)  
                 await model_context.add_message(
                     AssistantMessage(
                         content=model_result.content,
@@ -609,9 +611,12 @@ Current Session_ID is {self._thread_id}
                 for i in range(len(model_result.content)):
                     argument = json.loads(model_result.content[i].arguments)
                     tool_name = model_result.content[i].name
+                    call_id = model_result.content[i].id
                     if tool_name == "TodoWrite":
                         async for message in self.handle_todo_write(
                             argument = argument,
+                            tool_name = tool_name,
+                            call_id = call_id,
                             agent_name = agent_name, 
                             model_context = model_context):
                             if isinstance(message, StopMessage):
@@ -628,6 +633,8 @@ Current Session_ID is {self._thread_id}
                             model_client_stream = model_client_stream,
                             model_context = model_context,
                             argument = argument,
+                            tool_name = tool_name,
+                            call_id = call_id,
                             cancellation_token = cancellation_token,
                             output_content_type = output_content_type,
                         ):
@@ -640,17 +647,29 @@ Current Session_ID is {self._thread_id}
                             yield message
                     elif tool_name == "Skill":
                         skill_content = skills_loader.run_skill(argument["skill"])
-                        await model_context.add_message(
-                            UserMessage(
-                                content=f"Skill for {argument["skill"]}: {skill_content}",
-                                source="user",
-                            )
-                        )
+                        # await model_context.add_message(
+                        #     UserMessage(
+                        #         content=f"Skill for {argument["skill"]}: {skill_content}",
+                        #         source="user",
+                        #     )
+                        # )
+                        await model_context.add_message(FunctionExecutionResultMessage(
+                            content=[FunctionExecutionResult(
+                                content = f"Skill for {argument["skill"]}:\n\n {skill_content}",
+                                name = tool_name,
+                                call_id = call_id,
+                                is_error = False,
+                            ),]
+                        ))
                         yield AgentLogEvent(
                             title=f"I am reading skill: {argument["skill"]}.",
                             source=agent_name, 
                             content=str(argument), 
                             content_type="tools")
+                        yield ToolCallSummaryMessage(
+                            content=f"<think>Skill for {argument["skill"]}:\n\n {skill_content}</think>\n",
+                            source=agent_name,
+                        )
                     elif tool_name in self._tools_names:
                         async for message in self._process_model_result(
                             model_result=model_result,
@@ -673,19 +692,28 @@ Current Session_ID is {self._thread_id}
                             if self.is_paused:
                                 raise asyncio.CancelledError()
                             if isinstance(message, Response):
-                                yield ModelClientStreamingChunkEvent(content="<think>", source=agent_name)
-                                yield ModelClientStreamingChunkEvent(content=str(message.chat_message.content), source=agent_name)
-                                yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
+                                # yield ModelClientStreamingChunkEvent(content="<think>", source=agent_name)
+                                # yield ModelClientStreamingChunkEvent(content=str(message.chat_message.content), source=agent_name)
+                                # yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
+                                yield message.chat_message
                             else:
                                 yield message
                     elif tool_name == "UpdateUserConfig":
                         update_message = self._user_profile_manager.update_user_config(**argument)
-                        await model_context.add_message(
-                            UserMessage(
-                                content=update_message,
-                                source="user",
-                            )
-                        )
+                        # await model_context.add_message(
+                        #     UserMessage(
+                        #         content=update_message,
+                        #         source="user",
+                        #     )
+                        # )
+                        await model_context.add_message(FunctionExecutionResultMessage(
+                            content=[FunctionExecutionResult(
+                                content = update_message,
+                                name = tool_name,
+                                call_id = call_id,
+                                is_error = False,
+                            ),]
+                        ))
                         agent_name = self._user_profile_manager.agent_name
                         yield AgentLogEvent(
                             title=f"I am updating user's config.",
@@ -693,12 +721,20 @@ Current Session_ID is {self._thread_id}
                             content=str(argument), 
                             content_type="tools")
                     else:
-                        await model_context.add_message(
-                            UserMessage(
-                                content=f"Unknown tool: {model_result.content[i].name}",
-                                source="user",
-                            )
-                        )
+                        await model_context.add_message(FunctionExecutionResultMessage(
+                            content=[FunctionExecutionResult(
+                                content = f"Unknown tool: {model_result.content[i].name}",
+                                name = tool_name,
+                                call_id = call_id,
+                                is_error = False,
+                            ),]
+                        ))
+                        # await model_context.add_message(
+                        #     UserMessage(
+                        #         content=f"Unknown tool: {model_result.content[i].name}",
+                        #         source="user",
+                        #     )
+                        # )
 
                 turn_count += 1
                 if turn_count > self._max_turn_count:
@@ -860,7 +896,8 @@ Current Session_ID is {self._thread_id}
                 for call in model_result.content
             ]
         )
-        # exec_results = [result for _, result in executed_calls_and_results]
+        exec_results = [result for _, result in executed_calls_and_results]
+        await model_context.add_message(FunctionExecutionResultMessage(content=exec_results))
         normal_tool_calls = [(call, result) for call, result in executed_calls_and_results if call.name not in handoffs]
         tool_call_summaries: List[str] = []
         for tool_call, tool_call_result in normal_tool_calls:
@@ -872,15 +909,9 @@ Current Session_ID is {self._thread_id}
                 )
             )
         tool_call_summary = "\n".join(tool_call_summaries)
-        await model_context.add_message(
-            UserMessage(
-                content=tool_call_summary,
-                source="tool",
-            )
-        )
         yield Response(
                 chat_message=ToolCallSummaryMessage(
-                    content=tool_call_summary,
+                    content="<think>The results of execution:\n " + tool_call_summary + "</think>\n",
                     source=agent_name,
                 ),
                 inner_messages=inner_messages,
@@ -930,6 +961,8 @@ Current Session_ID is {self._thread_id}
         model_client_stream: bool,
         model_context: ChatCompletionContext,
         argument:Dict[str, Any],
+        tool_name: str,
+        call_id: str,
         cancellation_token: CancellationToken,
         output_content_type: type[BaseModel] | None,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
@@ -1014,12 +1047,20 @@ Current Session_ID is {self._thread_id}
             async for message in subagent.on_messages_stream(messages=task_messages, cancellation_token=cancellation_token):
                 if isinstance(message, Response):
                     yield message.chat_message
-                    await model_context.add_message(
-                        UserMessage(
-                            content=str(message.chat_message.content),
-                            source="user",
-                        )
-                    )
+                    # await model_context.add_message(
+                    #     UserMessage(
+                    #         content=str(message.chat_message.content),
+                    #         source="user",
+                    #     )
+                    # )
+                    await model_context.add_message(FunctionExecutionResultMessage(
+                        content=[FunctionExecutionResult(
+                            content = str(message.chat_message.content),
+                            name = tool_name,
+                            call_id = call_id,
+                            is_error = False,
+                        ),]
+                    ))
                     return
                 yield message
 
@@ -1029,12 +1070,20 @@ Current Session_ID is {self._thread_id}
                 content=str(e)+"\n\n",
                 source=self.name,
             )
-            await model_context.add_message(
-                UserMessage(
-                    content=str(e),
-                    source="user",
-                )
-            )
+            # await model_context.add_message(
+            #     UserMessage(
+            #         content=str(e),
+            #         source="user",
+            #     )
+            # )
+            await model_context.add_message(FunctionExecutionResultMessage(
+                content=[FunctionExecutionResult(
+                    content = str(e),
+                    name = tool_name,
+                    call_id = call_id,
+                    is_error = True,
+                ),]
+            ))
             yield StopMessage(
                 content=str(e),
                 source=agent_name,
@@ -1043,6 +1092,8 @@ Current Session_ID is {self._thread_id}
     async def handle_todo_write(
         self,
         argument: Dict[str, Any],
+        tool_name: str,
+        call_id: str,
         agent_name: str,
         model_context: ChatCompletionContext,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
@@ -1054,12 +1105,20 @@ Current Session_ID is {self._thread_id}
             #     source=self._user_profile_manager.agent_name,
             # )
             # add message to model_context with user source
-            await model_context.add_message(
-                UserMessage(
-                    content=self._todo_manager.get_task_prompt(),
-                    source="user",
-                )
-            )
+            await model_context.add_message(FunctionExecutionResultMessage(
+                content=[FunctionExecutionResult(
+                    content = self._todo_manager.get_task_prompt(),
+                    name = tool_name,
+                    call_id = call_id,
+                    is_error = False,
+                ),]
+            ))
+            # await model_context.add_message(
+            #     UserMessage(
+            #         content=self._todo_manager.get_task_prompt(),
+            #         source="user",
+            #     )
+            # )
             # send text message to save to db in drsai ui
             yield TextMessage(
                 content=todo_list,
@@ -1073,12 +1132,20 @@ Current Session_ID is {self._thread_id}
                 source=self._user_profile_manager.agent_name,
                 metadata={"interal": "no"},
             )
-            await model_context.add_message(
-                UserMessage(
-                    content=str(e),
-                    source="user",
-                )
-            )
+            # await model_context.add_message(
+            #     UserMessage(
+            #         content=str(e),
+            #         source="user",
+            #     )
+            # )
+            await model_context.add_message(FunctionExecutionResultMessage(
+                content=[FunctionExecutionResult(
+                    content = str(e),
+                    name = tool_name,
+                    call_id = call_id,
+                    is_error = True,
+                ),]
+            ))
             yield StopMessage(
                 content=str(e),
                 source=agent_name,
