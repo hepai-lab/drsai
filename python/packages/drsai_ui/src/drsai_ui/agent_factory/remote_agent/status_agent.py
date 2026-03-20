@@ -121,13 +121,22 @@ class StatusAgent(DrSaiAgent):
         if not self._funcs_map:
             return
         try:
+            params = {
+                "chat_id": self._chat_id,
+                "api_key": self.api_key,
+                "run_info": self._run_info,
+            }
+            if self.defult_config_name:
+                params.update({"defult_config_name": self.defult_config_name})
+
             result: Dict[str, Any] = await asyncio.wait_for(
               asyncio.to_thread(
                   self._funcs_map['lazy_init'],
-                  chat_id=self._chat_id,
-                  api_key=self.api_key,
-                  run_info=self._run_info,
-                  defult_config_name=self.defult_config_name,
+                  **params,
+                #   chat_id=self._chat_id,
+                #   api_key=self.api_key,
+                #   run_info=self._run_info,
+                #   defult_config_name=self.defult_config_name,
               ),
               timeout=60.0
             )

@@ -6,10 +6,10 @@ import asyncio
 api_key = os.environ.get("HEPAI_API_KEY")
 chat_id = "22578926-f5e3-48ef-873b-13a8fe7ca3e4"
 funcs = get_worker_sync_functions(
-    name="hepai/drsai", 
+    name="Dr.Sai Assistant", 
     api_key=api_key,
     # base_url="https://aiapi.ihep.ac.cn/apiv2"
-    base_url="http://0.0.0.0:42806/apiv2"
+    base_url="http://127.0.0.1:42501/apiv2"
     )
 # print([f.__name__ for f in funcs])
 funcs_map = {f.__name__: f for f in funcs}
@@ -30,8 +30,8 @@ async def test_agent_status():
     print(result)
 
     loop = asyncio.get_running_loop()
-    stream = funcs_map['a_chat_completions'](
-        messages = [{"role": "user", "content": "帮我测量psi(4260) -> K+ K- [J/psi -> e+ e-]过程在4.26 GeV能量点上的截面，并且绘制Jpsi（ee）的不变质量。先规划后执行。"}],
+    stream = funcs_map['chat_completions'](
+        # messages = [{"role": "user", "content": "帮我测量psi(4260) -> K+ K- [J/psi -> e+ e-]过程在4.26 GeV能量点上的截面，并且绘制Jpsi（ee）的不变质量。先规划后执行。"}],
         # messages = [{"role": "user", "content": "hi"}],
         # messages = [{"role": "user", "content": "Write a short poem about the fall season."}],
         api_key = api_key,
