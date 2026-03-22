@@ -37,6 +37,7 @@ from loguru import logger
 from datetime import datetime
 import json
 import os
+from datetime import datetime
 from dataclasses import asdict
 
 class LocalMesssage(BaseModel):
@@ -436,6 +437,9 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
             ) -> str:
         """Upload the conversation to RAGFlow."""
 
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        important_keywords = important_keywords or [f"thread_id:{self._thread_id}", f"timestamp:{now_str}"]
+        
         current_messages = current_messages or self._current_messages
         if self._rag_flow_manager:
             for message in current_messages:
@@ -445,7 +449,7 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
                 await self._rag_flow_manager.add_chunks_to_dataset(
                     dataset_id = self._dataset_id,
                     document_id = document_id or self._document_id,
-                    content = message.content,
+                    content = str(message.content),
                     important_keywords = important_keywords,
                     questions = questions)
 
@@ -499,6 +503,8 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         #     else:
         #         return "The conversation is not summarized."
         
+        thread_id = thread_id or self._thread_id
+
         await self._rag_flow_manager.add_chunks_to_dataset(
             dataset_id = dataset_id,
             document_id = document_id,
@@ -507,6 +513,30 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
             important_keywords = [f"thread_id:{thread_id}"]
             )
         logger.info(f"Summarized conversation added to RAGFlow for thread_id: {thread_id}")
+        return str(summry_content)
+    
+    async def summry_conversation_to_MEMORY_MD(
+            self, 
+            current_messages: Optional[List[LLMMessage]] = None,
+            summary_task_prompt: Optional[str] = None,
+            thread_id: Optional[str] = None,
+            cancellation_token: Optional[CancellationToken] = None,
+            ) -> str:
+        """Summarize the conversation."""
+        # TODO: 让AI读取MEMORY.md，进行近期记忆的刷新
+        if self._rag_flow_manager is None:
+            raise ValueError("RAGFlow manager is not configured.")
+        current_messages = current_messages or self._current_messages
+        summry_prompt = summary_task_prompt or self._summary_task_prompt
+        messages_str = self.format_messages_str(current_messages)
+        summry_response = await self._model_client.create(
+            messages=[
+                UserMessage(source="user", content=summry_prompt+messages_str)
+            ],
+            cancellation_token=cancellation_token,
+        )
+        summry_content = summry_response.content
+       
         return str(summry_content)
     
     async def summry_conversation_to_memory(
@@ -540,7 +570,14 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
                 return kw[10:]
         return "null"
 
-    async def retreve_from_memory(
+    def _extract_timestamp(self, chunk: Dict[str, Any]) -> Optional[str]:
+        """ extract the type of 'timestamp:...' from the chunk"""
+        for kw in chunk.get('important_keywords', []):
+            if isinstance(kw, str) and kw.startswith('timestamp:'):
+                return kw[10:]
+        return "null"
+
+    async def retrieve_from_memory(
         self, 
         question: str,
         document_ids: List[str] = [],
@@ -596,12 +633,12 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         raw = await self._rag_flow_manager.retrieve_chunks_by_content(**kwargs)
         chunks = raw.get('chunks', []) if raw else []
         for chunk in chunks:
-            thread_id = self._extract_thread_id(chunk)
-            chunk["thread_id"] = thread_id
+            chunk["thread_id"] = self._extract_thread_id(chunk)
+            chunk["timestamp"] = self._extract_timestamp(chunk)
 
         if len(chunks) > 0:
             return "**Relevant information:** \n" + "\n".join(
-                [f'Session_ID: {chunk["thread_id"]}\n{chunk["content"]}' for chunk in chunks]
+                [f'Session_ID: {chunk["thread_id"]} | Time: {chunk["timestamp"]}\n{chunk["content"]}' for chunk in chunks]
             )
         else:
             return "No relevant information found."

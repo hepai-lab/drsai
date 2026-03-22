@@ -14,6 +14,21 @@ import { AgentModeConfig, DEFAULT_AGENT_MODE_CONFIG } from "@/utils/agent";
 import { messageUtils } from "../rendermessage";
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 
+type SelectedLlm = { label: string; value: string };
+
+const buildLlmPayload = (
+  llm?: SelectedLlm,
+  agentInfo?: Record<string, any>
+): {
+  defult_config_name?: string;
+} => {
+  const resolvedDefaultConfigName = llm?.label || agentInfo?.defult_config_name;
+
+  return {
+    ...(resolvedDefaultConfigName && { defult_config_name: resolvedDefaultConfigName }),
+  };
+};
+
 interface UseTaskActionsProps {
   currentRun: Run | null;
   session: Session | null;
@@ -80,7 +95,8 @@ export const useTaskActions = ({
         size: number;
         uuid: string;
         url?: string;
-      }> = []
+      }> = [],
+      llm?: SelectedLlm
     ) => {
       if (!currentRun) {
         handleError(new Error("No active run"));
@@ -115,6 +131,7 @@ export const useTaskActions = ({
           accepted: accepted,
           content: response,
           ...(planString !== "" && { plan: planString }),
+          ...buildLlmPayload(llm, agentInfo as Record<string, any>),
         };
         const responseString = JSON.stringify(responseJson);
 
@@ -139,6 +156,7 @@ export const useTaskActions = ({
               settings_config: {
                 ...currentSettings,
                 agent_mode_config: agentInfo,
+                ...buildLlmPayload(llm, agentInfo as Record<string, any>),
               },
               ...(processedFiles.length > 0 && { files: processedFiles }),
             };
@@ -149,6 +167,10 @@ export const useTaskActions = ({
           const inputResponseMessage = {
             type: "input_response",
             response: responseString,
+            settings_config: {
+              ...(agentInfo?.id && { agent_id: agentInfo.id }),
+              ...buildLlmPayload(llm, agentInfo as Record<string, any>),
+            },
             ...(processedFiles.length > 0 && { files: processedFiles }),
           };
           socket.send(JSON.stringify(inputResponseMessage));
@@ -176,6 +198,7 @@ export const useTaskActions = ({
       teamConfig,
       setCurrentRun,
       handleError,
+      agentInfo,
     ]
   );
 
@@ -311,7 +334,8 @@ export const useTaskActions = ({
         url?: string;
       }> = [],
       plan?: IPlan,
-      fresh_socket: boolean = false
+      fresh_socket: boolean = false,
+      llm?: SelectedLlm
     ) => {
       setError(null);
       setNoMessagesYet(false);
@@ -382,6 +406,7 @@ export const useTaskActions = ({
             ...currentSettings,
             // agent_mode_config: agentInfo,
             agent_id: agentInfo?.id || "",
+            ...buildLlmPayload(llm, agentInfo as Record<string, any>),
           },
         };
 
@@ -410,6 +435,7 @@ export const useTaskActions = ({
       setError,
       setNoMessagesYet,
       onSessionNameChange,
+      agentInfo?.id,
     ]
   );
 

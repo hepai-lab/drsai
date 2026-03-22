@@ -346,6 +346,8 @@ class DrSai:
         """
         为drsai ui提供completions接口，yield autogen的BaseChatMessage和BaseAgentEvent
         """
+        user_id = None
+        thread_id = None
         try:
             start_time = time.time()
             # 处理用户的kwargs参数，保存UserInput到数据库
@@ -441,35 +443,38 @@ class DrSai:
             logger.error(f"Error in a_drsai_ui_completions: {e}")
             traceback.print_exc()
         finally:
-            # 更新thread状态
-            response: Response = self.db_manager.get(
-                Thread, 
-                filters={"user_id": user_id,"thread_id": thread_id},
-                return_json=False
-                )
-            if not response.status or not response.data:
-                raise RuntimeError(f"Failed to get thread: {response.message}")
+            if not thread_id:
+                pass
             else:
-                thread: Thread = response.data[0]
-                # 保存智能体/多智能体实例中的状态
-                if hasattr(agent, "save_state"):
-                    state_dict = await agent.save_state()
-                    state = compress_state(state_dict)
-                    thread.state = state
-                if agent_result:
-                    thread.status = RunStatus.COMPLETE
-                    thread.messages.extend([rely_message.model_dump(mode="json") for rely_message in rely_messages]) # 已经存在的Thread只添加最后一条消息
-                    if thread.team_result is None:
-                            thread.team_result = TeamResult(
-                                task_result = agent_result,
-                                usage="",
-                                duration= time.time() - start_time,
-                            )
-                    else:
-                        thread.team_result["task_result"] = agent_result.model_dump(mode="json")
-            response: Response = self.db_manager.upsert(thread)
-            if not response.status:
-                raise RuntimeError(f"Failed to create thread: {response.message}")
+                # 更新thread状态
+                response: Response = self.db_manager.get(
+                    Thread, 
+                    filters={"user_id": user_id,"thread_id": thread_id},
+                    return_json=False
+                    )
+                if not response.status or not response.data:
+                    raise RuntimeError(f"Failed to get thread: {response.message}")
+                else:
+                    thread: Thread = response.data[0]
+                    # 保存智能体/多智能体实例中的状态
+                    if hasattr(agent, "save_state"):
+                        state_dict = await agent.save_state()
+                        state = compress_state(state_dict)
+                        thread.state = state
+                    if agent_result:
+                        thread.status = RunStatus.COMPLETE
+                        thread.messages.extend([rely_message.model_dump(mode="json") for rely_message in rely_messages]) # 已经存在的Thread只添加最后一条消息
+                        if thread.team_result is None:
+                                thread.team_result = TeamResult(
+                                    task_result = agent_result,
+                                    usage="",
+                                    duration= time.time() - start_time,
+                                )
+                        else:
+                            thread.team_result["task_result"] = agent_result.model_dump(mode="json")
+                response: Response = self.db_manager.upsert(thread)
+                if not response.status:
+                    raise RuntimeError(f"Failed to create thread: {response.message}")
             
 
     #### --- 关于OpenAI Chat/Completions --- ####

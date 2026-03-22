@@ -1,13 +1,9 @@
 ---
 name: pdf_manual_search
-description: 基于pdf_manual_search工具的手册检索教程，可以查询《spec - X-Ray Diffraction Software》，OpenDrSai智能体开发等手册内容。
+description: 基于pdf_manual_search工具的手册检索教程，可以查询《spec - X-Ray Diffraction Software》，B9同步辐射线站的操作手册以及安全和注意事项等、OpenDrSai智能体开发等手册内容。
 ---
 
 # Guide
-
-## 用途
-
-在用户需要检索《spec - X-Ray Diffraction Software》，OpenDrSai智能体开发等PDF手册，帮助准确地找到需要的内容。
 
 ## 步骤
 
