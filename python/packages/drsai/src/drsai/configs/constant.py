@@ -27,8 +27,9 @@ FS_DIR = f'{Path.home()}/.{APPNAME}'  # 文件系统目录
 RUNS_DIR = f'{FS_DIR}/runs'  # 运行目录
 CONFIG_DIR = f'{FS_DIR}/configs'  # 配置目录
 FILE_DIR = f'{FS_DIR}/files'   # 文件目录
+WECHAT_DIR = f'{FS_DIR}/wechat'   # 文件目录
 
-directories = [FS_DIR, RUNS_DIR, CONFIG_DIR, FILE_DIR]
+directories = [FS_DIR, RUNS_DIR, CONFIG_DIR, FILE_DIR, WECHAT_DIR]
 for directory in directories:
     path = Path(directory)
     if not path.exists():

@@ -305,6 +305,7 @@ if __name__ == "__main__":
             # use_api_key_mode = "backend",
             join_topics = ["test"],
             metadata={"others": "test"},
+            link_wechat = False,
         )
     )
 

@@ -118,7 +118,7 @@ if __name__ == "__main__":
             # 数据库及文件存储目录
             base_dir = "/home/xiongdb/drsai_dev/examples/cli/tmp/drsai", 
             # 后端服务端口
-            port = 42810, 
+            port = 42815, 
             # 是否注册到HepAI智能体平台
             no_register=False,
             # 为了节约资源，是否在前端关闭智能体/页面后后端的智能体实例清除
@@ -127,5 +127,6 @@ if __name__ == "__main__":
             enable_openwebui_pipeline=True, 
             # 使用backend/frontend的api_key
             use_api_key_mode = "frontend",
+            link_wechat = True,
         )
     )
