@@ -114,9 +114,10 @@ if __name__ == "__main__":
             # 智能体实体
             agent_factory=create_agent, 
             # 智能体数据库地址
-            engine_uri = "sqlite:////home/xiongdb/drsai_dev/examples/cli/tmp/drsai/drsai.db",
-            # 数据库及文件存储目录
-            base_dir = "/home/xiongdb/drsai_dev/examples/cli/tmp/drsai", 
+            # engine_uri = "sqlite:////home/xiongdb/drsai_dev/examples/cli/tmp/drsai/drsai.db",
+            # # 数据库及文件存储目录
+            # base_dir = "/home/xiongdb/drsai_dev/examples/cli/tmp/drsai", 
+            drsai_dir = "/home/xiongdb/drsai_dev/examples/cli/tmp/drsai", 
             # 后端服务端口
             port = 42815, 
             # 是否注册到HepAI智能体平台

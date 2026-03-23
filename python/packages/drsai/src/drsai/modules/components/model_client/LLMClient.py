@@ -256,18 +256,32 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             extra_create_args,
         )
 
-        # # TODO: we should remove tool_calls?
+        # # # TODO: we should remove tool_calls?
         # new_oai_messages = []
         # for message in create_params.messages:
-        #     if message.get("role") == "tool":
+        #     # if message.get("role") == "tool":
         #         # message["role"] = "assistant"
         #         # message.pop("tool_call_id")
-        #         continue
+        #         # continue
         #     if message.get("tool_calls") is not None:
-        #         tool_calls = message.pop("tool_calls")
-        #         if message.get("content") is None:
-        #             message["content"] = ""
-        #         message["content"] += str(tool_calls)
+        #         # tool_calls = message.pop("tool_calls")
+        #         # if message.get("content") is None:
+        #         #     message["content"] = ""
+        #         # message["content"] += str(tool_calls)
+        #         tool_call_messages = []
+        #         # content = message.get("content")
+        #         # role = "tool"
+        #         tool_calls = message.get("tool_calls")
+        #         for tool_call in tool_calls:
+        #             tool_call_id = tool_call.get("id")
+        #             tool_call_messages.append(
+        #                 {
+        #                     "role": "tool",
+        #                     "tool_call_id": tool_call_id,
+        #                     "content": str(tool_call),
+        #                 }
+        #             )
+
         #     new_oai_messages.append(message)
         # create_params.messages = new_oai_messages
 

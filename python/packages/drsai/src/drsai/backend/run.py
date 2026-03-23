@@ -410,8 +410,9 @@ async def run_worker(agent_factory: callable, **kwargs):
         worker_args.port = port
         os.environ['BACKEND_PORT'] = str(port)
     
-    engine_uri = kwargs.pop('engine_uri', None) or f"sqlite:///{CONST.FS_DIR}/drsai.db"
-    base_dir = kwargs.pop('base_dir', None) or CONST.FS_DIR
+    drsai_dir = kwargs.pop('drsai_dir', None) or CONST.FS_DIR
+    engine_uri = kwargs.pop('engine_uri', None) or f"sqlite:///{drsai_dir}/drsai.db"
+    base_dir = kwargs.pop('base_dir', None) or drsai_dir
     db_manager = DatabaseManager(
         engine_uri = engine_uri,
         base_dir = base_dir
