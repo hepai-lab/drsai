@@ -521,7 +521,11 @@ You can update one or multiple fields at once. Only provide the fields that need
             skill_dir.mkdir(exist_ok=True)
 
             skill_file = skill_dir / "SKILL.md"
-            skill_file.write_text(skill_content, encoding='utf-8')
+            if skill_file.exists():
+                with skill_file.open("a", encoding='utf-8') as f:
+                    f.write("\n" + skill_content)
+            else:
+                skill_file.write_text(skill_content, encoding='utf-8')
 
             # 更新Skills.md
             self._update_skills_summary(skill_name)
@@ -569,6 +573,10 @@ You can update one or multiple fields at once. Only provide the fields that need
         try:
             filename = f"session_{self.thread_id}.json"
             filepath = self.memories_dir / filename
+            if filepath.exists():
+                existing = json.loads(filepath.read_text(encoding='utf-8'))
+                existing.extend(session_memory)
+                session_memory = existing
             filepath.write_text(
                 json.dumps(session_memory, indent=4, ensure_ascii=False),
                 encoding='utf-8'
