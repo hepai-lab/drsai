@@ -343,26 +343,31 @@ Current Session_ID is {self._thread_id}
         user_local_tools = []
         tools_config = self._user_profile_manager.load_user_tools_config()
         for tool in tools_config:
-            if tool.get("type") == "mcp-std":
-                config = tool.get("config")
-                if "command" in config and "args" in config:
-                    std_mcp_tools = await mcp_server_tools(StdioServerParams(
-                        command=config["command"],
-                        args=config["args"]
-                    ))
-                    user_mcp_tools.extend(std_mcp_tools)
-            elif tool.get("type") == "mcp-sse":
-                config = tool.get("config")
-                if "url" in config:
-                    sse_mcp_tools = await mcp_server_tools(SseServerParams(
-                        url=config["url"],
-                        headers = config.get("headers"),
-                        timeout=config.get("timeout", 20),
-                        sse_read_timeout=config.get("sse_read_timeout", 300),
-                    ))
-                    user_mcp_tools.extend(sse_mcp_tools)
-            else:
-                user_local_tools.append(str(config)+"\n")
+            try:
+                if tool.get("type") == "mcp-std":
+                    config = tool.get("config")
+                    if "command" in config and "args" in config:
+                        std_mcp_tools = await mcp_server_tools(StdioServerParams(
+                            command=config["command"],
+                            args=config["args"]
+                        ))
+                        user_mcp_tools.extend(std_mcp_tools)
+                elif tool.get("type") == "mcp-sse":
+                    config = tool.get("config")
+                    if "url" in config:
+                        sse_mcp_tools = await mcp_server_tools(SseServerParams(
+                            url=config["url"],
+                            headers = config.get("headers", None),
+                            timeout=config.get("timeout", float(20)),
+                            sse_read_timeout=config.get("sse_read_timeout", float(300)),
+                        ))
+                        user_mcp_tools.extend(sse_mcp_tools)
+                else:
+                    user_local_tools.append(str(config)+"\n")
+
+            except Exception as e:
+                # print(f"Error loading tool: {e}")
+                pass
 
         self._workbench._tools = self._tools + user_mcp_tools
         self._tools_names = [tool.name for tool in self._workbench._tools ]

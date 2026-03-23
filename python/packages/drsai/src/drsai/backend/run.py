@@ -443,7 +443,7 @@ async def run_worker(agent_factory: callable, **kwargs):
     close_kwargs: dict[str, Any] = kwargs.pop("close_kwargs", {})
 
     # WeChat
-    link_wechat = kwargs.pop("link_wechat", True)
+    link_wechat = kwargs.pop("link_wechat", False)
 
     print(model_args)
     print()
@@ -474,13 +474,20 @@ async def run_worker(agent_factory: callable, **kwargs):
         from .wechat.wechat_bot import WeChatBot
         from .wechat.idle_monitor import idle_monitor
 
+        wechat_dir = WECHAT_DIR
+        if base_dir != CONST.FS_DIR:
+            wechat_dir  = os.path.join(base_dir, "wechat")
+            os.makedirs(wechat_dir, exist_ok=True)
+        creds_file = os.path.join(wechat_dir, "credentials.json")
+
         # 1. QR 扫码登录 + HEPAI_API_KEY 录入（交互式，阻塞直到扫码完成）
-        await login_wechat_main()
-        creds = load_credentials()
+        await login_wechat_main(creds_file = creds_file)
+        creds = load_credentials(creds_file = creds_file)
         api_key = creds.get("hepai_api_key") or os.environ.get("HEPAI_API_KEY", "")
 
         # 2. 初始化会话管理器和 Bot
-        sessions_file = os.path.join(WECHAT_DIR, "sessions.json")
+        
+        sessions_file = os.path.join(wechat_dir, "sessions.json")
         session_mgr = SessionManager(sessions_file)
         bot = WeChatBot(
             model=model,

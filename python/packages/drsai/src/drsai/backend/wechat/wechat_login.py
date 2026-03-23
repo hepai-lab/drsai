@@ -97,7 +97,7 @@ async def wait_for_scan(qrcode_id: str) -> dict:
 
 # ── 保存凭据 ───────────────────────────────────────────────────────────────────
 
-def save_credentials(data: dict) -> None:
+def save_credentials(data: dict, creds_file: str = CREDS_FILE) -> None:
     """
     将登录凭据保存到 credentials.json，供后续步骤使用。
 
@@ -115,14 +115,14 @@ def save_credentials(data: dict) -> None:
         "base_url":    data.get("baseurl", BASE_URL),
         "login_time":  time.time(),
     }
-    with open(CREDS_FILE, "w", encoding="utf-8") as f:
+    with open(creds_file, "w", encoding="utf-8") as f:
         json.dump(creds, f, indent=2, ensure_ascii=False)
-    print(f"凭据已保存到: {CREDS_FILE}")
+    print(f"凭据已保存到: {creds_file}")
     print(f"  account_id : {creds['account_id']}")
     print(f"  user_id    : {creds['user_id']}")
 
 
-def is_credentials_valid(max_age_hours: float = 168.0) -> bool:
+def is_credentials_valid(max_age_hours: float = 168.0, creds_file: str = CREDS_FILE) -> bool:
     """
     检查本地凭据文件是否存在且未超过有效期。
 
@@ -133,10 +133,10 @@ def is_credentials_valid(max_age_hours: float = 168.0) -> bool:
         True  —— 凭据存在且在有效期内，可跳过扫码
         False —— 凭据不存在、缺少时间戳或已超期，需重新登录
     """
-    if not os.path.exists(CREDS_FILE):
+    if not os.path.exists(creds_file):
         return False
     try:
-        with open(CREDS_FILE, encoding="utf-8") as f:
+        with open(creds_file, encoding="utf-8") as f:
             creds = json.load(f)
     except (json.JSONDecodeError, OSError):
         return False
@@ -149,17 +149,17 @@ def is_credentials_valid(max_age_hours: float = 168.0) -> bool:
     return elapsed_hours < max_age_hours
 
 
-def load_credentials() -> dict:
+def load_credentials(creds_file: str = CREDS_FILE) -> dict:
     """从 credentials.json 加载凭据（供其他脚本调用）。"""
-    if not os.path.exists(CREDS_FILE):
-        raise FileNotFoundError(f"未找到凭据文件，请先运行 step1_login.py: {CREDS_FILE}")
-    with open(CREDS_FILE, encoding="utf-8") as f:
+    if not os.path.exists(creds_file):
+        raise FileNotFoundError(f"未找到凭据文件，请先运行 step1_login.py: {creds_file}")
+    with open(creds_file, encoding="utf-8") as f:
         return json.load(f)
 
 
 # ── HEPAI_API_KEY 录入 ─────────────────────────────────────────────────────────
 
-async def _prompt_api_key() -> None:
+async def _prompt_api_key(creds_file: CREDS_FILE) -> None:
     """
     提示用户输入 HEPAI_API_KEY，并将其写入 credentials.json。
     直接回车则沿用环境变量中的值（若已设置）。
@@ -183,30 +183,30 @@ async def _prompt_api_key() -> None:
     api_key = key if key else existing
 
     # 读取已保存的凭据并追加 hepai_api_key 字段
-    creds = load_credentials()
+    creds = load_credentials(creds_file = creds_file)
     creds["hepai_api_key"] = api_key
-    os.makedirs(WECHAT_DIR, exist_ok=True)
-    with open(CREDS_FILE, "w", encoding="utf-8") as f:
+    # os.makedirs(WECHAT_DIR, exist_ok=True)
+    with open(creds_file, "w", encoding="utf-8") as f:
         json.dump(creds, f, indent=2, ensure_ascii=False)
     print(f"  HEPAI_API_KEY 已保存（末尾: ...{api_key[-6:]}）")
 
 
 # ── 主流程 ─────────────────────────────────────────────────────────────────────
 
-async def login_wechat_main(max_age_hours: float = 168.0):
+async def login_wechat_main(max_age_hours: float = 168.0, creds_file: str = CREDS_FILE):
     """
     参数：
         max_age_hours: 凭据有效期（小时），默认 168 小时（7 天）。
                        在此时间内重启服务无需重新扫码。
     """
     # 如果凭据仍在有效期内，直接复用，跳过扫码
-    if is_credentials_valid(max_age_hours):
-        creds = load_credentials()
+    if is_credentials_valid(max_age_hours, creds_file = creds_file):
+        creds = load_credentials(creds_file = creds_file)
         elapsed_h = (time.time() - creds["login_time"]) / 3600
         print(f"✅ 检测到有效登录凭据（{elapsed_h:.1f} 小时前登录），跳过扫码。")
         # 若 HEPAI_API_KEY 尚未保存，仍需录入
         if not creds.get("hepai_api_key") and not os.environ.get("HEPAI_API_KEY"):
-            await _prompt_api_key()
+            await _prompt_api_key(creds_file = creds_file)
         return
 
     print("=" * 50)
@@ -236,10 +236,10 @@ async def login_wechat_main(max_age_hours: float = 168.0):
             raise
 
     # 保存凭据
-    save_credentials(result)
+    save_credentials(result, creds_file = creds_file)
 
     # 录入 HEPAI_API_KEY
-    await _prompt_api_key()
+    await _prompt_api_key(creds_file = creds_file)
 
     print("登录成功！")
 

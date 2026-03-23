@@ -70,9 +70,9 @@ llm_mode_config = {
     "minimax-m2.5-highspeed": "minimax/minimax-m2.5-highspeed",
     "minimax-m2.7": "minimax/minimax-m2.7",
     "minimax-m2.7-highspeed": "minimax/minimax-m2.7-highspeed",
-    # "gpt-4o": "openai/gpt-4o",
-    # "gpt-4.1": "openai/gpt-4.1",
-    # "gpt-5.2": "openai/gpt-5.2",
+    "gpt-4o": "openai/gpt-4o",
+    "gpt-4.1": "openai/gpt-4.1",
+    "gpt-5.2": "openai/gpt-5.2",
     "deepseek-r1(No image)": "deepseek-ai/deepseek-r1",
     "deepseek-v3.2(No image)": "deepseek-ai/deepseek-v3.2",
 }
@@ -237,7 +237,8 @@ your_code
         db_manager=db_manager,
         user_id=user_id,
         # skills and executor
-        skills_dir=os.getenv("SYSTEM_SKILLS_DIR"),
+        # skills_dir=os.getenv("SYSTEM_SKILLS_DIR"),
+        skills_dir="/home/xiongdb/drsai_dev/agent_skills/skills",
         # executor=local_executor,
         work_dir=WORKDIR,
         only_in_workspace=True,
@@ -305,7 +306,7 @@ if __name__ == "__main__":
             # use_api_key_mode = "backend",
             join_topics = ["test"],
             metadata={"others": "test"},
-            link_wechat = False,
+            link_wechat = True,
         )
     )
 
