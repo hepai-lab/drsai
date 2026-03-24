@@ -50,9 +50,10 @@ def get_default_agent_mode_config(user_id: str) -> List[Dict[str, Any]]:
                     agent.update({"id": str(uuid.uuid4())})
             agents_list.extend(default_agents)
     
-    default_agents_mode = get_agent_mode_config(user_id=user_id)
-    for agent_mode in default_agents_mode:
-        if not agent_mode.get("id"):
-            agent_mode["id"] = str(uuid.uuid4())
-    agents_list.extend(default_agents_mode) 
+    if not DEFAULT_REMOTE_AGENTS:
+        default_agents_mode = get_agent_mode_config(user_id=user_id)
+        for agent_mode in default_agents_mode:
+            if not agent_mode.get("id"):
+                agent_mode["id"] = str(uuid.uuid4())
+        agents_list.extend(default_agents_mode) 
     return agents_list
