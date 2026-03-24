@@ -38,7 +38,7 @@ from ..drsai_worker_agent import HepAIWorkerAgent
 from drsai.modules.components import (
     ComponentModel,
 )
-from drsai.modules.components.model_client import ChatCompletionClient
+from drsai.modules.components.model_client import ChatCompletionClient, HepAIChatCompletionClient
 from drsai.modules.components.model_context import (
     ChatCompletionContext,
     DrSaiChatCompletionContext,
@@ -148,6 +148,8 @@ class DrSaiAssistant(DrSaiAgent):
         db_manager: DatabaseManager | None = None,
         thread_id: str | None = None,
         user_id: str | None = None,
+        set_model_client: Callable | None = None,
+        llm_mode_config: Dict = {},
         # skills and executor
         skills_dir: Optional[str | List[str]] = None,
         work_dir: str | None = None,
@@ -184,6 +186,8 @@ class DrSaiAssistant(DrSaiAgent):
             db_manager=db_manager,
             thread_id=thread_id,
             user_id=user_id,
+            set_model_client=set_model_client,
+            llm_mode_config=llm_mode_config,
         )
 
         self._developer_system_message = system_message
@@ -435,14 +439,23 @@ Current Session_ID is {self._thread_id}
                     msg.metadata["internal"] = "yes"
                     input_messages.append(msg)
                     output_messages.append(msg)
-                    # save attached files
-                    attached_files_json = msg.metadata.get("attached_files")
-                    if attached_files_json:
-                        attached_files = json.loads(attached_files_json)
-                        for file in attached_files:
-                            download_file_from_url_or_base64(
-                                file_info = file, 
-                                save_path = f"{self._user_profile_manager.download_dir}/{file['name']}")
+                    try:
+                        attached_files_json = msg.metadata.get("attached_files")
+                        if attached_files_json:
+                            attached_files = json.loads(attached_files_json)
+                            for file in attached_files:
+                                download_file_from_url_or_base64(
+                                    file_info = file, 
+                                    save_path = f"{self._user_profile_manager.download_dir}/{file['name']}")
+                        settings_config = msg.metadata.get("settings_config")
+                        if settings_config:
+                            settings_config = json.loads(settings_config)
+                            default_config_name = settings_config.get("defult_config_name")
+                            llm_name = self._llm_mode_config.get(default_config_name)
+                            if llm_name != self._model_client._create_args["model"] and self._set_model_client:
+                                self._model_client = self._set_model_client(default_config_name)
+                    except Exception as e:
+                        logger.error(f"Error processing message metadata: {e}")
                     yield msg
                 else:
                     raise ValueError(f"Invalid message type in sequence: {type(msg)}")

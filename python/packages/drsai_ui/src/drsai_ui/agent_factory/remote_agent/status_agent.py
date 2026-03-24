@@ -572,13 +572,13 @@ class StatusAgent(DrSaiAgent):
             # add to chat history
             await model_context.add_message(
                 AssistantMessage(
-                    content=f"An error occurred while executing the task: {e}",
+                    content=f"An error occurred while executing the task: {e}.",
                     source=self.name
                 )
             )
             yield Response(
                 chat_message=TextMessage(
-                    content="An error occurred while executing the task.",
+                    content=f"An error occurred while executing the task: {e}.",
                     source=self.name,
                     metadata={"internal": "no", "error_message": str(e)},
                 ),

@@ -21,8 +21,28 @@ _DANGEROUS_PATTERNS = [
     r'>\s*/dev/',                 # redirect to devices
     r'>\s*/sys/',
     r'>\s*/proc/',
+    # --- rm variants ---
     r'\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)\s+/',  # rm -rf /...
     r'\brm\s+-[a-zA-Z]*r[a-zA-Z]*\s+/',                             # rm -r /...
+    r'\brm\s+-[a-zA-Z]*f[a-zA-Z]*\s+/',                             # rm -f /... (force, no recursion)
+    # --- find with deletion actions ---
+    r'\bfind\b.+\-delete\b',                    # find -delete
+    r'\bfind\b.+\-exec\s+rm\b',                 # find -exec rm ...
+    r'\bfind\b.+\-exec\s+unlink\b',             # find -exec unlink ...
+    # --- xargs piped to rm/unlink ---
+    r'\bxargs\b.*\brm\b',                        # xargs rm (e.g. find ... | xargs rm)
+    r'\bxargs\b.*\bunlink\b',                    # xargs unlink
+    # --- low-level / secure deletion tools ---
+    r'\bunlink\b',                               # unlink (syscall wrapper, deletes file)
+    r'\bshred\b',                                # shred (overwrite + delete)
+    r'\bwipe\b',                                 # wipe (secure delete)
+    r'\bsrm\b',                                  # srm (secure-delete package)
+    # --- directory removal ---
+    r'\brmdir\b',                                # rmdir (remove empty dirs)
+    # --- file truncation to zero ---
+    r'\btruncate\b.*(-s\s*0|--size[=\s]*0)\b',  # truncate --size 0 / -s 0
+    # --- move to /dev/null (effectively destroys content) ---
+    r'\bmv\b.+/dev/null\b',
 ]
 _DANGEROUS_RE = re.compile('|'.join(_DANGEROUS_PATTERNS), re.IGNORECASE)
 
