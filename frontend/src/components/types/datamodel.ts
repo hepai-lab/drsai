@@ -20,6 +20,12 @@ export interface FunctionExecutionResult {
   content: string;
 }
 
+// Action button from backend metadata (e.g. status, kill jobs, continue)
+export interface ActionButton {
+  label: string;
+  action: string;
+}
+
 // Base message configuration (maps to Python BaseMessage)
 export interface BaseMessageConfig {
   source: string;

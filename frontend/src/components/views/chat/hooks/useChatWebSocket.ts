@@ -110,7 +110,7 @@ export const useChatWebSocket = ({
                 typeof chunkData.source === "string" ? chunkData.source : "assistant";
               const sanitizedChunkMetadata =
                 chunkData.metadata && typeof chunkData.metadata === "object"
-                  ? { ...(chunkData.metadata as Record<string, string>) }
+                  ? { ...(chunkData.metadata as Record<string, unknown>) }
                   : undefined;
               const rawStartFlag = sanitizedChunkMetadata?.start_flag;
               const startFlagValue =
@@ -170,6 +170,10 @@ export const useChatWebSocket = ({
                     config: {
                       ...lastMessage.config,
                       content: newContent,
+                      metadata: {
+                        ...(lastMessage.config.metadata || {}),
+                        ...(sanitizedChunkMetadata || {}),
+                      },
                     },
                   };
 
@@ -264,13 +268,25 @@ export const useChatWebSocket = ({
             let updatedMessages = current.messages;
             if (hasTitle) {
               const logSource = typeof logData.source === "string" ? logData.source : "assistant";
+              const logMetaType =
+                logData.type === "AgentLogEvent" ? "AgentLogEvent" : "log";
               const logMessage = createMessage(
                 {
                   source: logSource,
                   content: logData.title,
+                  // 与后端 model_dump 一致：顶层 type / content_type，便于 RenderMessage 识别
+                  ...(logData.type === "AgentLogEvent"
+                    ? { type: "AgentLogEvent" as const }
+                    : {}),
+                  ...(typeof logData.content_type === "string"
+                    ? { content_type: logData.content_type }
+                    : {}),
                   metadata: {
-                    type: "log",
-                    log_content: hasContent ? logData.content : undefined,
+                    type: logMetaType,
+                    ...(hasContent ? { log_content: logData.content } : {}),
+                    ...(typeof logData.content_type === "string"
+                      ? { content_type: logData.content_type }
+                      : {}),
                   },
                 } as AgentMessageConfig,
                 current.id,

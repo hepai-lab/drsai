@@ -8,6 +8,7 @@
     --color-bg-white: #ffffff;
     --color-bg-dark: #0f0f0f;
     --color-bg-accent: #8b5cf6;
+    --color-inline-code-bg: rgba(139, 92, 246, 0.22);
 
     /* 文字颜色 - 更好的对比度 */
     --color-text-primary: #f8fafc;
@@ -64,6 +65,7 @@
     --color-bg-white: #ffffff;
     --color-bg-dark: #0f0f0f;
     --color-bg-accent: #a855f7;
+    --color-inline-code-bg: rgba(168, 85, 247, 0.14);
 
     /* 文字颜色 - 更好的层次感 */
     --color-text-primary: #0f172a;

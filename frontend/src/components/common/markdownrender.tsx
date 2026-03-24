@@ -451,7 +451,7 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
                       return (
                         <code
                           style={{
-                            backgroundColor: "var(--color-bg-secondary)",
+                            backgroundColor: "var(--color-inline-code-bg)",
                             color: "var(--color-text-secondary)",
                             padding: "2px 4px",
                             borderRadius: "3px",
@@ -783,8 +783,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                           style={{
                             whiteSpace: "pre-wrap",
                             color: "var(--color-text-primary)",
-                            backgroundColor:
-                              "var(--color-bg-primary)",
+                            backgroundColor: "var(--color-inline-code-bg)",
                             display: "inline",
                             padding: "0.2em 0.4em",
                             borderRadius:
@@ -894,8 +893,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                   style={{
                     whiteSpace: "pre-wrap",
                     color: "var(--color-text-primary)",
-                    backgroundColor:
-                      "var(--color-bg-primary)",
+                    backgroundColor: "var(--color-inline-code-bg)",
                     display: "inline",
                     padding: "0.2em 0.4em",
                     borderRadius: "0.375rem",

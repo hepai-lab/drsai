@@ -1017,6 +1017,14 @@ const RunView: React.FC<RunViewProps> = ({
                         onRunTask?.(content, [], undefined, true);
                       }
                     }}
+                    onActionButtonClick={(action: string) => {
+                      // 与 onResendMessage 相同逻辑：将 action 作为用户输入发送
+                      if (run.status === "awaiting_input" || run.status === "paused") {
+                        onInputResponse?.(action, false, undefined, []);
+                      } else {
+                        onRunTask?.(action, [], undefined, true);
+                      }
+                    }}
                     forceCollapsed={shouldForceCollapse}
                     onLogMessageClick={handleSwitchToLogExecution}
                     className={isLogMessage && isNextChunkMessage ? "!mb-8" : ""}

@@ -19,6 +19,7 @@ import {
   Settings,
 } from "lucide-react";
 import {
+  ActionButton,
   AgentMessageConfig,
   FunctionCall,
   FunctionExecutionResult,
@@ -52,6 +53,7 @@ interface MessageProps {
   runStatus?: string;
   forceCollapsed?: boolean;
   onLogMessageClick?: () => void;
+  onActionButtonClick?: (action: string) => void;
 }
 
 interface RenderPlanProps {
@@ -649,6 +651,26 @@ export const messageUtils = {
   },
 };
 
+/** Backend may send action_buttons as JSON string or as an array */
+function parseActionButtonsFromMetadata(raw: unknown): ActionButton[] {
+  let parsed: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(
+    (b): b is ActionButton =>
+      typeof b === "object" &&
+      b !== null &&
+      typeof (b as ActionButton).label === "string" &&
+      typeof (b as ActionButton).action === "string"
+  );
+}
+
 const RenderUserMessage: React.FC<{
   parsedContent: ParsedContent;
   isUserProxy: boolean;
@@ -859,6 +881,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     onResendMessage,
     forceCollapsed = false,
     onLogMessageClick,
+    onActionButtonClick,
   }) => {
     const { darkMode } = React.useContext(appContext);
     const [isEditing, setIsEditing] = useState(false);
@@ -943,6 +966,9 @@ export const RenderMessage: React.FC<MessageProps> = memo(
           ...message.metadata,
           type: "log",
           log_content: logContentValue,
+          ...(typeof messageAny.content_type === "string"
+            ? { content_type: messageAny.content_type }
+            : {}),
         },
         content: contentValue,
       } as AgentMessageConfig;
@@ -982,6 +1008,16 @@ export const RenderMessage: React.FC<MessageProps> = memo(
             metadata: normalizedMessage.metadata
           } as ParsedContent;
         })();
+
+    /** tools / AgentLogEvent 行 — 不显示本条下方的复制按钮（用归一化后 config，避免 metadata 为空时漏判） */
+    const cfg = normalizedMessage as unknown as Record<string, unknown>;
+    const meta = (normalizedMessage.metadata || {}) as Record<string, unknown>;
+    const suppressNonUserCopyButton =
+      cfg.content_type === "tools" ||
+      meta.content_type === "tools" ||
+      cfg.type === "AgentLogEvent" ||
+      meta.type === "AgentLogEvent";
+
     // Use new plan message check
     const isPlanMsg = messageUtils.isPlanMessage(normalizedMessage.metadata);
     const orchestratorContent =
@@ -1371,8 +1407,27 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                   </div>
                 )
                 )}
-              {/* Copy button for non-user messages (excluding plan messages) */}
-              {!isPlanMsg && (
+              {/* Action buttons from metadata (e.g. status, kill jobs, continue) */}
+              {!isPlanMsg && !isUser && !isUserProxy && (() => {
+                const rawButtons = (normalizedMessage.metadata as Record<string, unknown>)?.action_buttons;
+                const actionButtons = parseActionButtonsFromMetadata(rawButtons);
+                return actionButtons.length > 0 && onActionButtonClick ? (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {actionButtons.map((btn) => (
+                      <button
+                        key={btn.action}
+                        type="button"
+                        onClick={() => onActionButtonClick(btn.action)}
+                        className="px-3 py-1.5 text-sm rounded-md bg-primary/10 hover:bg-primary/20 text-primary transition-colors border border-primary/30 focus:!border-accent focus-visible:!border-accent"
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
+              {/* Copy button for non-user messages (excluding plan messages and tool log lines) */}
+              {!isPlanMsg && !suppressNonUserCopyButton && (
                 <div className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={handleNonUserCopy}

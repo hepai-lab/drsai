@@ -268,6 +268,7 @@ class WebSocketManager:
                     message = TextMessage(
                         content=message.content,
                         source=message.source,
+                        metadata=message.metadata,
                     )
                     
                 # do not show internal messages
