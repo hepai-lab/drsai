@@ -219,7 +219,7 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
             examples: List[str] = [],
             agent_config: Dict[str, Any] = {},
             defult_config_name: str|None = None,
-            close_agent_on_finish: bool = False,
+            close_agent_on_finish: bool = True,
             drsaiapp: DrSaiAPP = None # 传入DrSaiAPP实例
             ):
         super().__init__(config=config)
@@ -410,8 +410,9 @@ async def run_worker(agent_factory: callable, **kwargs):
         worker_args.port = port
         os.environ['BACKEND_PORT'] = str(port)
     
-    engine_uri = kwargs.pop('engine_uri', None) or f"sqlite:///{CONST.FS_DIR}/drsai.db"
-    base_dir = kwargs.pop('base_dir', None) or CONST.FS_DIR
+    drsai_dir = kwargs.pop('drsai_dir', None) or CONST.FS_DIR
+    engine_uri = kwargs.pop('engine_uri', None) or f"sqlite:///{drsai_dir}/drsai.db"
+    base_dir = kwargs.pop('base_dir', None) or drsai_dir
     db_manager = DatabaseManager(
         engine_uri = engine_uri,
         base_dir = base_dir
@@ -428,7 +429,7 @@ async def run_worker(agent_factory: callable, **kwargs):
     controller_address: str =  kwargs.pop("controller_address", "https://aiapi.ihep.ac.cn")
     worker_args.controller_address = controller_address
 
-    close_agent_on_finish: bool = kwargs.pop("close_agent_on_finish", False)
+    close_agent_on_finish: bool = kwargs.pop("close_agent_on_finish", True)
 
     # TODO: ADD METADATA for worker config
     _metadata: dict[str, Any] = kwargs.pop("metadata", None)
@@ -440,6 +441,9 @@ async def run_worker(agent_factory: callable, **kwargs):
         worker_args._metadata.update({"join_topics": join_topics})
     
     close_kwargs: dict[str, Any] = kwargs.pop("close_kwargs", {})
+
+    # WeChat
+    link_wechat = kwargs.pop("link_wechat", False)
 
     print(model_args)
     print()
@@ -460,6 +464,44 @@ async def run_worker(agent_factory: callable, **kwargs):
         defult_config_name = defult_config_name,
         close_agent_on_finish = close_agent_on_finish,
         drsaiapp=drsaiapp)
+
+    # ── WeChat Bot 集成 ────────────────────────────────────────────────────────
+    _wechat_tasks: list[asyncio.Task] = []
+    if link_wechat:
+        from drsai.configs.constant import WECHAT_DIR
+        from .wechat.wechat_login import login_wechat_main, load_credentials
+        from .wechat.session_manager import SessionManager
+        from .wechat.wechat_bot import WeChatBot
+        from .wechat.idle_monitor import idle_monitor
+
+        wechat_dir = WECHAT_DIR
+        if base_dir != CONST.FS_DIR:
+            wechat_dir  = os.path.join(base_dir, "wechat")
+            os.makedirs(wechat_dir, exist_ok=True)
+        creds_file = os.path.join(wechat_dir, "credentials.json")
+
+        # 1. QR 扫码登录 + HEPAI_API_KEY 录入（交互式，阻塞直到扫码完成）
+        await login_wechat_main(creds_file = creds_file)
+        creds = load_credentials(creds_file = creds_file)
+        api_key = creds.get("hepai_api_key") or os.environ.get("HEPAI_API_KEY", "")
+
+        # 2. 初始化会话管理器和 Bot
+        
+        sessions_file = os.path.join(wechat_dir, "sessions.json")
+        session_mgr = SessionManager(sessions_file)
+        bot = WeChatBot(
+            model=model,
+            creds=creds,
+            api_key=api_key,
+            session_manager=session_mgr,
+        )
+
+        # 3. 启动后台任务（与 uvicorn 共享同一 event loop）
+        _wechat_tasks.append(asyncio.create_task(bot.run(), name="wechat_bot"))
+        _wechat_tasks.append(asyncio.create_task(
+            idle_monitor(model, session_mgr), name="wechat_idle_monitor"
+        ))
+        print("微信 Bot 已启动，发送 /help 查看命令列表。")
 
     enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
     if enable_pipeline:
@@ -508,6 +550,11 @@ async def run_worker(agent_factory: callable, **kwargs):
     try:
         await server.serve()
     finally:
+        # 关闭微信后台任务
+        for task in _wechat_tasks:
+            task.cancel()
+        if _wechat_tasks:
+            await asyncio.gather(*_wechat_tasks, return_exceptions=True)
         # 关闭数据库连接
         await db_manager.close()
         for agent in model.drsai.agent_instance:

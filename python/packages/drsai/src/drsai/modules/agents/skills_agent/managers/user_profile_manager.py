@@ -106,16 +106,17 @@ class UserProfileManager:
         self.thread_id = thread_id
 
         # 定义各个文件路径
-        self.agents_md = self.config_path / "AGENTS.md"
-        self.subagent_config_path = self.config_path / "SUBAGENT_CONFIG.json"
-        self.memories_dir = self.config_path / "memories"
-        self.memories_document_ids = self.memories_dir / "document_ids.json"
-        self.skills_md = self.config_path / "SKILLS.md"
-        self.skills_dir = self.config_path / "skills"
-        self.tools_md = self.config_path / "TOOLS.md"
-        self.tools_config_path = self.config_path / "TOOLS_CONFIG.json"
-        self.user_md = self.config_path / "USER.md"
-        self.user_config_path = self.config_path / "USER_CONFIG.json"
+        self.agents_md = self.config_path / "AGENTS.md" # 整体的系统提示词：用户画像和智能体配置
+        self.subagent_config_path = self.config_path / "SUBAGENT_CONFIG.json" # 子智能体配置
+        self.memorie_path = self.config_path / "MEMORY.md" # 用户近期的记忆
+        self.memories_dir = self.config_path / "memories" # 用户所有的记忆文件
+        self.memories_document_ids = self.memories_dir / "document_ids.json" # 记录每个记忆文件的RAGFlow文档ID
+        self.skills_md = self.config_path / "SKILLS.md" # 调用技能描述，目前未用
+        self.skills_dir = self.config_path / "skills" # 用户的所有
+        self.tools_md = self.config_path / "TOOLS.md" # 用户的工作环境配置
+        self.tools_config_path = self.config_path / "TOOLS_CONFIG.json" # 工具配置
+        self.user_md = self.config_path / "USER.md" # 用户的个人描述
+        self.user_config_path = self.config_path / "USER_CONFIG.json" # 用户配置
             
         # user's user profile
         self.first_time_setup = True
@@ -202,7 +203,6 @@ class UserProfileManager:
 
 [User preferences and the agent's response style. To be filled based on user interactions]
 
-
 ---
 
 The more you know, the better you can help. But remember — you're learning about a person, not building a dossier. Respect the difference.
@@ -231,7 +231,7 @@ The more you know, the better you can help. But remember — you're learning abo
     - {self.config_path}/SKILLS.md
     - {self.config_path}/TOOLS.md
     - {self.config_path}/TOOLS_CONFIG.json
-    - {self.config_path}/USER.md"
+    - {self.config_path}/USER.md
     - {self.config_path}/USER_CONFIG.json
 
 ### Personal Skills and Memory dirs: 
@@ -263,12 +263,16 @@ The more you know, the better you can help. But remember — you're learning abo
 
 ## Agent Capabilities
 
-Your name is {self.agent_name}, a professional scientific data analysis assistant with the following capabilities:
+Your name is {self.agent_name} with the following capabilities:
 
 1. **Task Planning & Decomposition**: Analyze user requirements and decompose into executable subtasks
 2. **Multi-task Progress Management**: Automatically update task status to prevent information loss
 3. **Tool & Skills Invocation**: Proactively load tools, agent skills, and spawn subagents
 4. **Learning & Adaptation**: Summarize task execution patterns and save as reusable skills
+
+**Note:** - When the user performs a non-greeting task fisrtly, attempt to retrieve relevant memories using the `retreve_from_memory` tool. 
+- If the memory content is relevant, prioritize using the memory content for the reply and inform the user of the time when the memory was recorded, among other information. 
+- If the memory content is not relevant, proceed with the following rules.
 
 ## Rules:
 
@@ -463,6 +467,9 @@ You can update one or multiple fields at once. Only provide the fields that need
             )
             self.user_config = updated_config
 
+            self.agent_name = updated_config.agent_name
+            self.user_name = updated_config.user_name
+
             logger.info(f"Successfully updated user config for {self.user_id}")
             return f"Successfully updated user config for {self.user_id}"
 
@@ -514,7 +521,11 @@ You can update one or multiple fields at once. Only provide the fields that need
             skill_dir.mkdir(exist_ok=True)
 
             skill_file = skill_dir / "SKILL.md"
-            skill_file.write_text(skill_content, encoding='utf-8')
+            if skill_file.exists():
+                with skill_file.open("a", encoding='utf-8') as f:
+                    f.write("\n" + skill_content)
+            else:
+                skill_file.write_text(skill_content, encoding='utf-8')
 
             # 更新Skills.md
             self._update_skills_summary(skill_name)
@@ -562,6 +573,10 @@ You can update one or multiple fields at once. Only provide the fields that need
         try:
             filename = f"session_{self.thread_id}.json"
             filepath = self.memories_dir / filename
+            if filepath.exists():
+                existing = json.loads(filepath.read_text(encoding='utf-8'))
+                existing.extend(session_memory)
+                session_memory = existing
             filepath.write_text(
                 json.dumps(session_memory, indent=4, ensure_ascii=False),
                 encoding='utf-8'

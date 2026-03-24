@@ -58,11 +58,14 @@ def get_model_list():
   for idx, model in enumerate(models):
     print(model)
 
-def test_sync_request():
+def test_sync_request(
+      name: str,
+      base_url: str = "https://aiapi.ihep.ac.cn/apiv2",
+):
     model = HRModel.connect(
         api_key=HEPAI_API_KEY,
-        name="R1_test",
-        base_url="https://aiapi.ihep.ac.cn/apiv2"
+        name=name,
+        base_url=base_url
     )
     funcs = model.functions  # Get all remote callable functions.
     print(f"Remote callable funcs: {funcs}")
@@ -138,6 +141,9 @@ if __name__ == '__main__':
     # get_model_list()
     # get_model_list()
     # asyncio.run(test_async_request())
-    # test_sync_request()
-    asyncio.run(test_async_request())
+    test_sync_request(
+       name = "Dr.Sai Assistant",
+       base_url = "http://127.0.0.1:42501/apiv2"
+    )
+    # asyncio.run(test_async_request())
     # asyncio.run(test_StatusAgent_request())

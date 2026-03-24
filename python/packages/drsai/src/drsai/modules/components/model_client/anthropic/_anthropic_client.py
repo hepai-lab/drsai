@@ -68,7 +68,7 @@ from autogen_ext.models.anthropic._anthropic_client import (
 
 class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
 
-    async def create_stream(
+    async def create_stream_tmp(
         self,
         messages: Sequence[LLMMessage],
         *,
@@ -111,6 +111,7 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         messages = self._merge_system_messages(messages)
         messages = self._rstrip_last_assistant_message(messages)
 
+        # NOTE：Not support ToolExecuteMessage
         for message in messages:
             if isinstance(message, SystemMessage):
                 if system_message is not None:
@@ -119,38 +120,77 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
                 system_message = to_anthropic_type(message)
             else:
                 anthropic_message = to_anthropic_type(message)
-
                 if isinstance(anthropic_message, list):
-                    # anthropic_messages.extend(anthropic_message)
-                    # For ToolExecuteMessage
-                    for message_i in anthropic_message:
-                        if isinstance(message_i["content"], list):
-                            new_content = ""
-                            for content_i in message_i["content"]:
-                                if isinstance(content_i, dict):
-                                    new_content += content_i["content"]+"\n"
-                            message_i["content"] = new_content
-                        anthropic_messages.append(message_i)
+                    anthropic_messages.extend(anthropic_message)
+                elif isinstance(anthropic_message["content"], list):
+                    anthropic_message_new = []
+                    for message_i in anthropic_message["content"]:
+                        if isinstance(message_i, TextBlock):
+                            anthropic_message_new.append({"type": "text", "text": message_i.text})
+                        elif isinstance(message_i, ToolUseBlock):
+                            anthropic_message_new.append({
+                                "type": "tool_use",
+                                "id": message_i.id,
+                                "name": message_i.name,
+                                "input": message_i.input,
+                            })
+                        elif isinstance(message_i, BaseModel):
+                            anthropic_message_new.append(message_i.model_dump())
+                        elif isinstance(message_i, dict):
+                            anthropic_message_new.append(message_i)
+                    anthropic_message["content"] = anthropic_message_new
+                    anthropic_messages.append(anthropic_message)
                 elif isinstance(anthropic_message, str):
                     msg = MessageParam(
                         role="user" if isinstance(message, UserMessage) else "assistant", content=anthropic_message
                     )
                     anthropic_messages.append(msg)
-                elif isinstance(anthropic_message["content"], list):
-                    new_content = ""
-                    for item in anthropic_message["content"]:
-                        if isinstance(item, TextBlock):
-                            new_content += item.text+"\n"
-                        elif isinstance(item, ToolUseBlock):
-                            new_content += f"too_name: {item.name}, arguments: {str(item.input)}"
-                        elif isinstance(item, dict):
-                            new_content += item["content"]
-                        else:
-                            continue
-                    anthropic_message["content"] = new_content
-                    anthropic_messages.append(anthropic_message)
                 else:
                     anthropic_messages.append(anthropic_message)
+
+        # TODO: can't convert ToolCallMessage to text
+        # for message in messages:
+        #     if isinstance(message, SystemMessage):
+        #         if system_message is not None:
+        #             # if that case, system message is must only one
+        #             raise ValueError("Multiple system messages are not supported")
+        #         system_message = to_anthropic_type(message)
+        #     else:
+        #         anthropic_message = to_anthropic_type(message)
+
+        #         if isinstance(anthropic_message, list):
+        #             # anthropic_messages.extend(anthropic_message)
+        #             # For ToolExecuteMessage
+        #             for message_i in anthropic_message:
+        #                 if isinstance(message_i["content"], list):
+        #                     new_content = ""
+        #                     for content_i in message_i["content"]:
+        #                         if isinstance(content_i, dict):
+        #                             new_content += content_i["content"]+"\n"
+        #                     message_i["content"] = new_content
+        #                 anthropic_messages.append(message_i)
+        #         elif isinstance(anthropic_message, str):
+        #             msg = MessageParam(
+        #                 role="user" if isinstance(message, UserMessage) else "assistant", content=anthropic_message
+        #             )
+        #             anthropic_messages.append(msg)
+        #         elif isinstance(anthropic_message["content"], list):
+        #             new_content = ""
+        #             for item in anthropic_message["content"]:
+        #                 if isinstance(item, TextBlock):
+        #                     new_content += item.text+"\n"
+        #                 elif isinstance(item, ToolUseBlock):
+        #                     # new_content += f"tool_name: {item.name}, arguments: {str(item.input)}"
+        #                     new_content += item.model_dump_json()
+        #                 elif isinstance(item, dict):
+        #                     # new_content += item["content"]
+        #                     new_content += str(item)
+        #                 else:
+        #                     continue
+        #             anthropic_message["content"] = new_content
+        #             anthropic_messages.append(anthropic_message)
+        #         else:
+        #             anthropic_messages.append(anthropic_message)
 
         # Check for function calling support
         if self.model_info["function_calling"] is False and len(tools) > 0:

@@ -26,18 +26,6 @@ from pdf_manual_search import PDFManualSearcher
 from dotenv import load_dotenv
 load_dotenv()
 
-llm_mode_config = {
-    "claude-sonnet-4-6(High)":"anthropic/claude-sonnet-4-6",
-    "claude-haiku-4-5(Fast)":"anthropic/claude-haiku-4-5",
-    "minimax-m2.5": "minimax/minimax-m2.5",
-    "minimax-m2.5-highspeed": "minimax/minimax-m2.5-highspeed",
-    "gpt-4o": "openai/gpt-4o",
-    "gpt-4.1": "openai/gpt-4.1",
-    "gpt-5.2": "openai/gpt-5.2",
-    "deepseek-r1(No image)": "deepseek-ai/deepseek-r1",
-    "deepseek-v3.2(No image)": "deepseek-ai/deepseek-v3.2",
-}
-
 async def pdf_manual_search(
         question: str,
         max_items: int = 5,
@@ -64,10 +52,30 @@ async def pdf_manual_search(
         question=question,
         page_size=max_items,
         similarity_threshold=similarity_threshold,
-        document_ids=["da82759e184c11f198850242ac120006", "4a37cf7e1c8f11f187230242ac120006"]
+        document_ids=[
+            "da82759e184c11f198850242ac120006", 
+            "4a37cf7e1c8f11f187230242ac120006",
+            "02cafdbc234411f19d9f0242ac120006"
+            ],
+        # rerank_id=None,
     )
     
     return searcher.format_results(results, is_detailed=True)
+
+
+llm_mode_config = {
+    "claude-sonnet-4-6(High)":"anthropic/claude-sonnet-4-6",
+    "claude-haiku-4-5(Fast)":"anthropic/claude-haiku-4-5",
+    "minimax-m2.5": "minimax/minimax-m2.5",
+    "minimax-m2.5-highspeed": "minimax/minimax-m2.5-highspeed",
+    "minimax-m2.7": "minimax/minimax-m2.7",
+    "minimax-m2.7-highspeed": "minimax/minimax-m2.7-highspeed",
+    "gpt-4o": "openai/gpt-4o",
+    "gpt-4.1": "openai/gpt-4.1",
+    "gpt-5.2": "openai/gpt-5.2",
+    "deepseek-r1(No image)": "deepseek-ai/deepseek-r1",
+    "deepseek-v3.2(No image)": "deepseek-ai/deepseek-v3.2",
+}
 
 def create_agent(
         api_key: str|None = None, 
@@ -81,13 +89,12 @@ def create_agent(
     # the `ChatCompletionClient` interface.
 
     llm_model = llm_mode_config.get(defult_config_name, "openai/gpt-4o")
-    if "claude" in llm_model:
+    if ("claude" in llm_model) or ("minimax" in llm_model):
         model_client = HepAIAnthropicChatCompletionClient(
-            # model="claude-haiku-4-5",
-            # model="claude-sonnet-4-6",
             model=llm_model,
             base_url="https://aiapi.ihep.ac.cn/apiv2/anthropic",
-            api_key=api_key or os.environ.get("HEPAI_API_KEY"),
+            # api_key=api_key or os.environ.get("HEPAI_API_KEY"),
+            api_key=api_key,
             model_info=_MODEL_INFO["claude-sonnet-4-5"],
             # temperature=0.5,
             max_tokens=60000,
@@ -99,7 +106,8 @@ def create_agent(
         model_client = HepAIChatCompletionClient(
             # model="openai/gpt-4o",
             model=llm_model,
-            api_key= api_key or os.environ.get("HEPAI_API_KEY"),
+            # api_key=api_key or os.environ.get("HEPAI_API_KEY"),
+            api_key=api_key,
             base_url="https://aiapi.ihep.ac.cn/apiv2",
             model_info={
                     "vision": is_vision,
@@ -114,15 +122,19 @@ def create_agent(
 
     # # Code executor and working directory
     WORKDIR=os.getenv("WORKDIR")
+    # work_dir = Path(WORKDIR)
+    # work_dir.mkdir(exist_ok=True)
+    # venv_dir = work_dir / ".venv"
+    # venv_builder = venv.EnvBuilder(with_pip=True)
+    # venv_builder.create(venv_dir)
+    # venv_context = venv_builder.ensure_directories(venv_dir)
+    # local_executor = LocalCommandLineCodeExecutor(work_dir=work_dir, virtual_env_context=venv_context)
+
+    #Agent skills 
+    # skills_loader = SkillLoader(skills_dir=os.getenv("SKILLS_DIR"))
 
     # Sub-agents configuration
     SUB_AGENTS = {
-        "explore": {
-            "type": "DrSaiAgent",
-            "description": "Read-only agent for exploring code, finding files, searching",
-            "tools": ["run_bash", "run_read"],
-            "prompt": "You are an exploration agent. Search and analyze, but never modify files. Return a concise summary.",
-        },
         "coder": {
             "type": "DrSaiAgent",
             "description": "Full agent for writing codes, implementing features and fixing bugs",
@@ -145,13 +157,43 @@ your_code
             "tools": [],
             "prompt": "A Code Execution Agent that generates and executes Python and shell scripts based on user instructions. Python code should be provided in ```python code blocks, and sh shell scripts should be provided in ```sh code blocks for execution. It ensures correctness, efficiency, and minimal errors while gracefully handling edge cases.",
         },
-        "plan": {
-            "type": "DrSaiAgent",
-            "description": "Planning agent for designing implementation strategies",
-            "tools": ["run_bash", "read_file"],
-            "prompt": "You are a planning agent. Analyze the codebase and output a numbered implementation plan. Do NOT make changes.",
-        },
     }
+#     SUB_AGENTS = {
+#         "explore": {
+#             "type": "DrSaiAgent",
+#             "description": "Read-only agent for exploring code, finding files, searching",
+#             "tools": ["run_bash", "run_read"],
+#             "prompt": "You are an exploration agent. Search and analyze, but never modify files. Return a concise summary.",
+#         },
+#         "coder": {
+#             "type": "DrSaiAgent",
+#             "description": "Full agent for writing codes, implementing features and fixing bugs",
+#             "tools": ["run_bash", "run_read", "run_write", "run_edit"],
+#             "prompt": """You are a coding agent. Implement the requested changes efficiently. 
+# If you want to test your code or editting, you must generate a shell script and ask sub agent-coder_executor to execute the code. The style of shell script should be as follows:
+
+# ```bash
+
+# # filename: xxx.sh
+
+# your_code
+
+# ```
+# """,
+#         },
+#         "coder_executor": {
+#             "type": "CodeExecutorAgent",
+#             "description": "A computer terminal that performs no other action than running Python scripts (provided to it quoted in ```python code blocks), or sh shell scripts (provided to it quoted in ```sh code blocks).",
+#             "tools": [],
+#             "prompt": "A Code Execution Agent that generates and executes Python and shell scripts based on user instructions. Python code should be provided in ```python code blocks, and sh shell scripts should be provided in ```sh code blocks for execution. It ensures correctness, efficiency, and minimal errors while gracefully handling edge cases.",
+#         },
+#         "plan": {
+#             "type": "DrSaiAgent",
+#             "description": "Planning agent for designing implementation strategies",
+#             "tools": ["run_bash", "read_file"],
+#             "prompt": "You are a planning agent. Analyze the codebase and output a numbered implementation plan. Do NOT make changes.",
+#         },
+#     }
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
     # The system message instructs the agent via natural language.
@@ -173,10 +215,14 @@ your_code
     #     - Prefer tools over prose. Act, don't just explain.
     #     - After finishing, summarize what changed."""
     
-    SYSTEM = f"""You are a personal assistant. **NOTE**, when a user's question pertains to your skills in `Skill` tool, it is imperative to first refer to the relevant skills, for example:
-- If the user needs to update the username, system prompts, etc., please be sure to refer to the `user_system_config` skill
-- If the user needs to konwledge about the `spec - X-Ray Diffraction Software` , etc., can refer to the `pdf_manual_search` skill
-"""
+#     SYSTEM = f"""You are a personal assistant. **NOTE**, when a user's question pertains to your skills in `Skill` tool, it is imperative to first refer to the relevant skills, for example:
+# - If the user needs to update the username, system prompts, etc., please be sure to refer to the `user_system_config` skill
+# - If the user needs to konwledge about the `spec - X-Ray Diffraction Software` , etc., can refer to the `pdf_manual_search` skill
+# """
+#  **NOTE**:
+# - when a user's question pertains to your skills in `Skill` tool, it is imperative to first refer to the relevant skills.
+# - When a tool invocation is required for the current task, you must use `tool_use` for outputting, rather than directly outputting the tool invocation parameters in text.
+    SYSTEM = f"""You are a personal assistant."""
 
     return DrSaiAssistant(
         name="Assistant",
@@ -191,13 +237,13 @@ your_code
         db_manager=db_manager,
         user_id=user_id,
         # skills and executor
-        skills_dir=os.getenv("SYSTEM_SKILLS_DIR"),
+        # skills_dir=os.getenv("SYSTEM_SKILLS_DIR"),
+        skills_dir="/home/xiongdb/drsai_dev/agent_skills/skills",
         # executor=local_executor,
         work_dir=WORKDIR,
         only_in_workspace=True,
         extra_work_dirs=[
-            "/home/xiongdb/drsai_dev/docs/manual", 
-            "/home/xiongdb/b9agent/test",
+            "/home/xiongdb/drsai_dev/docs/manual",
             ],
         sub_agent_config = SUB_AGENTS,
         max_turn_count=20,
@@ -252,6 +298,7 @@ if __name__ == "__main__":
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务配置
+            # controller_address = "http://127.0.0.1:42501",
             port = 42812, 
             no_register=False,
             enable_openwebui_pipeline=True, 
@@ -259,5 +306,11 @@ if __name__ == "__main__":
             # use_api_key_mode = "backend",
             join_topics = ["test"],
             metadata={"others": "test"},
+            link_wechat = True,
         )
     )
+
+    # format_results = asyncio.run(
+    #    pdf_manual_search(question="spec 控制软件spec中scan和dscan命令的区别是什么？")
+    # )
+    # print(format_results)
