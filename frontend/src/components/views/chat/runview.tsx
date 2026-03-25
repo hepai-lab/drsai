@@ -16,6 +16,59 @@ import { appContext } from "../../../hooks/provider";
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 const CHAT_INPUT_BASE_HEIGHT_PX = 78;
 
+/** Next index that bounds the "segment" after messageIndex (plan, final answer, or next non-duplicate step). */
+function getNextSignificantMessageIndex(
+  messages: Message[],
+  messageIndex: number
+): number {
+  let nextSignificantIndex = messages.length;
+  for (let i = messageIndex + 1; i < messages.length; i++) {
+    const msg = messages[i];
+    const content = msg.config.content;
+
+    if (
+      typeof content === "string" &&
+      (messageUtils.isFinalAnswer(msg.config.metadata) ||
+        messageUtils.isPlanMessage(msg.config.metadata))
+    ) {
+      nextSignificantIndex = i;
+      break;
+    }
+
+    if (
+      messageUtils.isStepExecution(msg.config.metadata) &&
+      typeof content === "string"
+    ) {
+      try {
+        const currentStep = JSON.parse(content);
+        if (currentStep.title && currentStep.details) {
+          const earlierMessages = messages.slice(0, i);
+          const isDuplicate = earlierMessages.some((earlierMsg: Message) => {
+            if (typeof earlierMsg.config.content !== "string") return false;
+            try {
+              const earlierContent = JSON.parse(earlierMsg.config.content);
+              return (
+                earlierContent.title === currentStep.title &&
+                earlierContent.details === currentStep.details
+              );
+            } catch {
+              return false;
+            }
+          });
+
+          if (!isDuplicate) {
+            nextSignificantIndex = i;
+            break;
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+  return nextSignificantIndex;
+}
+
 interface RunViewProps {
   run: Run;
   onSavePlan?: (plan: IPlanStep[]) => void;
@@ -109,6 +162,9 @@ const RunView: React.FC<RunViewProps> = ({
   const [hiddenStepExecutionIndices, setHiddenStepExecutionIndices] =
     useState<Set<number>>(new Set());
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
+
+  /** Step indices where the user explicitly expanded; auto-collapse skips these. */
+  const userPinnedExpandedStepIndicesRef = useRef<Set<number>>(new Set());
 
   const isTogglingRef = useRef(false);
 
@@ -323,6 +379,10 @@ const RunView: React.FC<RunViewProps> = ({
     return () => clearTimeout(timeout);
   }, [run.id]);
 
+  useEffect(() => {
+    userPinnedExpandedStepIndicesRef.current = new Set();
+  }, [run.id]);
+
   // Effect to handle browser_address message (for VNC panel)
   useEffect(() => {
     if (agentConfig.panel.type !== 'vnc') return;
@@ -496,7 +556,8 @@ const RunView: React.FC<RunViewProps> = ({
 
   const handleToggleHide = async (
     messageIndex: number,
-    expanded: boolean
+    expanded: boolean,
+    isUserAction = false
   ) => {
     // If a toggle operation is already in progress, ignore this request
     if (isTogglingRef.current) {
@@ -507,71 +568,28 @@ const RunView: React.FC<RunViewProps> = ({
       isTogglingRef.current = true;
       const newIndicesToHide = new Set();
 
-      // Find the next significant message index
-      let nextSignificantIndex = run.messages.length; // Default to end of messages
-      for (let i = messageIndex + 1; i < run.messages.length; i++) {
-        const msg = run.messages[i];
-        const content = msg.config.content;
-
-        // Check if this is a significant message that should stop the hiding
-        if (
-          typeof content === "string" &&
-          (messageUtils.isFinalAnswer(msg.config.metadata) ||
-            messageUtils.isPlanMessage(msg.config.metadata))
-        ) {
-          nextSignificantIndex = i;
-          break;
-        }
-
-        // Check for messages with title and details that aren't duplicates
-        if (
-          messageUtils.isStepExecution(msg.config.metadata) &&
-          typeof content === "string"
-        ) {
-          try {
-            const currentStep = JSON.parse(content);
-            if (currentStep.title && currentStep.details) {
-              // Check if this step is a duplicate of any previous step
-              const earlierMessages = run.messages.slice(0, i);
-              const isDuplicate = earlierMessages.some(
-                (earlierMsg: Message) => {
-                  if (
-                    typeof earlierMsg.config.content !==
-                    "string"
-                  )
-                    return false;
-                  try {
-                    const earlierContent = JSON.parse(
-                      earlierMsg.config.content
-                    );
-                    return (
-                      earlierContent.title ===
-                      currentStep.title &&
-                      earlierContent.details ===
-                      currentStep.details
-                    );
-                  } catch {
-                    return false;
-                  }
-                }
-              );
-
-              if (!isDuplicate) {
-                nextSignificantIndex = i;
-                break;
-              }
-            }
-          } catch {
-            // If we can't parse the JSON, continue to next message
-            continue;
-          }
-        }
-      }
+      const nextSignificantIndex = getNextSignificantMessageIndex(
+        run.messages,
+        messageIndex
+      );
 
       // Update hidden states for messages between current and next significant message
       for (let i = messageIndex + 1; i < nextSignificantIndex; i++) {
         newIndicesToHide.add(i);
       }
+
+      if (isUserAction) {
+        if (expanded) {
+          const next = new Set(userPinnedExpandedStepIndicesRef.current);
+          next.add(messageIndex);
+          userPinnedExpandedStepIndicesRef.current = next;
+        } else {
+          const next = new Set(userPinnedExpandedStepIndicesRef.current);
+          next.delete(messageIndex);
+          userPinnedExpandedStepIndicesRef.current = next;
+        }
+      }
+
       if (!expanded) {
         setHiddenMessageIndices((prevSet) => {
           const updatedSet = new Set(prevSet);
@@ -593,6 +611,15 @@ const RunView: React.FC<RunViewProps> = ({
       // Always reset the toggling flag when done
       isTogglingRef.current = false;
     }
+  };
+
+  /** True when no messages in this step's segment (before next significant) are hidden. */
+  const getStepFollowingExpanded = (messageIndex: number): boolean => {
+    const next = getNextSignificantMessageIndex(run.messages, messageIndex);
+    for (let i = messageIndex + 1; i < next; i++) {
+      if (hiddenMessageIndices.has(i)) return false;
+    }
+    return true;
   };
 
   // Add this function to check if a message is a step execution
@@ -718,7 +745,9 @@ const RunView: React.FC<RunViewProps> = ({
                     )
                   ) {
                     newHiddenStepExecutionIndices.add(j);
-                    handleToggleHide(j, false);
+                    if (!userPinnedExpandedStepIndicesRef.current.has(j)) {
+                      handleToggleHide(j, false);
+                    }
                     // delay for 100ms
                     await new Promise((resolve) =>
                       setTimeout(resolve, 100)
@@ -747,7 +776,9 @@ const RunView: React.FC<RunViewProps> = ({
                     )
                   ) {
                     if (!newRepeatedIndices.has(j)) {
-                      handleToggleHide(j, false);
+                      if (!userPinnedExpandedStepIndicesRef.current.has(j)) {
+                        handleToggleHide(j, false);
+                      }
                       newHiddenStepExecutionIndices.add(
                         j
                       );
@@ -1001,7 +1032,12 @@ const RunView: React.FC<RunViewProps> = ({
                       handleImageClick(idx)
                     }
                     onToggleHide={(expanded: boolean) =>
-                      handleToggleHide(idx, expanded)
+                      handleToggleHide(idx, expanded, true)
+                    }
+                    stepFollowingExpanded={
+                      messageUtils.isStepExecution(msg.config.metadata)
+                        ? getStepFollowingExpanded(idx)
+                        : undefined
                     }
                     runStatus={run.status}
                     onRegeneratePlan={
@@ -1134,12 +1170,9 @@ const RunView: React.FC<RunViewProps> = ({
         agentConfig.panel.type !== 'none' &&
         !isPanelMinimized && (
           <div
-            className={`${detailViewerExpanded
-              ? "2xl:w-[576px] w-[360px]"
-              : "2xl:w-[800px] w-[360px]"
-              } self-start sticky top-0 h-full ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}
+            className={`self-start sticky top-0 h-full flex-1 flex ${darkMode === 'dark' ? 'bg-[#0f0f0f]' : ''}`}
           >
-            <div className={`h-full flex-1 ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
+            <div className={`h-full w-full ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
               {/* Dynamic Agent Panel - renders different panels based on agent type */}
               <AgentPanel
                 panelConfig={agentConfig.panel}
@@ -1175,6 +1208,7 @@ const RunView: React.FC<RunViewProps> = ({
                   fileEvents: run.file_events || [],
                   activeTab: besiiiActiveTab,
                   onTabChange: setBesiiiActiveTab,
+                  isExpanded: detailViewerExpanded,
                   onTaskClick: (taskId: string) => {
                     // TODO: Handle task click
                   },

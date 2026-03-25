@@ -384,7 +384,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                         }`}
                     onClick={() => setActiveTab('files')}
                 >
-                    Files
+                    Global Info
                 </button>
                 <button
                     className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'logs'

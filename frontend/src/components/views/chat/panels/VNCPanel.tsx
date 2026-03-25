@@ -39,7 +39,7 @@ interface VNCPanelProps {
  * 未来可以根据需要进行定制化修改
  */
 const VNCPanel: React.FC<VNCPanelProps> = (props) => {
-    return <DetailViewer {...props} />;
+    return <div className="h-full"><DetailViewer {...props} /></div>;
 };
 
 export default VNCPanel;

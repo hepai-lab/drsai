@@ -43,6 +43,8 @@ interface AgentPanelProps {
         onSubtaskClick?: (taskId: string, subtaskId: string) => void;
         activeTab?: 'logs' | 'files' | 'terminal';
         onTabChange?: (tab: 'logs' | 'files' | 'terminal') => void;
+        /** When true, panel uses narrower width (matches detail viewer expanded layout). */
+        isExpanded?: boolean;
     };
 
     // 其他扩展 props
@@ -91,17 +93,24 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
             case 'besiii':
                 // BESIII 分析面板
                 return (
-                    <BESIIIPanel
-                        tasks={besiiiProps?.tasks}
-                        terminalOutput={besiiiProps?.terminalOutput}
-                        logs={besiiiProps?.logs}
-                        fileEvents={besiiiProps?.fileEvents}
-                        onMinimize={onMinimize}
-                        onTaskClick={besiiiProps?.onTaskClick}
-                        onSubtaskClick={besiiiProps?.onSubtaskClick}
-                        activeTab={besiiiProps?.activeTab}
-                        onTabChange={besiiiProps?.onTabChange}
-                    />
+                    <div
+                        className={`h-full ${besiiiProps?.isExpanded
+                            ? "2xl:w-[576px] w-[360px]"
+                            : "2xl:w-[800px] w-[360px]"
+                            }`}
+                    >
+                        <BESIIIPanel
+                            tasks={besiiiProps?.tasks}
+                            terminalOutput={besiiiProps?.terminalOutput}
+                            logs={besiiiProps?.logs}
+                            fileEvents={besiiiProps?.fileEvents}
+                            onMinimize={onMinimize}
+                            onTaskClick={besiiiProps?.onTaskClick}
+                            onSubtaskClick={besiiiProps?.onSubtaskClick}
+                            activeTab={besiiiProps?.activeTab}
+                            onTabChange={besiiiProps?.onTabChange}
+                        />
+                    </div>
                 );
 
             case 'terminal':
@@ -126,7 +135,11 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
     }
 
     return (
-        <div className="h-full w-full">
+        <div
+            className={
+                panelConfig.type === 'besiii' ? 'h-full' : 'h-full w-full'
+            }
+        >
             {panel}
         </div>
     );

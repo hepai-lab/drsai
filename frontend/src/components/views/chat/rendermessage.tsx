@@ -54,6 +54,8 @@ interface MessageProps {
   forceCollapsed?: boolean;
   onLogMessageClick?: () => void;
   onActionButtonClick?: (action: string) => void;
+  /** When set (e.g. from RunView), chevron matches hidden segment state. */
+  stepFollowingExpanded?: boolean;
 }
 
 interface RenderPlanProps {
@@ -79,6 +81,8 @@ interface RenderStepExecutionProps {
   is_step_failed?: boolean;
   runStatus: string;
   onToggleHide?: (expanded: boolean) => void;
+  /** Derived from parent hiddenMessageIndices; controls chevron vs local-only state. */
+  stepFollowingExpanded?: boolean;
 }
 
 interface ParsedContent {
@@ -432,21 +436,13 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
     is_step_failed, // is_step_failed means the step is being re-planned
     runStatus,
     onToggleHide,
+    stepFollowingExpanded,
   }) => {
-    const [isExpanded, setIsExpanded] = useState(true);
-
-    useEffect(() => {
-      if (hidden && isExpanded) {
-        setIsExpanded(false);
-      } else if (!hidden && !isExpanded) {
-        setIsExpanded(true);
-      }
-    }, [hidden]);
+    const expanded =
+      stepFollowingExpanded !== undefined ? stepFollowingExpanded : true;
 
     const handleToggle = () => {
-      const newExpanded = !isExpanded;
-      setIsExpanded(newExpanded);
-      onToggleHide?.(newExpanded);
+      onToggleHide?.(!expanded);
     };
 
     const isUserProxyInstruction = content.agent_name === "user_proxy";
@@ -498,12 +494,12 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
                 handleToggle();
               }}
               aria-label={
-                isExpanded
+                expanded
                   ? "Hide following messages"
                   : "Show following messages"
               }
             >
-              {isExpanded ? (
+              {expanded ? (
                 <ChevronDown size={16} className="text-primary" />
               ) : (
                 <ChevronRight size={16} className="text-primary" />
@@ -525,7 +521,7 @@ const RenderStepExecution: React.FC<RenderStepExecutionProps> = memo(
           </div>
         </div>
         <div>
-          {isUserProxyInstruction && content.instruction && isExpanded && (
+          {isUserProxyInstruction && content.instruction && expanded && (
             <div className="flex items-start">
               <MarkdownRenderer content={content.instruction} />
             </div>
@@ -882,6 +878,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     forceCollapsed = false,
     onLogMessageClick,
     onActionButtonClick,
+    stepFollowingExpanded,
   }) => {
     const { darkMode } = React.useContext(appContext);
     const [isEditing, setIsEditing] = useState(false);
@@ -1295,6 +1292,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                     is_step_failed={is_step_failed}
                     runStatus={runStatus || ""}
                     onToggleHide={onToggleHide}
+                    stepFollowingExpanded={stepFollowingExpanded}
                   />
                 ) : orchestratorContent?.type === "final-answer" ? (
                   <RenderFinalAnswer
