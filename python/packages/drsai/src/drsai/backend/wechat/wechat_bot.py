@@ -250,6 +250,9 @@ class WeChatBot:
 
                 event_type = event.get("type", "")
 
+                if event_type == "AgentLogEvent":
+                    title = event.get("title", "")
+                    await self._reply(user_id, context_token, title)
                 if event_type == "TextMessage":
                     source = event.get("source", "")
                     content = event.get("content", "")
