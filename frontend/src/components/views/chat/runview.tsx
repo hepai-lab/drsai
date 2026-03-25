@@ -917,7 +917,7 @@ const RunView: React.FC<RunViewProps> = ({
           ? detailViewerExpanded
             ? "w-0"
             : "w-[40%]"
-          : "w-full"
+          : "w-[800px] 2xl:w-full"
           } transition-all duration-300`}
       >
         {/* Thread Section - use flex-1 for height, but remove overflow-y-auto */}
@@ -1134,7 +1134,9 @@ const RunView: React.FC<RunViewProps> = ({
         agentConfig.panel.type !== 'none' &&
         !isPanelMinimized && (
           <div
-            className={`${detailViewerExpanded ? "w-full" : "w-[60%]"
+            className={`${detailViewerExpanded
+              ? "2xl:w-[576px] w-[360px]"
+              : "2xl:w-[800px] w-[360px]"
               } self-start sticky top-0 h-full ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}
           >
             <div className={`h-full flex-1 ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>

@@ -70,10 +70,11 @@ const ContentHeader = ({
           {/* Current Agent Name - show whenever an agent is selected */}
           {activeSubMenuItem === "current_session" && agentInfo?.name && (
             <div className="ml-2 px-2 py-1 rounded-md text-lg text-accent bg-tertiary/30">
-              <div className="ml-2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-tertiary/30">
+              <div className="ml-2 flex flex-col justify-start items-start py-1.5 rounded-full bg-tertiary/30">
                 <span className="text-lg font-medium">
                   {agentInfo.name}
                 </span>
+                <span className="text-sm text-secondary">{agentInfo.defult_config_name}</span>
               </div>
             </div>
           )}
