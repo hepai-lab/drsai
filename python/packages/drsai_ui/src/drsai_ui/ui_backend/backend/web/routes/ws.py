@@ -109,7 +109,7 @@ async def run_websocket(
                     if metadata:
                         response = {
                             "response": response,
-                            "metadata": json.dumps(metadata),
+                            "metadata": metadata,
                         }
                     if response is not None:
                         await ws_manager.handle_input_response(run_id, response)
