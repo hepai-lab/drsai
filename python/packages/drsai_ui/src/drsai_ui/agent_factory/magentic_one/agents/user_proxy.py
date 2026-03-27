@@ -237,9 +237,9 @@ class RoundbinDrSaiUserProxyAgent(BaseChatAgent, Component[UserProxyAgentConfig]
                 metadata.update({"content":last_user_message_format.content,"user_request":last_user_message_format.to_str()})
 
             for item in metadata:
-                if isinstance(item, dict) or isinstance(item, list):
+                if isinstance(metadata[item], dict) or isinstance(metadata[item], list):
                     metadata[item] = json.dumps(metadata[item])
-                elif isinstance(item, str):
+                elif isinstance(metadata[item], str):
                     pass
                 else:
                     metadata[item] = str(metadata[item])
