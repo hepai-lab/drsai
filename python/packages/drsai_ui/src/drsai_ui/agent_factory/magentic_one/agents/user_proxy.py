@@ -230,7 +230,7 @@ class RoundbinDrSaiUserProxyAgent(BaseChatAgent, Component[UserProxyAgentConfig]
                     user_input = user_input_mata.pop("response")
                     if not user_input:
                         raise ValueError("User's response cannot be empty")
-                    metadata.update(user_input_mata.get("metadata"), {})
+                    metadata.update(user_input_mata.get("metadata", {}))
 
                 last_user_message_format = HumanInputFormat.from_str(user_input)
                 metadata.update({"content":last_user_message_format.content,"user_request":last_user_message_format.to_str()})
