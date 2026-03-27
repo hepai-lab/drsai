@@ -102,8 +102,10 @@ export const usePlanManagement = ({
           type: "start",
           id: `plan_${Date.now()}`,
           task: newPlan.task,
-          team_config: currentTeamConfig,
-          settings_config: sessionSettingsConfig,
+          metadata: {
+            team_config: currentTeamConfig,
+            settings_config: sessionSettingsConfig,
+          },
           sessionId: session.id,
         };
 

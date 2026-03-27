@@ -159,14 +159,16 @@ export const useTaskActions = ({
             const continueMessage = {
               type: "continue",
               task: responseString,
-              team_config: teamConfig,
-              settings_config: {
-                ...currentSettings,
-                agent_mode_config: agentInfo,
-                ...buildLlmPayload(llm, agentInfo as Record<string, any>),
+              metadata: {
+                team_config: teamConfig,
+                settings_config: {
+                  ...currentSettings,
+                  agent_mode_config: agentInfo,
+                  ...buildLlmPayload(llm, agentInfo as Record<string, any>),
+                },
+                ...(processedFiles.length > 0 && { files: processedFiles }),
+                ...(hasInputMetadata ? inputMetadata : {}),
               },
-              ...(processedFiles.length > 0 && { files: processedFiles }),
-              ...(hasInputMetadata ? { metadata: inputMetadata } : {}),
             };
 
             socket.send(JSON.stringify(continueMessage));
@@ -175,12 +177,14 @@ export const useTaskActions = ({
           const inputResponseMessage = {
             type: "input_response",
             response: responseString,
-            settings_config: {
-              ...(agentInfo?.id && { agent_id: agentInfo.id }),
-              ...buildLlmPayload(llm, agentInfo as Record<string, any>),
+            metadata: {
+              settings_config: {
+                ...(agentInfo?.id && { agent_id: agentInfo.id }),
+                ...buildLlmPayload(llm, agentInfo as Record<string, any>),
+              },
+              ...(processedFiles.length > 0 && { files: processedFiles }),
+              ...(hasInputMetadata ? inputMetadata : {}),
             },
-            ...(processedFiles.length > 0 && { files: processedFiles }),
-            ...(hasInputMetadata ? { metadata: inputMetadata } : {}),
           };
           socket.send(JSON.stringify(inputResponseMessage));
 
@@ -405,17 +409,18 @@ export const useTaskActions = ({
           ...(planString !== "" && { plan: planString }),
         };
 
-        // 发送给后端：使用最新的settings配置
+        // 发送给后端：使用最新的settings配置（files / team / settings 均在 metadata）
         const messageToSend = {
           type: "start",
           task: JSON.stringify(taskJson),
-          files: processedFiles,
-          team_config: teamConfig,
-          settings_config: {
-            ...currentSettings,
-            // agent_mode_config: agentInfo,
-            agent_id: agentInfo?.id || "",
-            ...buildLlmPayload(llm, agentInfo as Record<string, any>),
+          metadata: {
+            files: processedFiles,
+            team_config: teamConfig,
+            settings_config: {
+              ...currentSettings,
+              agent_id: agentInfo?.id || "",
+              ...buildLlmPayload(llm, agentInfo as Record<string, any>),
+            },
           },
         };
 

@@ -48,7 +48,7 @@ export interface BESIIIPanelProps {
   onSubtaskClick?: (taskId: string, subtaskId: string) => void;
   activeTab?: 'logs' | 'files' | 'terminal';
   onTabChange?: (tab: 'logs' | 'files' | 'terminal') => void;
-  /** Same contract as ChatInput / useTaskActions.handleInputResponse → WebSocket `input_response` */
+  /** Same contract as ChatInput / useTaskActions.handleInputResponse → WebSocket `input_response` (`files` / extra fields go in envelope `metadata`) */
   onInputResponse?: (
     response: string,
     accepted?: boolean,
