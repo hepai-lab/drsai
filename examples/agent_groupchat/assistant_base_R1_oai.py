@@ -30,24 +30,29 @@ def create_agent(
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
-    model_client = HepAIChatCompletionClient(
-        # model="deepseek-ai/deepseek-r1",
-        model=llm_mode_config.get(defult_config_name, "openai/gpt-4o"),
-        api_key=api_key or os.environ.get("HEPAI_API_KEY"),
-        base_url="https://aiapi.ihep.ac.cn/apiv2",
-    )
+    def set_model_client(defult_config_name: str|None = "deepseek-r1") ->  HepAIChatCompletionClient:
+        model_client = HepAIChatCompletionClient(
+            # model="deepseek-ai/deepseek-r1",
+            model=llm_mode_config.get(defult_config_name, "openai/gpt-4o"),
+            api_key=api_key or os.environ.get("HEPAI_API_KEY"),
+            base_url="https://aiapi.ihep.ac.cn/apiv2",
+        )
+        return model_client
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
     # The system message instructs the agent via natural language.
     return TestAgent(
         name="weather_agent",
-        model_client=model_client,
+        model_client=set_model_client(defult_config_name),
         system_message="You are a helpful assistant.",
         reflect_on_tool_use=False,
         model_client_stream=True,  # Enable streaming tokens from the model client.
         thread_id=thread_id,
         db_manager=db_manager,
         user_id=user_id,
+        set_model_client=set_model_client,
+        llm_mode_config = llm_mode_config,
+
     )
 
 
@@ -128,6 +133,6 @@ if __name__ == "__main__":
             enable_openwebui_pipeline=True, 
             # 使用backend/frontend的api_key
             use_api_key_mode = "frontend",
-            link_wechat = True,
+            link_wechat = False,
         )
     )

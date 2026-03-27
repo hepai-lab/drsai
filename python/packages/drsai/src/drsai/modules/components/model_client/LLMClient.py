@@ -101,7 +101,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
                 "token_model": "gpt-4o-2024-11-20", # Default model for token counting
             }
             kwargs["model_info"] = model_info
-        r1_series = [
+        self.r1_series = [
             "aliyun/qwen-turbo-latest",
             "aliyun/qwen3-30b-a3b",
             "aliyun/qwen3-235b-a22b",
@@ -113,7 +113,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             "deepseek-ai/deepseek-r1:7b",
 
         ]
-        v3_series = [
+        self.v3_series = [
             "aliyun/qwen-max-latest",
             "aliyun/qwen-coder-plus-latest",
             "aliyun/qwen-long-latest",
@@ -126,7 +126,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
 
         ]
 
-        vsion_series = [
+        self.vsion_series = [
             "aliyun/qwen-vl-max-latest",
             "aliyun/qwen-vl-ocr-latest",
             "aliyun/qvq-max-latest",
@@ -150,8 +150,6 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             "anthropic/claude-3-5-haiku",
             "anthropic/claude-opus-4",
             "ark/doubao-vision-pro",
-
-
         ]
 
         allowed_models = [
@@ -200,14 +198,14 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
         for allowed_model in all_allowed_models:
             if allowed_model in model.lower():
                 if allowed_model in hepai_allowed_models:
-                    if model in r1_series:
+                    if model in self.r1_series:
                         kwargs["model_info"]["family"] = ModelFamily.R1
-                    elif model in v3_series:
+                    elif model in self.v3_series:
                         kwargs["model_info"]["family"] = ModelFamily.GPT_4O
                 else:
                     kwargs["model_info"]["family"] = allowed_model
                 
-                if model in vsion_series:
+                if model in self.vsion_series:
                     kwargs["model_info"]["vision"] = True
                 
                 kwargs["model_info"]["function_calling"] = True

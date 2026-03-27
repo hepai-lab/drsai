@@ -97,6 +97,7 @@ class HepAIWorkerAgent(DrSaiAgent):
         self.api_key = model_remote_configs.pop("api_key", "")
         self.url = model_remote_configs.pop("url", "https://aiapi.ihep.ac.cn/apiv2")
         self.model_name = model_remote_configs.pop("name", "hepai/drsai")
+        self.defult_config_name = model_remote_configs.pop("defult_config_name", None)
 
         # worker函数
         self._funcs_map = {}
@@ -120,13 +121,22 @@ class HepAIWorkerAgent(DrSaiAgent):
         if not self._funcs_map:
             return
         try:
+            params = {
+                "chat_id": self._chat_id,
+                "api_key": self.api_key,
+                "run_info": self._run_info,
+            }
+            if self.defult_config_name:
+                params.update({"defult_config_name": self.defult_config_name})
+
             result: Dict[str, Any] = await asyncio.wait_for(
               asyncio.to_thread(
                   self._funcs_map['lazy_init'],
-                  chat_id=self._chat_id,
-                  api_key=self.api_key,
-                  run_info=self._run_info,
-                  stream=self._model_client_stream,
+                  **params,
+                #   chat_id=self._chat_id,
+                #   api_key=self.api_key,
+                #   run_info=self._run_info,
+                #   defult_config_name=self.defult_config_name,
               ),
               timeout=60.0
             )
@@ -390,7 +400,7 @@ class HepAIWorkerAgent(DrSaiAgent):
             format_string = self._output_content_type_format
 
             # STEP 1: Add new user/handoff messages to the model context
-            ## 将前端传入的json格式的user message转换为str
+            # # 将前端传入的json格式的user message转换为str
             # try:
             #     input = messages[-1].content
             #     data = json.loads(input)
@@ -562,15 +572,15 @@ class HepAIWorkerAgent(DrSaiAgent):
             # add to chat history
             await model_context.add_message(
                 AssistantMessage(
-                    content=f"An error occurred while executing the task: {e}",
+                    content=f"An error occurred while executing the task: {e}.",
                     source=self.name
                 )
             )
             yield Response(
                 chat_message=TextMessage(
-                    content="An error occurred while executing the task.",
+                    content=f"An error occurred while executing the task: {e}.",
                     source=self.name,
-                    metadata={"internal": "no"},
+                    metadata={"internal": "no", "error_message": str(e)},
                 ),
                 inner_messages=inner_messages,
             )
@@ -902,5 +912,4 @@ class HepAIWorkerAgent(DrSaiAgent):
                 if isinstance(message, ModelClientStreamingChunkEvent):
                     # Skip the model client streaming chunk events.
                     continue
-                output_messages.append(message)
 

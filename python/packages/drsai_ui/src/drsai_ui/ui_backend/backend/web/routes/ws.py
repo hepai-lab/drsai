@@ -95,8 +95,12 @@ async def run_websocket(
                     # Handle input response from client
                     response = message.get("response")
                     files = message.get("files")
-                    if files:
-                        response = {"response": response, "attached_files": json.dumps(files)}
+                    settings_config = message.get("settings_config")
+                    if files or settings_config:
+                        response = {
+                            "response": response, 
+                            "attached_files": json.dumps(files),
+                            "settings_config": json.dumps(settings_config), }
                     if response is not None:
                         await ws_manager.handle_input_response(run_id, response)
                     else:

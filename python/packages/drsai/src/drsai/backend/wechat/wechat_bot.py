@@ -33,6 +33,8 @@ HELP_TEXT = """DrSai Bot 命令列表：
 /newsession      —— 新建对话（开始全新 session）
 /session         —— 查看所有历史 session
 /session <id>    —— 切换到指定 session（如 /session session_1）
+/models          —— 列出所有可用模型
+/model <模型名>   —— 使用指定模型
 其他文字         —— 与当前 session 的 AI 助手对话""".strip()
 
 # 连续失败退避阈值
@@ -70,6 +72,8 @@ class WeChatBot:
         )
         self._user_locks: dict[str, asyncio.Lock] = {}
         self._seen_ids: set = set()
+
+        self._msg_metadata = {}
 
     # ── 主循环 ────────────────────────────────────────────────────────────────
 
@@ -199,13 +203,28 @@ class WeChatBot:
         # 确保 agent 已初始化
         await self._ensure_agent(chat_id, user_id)
 
+        if text.startswith("/models"):
+            llm_mode_config: dict = self.model.drsai.agent_instance[chat_id]._llm_mode_config
+            llm_mode_config_format = "可用的模型配置：\n"
+            for k, _ in llm_mode_config.items():
+                llm_mode_config_format += f"{k}\n\n"
+            await self._reply(user_id, context_token, llm_mode_config_format)
+            return
+        
+        
+        if text.startswith("/model "):
+            model_name = text[7:].strip()
+            # self.model.drsai.agent_instance[chat_id].set_llm_mode(model_name)
+            self._msg_metadata.update({"settings_config": json.dumps({"defult_config_name": model_name})})
+            await self._reply(user_id, context_token, f"已切换模型为 {model_name}")
+            return
         # 以 a_drsai_ui_completions 为核心，收到每条 TextMessage 立即发送
         messages = [
             {
                 "type": "TextMessage",
                 "source": "user",
                 "content": text,
-                "models_usage": None,
+                "metadata": self._msg_metadata,
             }
         ]
         kwargs = dict(
@@ -231,6 +250,9 @@ class WeChatBot:
 
                 event_type = event.get("type", "")
 
+                if event_type == "AgentLogEvent":
+                    title = event.get("title", "")
+                    await self._reply(user_id, context_token, title)
                 if event_type == "TextMessage":
                     source = event.get("source", "")
                     content = event.get("content", "")

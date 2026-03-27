@@ -30,6 +30,7 @@ def upload_to_hepai_filesystem(file_path: str, api_key: str|None = None) -> Dict
 def construct_task(
     query: str, 
     files: List[Dict[str, Any]] | None = None,
+    metadata: Dict[str, Any] = {},
 ) -> Sequence[ChatMessage]:
     """
     Construct a task from a query string and list of files.
@@ -101,6 +102,7 @@ def construct_task(
     # Add the user query at the end
     combined_text = "\n\n".join(text_parts)
     attached_files_json = json.dumps(attached_files)
+    metadata.update({"attached_files": attached_files_json})
     # Return a MultiModalMessage if there are images, otherwise a TextMessage
     if len(text_parts) > 0:
         messages_return.append(
@@ -113,7 +115,7 @@ def construct_task(
             MultiModalMessage(
                 source="user",
                 content=[query, *images],
-                metadata={"attached_files": attached_files_json},
+                metadata=metadata,
             )
         )
     else:
@@ -121,7 +123,7 @@ def construct_task(
             TextMessage(
                 source="user",
                 content=query,
-                metadata={"attached_files": attached_files_json},
+                metadata=metadata,
             )
         )
 

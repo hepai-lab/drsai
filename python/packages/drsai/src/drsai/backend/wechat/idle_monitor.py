@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 async def idle_monitor(
     model: "DrSaiWorkerModel",
     session_manager: SessionManager,
-    idle_seconds: int = 60,
+    idle_seconds: int = 60*10,
     check_interval: int = 30,
 ) -> None:
     """

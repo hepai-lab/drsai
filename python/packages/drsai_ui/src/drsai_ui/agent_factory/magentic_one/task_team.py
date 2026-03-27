@@ -492,7 +492,11 @@ async def create_magentic_round_team(
         )
 
     elif agent_mode == "remote" or agent_mode == "ddf":
-        agent_config["api_key"] = agent_mode_config.get("api_key", api_key)
+        # agent_config["api_key"] = agent_mode_config.get("api_key")
+        ddf_api_key = agent_mode_config.get("api_key")
+        if not ddf_api_key:
+            ddf_api_key = api_key
+        agent_config["api_key"] = ddf_api_key
         agent_config["url"] = agent_mode_config.get("url", "https://aiapi.ihep.ac.cn/apiv2")
         if agent_mode_config.get("defult_config_name"):
             agent_config["defult_config_name"] = agent_mode_config.get("defult_config_name")

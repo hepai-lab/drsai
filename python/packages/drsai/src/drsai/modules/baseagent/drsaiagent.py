@@ -156,6 +156,8 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         db_manager: DatabaseManager | None = None,
         thread_id: str | None = None,
         user_id: str | None = None,
+        set_model_client: Callable | None = None,
+        llm_mode_config: Dict[str, Any] | None = None,
         **kwargs,
             ):
         '''
@@ -302,6 +304,8 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             file_dir = FILE_DIR
         self._file_save_dir = file_save_dir or file_dir
 
+        self._set_model_client = set_model_client
+        self._llm_mode_config = llm_mode_config
         # custom arguments for _reply_function
         self._user_params: Dict[str, Any] = {}
         self._user_params.update(kwargs)
@@ -325,7 +329,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         The model context in use by the agent.
         """
         return self._model_context
-
+    
     async def run_stream(
         self,
         *,
@@ -360,13 +364,24 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                     msg.metadata["internal"] = "yes"
                     input_messages.append(msg)
                     output_messages.append(msg)
-                    attached_files_json = msg.metadata.get("attached_files")
-                    if attached_files_json:
-                        attached_files = json.loads(attached_files_json)
-                        for file in attached_files:
-                            download_file_from_url_or_base64(
-                                file_info = file, 
-                                save_path = f"{self._file_save_dir}/{self._user_id}/{self._thread_id}/{file['name']}")
+                    try:
+                        attached_files_json = msg.metadata.get("attached_files")
+                        if attached_files_json:
+                            attached_files = json.loads(attached_files_json)
+                            for file in attached_files:
+                                download_file_from_url_or_base64(
+                                    file_info = file, 
+                                    save_path = f"{self._file_save_dir}/{self._user_id}/{self._thread_id}/{file['name']}")
+                        settings_config = msg.metadata.get("settings_config")
+                        if settings_config:
+                            settings_config = json.loads(settings_config)
+                            default_config_name = settings_config.get("defult_config_name")
+                            llm_name = self._llm_mode_config.get(default_config_name)
+                            if llm_name != self._model_client._create_args["model"] and self._set_model_client:
+                                self._model_client = self._set_model_client(default_config_name)
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing message metadata: {e}")
                     yield msg
                 else:
                     raise ValueError(f"Invalid message type in sequence: {type(msg)}")
