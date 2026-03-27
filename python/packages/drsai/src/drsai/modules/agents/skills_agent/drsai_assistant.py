@@ -561,6 +561,8 @@ Current Session_ID is {self._thread_id}
             # TODO: Update model context with any relevant memory -> When? How?
 
             turn_count = 0
+            max_empty_turn = 3 
+            empty_turn_count = 0
             while turn_count < self._max_turn_count:
                 
                 model_result = None
@@ -604,12 +606,27 @@ Current Session_ID is {self._thread_id}
                 
                 # If direct text response (string)
                 if isinstance(model_result.content, str):
+
+                    if not model_result.content and empty_turn_count < max_empty_turn:
+                        empty_turn_count += 1
+                        await self._model_context.add_message(
+                            UserMessage(
+                                content=f"Your reply is empty. Please continue with the task above.",
+                                source="user"
+                            )
+                        )
+                        continue
+                    elif not model_result.content and empty_turn_count >= max_empty_turn:
+                        model_result.content = "The response is empty. Please try again or create a new session."
+                    else:
+                        empty_turn_count = 0
+
                     reponse = await self.handle_str_reponse(
-                            model_result = model_result,
-                            agent_name = agent_name,
-                            format_string = format_string,
-                            inner_messages = inner_messages,
-                            output_content_type = output_content_type,)
+                        model_result = model_result,
+                        agent_name = agent_name,
+                        format_string = format_string,
+                        inner_messages = inner_messages,
+                        output_content_type = output_content_type,)
                     if self._user_profile_manager.first_time_setup:
                         yield TextMessage(
                             content="\n\n(●'◡'●)如果您需要调整我的名称、我对您的称呼、您涉及领域，请告诉我，我来调整(If you need to adjust my name, how I address you, or your field of expertise, please let me know, and I will make the changes).",

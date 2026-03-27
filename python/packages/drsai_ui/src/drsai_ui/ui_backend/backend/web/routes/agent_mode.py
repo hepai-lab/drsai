@@ -3,38 +3,25 @@ from typing import Dict
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...datamodel.db import AgentModeSettings, AgentModeConfig, UserAgents
+from drsai_ui.ui_backend.backend.database import DatabaseManager
 from ..deps import get_db
 from .....agent_factory.agent_mode_cofigs import (
     get_agent_mode_config, 
-    get_default_agent_mode_config)
+    get_default_agent_mode_config,
+    get_agents_mode
+    )
 
 import uuid
 
 router = APIRouter()
 
-
 @router.get("/")
-async def get_agents_mode(user_id: str, db=Depends(get_db)) -> Dict:
-    '''
-    获取侧边栏的 mode 配置
-    '''
+async def get_agents_mode_route(user_id: str, db=Depends(get_db)) -> Dict:
     try:
-        response = db.get(AgentModeSettings, filters={"user_id": user_id})
-        if not response.status or not response.data:
-            # create a default agents_mode
-            default_agents_mode = get_default_agent_mode_config(user_id=user_id)
-            for agent_mode in default_agents_mode:
-                if not agent_mode.get("id"):
-                    agent_mode["id"] = str(uuid.uuid4())
-            settings = AgentModeSettings(user_id=user_id, agents_mode=default_agents_mode)
-            db.upsert(settings)
-        else:
-            settings = response.data[0]
-        return {"status": True, "data": settings}
+        return await get_agents_mode(user_id, db)
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
-
 
 @router.put("/")
 async def update_agents_mode(user_id: str, id: str, db=Depends(get_db)) -> Dict:
