@@ -56,12 +56,16 @@ async def run_websocket(
                 if message.get("type") == "start" or message.get("type") == "continue":
                     # Handle start message
                     logger.info(f"Received start request for run {run_id}")
-                    team_config = message.get("team_config")
-                    settings_config = message.get("settings_config")
+                    task: str = message.get("task")
+                    start_metadata: dict = message.get("metadata")
+                    team_config = start_metadata.pop("team_config")
+                    settings_config = start_metadata.pop("settings_config")
+                    files = start_metadata.pop("files")
                     task = construct_task(
-                        query=message.get("task"), 
-                        files=message.get("files"),
+                        query=task, 
+                        files=files,
                         # settings_config=settings_config,
+                        metadata=start_metadata,
                     )
                     if task and team_config:
                         # await ws_manager.start_stream(run_id, task, team_config)
