@@ -37,6 +37,7 @@ import { usePlanSearch } from "./hooks/usePlanSearch";
 // Import components
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 import { agentWorkerAPI } from "@/components/views/api";
+import { useModeConfigStore } from "@/store/modeConfig";
 import DragDropOverlay from "./components/DragDropOverlay";
 import FilePreview from "./components/FilePreview";
 import PlanPreview from "./components/PlanPreview";
@@ -102,6 +103,7 @@ const ChatInput = React.forwardRef<
     const { settings: voiceSettings } = useVoiceSettingsStore();
     const userId = user?.email || "default_user";
     const { agentInfo, agentId } = useAgentInfo();
+    const setAgentInfo = useModeConfigStore((s) => s.setAgentInfo);
     const [llmList, setLlmList] = React.useState<{ label: string; value: string }[]>([]);
     const [selectedLlmLabel, setSelectedLlmLabel] = React.useState<string>("");
     React.useEffect(() => {
@@ -448,6 +450,7 @@ const ChatInput = React.forwardRef<
 
         // 调用后端 API 更新 agent
         await agentWorkerAPI.updateUserAgent(userId, updatedAgentConfig);
+        setAgentInfo({ ...agentInfo, defult_config_name: llm.label });
         setSelectedLlmLabel(llm.label);
         message.success(`已选择模型: ${llm.label}`);
         console.log("Selected LLM:", llm);
