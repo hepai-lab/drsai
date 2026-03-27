@@ -16,6 +16,13 @@ import json
 from .jwt import create_jwt_token, AccessToken, AccessTokenData
 from datetime import timedelta
 
+from  drsai_ui.ui_backend.backend.web.deps import get_db
+from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, AgentModeConfig, UserAgents
+from drsai_ui.agent_factory.agent_mode_cofigs import (
+    get_agent_mode_config, 
+    get_default_agent_mode_config,
+    get_agents_mode
+    )
 from dataclasses import dataclass, field, asdict
 # import gradio as gr
 from dotenv import load_dotenv
@@ -134,7 +141,7 @@ async def logout(request: Request):
     return response
 
 @router.get('/callback')
-async def auth(request: Request):
+async def auth(request: Request, db=Depends(get_db)):
     # ③ 统一认证回调
     code = request.query_params.get('code')
     if code is None:
@@ -194,6 +201,15 @@ async def auth(request: Request):
         value="sk-1234567890abcdef",  # 这里可以设置一个API密钥
         httponly=True,
     )
+
+    # 更新用户的默认智能体配置
+    user_id = userdata['cstnetId']
+    response_agent = db.get(AgentModeSettings, filters={"user_id": user_id})
+    if not response_agent.status or not response_agent.data:
+        # 将默认的配置存储进入对应的数据库
+        agents_list = get_default_agent_mode_config(user_id)
+        db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
+        db.upsert(UserAgents(user_id=user_id, agents=agents_list))
 
     return response
     # return RedirectResponse(url='/umt/')  # 回调首页，可以自己改回调页面
