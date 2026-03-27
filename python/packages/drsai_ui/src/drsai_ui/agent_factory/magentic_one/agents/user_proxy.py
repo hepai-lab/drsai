@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+import json
 from contextlib import contextmanager
 from contextvars import ContextVar
 from inspect import iscoroutinefunction
@@ -234,6 +235,14 @@ class RoundbinDrSaiUserProxyAgent(BaseChatAgent, Component[UserProxyAgentConfig]
 
                 last_user_message_format = HumanInputFormat.from_str(user_input)
                 metadata.update({"content":last_user_message_format.content,"user_request":last_user_message_format.to_str()})
+
+            for item in metadata:
+                if isinstance(item, dict) or isinstance(item, list):
+                    metadata[item] = json.dumps(metadata[item])
+                elif isinstance(item, str):
+                    pass
+                else:
+                    metadata[item] = str(metadata[item])
 
             # Return appropriate message type based on handoff presence
             if handoff:
