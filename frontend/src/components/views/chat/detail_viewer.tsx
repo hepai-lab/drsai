@@ -42,7 +42,10 @@ interface DetailViewerProps {
   onInputResponse?: (
     response: string,
     accepted?: boolean,
-    plan?: IPlan
+    plan?: IPlan,
+    files?: unknown[],
+    llm?: { label: string; value: string },
+    inputMetadata?: Record<string, unknown>
   ) => void;
 }
 

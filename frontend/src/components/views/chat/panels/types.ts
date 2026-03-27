@@ -1,5 +1,6 @@
 import { RunLogEntry } from "../../../types/datamodel";
 import { FilesEvent } from "../../../types/datamodel";
+import { IPlan } from "../../../types/plan";
 
 /**
  * Panel 组件的通用类型定义
@@ -27,17 +28,35 @@ export interface BESIIITask {
   metadata?: Record<string, any>;
 }
 
+/** Parsed from latest TaskManager TextMessage with metadata.type === "global_info". */
+export interface BESIIIServerGlobalInfo {
+  /** Stable key (message index + content) so the panel resets only when server sends new global_info. */
+  revision: string;
+  fields: Record<string, string>;
+}
+
 // BESIII Panel Props
 export interface BESIIIPanelProps {
   tasks?: BESIIITask[];
   terminalOutput?: string;
   logs?: RunLogEntry[];
   fileEvents?: FilesEvent[];
+  /** Latest global_info payload from run messages; revision changes when a new global_info arrives. */
+  serverGlobalInfo?: BESIIIServerGlobalInfo | null;
   onMinimize?: () => void;
   onTaskClick?: (taskId: string) => void;
   onSubtaskClick?: (taskId: string, subtaskId: string) => void;
   activeTab?: 'logs' | 'files' | 'terminal';
   onTabChange?: (tab: 'logs' | 'files' | 'terminal') => void;
+  /** Same contract as ChatInput / useTaskActions.handleInputResponse → WebSocket `input_response` */
+  onInputResponse?: (
+    response: string,
+    accepted?: boolean,
+    plan?: IPlan,
+    files?: any[],
+    llm?: { label: string; value: string },
+    inputMetadata?: Record<string, unknown>
+  ) => void;
 }
 
 // VNC Panel Props (原 DetailViewer)

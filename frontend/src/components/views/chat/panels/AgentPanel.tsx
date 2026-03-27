@@ -3,6 +3,8 @@ import VNCPanel from "./VNCPanel";
 import BESIIIPanel from "./BESIIIPanel";
 import { AgentPanelConfig } from "../config/agentConfigs";
 import { RunLogEntry, FilesEvent } from "../../../types/datamodel";
+import { IPlan } from "../../../types/plan";
+import type { BESIIIServerGlobalInfo } from "./types";
 
 /**
  * AgentPanel - 通用 Panel 容器组件
@@ -28,7 +30,14 @@ interface AgentPanelProps {
         activeTab?: "screenshots" | "live";
         onTabChange?: (tab: "screenshots" | "live") => void;
         detailViewerContainerId?: string;
-        onInputResponse?: (response: string, accepted?: boolean, plan?: any) => void;
+        onInputResponse?: (
+            response: string,
+            accepted?: boolean,
+            plan?: any,
+            files?: any[],
+            llm?: { label: string; value: string },
+            inputMetadata?: Record<string, unknown>
+        ) => void;
         isExpanded?: boolean;
         onToggleExpand?: () => void;
     };
@@ -39,12 +48,21 @@ interface AgentPanelProps {
         tasks?: any[];
         terminalOutput?: string;
         fileEvents?: FilesEvent[];
+        serverGlobalInfo?: BESIIIServerGlobalInfo | null;
         onTaskClick?: (taskId: string) => void;
         onSubtaskClick?: (taskId: string, subtaskId: string) => void;
         activeTab?: 'logs' | 'files' | 'terminal';
         onTabChange?: (tab: 'logs' | 'files' | 'terminal') => void;
         /** When true, panel uses narrower width (matches detail viewer expanded layout). */
         isExpanded?: boolean;
+        onInputResponse?: (
+            response: string,
+            accepted?: boolean,
+            plan?: IPlan,
+            files?: any[],
+            llm?: { label: string; value: string },
+            inputMetadata?: Record<string, unknown>
+        ) => void;
     };
 
     // 其他扩展 props
@@ -104,11 +122,13 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                             terminalOutput={besiiiProps?.terminalOutput}
                             logs={besiiiProps?.logs}
                             fileEvents={besiiiProps?.fileEvents}
+                            serverGlobalInfo={besiiiProps?.serverGlobalInfo ?? null}
                             onMinimize={onMinimize}
                             onTaskClick={besiiiProps?.onTaskClick}
                             onSubtaskClick={besiiiProps?.onSubtaskClick}
                             activeTab={besiiiProps?.activeTab}
                             onTabChange={besiiiProps?.onTabChange}
+                            onInputResponse={besiiiProps?.onInputResponse}
                         />
                     </div>
                 );

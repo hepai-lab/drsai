@@ -96,7 +96,8 @@ export const useTaskActions = ({
         uuid: string;
         url?: string;
       }> = [],
-      llm?: SelectedLlm
+      llm?: SelectedLlm,
+      inputMetadata?: Record<string, unknown>
     ) => {
       if (!currentRun) {
         handleError(new Error("No active run"));
@@ -126,7 +127,8 @@ export const useTaskActions = ({
         // Use files directly (already in the correct format from upload)
         const processedFiles = files && files.length > 0 ? files : [];
 
-        // responseJson only contains accepted, content, and plan (no files)
+        // Inner JSON (response field only): accepted, content, plan — no metadata here.
+        // BESIII Revise etc. pass inputMetadata as sibling on the WebSocket envelope.
         const responseJson = {
           accepted: accepted,
           content: response,
@@ -134,6 +136,11 @@ export const useTaskActions = ({
           ...buildLlmPayload(llm, agentInfo as Record<string, any>),
         };
         const responseString = JSON.stringify(responseJson);
+
+        const hasInputMetadata =
+          inputMetadata != null &&
+          typeof inputMetadata === "object" &&
+          Object.keys(inputMetadata).length > 0;
 
         if (needsReconnect) {
           let currentSettings = settingsConfig;
@@ -159,6 +166,7 @@ export const useTaskActions = ({
                 ...buildLlmPayload(llm, agentInfo as Record<string, any>),
               },
               ...(processedFiles.length > 0 && { files: processedFiles }),
+              ...(hasInputMetadata ? { metadata: inputMetadata } : {}),
             };
 
             socket.send(JSON.stringify(continueMessage));
@@ -172,6 +180,7 @@ export const useTaskActions = ({
               ...buildLlmPayload(llm, agentInfo as Record<string, any>),
             },
             ...(processedFiles.length > 0 && { files: processedFiles }),
+            ...(hasInputMetadata ? { metadata: inputMetadata } : {}),
           };
           socket.send(JSON.stringify(inputResponseMessage));
 

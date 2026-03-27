@@ -1,7 +1,6 @@
-import { CheckCircle, Circle, Clock, Download, FileText, ChevronDown, ChevronRight } from "lucide-react";
+import { Check, CheckCircle, Circle, Clock } from "lucide-react";
 import React, { useEffect, useRef, useState } from "react";
 import { appContext } from "../../../../hooks/provider";
-import { FilesEvent, MessageFileItem } from "../../../types/datamodel";
 import { BESIIIPanelProps, BESIIISubTask, BESIIITask } from "./types";
 
 /**
@@ -15,12 +14,18 @@ import { BESIIIPanelProps, BESIIISubTask, BESIIITask } from "./types";
 
 type TabType = 'logs' | 'files' | 'terminal';
 
+/** Shown first; only these keys are treated as read-only. */
+const GLOBAL_INFO_READ_ONLY_ORDER = ["taskName", "root_path"] as const;
+const GLOBAL_INFO_READ_ONLY_SET = new Set<string>(GLOBAL_INFO_READ_ONLY_ORDER);
+
 const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     tasks = [],
     terminalOutput = '',
     logs = [],
-    fileEvents = [],
+    fileEvents: _fileEvents = [],
+    serverGlobalInfo = null,
     onMinimize,
+    onInputResponse,
     activeTab: controlledActiveTab,
     onTabChange,
 }) => {
@@ -37,7 +42,34 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     };
     const [localTasks, setLocalTasks] = useState<BESIIITask[]>(tasks);
     const logContainerRef = useRef<HTMLDivElement>(null);
-    const [expandedEvents, setExpandedEvents] = useState<Record<number, boolean>>({});
+
+    const initialGlobalInfoRef = useRef<Record<string, string>>({});
+    /** Only re-apply server snapshot when revision changes — avoids wiping local edits on every run.messages update. */
+    const lastSyncedGlobalInfoRevisionRef = useRef<string | null>(null);
+    const [globalInfo, setGlobalInfo] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        const fields = serverGlobalInfo?.fields;
+        const revision = serverGlobalInfo?.revision ?? null;
+
+        if (!fields || Object.keys(fields).length === 0) {
+            if (serverGlobalInfo == null && lastSyncedGlobalInfoRevisionRef.current != null) {
+                lastSyncedGlobalInfoRevisionRef.current = null;
+                initialGlobalInfoRef.current = {};
+                setGlobalInfo({});
+            }
+            return;
+        }
+
+        if (revision === lastSyncedGlobalInfoRevisionRef.current) {
+            return;
+        }
+
+        lastSyncedGlobalInfoRevisionRef.current = revision;
+        const normalized = { ...fields, root_path: fields.root_path ?? "" };
+        initialGlobalInfoRef.current = normalized;
+        setGlobalInfo({ ...normalized });
+    }, [serverGlobalInfo]);
 
     // 同步 tasks prop 到 localTasks 状态
     useEffect(() => {
@@ -87,173 +119,144 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
         }
     };
 
-    // 处理文件下载
-    const handleFileDownload = (file: MessageFileItem) => {
-        if (file.download_method === "url" && file.url) {
-            // URL 下载：直接打开链接
-            window.open(file.url, '_blank');
-        } else if (file.download_method === "base64" && file.base64_content) {
-            // Base64 下载：转换为 Blob 并下载
-            try {
-                // 解码 base64
-                const binaryString = atob(file.base64_content);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-                const blob = new Blob([bytes], { type: file.mime_type || 'application/octet-stream' });
+    const globalInfoKeys = Object.keys(globalInfo);
+    const globalInfoReadOnlyKeys = GLOBAL_INFO_READ_ONLY_ORDER.filter(
+        (k) => k in globalInfo
+    );
+    const globalInfoEditableKeys = Object.keys(globalInfo).filter(
+        (k) => !GLOBAL_INFO_READ_ONLY_SET.has(k)
+    );
 
-                // 创建下载链接
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = file.name;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                URL.revokeObjectURL(url);
-            } catch (error) {
-                console.error('Failed to download file:', error);
-                alert('下载文件失败');
+    const hasGlobalInfoEdits = React.useMemo(() => {
+        const initial = initialGlobalInfoRef.current;
+        for (const key of Object.keys(globalInfo)) {
+            if (GLOBAL_INFO_READ_ONLY_SET.has(key)) continue;
+            if ((globalInfo[key] ?? "") !== (initial[key] ?? "")) {
+                return true;
             }
         }
+        return false;
+    }, [globalInfo]);
+
+    const reviseDisabled = !onInputResponse || !hasGlobalInfoEdits;
+
+    const updateGlobalField = (key: string, value: string) => {
+        setGlobalInfo((prev) => ({ ...prev, [key]: value }));
     };
 
-    // 渲染 Files 标签页
-    const renderFiles = () => {
-        // 收集所有文件事件中的文件
-        const allFiles: Array<{ file: MessageFileItem; event: FilesEvent }> = [];
-        fileEvents.forEach(event => {
-            if (event.content?.files && Array.isArray(event.content.files)) {
-                event.content.files.forEach(file => {
-                    allFiles.push({ file, event });
-                });
-            }
-        });
-
-        if (allFiles.length === 0) {
-            return (
-                <div className={`flex items-center justify-center h-full ${darkMode === "dark" ? "text-gray-400" : "text-gray-500"}`}>
-                    <div className="text-center">
-                        <FileText size={48} className={`mx-auto mb-4 ${darkMode === "dark" ? "text-gray-600" : "text-gray-400"}`} />
-                        <div>暂无文件</div>
-                    </div>
-                </div>
-            );
+    const handleRevise = () => {
+        if (!onInputResponse) {
+            console.warn("[BESIII] Revise skipped: onInputResponse is not wired");
+            return;
         }
+        const initial = initialGlobalInfoRef.current;
+        const changed: Record<string, string> = {};
+        for (const key of globalInfoEditableKeys) {
+            const cur = globalInfo[key] ?? "";
+            const init = initial[key] ?? "";
+            if (cur !== init) {
+                changed[key] = cur;
+            }
+        }
+        if (Object.keys(changed).length === 0) {
+            console.warn("[BESIII] Revise skipped: no edited fields");
+            return;
+        }
+        // Revise: payload in top-level `metadata` on wire; `content` empty (see useTaskActions)
+        onInputResponse("", false, undefined, [], undefined, {
+            type: "global_info",
+            ...changed,
+        });
+    };
+
+    const renderGlobalInfo = () => {
+        const border = darkMode === "dark" ? "border-gray-700" : "border-gray-200";
+        const muted = darkMode === "dark" ? "text-gray-500" : "text-gray-500";
+        const keyCls = `shrink-0 font-mono text-xs ${muted} sm:w-44`;
+        const inputCls =
+            darkMode === "dark"
+                ? "bg-gray-900 border-gray-600 text-gray-100 focus:border-purple-500 focus:ring-purple-500/30"
+                : "bg-white border-gray-300 text-gray-900 focus:border-purple-500 focus:ring-purple-500/30";
+        const valueCls = darkMode === "dark" ? "text-gray-100" : "text-gray-900";
+
+        const row = "px-3 py-2.5 flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-4";
 
         return (
-            <div className="flex flex-col gap-4 overflow-y-auto h-full p-4">
-                {fileEvents.map((event, eventIndex) => {
-                    if (!event.content?.files || event.content.files.length === 0) {
-                        return null;
-                    }
-
-                    const isExpanded = expandedEvents[eventIndex] ?? true;
-
-                    const toggleEvent = () => {
-                        setExpandedEvents(prev => ({
-                            ...prev,
-                            [eventIndex]: !isExpanded,
-                        }));
-                    };
-
-                    return (
-                        <div key={eventIndex} className={`border rounded-lg overflow-hidden ${darkMode === "dark" ? "border-gray-700 bg-gray-900" : "border-gray-200 bg-white"}`}>
-                            {/* Event Header */}
-                            {(event.content.title || event.content.description) && (
-                                <button
-                                    type="button"
-                                    onClick={toggleEvent}
-                                    className={`w-full px-4 py-3 border-b flex items-center justify-between text-left ${darkMode === "dark" ? "border-gray-700 bg-gray-800 hover:bg-gray-700" : "border-gray-200 bg-gray-50 hover:bg-gray-100"}`}
-                                >
-                                    <div>
-
-
-                                        {event.content.title && (
-                                            <h3 className={`font-semibold mb-1 ${darkMode === "dark" ? "text-gray-200" : "text-gray-800"}`}>
-                                                {event.content.title}
-                                            </h3>
-                                        )}
-                                        {event.content.description && (
-                                            <p className={`text-sm ${darkMode === "dark" ? "text-gray-400" : "text-gray-600"}`}>
-                                                {event.content.description}
-                                            </p>
-                                        )}
-                                        {(() => {
-                                            const ts = (event.content as any)?.send_time_stamp;
-                                            if (ts === undefined || ts === null) return null;
-                                            return (
-                                                <div className={`text-xs mb-1 ${darkMode === "dark" ? "text-gray-300" : "text-gray-600"}`}>
-                                                    {formatTimestamp(ts)}
-                                                </div>
-                                            );
-                                        })()}
-                                    </div>
-                                    <div className={`ml-4 flex-shrink-0 ${darkMode === "dark" ? "text-gray-400" : "text-gray-500"}`}>
-                                        {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                                    </div>
-                                </button>
-                            )}
-
-                            {/* Files List */}
-                            {isExpanded && (
-                                <div className="divide-y divide-gray-200 dark:divide-gray-700">
-                                    {event.content.files.map((file, fileIndex) => (
-                                        <div
-                                            key={fileIndex}
-                                            className={`px-4 py-3 hover:bg-opacity-50 transition-colors ${darkMode === "dark"
-                                                ? "hover:bg-gray-800"
-                                                : "hover:bg-gray-50"
-                                                }`}
-                                        >
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-3 flex-1 min-w-0">
-                                                    <FileText
-                                                        size={20}
-                                                        className={`flex-shrink-0 ${darkMode === "dark" ? "text-gray-400" : "text-gray-500"}`}
-                                                    />
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className={`font-medium truncate ${darkMode === "dark" ? "text-gray-200" : "text-gray-800"}`}>
-                                                            {file.name}
-                                                        </div>
-                                                        {file.description && (
-                                                            <div className={`text-xs mt-1 ${darkMode === "dark" ? "text-gray-500" : "text-gray-500"}`}>
-                                                                {file.description}
-                                                            </div>
-                                                        )}
-                                                        <div className={`text-xs mt-1 flex items-center gap-2 ${darkMode === "dark" ? "text-gray-500" : "text-gray-500"}`}>
-                                                            <span className={`px-2 py-0.5 rounded ${darkMode === "dark" ? "bg-purple-500/20 text-purple-300" : "bg-purple-100 text-purple-700"}`}>
-                                                                {file.download_method === "url" ? "URL" : "Base64"}
-                                                            </span>
-                                                            {file.size && (
-                                                                <span>{(file.size / 1024).toFixed(2)} KB</span>
-                                                            )}
-                                                            {file.mime_type && (
-                                                                <span>{file.mime_type}</span>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <button
-                                                    onClick={() => handleFileDownload(file)}
-                                                    className={`ml-4 px-3 py-2 rounded-lg flex items-center gap-2 transition-colors ${darkMode === "dark"
-                                                        ? "bg-purple-600 hover:bg-purple-700 text-white"
-                                                        : "bg-purple-600 hover:bg-purple-700 text-white"
-                                                        }`}
-                                                    title={`下载 ${file.name}`}
-                                                >
-                                                    <Download size={16} />
-                                                    <span className="text-sm">下载</span>
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
+            <div className="flex flex-col h-full overflow-y-auto p-4">
+                {globalInfoKeys.length === 0 ? (
+                    <div
+                        className={`flex flex-1 min-h-[160px] items-center justify-center rounded-lg border ${border} text-sm ${muted}`}
+                    >
+                        Loading...
+                    </div>
+                ) : (
+                    <>
+                        <div className={`rounded-lg border ${border} divide-y ${darkMode === "dark" ? "divide-gray-700" : "divide-gray-200"}`}>
+                            {globalInfoReadOnlyKeys.map((key) => (
+                                <div key={key} className={row}>
+                                    <span className={keyCls}>{key}</span>
+                                    <span className={`text-sm break-all min-h-[1.25rem] flex-1 ${valueCls}`}>
+                                        {globalInfo[key] ?? ""}
+                                    </span>
                                 </div>
-                            )}
+                            ))}
+                            {globalInfoEditableKeys.map((key) => {
+                                const initial = initialGlobalInfoRef.current[key] ?? "";
+                                const current = globalInfo[key] ?? "";
+                                const isEdited = current !== initial;
+                                return (
+                                    <div key={key} className={row}>
+                                        <label htmlFor={`global-info-${key}`} className={keyCls}>
+                                            {key}
+                                        </label>
+                                        <div className="flex flex-1 min-w-0 items-center gap-2">
+                                            <input
+                                                id={`global-info-${key}`}
+                                                type="text"
+                                                value={current}
+                                                onChange={(e) => updateGlobalField(key, e.target.value)}
+                                                className={`flex-1 min-w-0 rounded-md border px-2.5 py-1.5 h-9 text-sm focus:outline-none focus:ring-2 ${inputCls}`}
+                                            />
+                                            <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center">
+                                                {isEdited ? (
+                                                    <Check
+                                                        size={16}
+                                                        className={
+                                                            darkMode === "dark"
+                                                                ? "text-emerald-400"
+                                                                : "text-emerald-600"
+                                                        }
+                                                        strokeWidth={2.5}
+                                                    />
+                                                ) : null}
+                                            </span>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
-                    );
-                })}
+                        <div className="mt-4 flex justify-end">
+                            <button
+                                type="button"
+                                onClick={handleRevise}
+                                disabled={reviseDisabled}
+                                title={
+                                    !onInputResponse
+                                        ? "Input response is not available"
+                                        : !hasGlobalInfoEdits
+                                          ? "Edit at least one field to submit"
+                                          : undefined
+                                }
+                                className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${darkMode === "dark"
+                                    ? "bg-purple-600 hover:bg-purple-500 text-white disabled:opacity-40 disabled:hover:bg-purple-600 disabled:cursor-not-allowed"
+                                    : "bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-40 disabled:hover:bg-purple-600 disabled:cursor-not-allowed"
+                                    }`}
+                            >
+                                Revise
+                            </button>
+                        </div>
+                    </>
+                )}
             </div>
         );
     };
@@ -428,7 +431,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
             {/* Tab Content */}
             <div className={`flex-1 overflow-hidden ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
                 {activeTab === 'logs' && <div className="h-full p-4">{renderLogs()}</div>}
-                {activeTab === 'files' && <div className="h-full overflow-y-auto">{renderFiles()}</div>}
+                {activeTab === 'files' && <div className="h-full overflow-y-auto">{renderGlobalInfo()}</div>}
                 {activeTab === 'terminal' && renderTerminal()}
             </div>
         </div>

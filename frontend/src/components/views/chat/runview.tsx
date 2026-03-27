@@ -10,7 +10,7 @@ import { IStatus } from "../../types/app";
 import { RcFile } from "antd/es/upload";
 import AgentPanel from "./panels/AgentPanel";
 import { AgentConfiguration } from "./config/agentConfigs";
-import { BESIIITask } from "./panels/types";
+import { BESIIITask, BESIIIServerGlobalInfo } from "./panels/types";
 import { appContext } from "../../../hooks/provider";
 
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
@@ -98,7 +98,8 @@ interface RunViewProps {
       uuid: string;
       url?: string;
     }>,
-    llm?: { label: string; value: string }
+    llm?: { label: string; value: string },
+    inputMetadata?: Record<string, unknown>
   ) => void;
   onRunTask?: (
     query: string,
@@ -325,7 +326,36 @@ const RunView: React.FC<RunViewProps> = ({
     return convertTaskToBESIIITask(run.task);
   });
   const [logs, setLogs] = useState<RunLogEntry[]>([]);
-  const [terminalOutput, setTerminalOutput] = useState<string>('[INFO] Starting BESIII analysis workflow...\n[INFO] Loading detector configuration...\n[SUCCESS] Detector configuration loaded\n[INFO] Processing event data...');
+  const [terminalOutput, setTerminalOutput] = useState<string>("");
+
+  const besiiiServerGlobalInfo = React.useMemo((): BESIIIServerGlobalInfo | null => {
+    if (agentConfig.panel.type !== "besiii") return null;
+    for (let i = run.messages.length - 1; i >= 0; i--) {
+      const m = run.messages[i];
+      const meta = m.config.metadata as Record<string, unknown> | undefined;
+      if (meta?.type !== "global_info") continue;
+      const c = m.config.content;
+      if (typeof c !== "string") continue;
+      try {
+        const parsed = JSON.parse(c) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const out: Record<string, string> = {};
+          for (const [k, v] of Object.entries(
+            parsed as Record<string, unknown>
+          )) {
+            out[k] = v == null ? "" : String(v);
+          }
+          if (!Object.prototype.hasOwnProperty.call(out, "root_path")) {
+            out.root_path = "";
+          }
+          return { revision: `${i}:${c}`, fields: out };
+        }
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }, [run.messages, agentConfig.panel.type]);
 
   // Track manual scrolling so users can inspect earlier messages without being forced to bottom
   useEffect(() => {
@@ -1206,6 +1236,7 @@ const RunView: React.FC<RunViewProps> = ({
                   terminalOutput: terminalOutput,
                   logs: logs,
                   fileEvents: run.file_events || [],
+                  serverGlobalInfo: besiiiServerGlobalInfo,
                   activeTab: besiiiActiveTab,
                   onTabChange: setBesiiiActiveTab,
                   isExpanded: detailViewerExpanded,
@@ -1215,6 +1246,7 @@ const RunView: React.FC<RunViewProps> = ({
                   onSubtaskClick: (taskId: string, subtaskId: string) => {
                     // TODO: Handle subtask click
                   },
+                  onInputResponse,
                 }}
               />
             </div>
