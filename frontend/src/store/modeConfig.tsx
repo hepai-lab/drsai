@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { Agent } from "@/types/common";
+import { agentAPI } from "@/components/views/api";
+import { getLocalStorage } from "@/components/utils";
 
 interface IModeConfig {
     mode: string;
@@ -19,9 +21,6 @@ interface IModeConfig {
     agentInfo: Partial<Agent> | null;
     setAgentInfo: (agentInfo: Partial<Agent> | null) => void;
 }
-
-// 默认的 agentId，用于首次登录时设置
-const DEFAULT_AGENT_ID = "010022126sdfnjsdnqw";
 
 export const useModeConfigStore = create<IModeConfig>()(
     persist(
@@ -49,12 +48,33 @@ export const useModeConfigStore = create<IModeConfig>()(
                 agentId: state.agentId,
             }),
             onRehydrateStorage: () => (state) => {
-                // 检查是否是第一次登录（localStorage 中没有 agentId）
-                if (state && !state.agentId) {
-                    // 设置默认的 agentId
-                    state.setAgentId(DEFAULT_AGENT_ID);
-                    console.log(`首次登录，设置默认 agentId: ${DEFAULT_AGENT_ID}`);
-                }
+                if (!state || state.agentId) return;
+                const userId = getLocalStorage("user_email", false) as
+                    | string
+                    | null;
+                if (!userId) return;
+
+                void agentAPI
+                    .getAgentList(userId)
+                    .then((agents) => {
+                        const first = agents?.[0];
+                        const id = first?.id;
+                        if (!id || typeof id !== "string") return;
+                        const { agentId, setAgentId } =
+                            useModeConfigStore.getState();
+                        if (!agentId) {
+                            setAgentId(id);
+                            console.log(
+                                `首次登录，设置默认 agentId 为列表首项: ${id}`
+                            );
+                        }
+                    })
+                    .catch((err) => {
+                        console.warn(
+                            "获取 agent 列表失败，无法设置默认 agentId:",
+                            err
+                        );
+                    });
             },
         }
     )
