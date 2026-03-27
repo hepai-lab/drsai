@@ -151,9 +151,9 @@ def construct_task(
             logger.error(f"Error processing file {file.get('name')}: {str(e)}")
 
     # Add the user query at the end
-    metadata.update({"attached_files": attached_files_json})
     combined_text = "\n\n".join(text_parts)
     attached_files_json = json.dumps(attached_files)
+    metadata.update({"attached_files": attached_files_json})
     # Return a MultiModalMessage if there are images, otherwise a TextMessage
     if len(text_parts) > 0:
         messages_return.append(
