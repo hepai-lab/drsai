@@ -162,10 +162,9 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
             console.warn("[BESIII] Revise skipped: no edited fields");
             return;
         }
-        // Revise: payload in top-level `metadata` on wire; `content` empty (see useTaskActions)
-        onInputResponse("", false, undefined, [], undefined, {
+        // Revise: `type` on envelope metadata; edited fields only in inner `content` JSON (see useTaskActions)
+        onInputResponse(JSON.stringify(changed), false, undefined, [], undefined, {
             type: "global_info",
-            ...changed,
         });
     };
 
