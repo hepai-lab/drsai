@@ -442,7 +442,8 @@ class HepAIWorkerAgent(DrSaiAgent):
                 chat_id = self._chat_id,
                 user = self._run_info,
             )
-            full_response = []
+            
+            final_message = None
             try:
                 async for chunk in self.async_stream_generator(stream):
                     if self.is_paused:
@@ -451,18 +452,19 @@ class HepAIWorkerAgent(DrSaiAgent):
                     message_type = chunk.get("type", None)
                     if message_type in self._message_factory._message_types:
                         msg: BaseChatMessage|BaseAgentEvent = self._message_factory._message_types[message_type].model_validate(chunk)
-
-                        if message_type in [
-                            "TextMessage",
-                            "ToolCallSummaryMessage",
-                            "StructuredMessage",
-                            "HandoffMessage",
-                            "MultiModalMessage",
-                            "StopMessage"]:
-                            full_response.append({msg.source: msg.content})
+                        # if message_type in [
+                        #     "TextMessage",
+                        #     "ToolCallSummaryMessage",
+                        #     "StructuredMessage",
+                        #     "HandoffMessage",
+                        #     "MultiModalMessage",
+                        #     "StopMessage"]:
+                        #     full_response.append({msg.source: msg.content})
+                        final_message = msg
                         yield msg
                     if "stop_reason" in chunk:
                         # taskresult = TaskResult.model_validate(chunk)
+                        # task_result = chunk
                         break
 
             except asyncio.CancelledError:
@@ -479,20 +481,20 @@ class HepAIWorkerAgent(DrSaiAgent):
                     logger.error(f"Error during streaming: {e}")
                     raise
 
-            full_response_str = ""
-            if len(full_response)>1:
-                for response in full_response:
-                    for key, value in response.items():
-                        full_response_str += f"**{key}:**\n\n{value}\n\n"
-            else:
-                for response in full_response:
-                    for key, value in response.items():
-                        full_response_str += f"{value}"
-
+            # full_response_str = ""
+            # if len(full_response)>1:
+            #     for response in full_response:
+            #         for key, value in response.items():
+            #             full_response_str += f"**{key}:**\n\n{value}\n\n"
+            # else:
+            #     for response in full_response:
+            #         for key, value in response.items():
+            #             full_response_str += f"{value}"
+            final_answer = final_message.content 
             model_result = CreateResult(
-                content=full_response_str, 
+                content=final_answer, 
                 finish_reason="stop",
-                usage = RequestUsage(prompt_tokens = 0, completion_tokens = len(full_response_str.split())),
+                usage = RequestUsage(prompt_tokens = 0, completion_tokens = len(final_answer.split())),
                 cached = False
                 )
             
