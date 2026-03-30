@@ -42,6 +42,7 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                 // 未登录态
                 // 如果访问非公开路由，重定向到登录页
                 if (!isPublicRoute) {
+                    console.log("GATSBY_SERVICE_MODE", process.env.GATSBY_SERVICE_MODE);
                     const loginPath = process.env.GATSBY_SERVICE_MODE === "DEV" ? "/login" : "/sso-login";
                     // 避免重复重定向（标准化后比较，兼容 /login 与 /login/）
                     if (normalizedPath !== normalizePath(loginPath)) {

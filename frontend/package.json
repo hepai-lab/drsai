@@ -8,7 +8,7 @@
     "gatsby"
   ],
   "scripts": {
-    "develop": "gatsby develop --port 8000 --host 0.0.0.0",
+    "develop": "NODE_OPTIONS=--max-old-space-size=4096 GATSBY_CPU_COUNT=2 gatsby develop --port 8000 --host 0.0.0.0",
     "develop-clean": "gatsby clean && gatsby develop --port 8000 --host 0.0.0.0",
     "dev": "npm run develop",
     "start": "gatsby clean && gatsby develop --port 8000 --host 0.0.0.0",

@@ -72,7 +72,7 @@ def backend(
     host: str = "0.0.0.0",
     port: int = 42801,
     enable_openwebui_pipeline: bool = True,
-    pipelines_dir: str = None,
+    pipelines_dir: Optional[str] = None,
     history_mode: str = "backend",
     use_api_key_mode: str = "frontend",
 ):

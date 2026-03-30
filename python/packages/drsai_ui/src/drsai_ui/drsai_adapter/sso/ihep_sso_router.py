@@ -6,8 +6,10 @@ Created on Wed Nov 20 08:24:18 2024
 """
 
 import os
+import secrets
+from urllib.parse import urlencode
 from authlib.integrations.starlette_client import OAuth, OAuthError
-from fastapi import FastAPI, Depends, Request, HTTPException, APIRouter
+from fastapi import FastAPI, Depends, Request, HTTPException, APIRouter, status
 from starlette.responses import RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
@@ -113,6 +115,9 @@ oauth.register(
 
 router = APIRouter()
 
+def _make_state() -> str:
+    return secrets.token_urlsafe(32)
+
 def get_user(request: Request):
     user = request.session.get('user')
     if user:
@@ -215,11 +220,23 @@ async def auth(request: Request, db=Depends(get_db)):
     # return RedirectResponse(url='/umt/')  # 回调首页，可以自己改回调页面
 
 @router.get('/login')
-async def login(request: Request):
-    # ② 跳转到统一认证登录页面
-    redirect_uri = oauth_config.redirect_uri
-    authorize_redirect = await oauth.ihepsso.authorize_redirect(request, redirect_uri)
-    return authorize_redirect
+async def login():
+    """Initiate IHEP SSO login — redirects user to IHEP authorization page"""
+    if not oauth_config.client_id or oauth_config.client_id == "<enter your key here>":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="IHEP SSO is not configured. Please set IHEP_SSO_APP_KEY and IHEP_SSO_APP_SECRET.",
+        )
+
+    params = {
+        "client_id": oauth_config.client_id,
+        "redirect_uri": oauth_config.redirect_uri,
+        "response_type": "code",
+        "state": _make_state(),
+    }
+    auth_url = f"{oauth_config.authorize_url}?{urlencode(params)}"
+    return RedirectResponse(url=auth_url)
+
 
 
 if __name__ == '__main__':

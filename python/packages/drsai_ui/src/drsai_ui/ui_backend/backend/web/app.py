@@ -251,7 +251,8 @@ if SERVICE_MODE == "PROD":
     from ....drsai_adapter.sso.ihep_sso_router import oauth_config
     from starlette.middleware.sessions import SessionMiddleware
     app.add_middleware(SessionMiddleware, secret_key=oauth_config.meddleware_secret)
-    app.include_router(ihep_sso_router, prefix="/umt", tags=["umt"])
+    app.include_router(ihep_sso_router, prefix="/umt", tags=["umt"]) 
+    # api.include_router(ihep_sso_router, prefix="/umt", tags=["umt"], responses={404: {"description": "Not found"}})
 
 # Error handlers
 
