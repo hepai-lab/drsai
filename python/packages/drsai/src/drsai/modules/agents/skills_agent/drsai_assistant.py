@@ -84,7 +84,7 @@ from .managers import (
     get_operator_funcs,
 )
 from drsai.modules.components.skills import SkillLoader
-from drsai.utils.utils import download_file_from_url_or_base64
+from drsai.utils.utils import download_file_from_url_or_base64, fix_and_parse_json
 from .managers.get_managers_tools import (
     get_agent_skills_tool,
     get_subagent_tools,
@@ -644,7 +644,19 @@ Current Session_ID is {self._thread_id}
                 
                 # handle tool call
                 for i in range(len(model_result.content)):
-                    argument = json.loads(model_result.content[i].arguments)
+                    # argument = json.loads(model_result.content[i].arguments)
+                    argument = fix_and_parse_json(model_result.content[i].arguments)
+                    if isinstance(argument, str):
+                        await model_context.add_message(FunctionExecutionResultMessage(
+                            content=[FunctionExecutionResult(
+                                content = argument,
+                                name = tool_name,
+                                call_id = call_id,
+                                is_error = False,
+                            ),]
+                        ))
+                        continue
+
                     tool_name = model_result.content[i].name
                     call_id = model_result.content[i].id
                     if tool_name == "TodoWrite":
@@ -733,6 +745,8 @@ Current Session_ID is {self._thread_id}
                                 yield message.chat_message
                             else:
                                 yield message
+                            
+                        break
                     elif tool_name == "UpdateUserConfig":
                         update_message = self._user_profile_manager.update_user_config(**argument)
                         # await model_context.add_message(
@@ -772,7 +786,7 @@ Current Session_ID is {self._thread_id}
                         # )
 
                 turn_count += 1
-                if turn_count > self._max_turn_count:
+                if turn_count >= self._max_turn_count:
                     yield Response(
                         chat_message=TextMessage(
                             content="\n\n(●'◡'●)抱歉，已达最大的任务循环次数，触发了保护措施，请重新调整您的询问方式或者更具体的告诉您的助手应该怎么做。",
@@ -797,7 +811,7 @@ Current Session_ID is {self._thread_id}
             logger.error(traceback.format_exc())
             # add to chat history
             await self._model_context.add_message(
-                AssistantMessage(
+                UserMessage(
                     content=f"An error occurred while executing the task: {e}",
                     source=self._name
                 )

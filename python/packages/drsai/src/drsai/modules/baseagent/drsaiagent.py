@@ -744,8 +744,14 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         exec_results = [result for _, result in executed_calls_and_results]
 
         # Yield ToolCallExecutionEvent
+        exec_results_output = []
+        for result in exec_results:
+            if len(result.content)>100:
+                exec_results_output.append(result.content[:100] + "...")
+            else:
+                exec_results_output.append(result.content)
         tool_call_result_msg = ToolCallExecutionEvent(
-            content=exec_results,
+            content=exec_results_output,
             source=agent_name,
         )
         logger.debug(tool_call_result_msg)

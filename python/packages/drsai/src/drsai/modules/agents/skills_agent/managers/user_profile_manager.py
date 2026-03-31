@@ -250,6 +250,7 @@ The more you know, the better you can help. But remember — you're learning abo
 **Note:** 
 
 - Remember to perform operations such as downloading files in the Download Directory, and avoid interfering with the contents of other configured files.
+- When generating and testing code, if the user does not explicitly specify a folder, it should be created and run in the Temporary Directory.
 """
         self.tools_md.write_text(content, encoding='utf-8')
 
