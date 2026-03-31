@@ -242,23 +242,24 @@ const DetailViewer: React.FC<DetailViewerProps> = ({
         id={detailViewerContainerId}
       >
         {/* Tabs and Controls */}
-        <div className="flex justify-between items-center mb-4 border-b flex-shrink-0">
-          <div className="flex">
+        <div className="flex justify-between items-center mb-3 flex-shrink-0">
+          {/* Segmented control — secondary "module switching" style */}
+          <div className="flex rounded-lg bg-secondary/30 p-[3px] gap-[2px]">
             <button
-              className={`px-6 py-2 font-medium rounded-t-lg transition-colors ${
+              className={`px-3 py-1 text-[11px] font-medium rounded-md transition-all ${
                 activeTab === "screenshots"
-                  ? "bg-secondary text-primary border-2 border-b-0 border-primary"
-                  : "text-secondary hover:text-primary hover:bg-secondary/10"
+                  ? "bg-tertiary text-primary shadow-sm"
+                  : "text-secondary hover:text-primary"
               }`}
               onClick={() => handleTabChange("screenshots")}
             >
               Screenshots
             </button>
             <button
-              className={`px-6 py-2 font-medium rounded-t-lg transition-colors ${
+              className={`px-3 py-1 text-[11px] font-medium rounded-md transition-all ${
                 activeTab === "live"
-                  ? "bg-secondary text-primary border-2 border-b-0 border-primary"
-                  : "text-secondary hover:text-primary hover:bg-secondary/10"
+                  ? "bg-tertiary text-primary shadow-sm"
+                  : "text-secondary hover:text-primary"
               }`}
               onClick={() => handleTabChange("live")}
             >

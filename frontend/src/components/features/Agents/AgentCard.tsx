@@ -1,9 +1,7 @@
 import { Network, Pencil, X } from "lucide-react";
-import React, { useContext, useEffect } from "react";
-import { appContext } from "../../../hooks/provider";
+import React from "react";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { Button } from "../../common/Button";
-import { agentAPI } from "../../views/api";
 import type { AgentMode } from "@/types/common";
 
 interface AgentCardData {
@@ -23,57 +21,17 @@ interface AgentCardData {
 interface AgentCardProps {
   agent: AgentCardData;
   onEdit?: (id?: string) => void;
-  handleAgentList?: (agents: any[]) => Promise<void>;
-  existingAgents?: any[]; // 现有的侧边栏智能体列表
 }
 
-const DEFAULT_AVATAR = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRkM2RjMyIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyNCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPkE8L3RleHQ+Cjwvc3ZnPgo=";
+const DEFAULT_AVATAR =
+  "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHZpZXdCb3g9IjAgMCA2NCA2NCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iOCIgZmlsbD0iIzRkM2RjMyIvPgo8dGV4dCB4PSIzMiIgeT0iMzgiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIyNCIgZmlsbD0id2hpdGUiIHRleHQtYW5jaG9yPSJtaWRkbGUiPkE8L3RleHQ+Cjwvc3ZnPgo=";
 
+/** 统一图标：缩小版容器，logo 居中 contain */
+const ICON_BOX =
+  "flex h-7 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[#fbf8ee] ring-1 ring-inset ring-[#f3cf63]";
 
-const AgentCard: React.FC<AgentCardProps> = ({
-  agent,
-  onEdit,
-  handleAgentList,
-  existingAgents = [],
-}) => {
-  const { setSelectedAgent, setConfig, setAgentId } = useModeConfigStore();
-  const { user } = useContext(appContext);
-
-  // 添加状态跟踪
-  const [isAdding, setIsAdding] = React.useState(false);
-  const [isAdded, setIsAdded] = React.useState(false);
-
-
-  // 检查智能体是否已存在于侧边栏中
-  const checkIfAgentExists = React.useCallback(() => {
-    return existingAgents.some(existingAgent => {
-      // 对于 remote agent，优先通过 id 检查
-      if (agent.id && existingAgent.id === agent.id) {
-        return true;
-      }
-      // 优先检查名称是否相同
-      // if (existingAgent.name === agent.name) {
-      //   return true;
-      // }
-      // 对于非 remote agent，如果 mode 相同且配置相同，且 name 也匹配，认为是同一个
-      // 这里确保 name 必须匹配，避免因为配置相同而误判不同的 agent
-      // if (agent.mode && agent.mode !== "remote" &&
-      //   existingAgent.mode === agent.mode &&
-      //   existingAgent.name === agent.name &&
-      //   existingAgent.config?.url === agent.url &&
-      //   existingAgent.config?.apiKey === agent.apiKey) {
-      //   return true;
-      // }
-      return false;
-    });
-  }, [existingAgents, agent]);
-
-  // 组件初始化时检查是否已存在
-  React.useEffect(() => {
-    if (existingAgents.length > 0) {
-      setIsAdded(checkIfAgentExists());
-    }
-  }, [existingAgents, checkIfAgentExists]);
+const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
+  const { setAgentId } = useModeConfigStore();
 
   const handleTryClick = async () => {
     setAgentId(agent.id || "");
@@ -87,29 +45,6 @@ const AgentCard: React.FC<AgentCardProps> = ({
     );
   };
 
-  const handleAddToSidebar = async () => {
-    if (!user?.email || isAdding || isAdded) return;
-    setIsAdding(true);
-    try {
-
-      const agentNewList = await agentAPI.updateAgentList(
-        user.email,
-        agent.id || ""
-      );
-
-      if (handleAgentList) {
-        await handleAgentList(agentNewList);
-      }
-
-      // 添加成功后设置状态
-      setIsAdded(true);
-    } catch (error) {
-      console.error("Failed to add agent to sidebar:", error);
-    } finally {
-      setIsAdding(false);
-    }
-  };
-
   const handleRemoveClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     agent.onRemove?.(agent.id);
@@ -120,97 +55,85 @@ const AgentCard: React.FC<AgentCardProps> = ({
     onEdit?.(agent.id);
   };
 
+  const showToolbar =
+    ((agent.mode === "remote" || agent.mode === "custom") && agent.onRemove) ||
+    (agent.mode === "custom" && onEdit);
+
   return (
-    <div className="bg-primary border border-secondary rounded-lg p-6 shadow-md hover:shadow-lg transition-all duration-200 hover:border-magenta-800 group relative w-[360px] h-[285px]">
-      {agent.mode === "remote" && (
-        <div className="absolute -top-[-0.5px] left-6 flex gap-1 z-20">
-          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium shadow-sm bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
-            <Network className="w-2.5 h-2.5 mr-0.5" />
-            远程
-          </span>
+    <div className="group relative flex min-h-[96px] w-full max-w-[300px] flex-col rounded-xl border border-[#c9b8ff] bg-[#f8f8fb] px-3 py-2.5 shadow-sm transition-all duration-200 hover:border-[#b8a4ff] hover:shadow-md dark:border-[#6550ba] dark:bg-[#181824]">
+      {/* 顶部信息区：类型标签 + 管理操作 */}
+      <div className="flex min-h-[1.125rem] items-start justify-between gap-1.5">
+        <div className="min-w-0 flex-1">
+          {agent.mode === "remote" && (
+            <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-1 text-[11px] font-medium text-blue-800 dark:bg-blue-900/80 dark:text-blue-200">
+              <Network className="mr-1 h-3 w-3 shrink-0" />
+              远程
+            </span>
+          )}
         </div>
-      )}
+        {showToolbar && (
+          <div className="flex shrink-0 items-center gap-1">
+            {agent.mode === "custom" && onEdit && (
+              <button
+                type="button"
+                onClick={handleEditClick}
+                className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/90 text-white opacity-0 transition-opacity hover:bg-blue-600 group-hover:opacity-100"
+                title="编辑自定义智能体"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+            )}
+            {(agent.mode === "remote" || agent.mode === "custom") && agent.onRemove && (
+              <button
+                type="button"
+                onClick={handleRemoveClick}
+                className="flex h-6 w-6 items-center justify-center rounded-full bg-red-500/90 text-white opacity-0 transition-opacity hover:bg-red-600 group-hover:opacity-100"
+                title="移除智能体"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
 
-      {(agent.mode === "remote" || agent.mode === "custom") && agent.onRemove && (
-        <button
-          onClick={handleRemoveClick}
-          className="absolute top-2 right-2 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
-          title="移除智能体"
-        >
-          <X className="w-2.5 h-2.5" />
-        </button>
-      )}
-
-      {agent.mode === "custom" && onEdit && (
-        <button
-          onClick={handleEditClick}
-          className="absolute top-2 right-8 w-5 h-5 bg-blue-500 hover:bg-blue-600 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
-          title="编辑自定义智能体"
-        >
-          <Pencil className="w-2.5 h-2.5" />
-        </button>
-      )}
-
-      <div className="flex items-start mb-4">
-        <div className="flex-shrink-0 w-16 h-16 bg-secondary rounded-lg overflow-hidden mr-3 relative">
+      {/* 标题区：图标与名称/作者垂直居中 */}
+      <div className="mt-1.5 flex items-center gap-2">
+        <div className={ICON_BOX}>
           <img
             src={agent.logo}
-            alt={`${agent.name} logo`}
-            className="w-full h-full object-cover"
+            alt=""
+            className="h-5 w-5 max-h-full max-w-full object-contain"
             onError={(e) => {
               const target = e.target as HTMLImageElement;
               target.src = DEFAULT_AVATAR;
             }}
           />
         </div>
-
-        <div className="flex-1 min-w-0">
-          <h3 className="text-lg font-semibold text-primary mb-1 truncate">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-[clamp(9px,1.1vw,15px)] font-semibold leading-[1.15] tracking-[-0.02em] text-[#233457] dark:text-[#e4e8ff]">
             {agent.name}
           </h3>
-          <div className="text-xs text-secondary">by {agent.owner}</div>
+          <p className="mt-0.5 truncate text-[clamp(7px,0.8vw,10px)] leading-tight text-[#9aa2b2] dark:text-[#b6bdd0]">
+            {agent.owner}
+          </p>
         </div>
       </div>
 
-      <p className="text-sm text-secondary text-left mb-4 line-clamp-3 min-h-[3rem]">
+      {/* 描述区 */}
+      <p className="mt-2 line-clamp-2 text-left text-[clamp(8px,0.95vw,12px)] leading-[1.35] text-[#374156] dark:text-[#cfd6e9]">
         {agent.description}
       </p>
 
-      <div className="w-full flex flex-col gap-2">
+      {/* 操作区：紧贴描述，按钮适中宽度、居中 */}
+      <div className="mt-2.5 flex justify-start">
         <Button
-          variant="primary"
+          variant="ghost"
           size="sm"
           onClick={handleTryClick}
-          className="w-full"
+          className="min-w-[4.5rem] !rounded-full !border !border-[#b5a1ff] !bg-[#ece9ff] !px-2.5 !py-1 !text-[clamp(8px,0.95vw,12px)] font-semibold tracking-[0.02em] text-[#5d3fcd] transition-colors hover:!translate-y-0 hover:!border-[#9f85ff] hover:!bg-[#e2dcff] hover:text-[#4d32b4] dark:!border-[#6f56c7] dark:!bg-[#2a2342] dark:text-[#bca8ff] dark:hover:!bg-[#32294d]"
         >
-          点击试用
-        </Button>
-        <Button
-          variant={isAdded ? "success" : "secondary"}
-          size="sm"
-          onClick={handleAddToSidebar}
-          disabled={isAdding || isAdded}
-          isLoading={isAdding}
-          className={`w-full transition-all duration-300 ${isAdded
-            ? "bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
-            : "bg-black/5 dark:bg-white/5 backdrop-blur-sm border border-white/20 dark:border-white/10 text-primary hover:bg-accent/10 hover:border-accent/30 hover:shadow-lg hover:shadow-accent/20 transform hover:-translate-y-0.5"
-            }`}
-        >
-          {isAdded ? (
-            <span className="flex items-center justify-center gap-2">
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-              </svg>
-              已添加
-            </span>
-          ) : (
-            <span className="flex items-center justify-center gap-2">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              添加到侧边栏
-            </span>
-          )}
+          试用一下
         </Button>
       </div>
     </div>

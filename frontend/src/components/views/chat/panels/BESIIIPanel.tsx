@@ -243,8 +243,8 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                                     !onInputResponse
                                         ? "Input response is not available"
                                         : !hasGlobalInfoEdits
-                                          ? "Edit at least one field to submit"
-                                          : undefined
+                                            ? "Edit at least one field to submit"
+                                            : undefined
                                 }
                                 className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${darkMode === "dark"
                                     ? "bg-purple-600 hover:bg-purple-500 text-white disabled:opacity-40 disabled:hover:bg-purple-600 disabled:cursor-not-allowed"
@@ -363,7 +363,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
 
     // 渲染 Terminal 标签页
     const renderTerminal = () => (
-        <div className="bg-black text-green-400 font-mono text-sm p-4 rounded overflow-y-auto h-full">
+        <div className="bg-black text-green-400 font-mono text-sm p-4 rounded-lg overflow-y-auto h-full">
             <pre className="whitespace-pre-wrap">
                 {terminalOutput || '等待输出...'}
             </pre>
@@ -372,66 +372,40 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
 
     return (
         <div className={`${darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-white"} rounded-lg shadow-lg h-full flex flex-col`}>
-            {/* Tab Headers */}
-            <div className={`flex border-b ${darkMode === "dark" ? "bg-[#1a1a1a] border-gray-700" : "bg-gray-50 border-gray-200"}`}>
-
-                <button
-                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'files'
-                        ? darkMode === "dark"
-                            ? 'bg-[#0f0f0f] text-purple-400 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                            : 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                        : darkMode === "dark"
-                            ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                        }`}
-                    onClick={() => setActiveTab('files')}
-                >
-                    Global Info
-                </button>
-                <button
-                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'logs'
-                        ? darkMode === "dark"
-                            ? 'bg-[#0f0f0f] text-purple-400 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                            : 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                        : darkMode === "dark"
-                            ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                        }`}
-                    onClick={() => setActiveTab('logs')}
-                >
-                    LogExecution
-                </button>
-                <button
-                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'terminal'
-                        ? darkMode === "dark"
-                            ? 'bg-[#0f0f0f] text-purple-400 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                            : 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                        : darkMode === "dark"
-                            ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                        }`}
-                    onClick={() => setActiveTab('terminal')}
-                >
-                    Terminal
-                </button>
-
-                {/* Minimize button */}
-                {onMinimize && (
-                    <button
-                        onClick={onMinimize}
-                        className={`ml-auto px-4 ${darkMode === "dark" ? "text-gray-400 hover:text-gray-200" : "text-gray-500 hover:text-gray-700"}`}
-                        title="最小化"
-                    >
-                        ✕
-                    </button>
-                )}
+            {/* Segmented control — secondary "module switching" style, inside content area */}
+            <div className="flex-shrink-0 px-3 pt-3 pb-2">
+                <div className={`flex rounded-lg p-[3px] ${darkMode === "dark" ? "bg-[#1e1e1e]" : "bg-gray-100"}`}>
+                    {(
+                        [
+                            { id: 'files', label: 'Global Info' },
+                            { id: 'logs', label: 'LogExecution' },
+                            { id: 'terminal', label: 'Terminal' },
+                        ] as { id: TabType; label: string }[]
+                    ).map((tab) => (
+                        <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`flex-1 py-1 px-2 text-[11px] font-medium rounded-md transition-all ${activeTab === tab.id
+                                ? darkMode === "dark"
+                                    ? "bg-[#2a2a2a] text-white shadow-sm"
+                                    : "bg-white text-gray-900 shadow-sm"
+                                : darkMode === "dark"
+                                    ? "text-gray-400 hover:text-gray-200"
+                                    : "text-gray-500 hover:text-gray-700"
+                                }`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
             </div>
 
             {/* Tab Content */}
             <div className={`flex-1 overflow-hidden ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
                 {activeTab === 'logs' && <div className="h-full p-4">{renderLogs()}</div>}
                 {activeTab === 'files' && <div className="h-full overflow-y-auto">{renderGlobalInfo()}</div>}
-                {activeTab === 'terminal' && renderTerminal()}
+                {activeTab === 'terminal' && <div className="h-full p-4">{renderTerminal()}</div>}
             </div>
         </div>
     );

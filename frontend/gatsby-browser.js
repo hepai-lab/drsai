@@ -3,7 +3,7 @@ import "antd/dist/reset.css";
 import "./src/styles/global.css";
 
 import AuthProvider from "./src/hooks/provider";
-import { RouteGuard } from "./src/components/RouteGuard";
+import { RouteGuard } from "./src/auth/RouteGuard";
 
 export const wrapRootElement = AuthProvider;
 

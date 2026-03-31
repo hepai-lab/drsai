@@ -21,6 +21,10 @@ from drsai.modules.managers.messages import (
     ModelClientStreamingChunkEvent,
     TextMessage,)
 
+from pathlib import Path
+HERE = Path(__file__).parent
+HOME = str(Path.home())
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -183,12 +187,12 @@ if __name__ == "__main__":
             # controller_address = "http://127.0.0.1:42501",
             port = 42818, 
             no_register=False,
-            drsai_dir = "/home/xiongdb/b9agent/tmp",
+            drsai_dir = f"{HOME}/b9agent/tmp",
             enable_openwebui_pipeline=True, 
             history_mode = "backend",
             # use_api_key_mode = "backend",
             join_topics = ["test"],
             metadata={"others": "test"},
-            link_wechat = True,
+            link_wechat = False,
         )
     )
