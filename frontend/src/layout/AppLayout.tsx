@@ -92,6 +92,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
             } ${isSidebarOpen ? "w-56" : "w-0"}`}
           >
             <LeftMenu
+              isSidebarOpen={isSidebarOpen}
               activeSubMenuItem={activeSubMenuItem}
               onSubMenuChange={onSubMenuChange}
               onClose={onToggleSidebar}

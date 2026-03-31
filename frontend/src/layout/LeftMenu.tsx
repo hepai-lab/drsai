@@ -1,5 +1,6 @@
 import { Tooltip } from "antd";
 import {
+  AlignJustify,
   Bot,
   BotMessageSquare,
   ChevronDown,
@@ -7,7 +8,6 @@ import {
   FileText,
   Grid2X2,
   MessageSquare,
-  PanelLeftClose,
   Radio,
   Settings,
   Shield,
@@ -21,6 +21,7 @@ import { appContext } from "../hooks/provider";
 import { Button } from "../components/common/Button";
 
 interface LeftMenuProps {
+  isSidebarOpen: boolean;
   activeSubMenuItem: string;
   onSubMenuChange: (tabId: string) => void;
   onClose: () => void;
@@ -29,6 +30,7 @@ interface LeftMenuProps {
 type SectionId = "chat" | "agents" | "settings" | "admin";
 
 const LeftMenu: React.FC<LeftMenuProps> = ({
+  isSidebarOpen,
   activeSubMenuItem,
   onSubMenuChange,
   onClose,
@@ -117,21 +119,8 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
           darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-gray-50/90"
         }`}
       >
-        {/* Header */}
-        <div className="flex-shrink-0 flex items-center justify-end px-2 pt-2 pb-1">
-          <Tooltip title="Close Sidebar">
-            <Button
-              variant="tertiary"
-              size="sm"
-              icon={<PanelLeftClose strokeWidth={1.5} className="h-4 w-4" />}
-              onClick={onClose}
-              className="!px-1 transition-colors hover:text-accent"
-            />
-          </Tooltip>
-        </div>
-
         {/* Nav */}
-        <div className="flex-1 overflow-y-auto px-2 pb-4 sidebar-scroll space-y-0.5">
+        <div className="flex-1 overflow-y-auto px-2 pt-2 pb-4 sidebar-scroll space-y-0.5">
           {/* ── 聊天 ── */}
           <div>
             <SectionHeader
@@ -243,6 +232,24 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
               </div>
             )}
           </div>
+        </div>
+
+        <div
+          className={
+            isSidebarOpen
+              ? "flex-shrink-0 flex items-center justify-end px-2 pb-2 pt-1"
+              : "fixed left-3 bottom-3 z-[80]"
+          }
+        >
+          <Tooltip title={isSidebarOpen ? "Close Sidebar" : "Open Sidebar"}>
+            <Button
+              variant="tertiary"
+              size="sm"
+              icon={<AlignJustify strokeWidth={1.5} className="h-4 w-4" />}
+              onClick={onClose}
+              className="!px-1 transition-colors hover:text-accent"
+            />
+          </Tooltip>
         </div>
       </div>
     </>
