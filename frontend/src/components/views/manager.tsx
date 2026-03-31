@@ -5,7 +5,6 @@ import { parse } from "yaml";
 import { useConfigStore } from "../../hooks/store";
 import { useModeConfigStore } from "../../store/modeConfig";
 import { Agent } from "../../types/common";
-import ContentHeader from "../contentheader";
 import { AgentSquare } from "../features/Agents/AgentSquare";
 import { useAgentInfo } from "../features/Agents/useAgentInfo";
 import PlanList from "../features/Plans/PlanList";
@@ -19,18 +18,17 @@ import { useSessionManager } from "./hooks/useSessionManager";
 import { useSessionStorage } from "./hooks/useSessionStorage";
 import { useWebSocketManager } from "./hooks/useWebSocketManager";
 import { SessionEditor } from "./session_editor";
-import { Sidebar } from "./sidebar";
+import { AppLayout } from "../../layout";
 
 export const SessionManager: React.FC = () => {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | undefined>();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [messageApi, contextHolder] = message.useMessage();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activeSubMenuItem, setActiveSubMenuItem] = useState("current_session");
   const [baseUrl, setBaseUrl] = useState<string | undefined>();
 
-  const { user, darkMode } = useContext(appContext);
+  const { user } = useContext(appContext);
   const { session, setSession, setSessions } = useConfigStore();
   const { selectedAgent, setSelectedAgent, setConfig } = useModeConfigStore();
   const { saveSessionId } = useSessionStorage();
@@ -341,57 +339,20 @@ export const SessionManager: React.FC = () => {
   ]);
 
   return (
-    <div className="relative flex flex-1 w-full h-full">
+    <>
       {contextHolder}
 
-      {/* Mobile overlay */}
-      {isSidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden"
-          onClick={() => setIsSidebarOpen(false)}
-        />
-      )}
+      <AppLayout
+        // TopNav
+        isSidebarOpen={isSidebarOpen}
+        onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+        onLogoClick={handleLogoClick}
 
-      {/* Sidebar */}
-      <div
-        className={`fixed lg:relative left-0 top-0 h-full transition-smooth z-50 lg:z-auto overflow-hidden ${darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-gray-50/95"} border-r ${darkMode === "dark" ? "border-border-primary/50" : "border-gray-200/50"} ${isSidebarOpen
-          ? "w-72 lg:w-56 translate-x-0"
-          : "w-72 lg:w-0 -translate-x-full lg:translate-x-0"
-          }`}
+        // LeftMenu
+        activeSubMenuItem={activeSubMenuItem}
+        onSubMenuChange={setActiveSubMenuItem}
       >
-        <Sidebar
-          isOpen={isSidebarOpen}
-          sessions={sessions}
-          currentSession={session}
-          onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
-          onSelectSession={handleSelectSession}
-          onEditSession={handleEditSession}
-          onDeleteSession={handleDeleteSession}
-          isLoading={isSessionLoading}
-          sessionRunStatuses={sessionRunStatuses}
-          activeSubMenuItem={activeSubMenuItem}
-          onSubMenuChange={setActiveSubMenuItem}
-          onLogoClick={handleLogoClick}
-          onStopSession={handleStopSession}
-          agents={agents}
-          selectedAgent={agentInfo}
-          onAgentClick={handleAgentClick}
-          onDeleteAgent={handleDeleteAgent}
-        />
-      </div>
-
-      {/* Main content area */}
-      <div className={`flex flex-col flex-1 min-h-0 transition-smooth ${isSidebarOpen ? "ml-0 lg:ml-0" : "ml-0"}`}>
-        <ContentHeader
-          isMobileMenuOpen={isMobileMenuOpen}
-          onMobileMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-          isSidebarOpen={isSidebarOpen}
-          onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-          onNewSession={() => handleEditSession()}
-          agentSelector={null}
-          activeSubMenuItem={activeSubMenuItem}
-        />
-
+        {/* Canvas content */}
         {activeSubMenuItem === "current_session" ? (
           (() => {
             if (session) {
@@ -416,17 +377,23 @@ export const SessionManager: React.FC = () => {
               );
             }
           })()
-        ) : activeSubMenuItem === "agent_square" ? (
+        ) : activeSubMenuItem === "agent_square" || activeSubMenuItem === "my_agents" ? (
           <div className="h-full overflow-hidden">
-            <AgentSquare agents={[]} handleAgentList={fetchAgentList} existingAgents={agents} />
+            <AgentSquare agents={[]} handleAgentList={fetchAgentList} />
           </div>
-        ) : (
+        ) : activeSubMenuItem === "saved_plan" ? (
           <div className="h-full overflow-hidden">
             <PlanList
               onTabChange={setActiveSubMenuItem}
               onSelectSession={handleSelectSession}
               onCreateSessionFromPlan={handleCreateSessionFromPlan}
             />
+          </div>
+        ) : (
+          <div className="flex items-center justify-center h-full text-secondary">
+            <div className="text-center">
+              <p className="text-sm opacity-50">敬请期待</p>
+            </div>
           </div>
         )}
 
@@ -439,8 +406,8 @@ export const SessionManager: React.FC = () => {
             setEditingSession(undefined);
           }}
         />
-      </div>
-    </div>
+      </AppLayout>
+    </>
   );
 };
 

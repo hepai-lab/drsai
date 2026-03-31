@@ -16,13 +16,11 @@ interface AgentSquareProps {
   agents: AgentCardData[];
   className?: string;
   handleAgentList?: (agents: any[]) => Promise<void>;
-  existingAgents?: any[]; // 现有的侧边栏智能体列表
 }
 
 const AgentSquare: React.FC<AgentSquareProps> = ({
   className = "",
   handleAgentList,
-  existingAgents = [],
 }) => {
   const { user } = useContext(appContext);
   const [agentList, setAgentList] = useState<AgentCardData[]>([]);
@@ -390,8 +388,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               <AgentCard
                 key={agent.id || agent.name}
                 agent={agent}
-                handleAgentList={handleAgentList}
-                existingAgents={existingAgents}
                 onEdit={agent.mode === "custom" ? () => handleEditCustomAgent(agent) : undefined}
               />
             ))}

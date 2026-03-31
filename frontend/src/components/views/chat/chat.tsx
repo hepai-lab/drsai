@@ -598,12 +598,12 @@ export default function ChatView({
   }
 
   return (
-    <div className="text-primary h-[calc(100vh-100px)] bg-primary relative rounded flex-1 scroll w-full">
+    <div className="text-primary h-full bg-primary relative flex-1 w-full overflow-hidden">
       {contextHolder}
       <div className="flex flex-col h-full w-full">
         {/* Progress Bar - Sticky at top */}
         <div
-          className="progress-container"
+          className="progress-container w-full max-w-full overflow-hidden"
           style={{ height: "3.5rem" }}
         >
           <div
@@ -635,10 +635,7 @@ export default function ChatView({
             }`}
         >
           <div
-            className={`${showPanel && !isPanelMinimized
-              ? "w-full max-w-sm sm:max-w-md md:max-w-4xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-7xl [&>*]:max-w-none [@media(min-width:1920px)]:max-w-[1600px] [@media(min-width:2560px)]:max-w-[2000px]"
-              : "w-full max-w-sm sm:max-w-md md:max-w-2xl lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl [@media(min-width:1920px)]:max-w-[1200px] [@media(min-width:2560px)]:max-w-[1400px]"
-              } mx-auto px-2 sm:px-3 md:px-4 h-full ${noMessagesYet && currentRun ? "hidden" : ""
+            className={`w-full max-w-sm sm:max-w-md md:max-w-2xl lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl [@media(min-width:1920px)]:max-w-[1200px] [@media(min-width:2560px)]:max-w-[1400px] mx-auto px-2 sm:px-3 md:px-4 h-full ${noMessagesYet && currentRun ? "hidden" : ""
               }`}
           >
             {

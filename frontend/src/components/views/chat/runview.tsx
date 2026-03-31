@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Globe2 } from "lucide-react";
+import ReactDOM from "react-dom";
 import { Run, Message, RunLogEntry } from "../../types/datamodel";
 import { RenderMessage, messageUtils } from "./rendermessage";
 import { getStatusIcon } from "../statusicon";
@@ -11,8 +11,7 @@ import { RcFile } from "antd/es/upload";
 import AgentPanel from "./panels/AgentPanel";
 import { AgentConfiguration } from "./config/agentConfigs";
 import { BESIIITask, BESIIIServerGlobalInfo } from "./panels/types";
-import { appContext } from "../../../hooks/provider";
-
+import { useRightPanelStore } from "../../../store/rightPanel";
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 const CHAT_INPUT_BASE_HEIGHT_PX = 78;
 
@@ -145,7 +144,8 @@ const RunView: React.FC<RunViewProps> = ({
   onExecutePlan,
   enable_upload = false,
 }) => {
-  const { darkMode } = React.useContext(appContext);
+  const setIsRightPanelOpen = useRightPanelStore((s) => s.setIsOpen);
+  const overviewSlot = useRightPanelStore((s) => s.overviewSlot);
   const threadContainerRef = useRef<HTMLDivElement | null>(null);
   const autoScrollLockedRef = useRef(false);
   const [autoScrollLocked, setAutoScrollLocked] = useState(false);
@@ -479,6 +479,15 @@ const RunView: React.FC<RunViewProps> = ({
       setLogs([]);
     }
   }, [run.logs, agentConfig.panel.type]);
+
+  // Control right panel open state based on panel visibility
+  useEffect(() => {
+    const shouldShow = showPanel && !isPanelMinimized && agentConfig.panel.type !== 'none';
+    setIsRightPanelOpen(shouldShow);
+    return () => {
+      setIsRightPanelOpen(false);
+    };
+  }, [showPanel, isPanelMinimized, agentConfig.panel.type, setIsRightPanelOpen]);
 
   const isEditable =
     run.status === "awaiting_input" &&
@@ -969,18 +978,9 @@ const RunView: React.FC<RunViewProps> = ({
   }, [run.status]);
 
   return (
-    <div className="flex w-full gap-4 h-full">
-      {/* Messages section */}
-      <div
-        className={`items-start relative flex flex-col h-full ${showPanel &&
-          novncPort !== undefined &&
-          !isPanelMinimized
-          ? detailViewerExpanded
-            ? "w-0"
-            : "w-[40%]"
-          : "w-[800px] 2xl:w-full"
-          } transition-all duration-300`}
-      >
+    <div className="flex w-full h-full">
+      {/* Messages section — always full width, panel is in the right sidebar */}
+      <div className="items-start relative flex flex-col h-full w-full transition-all duration-300">
         {/* Thread Section - use flex-1 for height, but remove overflow-y-auto */}
         <div
           ref={threadContainerRef}
@@ -1182,75 +1182,63 @@ const RunView: React.FC<RunViewProps> = ({
             onExecutePlan={onExecutePlan}
             sessionId={run.session_id}
           />
-        </div>
+      </div>
       </div>
 
-      {/* Agent Panel section - Dynamic panel based on agent type */}
-      {isPanelMinimized && agentConfig.panel.type !== 'none' && (
-        <button
-          onClick={() => setIsPanelMinimized(false)}
-          className="self-start sticky top-0 h-full inline-flex text-magenta-800 hover:text-magenta-900 cursor-pointer"
-          title={`Show ${agentConfig.panel.title}`}
-        >
-          <Globe2 size={20} />
-        </button>
-      )}
-
+      {/* Portal AgentPanel into the right panel's overview slot */}
       {showPanel &&
         agentConfig.panel.type !== 'none' &&
-        !isPanelMinimized && (
-          <div
-            className={`self-start sticky top-0 h-full flex-1 flex ${darkMode === 'dark' ? 'bg-[#0f0f0f]' : ''}`}
-          >
-            <div className={`h-full w-full ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
-              {/* Dynamic Agent Panel - renders different panels based on agent type */}
-              <AgentPanel
-                panelConfig={agentConfig.panel}
-                onMinimize={() => setIsPanelMinimized(true)}
+        !isPanelMinimized &&
+        overviewSlot &&
+        ReactDOM.createPortal(
+          <div className="h-full w-full overflow-auto">
+            <AgentPanel
+              panelConfig={agentConfig.panel}
+              onMinimize={() => setIsPanelMinimized(true)}
 
-                // VNC Panel props
-                vncProps={{
-                  images: messageImages.urls,
-                  imageTitles: messageImages.titles,
-                  currentIndex: messageImages.currentIndex || 0,
-                  onIndexChange: (index: number) =>
-                    setMessageImages((prev) => ({
-                      ...prev,
-                      currentIndex: index,
-                    })),
-                  novncPort: novncPort,
-                  onPause: onPause,
-                  runStatus: run.status,
-                  activeTab: detailViewerTab,
-                  onTabChange: setDetailViewerTab,
-                  detailViewerContainerId: DETAIL_VIEWER_CONTAINER_ID,
-                  onInputResponse: onInputResponse,
-                  isExpanded: detailViewerExpanded,
-                  onToggleExpand: () =>
-                    setDetailViewerExpanded(!detailViewerExpanded),
-                }}
+              // VNC Panel props
+              vncProps={{
+                images: messageImages.urls,
+                imageTitles: messageImages.titles,
+                currentIndex: messageImages.currentIndex || 0,
+                onIndexChange: (index: number) =>
+                  setMessageImages((prev) => ({
+                    ...prev,
+                    currentIndex: index,
+                  })),
+                novncPort: novncPort,
+                onPause: onPause,
+                runStatus: run.status,
+                activeTab: detailViewerTab,
+                onTabChange: setDetailViewerTab,
+                detailViewerContainerId: DETAIL_VIEWER_CONTAINER_ID,
+                onInputResponse: onInputResponse,
+                isExpanded: detailViewerExpanded,
+                onToggleExpand: () =>
+                  setDetailViewerExpanded(!detailViewerExpanded),
+              }}
 
-                // BESIII Panel props
-                besiiiProps={{
-                  tasks: besiiiTasks,
-                  terminalOutput: terminalOutput,
-                  logs: logs,
-                  fileEvents: run.file_events || [],
-                  serverGlobalInfo: besiiiServerGlobalInfo,
-                  activeTab: besiiiActiveTab,
-                  onTabChange: setBesiiiActiveTab,
-                  isExpanded: detailViewerExpanded,
-                  onTaskClick: (taskId: string) => {
-                    // TODO: Handle task click
-                  },
-                  onSubtaskClick: (taskId: string, subtaskId: string) => {
-                    // TODO: Handle subtask click
-                  },
-                  onInputResponse,
-                }}
-              />
-            </div>
-          </div>
+              // BESIII Panel props
+              besiiiProps={{
+                tasks: besiiiTasks,
+                terminalOutput: terminalOutput,
+                logs: logs,
+                fileEvents: run.file_events || [],
+                serverGlobalInfo: besiiiServerGlobalInfo,
+                activeTab: besiiiActiveTab,
+                onTabChange: setBesiiiActiveTab,
+                isExpanded: detailViewerExpanded,
+                onTaskClick: (taskId: string) => {
+                  // TODO: Handle task click
+                },
+                onSubtaskClick: (taskId: string, subtaskId: string) => {
+                  // TODO: Handle subtask click
+                },
+                onInputResponse,
+              }}
+            />
+          </div>,
+          overviewSlot
         )}
     </div>
   );

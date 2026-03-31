@@ -6,6 +6,7 @@ module.exports = {
     `./src/components/**/*.{js,jsx,ts,tsx}`,
     `./src/auth/**/*.{js,jsx,ts,tsx}`,
     `./src/hooks/**/*.{js,jsx,ts,tsx}`,
+    `./src/layout/**/*.{js,jsx,ts,tsx}`,
   ],
   theme: {
     extend: {
