@@ -62,7 +62,7 @@ const TopNav: React.FC<TopNavProps> = ({
       >
         {/* Left: open-sidebar button (only when closed) + logo + title */}
         <div className="flex items-center gap-2 flex-shrink-0">
-          {!isSidebarOpen && (
+          {/* {!isSidebarOpen && (
             <Tooltip title="Open Sidebar">
               <Button
                 variant="tertiary"
@@ -72,7 +72,7 @@ const TopNav: React.FC<TopNavProps> = ({
                 className="!px-1 transition-colors hover:text-accent"
               />
             </Tooltip>
-          )}
+          )} */}
           <div
             className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
             onClick={onLogoClick}

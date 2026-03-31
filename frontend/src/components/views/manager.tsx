@@ -387,6 +387,47 @@ export const SessionManager: React.FC = () => {
     pendingFirstMessage,
   ]);
 
+  const rightPanelHistory = useMemo(() => {
+    const sortedSessions = Array.isArray(sessions)
+      ? [...sessions].sort(
+        (a, b) =>
+          new Date(b.updated_at || b.created_at || 0).getTime() -
+          new Date(a.updated_at || a.created_at || 0).getTime()
+      )
+      : [];
+
+    if (sortedSessions.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="h-full overflow-y-auto p-3 space-y-1">
+        {sortedSessions.map((historySession) => {
+          const isCurrent = session?.id === historySession.id;
+          const lastTime = historySession.updated_at || historySession.created_at;
+          return (
+            <button
+              key={historySession.id}
+              type="button"
+              onClick={() => void handleSelectSession(historySession)}
+              className={`w-full text-left rounded-lg px-3 py-2 transition-colors ${isCurrent
+                  ? "bg-accent/10 text-accent"
+                  : "hover:bg-tertiary/20 text-primary"
+                }`}
+            >
+              <div className="text-sm font-medium truncate">
+                {historySession.name || `Session ${historySession.id ?? ""}`}
+              </div>
+              <div className="text-xs text-secondary mt-1">
+                {lastTime ? new Date(lastTime).toLocaleString() : "-"}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }, [sessions, session?.id, handleSelectSession]);
+
   return (
     <>
       {contextHolder}
@@ -404,6 +445,7 @@ export const SessionManager: React.FC = () => {
         canvasActiveView={activeCanvasView}
         onCanvasViewChange={navigateToView}
         canvasFilePreviewContent={<FilePreviewPage />}
+        rightPanelHistory={rightPanelHistory}
         onRightPanelTabChange={(tab) => {
           if (tab === "files") {
             navigateToView("file_preview");
