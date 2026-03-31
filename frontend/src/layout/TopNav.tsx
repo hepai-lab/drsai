@@ -193,9 +193,9 @@ const TopNav: React.FC<TopNavProps> = ({
                       .toUpperCase()}
                   </div>
                 )}
-                <span className="max-w-[120px] truncate hidden sm:block">
+                {/* <span className="max-w-[120px] truncate hidden sm:block">
                   {user.name || user.email}
-                </span>
+                </span> */}
               </button>
             </Dropdown>
           )}

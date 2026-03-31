@@ -19,7 +19,6 @@ import {
 import React, { useContext, useEffect, useState } from "react";
 import { appContext } from "../hooks/provider";
 import { Button } from "../components/common/Button";
-import UserProfileModal from "../components/userProfile";
 
 interface LeftMenuProps {
   activeSubMenuItem: string;
@@ -34,22 +33,20 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
   onSubMenuChange,
   onClose,
 }) => {
-  const { darkMode, user } = useContext(appContext);
+  const { darkMode } = useContext(appContext);
   const [expanded, setExpanded] = useState<Record<SectionId, boolean>>({
     chat: true,
     agents: false,
     settings: false,
     admin: false,
   });
-  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
-
   // Auto-expand section containing the active item
   useEffect(() => {
     if (["current_session"].includes(activeSubMenuItem)) {
       setExpanded((e) => ({ ...e, chat: true }));
     } else if (["my_agents", "agent_square", "skills_square"].includes(activeSubMenuItem)) {
       setExpanded((e) => ({ ...e, agents: true }));
-    } else if (["channels", "logs"].includes(activeSubMenuItem)) {
+    } else if (["profile", "channels", "logs"].includes(activeSubMenuItem)) {
       setExpanded((e) => ({ ...e, settings: true }));
     } else if (["agent_management", "user_management"].includes(activeSubMenuItem)) {
       setExpanded((e) => ({ ...e, admin: true }));
@@ -199,9 +196,10 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
             {expanded.settings && (
               <div className="mt-0.5 space-y-0.5">
                 <NavItem
+                  id="profile"
                   icon={<UserCog className="w-3.5 h-3.5" />}
                   label="个人设置"
-                  onClick={() => setIsProfileModalOpen(true)}
+                  onClick={() => onSubMenuChange("profile")}
                 />
                 <NavItem
                   id="channels"
@@ -247,12 +245,6 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
           </div>
         </div>
       </div>
-
-      <UserProfileModal
-        isVisible={isProfileModalOpen}
-        onClose={() => setIsProfileModalOpen(false)}
-        user={user || { name: "", email: "" }}
-      />
     </>
   );
 };

@@ -14,9 +14,27 @@ import { settingsAPI } from "./api";
 import ChatView from "./chat/chat";
 import NewChatView from "./chat/NewChatView";
 import { useAgentManager } from "./hooks/useAgentManager";
+import { useLocation, useNavigate } from "../../hooks/useRouter";
 import { useSessionManager } from "./hooks/useSessionManager";
 import { useSessionStorage } from "./hooks/useSessionStorage";
 import { useWebSocketManager } from "./hooks/useWebSocketManager";
+import AgentManagementPage from "./pages/AgentManagementPage";
+import ChannelsPage from "./pages/ChannelsPage";
+import FilePreviewPage from "./pages/FilePreviewPage";
+import LogsPage from "./pages/LogsPage";
+import ProfilePage from "./pages/ProfilePage";
+import SkillsSquarePage from "./pages/SkillsSquarePage";
+import UserManagementPage from "./pages/UserManagementPage";
+import {
+  MENU_LABELS,
+  MENU_IDS,
+  type CanvasViewId,
+  type MenuId,
+  createSearchWithMenu,
+  createSearchWithView,
+  getCanvasViewFromSearch,
+  getMenuIdFromSearch,
+} from "./menuRoutes";
 import { SessionEditor } from "./session_editor";
 import { AppLayout } from "../../layout";
 
@@ -25,8 +43,36 @@ export const SessionManager: React.FC = () => {
   const [editingSession, setEditingSession] = useState<Session | undefined>();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [messageApi, contextHolder] = message.useMessage();
-  const [activeSubMenuItem, setActiveSubMenuItem] = useState("current_session");
   const [baseUrl, setBaseUrl] = useState<string | undefined>();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const activeSubMenuItem = useMemo(
+    () => getMenuIdFromSearch(location.search),
+    [location.search]
+  );
+  const activeCanvasView = useMemo(
+    () => getCanvasViewFromSearch(location.search),
+    [location.search]
+  );
+  const activeMenuLabel = useMemo(
+    () => MENU_LABELS[activeSubMenuItem],
+    [activeSubMenuItem]
+  );
+
+  const navigateToMenu = useCallback(
+    (menuId: MenuId) => {
+      const withMenu = createSearchWithMenu(location.search, menuId);
+      navigate(createSearchWithView(withMenu, "chat"));
+    },
+    [location.search, navigate]
+  );
+
+  const navigateToView = useCallback(
+    (viewId: CanvasViewId) => {
+      navigate(createSearchWithView(location.search, viewId));
+    },
+    [location.search, navigate]
+  );
 
   const { user } = useContext(appContext);
   const { session, setSession, setSessions } = useConfigStore();
@@ -144,13 +190,13 @@ export const SessionManager: React.FC = () => {
       clearCurrentSession();
     }
 
-    setActiveSubMenuItem("current_session");
+    navigateToMenu(MENU_IDS.currentSession);
 
   }, [user?.email, selectedAgent, clearCurrentSession, settingsConfig, updateSettingsConfig, messageApi]);
 
   // Handle edit session
   const handleEditSession = useCallback(async (sessionData?: Session) => {
-    setActiveSubMenuItem("current_session");
+    navigateToMenu(MENU_IDS.currentSession);
 
     if (sessionData) {
       setEditingSession(sessionData);
@@ -165,7 +211,7 @@ export const SessionManager: React.FC = () => {
 
   // Handle logo click
   const handleLogoClick = useCallback(async () => {
-    setActiveSubMenuItem("current_session");
+    navigateToMenu(MENU_IDS.currentSession);
     // 创建新会话
     handleEditSession();
   }, [agents, handleEditSession]);
@@ -184,7 +230,7 @@ export const SessionManager: React.FC = () => {
 
     // 如果删除的是当前会话，确保显示 NewChatView
     if (isDeletingCurrentSession) {
-      setActiveSubMenuItem("current_session");
+      navigateToMenu(MENU_IDS.currentSession);
     }
   }, [deleteSession, closeSocket, session?.id]);
 
@@ -225,8 +271,8 @@ export const SessionManager: React.FC = () => {
   // Handle selecting a session from sidebar / plan list:
   // always switch back to "current_session" view so the chat is visible.
   const handleSelectSession = useCallback(
-    (selectedSession: Session) => {
-      setActiveSubMenuItem("current_session");
+    async (selectedSession: Session) => {
+      navigateToMenu(MENU_IDS.currentSession);
       selectSession(selectedSession);
     },
     [selectSession]
@@ -237,7 +283,7 @@ export const SessionManager: React.FC = () => {
     const handleSwitchToCurrentSession = async (event: CustomEvent) => {
       const { agent, newSession, config, clearSession } = event.detail || {};
 
-      setActiveSubMenuItem("current_session");
+      navigateToMenu(MENU_IDS.currentSession);
       if (agent) {
         setSelectedAgent(agent);
       }
@@ -280,7 +326,7 @@ export const SessionManager: React.FC = () => {
   // Listen for sessionDeleted event and ensure NewChatView is shown
   useEffect(() => {
     const handleSessionDeleted = () => {
-      setActiveSubMenuItem("current_session");
+      navigateToMenu(MENU_IDS.currentSession);
     };
 
     window.addEventListener(
@@ -300,7 +346,7 @@ export const SessionManager: React.FC = () => {
   useEffect(() => {
 
     if (!session && selectedAgent && selectedAgent.name) {
-      setActiveSubMenuItem("current_session");
+      navigateToMenu(MENU_IDS.currentSession);
     }
   }, [session, selectedAgent]);
 
@@ -316,7 +362,10 @@ export const SessionManager: React.FC = () => {
       // Always render ChatView for all sessions to preserve streamed messages when switching.
       // Non-current sessions are hidden via CSS (className="hidden").
       return (
-        <div key={s.id} className={`${session?.id === s.id ? "block" : "hidden"} relative`}>
+        <div
+          key={s.id}
+          className={`${session?.id === s.id ? "block" : "hidden"} relative h-full min-h-0`}
+        >
           <ChatView
             session={s}
             onSessionNameChange={updateSessionName}
@@ -350,13 +399,24 @@ export const SessionManager: React.FC = () => {
 
         // LeftMenu
         activeSubMenuItem={activeSubMenuItem}
-        onSubMenuChange={setActiveSubMenuItem}
+        activeMenuLabel={activeMenuLabel}
+        onSubMenuChange={(tabId) => navigateToMenu(tabId as MenuId)}
+        canvasActiveView={activeCanvasView}
+        onCanvasViewChange={navigateToView}
+        canvasFilePreviewContent={<FilePreviewPage />}
+        onRightPanelTabChange={(tab) => {
+          if (tab === "files") {
+            navigateToView("file_preview");
+            return;
+          }
+          navigateToView("chat");
+        }}
       >
         {/* Canvas content */}
-        {activeSubMenuItem === "current_session" ? (
+        {activeSubMenuItem === MENU_IDS.currentSession ? (
           (() => {
             if (session) {
-              return <div className="h-full">{chatViews}</div>;
+              return <div className="h-full min-h-0">{chatViews}</div>;
             } else if (agentInfo) {
               return (
                 <NewChatView
@@ -377,14 +437,29 @@ export const SessionManager: React.FC = () => {
               );
             }
           })()
-        ) : activeSubMenuItem === "agent_square" || activeSubMenuItem === "my_agents" ? (
+        ) : activeSubMenuItem === MENU_IDS.agentSquare || activeSubMenuItem === MENU_IDS.myAgents ? (
           <div className="h-full overflow-hidden">
             <AgentSquare agents={[]} handleAgentList={fetchAgentList} />
           </div>
-        ) : activeSubMenuItem === "saved_plan" ? (
+        ) : activeSubMenuItem === MENU_IDS.skillsSquare ? (
+          <SkillsSquarePage />
+        ) : activeSubMenuItem === MENU_IDS.channels ? (
+          <ChannelsPage />
+        ) : activeSubMenuItem === MENU_IDS.logs ? (
+          <LogsPage />
+        ) : activeSubMenuItem === MENU_IDS.agentManagement ? (
+          <AgentManagementPage />
+        ) : activeSubMenuItem === MENU_IDS.userManagement ? (
+          <UserManagementPage />
+        ) : activeSubMenuItem === MENU_IDS.profile ? (
+          <ProfilePage
+            user={user || { name: "", email: "" }}
+            onClose={() => navigateToMenu(MENU_IDS.currentSession)}
+          />
+        ) : activeSubMenuItem === MENU_IDS.savedPlan ? (
           <div className="h-full overflow-hidden">
             <PlanList
-              onTabChange={setActiveSubMenuItem}
+              onTabChange={(tabId) => navigateToMenu(tabId as MenuId)}
               onSelectSession={handleSelectSession}
               onCreateSessionFromPlan={handleCreateSessionFromPlan}
             />

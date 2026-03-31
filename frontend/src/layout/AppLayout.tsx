@@ -6,6 +6,7 @@ import TopNav from "./TopNav";
 import LeftMenu from "./LeftMenu";
 import Canvas from "./Canvas";
 import RightPanel from "./RightPanel";
+import { CanvasViewId } from "../components/views/menuRoutes";
 
 interface AppLayoutProps {
   // TopNav
@@ -15,15 +16,20 @@ interface AppLayoutProps {
 
   // LeftMenu
   activeSubMenuItem: string;
+  activeMenuLabel: string;
   onSubMenuChange: (tabId: string) => void;
 
   // RightPanel
   rightPanelWidth?: number;
   rightPanelHistory?: React.ReactNode;
   rightPanelFiles?: React.ReactNode;
+  onRightPanelTabChange?: (tab: "overview" | "history" | "files") => void;
 
   // Canvas
   children: React.ReactNode;
+  canvasActiveView: CanvasViewId;
+  onCanvasViewChange: (view: CanvasViewId) => void;
+  canvasFilePreviewContent?: React.ReactNode;
 }
 
 const AppLayout: React.FC<AppLayoutProps> = ({
@@ -34,15 +40,20 @@ const AppLayout: React.FC<AppLayoutProps> = ({
 
   // LeftMenu
   activeSubMenuItem,
+  activeMenuLabel,
   onSubMenuChange,
 
   // RightPanel
   rightPanelWidth = 380,
   rightPanelHistory,
   rightPanelFiles,
+  onRightPanelTabChange,
 
   // Canvas
   children,
+  canvasActiveView,
+  onCanvasViewChange,
+  canvasFilePreviewContent,
 }) => {
   const { darkMode } = useContext(appContext);
 
@@ -88,13 +99,22 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           </div>
 
           {/* Center: canvas */}
-          <Canvas onRootClick={onLogoClick}>{children}</Canvas>
+          <Canvas
+            onRootClick={onLogoClick}
+            activeView={canvasActiveView}
+            activeMenuLabel={activeMenuLabel}
+            onViewChange={onCanvasViewChange}
+            filePreviewContent={canvasFilePreviewContent}
+          >
+            {children}
+          </Canvas>
 
           {/* Right: panel — isOpen controlled by useRightPanelStore */}
           <RightPanel
             width={rightPanelWidth}
             historyContent={rightPanelHistory}
             filesContent={rightPanelFiles}
+            onTabChange={onRightPanelTabChange}
           />
         </div>
       </div>

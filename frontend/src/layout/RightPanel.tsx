@@ -17,12 +17,15 @@ interface RightPanelProps {
   historyContent?: React.ReactNode;
   /** 文件 tab 的内容 */
   filesContent?: React.ReactNode;
+  /** tab 切换回调 */
+  onTabChange?: (tab: RightPanelTab) => void;
 }
 
 const RightPanel: React.FC<RightPanelProps> = ({
   width = 380,
   historyContent,
   filesContent,
+  onTabChange,
 }) => {
   const { darkMode } = useContext(appContext);
   const [activeTab, setActiveTab] = React.useState<RightPanelTab>("overview");
@@ -58,7 +61,10 @@ const RightPanel: React.FC<RightPanelProps> = ({
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => {
+                    setActiveTab(tab.id);
+                    onTabChange?.(tab.id);
+                  }}
                   className={`relative flex flex-col items-center justify-center gap-0.5 h-10 text-[11px] font-medium transition-all select-none flex-1 ${isActive
                       ? "text-accent bg-accent/[0.07]"
                       : "text-secondary hover:text-primary hover:bg-tertiary/20"

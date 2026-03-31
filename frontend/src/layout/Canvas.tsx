@@ -1,34 +1,39 @@
-import { Dropdown } from "antd";
-import { ChevronRight, FileText, MessageSquare } from "lucide-react";
-import React, { useContext, useState } from "react";
+import { ChevronRight, FileText } from "lucide-react";
+import React, { useContext } from "react";
+import { CanvasViewId } from "../components/views/menuRoutes";
 import { appContext } from "../hooks/provider";
 
-type CanvasView = "chat" | "file_preview";
-
-const VIEWS: { id: CanvasView; label: string; icon: React.ReactNode }[] = [
-  { id: "chat", label: "对话", icon: <MessageSquare className="w-3.5 h-3.5" /> },
-  { id: "file_preview", label: "文件预览", icon: <FileText className="w-3.5 h-3.5" /> },
-];
+// const VIEWS: { id: CanvasViewId; label: string; icon: React.ReactNode }[] = [
+//   { id: "chat", label: "对话", icon: <MessageSquare className="w-3.5 h-3.5" /> },
+//   { id: "file_preview", label: "文件预览", icon: <FileText className="w-3.5 h-3.5" /> },
+// ];
 
 interface CanvasProps {
   children: React.ReactNode;
   filePreviewContent?: React.ReactNode;
+  activeView: CanvasViewId;
+  activeMenuLabel: string;
+  onViewChange: (view: CanvasViewId) => void;
   onRootClick?: () => void;
 }
 
-const Canvas: React.FC<CanvasProps> = ({ children, filePreviewContent, onRootClick }) => {
+const Canvas: React.FC<CanvasProps> = ({
+  children,
+  filePreviewContent,
+  activeView,
+  activeMenuLabel,
+  onViewChange,
+  onRootClick,
+}) => {
   const { darkMode } = useContext(appContext);
-  const [activeView, setActiveView] = useState<CanvasView>("chat");
-
-  const current = VIEWS.find((v) => v.id === activeView)!;
+  // const current = VIEWS.find((v) => v.id === activeView)!;
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
       {/* Breadcrumb */}
       <div
-        className={`flex-shrink-0 flex items-center gap-1 px-4 h-10 border-b text-sm ${
-          darkMode === "dark" ? "border-border-primary/30" : "border-gray-200/80"
-        }`}
+        className={`flex-shrink-0 flex items-center gap-1 px-4 h-10 border-b text-sm ${darkMode === "dark" ? "border-border-primary/30" : "border-gray-200/80"
+          }`}
       >
         {/* Root */}
         <button
@@ -40,9 +45,12 @@ const Canvas: React.FC<CanvasProps> = ({ children, filePreviewContent, onRootCli
         </button>
 
         <ChevronRight className="w-3.5 h-3.5 text-secondary/50 flex-shrink-0" />
+        <span className="text-secondary">{activeMenuLabel}</span>
+
+        {/* <ChevronRight className="w-3.5 h-3.5 text-secondary/50 flex-shrink-0" /> */}
 
         {/* Current view — dropdown to switch */}
-        <Dropdown
+        {/* <Dropdown
           trigger={["click"]}
           menu={{
             items: VIEWS.map((v) => ({
@@ -53,7 +61,7 @@ const Canvas: React.FC<CanvasProps> = ({ children, filePreviewContent, onRootCli
                   {v.label}
                 </span>
               ),
-              onClick: () => setActiveView(v.id),
+              onClick: () => onViewChange(v.id),
             })),
             selectedKeys: [activeView],
           }}
@@ -67,7 +75,7 @@ const Canvas: React.FC<CanvasProps> = ({ children, filePreviewContent, onRootCli
             {current.label}
             <ChevronRight className="w-3 h-3 text-secondary/50 rotate-90" />
           </button>
-        </Dropdown>
+        </Dropdown> */}
       </div>
 
       {/* Content */}
