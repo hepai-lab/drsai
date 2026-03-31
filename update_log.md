@@ -1,5 +1,7 @@
 # Update and Log
 
+- [x] 2026.03.31 更新Frontend版本到1.2.3，优化BESIII面板终端区域圆角与内边距展示效果。
+
 - [x] 2026.03.31 更新Frontend版本到1.2.2，新增右侧面板历史会话列表并优化顶部/内容头部按钮展示逻辑。
 
 - [x] 2026.03.31 更新Frontend版本到1.2.0，优化 AgentCard 与 SessionManager 的布局和导航。

@@ -363,7 +363,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
 
     // 渲染 Terminal 标签页
     const renderTerminal = () => (
-        <div className="bg-black text-green-400 font-mono text-sm p-4 rounded overflow-y-auto h-full">
+        <div className="bg-black text-green-400 font-mono text-sm p-4 rounded-lg overflow-y-auto h-full">
             <pre className="whitespace-pre-wrap">
                 {terminalOutput || '等待输出...'}
             </pre>
@@ -386,15 +386,14 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                             key={tab.id}
                             type="button"
                             onClick={() => setActiveTab(tab.id)}
-                            className={`flex-1 py-1 px-2 text-[11px] font-medium rounded-md transition-all ${
-                                activeTab === tab.id
-                                    ? darkMode === "dark"
-                                        ? "bg-[#2a2a2a] text-white shadow-sm"
-                                        : "bg-white text-gray-900 shadow-sm"
-                                    : darkMode === "dark"
-                                        ? "text-gray-400 hover:text-gray-200"
-                                        : "text-gray-500 hover:text-gray-700"
-                            }`}
+                            className={`flex-1 py-1 px-2 text-[11px] font-medium rounded-md transition-all ${activeTab === tab.id
+                                ? darkMode === "dark"
+                                    ? "bg-[#2a2a2a] text-white shadow-sm"
+                                    : "bg-white text-gray-900 shadow-sm"
+                                : darkMode === "dark"
+                                    ? "text-gray-400 hover:text-gray-200"
+                                    : "text-gray-500 hover:text-gray-700"
+                                }`}
                         >
                             {tab.label}
                         </button>
@@ -406,7 +405,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
             <div className={`flex-1 overflow-hidden ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
                 {activeTab === 'logs' && <div className="h-full p-4">{renderLogs()}</div>}
                 {activeTab === 'files' && <div className="h-full overflow-y-auto">{renderGlobalInfo()}</div>}
-                {activeTab === 'terminal' && renderTerminal()}
+                {activeTab === 'terminal' && <div className="h-full p-4">{renderTerminal()}</div>}
             </div>
         </div>
     );
