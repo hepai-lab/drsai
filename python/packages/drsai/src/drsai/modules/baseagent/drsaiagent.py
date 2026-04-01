@@ -747,9 +747,8 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         exec_results_output = []
         for result in exec_results:
             if len(result.content)>100:
-                exec_results_output.append(result.content[:100] + "...")
-            else:
-                exec_results_output.append(result.content)
+                result.content = result.content[:100] + "..."
+            exec_results_output.append(result)
         tool_call_result_msg = ToolCallExecutionEvent(
             content=exec_results_output,
             source=agent_name,
