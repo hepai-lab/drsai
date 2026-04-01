@@ -148,9 +148,13 @@ async def logout(request: Request):
 @router.get('/callback')
 async def auth(request: Request, db=Depends(get_db)):
     # ③ 统一认证回调
-    code = request.query_params.get('code')
+    all_params = dict(request.query_params)
+    body = await request.body()
+
+    code = all_params.get('code')
+    # code = request.query_params.get('code')
     if code is None:
-        error = request.query_params.get('error_description')
+        error = all_params.get('error_description')
         raise HTTPException(status_code=400, detail=f"Failed to fetch code, error: {error}")
     payload = { 
         "client_id": oauth_config.client_id,
@@ -232,7 +236,7 @@ async def login():
         "client_id": oauth_config.client_id,
         "redirect_uri": oauth_config.redirect_uri,
         "response_type": "code",
-        "state": _make_state(),
+        "state": _make_state()
     }
     auth_url = f"{oauth_config.authorize_url}?{urlencode(params)}"
     return RedirectResponse(url=auth_url)

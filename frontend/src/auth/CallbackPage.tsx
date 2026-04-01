@@ -21,10 +21,10 @@ const CallbackPage = () => {
             setUser({ name: username, email: username, username });
 
             agentWorkerAPI.getUserDefaultAgents(username)
-                .then(() => navigate("/"))
+                .then(() => navigate("/", { delay: 0 }))
                 .catch((error) => {
                     console.error("Failed to initialize user default agents:", error);
-                    navigate("/");
+                    navigate("/", { delay: 0 });
                 });
         } else {
             navigate("/login");
