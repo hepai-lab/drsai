@@ -1,6 +1,6 @@
 {
   "name": "Dr.Sai",
-  "version": "1.2.4",
+  "version": "1.0.0",
   "private": true,
   "description": "Dr.Sai",
   "author": "HepAI",
@@ -8,7 +8,7 @@
     "gatsby"
   ],
   "scripts": {
-    "develop": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port 8000 --host 0.0.0.0",
+    "develop": "gatsby develop --port 8000 --host 0.0.0.0",
     "develop-clean": "gatsby clean && gatsby develop --port 8000 --host 0.0.0.0",
     "dev": "npm run develop",
     "start": "gatsby clean && gatsby develop --port 8000 --host 0.0.0.0",

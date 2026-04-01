@@ -332,7 +332,7 @@ if __name__ == "__main__":
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务配置
-            port = 42816, 
+            port = 42850, 
             no_register=False,
             # enable_openwebui_pipeline=True, 
             # pipelines_dir="/home/xiongdb/drsai/examples/agent_groupchat/assistant_ragflow/pipelines/",

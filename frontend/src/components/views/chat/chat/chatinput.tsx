@@ -15,11 +15,14 @@ import {
 import type { RcFile, UploadProps } from "antd/es/upload/interface";
 import {
   BotIcon,
+  FileTextIcon,
   PaperclipIcon,
   PlusIcon
 } from "lucide-react";
 import * as React from "react";
 import { appContext } from "../../../../hooks/provider";
+import { useVoiceSettingsStore } from "../../../../store/voiceSettings";
+import VoiceInput from "../../../common/VoiceInput";
 import { IStatus } from "../../../types/app";
 import { InputRequest } from "../../../types/datamodel";
 import { IPlan } from "../../../types/plan";
@@ -97,6 +100,7 @@ const ChatInput = React.forwardRef<
       darkMode: string;
       user: { email: string };
     };
+    const { settings: voiceSettings } = useVoiceSettingsStore();
     const userId = user?.email || "default_user";
     const { agentInfo, agentId } = useAgentInfo();
     const setAgentInfo = useModeConfigStore((s) => s.setAgentInfo);
@@ -150,6 +154,7 @@ const ChatInput = React.forwardRef<
     const {
       isSearching,
       relevantPlans,
+      allPlans,
       attachedPlan,
       isRelevantPlansVisible,
       isPlanModalVisible,
@@ -403,6 +408,24 @@ const ChatInput = React.forwardRef<
 
         submitInternal(query, filesToUse as any, false, true);
       }
+    };
+
+    const handleVoiceTranscript = (transcript: string) => {
+      setText(transcript);
+      if (textAreaRef.current) {
+        textAreaRef.current.value = transcript;
+        const scrollHeight = textAreaRef.current.scrollHeight;
+        const newHeight = Math.min(scrollHeight, 120);
+        textAreaRef.current.style.height = `${newHeight}px`;
+      }
+
+      if (onTextChange) {
+        onTextChange(transcript);
+      }
+    };
+
+    const handleVoiceError = (error: string) => {
+      // Error handling is done in VoiceInput component
     };
 
     const handlePause = () => {
@@ -687,6 +710,34 @@ const ChatInput = React.forwardRef<
                                 ))
                               )}
                             </Menu.SubMenu>
+                            <Menu.SubMenu
+                              key="attach-plan"
+                              title={<span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Attach Plan</span>}
+                              icon={
+                                <FileTextIcon
+                                  className={`w-4 h-4 flex-shrink-0 ${darkMode === "dark"
+                                    ? "text-gray-300"
+                                    : "text-magenta-600"
+                                    }`}
+                                />
+                              }
+                            >
+                              {allPlans.length === 0 ? (
+                                <Menu.Item disabled key="no-plans" className={darkMode === "dark" ? "text-gray-500" : ""}>
+                                  <span className={darkMode === "dark" ? "text-gray-500" : ""}>No plans available</span>
+                                </Menu.Item>
+                              ) : (
+                                allPlans.map((plan: any) => (
+                                  <Menu.Item
+                                    key={plan.id || plan.task}
+                                    onClick={() => handleUsePlan(plan)}
+                                    className={darkMode === "dark" ? "text-gray-300 hover:text-white" : ""}
+                                  >
+                                    <span className={darkMode === "dark" ? "text-gray-300" : ""}>{plan.task}</span>
+                                  </Menu.Item>
+                                ))
+                              )}
+                            </Menu.SubMenu>
                           </Menu>
                         }
                         trigger={["click"]}
@@ -696,7 +747,7 @@ const ChatInput = React.forwardRef<
                             <span className="text-sm">
                               {fileList.length > 0
                                 ? `${fileList.length} file(s) attached`
-                                : "Attach File"}
+                                : "Attach File or Plan"}
                             </span>
                           }
                           placement="top"
@@ -768,6 +819,15 @@ const ChatInput = React.forwardRef<
                         <XMarkIcon className="h-4 w-4" />
                       </button>
                     )}
+                    {/* Voice input button */}
+                    <VoiceInput
+                      onTranscript={handleVoiceTranscript}
+                      onError={handleVoiceError}
+                      disabled={isInputDisabled}
+                      language={voiceSettings.inputLanguage}
+                      className="transition-smooth hover-lift"
+                    />
+
                     {/* Pause button - only show when active */}
                     {runStatus === "active" && (
                       <button

@@ -24,6 +24,7 @@ __pycache__/
 
 # 忽略测试文件
 test/
+tmp/ 
 
 # 忽略所有以.env 结尾的文件
 *.env

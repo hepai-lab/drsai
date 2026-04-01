@@ -1,7 +1,5 @@
+# npm run start
 
-# npm install --legacy-peer-deps
-
-# npm run develop
-yarn develop     
+npm run develop
 
 # npm run product

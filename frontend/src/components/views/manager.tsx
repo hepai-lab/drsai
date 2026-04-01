@@ -5,6 +5,7 @@ import { parse } from "yaml";
 import { useConfigStore } from "../../hooks/store";
 import { useModeConfigStore } from "../../store/modeConfig";
 import { Agent } from "../../types/common";
+import ContentHeader from "../contentheader";
 import { AgentSquare } from "../features/Agents/AgentSquare";
 import { useAgentInfo } from "../features/Agents/useAgentInfo";
 import PlanList from "../features/Plans/PlanList";
@@ -14,67 +15,22 @@ import { settingsAPI } from "./api";
 import ChatView from "./chat/chat";
 import NewChatView from "./chat/NewChatView";
 import { useAgentManager } from "./hooks/useAgentManager";
-import { useLocation, useNavigate } from "../../hooks/useRouter";
 import { useSessionManager } from "./hooks/useSessionManager";
 import { useSessionStorage } from "./hooks/useSessionStorage";
 import { useWebSocketManager } from "./hooks/useWebSocketManager";
-import AgentManagementPage from "./pages/AgentManagementPage";
-import ChannelsPage from "./pages/ChannelsPage";
-import FilePreviewPage from "./pages/FilePreviewPage";
-import LogsPage from "./pages/LogsPage";
-import ProfilePage from "./pages/ProfilePage";
-import SkillsSquarePage from "./pages/SkillsSquarePage";
-import UserManagementPage from "./pages/UserManagementPage";
-import {
-  MENU_LABELS,
-  MENU_IDS,
-  type CanvasViewId,
-  type MenuId,
-  createSearchWithMenu,
-  createSearchWithView,
-  getCanvasViewFromSearch,
-  getMenuIdFromSearch,
-} from "./menuRoutes";
 import { SessionEditor } from "./session_editor";
-import { AppLayout } from "../../layout";
+import { Sidebar } from "./sidebar";
 
 export const SessionManager: React.FC = () => {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | undefined>();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [messageApi, contextHolder] = message.useMessage();
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [activeSubMenuItem, setActiveSubMenuItem] = useState("current_session");
   const [baseUrl, setBaseUrl] = useState<string | undefined>();
-  const location = useLocation();
-  const navigate = useNavigate();
-  const activeSubMenuItem = useMemo(
-    () => getMenuIdFromSearch(location.search),
-    [location.search]
-  );
-  const activeCanvasView = useMemo(
-    () => getCanvasViewFromSearch(location.search),
-    [location.search]
-  );
-  const activeMenuLabel = useMemo(
-    () => MENU_LABELS[activeSubMenuItem],
-    [activeSubMenuItem]
-  );
 
-  const navigateToMenu = useCallback(
-    (menuId: MenuId) => {
-      const withMenu = createSearchWithMenu(location.search, menuId);
-      navigate(createSearchWithView(withMenu, "chat"));
-    },
-    [location.search, navigate]
-  );
-
-  const navigateToView = useCallback(
-    (viewId: CanvasViewId) => {
-      navigate(createSearchWithView(location.search, viewId));
-    },
-    [location.search, navigate]
-  );
-
-  const { user } = useContext(appContext);
+  const { user, darkMode } = useContext(appContext);
   const { session, setSession, setSessions } = useConfigStore();
   const { selectedAgent, setSelectedAgent, setConfig } = useModeConfigStore();
   const { saveSessionId } = useSessionStorage();
@@ -190,13 +146,13 @@ export const SessionManager: React.FC = () => {
       clearCurrentSession();
     }
 
-    navigateToMenu(MENU_IDS.currentSession);
+    setActiveSubMenuItem("current_session");
 
   }, [user?.email, selectedAgent, clearCurrentSession, settingsConfig, updateSettingsConfig, messageApi]);
 
   // Handle edit session
   const handleEditSession = useCallback(async (sessionData?: Session) => {
-    navigateToMenu(MENU_IDS.currentSession);
+    setActiveSubMenuItem("current_session");
 
     if (sessionData) {
       setEditingSession(sessionData);
@@ -211,7 +167,7 @@ export const SessionManager: React.FC = () => {
 
   // Handle logo click
   const handleLogoClick = useCallback(async () => {
-    navigateToMenu(MENU_IDS.currentSession);
+    setActiveSubMenuItem("current_session");
     // 创建新会话
     handleEditSession();
   }, [agents, handleEditSession]);
@@ -230,7 +186,7 @@ export const SessionManager: React.FC = () => {
 
     // 如果删除的是当前会话，确保显示 NewChatView
     if (isDeletingCurrentSession) {
-      navigateToMenu(MENU_IDS.currentSession);
+      setActiveSubMenuItem("current_session");
     }
   }, [deleteSession, closeSocket, session?.id]);
 
@@ -271,8 +227,8 @@ export const SessionManager: React.FC = () => {
   // Handle selecting a session from sidebar / plan list:
   // always switch back to "current_session" view so the chat is visible.
   const handleSelectSession = useCallback(
-    async (selectedSession: Session) => {
-      navigateToMenu(MENU_IDS.currentSession);
+    (selectedSession: Session) => {
+      setActiveSubMenuItem("current_session");
       selectSession(selectedSession);
     },
     [selectSession]
@@ -283,7 +239,7 @@ export const SessionManager: React.FC = () => {
     const handleSwitchToCurrentSession = async (event: CustomEvent) => {
       const { agent, newSession, config, clearSession } = event.detail || {};
 
-      navigateToMenu(MENU_IDS.currentSession);
+      setActiveSubMenuItem("current_session");
       if (agent) {
         setSelectedAgent(agent);
       }
@@ -326,7 +282,7 @@ export const SessionManager: React.FC = () => {
   // Listen for sessionDeleted event and ensure NewChatView is shown
   useEffect(() => {
     const handleSessionDeleted = () => {
-      navigateToMenu(MENU_IDS.currentSession);
+      setActiveSubMenuItem("current_session");
     };
 
     window.addEventListener(
@@ -346,7 +302,7 @@ export const SessionManager: React.FC = () => {
   useEffect(() => {
 
     if (!session && selectedAgent && selectedAgent.name) {
-      navigateToMenu(MENU_IDS.currentSession);
+      setActiveSubMenuItem("current_session");
     }
   }, [session, selectedAgent]);
 
@@ -362,10 +318,7 @@ export const SessionManager: React.FC = () => {
       // Always render ChatView for all sessions to preserve streamed messages when switching.
       // Non-current sessions are hidden via CSS (className="hidden").
       return (
-        <div
-          key={s.id}
-          className={`${session?.id === s.id ? "block" : "hidden"} relative h-full min-h-0`}
-        >
+        <div key={s.id} className={`${session?.id === s.id ? "block" : "hidden"} relative`}>
           <ChatView
             session={s}
             onSessionNameChange={updateSessionName}
@@ -387,78 +340,62 @@ export const SessionManager: React.FC = () => {
     pendingFirstMessage,
   ]);
 
-  const rightPanelHistory = useMemo(() => {
-    const sortedSessions = Array.isArray(sessions)
-      ? [...sessions].sort(
-        (a, b) =>
-          new Date(b.updated_at || b.created_at || 0).getTime() -
-          new Date(a.updated_at || a.created_at || 0).getTime()
-      )
-      : [];
-
-    if (sortedSessions.length === 0) {
-      return null;
-    }
-
-    return (
-      <div className="h-full overflow-y-auto p-3 space-y-1">
-        {sortedSessions.map((historySession) => {
-          const isCurrent = session?.id === historySession.id;
-          const lastTime = historySession.updated_at || historySession.created_at;
-          return (
-            <button
-              key={historySession.id}
-              type="button"
-              onClick={() => void handleSelectSession(historySession)}
-              className={`w-full text-left rounded-lg px-3 py-2 transition-colors ${isCurrent
-                  ? "bg-accent/10 text-accent"
-                  : "hover:bg-tertiary/20 text-primary"
-                }`}
-            >
-              <div className="text-sm font-medium truncate">
-                {historySession.name || `Session ${historySession.id ?? ""}`}
-              </div>
-              <div className="text-xs text-secondary mt-1">
-                {lastTime ? new Date(lastTime).toLocaleString() : "-"}
-              </div>
-            </button>
-          );
-        })}
-      </div>
-    );
-  }, [sessions, session?.id, handleSelectSession]);
-
   return (
-    <>
+    <div className="relative flex flex-1 w-full h-full">
       {contextHolder}
 
-      <AppLayout
-        // TopNav
-        isSidebarOpen={isSidebarOpen}
-        onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-        onLogoClick={handleLogoClick}
+      {/* Mobile overlay */}
+      {isSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
 
-        // LeftMenu
-        activeSubMenuItem={activeSubMenuItem}
-        activeMenuLabel={activeMenuLabel}
-        onSubMenuChange={(tabId) => navigateToMenu(tabId as MenuId)}
-        canvasActiveView={activeCanvasView}
-        onCanvasViewChange={navigateToView}
-        canvasFilePreviewContent={<FilePreviewPage />}
-        rightPanelHistory={rightPanelHistory}
-        onRightPanelTabChange={(tab) => {
-          if (tab === "files") {
-            navigateToView("file_preview");
-            return;
-          }
-          navigateToView("chat");
-        }}
+      {/* Sidebar */}
+      <div
+        className={`fixed lg:relative left-0 top-0 h-full transition-smooth z-50 lg:z-auto overflow-hidden ${darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-gray-50/95"} border-r ${darkMode === "dark" ? "border-border-primary/50" : "border-gray-200/50"} ${isSidebarOpen
+          ? "w-72 lg:w-56 translate-x-0"
+          : "w-72 lg:w-0 -translate-x-full lg:translate-x-0"
+          }`}
       >
-        {/* Canvas content */}
-        {activeSubMenuItem === MENU_IDS.currentSession ? (
+        <Sidebar
+          isOpen={isSidebarOpen}
+          sessions={sessions}
+          currentSession={session}
+          onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
+          onSelectSession={handleSelectSession}
+          onEditSession={handleEditSession}
+          onDeleteSession={handleDeleteSession}
+          isLoading={isSessionLoading}
+          sessionRunStatuses={sessionRunStatuses}
+          activeSubMenuItem={activeSubMenuItem}
+          onSubMenuChange={setActiveSubMenuItem}
+          onLogoClick={handleLogoClick}
+          onStopSession={handleStopSession}
+          agents={agents}
+          selectedAgent={agentInfo}
+          onAgentClick={handleAgentClick}
+          onDeleteAgent={handleDeleteAgent}
+        />
+      </div>
+
+      {/* Main content area */}
+      <div className={`flex flex-col flex-1 min-h-0 transition-smooth ${isSidebarOpen ? "ml-0 lg:ml-0" : "ml-0"}`}>
+        <ContentHeader
+          isMobileMenuOpen={isMobileMenuOpen}
+          onMobileMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          isSidebarOpen={isSidebarOpen}
+          onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+          onNewSession={() => handleEditSession()}
+          agentSelector={null}
+          activeSubMenuItem={activeSubMenuItem}
+        />
+
+        {activeSubMenuItem === "current_session" ? (
           (() => {
             if (session) {
-              return <div className="h-full min-h-0">{chatViews}</div>;
+              return <div className="h-full">{chatViews}</div>;
             } else if (agentInfo) {
               return (
                 <NewChatView
@@ -479,38 +416,17 @@ export const SessionManager: React.FC = () => {
               );
             }
           })()
-        ) : activeSubMenuItem === MENU_IDS.agentSquare || activeSubMenuItem === MENU_IDS.myAgents ? (
+        ) : activeSubMenuItem === "agent_square" ? (
           <div className="h-full overflow-hidden">
-            <AgentSquare agents={[]} handleAgentList={fetchAgentList} />
+            <AgentSquare agents={[]} handleAgentList={fetchAgentList} existingAgents={agents} />
           </div>
-        ) : activeSubMenuItem === MENU_IDS.skillsSquare ? (
-          <SkillsSquarePage />
-        ) : activeSubMenuItem === MENU_IDS.channels ? (
-          <ChannelsPage />
-        ) : activeSubMenuItem === MENU_IDS.logs ? (
-          <LogsPage />
-        ) : activeSubMenuItem === MENU_IDS.agentManagement ? (
-          <AgentManagementPage />
-        ) : activeSubMenuItem === MENU_IDS.userManagement ? (
-          <UserManagementPage />
-        ) : activeSubMenuItem === MENU_IDS.profile ? (
-          <ProfilePage
-            user={user || { name: "", email: "" }}
-            onClose={() => navigateToMenu(MENU_IDS.currentSession)}
-          />
-        ) : activeSubMenuItem === MENU_IDS.savedPlan ? (
+        ) : (
           <div className="h-full overflow-hidden">
             <PlanList
-              onTabChange={(tabId) => navigateToMenu(tabId as MenuId)}
+              onTabChange={setActiveSubMenuItem}
               onSelectSession={handleSelectSession}
               onCreateSessionFromPlan={handleCreateSessionFromPlan}
             />
-          </div>
-        ) : (
-          <div className="flex items-center justify-center h-full text-secondary">
-            <div className="text-center">
-              <p className="text-sm opacity-50">敬请期待</p>
-            </div>
           </div>
         )}
 
@@ -523,8 +439,8 @@ export const SessionManager: React.FC = () => {
             setEditingSession(undefined);
           }}
         />
-      </AppLayout>
-    </>
+      </div>
+    </div>
   );
 };
 

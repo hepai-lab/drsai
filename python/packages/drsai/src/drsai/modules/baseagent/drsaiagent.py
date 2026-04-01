@@ -372,14 +372,14 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                                 download_file_from_url_or_base64(
                                     file_info = file, 
                                     save_path = f"{self._file_save_dir}/{self._user_id}/{self._thread_id}/{file['name']}")
-                        settings_config = msg.metadata.get("settings_config")
-                        if settings_config:
-                            settings_config = json.loads(settings_config)
-                            default_config_name = settings_config.get("defult_config_name")
-                            llm_name = self._llm_mode_config.get(default_config_name)
-                            if llm_name != self._model_client._create_args["model"] and self._set_model_client:
-                                self._model_client = self._set_model_client(default_config_name)
-                            
+                        # 由于不同模型的tool call格式的限制，不允许在同一个session中切换模型
+                        # settings_config = msg.metadata.get("settings_config")
+                        # if settings_config:
+                        #     settings_config = json.loads(settings_config)
+                        #     default_config_name = settings_config.get("defult_config_name")
+                        #     llm_name = self._llm_mode_config.get(default_config_name)
+                        #     if llm_name != self._model_client._create_args["model"] and self._set_model_client:
+                        #         self._model_client = self._set_model_client(default_config_name)   
                     except Exception as e:
                         logger.error(f"Error processing message metadata: {e}")
                     yield msg

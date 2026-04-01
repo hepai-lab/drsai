@@ -91,6 +91,8 @@ from .managers.get_managers_tools import (
     get_todo_manager_tool,
     create_local_venv,
 )
+from .utils.utils import HELP_TEXT
+
 
 class DrSaiAssistantConfig(DrSaiAgentConfig):
     skills_dir: Optional[str | List[str]]
@@ -447,13 +449,14 @@ Current Session_ID is {self._thread_id}
                                 download_file_from_url_or_base64(
                                     file_info = file, 
                                     save_path = f"{self._user_profile_manager.download_dir}/{file['name']}")
-                        settings_config = msg.metadata.get("settings_config")
-                        if settings_config:
-                            settings_config = json.loads(settings_config)
-                            default_config_name = settings_config.get("defult_config_name")
-                            llm_name = self._llm_mode_config.get(default_config_name)
-                            if llm_name != self._model_client._create_args["model"] and self._set_model_client:
-                                self._model_client = self._set_model_client(default_config_name)
+                        # 由于不同模型的tool call格式的限制，不允许在同一个session中切换模型
+                        # settings_config = msg.metadata.get("settings_config")
+                        # if settings_config:
+                        #     settings_config = json.loads(settings_config)
+                        #     default_config_name = settings_config.get("defult_config_name")
+                        #     llm_name = self._llm_mode_config.get(default_config_name)
+                        #     if llm_name != self._model_client._create_args["model"] and self._set_model_client:
+                        #         self._model_client = self._set_model_client(default_config_name)
                     except Exception as e:
                         logger.error(f"Error processing message metadata: {e}")
                     yield msg
@@ -557,6 +560,33 @@ Current Session_ID is {self._thread_id}
                 model_context=model_context,
                 messages=messages,
             )
+
+            # check commands mode
+            last_message_content = messages[-1].content
+            if self.is_commands_mode(last_message_content):
+                async for message in self.on_messages_stream_commands(
+                    last_message_content = last_message_content,
+                ):
+                    yield message
+                return
+
+            # Check if there's a default subagent set for this thread
+            default_subagent_name = self._user_profile_manager.get_default_subagent(self._thread_id)
+            if default_subagent_name and default_subagent_name in self._user_sub_agents:
+                # Route to default subagent
+                async for message in self._handle_default_subagent_mode(
+                    messages=messages,
+                    default_subagent_name=default_subagent_name,
+                    agent_name=agent_name,
+                    model_client=model_client,
+                    model_client_stream=model_client_stream,
+                    model_context=model_context,
+                    cancellation_token=cancellation_token,
+                    output_content_type=output_content_type,
+                ):
+                    yield message
+                # Always return after handling default subagent (success or error)
+                return
 
             # TODO: Update model context with any relevant memory -> When? How?
 
@@ -892,6 +922,250 @@ Current Session_ID is {self._thread_id}
            ):
                yield chunk
     
+    async def _handle_default_subagent_mode(
+        self,
+        messages: List[BaseChatMessage],
+        default_subagent_name: str,
+        agent_name: str,
+        model_client: ChatCompletionClient,
+        model_client_stream: bool,
+        model_context: ChatCompletionContext,
+        cancellation_token: CancellationToken,
+        output_content_type: type[BaseModel] | None,
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
+        """
+        Handle default subagent mode for the current thread.
+        Routes all messages to the configured default subagent.
+        """
+        try:
+            # Get sub agent system prompt
+            sub_system = f"""You are a {default_subagent_name} subagent at {self._work_dir}.
+
+{self._user_sub_agents[default_subagent_name].get("prompt", "")}
+
+Complete the task and return a clear, concise summary."""
+
+            # Get subagent instance
+            subagent = await self.get_sub_agent_instance(
+                sub_agent_name=default_subagent_name,
+                model_client=model_client,
+                model_client_stream=model_client_stream,
+                sub_system=sub_system,
+                output_content_type=output_content_type,
+            )
+
+            # # Construct task messages with background context
+            # task_messages: List[BaseChatMessage] = []
+            # llm_messages = await model_context.get_messages()
+
+            # # Add background context (limited to recent messages to avoid too much context)
+            # background_message = "Below are the recent chat records for context:\n\n"
+            # for llm_message in llm_messages[-10:]:  # Only last 10 messages
+            #     if isinstance(llm_message, (UserMessage, AssistantMessage)):
+            #         background_message += f"{llm_message.source}: {llm_message.content}\n\n"
+
+            # task_messages.append(TextMessage(content=background_message, source="user"))
+
+            # Process with subagent
+            async for message in subagent.on_messages_stream(
+                messages=messages,
+                cancellation_token=cancellation_token
+            ):
+                if isinstance(message, Response):
+                    # Add subagent response to model context
+                    await model_context.add_message(
+                        AssistantMessage(
+                            content=str(message.chat_message.content),
+                            source=default_subagent_name,
+                        )
+                    )
+                    yield message
+                    return
+                yield message
+
+        except Exception as e:
+            logger.error(f"Error routing to default subagent {default_subagent_name}: {e}")
+            logger.error(traceback.format_exc())
+            yield Response(
+                chat_message=TextMessage(
+                    content=f"⚠️ 使用默认子智能体 **{default_subagent_name}** 时出错:\n\n```\n{str(e)}\n```\n\n💡 使用 `/agent clear` 清除默认子智能体设置。\n\n---\n\n⚠️ Error using default subagent **{default_subagent_name}**:\n\n```\n{str(e)}\n```\n\n💡 Use `/agent clear` to clear default subagent setting.",
+                    source=agent_name,
+                    metadata={"internal": "no"},
+                )
+            )
+
+    def is_commands_mode(self, text: str) -> bool:
+        """Check if the message is a command."""
+        text = str(text).strip().lower()
+        if text in ["/help", "/agents", "/agent clear", "/agent reset"]:
+            return True
+        elif text.startswith("/agent "):
+            return True
+        return False
+
+    def extract_command(self, text: str) -> Tuple[str, str]:
+        """Extract command type and argument from text.
+
+        Returns:
+            Tuple[str, str]: (command_type, argument)
+        """
+        text = str(text).strip()
+        if text.lower() == "/help":
+            return "help", ""
+        elif text.lower() == "/agents":
+            return "agents", ""
+        elif text.lower() in ["/agent clear", "/agent reset"]:
+            return "agent_clear", ""
+        elif text.lower().startswith("/agent "):
+            # Extract agent name after /agent
+            parts = text.split(maxsplit=1)
+            agent_name = parts[1] if len(parts) > 1 else ""
+            return "agent", agent_name.strip()
+        return "unknown", ""
+    async def on_messages_stream_commands(
+        self,
+        last_message_content: str 
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
+        """Handle command-based interactions."""
+        # Get the last message content
+        last_message_content = str(last_message_content).strip()
+
+        # Extract command
+        command_type, argument = self.extract_command(last_message_content)
+        agent_name = self._user_profile_manager.agent_name
+
+        if command_type == "help":
+            # Display help text
+            yield Response(
+                chat_message=TextMessage(
+                    content=HELP_TEXT,
+                    source=agent_name,
+                    metadata={"internal": "no"},
+                )
+            )
+
+        elif command_type == "agents":
+            # Display available subagents
+            if not self._user_sub_agents:
+                response_text = "当前没有可用的子智能体。\n\nNo subagents available."
+            else:
+                response_text = "可用的子智能体列表：\n\nAvailable subagents:\n\n"
+                for name, config in self._user_sub_agents.items():
+                    description = config.get("description", "No description")
+                    response_text += f"- **{name}**: {description}\n"
+                response_text += "\n使用 `/agent <agent_name>` 切换到指定的子智能体。\n\nUse `/agent <agent_name>` to switch to a specific subagent."
+
+            yield Response(
+                chat_message=TextMessage(
+                    content=response_text,
+                    source=agent_name,
+                    metadata={"internal": "no"},
+                )
+            )
+
+        elif command_type == "agent":
+            # Switch to specified subagent
+            if not argument:
+                yield Response(
+                    chat_message=TextMessage(
+                        content="请指定子智能体名称。例如：`/agent code_executor`\n\nPlease specify the subagent name. Example: `/agent code_executor`",
+                        source=agent_name,
+                        metadata={"internal": "no"},
+                    )
+                )
+                return
+
+            if argument not in self._user_sub_agents:
+                available_agents = ", ".join(self._user_sub_agents.keys())
+                yield Response(
+                    chat_message=TextMessage(
+                        content=f"子智能体 `{argument}` 不存在。\n\n可用的子智能体: {available_agents}\n\nSubagent `{argument}` not found.\n\nAvailable subagents: {available_agents}",
+                        source=agent_name,
+                        metadata={"internal": "no"},
+                    )
+                )
+                return
+
+            # Save the selected subagent to thread config
+            try:
+                self._user_profile_manager.set_default_subagent(self._thread_id, argument)
+
+                description = self._user_sub_agents[argument].get("description", "")
+                response_text = f"✅ 已为当前会话设置默认子智能体: **{argument}**\n\n"
+                response_text += f"📝 描述: {description}\n\n"
+                response_text += f"💡 从现在开始，此会话中的所有消息都将由 **{argument}** 子智能体处理。\n\n"
+                response_text += f"🔄 使用 `/agent clear` 可以取消此设置。\n\n"
+                response_text += f"---\n\n"
+                response_text += f"✅ Default subagent set for current session: **{argument}**\n\n"
+                response_text += f"📝 Description: {description}\n\n"
+                response_text += f"💡 From now on, all messages in this session will be handled by **{argument}**.\n\n"
+                response_text += f"🔄 Use `/agent clear` to cancel this setting."
+
+                yield Response(
+                    chat_message=TextMessage(
+                        content=response_text,
+                        source=agent_name,
+                        metadata={"internal": "no"},
+                    )
+                )
+            except Exception as e:
+                logger.error(f"Error saving thread config: {e}")
+                yield Response(
+                    chat_message=TextMessage(
+                        content=f"保存配置时出错: {str(e)}\n\nError saving configuration: {str(e)}",
+                        source=agent_name,
+                        metadata={"internal": "no"},
+                    )
+                )
+
+        elif command_type == "agent_clear":
+            # Clear default subagent for current thread
+            try:
+                current_subagent = self._user_profile_manager.get_default_subagent(self._thread_id)
+
+                if not current_subagent:
+                    yield Response(
+                        chat_message=TextMessage(
+                            content="当前会话没有设置默认子智能体。\n\nNo default subagent is currently set for this session.",
+                            source=agent_name,
+                            metadata={"internal": "no"},
+                        )
+                    )
+                    return
+
+                self._user_profile_manager.clear_default_subagent(self._thread_id)
+
+                response_text = f"✅ 已取消当前会话的默认子智能体设置（之前为: **{current_subagent}**）\n\n"
+                response_text += f"💡 现在将恢复使用主智能体 **{agent_name}** 处理消息。\n\n"
+                response_text += f"---\n\n"
+                response_text += f"✅ Default subagent cleared (was: **{current_subagent}**)\n\n"
+                response_text += f"💡 Now returning to main agent **{agent_name}**."
+
+                yield Response(
+                    chat_message=TextMessage(
+                        content=response_text,
+                        source=agent_name,
+                        metadata={"internal": "no"},
+                    )
+                )
+            except Exception as e:
+                logger.error(f"Error clearing thread config: {e}")
+                yield Response(
+                    chat_message=TextMessage(
+                        content=f"清除配置时出错: {str(e)}\n\nError clearing configuration: {str(e)}",
+                        source=agent_name,
+                        metadata={"internal": "no"},
+                    )
+                )
+        else:
+            yield Response(
+                chat_message=TextMessage(
+                    content=f"未知命令。使用 `/help` 查看可用命令。\n\nUnknown command. Use `/help` to see available commands.",
+                    source=agent_name,
+                    metadata={"internal": "no"},
+                )
+            )
+
     @classmethod
     async def _process_model_result(
         cls,
@@ -1003,6 +1277,59 @@ Current Session_ID is {self._thread_id}
             return self._tools
         return [t for t in self._workbench._tools if t.name in allowed]
 
+    async def get_sub_agent_instance(
+            self, 
+            sub_agent_name: str,
+            model_client: ChatCompletionClient,
+            model_client_stream: bool = True,
+            sub_system: Optional[str] = None,
+            output_content_type: type[BaseModel] | None = None,
+            ) -> DrSaiAgent:
+        # Get agent
+        if sub_agent_name in self._user_sub_agents:
+            sub_agent = self._user_sub_agents[sub_agent_name]
+            description=self._user_sub_agents[sub_agent_name].get("description", "")
+            sub_agent_type = sub_agent.get("type")
+            if sub_agent_type == "CodeExecutorAgent":
+                venv_path = sub_agent.get("venv_path")
+                if venv_path:
+                    executor = create_local_venv(work_dir=venv_path)
+                else:
+                    executor = self._local_executor or create_local_venv(work_dir=self._user_profile_manager.tmp_dir)
+                subagent = CodeExecutorAgent(
+                    name=sub_agent_name,
+                    code_executor=executor,
+                    model_client_stream=model_client_stream,
+                )
+            elif sub_agent_type == "DrSaiAgent":
+                tools = self.get_tools_for_agent(sub_agent_name)
+                subagent = DrSaiAgent(
+                    name=sub_agent_name,
+                    system_message=sub_system,
+                    description=description,
+                    tools=tools,
+                    model_client=model_client,
+                    model_client_stream=model_client_stream,
+                    output_content_type=output_content_type,)
+            elif sub_agent_type == "HepAIWorkerAgent":
+                model_remote_configs = sub_agent.get("model_remote_configs")
+                url = model_remote_configs.get("url", "https://aiapi.ihep.ac.cn/apiv2")
+                name = model_remote_configs.get("name")
+                subagent = HepAIWorkerAgent(
+                    name=sub_agent_name,
+                    description=description,
+                    model_remote_configs={
+                        "url": url,
+                        "api_key": model_client._client.api_key,
+                        "name": name
+                    },
+                    chat_id=self._thread_id,
+                    run_info={"name": self._user_profile_manager.user_id, "email": self._user_id},
+
+                )
+            return subagent
+        else:
+            raise ValueError(f"Sub agent {sub_agent_name} not found")
     async def handle_subagent_repsonse(
         self,
         agent_name: str,
@@ -1044,55 +1371,18 @@ Current Session_ID is {self._thread_id}
             task_messages.append(TextMessage(content=backgroud_message, source="user"))
             task_messages.append(TextMessage(content=f"Current task: \n\n{prompt}", source="user"))
 
-            # Get agent
-            if sub_agent_name in self._user_sub_agents:
-                sub_agent = self._user_sub_agents[sub_agent_name]
-                description=self._sub_agent_config[sub_agent_name].get("description", "")
-                sub_agent_type = sub_agent.get("type")
-                if sub_agent_type == "CodeExecutorAgent":
-                    venv_path = sub_agent.get("venv_path")
-                    if venv_path:
-                        executor = create_local_venv(work_dir=venv_path)
-                    else:
-                        executor = self._local_executor or create_local_venv(work_dir=self._user_profile_manager.tmp_dir)
-                    subagent = CodeExecutorAgent(
-                        name=sub_agent_name,
-                        code_executor=executor,
-                        model_client_stream=model_client_stream,
-                    )
-                elif sub_agent_type == "DrSaiAgent":
-                    tools = self.get_tools_for_agent(sub_agent_name)
-                    subagent = DrSaiAgent(
-                        name=sub_agent_name,
-                        system_message=sub_system,
-                        description=description,
-                        tools=tools,
-                        model_client=model_client,
-                        model_client_stream=model_client_stream,
-                        output_content_type=output_content_type,)
-                elif sub_agent_type == "HepAIWorkerAgent":
-                    model_remote_configs = sub_agent.get("model_remote_configs")
-                    url = model_remote_configs.get("url", "https://aiapi.ihep.ac.cn/apiv2")
-                    name = model_remote_configs.get("name")
-                    subagent = HepAIWorkerAgent(
-                        name=sub_agent_name,
-                        description=description,
-                        model_remote_configs={
-                            "url": url,
-                            "api_key": self._model_client._client.api_key,
-                            "name": name
-                        },
-                        chat_id=self._thread_id,
-                        run_info={"name": self._user_profile_manager.user_name, "email": self._user_id},
-
-                    )
-
-            
             # Process task
             #  TODO: handle turn count fro multi-turn task.
             # turn_count = 0
             # while turn_count < self._max_turn_count:
             #     turn_count += 1
+            subagent = await self.get_sub_agent_instance(
+                sub_agent_name = sub_agent_name,
+                model_client = model_client,
+                model_client_stream = model_client_stream,
+                sub_system = sub_system,
+                output_content_type = output_content_type,
+            )
             async for message in subagent.on_messages_stream(messages=task_messages, cancellation_token=cancellation_token):
                 if isinstance(message, Response):
                     yield message.chat_message
