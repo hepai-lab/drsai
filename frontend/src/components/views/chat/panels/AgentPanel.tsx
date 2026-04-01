@@ -51,8 +51,8 @@ interface AgentPanelProps {
         serverGlobalInfo?: BESIIIServerGlobalInfo | null;
         onTaskClick?: (taskId: string) => void;
         onSubtaskClick?: (taskId: string, subtaskId: string) => void;
-        activeTab?: 'logs' | 'files' | 'terminal';
-        onTabChange?: (tab: 'logs' | 'files' | 'terminal') => void;
+        activeTab?: 'info' | 'files' | 'logs' | 'terminal';
+        onTabChange?: (tab: 'info' | 'files' | 'logs' | 'terminal') => void;
         /** When true, panel uses narrower width (matches detail viewer expanded layout). */
         isExpanded?: boolean;
         onInputResponse?: (

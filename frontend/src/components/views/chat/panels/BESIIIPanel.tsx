@@ -1,28 +1,68 @@
-import { Check, CheckCircle, Circle, Clock } from "lucide-react";
+import { Check, CheckCircle, Circle, Clock, Download } from "lucide-react";
 import React, { useEffect, useRef, useState } from "react";
 import { appContext } from "../../../../hooks/provider";
+import { FilesEvent, MessageFileItem } from "../../../types/datamodel";
 import { BESIIIPanelProps, BESIIISubTask, BESIIITask } from "./types";
 
 /**
  * BESIII Panel - 用于显示 BESIII Agent 的任务执行状态
- * 
+ *
  * 功能：
- * 1. 全局任务执行 - 总览
- * 2. Files - 文件列表和下载
- * 3. Terminal - 终端输出
+ * 1. Global Info - 全局信息（可编辑字段 Revise）
+ * 2. Files - message_files / FilesEvent 文件列表（URL 或 base64 下载）
+ * 3. LogExecution - 运行日志
+ * 4. Terminal - 终端输出
  */
 
-type TabType = 'logs' | 'files' | 'terminal';
+type TabType = 'info' | 'files' | 'logs' | 'terminal';
 
 /** Shown first; only these keys are treated as read-only. */
 const GLOBAL_INFO_READ_ONLY_ORDER = ["taskName", "root_path"] as const;
 const GLOBAL_INFO_READ_ONLY_SET = new Set<string>(GLOBAL_INFO_READ_ONLY_ORDER);
 
+function besiiiFilesFromEvent(ev: FilesEvent): MessageFileItem[] {
+    const c = ev.content?.files;
+    if (c && c.length > 0) return c;
+    return (ev as FilesEvent & { files?: MessageFileItem[] }).files ?? [];
+}
+
+function besiiiEventDisplayMeta(ev: FilesEvent): {
+    title?: string;
+    description?: string;
+    ts?: number;
+} {
+    const title = ev.content?.title ?? (ev as { title?: string }).title;
+    const description =
+        ev.content?.description ?? (ev as { description?: string }).description;
+    const ts = ev.send_time_stamp ?? ev.content?.send_time_stamp;
+    return { title, description, ts };
+}
+
+function downloadMessageFileBase64(file: MessageFileItem) {
+    const b64 = file.base64_content;
+    if (!b64) return;
+    try {
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const mime = file.mime_type || "application/octet-stream";
+        const blob = new Blob([bytes], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.name || "download";
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        console.error("[BESIII] base64 download failed", e);
+    }
+}
+
 const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     tasks = [],
     terminalOutput = '',
     logs = [],
-    fileEvents: _fileEvents = [],
+    fileEvents = [],
     serverGlobalInfo = null,
     onMinimize,
     onInputResponse,
@@ -30,7 +70,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     onTabChange,
 }) => {
     const { darkMode } = React.useContext(appContext);
-    const [internalActiveTab, setInternalActiveTab] = useState<TabType>('files');
+    const [internalActiveTab, setInternalActiveTab] = useState<TabType>('info');
     // 使用受控的 activeTab（如果提供），否则使用内部状态
     const activeTab = controlledActiveTab !== undefined ? controlledActiveTab : internalActiveTab;
     const setActiveTab = (tab: TabType) => {
@@ -370,46 +410,163 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
         </div>
     );
 
+    /** message_files / FilesEvent：含 download_method url | base64 */
+    const renderFiles = () => {
+        const border = darkMode === "dark" ? "border-gray-700" : "border-gray-200";
+        const muted = darkMode === "dark" ? "text-gray-500" : "text-gray-500";
+        const cardBg =
+            darkMode === "dark"
+                ? "bg-gray-900 border-gray-800"
+                : "bg-gray-50 border-gray-200";
+        const textMain = darkMode === "dark" ? "text-gray-100" : "text-gray-900";
+
+        if (!fileEvents || fileEvents.length === 0) {
+            return (
+                <div className="flex items-center justify-center h-full min-h-[200px] px-4">
+                    <div
+                        className={`flex w-full max-w-lg min-h-[160px] items-center justify-center rounded-lg border text-sm ${border} ${muted}`}
+                    >
+                        暂无文件事件（message_files / FilesEvent）
+                    </div>
+                </div>
+            );
+        }
+
+        return (
+            <div className="flex flex-col h-full overflow-y-auto p-4 gap-4">
+                {fileEvents.map((ev, evIdx) => {
+                    const { title, description, ts } = besiiiEventDisplayMeta(ev);
+                    const files = besiiiFilesFromEvent(ev);
+                    const eventKey = `${ev.source ?? "ev"}-${String(ts ?? evIdx)}-${evIdx}`;
+                    return (
+                        <div key={eventKey} className={`rounded-lg border ${border} overflow-hidden`}>
+                            <div
+                                className={`px-4 py-3 border-b ${border} ${darkMode === "dark" ? "bg-[#1a1a1a]" : "bg-gray-50"}`}
+                            >
+                                <div className={`text-sm font-medium ${textMain}`}>{title || "Files"}</div>
+                                {description ? (
+                                    <div className={`text-xs mt-1 ${muted}`}>{description}</div>
+                                ) : null}
+                                <div className={`flex flex-wrap gap-x-3 gap-y-1 mt-2 text-xs ${muted}`}>
+                                    {ev.source ? <span>source: {ev.source}</span> : null}
+                                    {ev.type ? <span>type: {ev.type}</span> : null}
+                                    <span>time: {formatTimestamp(ts)}</span>
+                                </div>
+                            </div>
+                            <div className="p-3 flex flex-col gap-2">
+                                {files.length === 0 ? (
+                                    <div className={`text-xs ${muted}`}>（无文件条目）</div>
+                                ) : (
+                                    files.map((file, fi) => (
+                                        <div
+                                            key={`${file.name}-${fi}`}
+                                            className={`rounded-md border p-3 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between ${cardBg}`}
+                                        >
+                                            <div className="min-w-0 flex-1">
+                                                <div className={`font-medium text-sm ${textMain} break-all`}>
+                                                    {file.name}
+                                                </div>
+                                                {file.description ? (
+                                                    <div className={`text-xs mt-1 ${muted}`}>{file.description}</div>
+                                                ) : null}
+                                                <div className="flex flex-wrap gap-2 mt-2">
+                                                    <span
+                                                        className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase border ${darkMode === "dark"
+                                                            ? "border-purple-500/40 text-purple-300"
+                                                            : "border-purple-300 text-purple-700"
+                                                            }`}
+                                                    >
+                                                        {file.download_method}
+                                                    </span>
+                                                    {file.size != null ? (
+                                                        <span className={`text-xs ${muted}`}>
+                                                            {typeof file.size === "number"
+                                                                ? `${file.size} B`
+                                                                : String(file.size)}
+                                                        </span>
+                                                    ) : null}
+                                                    {file.mime_type ? (
+                                                        <span className={`text-xs font-mono ${muted}`}>
+                                                            {file.mime_type}
+                                                        </span>
+                                                    ) : null}
+                                                </div>
+                                            </div>
+                                            <div className="shrink-0 flex items-center gap-2">
+                                                {file.download_method === "url" && file.url ? (
+                                                    <a
+                                                        href={file.url}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium ${darkMode === "dark"
+                                                            ? "bg-purple-600 hover:bg-purple-500 text-white"
+                                                            : "bg-purple-600 hover:bg-purple-700 text-white"
+                                                            }`}
+                                                    >
+                                                        <Download size={16} />
+                                                        打开 / 下载
+                                                    </a>
+                                                ) : null}
+                                                {file.download_method === "base64" && file.base64_content ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => downloadMessageFileBase64(file)}
+                                                        className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium ${darkMode === "dark"
+                                                            ? "bg-purple-600 hover:bg-purple-500 text-white"
+                                                            : "bg-purple-600 hover:bg-purple-700 text-white"
+                                                            }`}
+                                                    >
+                                                        <Download size={16} />
+                                                        下载
+                                                    </button>
+                                                ) : null}
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    };
+
+    const tabButtonActive = (tab: TabType) =>
+        activeTab === tab
+            ? darkMode === "dark"
+                ? "bg-[#0f0f0f] text-purple-400 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500"
+                : "bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500"
+            : darkMode === "dark"
+                ? "text-gray-400 hover:text-gray-200 hover:bg-gray-800"
+                : "text-gray-600 hover:text-gray-900 hover:bg-gray-100";
+
     return (
         <div className={`${darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-white"} rounded-lg shadow-lg h-full flex flex-col`}>
+
             {/* Tab Headers */}
             <div className={`flex border-b ${darkMode === "dark" ? "bg-[#1a1a1a] border-gray-700" : "bg-gray-50 border-gray-200"}`}>
 
                 <button
-                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'files'
-                        ? darkMode === "dark"
-                            ? 'bg-[#0f0f0f] text-purple-400 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                            : 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                        : darkMode === "dark"
-                            ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                        }`}
-                    onClick={() => setActiveTab('files')}
+                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${tabButtonActive('info')}`}
+                    onClick={() => setActiveTab('info')}
                 >
                     Global Info
                 </button>
                 <button
-                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'logs'
-                        ? darkMode === "dark"
-                            ? 'bg-[#0f0f0f] text-purple-400 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                            : 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                        : darkMode === "dark"
-                            ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                        }`}
+                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${tabButtonActive('files')}`}
+                    onClick={() => setActiveTab('files')}
+                >
+                    Files
+                </button>
+                <button
+                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${tabButtonActive('logs')}`}
                     onClick={() => setActiveTab('logs')}
                 >
                     LogExecution
                 </button>
                 <button
-                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${activeTab === 'terminal'
-                        ? darkMode === "dark"
-                            ? 'bg-[#0f0f0f] text-purple-400 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                            : 'bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500'
-                        : darkMode === "dark"
-                            ? 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'
-                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                        }`}
+                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${tabButtonActive('terminal')}`}
                     onClick={() => setActiveTab('terminal')}
                 >
                     Terminal
@@ -429,8 +586,9 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
 
             {/* Tab Content */}
             <div className={`flex-1 overflow-hidden ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
+                {activeTab === 'info' && <div className="h-full overflow-y-auto">{renderGlobalInfo()}</div>}
+                {activeTab === 'files' && <div className="h-full overflow-y-auto">{renderFiles()}</div>}
                 {activeTab === 'logs' && <div className="h-full p-4">{renderLogs()}</div>}
-                {activeTab === 'files' && <div className="h-full overflow-y-auto">{renderGlobalInfo()}</div>}
                 {activeTab === 'terminal' && renderTerminal()}
             </div>
         </div>

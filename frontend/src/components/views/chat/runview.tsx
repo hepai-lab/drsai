@@ -155,8 +155,8 @@ const RunView: React.FC<RunViewProps> = ({
     "screenshots" | "live"
   >("live");
   const [besiiiActiveTab, setBesiiiActiveTab] = useState<
-    "logs" | "files" | "terminal"
-  >("files");
+    "info" | "files" | "logs" | "terminal"
+  >("info");
   const [hiddenMessageIndices, setHiddenMessageIndices] = useState<
     Set<number>
   >(new Set());

@@ -29,12 +29,15 @@ logger = logging.getLogger(__name__)
 THINKING_HINT = "⏳ 正在处理，请稍候..."
 
 HELP_TEXT = """DrSai Bot 命令列表：
-/help            —— 显示此帮助
-/newsession      —— 新建对话（开始全新 session）
-/session         —— 查看所有历史 session
-/session <id>    —— 切换到指定 session（如 /session session_1）
-/models          —— 列出所有可用模型
-/model <模型名>   —— 使用指定模型
+/help                 —— 显示此帮助
+/newsession           —— 新建对话（开始全新 session）
+/session              —— 查看所有历史 session
+/session <id>         —— 切换到指定 session（如 /session session_1）
+/models               —— 列出所有可用模型
+/model <model_name>   —— 使用指定模型
+/agents               —— 查看可用的子智能体
+/agent <agent_name>   —— 设置当前会话的默认子智能体 
+/agent clear          —— 取消当前会话的默认子智能体设置
 其他文字         —— 与当前 session 的 AI 助手对话""".strip()
 
 # 连续失败退避阈值

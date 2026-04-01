@@ -117,6 +117,7 @@ class UserProfileManager:
         self.tools_config_path = self.config_path / "TOOLS_CONFIG.json" # 工具配置
         self.user_md = self.config_path / "USER.md" # 用户的个人描述
         self.user_config_path = self.config_path / "USER_CONFIG.json" # 用户配置
+        self.thread_config_path = self.config_path / "THREAD_CONFIG.json" # Thread级别的配置（如默认子智能体）
             
         # user's user profile
         self.first_time_setup = True
@@ -159,6 +160,10 @@ class UserProfileManager:
         
         if not self.subagent_config_path.exists():
             with self.subagent_config_path.open("w", encoding='utf-8') as f:
+                json.dump({}, f, indent=4, ensure_ascii=False)
+
+        if not self.thread_config_path.exists():
+            with self.thread_config_path.open("w", encoding='utf-8') as f:
                 json.dump({}, f, indent=4, ensure_ascii=False)
         
         # 创建目录
@@ -250,6 +255,7 @@ The more you know, the better you can help. But remember — you're learning abo
 **Note:** 
 
 - Remember to perform operations such as downloading files in the Download Directory, and avoid interfering with the contents of other configured files.
+- When generating and testing code, if the user does not explicitly specify a folder, it should be created and run in the Temporary Directory.
 """
         self.tools_md.write_text(content, encoding='utf-8')
 
@@ -605,6 +611,76 @@ You can update one or multiple fields at once. Only provide the fields that need
         """
         memories_document_ids = json.loads(self.memories_document_ids.read_text(encoding='utf-8'))
         return memories_document_ids.get(thread_id)
+
+    def load_thread_config(self, thread_id: str) -> dict:
+        """
+        加载特定thread的配置
+        Args:
+            thread_id: 会话ID
+        Returns:
+            thread配置字典
+        """
+        try:
+            thread_configs = json.loads(self.thread_config_path.read_text(encoding='utf-8'))
+            return thread_configs.get(thread_id, {})
+        except Exception as e:
+            logger.error(f"Failed to load thread config: {e}")
+            return {}
+
+    def save_thread_config(self, thread_id: str, config: dict):
+        """
+        保存特定thread的配置
+        Args:
+            thread_id: 会话ID
+            config: 配置字典
+        """
+        try:
+            thread_configs = json.loads(self.thread_config_path.read_text(encoding='utf-8'))
+            thread_configs[thread_id] = config
+            self.thread_config_path.write_text(
+                json.dumps(thread_configs, indent=4, ensure_ascii=False),
+                encoding='utf-8'
+            )
+            logger.info(f"Saved thread config for {thread_id}")
+        except Exception as e:
+            logger.error(f"Failed to save thread config: {e}")
+
+    def get_default_subagent(self, thread_id: str) -> str | None:
+        """
+        获取指定thread的默认子智能体
+        Args:
+            thread_id: 会话ID
+        Returns:
+            子智能体名称，如果没有设置则返回None
+        """
+        thread_config = self.load_thread_config(thread_id)
+        return thread_config.get("default_subagent")
+
+    def set_default_subagent(self, thread_id: str, subagent_name: str):
+        """
+        设置指定thread的默认子智能体
+        Args:
+            thread_id: 会话ID
+            subagent_name: 子智能体名称
+        """
+        thread_config = self.load_thread_config(thread_id)
+        thread_config["default_subagent"] = subagent_name
+        thread_config["updated_at"] = datetime.now().isoformat()
+        self.save_thread_config(thread_id, thread_config)
+        logger.info(f"Set default subagent for thread {thread_id}: {subagent_name}")
+
+    def clear_default_subagent(self, thread_id: str):
+        """
+        清除指定thread的默认子智能体设置
+        Args:
+            thread_id: 会话ID
+        """
+        thread_config = self.load_thread_config(thread_id)
+        if "default_subagent" in thread_config:
+            del thread_config["default_subagent"]
+            thread_config["updated_at"] = datetime.now().isoformat()
+            self.save_thread_config(thread_id, thread_config)
+            logger.info(f"Cleared default subagent for thread {thread_id}")
 
     # def create_session_memory(
     #     self,

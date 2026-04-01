@@ -1,6 +1,6 @@
 import base64
 import os
-from typing import Any, List, Sequence, Dict
+from typing import Any, List, Sequence, Dict, Union
 import json
 from autogen_agentchat.messages import ChatMessage, MultiModalMessage, TextMessage
 from autogen_core import Image
@@ -10,6 +10,7 @@ from typing import Optional
 import zlib
 from openai import OpenAI
 import requests
+import re
 
 def upload_to_hepai_filesystem(file_path: str, api_key: str|None = None) -> Dict[str, Any]:
  
@@ -513,3 +514,55 @@ def download_file_from_url_or_base64(file_info: dict, save_path: str) -> str:
     except Exception as e:
         logger.debug(f"An error occurred while saving the file {filename}: {e}")
         return None
+
+def fix_and_parse_json(json_str: str, debug: bool = True) -> Union[Dict[str, Any], str]:
+    """
+    修复 AI 生成的不标准 JSON 并解析
+    成功：返回 dict
+    失败：返回 【完整报错 + 原始字符串】，绝不会丢失现场！
+    
+    支持修复：
+    1. 无引号字符串（status: in_progress → "status": "in_progress"）
+    2. 单引号转双引号
+    3. 多余转义符 \
+    4. AI 返回的 ```json 代码块
+    5. 首尾空白、换行
+    """
+    original_str = json_str  # 永远保留原始字符串，报错时返回
+    
+    if not json_str or not isinstance(json_str, str):
+        return f"[JSON解析失败] 输入为空或非字符串 | 原始内容：{original_str}"
+
+    try:
+        # 1. 尝试直接解析（合法JSON直接返回）
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        if debug:
+            print(f"[初次解析失败] {str(e)}")
+
+    try:
+        # 2. 开始自动修复
+        json_str = json_str.strip()
+        json_str = re.sub(r'```json|```', '', json_str)  # 移除代码块
+        json_str = json_str.replace("'", '"')            # 单引号→双引号
+        json_str = json_str.replace('\\"', '"')          # 移除多余转义
+
+        # 修复无引号的 key
+        json_str = re.sub(r'([a-zA-Z0-9_]+)\s*:', r'"\1":', json_str)
+        # 修复无引号的 value（你的 in_progress 问题）
+        json_str = re.sub(r':\s*([a-zA-Z_]+)([,}])', r': "\1"\2', json_str)
+
+        # 3. 修复后再次解析
+        return json.loads(json_str)
+
+    except Exception as e:
+        # 最终失败：返回【完整报错 + 位置 + 原始字符串】
+        error_msg = (
+            f"[JSON最终解析失败]\n"
+            f"错误类型：{type(e).__name__}\n"
+            f"错误信息：{str(e)}\n"
+            f"原始字符串：{original_str}"
+        )
+        if debug:
+            print(error_msg)
+        return error_msg

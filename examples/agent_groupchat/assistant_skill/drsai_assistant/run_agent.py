@@ -23,7 +23,12 @@ from drsai.modules.managers.messages import (
 
 from pathlib import Path
 HERE = Path(__file__).parent
-HOME = str(Path.home())
+WORKSPACE = HERE / "workspace"
+WORKSPACE.mkdir(parents=True, exist_ok=True)
+DATASET = WORKSPACE / "dataset"
+DATASET.mkdir(parents=True, exist_ok=True)
+WORKDIR = WORKSPACE / "runs"
+WORKDIR.mkdir(parents=True, exist_ok=True)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -93,7 +98,7 @@ def create_agent(
         return model_client
 
     # # Code executor and working directory
-    WORKDIR=os.getenv("WORKDIR")
+    # WORKDIR=os.getenv("WORKDIR")
 
     # Sub-agents configuration
     SUB_AGENTS = {
@@ -168,7 +173,7 @@ if __name__ == "__main__":
             # permission='groups: drsai, payg; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             permission={
                 "groups": "drsai, payg", 
-                "users": ["admin", "xiongdb@ihep.ac.cn", "yqsun@ihep.ac.cn", "chen_yu@ihep.ac.cn", "wangzhen96@ihep.ac.cn", "shenzb@ihep.ac.cn", "wengxr@ihep.ac.cn", "guowg@ihep.ac.cn"], 
+                "users": ["admin", "xiongdb@ihep.ac.cn"], 
                 "owner": "xiongdb@ihep.ac.cn"
                 },
             description = "A general assistant for PDF QA,writing code, implementing features, and fixing bugs.",
@@ -187,7 +192,7 @@ if __name__ == "__main__":
             # controller_address = "http://127.0.0.1:42501",
             port = 42818, 
             no_register=False,
-            drsai_dir = f"{HOME}/b9agent/tmp",
+            drsai_dir = DATASET,
             enable_openwebui_pipeline=True, 
             history_mode = "backend",
             # use_api_key_mode = "backend",
