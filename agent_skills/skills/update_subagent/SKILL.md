@@ -12,6 +12,7 @@ description: 指导如何更新智能助手的子智能体(subagent)的列表。
 - CodeExecutorAgent：用于代码执行的子智能体使用docker或者局部的.venv环境进行代码块执行。用户可以自定义传入.venv环境地址配置进行创建。
 - DrSaiAgent：普通的Autogen Assistant，可以使用工具。
 - HepAIWorkerAgent：链接远程智能体的代理智能体。
+- RemoteAgent：链接远程智能体OpenAI ChatCompletions格式的代理智能体，如OpenClaw等。
 
 具体的格式为：
 ```json
@@ -41,7 +42,21 @@ description: 指导如何更新智能助手的子智能体(subagent)的列表。
             "name": "remote_model_name",
             "url": "https://aiapi.ihep.ac.cn/apiv2" // or any other url
         }
-    }
+    },
+    "agent_04": {
+        "type": "RemoteAgent", // the type of the agent
+        "description": "The descrpiption of the agent",
+        "tools": [], 
+        "prompt": "The system prompt for the agent.",
+        "model_remote_configs": {
+            "model": "openclaw",
+            "url": "http://127.0.0.1:18789/v1/chat/completions",
+            "headers": {
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                        "x-openclaw-agent-id": "main"
+                    }
+        }
 }
 ```
 **注意：**
@@ -110,6 +125,41 @@ description: 指导如何更新智能助手的子智能体(subagent)的列表。
         "model": "openai/gpt-5.2",
         "model_type": "openai", 
         "base_url": "https://aiapi.ihep.ac.cn/apiv2" 
+    }
+}
+```
+
+4. 例如用户需要添加一个名称类型为`RemoteAgent`，如openclaw的聊天接口，名称为`openclaw_agent`，描述为`A openclaw agent.`，提示词为`The system prompt for the agent.`，访问的配置为：
+```
+{
+    "model": "openclaw",
+    "url": "http://127.0.0.1:18789/v1/chat/completions",
+    "headers": {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "x-openclaw-agent-id": "main"
+            }
+}
+```
+
+那么可以按照以下的格式添加：
+
+```json
+{
+    "openclaw_agent": {
+        "type": "RemoteAgent",
+        "description": "A openclaw agent.",
+        "tools": [], 
+        "prompt": "The system prompt for the agent.",
+        "model_remote_configs": {
+            "model": "openclaw",
+            "url": "http://127.0.0.1:18789/v1/chat/completions",
+            "headers": {
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                        "x-openclaw-agent-id": "main"
+                    }
+        }
     }
 }
 ```

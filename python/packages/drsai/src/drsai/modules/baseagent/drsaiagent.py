@@ -13,6 +13,7 @@ from typing import (
     Mapping,
     )
 
+# from copy import deepcopy
 import asyncio, traceback
 from loguru import logger
 import warnings
@@ -744,10 +745,15 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         exec_results = [result for _, result in executed_calls_and_results]
 
         # Yield ToolCallExecutionEvent
-        exec_results_output = exec_results[:]
-        for result in exec_results_output:
-            if len(result.content)>100:
-                result.content = result.content[:100] + "..."
+        exec_results_output = [
+            FunctionExecutionResult(
+                content=result.content[:100] + "..." if len(result.content) > 100 else result.content,
+                call_id=result.call_id,
+                is_error=result.is_error,
+                name=result.name,
+            )
+            for result in exec_results
+        ]
         tool_call_result_msg = ToolCallExecutionEvent(
             content=exec_results_output,
             source=agent_name,

@@ -34,7 +34,7 @@ from drsai.modules.baseagent import (
     )
 from drsai.modules.baseagent.drsaiagent import DrSaiAgentConfig
 from drsai.modules.baseagent import CodeExecutorAgent, CodeExecutor
-from ..drsai_worker_agent import HepAIWorkerAgent
+from drsai.modules.agents import RemoteAgent, HepAIWorkerAgent
 from drsai.modules.components import (
     ComponentModel,
 )
@@ -1327,6 +1327,14 @@ Complete the task and return a clear, concise summary."""
                     run_info={"name": self._user_profile_manager.user_id, "email": self._user_id},
 
                 )
+            elif sub_agent_type == "RemoteAgent":
+                model_remote_configs = sub_agent.get("model_remote_configs")
+                subagent = RemoteAgent(
+                    name=sub_agent_name,
+                    description=description,
+                    model_remote_configs=model_remote_configs
+                )
+                await subagent.lazy_init()
             return subagent
         else:
             raise ValueError(f"Sub agent {sub_agent_name} not found")
