@@ -16,6 +16,29 @@ import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 
 type SelectedLlm = { label: string; value: string };
 
+type UploadedFileInfo = {
+  name: string;
+  type: string;
+  path: string;
+  suffix: string;
+  size: number;
+  uuid: string;
+  url?: string;
+};
+
+function toAttachedFilesValue(
+  files: Array<RcFile | UploadedFileInfo>
+): Array<{ name: string; type: string }> {
+  return files
+    .map((f) => {
+      const name = (f as any)?.name;
+      const type = (f as any)?.type || "";
+      if (typeof name !== "string" || name.length === 0) return null;
+      return { name, type: typeof type === "string" ? type : String(type) };
+    })
+    .filter((x): x is { name: string; type: string } => x !== null);
+}
+
 const buildLlmPayload = (
   llm?: SelectedLlm,
   agentInfo?: Record<string, any>
@@ -126,6 +149,12 @@ export const useTaskActions = ({
 
         // Use files directly (already in the correct format from upload)
         const processedFiles = files && files.length > 0 ? files : [];
+        const attachedFiles = toAttachedFilesValue(
+          processedFiles as Array<RcFile | UploadedFileInfo>
+        );
+        const filesJson =
+          processedFiles.length > 0 ? JSON.stringify(processedFiles) : "[]";
+        const attachedFilesJson = JSON.stringify(attachedFiles);
 
         // Inner JSON (response field only): accepted, content, plan — no metadata here.
         // BESIII Revise etc. pass inputMetadata as sibling on the WebSocket envelope.
@@ -166,7 +195,14 @@ export const useTaskActions = ({
                   agent_mode_config: agentInfo,
                   ...buildLlmPayload(llm, agentInfo as Record<string, any>),
                 },
-                ...(processedFiles.length > 0 && { files: processedFiles }),
+                ...(processedFiles.length > 0 && {
+                  // Keep both forms for backward/forward compatibility:
+                  // - `files`: consumed by backend
+                  // - stringified `files` / `attached_files`: consumed by UI renderers
+                  files: processedFiles,
+                  files_json: filesJson,
+                  attached_files: attachedFilesJson,
+                }),
                 ...(hasInputMetadata ? inputMetadata : {}),
               },
             };
@@ -182,7 +218,11 @@ export const useTaskActions = ({
                 ...(agentInfo?.id && { agent_id: agentInfo.id }),
                 ...buildLlmPayload(llm, agentInfo as Record<string, any>),
               },
-              ...(processedFiles.length > 0 && { files: processedFiles }),
+              ...(processedFiles.length > 0 && {
+                files: processedFiles,
+                files_json: filesJson,
+                attached_files: attachedFilesJson,
+              }),
               ...(hasInputMetadata ? inputMetadata : {}),
             },
           };

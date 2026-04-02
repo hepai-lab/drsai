@@ -693,8 +693,28 @@ const RenderUserMessage: React.FC<{
         return [];
       }
     }
+    // Backward/alternate shape: some events use `files` (array or JSON string)
+    const rawFiles = (parsedContent.metadata as any)?.files;
+    if (rawFiles) {
+      try {
+        const parsed =
+          typeof rawFiles === "string" ? JSON.parse(rawFiles) : rawFiles;
+        if (Array.isArray(parsed)) {
+          return parsed
+            .map((f: any) => {
+              const name = typeof f?.name === "string" ? f.name : "";
+              const type = typeof f?.type === "string" ? f.type : "";
+              if (!name) return null;
+              return { name, type };
+            })
+            .filter((x: any) => x !== null);
+        }
+      } catch {
+        return [];
+      }
+    }
     return [];
-  }, [parsedContent.metadata?.attached_files]);
+  }, [parsedContent.metadata?.attached_files, (parsedContent.metadata as any)?.files]);
 
   // Get the text content for editing/copying
   const getTextContent = (): string => {
