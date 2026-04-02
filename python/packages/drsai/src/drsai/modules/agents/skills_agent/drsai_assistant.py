@@ -442,13 +442,17 @@ Current Session_ID is {self._thread_id}
                     input_messages.append(msg)
                     output_messages.append(msg)
                     try:
-                        attached_files_json = msg.metadata.get("attached_files")
+                        files=[]
+                        attached_files_json = msg.metadata.get("attached_files") or msg.metadata.get("files")
                         if attached_files_json:
                             attached_files = json.loads(attached_files_json)
                             for file in attached_files:
                                 download_file_from_url_or_base64(
                                     file_info = file, 
                                     save_path = f"{self._user_profile_manager.download_dir}/{file['name']}")
+                                files.append(f"{self._user_profile_manager.download_dir}/{file['name']}")
+                        if files:
+                            msg.content = msg.content + "\nThe files uploaded by the user are as follows:\n" + "\n".join(files)
                         # 由于不同模型的tool call格式的限制，不允许在同一个session中切换模型
                         # settings_config = msg.metadata.get("settings_config")
                         # if settings_config:
@@ -937,6 +941,7 @@ Current Session_ID is {self._thread_id}
         Handle default subagent mode for the current thread.
         Routes all messages to the configured default subagent.
         """
+        subagent = None
         try:
             # Get sub agent system prompt
             sub_system = f"""You are a {default_subagent_name} subagent at {self._work_dir}.
@@ -980,7 +985,6 @@ Complete the task and return a clear, concise summary."""
                         )
                     )
                     yield message
-                    return
                 yield message
 
         except Exception as e:
@@ -993,6 +997,14 @@ Complete the task and return a clear, concise summary."""
                     metadata={"internal": "no"},
                 )
             )
+        finally:
+            # 确保无论如何都要关闭 subagent，防止资源泄漏
+            if subagent:
+                try:
+                    await subagent.close()
+                    logger.debug(f"Successfully closed subagent: {default_subagent_name}")
+                except Exception as close_error:
+                    logger.warning(f"Error closing subagent {default_subagent_name}: {close_error}")
 
     def is_commands_mode(self, text: str) -> bool:
         """Check if the message is a command."""
@@ -1328,13 +1340,13 @@ Complete the task and return a clear, concise summary."""
 
                 )
             elif sub_agent_type == "RemoteAgent":
-                model_remote_configs = sub_agent.get("model_remote_configs")
+                model_remote_configs = sub_agent.get("model_remote_configs", {})
                 subagent = RemoteAgent(
                     name=sub_agent_name,
                     description=description,
-                    model_remote_configs=model_remote_configs
+                    model_remote_configs=model_remote_configs.copy() # 创建配置副本，避免原始配置被修改
                 )
-                await subagent.lazy_init()
+            await subagent.lazy_init()
             return subagent
         else:
             raise ValueError(f"Sub agent {sub_agent_name} not found")
@@ -1358,6 +1370,7 @@ Complete the task and return a clear, concise summary."""
         2. normal drsai agent
         3. worker agent
         """
+        subagent = None
         try:
             description, prompt, sub_agent_name = argument["description"], argument["prompt"], argument["agent_type"]
 
@@ -1367,7 +1380,7 @@ Complete the task and return a clear, concise summary."""
     {self._user_sub_agents[sub_agent_name].get("prompt", "")}
 
     Complete the task and return a clear, concise summary."""
-            
+
             # construct task messages
             task_messages: Sequence[BaseChatMessage] = []
             llm_messages = await model_context.get_messages()
@@ -1435,6 +1448,14 @@ Complete the task and return a clear, concise summary."""
                 content=str(e),
                 source=agent_name,
             )
+        finally:
+            # 确保无论如何都要关闭 subagent，防止资源泄漏
+            if subagent:
+                try:
+                    await subagent.close()
+                    logger.debug(f"Successfully closed subagent: {sub_agent_name}")
+                except Exception as close_error:
+                    logger.warning(f"Error closing subagent {sub_agent_name}: {close_error}")
 
     async def handle_todo_write(
         self,

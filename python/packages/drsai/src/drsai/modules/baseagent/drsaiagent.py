@@ -366,13 +366,17 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                     input_messages.append(msg)
                     output_messages.append(msg)
                     try:
-                        attached_files_json = msg.metadata.get("attached_files")
+                        files = []
+                        attached_files_json = msg.metadata.get("attached_files") or msg.metadata.get("files")
                         if attached_files_json:
                             attached_files = json.loads(attached_files_json)
                             for file in attached_files:
                                 download_file_from_url_or_base64(
                                     file_info = file, 
                                     save_path = f"{self._file_save_dir}/{self._user_id}/{self._thread_id}/{file['name']}")
+                                files.append(f"{self._file_save_dir}/{self._user_id}/{self._thread_id}/{file['name']}")
+                        if files:
+                            msg.content = msg.content + "\nThe files uploaded by the user are as follows:\n" + "\n".join(files)
                         # 由于不同模型的tool call格式的限制，不允许在同一个session中切换模型
                         # settings_config = msg.metadata.get("settings_config")
                         # if settings_config:

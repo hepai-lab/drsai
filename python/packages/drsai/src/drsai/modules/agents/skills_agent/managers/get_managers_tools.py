@@ -47,6 +47,7 @@ def get_todo_manager_tool(strict: bool = False,) -> ToolSchema:
         properties={
             "items": {
                 "type": "array",
+                "description": "To-do list, must contain complete information for all tasks",
                 "items": {
                     "type": "object",
                     "properties": {
@@ -57,10 +58,11 @@ def get_todo_manager_tool(strict: bool = False,) -> ToolSchema:
                         },
                         # "activeForm": {"type": "string"},
                     },
+                    "required": ["content", "status"], # , "activeForm"
                 },
             },
         },
-        required=["content", "status"], # , "activeForm"
+        required=["items"],
         additionalProperties=False,
     )
     tool_schema = ToolSchema(

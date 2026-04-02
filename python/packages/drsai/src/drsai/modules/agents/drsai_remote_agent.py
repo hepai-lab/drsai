@@ -1,6 +1,6 @@
 import json
 
-import asyncio
+import asyncio, traceback
 from typing import AsyncGenerator,Optional, List, Dict, Tuple, Sequence, Any, Awaitable, Callable, Union
 from loguru import logger
 # from datetime import datetime
@@ -35,6 +35,8 @@ from drsai.modules.components.model_client import (
     LLMMessage,
     # ModelFamily,
     SystemMessage,
+    UserMessage,
+    AssistantMessage,
 )
 from drsai.modules.components.tool import (
     BaseTool, 
@@ -42,7 +44,6 @@ from drsai.modules.components.tool import (
     )
 from drsai.modules.baseagent import DrSaiAgent
 import aiohttp
-from aiohttp import ClientConnectionError
 
 class RemoteAgent(DrSaiAgent):
     '''
@@ -82,54 +83,52 @@ class RemoteAgent(DrSaiAgent):
 
         self._run_info = {
             "name": self._user_id,
-        } 
-        
+        }
+
         # initialize the async model client
-        self.api_key = model_remote_configs.pop("api_key", "")
-        self.url = model_remote_configs.pop("url", "")
-        self.model = model_remote_configs.pop("model", self._name)
+        self.api_key = model_remote_configs.get("api_key", "")
+        self.url = model_remote_configs.get("url", "")
+        self.model = model_remote_configs.get("model", self._name)
         self.new_headers = model_remote_configs.get("headers", {})
         if not self.new_headers:
-            self.new_headers["Authorization"] = f"Bearer {self.api_key}"
-            self.new_headers["Content-Type"] = "application/json"
-        self._session = None
-        self._connection_timeout = 60
+            self.new_headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+        self._connection_timeout = model_remote_configs.get("timeout", 60)
 
     async def lazy_init(self, **kwargs: Any) -> None:
         """Initialize the tools and models needed by the agent."""
-        if self._session is None:
-            self._session = aiohttp.ClientSession(
-                # base_url=self.url, 如"http://localhost:42807/apiv2"，这里直接在on_messages_stream中使用完整的url
-                headers=self.new_headers,
-                timeout=aiohttp.ClientTimeout(total=self._connection_timeout)
-            )
+        # 验证 URL 配置
+        if not self.url:
+            raise ValueError(f"RemoteAgent '{self.name}' requires a valid URL in model_remote_configs")
+
+        # 验证 URL 格式
+        if not self.url.startswith(('http://', 'https://')):
+            raise ValueError(f"RemoteAgent '{self.name}' URL must start with http:// or https://, got: {self.url}")
+
+        logger.info(f"RemoteAgent '{self.name}' initialized with URL: {self.url}")
 
     async def close(self) -> None:
-        """Clean up resources used by the agent.
-
-        This method:
-          ...
-        """
-        logger.info(f"Closing {self.name}...")
+        """Clean up resources used by the agent."""
+        logger.info(f"Closing RemoteAgent '{self.name}'...")
 
         # 中断当前流式响应
         if self._current_streaming_response:
             try:
                 self._current_streaming_response.close()
-                # logger.debug(f"Force-closed streaming response for {self.name}")
             except Exception as e:
                 logger.warning(f"Error closing response: {str(e)}")
 
         # 关闭模型客户端
         if self._model_client:
-            await self._model_client.close()
-        
-        # 关闭HTTP session
-        if self._session and not self._session.closed:
-            # await asyncio.sleep(0.5)
-            await self._session.close()
-        
-        logger.info(f"Closed {self.name} successfully.")
+            try:
+                await self._model_client.close()
+            except Exception as e:
+                logger.warning(f"Error closing model client: {str(e)}")
+
+        # 注意：不再需要关闭 self._session，因为我们使用临时 session
+        logger.info(f"RemoteAgent '{self.name}' closed successfully.")
 
     async def pause(self) -> None:
         """Pause the agent by setting the paused state."""
@@ -211,64 +210,87 @@ class RemoteAgent(DrSaiAgent):
             # STEP 3: Run the first inference
             model_result = None
             all_messages = await model_context.get_messages()
-            llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
-            oai_massages = await self.llm_messages2oai_messages(llm_messages)
+            # llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
+            oai_massages = await self.llm_messages2oai_messages(all_messages)
+
+            # 构建请求体
             body = {
-                "chat_id": self._thread_id, 
-                "user": self._run_info,
-                "model":self.model, 
+                "model": self.model,
                 "messages": oai_massages,
                 "stream": self._model_client_stream
-                }
-            
-            # try:
+            }
 
+            # 添加可选字段（如果存在）
+            if self._thread_id:
+                body["chat_id"] = self._thread_id
+            if self._run_info:
+                body["user"] = self._run_info
+
+            logger.debug(f"RemoteAgent '{self.name}' sending request to {self.url}")
+            logger.debug(f"Request body keys: {list(body.keys())}")
+
+            # 使用临时 session，每次请求创建新的连接，避免资源泄漏
             full_response = ""
-            async with self._session.post(
-                self.url,
-                headers=self.new_headers,
-                json=body
-            ) as response:
-                 
-                self._current_streaming_response = response
+            try:
+                async with aiohttp.ClientSession(
+                    headers=self.new_headers,
+                    timeout=aiohttp.ClientTimeout(total=self._connection_timeout)
+                ) as temp_session:
+                    async with temp_session.post(
+                        self.url,
+                        json=body
+                    ) as response:
 
-                response.raise_for_status()
-                
-                buffer = b''
-                async for chunk in response.content.iter_chunked(1024):
-                    
-                    # 检查取消和暂停状态
-                    if code_execution_token.is_cancelled() or self.is_paused:
-                        raise asyncio.CancelledError()
+                        self._current_streaming_response = response
 
-                    buffer += chunk
-                    while b'\n' in buffer:
-                        line_bytes, buffer = buffer.split(b'\n', 1)
-                        line = line_bytes.decode().strip()
-                        
-                        if line.startswith("data: "):
-                            try:
-                                json_str = line[6:]  # 去掉"data: "前缀
-                                if "[DONE]" in json_str:
-                                    continue
-                                oai_json = json.loads(json_str)
-                                # 安全访问嵌套字段
-                                if "choices" in oai_json and len(oai_json["choices"]) > 0:
-                                    delta = oai_json["choices"][0].get("delta", {})
-                                    textchunck = delta.get("content", "")
-                                    if textchunck:
-                                        yield ModelClientStreamingChunkEvent(content=textchunck, source=agent_name)
-                                        full_response += textchunck
-                            except (json.JSONDecodeError, KeyError) as parse_error:
-                                logger.warning(f"Failed to parse SSE data: {str(parse_error)}")
+                        response.raise_for_status()
 
-            self._current_streaming_response = None
+                        buffer = b''
+                        async for chunk in response.content.iter_chunked(1024):
+
+                            # 检查取消和暂停状态
+                            if code_execution_token.is_cancelled() or self.is_paused:
+                                raise asyncio.CancelledError()
+
+                            buffer += chunk
+                            while b'\n' in buffer:
+                                line_bytes, buffer = buffer.split(b'\n', 1)
+                                line = line_bytes.decode().strip()
+
+                                if line.startswith("data: "):
+                                    try:
+                                        json_str = line[6:]  # 去掉"data: "前缀
+                                        if "[DONE]" in json_str:
+                                            continue
+                                        oai_json = json.loads(json_str)
+                                        # 安全访问嵌套字段
+                                        if "choices" in oai_json and len(oai_json["choices"]) > 0:
+                                            delta = oai_json["choices"][0].get("delta", {})
+                                            textchunck = delta.get("content", "")
+                                            if textchunck:
+                                                yield ModelClientStreamingChunkEvent(content=textchunck, source=agent_name)
+                                                full_response += textchunck
+                                    except (json.JSONDecodeError, KeyError) as parse_error:
+                                        logger.warning(f"Failed to parse SSE data: {str(parse_error)}")
+
+            except aiohttp.ClientError as http_error:
+                error_msg = f"HTTP error when calling {self.url}: {str(http_error)}"
+                logger.error(error_msg)
+                logger.error(traceback.format_exc())
+                raise RuntimeError(error_msg) from http_error
+
+            finally:
+                self._current_streaming_response = None
+
+            if not full_response:
+                logger.warning(f"RemoteAgent '{self.name}' received empty response")
+
             model_result = CreateResult(
-                content=full_response, 
+                content=full_response,
                 finish_reason="stop",
                 usage = RequestUsage(prompt_tokens = 0, completion_tokens = len(full_response.split())),
                 cached = False
-                )
+            )
             
             # except aiohttp.ClientError as e:
             #     logger.debug(f"HTTP error: {str(e)}")
@@ -325,17 +347,7 @@ class RemoteAgent(DrSaiAgent):
             # If the task is cancelled, we respond with a message.
             if self._current_streaming_response:
                 self._current_streaming_response.close()
-            yield Response(
-                chat_message=TextMessage(
-                    content="The task was cancelled by the user.",
-                    source=self.name,
-                    metadata={"internal": "yes"},
-                ),
-                inner_messages=inner_messages,
-            )
-        
-        except ClientConnectionError:
-            # If the task is cancelled, we respond with a message.
+            logger.info(f"RemoteAgent '{self.name}' task was cancelled")
             yield Response(
                 chat_message=TextMessage(
                     content="The task was cancelled by the user.",
@@ -346,17 +358,18 @@ class RemoteAgent(DrSaiAgent):
             )
 
         except Exception as e:
-            logger.error(f"Error in {self.name}: {e}")
+            logger.error(f"Error in RemoteAgent '{self.name}': {e}")
+            logger.error(traceback.format_exc())
             # add to chat history
             await model_context.add_message(
-                AssistantMessage(
+                UserMessage(
                     content=f"An error occurred while executing the task: {e}",
                     source=self.name
                 )
             )
             yield Response(
                 chat_message=TextMessage(
-                    content="An error occurred while executing the task.",
+                    content=f"An error occurred while executing the task: {str(e)}",
                     source=self.name,
                     metadata={"internal": "no"},
                 ),
