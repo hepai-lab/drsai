@@ -31,9 +31,23 @@ from autogen_agentchat.messages import (
     MessageFactory,
     ModelClientStreamingChunkEvent,
     SelectorEvent,
+    StopMessage,
 )
 from autogen_agentchat.state import SelectorManagerState
-from autogen_agentchat.teams._group_chat._events import GroupChatTermination
+
+from autogen_core import AgentId, DefaultTopicId, MessageContext, event, rpc
+from autogen_agentchat.teams._group_chat._events import (
+    GroupChatAgentResponse,
+    GroupChatError,
+    GroupChatMessage,
+    GroupChatPause,
+    GroupChatRequestPublish,
+    GroupChatReset,
+    GroupChatResume,
+    GroupChatStart,
+    GroupChatTermination,
+    SerializableException,
+)
 
 # from autogen_agentchat.teams import BaseGroupChat
 # from autogen_agentchat.teams._group_chat._base_group_chat_manager import BaseGroupChatManager
@@ -52,6 +66,7 @@ SyncCandidateFunc = Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], List[
 AsyncCandidateFunc = Callable[[Sequence[BaseAgentEvent | BaseChatMessage]], Awaitable[List[str]]]
 CandidateFuncType = Union[SyncCandidateFunc | AsyncCandidateFunc]
 
+from loguru import logger
 
 class AGSelectorGroupChatManager(DrSaiBaseGroupChatManager):
     """A group chat manager that selects the next speaker using a ChatCompletion
@@ -158,6 +173,112 @@ class AGSelectorGroupChatManager(DrSaiBaseGroupChatManager):
         self._message_thread.extend(messages)
         base_chat_messages = [m for m in messages if isinstance(m, BaseChatMessage)]
         await self._add_messages_to_context(self._model_context, base_chat_messages)
+
+    @rpc
+    async def handle_start(self, message: GroupChatStart, ctx: MessageContext) -> None:
+        """Handle the start of a group chat by selecting a speaker to start the conversation."""
+        try:
+            # Check if the conversation has already terminated.
+            if self._is_paused:
+                return
+
+            if (
+                self._termination_condition is not None
+                and self._termination_condition.terminated
+            ):
+                early_stop_message = StopMessage(
+                    content="The group chat has already terminated.", source=self._name
+                )
+                await self._signal_termination(early_stop_message)
+                return
+
+            assert message is not None and message.messages is not None
+            await self.update_message_thread(message.messages)
+            # Send message to all agents with initial user message
+            await self.publish_message(
+                GroupChatStart(messages=message.messages),
+                topic_id=DefaultTopicId(type=self._group_topic_type),
+                cancellation_token=ctx.cancellation_token,
+            )
+
+            # Add messages to thread
+            for m in message.messages:
+                self._message_thread.append(m)
+
+            # Select a speaker to start/continue the conversation
+            speaker_name_future = asyncio.ensure_future(self.select_speaker(self._message_thread))
+            # Link the select speaker future to the cancellation token.
+            ctx.cancellation_token.link_future(speaker_name_future)
+            speaker_name = await speaker_name_future
+            if speaker_name not in self._participant_name_to_topic_type:
+                raise RuntimeError(f"Speaker {speaker_name} not found in participant names.")
+            await self._log_speaker_selection(speaker_name)
+
+            # send request to next speaker
+            await self.publish_message(
+                GroupChatRequestPublish(),
+                topic_id=DefaultTopicId(
+                    type=self._participant_name_to_topic_type[speaker_name]
+                ),
+                cancellation_token=ctx.cancellation_token,
+            )
+        except asyncio.CancelledError:
+            # Handle cancellation gracefully during pause/stop operations
+            logger.info(f"Group chat manager {self._name} start operation was cancelled (likely due to pause/stop).")
+            # Don't raise the exception - this is expected behavior during pause/stop
+            return
+        
+    @event
+    async def handle_agent_response(self, message: GroupChatAgentResponse, ctx: MessageContext) -> None:
+        try:
+            if self._is_paused:
+                return
+
+            delta: List[BaseChatMessage] = []
+            if message.agent_response.inner_messages is not None:
+                for inner_message in message.agent_response.inner_messages:
+                    delta.append(inner_message)  # type: ignore
+                    self._message_thread.append(inner_message)  # type: ignore
+
+            # Add the agent's response to the thread
+            self._message_thread.append(message.agent_response.chat_message)
+            delta.append(message.agent_response.chat_message)
+            await self.update_message_thread(delta)
+
+
+            # "Check termination condition" and "Check max turns" is all in _apply_termination_condition
+            is_terminated = await self._apply_termination_condition(delta, increment_turn_count=True)
+            if is_terminated:
+                return
+
+            # Select a speaker to start/continue the conversation
+            speaker_name_future = asyncio.ensure_future(self.select_speaker(self._message_thread))
+            # Link the select speaker future to the cancellation token.
+            ctx.cancellation_token.link_future(speaker_name_future)
+            next_speaker = await speaker_name_future
+            if next_speaker not in self._participant_name_to_topic_type:
+                raise RuntimeError(f"Speaker {next_speaker} not found in participant names.")
+            await self._log_speaker_selection(next_speaker)
+
+            # send request to next speaker
+            await self.publish_message(
+                GroupChatRequestPublish(),
+                topic_id=DefaultTopicId(
+                    type=self._participant_name_to_topic_type[next_speaker]
+                ),
+                cancellation_token=ctx.cancellation_token,
+            )
+        except asyncio.CancelledError:
+            # Handle cancellation gracefully during pause/stop operations
+            logger.info(f"Group chat manager {self._name} operation was cancelled (likely due to pause/stop).")
+            # Don't raise the exception - this is expected behavior during pause/stop
+            return
+        except Exception as e:
+            # Handle the exception and signal termination with an error.
+            error = SerializableException.from_exception(e)
+            await self._signal_termination_with_error(error)
+            # Raise the exception to the runtime.
+            raise
 
     async def select_speaker(self, thread: List[BaseAgentEvent | BaseChatMessage]) -> str:
         """Selects the next speaker in a group chat using a ChatCompletion client,

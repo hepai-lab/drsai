@@ -68,6 +68,21 @@ description: 指导如何更新智能助手的子智能体(subagent)的列表。
 - 如果用户没有明确说明`base_url`或者`url`，默认为"https://aiapi.ihep.ac.cn/apiv2"，anthropic的模型默认为"https://aiapi.ihep.ac.cn/apiv2/anthropic"。
 - 如果用户在添加`CodeExecutorAgent`类型的子智能体时未否指定venv环境路径，则系统将使用用户工作目录下的.venv环境进行代码块执行。
 - 在用户提供的信息缺失，或者与上面的格式对比有明显问题，一定要向用户说明正确的格式和参数类型。
+- 如果配置openclaw作为子智能体，切记需要在`~/.openclaw/gateway/openclaw.json`设置chatCompletions为true：
+
+```json
+{
+  "gateway": {
+    "http": {
+      "endpoints": {
+        "chatCompletions": {
+          "enabled": true
+        }
+      }
+    }
+  }
+}
+```
 
 ## 配置文件修改流程
 
@@ -163,3 +178,12 @@ description: 指导如何更新智能助手的子智能体(subagent)的列表。
     }
 }
 ```
+
+## 前端查询与使用子智能体的方法：
+
+命令列表：
+/help                   —— 显示此帮助 
+/agents                 —— 查看可用的子智能体 
+/agent <agent_name>     —— 设置当前会话的默认子智能体 
+/agent clear            —— 取消当前会话的默认子智能体设置
+其他文字                 —— 与当前 session 的 AI 助手对话
