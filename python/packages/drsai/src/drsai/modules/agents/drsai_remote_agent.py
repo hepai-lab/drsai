@@ -284,6 +284,8 @@ class RemoteAgent(DrSaiAgent):
 
             if not full_response:
                 logger.warning(f"RemoteAgent '{self.name}' received empty response")
+                full_response = f"RemoteAgent '{self.name}' received empty response. Maybe the model is working on background. Please wait for a while."
+                yield ModelClientStreamingChunkEvent(content=full_response, source=agent_name)
 
             model_result = CreateResult(
                 content=full_response,
