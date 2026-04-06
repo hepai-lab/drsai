@@ -1,4 +1,4 @@
-import { Check, CheckCircle, Circle, Clock, Download } from "lucide-react";
+import { Check, CheckCircle, Circle, Clock, Download, X } from "lucide-react";
 import React, { useEffect, useRef, useState } from "react";
 import { appContext } from "../../../../hooks/provider";
 import { FilesEvent, MessageFileItem } from "../../../types/datamodel";
@@ -15,6 +15,13 @@ import { BESIIIPanelProps, BESIIISubTask, BESIIITask } from "./types";
  */
 
 type TabType = 'info' | 'files' | 'logs' | 'terminal';
+
+const BESIII_TABS: { id: TabType; label: string }[] = [
+    { id: "info", label: "Global Info" },
+    { id: "files", label: "Files" },
+    { id: "logs", label: "LogExecution" },
+    { id: "terminal", label: "Terminal" },
+];
 
 /** Shown first; only these keys are treated as read-only. */
 const GLOBAL_INFO_READ_ONLY_ORDER = ["taskName", "root_path"] as const;
@@ -532,60 +539,61 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
         );
     };
 
-    const tabButtonActive = (tab: TabType) =>
-        activeTab === tab
-            ? darkMode === "dark"
-                ? "bg-[#0f0f0f] text-purple-400 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500"
-                : "bg-white text-purple-600 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-purple-500"
-            : darkMode === "dark"
-                ? "text-gray-400 hover:text-gray-200 hover:bg-gray-800"
-                : "text-gray-600 hover:text-gray-900 hover:bg-gray-100";
+    const tabPillClass = (tab: TabType) => {
+        const isOn = activeTab === tab;
+        if (isOn) {
+            return darkMode === "dark"
+                ? "bg-zinc-800 text-magenta-300 shadow-sm ring-1 ring-white/10"
+                : "bg-white text-magenta-800 shadow-sm ring-1 ring-slate-900/[0.06]";
+        }
+        return darkMode === "dark"
+            ? "text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100"
+            : "text-slate-600 hover:bg-white/70 hover:text-slate-900";
+    };
 
     return (
-        <div className={`${darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-white"} rounded-lg shadow-lg h-full flex flex-col`}>
+        <div
+            className={`${darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-white"} flex min-h-0 flex-1 flex-col rounded-lg shadow-lg h-full w-full`}
+        >
 
-            {/* Tab Headers */}
-            <div className={`flex border-b ${darkMode === "dark" ? "bg-[#1a1a1a] border-gray-700" : "bg-gray-50 border-gray-200"}`}>
+            {/* Segmented tab strip: scrolls without visible scrollbar; active = pill, not bottom rule */}
+            <div
+                className={`flex min-w-0 items-center gap-2 border-b px-3 py-2.5 ${darkMode === "dark" ? "border-zinc-800/80 bg-zinc-950/40" : "border-slate-200/90 bg-slate-50/80"}`}
+            >
+                <div
+                    className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain touch-pan-x [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+                >
+                    <div
+                        className={`flex w-max min-w-full flex-nowrap gap-0.5 rounded-xl p-1 ${darkMode === "dark" ? "bg-zinc-900/80 ring-1 ring-white/[0.06]" : "bg-slate-200/60 ring-1 ring-slate-900/[0.04]"}`}
+                    >
+                        {BESIII_TABS.map(({ id, label }) => (
+                            <button
+                                key={id}
+                                type="button"
+                                className={`shrink-0 rounded-lg px-3 py-1.5 text-left text-sm font-medium transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-magenta-800/30 dark:focus-visible:ring-magenta-500/40 sm:px-3.5 ${tabPillClass(id)}`}
+                                onClick={() => setActiveTab(id)}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
 
-                <button
-                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${tabButtonActive('info')}`}
-                    onClick={() => setActiveTab('info')}
-                >
-                    Global Info
-                </button>
-                <button
-                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${tabButtonActive('files')}`}
-                    onClick={() => setActiveTab('files')}
-                >
-                    Files
-                </button>
-                <button
-                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${tabButtonActive('logs')}`}
-                    onClick={() => setActiveTab('logs')}
-                >
-                    LogExecution
-                </button>
-                <button
-                    className={`px-6 py-3 font-medium transition-colors relative focus:outline-none ${tabButtonActive('terminal')}`}
-                    onClick={() => setActiveTab('terminal')}
-                >
-                    Terminal
-                </button>
-
-                {/* Minimize button */}
                 {onMinimize && (
                     <button
+                        type="button"
                         onClick={onMinimize}
-                        className={`ml-auto px-4 ${darkMode === "dark" ? "text-gray-400 hover:text-gray-200" : "text-gray-500 hover:text-gray-700"}`}
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors ${darkMode === "dark" ? "text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-100" : "text-slate-500 hover:bg-slate-200/80 hover:text-slate-800"}`}
                         title="最小化"
+                        aria-label="最小化面板"
                     >
-                        ✕
+                        <X className="h-4 w-4" strokeWidth={2} />
                     </button>
                 )}
             </div>
 
             {/* Tab Content */}
-            <div className={`flex-1 overflow-hidden ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
+            <div className={`min-h-0 flex-1 overflow-hidden ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
                 {activeTab === 'info' && <div className="h-full overflow-y-auto">{renderGlobalInfo()}</div>}
                 {activeTab === 'files' && <div className="h-full overflow-y-auto">{renderFiles()}</div>}
                 {activeTab === 'logs' && <div className="h-full p-4">{renderLogs()}</div>}

@@ -112,9 +112,9 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                 // BESIII 分析面板
                 return (
                     <div
-                        className={`h-full ${besiiiProps?.isExpanded
-                            ? "2xl:w-[576px] w-[360px]"
-                            : "2xl:w-[800px] w-[360px]"
+                        className={`flex h-full min-h-0 w-full max-w-full shrink-0 flex-col ${besiiiProps?.isExpanded
+                            ? "w-[min(100%,360px)] sm:w-[380px] lg:w-[420px] xl:w-[460px] 2xl:w-[520px]"
+                            : "w-[min(100%,340px)] sm:w-[360px] lg:w-[400px] xl:w-[420px] 2xl:w-[460px]"
                             }`}
                     >
                         <BESIIIPanel
@@ -157,7 +157,9 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
     return (
         <div
             className={
-                panelConfig.type === 'besiii' ? 'h-full' : 'h-full w-full'
+                panelConfig.type === 'besiii'
+                    ? 'flex h-full min-h-0 w-auto max-w-full flex-1 flex-col self-end'
+                    : 'h-full min-h-0 w-full'
             }
         >
             {panel}

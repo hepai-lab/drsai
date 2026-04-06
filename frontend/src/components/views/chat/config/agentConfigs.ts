@@ -13,6 +13,9 @@ export interface AgentPanelConfig {
   
   /** 是否默认最小化 */
   defaultMinimized: boolean;
+
+  /** 是否默认展开侧栏（false 时仅占位按钮，需用户点击打开） */
+  defaultPanelVisible?: boolean;
   
   /** 是否可最小化 */
   isMinimizable: boolean;
@@ -59,6 +62,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfiguration> = {
       type: 'vnc',
       title: 'Browser Preview',
       defaultMinimized: true,
+      defaultPanelVisible: false,
       isMinimizable: true,
       componentName: 'VNCViewer',
     },
@@ -72,6 +76,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfiguration> = {
       type: 'besiii',
       title: 'BESIII Analysis Panel',
       defaultMinimized: false,
+      defaultPanelVisible: false,
       isMinimizable: true,
       componentName: 'BESIIIPanel',
     },
