@@ -1,0 +1,50 @@
+# Python 缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 虚拟环境
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# 文档和测试（可选，根据需要调整）
+# docs/
+tests/
+*.md
+!README.md
+
+# 临时文件
+*.log
+*.tmp
+.DS_Store
+
+# Workspace 数据（会通过 volume 挂载）
+examples/agent_groupchat/assistant_skill/drsai_assistant/workspace/
+
+# Docker 相关
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# 环境变量文件
+.env
+.env.*

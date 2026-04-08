@@ -126,7 +126,8 @@ your_code
         },
     }
 
-    SYSTEM = f"""You are a personal assistant."""
+    # SYSTEM = f"""You are a personal assistant."""
+    SYSTEM = None
 
     return DrSaiAssistant(
         name="Assistant",
@@ -153,7 +154,7 @@ your_code
             # "/home/xiongdb/b9agent/skills",
             ],
         sub_agent_config = SUB_AGENTS,
-        max_turn_count=20,
+        # max_turn_count=20,
         token_limit=50000,
         rag_flow_url=os.getenv('RAGFLOW_URL'),
         rag_flow_token=os.getenv('RAGFLOW_TOKEN'),

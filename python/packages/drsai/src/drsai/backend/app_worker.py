@@ -7,9 +7,10 @@ from fastapi import FastAPI, Request, Header
 from fastapi.responses import StreamingResponse # , HTMLResponse, FileResponse, JSONResponse, PlainTextResponse
 from fastapi import FastAPI, HTTPException #, Form, File, UploadFile, Response
 from fastapi import APIRouter # , Query
+# from pydantic import BaseModel
 import traceback
-import inspect  
-from collections.abc import AsyncGenerator 
+import inspect
+from collections.abc import AsyncGenerator
 
 try:
     from drsai.version import __version__
@@ -46,6 +47,7 @@ class DrSaiAPP(DrSai):
         self.app.include_router(DrSaiAPP.router)
 
         self._info = {}
+        self._task_manager = None  # 由 run.py 在启动时注入 ScheduledTaskManager
     
     def _init_router(self):
 
@@ -61,6 +63,13 @@ class DrSaiAPP(DrSai):
         DrSaiAPP.router.get("/agents/get_info")(self.a_get_agents_info)
         DrSaiAPP.router.post("/agents/test_api")(self.a_agents_test_api)
         DrSaiAPP.router.get("/agents/list_agents")(self.a_list_agents)
+
+        # 定时任务路由
+        DrSaiAPP.router.post("/scheduled_tasks")(self.create_scheduled_task)
+        DrSaiAPP.router.get("/scheduled_tasks")(self.list_scheduled_tasks)
+        DrSaiAPP.router.delete("/scheduled_tasks/{task_id}")(self.delete_scheduled_task)
+        DrSaiAPP.router.patch("/scheduled_tasks/{task_id}/toggle")(self.toggle_scheduled_task)
+        DrSaiAPP.router.get("/scheduled_tasks/{task_id}/results")(self.get_task_results)
 
 
 
@@ -171,7 +180,111 @@ class DrSaiAPP(DrSai):
             self.test_agents, **params
             )
 
-    ### --- 其它函数 --- #### 
+    ### --- 定时任务接口 --- ###
+
+    def _get_task_manager(self):
+        """获取 ScheduledTaskManager 实例 (由 run.py 在 server 启动前赋值)"""
+        if self._task_manager is None:
+            raise HTTPException(status_code=503, detail="ScheduledTaskManager not initialized")
+        return self._task_manager
+
+    async def create_scheduled_task(self, request: Request):
+        """
+        创建定时任务
+        POST /apiv2/scheduled_tasks
+        """
+        try:
+            from drsai.modules.agents.skills_agent.managers import (
+                ScheduledTask, ScheduleType
+            )
+            body = await request.json()
+            task = ScheduledTask(
+                user_id=body["user_id"],
+                session_id=body["session_id"],
+                task_name=body["task_name"],
+                task_description=body.get("task_description"),
+                prompt=body["prompt"],
+                schedule_type=ScheduleType(body["schedule_type"]),
+                schedule_config=body["schedule_config"],
+                max_retries=body.get("max_retries", 3),
+                timeout=body.get("timeout", 300),
+                save_history=body.get("save_history", True),
+            )
+            task_manager = self._get_task_manager()
+            task_id = task_manager.add_task(task)
+            return {"status": "ok", "task_id": task_id, "next_run": task.next_run}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    async def list_scheduled_tasks(self, request: Request, user_id: str, session_id: Optional[str] = None):
+        """
+        获取用户的定时任务列表
+        GET /apiv2/scheduled_tasks?user_id=xxx&session_id=xxx
+        """
+        try:
+            task_manager = self._get_task_manager()
+            tasks = task_manager.list_tasks(user_id=user_id, session_id=session_id)
+            return {"status": "ok", "tasks": [t.model_dump() for t in tasks]}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def delete_scheduled_task(self, request: Request, task_id: str):
+        """
+        删除定时任务
+        DELETE /apiv2/scheduled_tasks/{task_id}
+        """
+        try:
+            task_manager = self._get_task_manager()
+            success = task_manager.remove_task(task_id)
+            if not success:
+                raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            return {"status": "ok", "task_id": task_id}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def toggle_scheduled_task(self, request: Request, task_id: str):
+        """
+        启用/禁用定时任务
+        PATCH /apiv2/scheduled_tasks/{task_id}/toggle
+        Body: {"enabled": true/false}
+        """
+        try:
+            from drsai.modules.agents.skills_agent.managers import TaskStatus
+            body = await request.json()
+            enabled = body.get("enabled", True)
+            task_manager = self._get_task_manager()
+            task = task_manager.get_task(task_id)
+            if task is None:
+                raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            new_status = TaskStatus.ENABLED if enabled else TaskStatus.DISABLED
+            task_manager.update_task_status(task_id, new_status)
+            return {"status": "ok", "task_id": task_id, "enabled": enabled}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def get_task_results(self, request: Request, task_id: str, limit: int = 10):
+        """
+        获取任务历史执行结果
+        GET /apiv2/scheduled_tasks/{task_id}/results?limit=10
+        """
+        try:
+            task_manager = self._get_task_manager()
+            results = task_manager.get_task_results(task_id, limit=limit)
+            return {"status": "ok", "task_id": task_id, "results": [r.model_dump() for r in results]}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    ### --- 其它函数 --- ####
     async def try_except_raise_http_exception(self, func, *args, **kwargs):  # 改为异步函数
         """智能捕获函数内部raise的异常，转换为HTTPException返回，支持同步/异步函数"""
         try:

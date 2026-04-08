@@ -82,6 +82,7 @@ from .managers import (
     UserProfileManager,
     TodoManager,
     get_operator_funcs,
+    _detect_powershell,
 )
 from drsai.modules.components.skills import SkillLoader
 from drsai.utils.utils import download_file_from_url_or_base64, fix_and_parse_json
@@ -113,7 +114,7 @@ class DrSaiAssistant(DrSaiAgent):
     """
     专业科学数据智能分析智能体
 
-    TODO: 核心能力:
+    核心能力:
     1. 用户个人画像/提示词/其他配置的动态更新
     2. 任务规划与分解
     3. 多任务进度管理
@@ -159,7 +160,7 @@ class DrSaiAssistant(DrSaiAgent):
         extra_work_dirs: List[str] | None = None,
         executor: CodeExecutor | None = None,
         sub_agent_config: Dict = {},
-        max_turn_count: int = 20,
+        max_turn_count: int = 100,
         token_limit: int = 50000,
         rag_flow_url: str | None = None,
         rag_flow_token: str | None = None,
@@ -192,7 +193,7 @@ class DrSaiAssistant(DrSaiAgent):
             llm_mode_config=llm_mode_config,
         )
 
-        self._developer_system_message = system_message
+        self._developer_system_message = system_message or ""
 
         # === workspace for assistant ===
         if not work_dir:
@@ -214,14 +215,23 @@ class DrSaiAssistant(DrSaiAgent):
             thread_id=self._thread_id,
         )
         self._update_user_config_tools = [self._user_profile_manager.get_user_config_tool()]
-        
+        # combine system messages
+        user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
+        enhanced_system_message = f"""{self._developer_system_message}\n{user_sys_prompt}\n
+Current Session_ID is {self._thread_id}"""
+        self._system_messages = [SystemMessage(content=enhanced_system_message)]
+
         # === basic tools ===
         self._only_in_workspace = only_in_workspace
         self._extra_work_dirs = extra_work_dirs
+        self._is_powershell = False
+        if _detect_powershell() is not None:
+            self._is_powershell = True
         self._basic_funcs: List[Callable] = get_operator_funcs(
             work_dir, 
             only_in_workspace=self._only_in_workspace,
             extra_dirs = self._extra_work_dirs,
+            is_powershell=self._is_powershell
             )
         self._basic_funcs_names = [func.__name__ for func in self._basic_funcs]
         for func in self._basic_funcs:
@@ -310,16 +320,9 @@ class DrSaiAssistant(DrSaiAgent):
 
     def update_system_prompt(self, additional_prompt: str = "") -> str:
         """获取agent描述、用户画像并更新系统消息"""
-        user_context = self._user_profile_manager.get_agent_system_prompt()
-        enhanced_system_message = self._developer_system_message
-        if user_context and self._developer_system_message:
-            # 合并系统消息和用户上下文
-            enhanced_system_message = f"""{self._developer_system_message}
-
-{user_context}
-
-Current Session_ID is {self._thread_id}
-"""
+        user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
+        enhanced_system_message = f"""{self._developer_system_message}\n\n{user_sys_prompt}\n
+Current Session_ID is {self._thread_id}"""
         enhanced_system_message += additional_prompt
         self._system_messages = [SystemMessage(content=enhanced_system_message)]
     
@@ -330,6 +333,7 @@ Current Session_ID is {self._thread_id}
         user_skills_dir = self._user_profile_manager.skills_dir
         if user_skills_dir.exists() and list(user_skills_dir.glob("*/SKILL.md")):
             skills_loader = SkillLoader(skills_dir=str(user_skills_dir))
+        # TODO: 从指定的skills目录加载/更新skills
         # # 再从指定的skills目录加载
         # if self._skills_dir:
         #     if not skills_loader:
@@ -678,6 +682,8 @@ Current Session_ID is {self._thread_id}
                 
                 # handle tool call
                 for i in range(len(model_result.content)):
+                    tool_name = model_result.content[i].name
+                    call_id = model_result.content[i].id
                     # argument = json.loads(model_result.content[i].arguments)
                     argument = fix_and_parse_json(model_result.content[i].arguments)
                     if isinstance(argument, str):
@@ -691,8 +697,6 @@ Current Session_ID is {self._thread_id}
                         ))
                         continue
 
-                    tool_name = model_result.content[i].name
-                    call_id = model_result.content[i].id
                     if tool_name == "TodoWrite":
                         async for message in self.handle_todo_write(
                             argument = argument,
@@ -736,19 +740,19 @@ Current Session_ID is {self._thread_id}
                         # )
                         await model_context.add_message(FunctionExecutionResultMessage(
                             content=[FunctionExecutionResult(
-                                content = f"Skill for {argument["skill"]}:\n\n {skill_content}",
+                                content = f"Skill for {argument['skill']}:\n\n {skill_content}",
                                 name = tool_name,
                                 call_id = call_id,
                                 is_error = False,
                             ),]
                         ))
                         yield AgentLogEvent(
-                            title=f"I am reading skill: {argument["skill"]}.",
+                            title=f"I am reading skill: {argument['skill']}.",
                             source=agent_name, 
                             content=str(argument), 
                             content_type="tools")
                         yield ToolCallSummaryMessage(
-                            content=f"<think>Skill for {argument["skill"]}:\n\n {skill_content}</think>\n",
+                            content=f"<think>Skill for {argument['skill']}:\n\n {skill_content}</think>\n",
                             source=agent_name,
                         )
                     elif tool_name in self._tools_names:

@@ -38,7 +38,8 @@ def create_team() -> AGSelectorGroupChat:
     return AGSelectorGroupChat(
         participants=[primary_agent, critic_agent], 
         termination_condition=text_termination,
-        model_client = model_client
+        model_client = model_client,
+        allow_repeated_speaker=True,
         )
 
 async def main():

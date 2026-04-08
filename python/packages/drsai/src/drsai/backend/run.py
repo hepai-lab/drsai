@@ -2,9 +2,9 @@ from .app_worker import DrSaiAPP
 
 import os
 from typing import (
-    Union, 
-    List, 
-    Dict, 
+    Union,
+    List,
+    Dict,
     Any,
     AsyncGenerator,
     Mapping,
@@ -16,7 +16,7 @@ from fastapi import FastAPI
 import uvicorn, asyncio
 from autogen_agentchat.base import TaskResult
 from autogen_agentchat.base import (
-    ChatAgent, 
+    ChatAgent,
     Team)
 from autogen_agentchat.ui import Console
 from pathlib import Path
@@ -26,7 +26,7 @@ import hepai
 
 from drsai.modules.managers.database import DatabaseManager
 from autogen_agentchat.base import (
-    ChatAgent, 
+    ChatAgent,
     Team,)
 from drsai.configs import CONST
 
@@ -125,6 +125,14 @@ async def run_backend(agent_factory: callable, **kwargs):
         agent_factory = agent_factory,
         **kwargs
         )
+
+    # 初始化定时任务管理器
+    from drsai.modules.agents.skills_agent.managers import ScheduledTaskManager
+    task_work_dir = Path(base_dir) / "scheduled_tasks"
+    task_work_dir.mkdir(parents=True, exist_ok=True)
+    task_manager = ScheduledTaskManager(work_dir=task_work_dir)
+    drsaiapp._task_manager = task_manager
+
     if enable_pipeline:
         os.environ['BACKEND_PORT'] = str(port)
         agnet_name = kwargs.pop("agnet_name", "Dr.Sai")
@@ -173,11 +181,14 @@ async def run_backend(agent_factory: callable, **kwargs):
     # 在现有事件循环中启动服务
     if enable_pipeline:
         print(f"Enable OpenWebUI pipelines: `http://{host}:{port}/pipelines` with API-KEY: `{owebui_pipeline_app.api_key}`")
+    await task_manager.start()
     try:
         await server.serve()
     except asyncio.CancelledError:
         await server.shutdown()
     finally:
+        # 关闭定时任务管理器
+        await task_manager.stop()
         # 关闭数据库连接
         await db_manager.close()
 
@@ -454,7 +465,14 @@ async def run_worker(agent_factory: callable, **kwargs):
         agent_factory = agent_factory,
         **kwargs
         )
-    
+
+    # 初始化定时任务管理器
+    from drsai.modules.agents.skills_agent.managers import ScheduledTaskManager
+    task_work_dir = Path(base_dir) / "scheduled_tasks"
+    task_work_dir.mkdir(parents=True, exist_ok=True)
+    task_manager = ScheduledTaskManager(work_dir=task_work_dir)
+    drsaiapp._task_manager = task_manager
+
     model = DrSaiWorkerModel(
         config=model_args, 
         worker_config=worker_args, 
@@ -547,6 +565,7 @@ async def run_worker(agent_factory: callable, **kwargs):
     if enable_pipeline:
         print(f"Enable OpenWebUI pipelines URL: `{worker_address}/pipelines` with API-KEY: `{owebui_pipeline_app.api_key}`")
     print(f"#####################################################################")
+    await task_manager.start()
     try:
         await server.serve()
     finally:
@@ -555,6 +574,8 @@ async def run_worker(agent_factory: callable, **kwargs):
             task.cancel()
         if _wechat_tasks:
             await asyncio.gather(*_wechat_tasks, return_exceptions=True)
+        # 关闭定时任务管理器
+        await task_manager.stop()
         # 关闭数据库连接
         await db_manager.close()
         for agent in model.drsai.agent_instance:

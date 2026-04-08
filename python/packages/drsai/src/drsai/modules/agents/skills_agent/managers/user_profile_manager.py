@@ -175,6 +175,12 @@ class UserProfileManager:
         if not self.skills_dir.exists():
             self.skills_dir.mkdir(exist_ok=True)
 
+        # 定时任务相关路径
+        self.scheduled_tasks_path = self.config_path / "SCHEDULED_TASKS.json"
+        if not self.scheduled_tasks_path.exists():
+            with self.scheduled_tasks_path.open("w", encoding='utf-8') as f:
+                json.dump({}, f, indent=4, ensure_ascii=False)
+
     def _create_user_config(self):
         """创建用户配置文件"""
         
@@ -192,7 +198,7 @@ class UserProfileManager:
 
     def _create_user_md(self):
         """创建USER.md文件"""
-        content = f"""# User Profile: {self.user_name}
+        content = f"""# User Profile
 
 ## Basic Information
 - **User ID:** {self.user_id}
@@ -243,9 +249,6 @@ The more you know, the better you can help. But remember — you're learning abo
     - {self.config_path}/skills
     - {self.config_path}/memories
 
-### SSH setup: 
-    - home-server → 192.168.1.100, user: admin
-
 ## Usage Preferences
 [To be learned from user interactions]
 
@@ -264,29 +267,11 @@ The more you know, the better you can help. But remember — you're learning abo
 
         user_md = self.get_user_profile()
         tools_md = self.get_tools_preferences()
+       
+        content = f"""# System
 
-        content = f"""# {self.agent_name} Configuration for User: {self.user_name}
+You are an interactive tool that helps users with software engineering and scientific data analysis tasks. In addition to these tasks, you should provide educational insights about user's task along the way.
 
-## Agent Capabilities
-
-Your name is {self.agent_name} with the following capabilities:
-
-1. **Task Planning & Decomposition**: Analyze user requirements and decompose into executable subtasks
-2. **Multi-task Progress Management**: Automatically update task status to prevent information loss
-3. **Tool & Skills Invocation**: Proactively load tools, agent skills, and spawn subagents
-4. **Learning & Adaptation**: Summarize task execution patterns and save as reusable skills
-
-**Note:** - When the user performs a non-greeting task fisrtly, attempt to retrieve relevant memories using the `retreve_from_memory` tool. 
-- If the memory content is relevant, prioritize using the memory content for the reply and inform the user of the time when the memory was recorded, among other information. 
-- If the memory content is not relevant, proceed with the following rules.
-
-## Rules:
-
-- Use Skill tool IMMEDIATELY when a task matches a skill description
-- Use Task tool for subtasks needing focused exploration or implementation
-- Use TodoWrite to track multi-step work
-- Prefer tools over prose. Act, don't just explain.
-- After finishing, summarize what changed.
 
 ## Workflow
 1. Receive user task → Analyze if planning is needed
@@ -294,8 +279,20 @@ Your name is {self.agent_name} with the following capabilities:
 3. Execute tasks with progress tracking (TodoManager)
 4. Record all actions, tool calls, errors in current session memory
 5. Learn from execution → Save skills if requested by user
-6. Handle errors → Request user help if blocked
+6. Handle errors → Request user help if blocked"
 
+## Rules:
+- Use Skill tool IMMEDIATELY when a task matches a skill description
+- Use Task tool for subtasks needing focused exploration or implementation
+- Use TodoWrite to track multi-step work
+- Prefer tools over prose. Act, don't just explain.
+- After finishing, summarize what changed.
+
+**Note:** 
+- Don't add features, refactor code, or make "improvements" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability. Don't add docstrings, comments, or type annotations to code you didn't change.
+- Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).
+- Don't remove existing comments unless you're removing the code they describe or you know they're wrong. A comment that looks pointless to you may encode a constraint or a lesson from a past bug.
+- Do NOT use the Bash tool to run commands when a relevant dedicated tool is provided.
 
 {user_md}
 
@@ -681,6 +678,92 @@ You can update one or multiple fields at once. Only provide the fields that need
             thread_config["updated_at"] = datetime.now().isoformat()
             self.save_thread_config(thread_id, thread_config)
             logger.info(f"Cleared default subagent for thread {thread_id}")
+
+    def save_scheduled_task(self, task_data: dict) -> str:
+        """
+        保存或更新定时任务配置
+        Args:
+            task_data: 任务配置字典 (ScheduledTask.model_dump())
+        Returns:
+            task_id
+        """
+        try:
+            tasks = json.loads(self.scheduled_tasks_path.read_text(encoding='utf-8'))
+            task_id = task_data["task_id"]
+            tasks[task_id] = task_data
+            self.scheduled_tasks_path.write_text(
+                json.dumps(tasks, indent=4, ensure_ascii=False),
+                encoding='utf-8'
+            )
+            logger.info(f"Saved scheduled task {task_id} for user {self.user_id}")
+            return task_id
+        except Exception as e:
+            logger.error(f"Failed to save scheduled task: {e}")
+            raise
+
+    def get_scheduled_tasks(self, session_id: Optional[str] = None) -> List[dict]:
+        """
+        获取当前用户的定时任务列表
+        Args:
+            session_id: 可选,过滤指定 session 的任务
+        Returns:
+            任务配置字典列表
+        """
+        try:
+            tasks = json.loads(self.scheduled_tasks_path.read_text(encoding='utf-8'))
+            result = list(tasks.values())
+            if session_id:
+                result = [t for t in result if t.get("session_id") == session_id]
+            return result
+        except Exception as e:
+            logger.error(f"Failed to get scheduled tasks: {e}")
+            return []
+
+    def delete_scheduled_task(self, task_id: str) -> bool:
+        """
+        删除定时任务配置
+        Args:
+            task_id: 任务ID
+        Returns:
+            是否删除成功
+        """
+        try:
+            tasks = json.loads(self.scheduled_tasks_path.read_text(encoding='utf-8'))
+            if task_id not in tasks:
+                return False
+            del tasks[task_id]
+            self.scheduled_tasks_path.write_text(
+                json.dumps(tasks, indent=4, ensure_ascii=False),
+                encoding='utf-8'
+            )
+            logger.info(f"Deleted scheduled task {task_id} for user {self.user_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete scheduled task: {e}")
+            return False
+
+    def update_scheduled_task_field(self, task_id: str, **fields) -> bool:
+        """
+        局部更新任务字段 (如 last_run, next_run, status 等)
+        Args:
+            task_id: 任务ID
+            **fields: 要更新的字段
+        Returns:
+            是否更新成功
+        """
+        try:
+            tasks = json.loads(self.scheduled_tasks_path.read_text(encoding='utf-8'))
+            if task_id not in tasks:
+                return False
+            tasks[task_id].update(fields)
+            self.scheduled_tasks_path.write_text(
+                json.dumps(tasks, indent=4, ensure_ascii=False),
+                encoding='utf-8'
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update scheduled task field: {e}")
+            return False
 
     # def create_session_memory(
     #     self,
