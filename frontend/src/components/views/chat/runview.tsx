@@ -955,6 +955,25 @@ const RunView: React.FC<RunViewProps> = ({
   const isPlanMsg =
     lastMessage && messageUtils.isPlanMessage(lastMessage.config.metadata);
 
+  const hasAgentPanel = agentConfig.panel.type !== "none";
+  const isVncSideBySide =
+    showPanel && novncPort !== undefined && !isPanelMinimized;
+  const messagesColumnWidthClass = isVncSideBySide
+    ? detailViewerExpanded
+      ? "w-0"
+      : "w-[40%]"
+    : hasAgentPanel
+      ? "flex-1 min-w-0"
+      : "w-[800px] 2xl:w-full";
+
+  const panelOpenButtonClass =
+    "shrink-0 self-start sticky top-2 z-10 inline-flex cursor-pointer items-center justify-center rounded-lg border border-magenta-800/25 bg-background/95 p-2 text-magenta-800 shadow-sm backdrop-blur-sm hover:bg-magenta-50 hover:text-magenta-900 dark:border-magenta-500/30 dark:hover:bg-magenta-950/40";
+
+  /** BESIII 等固定宽度面板贴右；VNC 分栏时侧栏仍 flex-1 占满剩余列宽 */
+  const agentPanelShellGrowClass = isVncSideBySide
+    ? "min-h-0 flex-1 flex-col self-stretch"
+    : "min-h-0 shrink-0 flex-col self-stretch";
+
   // Add this effect to handle scrolling when status changes
   useEffect(() => {
     if (run.status === "awaiting_input" && buttonsContainerRef.current) {
@@ -968,23 +987,22 @@ const RunView: React.FC<RunViewProps> = ({
     }
   }, [run.status]);
 
+  const runViewRowGapClass = isVncSideBySide ? "gap-4" : "gap-2 sm:gap-3";
+
   return (
-    <div className="flex w-full gap-4 h-full">
+    <div className={`flex h-full min-h-0 w-full ${runViewRowGapClass}`}>
       {/* Messages section */}
       <div
-        className={`items-start relative flex flex-col h-full ${showPanel &&
-          novncPort !== undefined &&
-          !isPanelMinimized
-          ? detailViewerExpanded
-            ? "w-0"
-            : "w-[40%]"
-          : "w-[800px] 2xl:w-full"
-          } transition-all duration-300`}
+        className={`relative flex h-full min-h-0 flex-col ${messagesColumnWidthClass} transition-all duration-300`}
       >
         {/* Thread Section - use flex-1 for height, but remove overflow-y-auto */}
         <div
           ref={threadContainerRef}
-          className="w-full max-w-4xl mx-auto flex-1"
+          className={`w-full min-w-0 flex-1 ${
+            showPanel && !isPanelMinimized
+              ? "max-w-none mx-0"
+              : "max-w-4xl mx-auto"
+          }`}
           style={{
             height: `calc(100% - ${chatInputHeight}px)`,
             overflowY: "auto",
@@ -1186,10 +1204,25 @@ const RunView: React.FC<RunViewProps> = ({
       </div>
 
       {/* Agent Panel section - Dynamic panel based on agent type */}
-      {isPanelMinimized && agentConfig.panel.type !== 'none' && (
+      {!showPanel && agentConfig.panel.type !== 'none' && (
         <button
+          type="button"
+          onClick={() => {
+            setShowPanel(true);
+            setIsPanelMinimized(false);
+          }}
+          className={panelOpenButtonClass}
+          title={`Open ${agentConfig.panel.title}`}
+        >
+          <Globe2 size={20} />
+        </button>
+      )}
+
+      {showPanel && isPanelMinimized && agentConfig.panel.type !== 'none' && (
+        <button
+          type="button"
           onClick={() => setIsPanelMinimized(false)}
-          className="self-start sticky top-0 h-full inline-flex text-magenta-800 hover:text-magenta-900 cursor-pointer"
+          className={panelOpenButtonClass}
           title={`Show ${agentConfig.panel.title}`}
         >
           <Globe2 size={20} />
@@ -1200,10 +1233,12 @@ const RunView: React.FC<RunViewProps> = ({
         agentConfig.panel.type !== 'none' &&
         !isPanelMinimized && (
           <div
-            className={`self-start sticky top-0 h-full flex-1 flex ${darkMode === 'dark' ? 'bg-[#0f0f0f]' : ''}`}
+            className={`sticky top-0 flex ${agentPanelShellGrowClass} ${!isVncSideBySide ? "ml-auto" : ""} ${darkMode === 'dark' ? 'bg-[#0f0f0f]' : ''}`}
           >
-            <div className={`h-full w-full ${darkMode === "dark" ? "bg-[#0f0f0f]" : ""}`}>
-              {/* Dynamic Agent Panel - renders different panels based on agent type */}
+            <div
+              className={`flex h-full min-h-0 min-w-0 flex-1 flex-col ${isVncSideBySide ? "w-full" : "w-auto max-w-full"} ${darkMode === 'dark' ? 'bg-[#0f0f0f]' : ''}`}
+            >
+              {/* Dynamic Agent Panel — self-stretch + min-h-0 so column height flows to BESIII/VNC */}
               <AgentPanel
                 panelConfig={agentConfig.panel}
                 onMinimize={() => setIsPanelMinimized(true)}

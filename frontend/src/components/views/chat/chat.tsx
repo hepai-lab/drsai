@@ -106,7 +106,8 @@ export default function ChatView({
     agentConfig.panel.defaultMinimized
   );
   const [showPanel, setShowPanel] = React.useState(
-    agentConfig.panel.type !== 'none'
+    agentConfig.panel.type !== 'none' &&
+      (agentConfig.panel.defaultPanelVisible ?? false)
   );
 
   const [teamConfig, setTeamConfig] = React.useState<TeamConfig | null>(defaultTeamConfig);
@@ -635,10 +636,15 @@ export default function ChatView({
             }`}
         >
           <div
-            className={`${showPanel && !isPanelMinimized
-              ? "w-full max-w-sm sm:max-w-md md:max-w-4xl lg:max-w-6xl xl:max-w-7xl 2xl:max-w-7xl [&>*]:max-w-none [@media(min-width:1920px)]:max-w-[1600px] [@media(min-width:2560px)]:max-w-[2000px]"
-              : "w-full max-w-sm sm:max-w-md md:max-w-2xl lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl [@media(min-width:1920px)]:max-w-[1200px] [@media(min-width:2560px)]:max-w-[1400px]"
-              } mx-auto px-2 sm:px-3 md:px-4 h-full ${noMessagesYet && currentRun ? "hidden" : ""
+            className={`${
+              showPanel && !isPanelMinimized
+                ? "w-full min-w-0 max-w-none"
+                : "w-full max-w-sm sm:max-w-md md:max-w-2xl lg:max-w-4xl xl:max-w-5xl 2xl:max-w-6xl [@media(min-width:1920px)]:max-w-[1200px] [@media(min-width:2560px)]:max-w-[1400px] mx-auto"
+              } ${
+              showPanel && !isPanelMinimized
+                ? "px-2 sm:px-3 md:pl-4 md:pr-2"
+                : "px-2 sm:px-3 md:px-4"
+              } h-full ${noMessagesYet && currentRun ? "hidden" : ""
               }`}
           >
             {
