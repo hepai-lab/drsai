@@ -86,19 +86,39 @@ class DrSaiChatAgentContainer(SequentialRoutedAgent):
     async def handle_agent_response(self, message: GroupChatAgentResponse, ctx: MessageContext) -> None:
         """Handle an agent response event by appending the content to the buffer."""
         chat_message = message.agent_response.chat_message
-        if chat_message.source == "user_proxy" and \
-            chat_message.metadata.get("attached_files"):
-                query=chat_message.metadata.pop("content")
-                files=json.loads(chat_message.metadata.pop("attached_files"))
+        if chat_message.source == "user_proxy" and chat_message.metadata:
+            md = chat_message.metadata
+            files_as_list = None
+            if md.get("files") is not None:
+                try:
+                    raw_f = md.pop("files")
+                    files_as_list = json.loads(raw_f) if isinstance(raw_f, str) else raw_f
+                except (json.JSONDecodeError, TypeError):
+                    files_as_list = None
+            if files_as_list:
+                query = md.pop("content", "")
                 messages_return = construct_task(
-                        query=query, 
-                        files=files,
-                        metadata=chat_message.metadata
-                    )
+                    query=query,
+                    files=files_as_list,
+                    metadata=md,
+                )
                 for msg in messages_return:
-                    self._buffer_message(msg)
-        else:
-            self._buffer_message(message.agent_response.chat_message)
+                        self._buffer_message(msg)
+                return
+        self._buffer_message(message.agent_response.chat_message)
+        # if chat_message.source == "user_proxy" and \
+        #     chat_message.metadata.get("attached_files"):
+        #         query=chat_message.metadata.pop("content")
+        #         files=json.loads(chat_message.metadata.pop("attached_files"))
+        #         messages_return = construct_task(
+        #                 query=query, 
+        #                 files=files,
+        #                 metadata=chat_message.metadata
+        #             )
+        #         for msg in messages_return:
+        #             self._buffer_message(msg)
+        # else:
+        #     self._buffer_message(message.agent_response.chat_message)
     
     @event
     async def handle_long_task(self, message: GroupChatAgentLongTask, ctx: MessageContext) -> None:

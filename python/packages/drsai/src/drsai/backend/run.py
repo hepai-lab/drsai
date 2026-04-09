@@ -561,7 +561,7 @@ async def run_worker(agent_factory: callable, **kwargs):
     # 在现有事件循环中启动服务
     worker_address = auto_worker_address(worker_address='auto', host=worker_args.host, port=worker_args.port)
     print(f"#####################Your Agent Server is ready!######################")
-    print(f"Enable HepAI worker URL: `{worker_address}/apiv2`")
+    print(f"Enable HepAI worker `{agent_name}` with URL: `{worker_address}/apiv2`")
     if enable_pipeline:
         print(f"Enable OpenWebUI pipelines URL: `{worker_address}/pipelines` with API-KEY: `{owebui_pipeline_app.api_key}`")
     print(f"#####################################################################")

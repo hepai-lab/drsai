@@ -10,7 +10,7 @@
   </p>
 </div>
 
-该开发框架基于Microsoft开源框架[AutoGen](https://github.com/microsoft/autogen)（当前0.5.7版本），在兼容AutoGen完整结构和生态的基础上，重新设计了智能体、多智能体系统的组件和开发逻辑，使其更适合于开发**专业科学智能体和多智能体系统🤖：如复杂多任务执行💡、状态管理和人机交互🙋‍♂️🙋‍♀️、专业科学工具管理和执行🛠️、长任务执行管理⏰、长短记忆管理等🧠**。与主流MCP、A2A协议、[HepAI](https://ai.ihep.ac.cn/)的相关生态、RAGFlow等主流RAG架构具有很好的兼容性。而且具备开发部署一体化能力，智能体或多智能体系统代码可一键启动，注册为openai ChatCompletions格式、HepAI Worker格式，作为API调用。并配套相应的人机交互前端，可以直接开发部署完整的前后端应用。
+该开发框架基于Microsoft开源框架[AutoGen](https://github.com/microsoft/autogen)（当前0.5.7版本），在兼容AutoGen完整结构和生态的基础上，重新设计了智能体、多智能体系统的组件和开发逻辑，使其更适合于开发**专业科学智能体和多智能体系统🤖：如复杂多任务执行💡、状态管理和人机交互🙋‍♂️🙋‍♀️、专业科学工具管理和执行🛠️、长任务执行管理⏰、长短记忆管理等🧠**。与主流MCP、A2A协议、[HepAI](https://ai.ihep.ac.cn/)的相关生态、RAGFlow等主流RAG架构具有很好的兼容性。而且具备开发部署一体化能力，智能体或多智能体系统代码可一键启动，注册为openai ChatCompletions格式、HepAI Worker格式，作为API调用。并配套相应的人机交互前端，可以直接开发部署完整的前后端应用。docs请访问[OpenDrSai文档](https://docs-drsai.ihep.ac.cn/).
 
 ## 1.特色
 
@@ -41,25 +41,24 @@
 
 ### 2.1.安装OpenDrSai
 
-#### pip 安装
-
-```shell
-conda create -n drsai python=>3.11
-conda activate drsai
-pip install drsai drsai_ui -U
-# NOTE: if you have installed hepai<=1.40.0, please keep opneai<= 1.98.0
-```
-
-#### 源码安装
+#### 源码安装(推荐)
 
 ```shell
 conda create -n drsai python=>3.11
 conda activate drsai
 git clone https://github.com/hepai-lab/drsai.git drsai # From Github
-git clone https://code.ihep.ac.cn/hepai/drsai drsai # From IHEP
+git clone https://code.ihep.ac.cn/hepai/drsai drsai # or From IHEP
 
 cd your/path/to/drsai/python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
 cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # for DrSai-UI  human-computer interaction frontend
+```
+
+#### pip 安装(版本可能落后)
+
+```shell
+conda create -n drsai python=>3.11
+conda activate drsai
+pip install drsai drsai_ui -U
 ```
 
 #### 配置HepAI平台的API访问密钥
@@ -81,8 +80,6 @@ setx "HEPAI_API_KEY" "your_api_key"
 # 注意 windows环境变量需要重启电脑才会生效
 ```
 
-**NOTE:** 所有OpenAI格式的模型都可以使用以上方式接入。其他格式的模型接入见：tutorials/components/ModelClient01.md
-
 ### 2.2.快速启动一个大模型智能体
 
 以[examples/agent_groupchat/assistant_base_R1_oai.py](examples/agent_groupchat/assistant_base_R1_oai.py)为例，展示了如何基于OpenDrSai快速启动一个智能体系统。
@@ -99,7 +96,7 @@ python examples/agent_groupchat/assistant_base_R1_oai.py
 ### 2.3.命令行启动OpenDrSai人机交互后端服务
 
 ```shell
-# pip install drsai_ui -U # 确保安装了drsai_ui
+# 确保安装了drsai_ui
 
 cp .env.example .env # 复制.env.example文件为.env, 可用于高能所部署统一认证
 drsai ui # 启动Dr.Sai-UI人机交互后端和静态前端
@@ -258,31 +255,7 @@ myassistant:
 - [ ] 开放可链接RAGFlow知识库/记忆知识库和MCP远程函数的智能体调用，数据格式符合python/packages/drsai_ui/src/drsai_ui/configs/agent_config.yaml（尽快）
 
 
-## 4.详细文档
-
-培训教程可见：[OpenDrSai-tutorials-v3.pdf](tutorials/OpenDrSai-tutorials-v3.pdf)
-
-详细的教程见tutorials目录（正在开发中，有问题及时联系我们）：
-
-```text
-tutorials/base01-hepai.md：HepAI平台的模型配置和使用
-tutorials/base02-worker.md：HEPAI Worker远程函数的配置和使用
-tutorials/base03-use_claude-code.md：基HepAI平台于Claude-Code的使用
-tutorials/agents：智能体/多智能体系统案例
-tutorials/components：智能体组件开发案例
-tutorials/request: 客户端请求案例
-```
-
-文档说明见docs目录（正在开发中，有问题及时联系我们）：
-
-```text
-docs/develop.md: 智能体/多智能体系统代码开发说明
-docs/agent_factory.md: 智能体/多智能体开放和社区开发指南
-docs/drsai_ui.md: 人机交互前端使用指南
-docs/open-webui.md：OpenAI格式的前端访问，以及OpenWebui的Pipeline插件的使用指南
-```
-
-## 5.参与贡献
+## 4.参与贡献
 
 欢迎参与OpenDrSai的开发，贡献代码、文档、问题、建议等。我们社区欢迎各种形式的贡献，包括但不限于：
 
@@ -291,10 +264,7 @@ docs/open-webui.md：OpenAI格式的前端访问，以及OpenWebui的Pipeline插
 - 问题反馈：包括Bug反馈、功能建议、使用问题等。
 - 社区活动：包括线下活动、线上沙龙、线上分享等。 
 
-## 6.联系我们
+## 5.联系我们
 
 - 邮箱：<hepai@ihep.ac.cn> / <zdzhang@ihep.ac.cn> / <xiongdb@ihep.ac.cn>
 - 微信：xiongdongbo_12138
-- 微信群聊：HepAI大模型技术交流3群：
-
-<img src="assets/微信三群.jpg" alt="微信三群" style="max-width:20%; height:auto;">

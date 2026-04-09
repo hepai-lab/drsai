@@ -10,13 +10,12 @@ services:
       - "42818:42818"
     volumes:
       # 挂载工作空间以持久化数据
-      - ./examples/agent_groupchat/assistant_skill/drsai_assistant/workspace:/app/examples/agent_groupchat/assistant_skill/drsai_assistant/workspace
+      - ./workspace:/app/workspace
       # 挂载 .env 文件（如果存在）
-      - ./.env:/app/examples/agent_groupchat/assistant_skill/drsai_assistant/.env:ro
+      - ./.env:/app/.env:ro
     environment:
       # 从 .env 文件或这里设置环境变量
       - HEPAI_API_KEY=${HEPAI_API_KEY:-}
-      - SYSTEM_SKILLS_DIR=${SYSTEM_SKILLS_DIR:-}
       - RAGFLOW_URL=${RAGFLOW_URL:-}
       - RAGFLOW_TOKEN=${RAGFLOW_TOKEN:-}
       - MEMORY_DATASET_ID=${MEMORY_DATASET_ID:-}

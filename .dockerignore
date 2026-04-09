@@ -38,7 +38,7 @@ tests/
 .DS_Store
 
 # Workspace 数据（会通过 volume 挂载）
-examples/agent_groupchat/assistant_skill/drsai_assistant/workspace/
+workspace/
 
 # Docker 相关
 Dockerfile

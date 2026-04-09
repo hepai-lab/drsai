@@ -1,7 +1,7 @@
-last_modified: 1768210760.1188514
+last_modified: 1775722910.4480894
 models:
-  R1_test:
+  Dr.Sai Assistant:
     enabled: true
-    last_updated: 1768210760.1188524
+    last_updated: 1775722910.4480903
     provider: Uncategorized
 version: '1.0'
