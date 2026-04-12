@@ -1,6 +1,6 @@
 ---
 name: update_tools
-description: 指导如何更新智能助手的mcp、函数工具列表。
+description: 在用户需要更新或者添加的mcp、函数工具列表时立即使用此技能。
 ---
 
 # 智能助手的mcp列表修改指导

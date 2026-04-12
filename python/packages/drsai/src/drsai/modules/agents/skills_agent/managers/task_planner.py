@@ -25,7 +25,7 @@ from drsai.modules.baseagent import (
     AssistantMessage,
     CreateResult,
 )
-from drsai import CancellationToken
+from autogen_core import CancellationToken
 
 
 class TaskPlanStep(BaseModel):

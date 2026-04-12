@@ -1,12 +1,5 @@
 
-from typing import (
-    List,
-    Dict,
-    Tuple,
-    Union,
-    AsyncGenerator,
-    Any,
-    Optional)
+from typing import (List, Dict, Union, AsyncGenerator, Any, Optional)
 import os
 import copy
 import json
@@ -14,34 +7,33 @@ import asyncio
 import time
 import traceback
 import inspect
+from pathlib import Path
 
 from autogen_core import FunctionCall
-from autogen_core.model_context import (
-    ChatCompletionContext,
-)
+
 from autogen_agentchat.messages import (
-    BaseAgentEvent,
+    # BaseAgentEvent,
     ToolCallExecutionEvent,
     ToolCallRequestEvent,
-    CodeGenerationEvent,
-    CodeExecutionEvent,
-    UserInputRequestedEvent,
-    MemoryQueryEvent,
+    # CodeGenerationEvent,
+    # CodeExecutionEvent,
+    # UserInputRequestedEvent,
+    # MemoryQueryEvent,
     ModelClientStreamingChunkEvent,
     ThoughtEvent,
-    SelectSpeakerEvent,
-    SelectorEvent,
+    # SelectSpeakerEvent,
+    # SelectorEvent,
     
     BaseChatMessage,
     TextMessage,
     HandoffMessage,
     StopMessage,
     ToolCallSummaryMessage,
-    StructuredMessage,
+    # StructuredMessage,
     MultiModalMessage,
     Image,
-    MessageFactory,
-    StructuredMessageFactory,
+    # MessageFactory,
+    # StructuredMessageFactory,
 )
 from drsai.modules.managers.messages import (
     AgentLongTaskMessage, 
@@ -57,7 +49,7 @@ from drsai.modules.managers.messages import (
 )
 
 from autogen_agentchat.base import ChatAgent, TaskResult, Team
-from autogen_agentchat.ui import Console
+# from autogen_agentchat.ui import Console
 
 
 # logger = logger.bind(name="dr_sai.py")
@@ -93,6 +85,9 @@ from drsai.utils.oai_stream_event import (
     chatcompletions)
 
 import uuid
+
+from drsai.modules.managers.user_profile import UserApiKeyManager
+
 from dotenv import load_dotenv
 load_dotenv(dotenv_path = "drsai_test.env")
 
@@ -115,6 +110,11 @@ class DrSai:
             auto_upgrade = kwargs.pop('auto_upgrade', False)
             init_response = self.db_manager.initialize_database(auto_upgrade=auto_upgrade)
             assert init_response.status, init_response.message
+
+        # API Key 管理器 (用于定时任务等后台服务)
+        
+        api_key_base_dir = Path(self.db_manager.schema_manager.base_dir) if self.db_manager else Path(CONST.FS_DIR)
+        self._api_key_manager = UserApiKeyManager(base_dir=api_key_base_dir)
 
         # 智能体管理
         self.agent_factory: callable = kwargs.pop('agent_factory', None)
@@ -184,6 +184,14 @@ class DrSai:
         创建智能体/多智能体系统实例，加载状态
         """
 
+        # 保存用户的 API Key (如果提供且非空)
+        if api_key and user_id and self._api_key_manager:
+            # 检查是否需要更新 (避免频繁写入)
+            existing_key = self._api_key_manager.get_api_key(user_id)
+            if existing_key != api_key:
+                self._api_key_manager.save_api_key(user_id, api_key)
+                logger.info(f"Updated API key for user: {user_id}")
+
         sig = inspect.signature(self.agent_factory)
         params = sig.parameters
         if len(params) > 0:
@@ -202,13 +210,13 @@ class DrSai:
                 kwargs['defult_config_name'] = defult_config_name
             agent: ChatAgent | Team = (
                 await self.agent_factory(**kwargs)
-                if asyncio.iscoroutinefunction(self.agent_factory)
+                if inspect.iscoroutinefunction(self.agent_factory)
                 else (self.agent_factory(**kwargs))
             )
         else:
             agent: ChatAgent | Team = (
                 await self.agent_factory()
-                if asyncio.iscoroutinefunction(self.agent_factory)
+                if inspect.iscoroutinefunction(self.agent_factory)
                 else (self.agent_factory())
             )
         
@@ -240,7 +248,7 @@ class DrSai:
                         participant._db_manager = self.db_manager
                 else:
                     agent._db_manager = self.db_manager
-    
+
             ## 是否使用流式模式
             if isinstance(agent, Team) and stream:
                 for participant in agent._participants:
@@ -250,6 +258,11 @@ class DrSai:
                 if agent._model_client_stream != stream:
                     raise ValueError("Streaming mode is not supported when agent._model_client_stream is False")
         
+        # 为智能体添加定时任务管理器
+        if hasattr(self, "_task_manager") and self._task_manager is not None:
+            if hasattr(agent, "set_task_manager"):
+                agent.set_task_manager(self._task_manager)
+                
         # 加载历史状态
         response: Response = self.db_manager.get(
             Thread, 

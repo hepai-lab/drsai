@@ -20,11 +20,18 @@ from autogen_agentchat.base import (
     Team)
 from autogen_agentchat.ui import Console
 from pathlib import Path
+import inspect
 
 from hepai import HRModel, HModelConfig, HWorkerConfig, HWorkerAPP
 import hepai
 
+from drsai.modules.managers.messages import (
+    BaseChatMessage,
+    AgentLogEvent,
+)
 from drsai.modules.managers.database import DatabaseManager
+from drsai.modules.agents.skills_agent.managers import ScheduledTaskManager
+from drsai.modules.managers.user_profile import UserApiKeyManager
 from autogen_agentchat.base import (
     ChatAgent,
     Team,)
@@ -126,11 +133,87 @@ async def run_backend(agent_factory: callable, **kwargs):
         **kwargs
         )
 
-    # 初始化定时任务管理器
-    from drsai.modules.agents.skills_agent.managers import ScheduledTaskManager
     task_work_dir = Path(base_dir) / "scheduled_tasks"
     task_work_dir.mkdir(parents=True, exist_ok=True)
-    task_manager = ScheduledTaskManager(work_dir=task_work_dir)
+
+    # 创建 API Key 管理器
+    api_key_manager = UserApiKeyManager(base_dir=Path(base_dir))
+
+    # 创建 agent_executor 函数（流式写入版本）
+    async def agent_executor(user_id: str, session_id: str, prompt: str, output_file: Path, execution_context: dict = None) -> str:
+        """定时任务的 Agent 执行器（流式写入版本）"""
+        agent = None
+        ctx = execution_context or {}
+        try:
+            # 从 UserApiKeyManager 获取用户的 API Key
+            api_key = api_key_manager.get_api_key(user_id)
+
+            if not api_key:
+                error_msg = f"❌ 无法执行定时任务：用户 `{user_id}` 未配置 API Key。\n\n请先登录系统并正常使用。"
+                logger.warning(f"API Key not found for user: {user_id}")
+
+                # 写入错误到文件
+                with open(output_file, 'a', encoding='utf-8') as f:
+                    f.write(error_msg)
+
+                return error_msg
+
+            # 使用 agent_factory 创建专用的 agent 实例
+            agent = await agent_factory(
+                api_key=api_key,
+                thread_id=session_id,
+                user_id=user_id,
+                db_manager=db_manager,
+                defult_config_name=ctx.get("defult_config_name"),
+            )
+
+            if hasattr(agent, "lazy_init"):
+                await agent.lazy_init()
+
+            # 流式写入输出文件
+            result_messages = []
+            message_count = 0
+
+            with open(output_file, 'a', encoding='utf-8') as f:
+                async for message in agent.run_stream(task=prompt):
+                    if hasattr(message, 'content') and isinstance(message.content, str):
+                        content = message.content
+                        result_messages.append(content)
+
+                        # 实时写入
+                        f.write(content)
+                        f.flush()
+
+                        message_count += 1
+
+            if hasattr(agent, "close"):
+                await agent.close()
+
+            total_chars = sum(len(msg) for msg in result_messages)
+            return f"任务执行完成：共 {message_count} 条消息，{total_chars} 字符"
+
+        except Exception as e:
+            logger.error(f"Agent executor error: {e}")
+
+            # 写入错误到文件
+            try:
+                with open(output_file, 'a', encoding='utf-8') as f:
+                    f.write(f"\n\n**执行异常:** {str(e)}\n")
+            except:
+                pass
+
+            if agent and hasattr(agent, "close"):
+                try:
+                    await agent.close()
+                except:
+                    pass
+            raise
+
+    # 创建 ScheduledTaskManager
+    task_manager = ScheduledTaskManager(
+        work_dir=task_work_dir,
+        agent_executor=agent_executor
+    )
     drsaiapp._task_manager = task_manager
 
     if enable_pipeline:
@@ -467,10 +550,136 @@ async def run_worker(agent_factory: callable, **kwargs):
         )
 
     # 初始化定时任务管理器
-    from drsai.modules.agents.skills_agent.managers import ScheduledTaskManager
     task_work_dir = Path(base_dir) / "scheduled_tasks"
     task_work_dir.mkdir(parents=True, exist_ok=True)
-    task_manager = ScheduledTaskManager(work_dir=task_work_dir)
+
+    # 创建 API Key 管理器
+    api_key_manager = UserApiKeyManager(base_dir=Path(base_dir))
+
+    # 创建 agent_executor 函数（流式写入版本）
+    async def agent_executor(user_id: str, session_id: str, prompt: str, output_file: Path, execution_context: dict = None) -> str:
+        """
+        定时任务的 Agent 执行器（流式写入版本）
+
+        Args:
+            user_id: 用户ID
+            session_id: 会话ID (thread_id)
+            prompt: 要执行的提示词
+            output_file: 输出文件路径（用于流式写入）
+            execution_context: 执行上下文（per-task 配置，如 defult_config_name）
+
+        Returns:
+            执行结果摘要
+        """
+        agent = None
+        ctx = execution_context or {}
+        try:
+            # 从 UserApiKeyManager 获取用户的 API Key
+            api_key = api_key_manager.get_api_key(user_id)
+
+            if not api_key:
+                error_msg = f"❌ 无法执行定时任务\n\n"
+                error_msg += f"**原因**: 用户 `{user_id}` 未配置 API Key\n\n"
+                error_msg += f"**解决方法**: 请先登录系统并正常使用，API Key 会自动保存\n"
+
+                logger.warning(f"API Key not found for user: {user_id}")
+
+                # 写入错误信息到输出文件
+                with open(output_file, 'a', encoding='utf-8') as f:
+                    f.write(error_msg)
+
+                return error_msg
+
+            # 从 execution_context 获取 per-task 配置，fallback 到全局值
+            config_name = ctx.get("defult_config_name", defult_config_name)
+
+            # 使用 agent_factory 创建专用的 agent 实例
+            # agent: ChatAgent = await agent_factory(
+            #     api_key=api_key,
+            #     thread_id=session_id,
+            #     user_id=user_id,
+            #     db_manager=db_manager,
+            #     defult_config_name=config_name,
+            # )
+            params = dict(
+                api_key=api_key,
+                thread_id=session_id,
+                user_id=user_id,
+                db_manager=db_manager,
+                defult_config_name=config_name,
+            )
+            agent: ChatAgent | Team = (
+                await agent_factory(**params)
+                if inspect.iscoroutinefunction(agent_factory)
+                else (agent_factory(**params))
+            )
+
+            # 初始化 agent
+            if hasattr(agent, "lazy_init"):
+                await agent.lazy_init()
+
+            # 执行任务并流式写入输出文件
+            result_messages = []
+            message_count = 0
+
+            # 以追加模式打开文件，实时写入
+            with open(output_file, 'a', encoding='utf-8') as f:
+                async for message in agent.run_stream(task=prompt):
+                    # 收集并实时写入消息
+                    # if hasattr(message, 'content'):
+                    #     if isinstance(message.content, str):
+                    if isinstance(message, AgentLogEvent) or isinstance(message, BaseChatMessage):
+                        # content = message.model_dump_json()
+                        content = ""
+                        if isinstance(message, AgentLogEvent):
+                            content = f"{message.title}"
+                        elif isinstance(message.content, str):
+                            content = message.content
+                        result_messages.append(content)
+
+                        # 立即写入文件
+                        f.write(content+"\n\n")
+                        f.flush()  # 强制刷新到磁盘
+                        message_count += 1
+
+                        # 每10条消息输出一次日志
+                        if message_count % 10 == 0:
+                            logger.debug(f"Task {session_id}: Written {message_count} messages")
+
+            # 关闭 agent
+            if hasattr(agent, "close"):
+                await agent.close()
+
+            # 返回执行摘要
+            total_chars = sum(len(msg) for msg in result_messages)
+            summary = f"任务执行完成：共 {message_count} 条消息，{total_chars} 字符"
+            logger.info(f"Task completed: {summary}")
+
+            return summary if result_messages else "任务执行完成，但没有输出内容。"
+
+        except Exception as e:
+            error_msg = f"执行错误: {str(e)}"
+            logger.error(f"Agent executor error for task (user={user_id}, session={session_id}): {e}")
+
+            # 写入错误到文件
+            try:
+                with open(output_file, 'a', encoding='utf-8') as f:
+                    f.write(f"\n\n**执行异常:** {error_msg}\n")
+            except:
+                pass
+
+            if agent and hasattr(agent, "close"):
+                try:
+                    await agent.close()
+                except:
+                    pass
+            raise
+
+    # 创建 ScheduledTaskManager 并传入 agent_executor
+    task_manager = ScheduledTaskManager(
+        work_dir=task_work_dir,
+        agent_executor=agent_executor
+    )
     drsaiapp._task_manager = task_manager
 
     model = DrSaiWorkerModel(
@@ -504,7 +713,6 @@ async def run_worker(agent_factory: callable, **kwargs):
         api_key = creds.get("hepai_api_key") or os.environ.get("HEPAI_API_KEY", "")
 
         # 2. 初始化会话管理器和 Bot
-        
         sessions_file = os.path.join(wechat_dir, "sessions.json")
         session_mgr = SessionManager(sessions_file)
         bot = WeChatBot(
@@ -554,8 +762,8 @@ async def run_worker(agent_factory: callable, **kwargs):
     # 创建uvicorn配置和服务实例
     config = uvicorn.Config(
         app, 
-        host=worker_args.host,  # 确保这里使用的是正确的host参数
-        port=worker_args.port   # 确保这里使用的是正确的port参数
+        host=worker_args.host, 
+        port=worker_args.port
     )
     server = uvicorn.Server(config)
     # 在现有事件循环中启动服务

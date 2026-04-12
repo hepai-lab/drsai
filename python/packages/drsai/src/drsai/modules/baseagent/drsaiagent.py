@@ -159,6 +159,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         user_id: str | None = None,
         set_model_client: Callable | None = None,
         llm_mode_config: Dict[str, Any] | None = None,
+        defult_config_name: str|None = None,
         **kwargs,
             ):
         '''
@@ -307,6 +308,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
 
         self._set_model_client = set_model_client
         self._llm_mode_config = llm_mode_config
+        self._defult_config_name = defult_config_name
         # custom arguments for _reply_function
         self._user_params: Dict[str, Any] = {}
         self._user_params.update(kwargs)

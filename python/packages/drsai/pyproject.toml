@@ -42,8 +42,9 @@ dependencies = [
 
     # hepai
     "damei",
-    "hepai>=1.3.3",
+    "hepai>=1.3.9",
     "qrcode[pil]",
+    "croniter",
 
     # sql
     "sqlmodel",

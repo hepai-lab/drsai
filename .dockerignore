@@ -28,7 +28,7 @@ ENV/
 
 # 文档和测试（可选，根据需要调整）
 # docs/
-tests/
+test/
 *.md
 !README.md
 
@@ -39,6 +39,7 @@ tests/
 
 # Workspace 数据（会通过 volume 挂载）
 workspace/
+.claude/
 
 # Docker 相关
 Dockerfile

@@ -1,6 +1,6 @@
 ---
 name: update_subagent
-description: 指导如何更新智能助手的子智能体(subagent)的列表。
+description: 在用户需要添加和更新自己的子智能体(subagent)列表时立即使用。
 ---
 
 # 智能助手的subagent列表更新指导

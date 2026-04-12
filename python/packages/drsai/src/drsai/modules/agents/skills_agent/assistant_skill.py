@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from pathlib import Path
 from loguru import logger
 
-from drsai import CancellationToken, FunctionCall
+from autogen_core import CancellationToken, FunctionCall
 from drsai.modules.baseagent import (
     DrSaiAgent, 
     HandoffBase, 

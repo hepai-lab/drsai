@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from pathlib import Path
 from loguru import logger
 
-from drsai import CancellationToken, FunctionCall
+from autogen_core import CancellationToken, FunctionCall
 from drsai.modules.baseagent import (
     DrSaiAgent, 
     HandoffBase, 
@@ -74,7 +74,6 @@ from drsai.modules.managers.messages import (
     StructuredMessageFactory,
     MultiModalMessage,
     Image,
-    
 )
 from drsai.modules.managers.database import DatabaseManager
 from drsai.configs.constant import RUNS_DIR
@@ -92,6 +91,7 @@ from .managers.get_managers_tools import (
     get_todo_manager_tool,
     create_local_venv,
 )
+from .managers.get_scheduled_task_tools import get_scheduled_task_tool
 from .utils.utils import HELP_TEXT
 
 
@@ -153,6 +153,8 @@ class DrSaiAssistant(DrSaiAgent):
         user_id: str | None = None,
         set_model_client: Callable | None = None,
         llm_mode_config: Dict = {},
+        defult_config_name: str | None = None,
+        is_powershell: bool = False,
         # skills and executor
         skills_dir: Optional[str | List[str]] = None,
         work_dir: str | None = None,
@@ -191,6 +193,7 @@ class DrSaiAssistant(DrSaiAgent):
             user_id=user_id,
             set_model_client=set_model_client,
             llm_mode_config=llm_mode_config,
+            defult_config_name=defult_config_name,
         )
 
         self._developer_system_message = system_message or ""
@@ -224,9 +227,9 @@ Current Session_ID is {self._thread_id}"""
         # === basic tools ===
         self._only_in_workspace = only_in_workspace
         self._extra_work_dirs = extra_work_dirs
-        self._is_powershell = False
-        if _detect_powershell() is not None:
-            self._is_powershell = True
+        self._is_powershell = is_powershell
+        # if _detect_powershell() is not None:
+        #     self._is_powershell = True
         self._basic_funcs: List[Callable] = get_operator_funcs(
             work_dir, 
             only_in_workspace=self._only_in_workspace,
@@ -293,6 +296,12 @@ Current Session_ID is {self._thread_id}"""
         self._todo_manager = TodoManager()
         self._todo_tools = [get_todo_manager_tool()]
 
+        # === scheduled task manager ===
+        # 注意: task_manager 实例会在 run.py 中创建并注入到 app._task_manager
+        # DrSaiAssistant 通过 app 访问，而不是直接持有实例
+        self._scheduled_task_tools = [get_scheduled_task_tool()]
+        self._task_manager = None  # 将在 lazy_init 或 set_task_manager 中设置
+
         # 初始化实例变量供edge_agent_core使用
         # self._current_plan = None
         # self._task_planner = None
@@ -305,6 +314,23 @@ Current Session_ID is {self._thread_id}"""
         self._config_mtimes: Dict[str, float] = {}
         self._cached_tools_prompt: str = ""
         self._cached_skills_loader = None
+
+    def set_task_manager(self, task_manager):
+        """设置定时任务管理器实例"""
+        self._task_manager = task_manager
+
+    def _format_task_notifications(self, notifications) -> str:
+        """格式化定时任务完成通知"""
+        text = "## 定时任务执行通知\n\n"
+        for n in notifications:
+            icon = {"success": "✅", "error": "❌", "timeout_partial": "⏱️"}.get(n.status, "❓")
+            text += f"- {icon} **{n.task_name}** (`{n.task_id}`)\n"
+            text += f"  状态: {n.status} | 时间: {n.timestamp}\n"
+            if n.output_file:
+                text += f"  输出: `{n.output_file}`\n"
+            text += "\n"
+        text += "💡 可使用定时任务管理工具的 `read_output` 操作查看详细输出内容。\n"
+        return text
 
     def _file_changed(self, path: Path) -> bool:
         """Check if a file/dir has been modified since last check, updating the cached mtime."""
@@ -502,6 +528,16 @@ Current Session_ID is {self._thread_id}"""
 
         inner_messages: List[BaseAgentEvent | BaseChatMessage] = []
         try:
+            # 检查定时任务完成通知
+            if self._task_manager:
+                notifications = self._task_manager.get_pending_notifications(self._user_id)
+                if notifications:
+                    notification_text = self._format_task_notifications(notifications)
+                    yield TextMessage(
+                        content=notification_text,
+                        source=self._user_profile_manager.agent_name,
+                        metadata={"internal": "no"},
+                    )
 
             # initialize the learning memory document
             if self._user_profile_manager.first_time_setup:
@@ -541,7 +577,7 @@ Current Session_ID is {self._thread_id}"""
                 self.update_user_subagents()
 
             # manager ToolSchema
-            manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools
+            manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools
 
             # count the number of tools
             if isinstance(self._model_context, DrSaiChatCompletionContext):
@@ -804,9 +840,18 @@ Current Session_ID is {self._thread_id}"""
                         agent_name = self._user_profile_manager.agent_name
                         yield AgentLogEvent(
                             title=f"I am updating user's config.",
-                            source=agent_name, 
-                            content=str(argument), 
+                            source=agent_name,
+                            content=str(argument),
                             content_type="tools")
+                    elif tool_name == "ScheduledTaskManager":
+                        async for message in self.handle_scheduled_task(
+                            argument=argument,
+                            tool_name=tool_name,
+                            call_id=call_id,
+                            agent_name=agent_name,
+                            model_context=model_context,
+                        ):
+                            yield message
                     else:
                         await model_context.add_message(FunctionExecutionResultMessage(
                             content=[FunctionExecutionResult(
@@ -1523,9 +1568,219 @@ Complete the task and return a clear, concise summary."""
                 source=agent_name,
             )
 
-    # TODO: handle user tools and evenroment
+    async def handle_scheduled_task(
+        self,
+        argument: Dict[str, Any],
+        tool_name: str,
+        call_id: str,
+        agent_name: str,
+        model_context: ChatCompletionContext,
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
+        """
+        处理定时任务管理操作
+        """
+        try:
+            from .managers import ScheduledTask, ScheduleType, TaskStatus
 
-    # TODO: handle skills and self-learning -> # TODO: 支持动态获取skills
+            if self._task_manager is None:
+                error_msg = "定时任务管理器未初始化。请联系管理员(ScheduledTaskManager not initialized.)。\n\n"
+                await model_context.add_message(FunctionExecutionResultMessage(
+                    content=[FunctionExecutionResult(
+                        content=error_msg,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ),]
+                ))
+                yield TextMessage(
+                    content=error_msg,
+                    source=agent_name,
+                    metadata={"internal": "no"},
+                )
+                return
+
+            operation = argument.get("operation")
+            result_content = ""
+
+            if operation == "create":
+                # 创建新任务，捕获当前用户会话的执行上下文
+                execution_context = {
+                    "defult_config_name": getattr(self, '_defult_config_name', None),
+                }
+                task = ScheduledTask(
+                    user_id=self._user_id,
+                    session_id=self._thread_id,
+                    task_name=argument["task_name"],
+                    task_description=argument.get("task_description"),
+                    prompt=argument["prompt"],
+                    schedule_type=ScheduleType(argument["schedule_type"]),
+                    schedule_config=argument["schedule_config"],
+                    timeout=argument.get("timeout", 300),
+                    save_history=argument.get("save_history", True),
+                    execution_context=execution_context,
+                )
+                task_id = self._task_manager.add_task(task)
+                result_content = f"✅ 定时任务创建成功！\n\n"
+                result_content += f"**任务ID:** `{task_id}`\n"
+                result_content += f"**任务名称:** {task.task_name}\n"
+                result_content += f"**调度类型:** {task.schedule_type}\n"
+                result_content += f"**调度配置:** {task.schedule_config}\n"
+                result_content += f"**下次执行:** {task.next_run}\n"
+
+            elif operation == "list":
+                # 列出任务
+                session_id = argument.get("session_id")
+                status = TaskStatus(argument["status"]) if argument.get("status") else None
+                tasks = self._task_manager.list_tasks(
+                    user_id=self._user_id,
+                    session_id=session_id,
+                    status=status
+                )
+                if not tasks:
+                    result_content = "当前没有定时任务(No scheduled tasks)。\n\n"
+                else:
+                    result_content = f"共有 {len(tasks)} 个定时任务：\n\n"
+                    for task in tasks:
+                        result_content += f"- **{task.task_name}** (`{task.task_id}`)\n"
+                        result_content += f"  - 状态: {task.status.value}\n"
+                        result_content += f"  - 调度: {task.schedule_type.value} - {task.schedule_config}\n"
+                        result_content += f"  - 下次执行: {task.next_run or '无'}\n"
+                        result_content += f"  - 执行次数: {task.run_count}\n\n"
+
+            elif operation == "get":
+                # 查询任务详情
+                task_id = argument["task_id"]
+                task = self._task_manager.get_task(task_id)
+                if task is None:
+                    result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
+                else:
+                    result_content = f"## 任务详情\n\n"
+                    result_content += f"**任务ID:** `{task.task_id}`\n"
+                    result_content += f"**任务名称:** {task.task_name}\n"
+                    result_content += f"**任务描述:** {task.task_description or '无'}\n"
+                    result_content += f"**提示词:** {task.prompt}\n"
+                    result_content += f"**调度类型:** {task.schedule_type.value}\n"
+                    result_content += f"**调度配置:** {task.schedule_config}\n"
+                    result_content += f"**状态:** {task.status.value}\n"
+                    result_content += f"**创建时间:** {task.created_at}\n"
+                    result_content += f"**上次执行:** {task.last_run or '从未执行'}\n"
+                    result_content += f"**下次执行:** {task.next_run or '无'}\n"
+                    result_content += f"**执行次数:** {task.run_count}\n"
+                    result_content += f"**错误次数:** {task.error_count}\n"
+                    if task.last_error:
+                        result_content += f"**最后错误:** {task.last_error}\n"
+
+            elif operation == "delete":
+                # 删除任务
+                task_id = argument["task_id"]
+                success = self._task_manager.remove_task(task_id)
+                if success:
+                    result_content = f"✅ 任务已删除(Task deleted successfully): `{task_id}`。\n\n"
+                else:
+                    result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
+
+            elif operation == "toggle":
+                # 启用/禁用任务
+                task_id = argument["task_id"]
+                enabled = argument["enabled"]
+                task = self._task_manager.get_task(task_id)
+                if task is None:
+                    result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
+                else:
+                    new_status = TaskStatus.ENABLED if enabled else TaskStatus.DISABLED
+                    self._task_manager.update_task_status(task_id, new_status)
+                    result_content = f"✅ 任务已{'启用' if enabled else '禁用'}: `{task_id}`"
+                    result_content += f"Task {'enabled' if enabled else 'disabled'} successfully\n\n."
+
+            elif operation == "get_results":
+                # 查询执行历史
+                task_id = argument["task_id"]
+                limit = argument.get("limit", 10)
+                results = self._task_manager.get_task_results(task_id, limit=limit)
+                if not results:
+                    result_content = f"任务 `{task_id}` 没有执行历史(No execution history)。\n\n"
+                else:
+                    result_content = f"任务 `{task_id}` 的执行历史（最近 {len(results)} 次）：\n\n"
+                    for i, res in enumerate(results, 1):
+                        result_content += f"{i}. **{res.start_time}**\n"
+                        result_content += f"   - 状态: {res.status}\n"
+                        result_content += f"   - 耗时: {res.duration:.2f}秒\n"
+                        if res.error_message:
+                            result_content += f"   - 错误: {res.error_message}\n"
+                        result_content += "\n"
+
+            elif operation == "get_outputs":
+                # 获取输出文件列表
+                task_id = argument["task_id"]
+                limit = argument.get("limit", 10)
+                outputs = self._task_manager.get_task_outputs(task_id, limit=limit)
+                if not outputs:
+                    result_content = f"任务 `{task_id}` 没有输出文件(No output files)。\n\n"
+                else:
+                    result_content = f"任务 `{task_id}` 的输出文件（最近 {len(outputs)} 个）：\n\n"
+                    for i, output in enumerate(outputs, 1):
+                        result_content += f"{i}. **{output['timestamp']}**\n"
+                        result_content += f"   - 文件: `{output['file_path']}`\n"
+                        result_content += f"   - 大小: {output['size']} bytes\n"
+                        result_content += f"   - 修改时间: {output['mtime']}\n\n"
+                    result_content += "\n💡 使用 `read_output` 操作读取文件内容。\n"
+
+            elif operation == "read_output":
+                # 读取输出文件
+                file_path = argument["file_path"]
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    result_content = f"## 输出文件内容\n\n**文件:** `{file_path}`\n\n---\n\n{content}"
+                except FileNotFoundError:
+                    result_content = f"❌ 文件不存在(File not found): `{file_path}`\n\n."
+                except Exception as e:
+                    result_content = f"❌ 读取文件失败(Failed to read file): {str(e)}\n\n."
+
+            else:
+                result_content = f"❌ 未知操作(Unknown operation): {operation}\n\n."
+
+            # 添加结果到上下文
+            await model_context.add_message(FunctionExecutionResultMessage(
+                content=[FunctionExecutionResult(
+                    content=result_content,
+                    name=tool_name,
+                    call_id=call_id,
+                    is_error=False,
+                ),]
+            ))
+
+            # 发送事件日志
+            yield AgentLogEvent(
+                title=f"执行定时任务操作: {operation}",
+                source=agent_name,
+                content=str(argument),
+                content_type="tools"
+            )
+
+            # 发送结果消息
+            yield TextMessage(
+                content=result_content,
+                source=agent_name,
+                metadata={"internal": "no"},
+            )
+
+        except Exception as e:
+            logger.exception(f"Error in handle_scheduled_task")
+            error_msg = f"❌ 定时任务操作失败: {str(e)}\n\nScheduled task operation failed."
+            await model_context.add_message(FunctionExecutionResultMessage(
+                content=[FunctionExecutionResult(
+                    content=error_msg,
+                    name=tool_name,
+                    call_id=call_id,
+                    is_error=True,
+                ),]
+            ))
+            yield TextMessage(
+                content=error_msg,
+                source=agent_name,
+                metadata={"internal": "no"},
+            )
 
     # TODO: fixed the config
     def _to_config(self) -> DrSaiAssistantConfig:

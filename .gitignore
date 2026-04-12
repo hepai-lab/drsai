@@ -26,6 +26,7 @@ __pycache__/
 test/
 tmp/
 /workspace
+.claude/
 
 # 忽略所有以.env 结尾的文件
 *.env

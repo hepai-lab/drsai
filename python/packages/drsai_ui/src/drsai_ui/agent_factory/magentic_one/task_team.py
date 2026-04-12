@@ -493,7 +493,8 @@ async def create_magentic_round_team(
 
     elif agent_mode == "remote" or agent_mode == "ddf":
         # agent_config["api_key"] = agent_mode_config.get("api_key")
-        ddf_api_key = agent_mode_config.get("api_key")
+        # BUG: 字段错误，api_key应该为apiKey
+        ddf_api_key = agent_mode_config.get("api_key") or agent_mode_config.get("apiKey")
         if not ddf_api_key:
             ddf_api_key = api_key
         agent_config["api_key"] = ddf_api_key

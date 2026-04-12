@@ -133,6 +133,8 @@ def create_agent(
         user_id=user_id,
         set_model_client=set_model_client,
         llm_mode_config=llm_mode_config,
+        defult_config_name=defult_config_name,
+        is_powershell=False,
         # skills and executor
         skills_dir=SYSTEM_SKILLS_DIR,
         # executor=local_executor,
@@ -155,21 +157,22 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册信息
-            agent_name="Dr.Sai Assistant",
+            agent_name="My Dr.Sai",
             author = "xiongdb@ihep.ac.cn",
             # permission='groups: "drsai, payg"; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
-            permission={
-                "groups": "drsai, payg", 
-                "users": [], 
-                "owner": "admin"
-                },
-            description = "Your dear personal assistant.",
+            # permission={
+            #     "groups": "drsai, payg", 
+            #     "users": [], 
+            #     "owner": "admin"
+            #     },
+            description = "专属于您的AI智能体❤",
             version = "0.1.0",
             logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
             examples=[
                 "/help",
                 "你有哪些技能？",
-                "我应该如何将openclaw作为我的子智能体？"
+                "我应该如何将openclaw作为我的子智能体？",
+                "如何设置定时任务？"
             ],
             agent_config = llm_mode_config,
             defult_config_name="deepseek-v3.2(No image)",
