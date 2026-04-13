@@ -142,8 +142,9 @@ if __name__ == '__main__':
     # get_model_list()
     # asyncio.run(test_async_request())
     test_sync_request(
-       name = "Dr.Sai Assistant",
-       base_url = "http://127.0.0.1:42501/apiv2"
+       name = "My Dr.Sai",
+      #  base_url = "http://10.5.8.19:42858/apiv2"
+      base_url = "https://aiapi.ihep.ac.cn/apiv2"
     )
     # asyncio.run(test_async_request())
     # asyncio.run(test_StatusAgent_request())

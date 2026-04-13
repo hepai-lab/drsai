@@ -1339,13 +1339,31 @@ Complete the task and return a clear, concise summary."""
         return [t for t in self._workbench._tools if t.name in allowed]
 
     async def get_sub_agent_instance(
-            self, 
+            self,
             sub_agent_name: str,
             model_client: ChatCompletionClient,
             model_client_stream: bool = True,
             sub_system: Optional[str] = None,
             output_content_type: type[BaseModel] | None = None,
             ) -> DrSaiAgent:
+        """
+        获取子智能体实例
+
+        注意: 此方法会为子智能体创建独立的 model_client 副本,
+        避免子智能体关闭时影响全局的 model_client
+        """
+        # 为子智能体创建独立的 model_client 副本
+        # 使用 dump_component 和 load_component 来创建深拷贝
+        independent_model_client = None
+        if model_client is not None:
+            try:
+                model_config = model_client.dump_component()
+                independent_model_client = ChatCompletionClient.load_component(model_config)
+            except Exception as e:
+                logger.warning(f"Failed to create independent model_client for subagent {sub_agent_name}: {e}")
+                logger.warning("Falling back to shared model_client (may cause issues when subagent is closed)")
+                independent_model_client = model_client
+
         # Get agent
         if sub_agent_name in self._user_sub_agents:
             sub_agent = self._user_sub_agents[sub_agent_name]
@@ -1369,19 +1387,21 @@ Complete the task and return a clear, concise summary."""
                     system_message=sub_system,
                     description=description,
                     tools=tools,
-                    model_client=model_client,
+                    model_client=independent_model_client,
                     model_client_stream=model_client_stream,
                     output_content_type=output_content_type,)
             elif sub_agent_type == "HepAIWorkerAgent":
                 model_remote_configs = sub_agent.get("model_remote_configs")
                 url = model_remote_configs.get("url", "https://aiapi.ihep.ac.cn/apiv2")
                 name = model_remote_configs.get("name")
+                # 使用原始 model_client 获取 api_key,因为这里只是读取配置,不会造成关闭问题
+                api_key = model_client._client.api_key if model_client else None
                 subagent = HepAIWorkerAgent(
                     name=sub_agent_name,
                     description=description,
                     model_remote_configs={
                         "url": url,
-                        "api_key": model_client._client.api_key,
+                        "api_key": api_key,
                         "name": name
                     },
                     chat_id=self._thread_id,

@@ -295,7 +295,7 @@ class DrSaiWorkerConfig(HWorkerConfig):
     no_register: bool = field(default=True, metadata={"help": "Do not register to controller"})
     
 
-    permissions: str = field(default='groups: payg; users: admin, xiongdb@ihep.ac.cn, ddf_free; owner: xiongdb@ihep.ac.cn', metadata={"help": "Model's permissions, separated by ;, e.g., 'groups: default; users: a, b; owner: c'"})
+    permissions: dict = field(default_factory=lambda: {}, metadata={"help": "Model's permissions, e.g., {'groups': ['default'], 'users': ['a', 'b'], 'owner': 'c'}"})
     description: str = field(default='This is Dr.Sai multi agents system', metadata={"help": "Model's description"})
     author: str = field(default=None, metadata={"help": "Model's author"})
     daemon: bool = field(default=False, metadata={"help": "Run as daemon"})
@@ -465,7 +465,7 @@ async def run_worker(agent_factory: callable, **kwargs):
         model_args.name = agent_name
         os.environ['AGNET_NAME'] = agent_name
     
-    author: str = kwargs.pop("author", "IsYourBaby")
+    author: str = kwargs.pop("author", None)
     worker_args.author = author
 
     permission: str|dict = kwargs.pop("permission", None)

@@ -36,6 +36,7 @@ test/
 *.log
 *.tmp
 .DS_Store
+model_status.yaml
 
 # Workspace 数据（会通过 volume 挂载）
 workspace/

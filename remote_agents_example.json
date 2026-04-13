@@ -3,7 +3,7 @@
         "mode": "remote",
         "name": "Calculate_Assistant",
         "url": "http://192.168.32.148:42816/apiv2",
-        "apiKey": "sk-****",
+        "api_key": "sk-****",
         "description": "一个简单计算器助手",
         "version": "0.1.0",
         "author": "xiongdb@ihep.ac.cn",
