@@ -351,7 +351,7 @@ class StatusAgent(DrSaiAgent):
                 chat_message=TextMessage(
                     content=f"The {self.name} is paused.",
                     source=self.name,
-                    metadata={"internal": "no"},
+                    metadata={"internal": "yes"},
                 )
             )
             return

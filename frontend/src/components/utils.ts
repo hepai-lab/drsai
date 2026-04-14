@@ -2,7 +2,12 @@ import { RcFile } from "antd/es/upload";
 import { IStatus } from "./types/app";
 
 export const getServerUrl = () => {
-  return process.env.GATSBY_API_URL || "/api";
+  const url = process.env.GATSBY_API_URL || "/api";
+  // 页面通过 HTTPS 加载时，自动将 http:// 升级为 https://，避免 mixed content
+  if (typeof window !== "undefined" && window.location.protocol === "https:" && url.startsWith("http://")) {
+    return url.replace("http://", "https://");
+  }
+  return url;
 };
 
 export function setCookie(name: string, value: any, days: number) {

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 import hashlib
 
 from ...datamodel.db import Userinfo
+from ...datamodel.db import UserRole
 from ..deps import get_db
 from ...datamodel.db import UserAgents, AgentModeSettings
 
@@ -40,6 +41,23 @@ async def create_new_user(user_id: str, password: str, db=Depends(get_db)) -> Di
 
         if not result.status:
             raise HTTPException(status_code=500, detail="Failed to create user")
+
+        # Bootstrap admin: if INITIAL_ADMIN_USER_ID matches, mark as admin.
+        # If env not set, do NOT auto-promote.
+        try:
+            import os
+            initial_admin = os.getenv("INITIAL_ADMIN_USER_ID")
+            if initial_admin and initial_admin == user_id:
+                roles = db.get(UserRole, filters={"user_id": user_id}, return_json=False)
+                if roles.status and roles.data:
+                    role: UserRole = roles.data[0]
+                    role.is_admin = True
+                    db.upsert(role)
+                else:
+                    db.upsert(UserRole(user_id=user_id, is_admin=True))
+        except Exception:
+            # If role bootstrap fails, user creation still succeeds.
+            pass
 
         return {"status": True, "message": "User created successfully", "data": {"user_id": user_id}}
 

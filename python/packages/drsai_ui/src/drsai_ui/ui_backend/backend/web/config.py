@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     CONFIG_DIR: str = "configs"  # Default config directory relative to app_root
     DEFAULT_USER_ID: str = "guestuser@gmail.com"
     UPGRADE_DATABASE: bool = False
+    # Optional absolute path to skills root (folders with SKILL.md). If unset, server walks up from package to find agent_skills/skills.
+    AGENT_SKILLS_CATALOG_DIR: str | None = None
 
     model_config = {"env_prefix": "DRSAI_UI_"}
 

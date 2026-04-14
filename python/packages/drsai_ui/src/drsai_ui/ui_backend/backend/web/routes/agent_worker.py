@@ -7,7 +7,8 @@ from pydantic import BaseModel
 from hepai import HepAI
 from hepai import HRModel
 from hepai.components.haiddf.worker._related_class import WorkerInfo
-from ...datamodel.db import UserAgents, UserRemoteAgents, UserDDFAgents, AgentModeSettings
+from sqlmodel import Session as DBSession, select
+from ...datamodel.db import UserAgents, UserRemoteAgents, UserDDFAgents, AgentModeSettings, UserAgentUsage
 from ..deps import get_db
 from drsai_ui.ui_backend.backend.database import DatabaseManager
 import uuid
@@ -15,10 +16,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .....agent_factory.agent_mode_cofigs import (
-    get_agent_mode_config, 
+    get_agent_mode_config,
     get_default_agent_mode_config,
     get_user_agents,
-    )
+    ensure_user_agents_list_has_builtin,
+)
 
 router = APIRouter()
 
@@ -39,15 +41,27 @@ async def test_remote_agent(
     测试远程智能体连接并获取智能体信息
     '''
     try:
-        agents = {}
-
         # 使用用户提供的远程 API key 连接远程智能体
         worker = HRModel.connect(
                 name=request.model_name,
                 api_key=request.api_key,
                 base_url=request.base_url,
             )
-        agent_info: dict = worker.get_info()
+        # get_info() is sync and may hang on remote issues; enforce timeout
+        try:
+            agent_info: dict = await asyncio.wait_for(
+                asyncio.to_thread(worker.get_info),
+                timeout=float(os.getenv("DRSAI_REMOTE_AGENT_TEST_TIMEOUT", "12")),
+            )
+        except asyncio.TimeoutError as e:
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    "code": 504,
+                    "error_type": "timeout",
+                    "detail": "Remote agent test timed out. Please retry or verify remote worker status/network.",
+                },
+            ) from e
 
         # 安全地处理 owner 字段
         if "author" in agent_info:
@@ -58,7 +72,18 @@ async def test_remote_agent(
         return {"status": True, "data": agent_info}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        msg = str(e)
+        # Map common remote-worker errors to a gateway-style error code for frontend
+        if "HAPIStatusError" in msg or "APITimeoutError" in msg or "worker_error" in msg:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": 503,
+                    "error_type": "worker_error",
+                    "detail": msg,
+                },
+            ) from e
+        raise HTTPException(status_code=500, detail=msg) from e
 
 class SaveRemoteAgentRequest(BaseModel):
     user_id: str
@@ -151,24 +176,38 @@ async def remove_remote_agent(
 @router.get("/user_default_agents/list")
 async def user_default_agents(user_id: str, db=Depends(get_db)) -> Dict:
     '''
-    获取drsai ui默认的智能体列表
+    获取 drsai UI 侧为用户缓存的智能体列表（user_agents 表）；
+    若尚无记录则先用 get_default_agent_mode_config 初始化再返回。
     '''
     try:
-        # 刷新进入UserAgents
         response = db.get(UserAgents, filters={"user_id": user_id})
-        if response.status and response.data:
-            pass
-        else:
-            # 用户不存在，创建默认智能体列表
-            agents_list = []
-            # 获取默认的远程智能体
+        if not (response.status and response.data):
+            agents_list: List[Dict[str, Any]] = []
             agents_list.extend(get_default_agent_mode_config(user_id=user_id))
             user_agents = UserAgents(
                 user_id=user_id,
                 agents=agents_list
             )
             db.upsert(user_agents)
-        return {"status": True, "message": "Get user's default agents successfully"}
+
+        response = db.get(UserAgents, filters={"user_id": user_id})
+        if not (response.status and response.data):
+            return {
+                "status": True,
+                "message": "Get user's default agents successfully",
+                "data": [],
+            }
+        user_agents_row: UserAgents = response.data[0]
+        agents_before = user_agents_row.agents or []
+        agents_out = ensure_user_agents_list_has_builtin(agents_before)
+        if agents_out != agents_before:
+            user_agents_row.agents = agents_out
+            db.upsert(user_agents_row)
+        return {
+            "status": True,
+            "message": "Get user's default agents successfully",
+            "data": agents_out,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -244,5 +283,87 @@ async def update_user_agent(
 
         return {"status": True, "message": "智能体配置保存/更新成功"}
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class RecordAgentUsageRequest(BaseModel):
+    user_id: str
+    agent_id: str
+
+
+@router.post("/user_agent/usage")
+async def record_user_agent_usage(
+    request: RecordAgentUsageRequest,
+    db: DatabaseManager = Depends(get_db),
+) -> Dict:
+    """
+    记录用户使用某个智能体（用于“最近使用/使用频次”）
+    """
+    try:
+        now = datetime.now()
+        with DBSession(db.engine) as session:
+            existing = session.exec(
+                select(UserAgentUsage).where(
+                    UserAgentUsage.user_id == request.user_id,
+                    UserAgentUsage.agent_id == request.agent_id,
+                )
+            ).first()
+
+            if existing:
+                existing.last_used_at = now
+                existing.use_count = (existing.use_count or 0) + 1
+                existing.updated_at = now
+                session.add(existing)
+                session.commit()
+                session.refresh(existing)
+                return {"status": True, "data": existing.model_dump(mode="json")}
+
+            row = UserAgentUsage(
+                user_id=request.user_id,
+                agent_id=request.agent_id,
+                last_used_at=now,
+                use_count=1,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            return {"status": True, "data": row.model_dump(mode="json")}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get("/user_agent/recent")
+async def get_recent_user_agents(
+    user_id: str,
+    limit: int = 6,
+    db: DatabaseManager = Depends(get_db),
+) -> Dict:
+    """
+    获取用户最近使用的智能体 id 列表（按 last_used_at 倒序）
+    """
+    try:
+        safe_limit = max(1, min(int(limit), 50))
+        with DBSession(db.engine) as session:
+            rows = session.exec(
+                select(UserAgentUsage)
+                .where(UserAgentUsage.user_id == user_id)
+                .order_by(UserAgentUsage.last_used_at.desc())
+                .limit(safe_limit)
+            ).all()
+        return {
+            "status": True,
+            "data": [
+                {
+                    "agent_id": r.agent_id,
+                    "last_used_at": r.last_used_at.isoformat() if r.last_used_at else None,
+                    "use_count": r.use_count,
+                }
+                for r in rows
+            ],
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
