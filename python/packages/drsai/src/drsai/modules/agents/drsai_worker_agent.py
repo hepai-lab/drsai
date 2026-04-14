@@ -351,7 +351,7 @@ class HepAIWorkerAgent(DrSaiAgent):
                 chat_message=TextMessage(
                     content=f"The {self.name} is paused.",
                     source=self.name,
-                    metadata={"internal": "yes"},
+                    metadata={"internal": "no"},
                 )
             )
             return
@@ -546,7 +546,7 @@ class HepAIWorkerAgent(DrSaiAgent):
                     chat_message=TextMessage(
                         content=f"The {self.name} was paused.",
                         source=self.name,
-                        metadata={"internal": "yes"},
+                        metadata={"internal": "no"},
                     ),
                     inner_messages=inner_messages,
                 )
@@ -565,7 +565,7 @@ class HepAIWorkerAgent(DrSaiAgent):
                 chat_message=TextMessage(
                     content="The task timed out.",
                     source=self.name,
-                    metadata={"internal": "yes"},
+                    metadata={"internal": "no"},
                 ),
                 inner_messages=inner_messages,
             )

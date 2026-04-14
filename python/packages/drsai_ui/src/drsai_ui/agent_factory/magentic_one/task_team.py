@@ -1,9 +1,9 @@
 
 from autogen_core.models import ChatCompletionClient
 from autogen_core import ComponentModel
-from autogen_agentchat.base import ChatAgent, TaskResult, Team
-from autogen_agentchat.agents import UserProxyAgent, BaseChatAgent, AssistantAgent
-from autogen_agentchat.teams import BaseGroupChat
+from autogen_agentchat.base import ChatAgent, Team # , TaskResult
+# from autogen_agentchat.agents import UserProxyAgent, BaseChatAgent, AssistantAgent
+# from autogen_agentchat.teams import BaseGroupChat
 
 from .tools.playwright.browser import get_browser_resource_config
 from .teams import GroupChat , RoundRobinGroupChat
@@ -19,11 +19,14 @@ from .approval_guard import (
     ApprovalConfig,
     BaseApprovalGuard,
 )
-from ..remote_agent.drsai_remote_agent import RemoteAgent
+# from ...agent_factory.remote_agent import StatusAgent
+from ...agent_factory.local_agents.ragflow_agent import RAGFlowAgent
+# from ..remote_agent.drsai_remote_agent import RemoteAgent
 # from ..magentic_one.agents.drsai_agents.drsai_agent import MagenticAgent
-from drsai.modules.baseagent import DrSaiAgent, DrSaiUserProxyAgent
+from drsai.modules.baseagent import DrSaiUserProxyAgent # DrSaiAgent,
 from .agents.user_proxy import RoundbinDrSaiUserProxyAgent
-from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory, RAGFlowMemoryConfig
+from drsai.modules.agents import HepAIWorkerAgent
+# from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory, RAGFlowMemoryConfig
 
 from ...ui_backend.input_func import InputFuncType, make_agentchat_input_func
 from ...ui_backend.learning.memory_provider import MemoryControllerProvider
@@ -31,9 +34,7 @@ from ...ui_backend.utils import get_internal_urls
 from ...ui_backend.types import RunPaths
 from ...ui_backend.backend.datamodel.types import EnvironmentVariable
 from ...ui_backend.backend.utils.utils import decompress_state
-from ...agent_factory.remote_agent import StatusAgent
-# from drsai.modules.agents import HepAIWorkerAgent
-from ...agent_factory.local_agents.ragflow_agent import RAGFlowAgent
+
 
 import json, os
 import aiofiles
@@ -424,7 +425,7 @@ async def create_magentic_round_team(
     
     if agent_mode == "besiii":
         # raise NotImplementedError("BesIII mode not implemented yet")
-        agent = StatusAgent(
+        agent = HepAIWorkerAgent(
             name='besiii',
             model_client=get_model_client(model_client_config = model_config),
             chat_id=chat_id,
@@ -501,7 +502,7 @@ async def create_magentic_round_team(
         agent_config["url"] = agent_mode_config.get("url", "https://aiapi.ihep.ac.cn/apiv2")
         if agent_mode_config.get("defult_config_name"):
             agent_config["defult_config_name"] = agent_mode_config.get("defult_config_name")
-        agent = StatusAgent(
+        agent = HepAIWorkerAgent(
             name="RemoteAgent",
             model_client=get_model_client(model_client_config = model_config),
             model_remote_configs = agent_config,

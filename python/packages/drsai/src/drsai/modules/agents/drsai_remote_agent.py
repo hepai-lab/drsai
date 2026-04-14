@@ -152,7 +152,7 @@ class RemoteAgent(DrSaiAgent):
                 chat_message=TextMessage(
                     content=f"The {self.name} is paused.",
                     source=self.name,
-                    metadata={"internal": "yes"},
+                    metadata={"internal": "no"},
                 )
             )
             return
