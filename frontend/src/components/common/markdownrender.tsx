@@ -1,8 +1,74 @@
-import React, { useState, useEffect } from "react";
-import ReactMarkdown from "react-markdown";
+import React, { useState, useEffect, useContext, createContext } from "react";
+import ReactMarkdown, { type ExtraProps } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism, SyntaxHighlighterProps } from "react-syntax-highlighter";
 import { tomorrow } from "react-syntax-highlighter/dist/esm/styles/prism";
+
+/** Fenced ``` blocks become hast <pre><code>; inline `x` is only <code>. Used to pick CodeBlock vs chip. */
+const MarkdownCodeInFenceContext = createContext(false);
+const MarkdownInlineCodeVariantContext = createContext<"default" | "compact">(
+  "default"
+);
+
+function MarkdownFencePre(
+  props: React.ComponentPropsWithoutRef<"pre"> & ExtraProps
+) {
+  const { children } = props;
+  return (
+    <MarkdownCodeInFenceContext.Provider value={true}>
+      {children}
+    </MarkdownCodeInFenceContext.Provider>
+  );
+}
+
+function MarkdownCode(
+  props: React.ComponentPropsWithoutRef<"code"> & ExtraProps
+) {
+  const { node, className, children, ...rest } = props;
+  const isInFence = useContext(MarkdownCodeInFenceContext);
+  const variant = useContext(MarkdownInlineCodeVariantContext);
+  const match = /language-(\w+)/.exec(className || "");
+  const language = match ? match[1] : "";
+  const value = String(children).replace(/\n$/, "");
+
+  if (isInFence) {
+    const lang = language || "text";
+    return (
+      <CodeBlock
+        key={getCodeBlockKey(lang, value, node)}
+        language={lang}
+        value={value}
+      />
+    );
+  }
+
+  const compact = variant === "compact";
+  return (
+    <code
+      style={
+        compact
+          ? {
+              backgroundColor: "var(--color-inline-code-bg)",
+              color: "var(--color-inline-code-text)",
+              padding: "2px 4px",
+              borderRadius: "3px",
+              fontSize: "0.8rem",
+            }
+          : {
+              whiteSpace: "pre-wrap",
+              color: "var(--color-inline-code-text)",
+              backgroundColor: "var(--color-inline-code-bg)",
+              display: "inline",
+              padding: "0.2em 0.4em",
+              borderRadius: "0.375rem",
+            }
+      }
+      {...rest}
+    >
+      {children}
+    </code>
+  );
+}
 
 
 
@@ -428,51 +494,24 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
             />
 
             <div style={{ position: "relative" }}>
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  p: ({ children }) => (
-                    <p style={{
-                      color: "var(--color-text-secondary)",
-                      fontSize: "0.85rem",
-                      lineHeight: "1.5",
-                      margin: "0 0 8px 0"
-                    }}>
-                      {children}
-                    </p>
-                  ),
-                  code: ({ node, children, className }) => {
-                    const match = /language-(\w+)/.exec(className || "");
-                    const language = match ? match[1] : "";
-                    const inline = !language;
-                    const value = String(children).replace(/\n$/, "");
-
-                    if (inline) {
-                      return (
-                        <code
-                          style={{
-                            backgroundColor: "var(--color-inline-code-bg)",
-                            color: "var(--color-text-secondary)",
-                            padding: "2px 4px",
-                            borderRadius: "3px",
-                            fontSize: "0.8rem",
-                          }}
-                        >
-                          {children}
-                        </code>
-                      );
-                    }
-
-                    return (
-                      <CodeBlock
-                        key={getCodeBlockKey(language, value, node)}
-                        language={language}
-                        value={value}
-                      />
-                    );
-                  },
-                  // 其他元素也使用浅色
-                  li: ({ children }) => (
+              <MarkdownInlineCodeVariantContext.Provider value="compact">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    pre: MarkdownFencePre,
+                    p: ({ children }) => (
+                      <p style={{
+                        color: "var(--color-text-secondary)",
+                        fontSize: "0.85rem",
+                        lineHeight: "1.5",
+                        margin: "0 0 8px 0"
+                      }}>
+                        {children}
+                      </p>
+                    ),
+                    code: MarkdownCode,
+                    // 其他元素也使用浅色
+                    li: ({ children }) => (
                     <li style={{ color: "var(--color-text-secondary)" }}>
                       {children}
                     </li>
@@ -491,6 +530,7 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
               >
                 {content}
               </ReactMarkdown>
+              </MarkdownInlineCodeVariantContext.Provider>
             </div>
           </div>
         </>
@@ -727,6 +767,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[]}
                 components={{
+                  pre: MarkdownFencePre,
                   h1: ({ children }) => (
                     <h1 style={{ color }}>{children}</h1>
                   ),
@@ -765,45 +806,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                       {children}
                     </a>
                   ),
-                  code: ({
-                    node,
-                    className,
-                    children,
-                    ...props
-                  }) => {
-                    const match = /language-(\w+)/.exec(
-                      className || ""
-                    );
-                    const language = match ? match[1] : "";
-                    const inline = !language;
-                    const value = String(children).replace(/\n$/, "");
-                    if (inline) {
-                      return (
-                        <code
-                          style={{
-                            whiteSpace: "pre-wrap",
-                            color: "var(--color-text-primary)",
-                            backgroundColor: "var(--color-inline-code-bg)",
-                            display: "inline",
-                            padding: "0.2em 0.4em",
-                            borderRadius:
-                              "0.375rem",
-                          }}
-                          {...props}
-                        >
-                          {children}
-                        </code>
-                      );
-                    }
-
-                    return (
-                      <CodeBlock
-                        key={getCodeBlockKey(language, value, node)}
-                        language={language}
-                        value={value}
-                      />
-                    );
-                  },
+                  code: MarkdownCode,
                   blockquote: ({ children }) => (
                     <blockquote
                       style={{
@@ -858,6 +861,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[]}
         components={{
+          pre: MarkdownFencePre,
           h1: ({ children }) => <h1 style={{ color }}>{children}</h1>,
           h2: ({ children }) => <h2 style={{ color }}>{children}</h2>,
           h3: ({ children }) => <h3 style={{ color }}>{children}</h3>,
@@ -882,37 +886,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
               {children}
             </a>
           ),
-          code: ({ node, className, children, ...props }) => {
-            const match = /language-(\w+)/.exec(className || "");
-            const language = match ? match[1] : "";
-            const inline = !language;
-            const value = String(children).replace(/\n$/, "");
-            if (inline) {
-              return (
-                <code
-                  style={{
-                    whiteSpace: "pre-wrap",
-                    color: "var(--color-text-primary)",
-                    backgroundColor: "var(--color-inline-code-bg)",
-                    display: "inline",
-                    padding: "0.2em 0.4em",
-                    borderRadius: "0.375rem",
-                  }}
-                  {...props}
-                >
-                  {children}
-                </code>
-              );
-            }
-
-            return (
-              <CodeBlock
-                key={getCodeBlockKey(language, value, node)}
-                language={language}
-                value={value}
-              />
-            );
-          },
+          code: MarkdownCode,
           blockquote: ({ children }) => (
             <blockquote
               style={{

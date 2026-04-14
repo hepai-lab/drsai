@@ -7,7 +7,7 @@ import uuid
 
 from autogen_core import ComponentModel
 from pydantic import field_serializer
-from sqlalchemy import ForeignKey, Integer
+from sqlalchemy import ForeignKey, Integer, UniqueConstraint, Text
 from sqlmodel import JSON, Column, DateTime, Field, SQLModel, String, func
 
 from .types import (
@@ -415,6 +415,156 @@ class Userinfo(SQLModel, table=True):
         default={}, sa_column=Column(JSON)
     )
 
+class UserRole(SQLModel, table=True):
+    """
+    Minimal role table for user management UI.
+
+    Note: This backend currently doesn't enforce auth; role changes are guarded by
+    operator_user_id checks in the API routes.
+    """
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False)
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )  # pylint: disable=not-callable
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )  # pylint: disable=not-callable
+    user_id: str = Field(index=True)
+    version: Optional[str] = "0.0.1"
+    is_admin: bool = False
+
+
+class UserAgentUsage(SQLModel, table=True):
+    __table_args__ = (
+        UniqueConstraint("user_id", "agent_id", name="uq_user_agent_usage_user_agent"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )  # pylint: disable=not-callable
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )  # pylint: disable=not-callable
+    user_id: str = Field(index=True)
+    agent_id: str = Field(index=True)
+    last_used_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    use_count: int = Field(default=0)
+
+    @field_serializer("created_at", "updated_at", "last_used_at")
+    def serialize_datetime(cls, value: datetime) -> str:
+        if isinstance(value, datetime):
+            return value.isoformat()
+
+
+class Organization(SQLModel, table=True):
+    """Cooperation group (e.g. drsai, rongzai)."""
+
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    slug: str = Field(index=True, unique=True)
+    display_name: str = Field(default="")
+    default_agent_id: Optional[str] = None
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )
+    meta: Optional[dict[str, Any]] = Field(default_factory=dict, sa_column=Column(JSON))
+
+
+class OrganizationMember(SQLModel, table=True):
+    """One row per user; user belongs to at most one organization."""
+
+    __table_args__ = (
+        UniqueConstraint("user_id", name="uq_organization_member_user_id"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    org_id: int = Field(sa_column=Column(Integer, ForeignKey("organization.id", ondelete="CASCADE")))
+    user_id: str = Field(index=True)
+    role: str = Field(default="member")  # org_admin | member
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )
+
+
+class OrganizationAgent(SQLModel, table=True):
+    """Agent entries owned by an organization (whitelist + snapshot for plaza)."""
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "agent_id", name="uq_org_agent_org_agent"),
+        {"sqlite_autoincrement": True},
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    org_id: int = Field(sa_column=Column(Integer, ForeignKey("organization.id", ondelete="CASCADE")))
+    agent_id: str = Field(index=True)
+    snapshot: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )
+
+
+class AgentAccessRequest(SQLModel, table=True):
+    """Apply to use another org's agent; platform admin approves."""
+
+    __table_args__ = {"sqlite_autoincrement": True}
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        sa_column=Column(String, unique=True, nullable=False),
+    )
+    applicant_user_id: str = Field(index=True)
+    target_org_id: int = Field(sa_column=Column(Integer, ForeignKey("organization.id", ondelete="CASCADE")))
+    requested_agent_id: str = Field(index=True)
+    status: str = Field(default="pending")  # pending | approved | rejected
+    reviewer_user_id: Optional[str] = None
+    reviewed_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    message: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )
+
 
 ##
 
@@ -433,5 +583,11 @@ DatabaseModel = (
     | UserRemoteAgents
     | UserDDFAgents
     | Userinfo
+    | UserRole
+    | UserAgentUsage
+    | Organization
+    | OrganizationMember
+    | OrganizationAgent
+    | AgentAccessRequest
 )
 
