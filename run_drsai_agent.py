@@ -8,9 +8,11 @@ from drsai.modules.components.model_client.anthropic import (
 )
 from drsai.modules.agents.skills_agent import DrSaiAssistant
 from drsai.modules.managers.database import DatabaseManager
+from drsai.configs.constant import FS_DIR
 
-HERE = Path(__file__).parent
-WORKSPACE = HERE / "workspace"
+# HERE = Path(__file__).parent
+# fs_dir = Path()
+WORKSPACE = Path(FS_DIR) / "workspace"
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 DATASET = WORKSPACE / "drsai"
 DATASET.mkdir(parents=True, exist_ok=True)
@@ -142,7 +144,7 @@ def create_agent(
         only_in_workspace=False,
         # extra_work_dirs=[],
         # sub_agent_config = SUB_AGENTS,
-        # max_turn_count=20,
+        # max_turn_count=200,
         token_limit=50000,
         rag_flow_url=RAGFLOW_URL,
         rag_flow_token=RAGFLOW_TOKEN,

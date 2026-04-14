@@ -92,6 +92,9 @@ from .managers.get_managers_tools import (
     create_local_venv,
 )
 from .managers.get_scheduled_task_tools import get_scheduled_task_tool
+from .managers.scheduled_task_manager import (
+    TaskNotification,
+)
 from .utils.utils import HELP_TEXT
 
 
@@ -162,7 +165,7 @@ class DrSaiAssistant(DrSaiAgent):
         extra_work_dirs: List[str] | None = None,
         executor: CodeExecutor | None = None,
         sub_agent_config: Dict = {},
-        max_turn_count: int = 100,
+        max_turn_count: int = 200,
         token_limit: int = 50000,
         rag_flow_url: str | None = None,
         rag_flow_token: str | None = None,
@@ -319,7 +322,7 @@ Current Session_ID is {self._thread_id}"""
         """设置定时任务管理器实例"""
         self._task_manager = task_manager
 
-    def _format_task_notifications(self, notifications) -> str:
+    def _format_task_notifications(self, notifications: List[TaskNotification]) -> str:
         """格式化定时任务完成通知"""
         text = "## 定时任务执行通知\n\n"
         for n in notifications:
@@ -344,6 +347,118 @@ Current Session_ID is {self._thread_id}"""
             return True
         return False
 
+    async def _emit_notification(self, content: str) -> TextMessage:
+        """Yield a notification to the user and inject it into the model context."""
+        await self._model_context.add_message(
+            UserMessage(source="system", content=f"[System Notification]\n{content}")
+        )
+        return TextMessage(
+            content=content,
+            source=self._user_profile_manager.agent_name,
+            metadata={"internal": "no"},
+        )
+
+    async def _init_memory_documents(self) -> None:
+        """Initialize learning memory and session documents on first use."""
+        if self._user_profile_manager.first_time_setup:
+            self._learning_document_id = await self._model_context.create_new_session_document(
+                dataset_id=self._learning_dataset_id, create_type="learning_memory"
+            )
+            self._user_profile_manager.update_document_ids(
+                thread_id=self._user_id, document_id=self._learning_document_id
+            )
+        if self._memory_document_id is None:
+            self._memory_document_id = await self._model_context.create_new_session_document(
+                user_id=self._user_id,
+                thread_id=self._thread_id,
+                work_dir=self._work_dir,
+            )
+            self._user_profile_manager.update_document_ids(
+                thread_id=self._thread_id, document_id=self._memory_document_id
+            )
+            self._model_context._document_id = self._memory_document_id
+
+    async def _run_startup_checks(self) -> List[str]:
+        """Reload configs if changed; return list of warning messages (side-effects: update caches)."""
+        warnings = []
+
+        # load/update tools only if TOOLS_CONFIG.json changed
+        tools_changed = self._file_changed(self._user_profile_manager.tools_config_path)
+        if tools_changed:
+            tools_prompt, tool_errors = await self.update_user_tools()
+            if tool_errors:
+                error_details = "\n".join(f"  - {err}" for err in tool_errors)
+                warnings.append(
+                    f"⚠️ **工具配置加载警告 / Tool Config Loading Warning**\n\n"
+                    f"部分工具配置加载失败,已跳过这些工具:\n"
+                    f"Some tool configurations failed to load and were skipped:\n\n"
+                    f"{error_details}\n\n"
+                    f"💡 请检查 `TOOLS_CONFIG.json` 文件格式是否正确。\n"
+                    f"💡 Please check if `TOOLS_CONFIG.json` format is correct.\n\n"
+                    f"✅ 其他工具已正常加载,系统将继续运行。\n"
+                    f"✅ Other tools loaded successfully, system will continue."
+                )
+            self._cached_tools_prompt = tools_prompt
+
+        # update system prompt if AGENTS.md or tools prompt changed
+        if tools_changed or self._file_changed(self._user_profile_manager.agents_md):
+            try:
+                self.update_system_prompt(additional_prompt=self._cached_tools_prompt)
+            except Exception as e:
+                logger.error(f"Failed to update system prompt from AGENTS.md: {e}")
+                logger.error(traceback.format_exc())
+                warnings.append(
+                    f"⚠️ **配置文件加载警告 / Config Loading Warning**\n\n"
+                    f"无法加载智能体配置文件 `AGENTS.md`:\n"
+                    f"Failed to load agent config `AGENTS.md`:\n\n"
+                    f"```\n{str(e)}\n```\n\n"
+                    f"将继续使用之前的系统提示词。\n"
+                    f"Continuing with previous system prompt.\n\n"
+                    f"💡 请检查 `AGENTS.md` 文件是否存在且格式正确。\n"
+                    f"💡 Please check if `AGENTS.md` exists and is properly formatted."
+                )
+
+        # load/update skills only if skills directories changed
+        skills_changed = self._file_changed(self._user_profile_manager.skills_dir)
+        if self._skills_dir:
+            # TODO: 从skills_dir 更新技能
+            extra_dirs = self._skills_dir if isinstance(self._skills_dir, list) else [self._skills_dir]
+            skills_changed = skills_changed or any(self._file_changed(Path(d)) for d in extra_dirs)
+        if skills_changed or self._cached_skills_loader is None:
+            skills_loader, skill_error = self.update_user_skills()
+            if skill_error:
+                warnings.append(
+                    f"⚠️ **技能配置加载警告 / Skills Config Loading Warning**\n\n"
+                    f"无法加载技能配置:\n"
+                    f"Failed to load skills configuration:\n\n"
+                    f"```\n{skill_error}\n```\n\n"
+                    f"将继续使用之前的技能配置。\n"
+                    f"Continuing with previous skills configuration.\n\n"
+                    f"💡 请检查 skills 目录下的 SKILL.md 文件格式。\n"
+                    f"💡 Please check SKILL.md files in the skills directory."
+                )
+                if self._cached_skills_loader is None:
+                    self._agent_skills_tools = []
+            else:
+                self._cached_skills_loader = skills_loader
+
+        # load/update subagents only if SUBAGENT_CONFIG.json changed
+        if self._file_changed(self._user_profile_manager.subagent_config_path):
+            subagent_error = self.update_user_subagents()
+            if subagent_error:
+                warnings.append(
+                    f"⚠️ **子智能体配置加载警告 / Subagent Config Loading Warning**\n\n"
+                    f"无法加载子智能体配置文件 `SUBAGENT_CONFIG.json`:\n"
+                    f"Failed to load subagent config `SUBAGENT_CONFIG.json`:\n\n"
+                    f"```\n{subagent_error}\n```\n\n"
+                    f"将继续使用之前的子智能体配置。\n"
+                    f"Continuing with previous subagent configuration.\n\n"
+                    f"💡 请检查 `SUBAGENT_CONFIG.json` 文件格式是否正确。\n"
+                    f"💡 Please check if `SUBAGENT_CONFIG.json` format is correct."
+                )
+
+        return warnings
+
     def update_system_prompt(self, additional_prompt: str = "") -> str:
         """获取agent描述、用户画像并更新系统消息"""
         user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
@@ -352,35 +467,68 @@ Current Session_ID is {self._thread_id}"""
         enhanced_system_message += additional_prompt
         self._system_messages = [SystemMessage(content=enhanced_system_message)]
     
-    def update_user_skills(self) -> SkillLoader:
-        """加载/更新用户技能"""
+    def update_user_skills(self) -> Tuple[Optional[SkillLoader], Optional[str]]:
+        """加载/更新用户技能
+
+        Returns:
+            Tuple[Optional[SkillLoader], Optional[str]]: (skills_loader, error_message)
+        """
         skills_loader = None
-        # 首先尝试从用户的skills目录加载
-        user_skills_dir = self._user_profile_manager.skills_dir
-        if user_skills_dir.exists() and list(user_skills_dir.glob("*/SKILL.md")):
-            skills_loader = SkillLoader(skills_dir=str(user_skills_dir))
-        # TODO: 从指定的skills目录加载/更新skills
-        # # 再从指定的skills目录加载
-        # if self._skills_dir:
-        #     if not skills_loader:
-        #         skills_loader = SkillLoader(skills_dir=self._skills_dir)
-        #     else:
-        #         skills_loader.add_skills_by_dir(skills_dir=self._skills_dir)
-        # 获取技能描述
-        if skills_loader and skills_loader.skills:
-            self._agent_skills_tools = [get_agent_skills_tool(descriptions=skills_loader.get_descriptions())]
-        else:
-            self._agent_skills_tools = []
-        return skills_loader
+        error_msg = None
+
+        try:
+            # 首先尝试从用户的skills目录加载
+            user_skills_dir = self._user_profile_manager.skills_dir
+            if user_skills_dir.exists() and list(user_skills_dir.glob("*/SKILL.md")):
+                skills_loader = SkillLoader(skills_dir=str(user_skills_dir))
+            # TODO: 从指定的skills目录加载/更新skills
+            # # 再从指定的skills目录加载
+            # if self._skills_dir:
+            #     if not skills_loader:
+            #         skills_loader = SkillLoader(skills_dir=self._skills_dir)
+            #     else:
+            #         skills_loader.add_skills_by_dir(skills_dir=self._skills_dir)
+
+            # 获取技能描述
+            if skills_loader and skills_loader.skills:
+                self._agent_skills_tools = [get_agent_skills_tool(descriptions=skills_loader.get_descriptions())]
+            else:
+                self._agent_skills_tools = []
+
+        except Exception as e:
+            error_msg = f"Failed to load skills: {str(e)}"
+            logger.error(f"Error in update_user_skills: {e}")
+            logger.error(traceback.format_exc())
+            # 保持之前的工具配置
+            self._agent_skills_tools = [] if not hasattr(self, '_agent_skills_tools') else self._agent_skills_tools
+
+        return skills_loader, error_msg
     
-    async def update_user_tools(self) -> str:
-        """将用户的自定义配置工具接入到agent中"""
+    async def update_user_tools(self) -> Tuple[str, List[str]]:
+        """将用户的自定义配置工具接入到agent中
+
+        Returns:
+            Tuple[str, List[str]]: (user_local_tools_prompt, error_messages)
+        """
         user_mcp_tools = []
         user_local_tools = []
-        tools_config = self._user_profile_manager.load_user_tools_config()
-        for tool in tools_config:
+        error_messages = []
+
+        try:
+            tools_config = self._user_profile_manager.load_user_tools_config()
+        except Exception as e:
+            error_msg = f"Failed to load TOOLS_CONFIG.json: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            error_messages.append(error_msg)
+            # 返回空配置
+            return "", error_messages
+
+        # 逐个加载工具，收集错误但不中断
+        for idx, tool in enumerate(tools_config):
+            tool_type = tool.get("type", "unknown")
             try:
-                if tool.get("type") == "mcp-std":
+                if tool_type == "mcp-std":
                     config = tool.get("config")
                     if "command" in config and "args" in config:
                         std_mcp_tools = await mcp_server_tools(StdioServerParams(
@@ -388,7 +536,9 @@ Current Session_ID is {self._thread_id}"""
                             args=config["args"]
                         ))
                         user_mcp_tools.extend(std_mcp_tools)
-                elif tool.get("type") == "mcp-sse":
+                    else:
+                        error_messages.append(f"Tool #{idx+1} (mcp-std): Missing 'command' or 'args' in config")
+                elif tool_type == "mcp-sse":
                     config = tool.get("config")
                     if "url" in config:
                         sse_mcp_tools = await mcp_server_tools(SseServerParams(
@@ -398,22 +548,30 @@ Current Session_ID is {self._thread_id}"""
                             sse_read_timeout=config.get("sse_read_timeout", float(300)),
                         ))
                         user_mcp_tools.extend(sse_mcp_tools)
+                    else:
+                        error_messages.append(f"Tool #{idx+1} (mcp-sse): Missing 'url' in config")
                 else:
+                    config = tool.get("config")
                     user_local_tools.append(str(config)+"\n")
 
             except Exception as e:
-                # print(f"Error loading tool: {e}")
-                pass
+                error_msg = f"Tool #{idx+1} ({tool_type}): {str(e)}"
+                logger.warning(f"Error loading tool: {error_msg}")
+                error_messages.append(error_msg)
+                # 继续加载其他工具
 
+        # 更新工具列表
         self._workbench._tools = self._tools + user_mcp_tools
         self._tools_names = [tool.name for tool in self._workbench._tools ]
 
+        # 生成本地工具提示
         if user_local_tools:
             user_local_tools_prompt = "The info about the user's local function is as follows. When needed, you can execute it on the command line using `run_bash` tool\n\n"
             user_local_tools_prompt += "\n".join(user_local_tools)
         else:
             user_local_tools_prompt = ""
-        return user_local_tools_prompt
+
+        return user_local_tools_prompt, error_messages
     
     def get_subagent_descriptions(self, sub_agent_config: dict) -> str:
         """Generate agent type descriptions for system prompt."""
@@ -528,53 +686,19 @@ Current Session_ID is {self._thread_id}"""
 
         inner_messages: List[BaseAgentEvent | BaseChatMessage] = []
         try:
-            # 检查定时任务完成通知
+            # task completion notifications
             if self._task_manager:
-                notifications = self._task_manager.get_pending_notifications(self._user_id)
+                notifications:List[TaskNotification] = self._task_manager.get_pending_notifications(self._user_id)
                 if notifications:
-                    notification_text = self._format_task_notifications(notifications)
-                    yield TextMessage(
-                        content=notification_text,
-                        source=self._user_profile_manager.agent_name,
-                        metadata={"internal": "no"},
-                    )
+                    yield await self._emit_notification(self._format_task_notifications(notifications))
 
-            # initialize the learning memory document
-            if self._user_profile_manager.first_time_setup:
-                self._learning_document_id = await self._model_context.create_new_session_document(dataset_id = self._learning_dataset_id, create_type="learning_memory" )
-                self._user_profile_manager.update_document_ids(thread_id=self._user_id, document_id=self._learning_document_id)
-            # create the new session document
-            if self._memory_document_id is None:
-                self._memory_document_id = await self._model_context.create_new_session_document(
-                    user_id = self._user_id,
-                    thread_id = self._thread_id,
-                    work_dir = self._work_dir,
-                )
-                self._user_profile_manager.update_document_ids(thread_id=self._thread_id, document_id=self._memory_document_id)
-                self._model_context._document_id = self._memory_document_id
+            # initialize memory documents
+            await self._init_memory_documents()
 
-
-            # load/update tools only if TOOLS_CONFIG.json changed
-            tools_changed = self._file_changed(self._user_profile_manager.tools_config_path)
-            if tools_changed:
-                self._cached_tools_prompt = await self.update_user_tools()
-
-            # update system prompt if AGENTS.md or tools prompt changed
-            if tools_changed or self._file_changed(self._user_profile_manager.agents_md):
-                self.update_system_prompt(additional_prompt=self._cached_tools_prompt)
-
-            # load/update skills only if skills directories changed
-            skills_changed = self._file_changed(self._user_profile_manager.skills_dir)
-            if self._skills_dir:
-                extra_dirs = self._skills_dir if isinstance(self._skills_dir, list) else [self._skills_dir]
-                skills_changed = skills_changed or any(self._file_changed(Path(d)) for d in extra_dirs)
-            if skills_changed or self._cached_skills_loader is None:
-                self._cached_skills_loader = self.update_user_skills()
+            # config reload checks — warnings injected into context and yielded to user
+            for warning in await self._run_startup_checks():
+                yield await self._emit_notification(warning)
             skills_loader = self._cached_skills_loader
-
-            # load/update subagents only if SUBAGENT_CONFIG.json changed
-            if self._file_changed(self._user_profile_manager.subagent_config_path):
-                self.update_user_subagents()
 
             # manager ToolSchema
             manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools
