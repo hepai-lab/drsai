@@ -1,6 +1,6 @@
 import { appContext } from "@/hooks/provider";
 import { Dropdown, message, Spin } from "antd";
-import React, { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { MoreVertical, Search, Trash2 } from "lucide-react";
 import { parse } from "yaml";
@@ -42,12 +42,15 @@ import {
 } from "./menuRoutes";
 import { SessionEditor } from "./session_editor";
 import { AppLayout } from "../../layout";
+import { useRightPanelStore } from "../../store/rightPanel";
 
 export const SessionManager: React.FC = () => {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | undefined>();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [historySearchQuery, setHistorySearchQuery] = useState("");
+  const historyScrollRef = useRef<HTMLDivElement | null>(null);
+  const historyScrollTopRef = useRef(0);
   /** 从「库」带入聊天输入框的已上传文件（短时清空引用，避免重复注入） */
   const [libraryAttachPrefill, setLibraryAttachPrefill] = useState<
     ServerUploadedFileInfo[] | null
@@ -87,6 +90,7 @@ export const SessionManager: React.FC = () => {
   );
 
   const { user, darkMode } = useContext(appContext);
+  const rightPanelTab = useRightPanelStore((s) => s.layoutTab);
   const formatFileSize = useCallback((size: number | null | undefined) => {
     if (typeof size !== "number" || !Number.isFinite(size) || size <= 0) return "-";
     if (size < 1024) return `${size} B`;
@@ -323,11 +327,28 @@ export const SessionManager: React.FC = () => {
   // always switch back to "current_session" view so the chat is visible.
   const handleSelectSession = useCallback(
     async (selectedSession: Session) => {
+      if (historyScrollRef.current) {
+        historyScrollTopRef.current = historyScrollRef.current.scrollTop;
+      }
       navigateToMenu(MENU_IDS.currentSession);
       selectSession(selectedSession);
     },
     [selectSession]
   );
+
+  const setHistoryScrollContainer = useCallback((el: HTMLDivElement | null) => {
+    historyScrollRef.current = el;
+    if (el) {
+      el.scrollTop = historyScrollTopRef.current;
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (rightPanelTab !== "history") return;
+    const el = historyScrollRef.current;
+    if (!el) return;
+    el.scrollTop = historyScrollTopRef.current;
+  }, [rightPanelTab, session?.id, sessions]);
 
   // Listen for switchToCurrentSession event
   useEffect(() => {
@@ -562,7 +583,13 @@ export const SessionManager: React.FC = () => {
             />
           </div>
         </div>
-        <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 space-y-1">
+        <div
+          ref={setHistoryScrollContainer}
+          onScroll={(e) => {
+            historyScrollTopRef.current = e.currentTarget.scrollTop;
+          }}
+          className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 space-y-1"
+        >
           {filteredSessions.length === 0 ? (
             <div className="text-center text-sm text-secondary py-8 px-2">
               无匹配会话，请调整关键词
@@ -580,6 +607,7 @@ export const SessionManager: React.FC = () => {
                 >
                   <button
                     type="button"
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => void handleSelectSession(historySession)}
                     className={`flex-1 min-w-0 text-left rounded-lg px-3 py-2 pr-1 transition-colors ${isCurrent ? "text-accent" : "text-primary"
                       }`}
