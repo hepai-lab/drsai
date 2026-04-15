@@ -33,6 +33,28 @@ def _builtin_drsai_general_enabled() -> bool:
     return not _truthy_env(os.getenv("DRSUI_DISABLE_BUILTIN_DRSAI_GENERAL"))
 
 
+def _int_env(name: str, default: int, min_value: int = 1) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(min_value, value)
+
+
+def _float_env(name: str, default: float, min_value: float = 0.1) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(min_value, value)
+
+
 def _mark_featured_and_default_agents(agents: List[Dict[str, Any]]) -> None:
     """
     Add UI-related flags to agent dicts.
@@ -225,13 +247,15 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
     '''
     获取后端的mode种类设置
     '''
+    user_ddf_agents: UserDDFAgents | None = None
+    agents_old: List[Dict[str, Any]] = []
     try:
         # Check cache first
         response = db.get(UserDDFAgents, filters={"user_id": user_id})
         
         agents_name_old = {}
         if response.status and response.data:
-            user_ddf_agents: UserDDFAgents = response.data[0]
+            user_ddf_agents = response.data[0]
             agents_old = user_ddf_agents.agents or []
             agents_name_old = {agent["name"]: agent for agent in agents_old}
             if not is_refresh:
@@ -247,49 +271,60 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
             raise HTTPException(status_code=401, detail="Invalid authorization header format")
         
         apikey = authorization[7:]  # Remove "Bearer " prefix
+        if not apikey.strip():
+            return {"status": True, "data": agents_old}
 
         client = HepAI(
             api_key=apikey,
             base_url="https://aiapi.ihep.ac.cn/apiv2"
         )
         models = client.agents.list()
-        
-        agents = []
-        for model in models.data:
-            if model.id != "hepai/custom-model":
-                try:
-                    model = HRModel.connect(
-                        name=model.id, 
+
+        timeout_seconds = _float_env("DRSUI_DDF_AGENT_INFO_TIMEOUT", default=5.0, min_value=0.5)
+        max_concurrency = _int_env("DRSUI_DDF_AGENT_INFO_MAX_CONCURRENCY", default=8, min_value=1)
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def _fetch_model_info(model_id: str) -> Dict[str, Any] | None:
+            try:
+                async with semaphore:
+                    worker = HRModel.connect(
+                        name=model_id,
                         api_key=apikey,
                         base_url="https://aiapi.ihep.ac.cn/apiv2",
                     )
-                    # agent_info: dict|WorkerInfo = model.get_info()
-                    agent_info: dict|WorkerInfo = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                model.get_info
-                            ),
-                            timeout=5.0
-                        )
-                    if isinstance(agent_info, WorkerInfo):
-                        pass
-                        # agent_info = agent_info.to_dict()
-                        # agent_info.update({"owner": agent_info["resource_info"][0]["owned_by"]})
-                    else:
-                        agent_info.update({"mode": "ddf"})
-                        agent_info.update({"owner": agent_info["author"]})
-                        if agent_info.get("name") in agents_name_old:
-                            agent_info.update({"id": agents_name_old[agent_info.get("name")]["id"]})
-                        else:
-                            agent_info.update({"id": str(uuid.uuid4())})
-                        agents.append(agent_info)
-                except Exception as e:
-                    pass
+                    agent_info: dict | WorkerInfo = await asyncio.wait_for(
+                        asyncio.to_thread(worker.get_info),
+                        timeout=timeout_seconds,
+                    )
+                if isinstance(agent_info, WorkerInfo):
+                    return None
+                agent_info.update({"mode": "ddf"})
+                agent_info.update({"owner": agent_info.get("author")})
+                if agent_info.get("name") in agents_name_old:
+                    agent_info.update({"id": agents_name_old[agent_info.get("name")]["id"]})
+                else:
+                    agent_info.update({"id": str(uuid.uuid4())})
+                return agent_info
+            except Exception:
+                return None
+
+        model_ids = [model.id for model in models.data if model.id != "hepai/custom-model"]
+        if model_ids:
+            fetched_agents = await asyncio.gather(*(_fetch_model_info(model_id) for model_id in model_ids))
+        else:
+            fetched_agents = []
+        agents = [agent for agent in fetched_agents if agent]
+
+        # 保持用户体验：刷新失败时不要把已有列表变为空
+        if not agents and agents_old:
+            agents = agents_old
         
         # Update cache
         if response.status and response.data:
             # Update existing record
-            user_ddf_agents.agents = agents
-            db.upsert(user_ddf_agents)
+            if user_ddf_agents is not None and agents != agents_old:
+                user_ddf_agents.agents = agents
+                db.upsert(user_ddf_agents)
         else:
             # Create new record
             new_user_ddf_agents = UserDDFAgents(
@@ -301,8 +336,8 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
         return {"status": True, "data": agents}
     
     except Exception as e:
-        # raise HTTPException(status_code=500, detail=str(e)) from e
-        return {"status": True, "data": []}
+        logger.warning("Failed to refresh DDF agents for user %s: %s", user_id, str(e))
+        return {"status": True, "data": agents_old}
 
 async def get_user_remote_agents(user_id: str, db: DatabaseManager = None) -> Dict:
     '''
