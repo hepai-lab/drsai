@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkopen_drsai=self.webpackChunkopen_drsai||[]).push([[5723],{70612:function(e,t,a){a.r(t);var s=a(96540);t.default=()=>s.createElement("div",{className:"flex items-center justify-center h-full text-secondary"},s.createElement("div",{className:"text-center"},s.createElement("h2",{className:"text-base font-medium text-primary"},"频道"),s.createElement("p",{className:"mt-2 text-sm opacity-60"},"页面建设中...")))}}]);
+//# sourceMappingURL=component---src-pages-settings-channels-page-tsx-461ac10d4d2b447c3e87.js.map
