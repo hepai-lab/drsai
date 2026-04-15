@@ -148,7 +148,6 @@ const RunView: React.FC<RunViewProps> = ({
   serverFilesPrefill,
 }) => {
   const setIsRightPanelOpen = useRightPanelStore((s) => s.setIsOpen);
-  const setLayoutTab = useRightPanelStore((s) => s.setLayoutTab);
   const overviewSlot = useRightPanelStore((s) => s.overviewSlot);
   const threadContainerRef = useRef<HTMLDivElement | null>(null);
   const autoScrollLockedRef = useRef(false);
@@ -408,13 +407,11 @@ const RunView: React.FC<RunViewProps> = ({
     if (agentConfig.panel.type !== "besiii") return;
     if (!besiiiServerGlobalInfo?.revision) return;
     setBesiiiActiveTab("global_info");
-    setLayoutTab("overview");
     setShowPanel(true);
     setIsPanelMinimized(false);
   }, [
     agentConfig.panel.type,
     besiiiServerGlobalInfo?.revision,
-    setLayoutTab,
     setShowPanel,
     setIsPanelMinimized,
   ]);
