@@ -10,6 +10,22 @@ const MarkdownInlineCodeVariantContext = createContext<"default" | "compact">(
   "default"
 );
 
+function renderWithSingleNewlineBreaks(children: React.ReactNode): React.ReactNode {
+  const flattened = React.Children.toArray(children);
+  return flattened.flatMap((child, childIndex) => {
+    if (typeof child !== "string") return child;
+    const lines = child.split("\n");
+    return lines.flatMap((line, lineIndex) => {
+      if (lineIndex === lines.length - 1) return line;
+      return [line, <br key={`br-${childIndex}-${lineIndex}`} />];
+    });
+  });
+}
+
+function toHtmlWithLineBreaks(rawHtml: string): string {
+  return rawHtml.replace(/\r?\n/g, "<br />");
+}
+
 function MarkdownFencePre(
   props: React.ComponentPropsWithoutRef<"pre"> & ExtraProps
 ) {
@@ -48,16 +64,18 @@ function MarkdownCode(
       style={
         compact
           ? {
-              backgroundColor: "var(--color-inline-code-bg)",
-              color: "var(--color-inline-code-text)",
+              backgroundColor:
+                "color-mix(in oklab, var(--color-magenta-600) 18%, transparent)",
+              color: "var(--color-text-accent)",
               padding: "2px 4px",
               borderRadius: "3px",
               fontSize: "0.8rem",
             }
           : {
               whiteSpace: "pre-wrap",
-              color: "var(--color-inline-code-text)",
-              backgroundColor: "var(--color-inline-code-bg)",
+              color: "var(--color-text-accent)",
+              backgroundColor:
+                "color-mix(in oklab, var(--color-magenta-600) 18%, transparent)",
               display: "inline",
               padding: "0.2em 0.4em",
               borderRadius: "0.375rem",
@@ -297,36 +315,31 @@ interface ThinkBubbleProps {
 const ThinkBubble: React.FC<ThinkBubbleProps> = ({
   content,
   attributes = {},
-  isStreaming = false
+  isStreaming = false,
 }) => {
-  // Default to reasoning type if not specified
-  const type = attributes.type || 'reasoning';
-  const isDone = attributes.done === 'true' || attributes.done === true;
-
-  // Think starts expanded, collapses when done
+  const type = attributes.type || "reasoning";
+  const isDone = attributes.done === "true" || attributes.done === true;
   const [isExpanded, setIsExpanded] = useState(!isDone);
   const [startTime] = useState(Date.now());
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [userManuallyToggled, setUserManuallyToggled] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const cleanContent = content.trim();
 
-  // Auto-collapse when thinking is done, but only if user hasn't manually toggled
   useEffect(() => {
     if (isDone && isExpanded && !userManuallyToggled) {
-      // Add a small delay before auto-collapsing
       const timer = setTimeout(() => {
         setIsExpanded(false);
-      }, 1500); // Slightly longer delay for better UX
+      }, 1500);
       return () => clearTimeout(timer);
     }
   }, [isDone, isExpanded, userManuallyToggled]);
 
-  // Handle manual toggle
   const handleToggle = () => {
     setIsExpanded(!isExpanded);
     setUserManuallyToggled(true);
   };
 
-  // Update current time every second when thinking
   useEffect(() => {
     if (!isDone) {
       const interval = setInterval(() => {
@@ -336,92 +349,181 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
     }
   }, [isDone]);
 
-  const duration = attributes.duration || Math.floor((currentTime - startTime) / 1000);
+  const durationSeconds =
+    typeof attributes.duration === "number"
+      ? Math.max(0, attributes.duration)
+      : Math.max(0, Math.floor((currentTime - startTime) / 1000));
+  const showDoneBadge =
+    type === "reasoning" &&
+    isDone &&
+    (cleanContent.length === 0 || durationSeconds === 0);
+  const shouldShowSpinner = !isDone;
+  const statusTextColor = isDone
+    ? "var(--color-text-primary)"
+    : "var(--color-text-secondary)";
+  const accentColor = isDone
+    ? "var(--color-magenta-600)"
+    : "var(--color-border-secondary)";
 
-  const getTitle = () => {
-    if (type === 'reasoning') {
-      if (isDone && duration) {
-        if (duration < 60) {
-          return `Thought for ${duration} seconds`;
-        } else {
-          const minutes = Math.floor(duration / 60);
-          const seconds = duration % 60;
-          return `Thought for ${minutes}m ${seconds}s`;
-        }
-      } else {
-        return 'Thinking...';
-      }
-    } else if (type === 'code_interpreter') {
-      return isDone ? 'Analyzed' : 'Analyzing...';
-    } else if (type === 'tool_calls') {
-      return isDone ? `View Result from **${attributes.name || 'Tool'}**` : `Executing **${attributes.name || 'Tool'}**...`;
-    }
-    return 'Thinking...';
+  const getReasoningTitle = () => {
+    if (!isDone) return "Thinking...";
+    if (cleanContent.length === 0 || durationSeconds === 0) return "Thought complete";
+    if (durationSeconds < 60) return `Thought for ${durationSeconds} seconds`;
+    const minutes = Math.floor(durationSeconds / 60);
+    const seconds = durationSeconds % 60;
+    if (seconds === 0) return `Thought for ${minutes}m`;
+    return `Thought for ${minutes}m ${seconds}s`;
   };
 
-  const shouldShowSpinner = !isDone && !isStreaming;
-  const shouldShimmer = !isDone;
+  const getTitle = () => {
+    if (type === "reasoning") return getReasoningTitle();
+    if (type === "code_interpreter") return isDone ? "Analysis complete" : "Analyzing...";
+    if (type === "tool_calls") {
+      const toolName = attributes.name || "Tool";
+      return isDone ? `Result ready: ${toolName}` : `Executing ${toolName}...`;
+    }
+    return isDone ? "Done" : "Working...";
+  };
+
+  const getSubtitle = () => {
+    if (!isDone || type !== "reasoning") return null;
+    if (durationSeconds < 1) return null;
+    if (durationSeconds < 60) return `${durationSeconds}s elapsed`;
+    const minutes = Math.floor(durationSeconds / 60);
+    const seconds = durationSeconds % 60;
+    if (seconds === 0) return `${minutes}m elapsed`;
+    return `${minutes}m ${seconds}s elapsed`;
+  };
+
+  const renderTitle = () => {
+    if (showDoneBadge) {
+      return (
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            padding: 0,
+            color: "var(--color-text-secondary)",
+            fontSize: "0.8rem",
+            fontWeight: 560,
+            lineHeight: 1.2,
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: "14px",
+              height: "14px",
+              borderRadius: "999px",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor:
+                "color-mix(in oklab, var(--color-magenta-600) 36%, transparent)",
+              color: "var(--color-text-secondary)",
+              fontSize: "0.64rem",
+              fontWeight: 760,
+              lineHeight: 1,
+              flexShrink: 0,
+            }}
+          >
+            ✓
+          </span>
+          <span>Thought complete</span>
+        </span>
+      );
+    }
+    return getTitle();
+  };
 
   return (
-    <div className="think-bubble-container" style={{ margin: "8px 0", width: "100%" }}>
+    <div className="think-bubble-container" style={{ margin: "10px 0", width: "100%" }}>
       <div
         className="think-bubble-header"
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: "8px",
-          padding: "8px 12px",
-          backgroundColor: "var(--color-bg-secondary)",
-          border: "1px solid var(--color-border-secondary)",
-          borderRadius: "6px",
+          gap: "10px",
+          padding: "10px 14px",
+          backgroundColor: isHovered
+            ? "var(--color-bg-tertiary)"
+            : "var(--color-bg-secondary)",
+          border: `1px solid ${isDone ? "var(--color-border-secondary)" : "var(--color-magenta-600)"}`,
+          borderRadius: isExpanded ? "10px 10px 0 0" : "10px",
           cursor: "pointer",
           userSelect: "none",
-          fontWeight: "500",
           transition: "all 0.2s ease",
+          boxShadow: isExpanded
+            ? "0 8px 20px rgba(0, 0, 0, 0.08)"
+            : "0 2px 8px rgba(0, 0, 0, 0.05)",
         }}
         onClick={handleToggle}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.backgroundColor = "var(--color-bg-tertiary)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.backgroundColor = "var(--color-bg-secondary)";
-        }}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
       >
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: "8px",
-            width: "100%"
+            gap: "10px",
+            width: "100%",
+            minWidth: 0,
           }}
-          className={shouldShimmer ? "shimmer" : ""}
         >
-          {shouldShowSpinner && (
-            <Spinner className="size-4" />
-          )}
+          <span
+            aria-hidden
+            style={{
+              width: "8px",
+              height: "8px",
+              borderRadius: "999px",
+              backgroundColor: accentColor,
+              boxShadow: isDone
+                ? "none"
+                : "0 0 0 3px color-mix(in oklab, var(--color-magenta-600) 22%, transparent)",
+              flexShrink: 0,
+            }}
+          />
+          {shouldShowSpinner && !isStreaming && <Spinner className="size-4" />}
 
-          <div style={{ flex: 1 }}>
-            <span
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
               style={{
-                color: "var(--color-text-secondary)",
-                fontSize: "0.9rem",
-                fontWeight: "500",
+                color: statusTextColor,
+                fontSize: "0.92rem",
+                fontWeight: 600,
+                lineHeight: 1.35,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
               }}
             >
-              {getTitle()}
-            </span>
+              {renderTitle()}
+            </div>
+            {getSubtitle() && (
+              <div
+                style={{
+                  marginTop: "2px",
+                  color: "var(--color-text-secondary)",
+                  fontSize: "0.75rem",
+                  lineHeight: 1.25,
+                }}
+              >
+                {getSubtitle()}
+              </div>
+            )}
           </div>
 
-          <div style={{ display: "flex", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
             {isExpanded ? (
               <svg
-                width="14"
-                height="14"
+                width="15"
+                height="15"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="3.5"
+                strokeWidth="2.8"
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 style={{ color: "var(--color-text-secondary)" }}
@@ -430,12 +532,12 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
               </svg>
             ) : (
               <svg
-                width="14"
-                height="14"
+                width="15"
+                height="15"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="3.5"
+                strokeWidth="2.8"
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 style={{ color: "var(--color-text-secondary)" }}
@@ -447,93 +549,72 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
         </div>
       </div>
       {isExpanded && (
-        <>
-          {/* Separator line between header and content */}
+        <div
+          className="think-bubble-content"
+          style={{
+            position: "relative",
+            padding: "12px 14px 12px 22px",
+            backgroundColor: "var(--color-bg-primary)",
+            border: "1px solid var(--color-border-secondary)",
+            borderTop: "none",
+            borderBottomLeftRadius: "10px",
+            borderBottomRightRadius: "10px",
+            marginTop: "0",
+            overflow: "hidden",
+            transition: "all 0.2s ease-out",
+          }}
+        >
           <div
             style={{
-              height: "1px",
-              backgroundColor: "var(--color-border-secondary)",
-              marginTop: "4px",
-              marginBottom: "4px",
-              opacity: 0.3,
+              position: "absolute",
+              left: "10px",
+              top: "10px",
+              bottom: "10px",
+              width: "2px",
+              backgroundColor: accentColor,
+              borderRadius: "999px",
+              opacity: isDone ? 0.65 : 0.45,
+              transition: "all 0.2s ease",
             }}
           />
-          <div
-            className="think-bubble-content"
-            style={{
-              position: "relative",
-              padding: "12px 12px 12px 20px",
-              backgroundColor: "var(--color-bg-primary)",
-              border: "1px solid var(--color-border-secondary)",
-              borderTop: "none",
-              borderTopLeftRadius: "0",
-              borderTopRightRadius: "0",
-              borderBottomLeftRadius: "6px",
-              borderBottomRightRadius: "6px",
-              marginTop: "0",
-              overflow: "hidden",
-              willChange: "transform, opacity",
-              transition: "all 0.2s ease-out",
-            }}
-          >
-            {/* Left border line - DeepSeek style */}
-            <div
-              style={{
-                position: "absolute",
-                left: "8px",
-                top: "0",
-                bottom: "0",
-                width: "2px",
-                backgroundColor: isDone
-                  ? "var(--color-magenta-600)"
-                  : "var(--color-border-secondary)",
-                borderRadius: "1px",
-                transition: "background-color 0.3s ease",
-                opacity: 0.3,
-              }}
-            />
 
-            <div style={{ position: "relative" }}>
-              <MarkdownInlineCodeVariantContext.Provider value="compact">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    pre: MarkdownFencePre,
-                    p: ({ children }) => (
-                      <p style={{
-                        color: "var(--color-text-secondary)",
+          <div style={{ position: "relative" }}>
+            <MarkdownInlineCodeVariantContext.Provider value="compact">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  pre: MarkdownFencePre,
+                  p: ({ children }) => (
+                    <p
+                      style={{
+                        color: "var(--color-text-primary)",
                         fontSize: "0.85rem",
-                        lineHeight: "1.5",
-                        margin: "0 0 8px 0"
-                      }}>
-                        {children}
-                      </p>
-                    ),
-                    code: MarkdownCode,
-                    // 其他元素也使用浅色
-                    li: ({ children }) => (
-                    <li style={{ color: "var(--color-text-secondary)" }}>
-                      {children}
-                    </li>
+                        lineHeight: "1.62",
+                        margin: "0 0 10px 0",
+                      }}
+                    >
+                      {renderWithSingleNewlineBreaks(children)}
+                    </p>
+                  ),
+                  code: MarkdownCode,
+                  li: ({ children }) => (
+                    <li style={{ color: "var(--color-text-primary)" }}>{children}</li>
                   ),
                   strong: ({ children }) => (
-                    <strong style={{ color: "var(--color-text-secondary)", fontWeight: "600" }}>
+                    <strong style={{ color: "var(--color-text-primary)", fontWeight: 650 }}>
                       {children}
                     </strong>
                   ),
                   em: ({ children }) => (
-                    <em style={{ color: "var(--color-text-secondary)" }}>
-                      {children}
-                    </em>
+                    <em style={{ color: "var(--color-text-primary)" }}>{children}</em>
                   ),
                 }}
               >
                 {content}
               </ReactMarkdown>
-              </MarkdownInlineCodeVariantContext.Provider>
-            </div>
+            </MarkdownInlineCodeVariantContext.Provider>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -645,6 +726,19 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     : "var(--color-text-primary)";
   // ? "var(--color-text-secondary)"
   // : "var(--color-text-primary)";
+  const proseReadableStyle = {
+    "--tw-prose-body": "var(--color-text-primary)",
+    "--tw-prose-headings": "var(--color-text-primary)",
+    "--tw-prose-bold": "var(--color-text-primary)",
+    "--tw-prose-links": "var(--color-text-accent)",
+    "--tw-prose-counters": "var(--color-text-secondary)",
+    "--tw-prose-bullets": "var(--color-text-secondary)",
+  } as React.CSSProperties;
+  const headingColor = "var(--color-text-primary)";
+  const headingBaseStyle = {
+    color: headingColor,
+    letterSpacing: "-0.01em",
+  };
 
   // If this is a file preview, wrap the content in a code block
   const processedContent = isFilePreview
@@ -670,6 +764,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         <div
           className="prose prose-code:before:content-[''] prose-code:after:content-[''] w-full"
           style={{
+            ...proseReadableStyle,
             color,
             fontSize: "0.85rem",
             overflowWrap: "break-word",
@@ -693,7 +788,11 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
               return (
                 <div
                   key={index}
-                  dangerouslySetInnerHTML={{ __html: part.content.replace(/<think>(.*?)<\/think>/gs, '') }}
+                  dangerouslySetInnerHTML={{
+                    __html: toHtmlWithLineBreaks(
+                      part.content.replace(/<think>(.*?)<\/think>/gs, "")
+                    ),
+                  }}
                 />
               );
             }
@@ -714,7 +813,11 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             maxWidth: "100%",
             position: "relative",
           }}
-          dangerouslySetInnerHTML={{ __html: content.replace(/<think>(.*?)<\/think>/gs, '') }}
+          dangerouslySetInnerHTML={{
+            __html: toHtmlWithLineBreaks(
+              content.replace(/<think>(.*?)<\/think>/gs, "")
+            ),
+          }}
         />
       );
     }
@@ -728,6 +831,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       <div
         className="prose prose-code:before:content-[''] prose-code:after:content-[''] w-full"
         style={{
+          ...proseReadableStyle,
           color,
           fontSize: "0.85rem",
           overflowWrap: "break-word",
@@ -769,26 +873,50 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                 components={{
                   pre: MarkdownFencePre,
                   h1: ({ children }) => (
-                    <h1 style={{ color }}>{children}</h1>
+                    <h1
+                      style={{
+                        ...headingBaseStyle,
+                        fontSize: "1.4rem",
+                        fontWeight: 750,
+                        lineHeight: 1.3,
+                        margin: "0.7em 0 0.45em",
+                      }}
+                    >
+                      {children}
+                    </h1>
                   ),
                   h2: ({ children }) => (
-                    <h2 style={{ color }}>{children}</h2>
+                    <h2
+                      style={{
+                        ...headingBaseStyle,
+                        fontSize: "1.22rem",
+                        fontWeight: 700,
+                        lineHeight: 1.34,
+                        margin: "0.62em 0 0.4em",
+                      }}
+                    >
+                      {children}
+                    </h2>
                   ),
                   h3: ({ children }) => (
-                    <h3 style={{ color }}>{children}</h3>
+                    <h3
+                      style={{
+                        ...headingBaseStyle,
+                        fontSize: "1.08rem",
+                        fontWeight: 680,
+                        lineHeight: 1.35,
+                        margin: "0.56em 0 0.35em",
+                      }}
+                    >
+                      {children}
+                    </h3>
                   ),
-                  h4: ({ children }) => (
-                    <h4 style={{ color }}>{children}</h4>
-                  ),
-                  h5: ({ children }) => (
-                    <h5 style={{ color }}>{children}</h5>
-                  ),
-                  h6: ({ children }) => (
-                    <h6 style={{ color }}>{children}</h6>
-                  ),
+                  h4: ({ children }) => <h4 style={{ ...headingBaseStyle, fontWeight: 650 }}>{children}</h4>,
+                  h5: ({ children }) => <h5 style={{ ...headingBaseStyle, fontWeight: 630 }}>{children}</h5>,
+                  h6: ({ children }) => <h6 style={{ ...headingBaseStyle, fontWeight: 620 }}>{children}</h6>,
                   p: ({ children }) => (
                     <p className="" style={{ color }}>
-                      {children}
+                      {renderWithSingleNewlineBreaks(children)}
                     </p>
                   ),
                   strong: ({ children }) => (
@@ -836,6 +964,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     <div
       className="prose prose-code:before:content-[''] prose-code:after:content-[''] w-full"
       style={{
+        ...proseReadableStyle,
         color,
         fontSize: "0.85rem",
         overflowWrap: "break-word",
@@ -862,15 +991,51 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         rehypePlugins={[]}
         components={{
           pre: MarkdownFencePre,
-          h1: ({ children }) => <h1 style={{ color }}>{children}</h1>,
-          h2: ({ children }) => <h2 style={{ color }}>{children}</h2>,
-          h3: ({ children }) => <h3 style={{ color }}>{children}</h3>,
-          h4: ({ children }) => <h4 style={{ color }}>{children}</h4>,
-          h5: ({ children }) => <h5 style={{ color }}>{children}</h5>,
-          h6: ({ children }) => <h6 style={{ color }}>{children}</h6>,
+          h1: ({ children }) => (
+            <h1
+              style={{
+                ...headingBaseStyle,
+                fontSize: "1.4rem",
+                fontWeight: 750,
+                lineHeight: 1.3,
+                margin: "0.7em 0 0.45em",
+              }}
+            >
+              {children}
+            </h1>
+          ),
+          h2: ({ children }) => (
+            <h2
+              style={{
+                ...headingBaseStyle,
+                fontSize: "1.22rem",
+                fontWeight: 700,
+                lineHeight: 1.34,
+                margin: "0.62em 0 0.4em",
+              }}
+            >
+              {children}
+            </h2>
+          ),
+          h3: ({ children }) => (
+            <h3
+              style={{
+                ...headingBaseStyle,
+                fontSize: "1.08rem",
+                fontWeight: 680,
+                lineHeight: 1.35,
+                margin: "0.56em 0 0.35em",
+              }}
+            >
+              {children}
+            </h3>
+          ),
+          h4: ({ children }) => <h4 style={{ ...headingBaseStyle, fontWeight: 650 }}>{children}</h4>,
+          h5: ({ children }) => <h5 style={{ ...headingBaseStyle, fontWeight: 630 }}>{children}</h5>,
+          h6: ({ children }) => <h6 style={{ ...headingBaseStyle, fontWeight: 620 }}>{children}</h6>,
           p: ({ children }) => (
             <p className="" style={{ color }}>
-              {children}
+              {renderWithSingleNewlineBreaks(children)}
             </p>
           ),
           strong: ({ children }) => (
