@@ -5,7 +5,11 @@ import re
 import shutil
 import platform
 import threading
+import time
+import os
+import signal
 from typing import Union, List, Dict, Any, Optional
+from datetime import datetime
 
 # Dangerous command patterns (regex)
 _DANGEROUS_PATTERNS = [
@@ -87,6 +91,7 @@ def get_operator_funcs(
         extra_dirs: list[str|Path] = None, 
         only_in_workspace: bool = True,
         is_powershell: bool = False, 
+        allolow_dangrous_cmd: bool = False,
         )->list[callable]:
 
     WORKDIR = Path(worker_dir).resolve()
@@ -123,31 +128,176 @@ def get_operator_funcs(
     # Mutable current directory state (persists across run_bash calls)
     _cwd = [WORKDIR]
 
-    def run_bash(cmd: str) -> str:
+    # Background tasks storage
+    _bash_tasks = {}
+    _task_counter = [0]
+
+    def run_bash(
+        cmd: str,
+        timeout: int = 200,
+        run_in_background: bool = False,
+        warn_before: int = 30
+    ) -> Union[str, Dict[str, Any]]:
         """Execute shell command in workspace directory.
 
         The working directory persists across calls: cd commands take effect
         for subsequent invocations, as long as the target stays within the
         allowed workspace.
+
+        Args:
+            cmd: Shell command to execute
+            timeout: Maximum execution time in seconds (default 300, max 600)
+            run_in_background: If True, run command in background and return task info
+            warn_before: Seconds before timeout to check if process should continue (default 30)
+
+        Returns:
+            If run_in_background=False: Command output as string
+            If run_in_background=True: Dict with task_id, pid, and pgid
         """
         # Check dangerous patterns
-        if _DANGEROUS_RE.search(cmd):
+        if not allolow_dangrous_cmd and _DANGEROUS_RE.search(cmd):
             return "Error: Dangerous command detected"
         # Check absolute paths referenced in command
         if only_in_workspace:
             path_err = _check_cmd_paths(cmd)
             if path_err:
                 return path_err
+
+        # Clamp timeout
+        timeout = min(max(10, timeout), 600)
+        warn_before = min(warn_before, timeout - 5)
+
+        # Append a sentinel so we can capture the resulting directory
+        wrapped = f'{cmd}\necho "__DRSAI_CWD__:$(pwd)"'
+
+        # Background execution
+        if run_in_background:
+            task_id = f"bash_task_{_task_counter[0]}"
+            _task_counter[0] += 1
+
+            task_info = {
+                "task_id": task_id,
+                "command": cmd,
+                "status": "running",
+                "output": None,
+                "error": None,
+                "pid": None,
+                "pgid": None,
+                "start_time": datetime.now().isoformat(),
+                "timeout": timeout,
+            }
+            _bash_tasks[task_id] = task_info
+
+            def run_bg_task():
+                try:
+                    # Create new process group for proper cleanup
+                    proc = subprocess.Popen(
+                        wrapped,
+                        shell=True,
+                        cwd=str(_cwd[0]),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        preexec_fn=os.setsid  # Create new session
+                    )
+
+                    task_info["pid"] = proc.pid
+                    task_info["pgid"] = os.getpgid(proc.pid)
+
+                    # Wait with timeout
+                    try:
+                        stdout, stderr = proc.communicate(timeout=timeout)
+                        raw_output = stdout + stderr
+
+                        # Parse output
+                        lines = raw_output.splitlines()
+                        out_lines = []
+                        for line in lines:
+                            if line.startswith("__DRSAI_CWD__:"):
+                                new_dir_str = line[len("__DRSAI_CWD__:"):].strip()
+                                try:
+                                    new_dir = Path(new_dir_str).resolve()
+                                    if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
+                                        _cwd[0] = new_dir
+                                except Exception:
+                                    pass
+                            else:
+                                out_lines.append(line)
+
+                        output = "\n".join(out_lines).strip() or "(no output)"
+                        task_info["output"] = output[:50000]
+                        task_info["status"] = "completed"
+                        task_info["exit_code"] = proc.returncode
+
+                    except subprocess.TimeoutExpired:
+                        # Kill entire process group
+                        try:
+                            os.killpg(task_info["pgid"], signal.SIGTERM)
+                            time.sleep(2)  # Grace period
+                            try:
+                                os.killpg(task_info["pgid"], signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        except Exception as e:
+                            task_info["error"] = f"Error killing process group: {e}"
+
+                        task_info["error"] = f"Command timed out after {timeout}s (all child processes terminated)"
+                        task_info["status"] = "timeout"
+
+                except Exception as e:
+                    task_info["error"] = f"Error: {e}"
+                    task_info["status"] = "failed"
+                finally:
+                    task_info["end_time"] = datetime.now().isoformat()
+
+            thread = threading.Thread(target=run_bg_task, daemon=True)
+            thread.start()
+
+            return {
+                "task_id": task_id,
+                "status": "running",
+                "message": f"Task {task_id} started in background (timeout: {timeout}s)",
+                "timeout": timeout,
+            }
+
+        # Foreground execution with process group management
         try:
-            # Append a sentinel so we can capture the resulting directory
-            wrapped = f'{cmd}\necho "__DRSAI_CWD__:$(pwd)"'
-            r = subprocess.run(
-                wrapped, shell=True, cwd=_cwd[0],
-                capture_output=True, text=True, timeout=300
+            # Create new process group
+            proc = subprocess.Popen(
+                wrapped,
+                shell=True,
+                cwd=str(_cwd[0]),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                preexec_fn=os.setsid
             )
-            raw = r.stdout + r.stderr
+
+            pgid = os.getpgid(proc.pid)
+
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+                raw_output = stdout + stderr
+
+            except subprocess.TimeoutExpired:
+                # Kill entire process group
+                try:
+                    os.killpg(pgid, signal.SIGTERM)
+                    time.sleep(2)  # Grace period for clean shutdown
+                    try:
+                        # Force kill if still alive
+                        os.killpg(pgid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass  # Already dead
+                except ProcessLookupError:
+                    pass  # Process group already gone
+                except Exception as e:
+                    return f"Error: Timeout after {timeout}s. Failed to kill process group: {e}"
+
+                return f"Error: Command timed out after {timeout}s. All processes in the process group have been terminated."
+
             # Parse and strip the sentinel line
-            lines = raw.splitlines()
+            lines = raw_output.splitlines()
             out_lines = []
             for line in lines:
                 if line.startswith("__DRSAI_CWD__:"):
@@ -163,6 +313,7 @@ def get_operator_funcs(
                 else:
                     out_lines.append(line)
             return ("\n".join(out_lines).strip() or "(no output)")[:50000]
+
         except Exception as e:
             return f"Error: {e}"
 
@@ -332,6 +483,132 @@ def get_operator_funcs(
             return f"Error: {e}"
 
 
+    def get_bash_task(task_id: str) -> Dict[str, Any]:
+        """
+        Get status and output of a background bash task.
+
+        Args:
+            task_id: Task ID returned by run_bash with run_in_background=True
+
+        Returns:
+            Dict with task status and output:
+            {
+                "task_id": str,
+                "command": str,
+                "status": "running"|"completed"|"timeout"|"failed",
+                "output": str (if completed),
+                "error": str (if failed/timeout),
+                "pid": int,
+                "pgid": int,
+                "start_time": str,
+                "end_time": str (if completed)
+            }
+        """
+        if task_id not in _bash_tasks:
+            return {
+                "task_id": task_id,
+                "status": "not_found",
+                "error": f"Task {task_id} not found"
+            }
+
+        task_info = _bash_tasks[task_id]
+        result = {
+            "task_id": task_id,
+            "command": task_info["command"],
+            "status": task_info["status"],
+            "start_time": task_info["start_time"],
+        }
+
+        if task_info.get("pid"):
+            result["pid"] = task_info["pid"]
+        if task_info.get("pgid"):
+            result["pgid"] = task_info["pgid"]
+        if task_info.get("end_time"):
+            result["end_time"] = task_info["end_time"]
+        if task_info.get("exit_code") is not None:
+            result["exit_code"] = task_info["exit_code"]
+
+        if task_info["status"] == "completed" and task_info.get("output"):
+            result["output"] = task_info["output"]
+        elif task_info.get("error"):
+            result["error"] = task_info["error"]
+
+        return result
+
+
+    def list_bash_tasks() -> str:
+        """
+        List all bash background tasks.
+
+        Returns:
+            Formatted string listing all tasks and their status
+        """
+        if not _bash_tasks:
+            return "No background bash tasks"
+
+        lines = ["Bash Background Tasks:"]
+        for task_id, info in _bash_tasks.items():
+            status = info["status"]
+            cmd_preview = info["command"][:50] + "..." if len(info["command"]) > 50 else info["command"]
+            lines.append(f"  {task_id}: {status} - {cmd_preview}")
+            if info.get("pid"):
+                lines.append(f"    PID: {info['pid']}, PGID: {info.get('pgid', 'N/A')}")
+
+        return "\n".join(lines)
+
+
+    def kill_bash_task(task_id: str, force: bool = False) -> str:
+        """
+        Kill a running background bash task and its entire process group.
+
+        Args:
+            task_id: Task ID to kill
+            force: If True, use SIGKILL immediately; if False, try SIGTERM first
+
+        Returns:
+            Status message
+        """
+        if task_id not in _bash_tasks:
+            return f"Error: Task {task_id} not found"
+
+        task_info = _bash_tasks[task_id]
+
+        if task_info["status"] not in ["running"]:
+            return f"Task {task_id} is not running (status: {task_info['status']})"
+
+        pgid = task_info.get("pgid")
+        if not pgid:
+            return f"Error: No process group ID found for task {task_id}"
+
+        try:
+            if force:
+                # Force kill
+                os.killpg(pgid, signal.SIGKILL)
+                task_info["status"] = "killed"
+                task_info["error"] = "Killed by user (SIGKILL)"
+            else:
+                # Graceful termination
+                os.killpg(pgid, signal.SIGTERM)
+                time.sleep(2)
+                # Check if still alive, then force kill
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # Already dead
+                task_info["status"] = "killed"
+                task_info["error"] = "Terminated by user (SIGTERM)"
+
+            task_info["end_time"] = datetime.now().isoformat()
+            return f"Task {task_id} (PGID: {pgid}) has been terminated"
+
+        except ProcessLookupError:
+            task_info["status"] = "completed"
+            task_info["error"] = "Process already terminated"
+            return f"Task {task_id} process group already terminated"
+        except Exception as e:
+            return f"Error killing task {task_id}: {e}"
+
+
     def run_glob(
         pattern: str,
         search_path: str = None,
@@ -395,9 +672,9 @@ def get_operator_funcs(
 
     def run_powershell(
         command: str,
-        timeout: int = 300,
+        timeout: int = 200,
         run_in_background: bool = False,
-        dangerous_allowed: bool = False
+        # dangerous_allowed: bool = False # dangerous_allowed: Allow dangerous commands (default False)
     ) -> Union[str, Dict[str, Any]]:
         """
         Execute PowerShell command in workspace directory.
@@ -409,7 +686,7 @@ def get_operator_funcs(
             command: PowerShell command to execute
             timeout: Timeout in seconds (default 300, max 600)
             run_in_background: Run command in background (returns task info)
-            dangerous_allowed: Allow dangerous commands (default False)
+            
 
         Returns:
             If run_in_background=False: Command output as string
@@ -429,7 +706,7 @@ def get_operator_funcs(
             return "Error: PowerShell not found. Please install PowerShell Core (pwsh) or use run_bash for Unix commands."
 
         # Check dangerous patterns (unless explicitly allowed)
-        if not dangerous_allowed and _DANGEROUS_RE.search(command):
+        if not allolow_dangrous_cmd and _DANGEROUS_RE.search(command):
             return "Error: Dangerous command detected"
 
         # Check absolute paths referenced in command
@@ -641,4 +918,7 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
             run_edit,
             run_grep,
             run_glob,
+            get_bash_task,
+            list_bash_tasks,
+            kill_bash_task,
         ]

@@ -69,7 +69,7 @@ from drsai.modules.managers.messages import (
     ToolCallSummaryMessage,
     UserInputRequestedEvent,
     ThoughtEvent,
-    AgentLogEvent,
+    AgentLogEvent,Send_level,
     StructuredMessage,
     StructuredMessageFactory,
     MultiModalMessage,
@@ -158,6 +158,7 @@ class DrSaiAssistant(DrSaiAgent):
         llm_mode_config: Dict = {},
         defult_config_name: str | None = None,
         is_powershell: bool = False,
+        allolow_dangrous_cmd: bool = False,
         # skills and executor
         skills_dir: Optional[str | List[str]] = None,
         work_dir: str | None = None,
@@ -230,14 +231,15 @@ Current Session_ID is {self._thread_id}"""
         # === basic tools ===
         self._only_in_workspace = only_in_workspace
         self._extra_work_dirs = extra_work_dirs
-        self._is_powershell = is_powershell
+        # self._is_powershell = is_powershell
         # if _detect_powershell() is not None:
         #     self._is_powershell = True
         self._basic_funcs: List[Callable] = get_operator_funcs(
             work_dir, 
             only_in_workspace=self._only_in_workspace,
             extra_dirs = self._extra_work_dirs,
-            is_powershell=self._is_powershell
+            is_powershell=is_powershell,
+            allolow_dangrous_cmd=allolow_dangrous_cmd
             )
         self._basic_funcs_names = [func.__name__ for func in self._basic_funcs]
         for func in self._basic_funcs:
@@ -252,9 +254,12 @@ Current Session_ID is {self._thread_id}"""
         self._memory_document_id = self._user_profile_manager.get_document_ids(self._thread_id)
         self._learning_document_id = self._user_profile_manager.get_document_ids(self._user_id)
         # memory manager
+        model_config = model_client.dump_component()
+        independent_model_client = ChatCompletionClient.load_component(model_config)
+        independent_model_client._model_info = model_client._model_info
         self._model_context = DrSaiChatCompletionContext(
             agent_name=self._user_profile_manager.agent_name,
-            model_client=self._model_client,
+            model_client=independent_model_client,
             user_id=self._user_id,
             thread_id=self._thread_id,
             work_dir=self._work_dir,
@@ -302,7 +307,8 @@ Current Session_ID is {self._thread_id}"""
         # === scheduled task manager ===
         # 注意: task_manager 实例会在 run.py 中创建并注入到 app._task_manager
         # DrSaiAssistant 通过 app 访问，而不是直接持有实例
-        self._scheduled_task_tools = [get_scheduled_task_tool()]
+        # self._scheduled_task_tools = [get_scheduled_task_tool()]
+        self._scheduled_task_tools = []
         self._task_manager = None  # 将在 lazy_init 或 set_task_manager 中设置
 
         # 初始化实例变量供edge_agent_core使用
@@ -321,6 +327,7 @@ Current Session_ID is {self._thread_id}"""
     def set_task_manager(self, task_manager):
         """设置定时任务管理器实例"""
         self._task_manager = task_manager
+        self._scheduled_task_tools = [get_scheduled_task_tool()]
 
     def _format_task_notifications(self, notifications: List[TaskNotification]) -> str:
         """格式化定时任务完成通知"""
@@ -1042,6 +1049,52 @@ Current Session_ID is {self._thread_id}"""
                 self._user_profile_manager.save_session_memory(current_session_memory)
                 
 
+    async def _get_messages_with_compression_notification(
+        self,
+        model_context: ChatCompletionContext,
+        cancellation_token: CancellationToken = None,
+    ) -> AsyncGenerator[Union[List[LLMMessage], AgentLogEvent], None]:
+        """
+        Get messages from context with compression notification support.
+
+        Yields:
+            AgentLogEvent: Notification events during compression
+            List[LLMMessage]: Final list of messages
+        """
+        if isinstance(model_context, DrSaiChatCompletionContext):
+            # Check if compression is needed
+            messages = list(model_context._messages)
+            token_count = model_context._model_client.count_tokens(
+                messages,
+                tools=model_context._tool_schema
+            )
+
+            if model_context._token_limit and token_count > model_context._token_limit:
+                # Notify frontend that compression is starting
+                yield AgentLogEvent(
+                    title="Memory Compression",
+                    content="正在压缩对话记忆以优化性能，这可能需要几分钟时间，请稍候...",
+                    send_level=Send_level.INFO
+                )
+
+            # Get messages (compression will happen if needed)
+            all_messages = await model_context.get_messages(
+                cancellation_token=cancellation_token
+            )
+
+            if model_context._token_limit and token_count > model_context._token_limit:
+                # Notify completion
+                yield AgentLogEvent(
+                    title="Memory Compression Complete",
+                    content="对话记忆压缩完成，继续处理您的请求...",
+                    send_level=Send_level.INFO
+                )
+
+            yield all_messages
+        else:
+            all_messages = await model_context.get_messages()
+            yield all_messages
+
     async def _call_llm(
         self,
         model_client: ChatCompletionClient,
@@ -1059,10 +1112,19 @@ Current Session_ID is {self._thread_id}"""
         Perform a model inference and yield either streaming chunk events or the final CreateResult.
         """
 
-        if isinstance(model_context, DrSaiChatCompletionContext):
-            all_messages = await model_context.get_messages(cancellation_token = cancellation_token)
-        else:
-            all_messages = await model_context.get_messages()
+        # Get messages with compression notification
+        all_messages = None
+        async for item in self._get_messages_with_compression_notification(
+            model_context, cancellation_token
+        ):
+            if isinstance(item, list):
+                all_messages = item
+            else:
+                # Yield notification events
+                yield item
+
+        if all_messages is None:
+            raise ValueError("Failed to get messages from context")
         
         llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
 
@@ -1483,6 +1545,7 @@ Complete the task and return a clear, concise summary."""
             try:
                 model_config = model_client.dump_component()
                 independent_model_client = ChatCompletionClient.load_component(model_config)
+                independent_model_client._model_info = model_client._model_info
             except Exception as e:
                 logger.warning(f"Failed to create independent model_client for subagent {sub_agent_name}: {e}")
                 logger.warning("Falling back to shared model_client (may cause issues when subagent is closed)")

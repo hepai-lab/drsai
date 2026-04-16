@@ -72,6 +72,7 @@ class HepAIWorkerAgent(DrSaiAgent):
         model_remote_configs: Dict[str, Any] = {},
         chat_id: str|None = None,
         run_info: Dict[str, Any] = {},
+        stream_timeout: float = 300.0,
         **kwargs):
         
         super().__init__(
@@ -92,6 +93,8 @@ class HepAIWorkerAgent(DrSaiAgent):
         self._chat_id = chat_id
         run_info.update(kwargs)
         self._run_info = run_info 
+
+        self._stream_timeout = stream_timeout
         
         # initialize the sync model client
         self.api_key = model_remote_configs.pop("api_key", "")
@@ -270,7 +273,7 @@ class HepAIWorkerAgent(DrSaiAgent):
         else:
             logger.info(f"Closed {self.name} successfully.")
 
-    async def async_stream_generator(self, stream, timeout: float = 120.0) -> AsyncGenerator[dict, None]:
+    async def async_stream_generator(self, stream, timeout: float = 300.0) -> AsyncGenerator[dict, None]:
         loop = asyncio.get_event_loop()
         queue = asyncio.Queue()
 
@@ -445,7 +448,7 @@ class HepAIWorkerAgent(DrSaiAgent):
             
             final_message = None
             try:
-                async for chunk in self.async_stream_generator(stream):
+                async for chunk in self.async_stream_generator(stream, timeout=self._stream_timeout):
                     if self.is_paused:
                         logger.info(f"{self.name} paused during streaming")
                         raise asyncio.CancelledError("Agent paused during streaming")

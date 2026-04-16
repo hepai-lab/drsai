@@ -297,24 +297,39 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         return content_str
     
     async def get_messages(
-            self, 
+            self,
             cancellation_token: CancellationToken = None) -> List[LLMMessage]:
         """Get at most `token_limit` tokens in recent messages. If the token limit is not
-        provided, then return as many messages as the remaining token allowed by the model client."""
+        provided, then return as many messages as the remaining token allowed by the model client.
+
+        Args:
+            cancellation_token: Token to cancel the operation
+        """
         messages = list(self._messages)
-       
+
         try:
             if self._token_limit is not None:
                 token_count = self._model_client.count_tokens(messages, tools=self._tool_schema)
                 if token_count > self._token_limit:
                     messages_str = self.format_messages_str(messages)
-                    compressed_response = await self._model_client.create(
+
+                    logger.info("Memory compression started due to token limit exceeded")
+
+                    # Use streaming API to avoid timeout for long-running compression
+                    compressed_content = ""
+                    async for chunk in self._model_client.create_stream(
                         messages=[
                             UserMessage(source="user", content=self._compression_prompt+messages_str)
                         ],
                         cancellation_token=cancellation_token,
-                    )
-                    compressed_content = compressed_response.content
+                    ):
+                        # Only extract content from the final CreateResult, not from streaming chunks
+                        if not isinstance(chunk, str):
+                            # This is the final CreateResult
+                            compressed_content = chunk.content
+                            break
+
+                    logger.info("Memory compression completed successfully")
                     
                     # keep some key messages
                     remaining_messages = []

@@ -37,7 +37,12 @@ from autogen_agentchat.base import (
     Team,)
 from drsai.configs import CONST
 
-from drsai.utils.utils import auto_worker_address, upload_to_hepai_filesystem
+from drsai.utils.utils import (
+    auto_worker_address, 
+    upload_to_hepai_filesystem, 
+    decompress_state, compress_state)
+from drsai.modules.managers.datamodel import Thread
+import json
 
 here = Path(__file__).parent.resolve()
 
@@ -167,6 +172,28 @@ async def run_backend(agent_factory: callable, **kwargs):
                 defult_config_name=ctx.get("defult_config_name"),
             )
 
+            # 加载历史状态（继承记忆）
+            response = db_manager.get(
+                Thread,
+                filters={"user_id": user_id, "thread_id": session_id},
+                return_json=False,
+            )
+            if response.status and response.data:
+                thread_obj = response.data[0]
+                if thread_obj.state:
+                    try:
+                        if isinstance(thread_obj.state, str):
+                            try:
+                                state_dict = decompress_state(thread_obj.state)
+                            except Exception:
+                                state_dict = json.loads(thread_obj.state)
+                        else:
+                            state_dict = thread_obj.state
+                        await agent.load_state(state_dict)
+                        logger.info(f"Loaded history state for scheduled task: user={user_id}, session={session_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load state for scheduled task: {e}")
+
             if hasattr(agent, "lazy_init"):
                 await agent.lazy_init()
 
@@ -186,6 +213,30 @@ async def run_backend(agent_factory: callable, **kwargs):
 
                         message_count += 1
 
+            # 保存状态到数据库（记忆持久化）
+            if hasattr(agent, "save_state"):
+                try:
+                    state_dict = await agent.save_state()
+                    state_compressed = compress_state(state_dict)
+                    resp = db_manager.get(
+                        Thread,
+                        filters={"user_id": user_id, "thread_id": session_id},
+                        return_json=False,
+                    )
+                    if resp.status and resp.data:
+                        thread_obj = resp.data[0]
+                        thread_obj.state = state_compressed
+                    else:
+                        thread_obj = Thread(
+                            user_id=user_id,
+                            thread_id=session_id,
+                            state=state_compressed,
+                        )
+                    db_manager.upsert(thread_obj)
+                    logger.info(f"Saved state for scheduled task: session={session_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to save state for scheduled task: {e}")
+
             if hasattr(agent, "close"):
                 await agent.close()
 
@@ -201,6 +252,29 @@ async def run_backend(agent_factory: callable, **kwargs):
                     f.write(f"\n\n**执行异常:** {str(e)}\n")
             except:
                 pass
+
+            # 异常时也尝试保存状态
+            if agent and hasattr(agent, "save_state"):
+                try:
+                    state_dict = await agent.save_state()
+                    state_compressed = compress_state(state_dict)
+                    resp = db_manager.get(
+                        Thread,
+                        filters={"user_id": user_id, "thread_id": session_id},
+                        return_json=False,
+                    )
+                    if resp.status and resp.data:
+                        thread_obj = resp.data[0]
+                        thread_obj.state = state_compressed
+                    else:
+                        thread_obj = Thread(
+                            user_id=user_id,
+                            thread_id=session_id,
+                            state=state_compressed,
+                        )
+                    db_manager.upsert(thread_obj)
+                except Exception:
+                    pass
 
             if agent and hasattr(agent, "close"):
                 try:
@@ -594,13 +668,6 @@ async def run_worker(agent_factory: callable, **kwargs):
             config_name = ctx.get("defult_config_name", defult_config_name)
 
             # 使用 agent_factory 创建专用的 agent 实例
-            # agent: ChatAgent = await agent_factory(
-            #     api_key=api_key,
-            #     thread_id=session_id,
-            #     user_id=user_id,
-            #     db_manager=db_manager,
-            #     defult_config_name=config_name,
-            # )
             params = dict(
                 api_key=api_key,
                 thread_id=session_id,
@@ -614,6 +681,28 @@ async def run_worker(agent_factory: callable, **kwargs):
                 else (agent_factory(**params))
             )
 
+            # 加载历史状态（继承记忆）
+            response = db_manager.get(
+                Thread,
+                filters={"user_id": user_id, "thread_id": session_id},
+                return_json=False,
+            )
+            if response.status and response.data:
+                thread_obj = response.data[0]
+                if thread_obj.state:
+                    try:
+                        if isinstance(thread_obj.state, str):
+                            try:
+                                state_dict = decompress_state(thread_obj.state)
+                            except Exception:
+                                state_dict = json.loads(thread_obj.state)
+                        else:
+                            state_dict = thread_obj.state
+                        await agent.load_state(state_dict)
+                        logger.info(f"Loaded history state for scheduled task: user={user_id}, session={session_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load state for scheduled task: {e}")
+
             # 初始化 agent
             if hasattr(agent, "lazy_init"):
                 await agent.lazy_init()
@@ -626,10 +715,7 @@ async def run_worker(agent_factory: callable, **kwargs):
             with open(output_file, 'a', encoding='utf-8') as f:
                 async for message in agent.run_stream(task=prompt):
                     # 收集并实时写入消息
-                    # if hasattr(message, 'content'):
-                    #     if isinstance(message.content, str):
                     if isinstance(message, AgentLogEvent) or isinstance(message, BaseChatMessage):
-                        # content = message.model_dump_json()
                         content = ""
                         if isinstance(message, AgentLogEvent):
                             content = f"{message.title}"
@@ -645,6 +731,30 @@ async def run_worker(agent_factory: callable, **kwargs):
                         # 每10条消息输出一次日志
                         if message_count % 10 == 0:
                             logger.debug(f"Task {session_id}: Written {message_count} messages")
+
+            # 保存状态到数据库（记忆持久化）
+            if hasattr(agent, "save_state"):
+                try:
+                    state_dict = await agent.save_state()
+                    state_compressed = compress_state(state_dict)
+                    resp = db_manager.get(
+                        Thread,
+                        filters={"user_id": user_id, "thread_id": session_id},
+                        return_json=False,
+                    )
+                    if resp.status and resp.data:
+                        thread_obj = resp.data[0]
+                        thread_obj.state = state_compressed
+                    else:
+                        thread_obj = Thread(
+                            user_id=user_id,
+                            thread_id=session_id,
+                            state=state_compressed,
+                        )
+                    db_manager.upsert(thread_obj)
+                    logger.info(f"Saved state for scheduled task: session={session_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to save state for scheduled task: {e}")
 
             # 关闭 agent
             if hasattr(agent, "close"):
@@ -667,6 +777,29 @@ async def run_worker(agent_factory: callable, **kwargs):
                     f.write(f"\n\n**执行异常:** {error_msg}\n")
             except:
                 pass
+
+            # 异常时也尝试保存状态
+            if agent and hasattr(agent, "save_state"):
+                try:
+                    state_dict = await agent.save_state()
+                    state_compressed = compress_state(state_dict)
+                    resp = db_manager.get(
+                        Thread,
+                        filters={"user_id": user_id, "thread_id": session_id},
+                        return_json=False,
+                    )
+                    if resp.status and resp.data:
+                        thread_obj = resp.data[0]
+                        thread_obj.state = state_compressed
+                    else:
+                        thread_obj = Thread(
+                            user_id=user_id,
+                            thread_id=session_id,
+                            state=state_compressed,
+                        )
+                    db_manager.upsert(thread_obj)
+                except Exception:
+                    pass
 
             if agent and hasattr(agent, "close"):
                 try:

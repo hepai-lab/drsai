@@ -24,6 +24,7 @@ from drsai.modules.managers.messages.agent_messages import (
     TaskEvent,
     FilesEvent,
 )
+from autogen_agentchat.messages import ThoughtEvent
 from ....input_func import InputFuncType, InputRequestType
 from autogen_core import CancellationToken
 from fastapi import WebSocket, WebSocketDisconnect
@@ -296,6 +297,7 @@ class WebSocketManager:
                             ToolCallRequestEvent,
                             ToolCallExecutionEvent,
                             AgentLogEvent,
+                            ThoughtEvent,
                             TaskEvent,
                             LLMCallEventMessage,
                             FilesEvent,

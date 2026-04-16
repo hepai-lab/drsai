@@ -61,11 +61,13 @@ def create_agent(
     def set_model_client(defult_config_name: str|None = "deepseek-v3.2(No image)") -> HepAIAnthropicChatCompletionClient| HepAIChatCompletionClient:
         llm_model = llm_mode_config.get(defult_config_name, "deepseek-ai/deepseek-v3.2")
         if ("claude" in llm_model) or ("minimax" in llm_model):
+            model_info=_MODEL_INFO["claude-sonnet-4-5"]
+            model_info["token_model"] = "claude-3-5-sonnet-20240620"
             model_client = HepAIAnthropicChatCompletionClient(
                 model=llm_model,
                 base_url="https://aiapi.ihep.ac.cn/apiv2/anthropic",
                 api_key=api_key,
-                model_info=_MODEL_INFO["claude-sonnet-4-5"],
+                model_info=model_info,
                 # temperature=0.5,
                 max_tokens=60000,
             )
@@ -142,6 +144,7 @@ def create_agent(
         # executor=local_executor,
         work_dir=WORKDIR,
         only_in_workspace=False,
+        allolow_dangrous_cmd=True,
         # extra_work_dirs=[],
         # sub_agent_config = SUB_AGENTS,
         # max_turn_count=200,

@@ -19,6 +19,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
+
 dependencies = [
     # drsai-core
     "autogen-agentchat==0.5.7",
@@ -51,6 +52,9 @@ dependencies = [
     "alembic",
 
 ]
+
+[project.scripts]
+drsai-chat = "drsai.backend.run_cli:run"
 
 [project.optional-dependencies]
 eval = [
