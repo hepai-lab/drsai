@@ -298,7 +298,7 @@ class WebSocketManager:
                             ToolCallExecutionEvent,
                             AgentLogEvent,
                             ThoughtEvent,
-                            TaskEvent,
+                            # TaskEvent,
                             LLMCallEventMessage,
                             FilesEvent,
                         ),
@@ -674,9 +674,14 @@ class WebSocketManager:
                     "type": "message_log",
                     "data": message.model_dump(),
                 }
-            elif isinstance(message, TaskEvent):
+            # elif isinstance(message, TaskEvent):
+            #     return {
+            #         "type": "message_task",
+            #         "data": message.model_dump(),
+            #     }
+            elif isinstance(message, ThoughtEvent):
                 return {
-                    "type": "message_task",
+                    "type": "message_thought",
                     "data": message.model_dump(),
                 }
             elif isinstance(message, FilesEvent):

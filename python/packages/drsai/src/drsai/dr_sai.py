@@ -361,6 +361,8 @@ class DrSai:
         """
         user_id = None
         thread_id = None
+        rely_messages: List[BaseChatMessage] = []
+        agent_result: TaskResult|None = None
         try:
             start_time = time.time()
             # 处理用户的kwargs参数，保存UserInput到数据库
@@ -418,10 +420,6 @@ class DrSai:
                 raise RuntimeError(f"Failed to create thread: {response.message}")
 
             # 开始聊天
-
-            rely_messages: List[BaseChatMessage] = []
-            agent_result: TaskResult|None = None
-            
             res = agent.run_stream(task=task)
             role = ""
             async for message in res:
