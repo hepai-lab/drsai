@@ -22,16 +22,6 @@ def _truthy_env(value: str | None) -> bool:
         return False
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
-def _builtin_drsai_general_enabled() -> bool:
-    """
-    Whether to inject the built-in "Dr.Sai General" agent into the agent list.
-
-    By default it's enabled for backwards-compatibility. Downstream users who
-    fork/use the source can disable it to avoid the frontend's hard-coded
-    Dr.Sai General login-default preference.
-    """
-    return not _truthy_env(os.getenv("DRSUI_DISABLE_BUILTIN_DRSAI_GENERAL"))
-
 
 def _int_env(name: str, default: int, min_value: int = 1) -> int:
     raw = os.getenv(name)
@@ -59,19 +49,17 @@ def _mark_featured_and_default_agents(agents: List[Dict[str, Any]]) -> None:
     """
     Add UI-related flags to agent dicts.
 
+    Only environment overrides control which agent gets marked "featured" —
+    there is no hard-coded builtin fallback. If no env matches, no agent is
+    auto-featured; use DEFAULT_REMOTE_AGENTS ordering / is_default to drive
+    the default instead.
+
     Environment overrides (optional):
     - DRSUI_FEATURED_AGENT_ID / _NAME / _OWNER: match rule for "featured" agent
-    - DRSUI_DISABLE_BUILTIN_FEATURED: if true, disables built-in Dr.Sai General fallback
-    - DRSUI_DISABLE_BUILTIN_DRSAI_GENERAL: if true, do not inject builtin Dr.Sai General
     """
     featured_id = os.getenv("DRSUI_FEATURED_AGENT_ID")
     featured_name = os.getenv("DRSUI_FEATURED_AGENT_NAME")
     featured_owner = os.getenv("DRSUI_FEATURED_AGENT_OWNER")
-    disable_builtin = _truthy_env(os.getenv("DRSUI_DISABLE_BUILTIN_FEATURED"))
-
-    # Built-in fallback (current official featured agent)
-    builtin_name = "Dr.Sai General"
-    builtin_owner = "xiongdb@ihep.ac.cn"
 
     def _match(agent: Dict[str, Any]) -> bool:
         a_id = str(agent.get("id") or "").strip()
@@ -86,10 +74,7 @@ def _mark_featured_and_default_agents(agents: List[Dict[str, Any]]) -> None:
             return True
         if featured_owner and a_owner == featured_owner.strip().lower():
             return True
-
-        if disable_builtin:
-            return False
-        return a_name == builtin_name and a_owner == builtin_owner.lower()
+        return False
 
     featured_agent_id: str | None = None
     for agent in agents:
@@ -113,38 +98,45 @@ def _mark_featured_and_default_agents(agents: List[Dict[str, Any]]) -> None:
 
 
 
-_BUILTIN_DRSAI_GENERAL_ID = "eab8c9e8-e5be-4bb2-9dd8-0fdc6938e357"
-
-
-def _builtin_drsai_general_json_path() -> Path:
-    return Path(__file__).resolve().parent / "data" / "builtin_drsai_general.json"
-
-
-def load_builtin_drsai_general_agent() -> Dict[str, Any]:
-    """Canonical Dr.Sai General (ddf) row for DB / API; shipped as package data."""
-    with open(_builtin_drsai_general_json_path(), encoding="utf-8") as f:
-        return json.load(f)
-
-
-def append_builtin_drsai_general_if_missing(agents_list: List[Dict[str, Any]]) -> None:
-    if not _builtin_drsai_general_enabled():
-        return
-    if any(str(a.get("id")) == _BUILTIN_DRSAI_GENERAL_ID for a in agents_list):
-        return
-    agents_list.append(load_builtin_drsai_general_agent())
-
-
-def ensure_user_agents_list_has_builtin(agents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Return a copy of agents with builtin Dr.Sai General appended if absent (by id)."""
-    out = list(agents or [])
-    append_builtin_drsai_general_if_missing(out)
-    return out
-
-
 def get_agent_mode_config(
         user_id: str,
 ) -> list[dict[str, str]]:
     return [
+      {
+            "name": "Dr.Sai General",
+            "description": "A general assistant for PDF QA, writing code, implementing features, and fixing bugs.",
+            "version": "0.1.0",
+            "author": "xiongdb@ihep.ac.cn",
+            "logo": "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            "examples": [
+                  "你有什么技能，如何下载新技能?",
+                  "如何配置自己的子智能体，如何使用子智能体。",
+                  "如何构建自己的RAGFlow知识库，并不断更新自己的知识库？",
+            ],
+            "agent_config": {
+                  "claude-sonnet-4-6(High)": "anthropic/claude-sonnet-4-6",
+                  "claude-haiku-4-5(Fast)": "anthropic/claude-haiku-4-5",
+                  "minimax-m2.5": "minimax/minimax-m2.5",
+                  "minimax-m2.5-highspeed": "minimax/minimax-m2.5-highspeed",
+                  "minimax-m2.7": "minimax/minimax-m2.7",
+                  "minimax-m2.7-highspeed": "minimax/minimax-m2.7-highspeed",
+                  "gpt-4o": "openai/gpt-4o",
+                  "gpt-4.1": "openai/gpt-4.1",
+                  "gpt-5.2": "openai/gpt-5.2",
+                  "deepseek-r1(No image)": "deepseek-ai/deepseek-r1",
+                  "deepseek-v3.2(No image)": "deepseek-ai/deepseek-v3.2",
+            },
+            "default_config_name": "deepseek-v3.2(No image)",
+            "mode": "ddf",
+            "owner": "xiongdb@ihep.ac.cn",
+            "id": "eab8c9e8-e5be-4bb2-9dd8-0fdc6938e357",
+            "config": {
+                  "name": "Dr.Sai General",
+                  "url": "https://aiapi.ihep.ac.cn/apiv2",
+            },
+            "featured": True,
+            "is_default": True,
+      },
       { 
             "id": "010022126sdfnjsdnqw",
             "mode": "magentic-one", 
@@ -216,7 +208,6 @@ def get_default_agent_mode_config(user_id: str) -> List[Dict[str, Any]]:
             if not agent_mode.get("id"):
                 agent_mode["id"] = str(uuid.uuid4())
         agents_list.extend(default_agents_mode)
-    append_builtin_drsai_general_if_missing(agents_list)
     return agents_list
 
 async def get_agents_mode(user_id: str, db:DatabaseManager) -> Dict:

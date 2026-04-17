@@ -284,6 +284,7 @@ class AgentModeSettings(SQLModel, table=True):
     agents_mode: Optional[list[dict[str, Any]]] = Field(
         default_factory=list, sa_column=Column(JSON)
     )
+    default_agent_id: Optional[str] = Field(default=None)
 
 class AgentModeConfig(SQLModel, table=True):
     __table_args__ = {"sqlite_autoincrement": True}

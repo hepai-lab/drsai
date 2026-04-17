@@ -1,6 +1,6 @@
 import { message } from "antd";
 import { Plus, Sparkles, RefreshCw } from "lucide-react";
-import React, { useCallback, useContext, useEffect, useState } from "react";
+import React, { useCallback, useContext, useEffect, useState, useRef } from "react";
 import { parse } from "yaml";
 import { appContext } from "../../../hooks/provider";
 import { Agent } from "../../../types/common";
@@ -51,8 +51,8 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const [plazaLoadError, setPlazaLoadError] = useState(false);
   /** 未配置平台模型 API Key：不阻塞页面，仍可使用「连接远程」 */
   const [noModelApiKeyForList, setNoModelApiKeyForList] = useState(false);
-
-  const DEFAULT_AGENT_INIT_KEY = "drsai.defaultAgentInitialized";
+  /** Server-side user default agent id */
+  const [userDefaultAgentId, setUserDefaultAgentId] = useState<string | null>(null);
 
   const readRecentAgentIds = useCallback(() => {
     try {
@@ -78,6 +78,29 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     } catch (e) {
       // ignore network errors; localStorage will be used as fallback
       console.debug("Failed to sync recent agents from server:", e);
+    }
+  }, [user?.email]);
+
+  const loadUserDefaultAgent = useCallback(async () => {
+    if (!user?.email) return;
+    try {
+      const result = await agentWorkerAPI.getUserDefaultAgent(user.email);
+      // Prefer the explicit user choice; default_agent_id may be a resolved fallback.
+      setUserDefaultAgentId(result.stored_default_agent_id ?? null);
+    } catch {
+      // ignore — old backend without the endpoint
+    }
+  }, [user?.email]);
+
+  const handleSetDefault = useCallback(async (agentId?: string) => {
+    if (!agentId || !user?.email) return;
+    try {
+      await agentWorkerAPI.setUserDefaultAgent(user.email, agentId);
+      setUserDefaultAgentId(agentId);
+      message.success("已设为默认智能体");
+    } catch (err) {
+      console.error("Failed to set default agent:", err);
+      message.error("设置默认智能体失败");
     }
   }, [user?.email]);
 
@@ -122,12 +145,14 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       api_key: agent.api_key || config.api_key || config.apiKey,
       featured: Boolean(agent.featured),
       is_default: Boolean(agent.is_default),
+      is_user_default: Boolean(agent.id && agent.id === userDefaultAgentId),
       onRemove: (agent.mode === "remote" || agent.mode === "custom")
         ? (id?: string) => handleRemoveRemoteAgent(id || agent.id)
         : undefined,
+      onSetDefault: (id?: string) => handleSetDefault(id || agent.id),
       onClick: () => { },
     };
-  }, [user?.email, handleRemoveRemoteAgent]);
+  }, [user?.email, handleRemoveRemoteAgent, handleSetDefault, userDefaultAgentId]);
 
   // 提取获取 API Key 和 BaseUrl 的逻辑
   const getApiKeyFromSettings = useCallback(async (userEmail: string) => {
@@ -384,7 +409,8 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
   useEffect(() => {
     loadAgentList();
-  }, [loadAgentList]);
+    loadUserDefaultAgent();
+  }, [loadAgentList, loadUserDefaultAgent]);
 
   useEffect(() => {
     if (isCustomModalOpen) {
@@ -407,7 +433,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     return () => window.removeEventListener("drsai:recentAgentsUpdated", handler as EventListener);
   }, [readRecentAgentIds, syncRecentFromServer, user?.email]);
 
-  // 新用户默认：有组织用组织默认智能体，否则 Dr.Sai General（必须放在条件 return 之前，避免 hooks 次序变化）
+  // 新用户默认：后端个人显式默认(stored_default_agent_id) > 组织默认 > 列表偏好
   useEffect(() => {
     if (agentId) return;
     if (!agentList.length) return;
@@ -416,15 +442,17 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     let cancelled = false;
     void (async () => {
       try {
-        if (window.localStorage.getItem(DEFAULT_AGENT_INIT_KEY)) return;
-        const myOrg = await organizationsAPI.getMyOrg(email).catch(() => null);
+        const [myOrg, userDefault] = await Promise.all([
+          organizationsAPI.getMyOrg(email).catch(() => null),
+          agentWorkerAPI.getUserDefaultAgent(email).catch(() => null),
+        ]);
         if (cancelled) return;
         const orgDefault = (myOrg?.default_agent_id as string) || null;
-        const target = pickLoginDefaultAgent(agentList as Agent[], orgDefault);
+        const userDefaultId = userDefault?.stored_default_agent_id ?? null;
+        const target = pickLoginDefaultAgent(agentList as Agent[], orgDefault, userDefaultId);
         if (!target?.id) return;
         setAgentId(target.id);
         setMode(target.mode || "");
-        window.localStorage.setItem(DEFAULT_AGENT_INIT_KEY, "1");
       } catch {
         // ignore
       }
@@ -512,12 +540,11 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
    * - 若无默认，再回退到后端标记的 featured（官方精选）。
    */
   const featuredAgent =
+    (userDefaultAgentId ? baseList.find((a) => a.id === userDefaultAgentId) : undefined) ||
     baseList.find((a) => a.is_default) ||
     baseList.find((a) => a.featured && a.mode !== "remote" && a.mode !== "custom");
 
-  const filteredList = baseList
-    .filter((agent) => matchOwner(agent) && matchSearch(agent))
-    .filter((agent) => (featuredAgent?.id ? agent.id !== featuredAgent.id : true));
+  const filteredList = baseList.filter((agent) => matchOwner(agent) && matchSearch(agent));
 
   const sortList = (list: AgentCardData[]) => {
     if (sortBy === "name") {
@@ -659,7 +686,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
       {user?.email && plazaLoadError && isLocalPasswordLogin() && (
         <div className="mb-3 ml-4 mr-4 rounded-xl border border-amber-200/90 bg-amber-50/95 px-3 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/35 dark:text-amber-100/95">
-          官方智能体暂不可用（本地登录账号通常无ddf注册的智能体的数据）。不影响使用上方「连接远程」添加外部智能体。
+          普通用户访问worker受限，暂不可用。不影响使用上方「连接远程」添加外部智能体。
         </div>
       )}
 
@@ -728,15 +755,15 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {/* 官方精选：现代化主推卡片（与下方网格区分的视觉层级） */}
-          {featuredAgent && ownerFilter !== "mine" && (
+          {/* 主推位：用户默认 > 官方精选 */}
+          {featuredAgent && (featuredAgent.is_user_default || ownerFilter !== "mine") && (
             <div className="mb-6 pl-4 pr-4">
               <div className="mb-3 flex items-center gap-2">
                 <span className="inline-flex items-center rounded-full bg-[#111827] px-2.5 py-1 text-[11px] font-semibold tracking-wide text-white dark:bg-white dark:text-[#111827]">
-                  Featured
+                  {featuredAgent.is_user_default ? "Default" : "Featured"}
                 </span>
                 <span className="text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
-                  官方精选
+                  {featuredAgent.is_user_default ? "我的默认智能体" : "官方精选"}
                 </span>
               </div>
 
@@ -786,6 +813,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
                           编辑
                         </button>
                       )}
+
                       <button
                         type="button"
                         onClick={() => startWithAgent(featuredAgent)}
