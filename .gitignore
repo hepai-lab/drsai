@@ -222,7 +222,7 @@ scratch.py
 .magentic_ui_state.json
 debug
 
-data
+/data
 runs
 
 node_modules
