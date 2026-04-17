@@ -3,13 +3,19 @@ import { Agent } from '../../../types/common';
 import { useModeConfigStore } from '../../../store/modeConfig';
 import { getFirstRecentAgentId } from '../../../utils/recentAgentsStorage';
 import { pickLoginDefaultAgent, pickPreferredAgentFromList } from '../../../utils/agentPreference';
-import { agentAPI, organizationsAPI } from '../api';
+import { agentAPI, agentWorkerAPI, organizationsAPI } from '../api';
 
 export const useAgentManager = (userEmail: string | undefined) => {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const { setSelectedAgent, setMode, setConfig, setAgentId, setAgentInfo } =
     useModeConfigStore();
+
+  const fetchUserAgentsFromDb = useCallback(async (): Promise<Agent[]> => {
+    if (!userEmail) return [];
+    const resp = await agentWorkerAPI.getUserDefaultAgents(userEmail);
+    return (resp?.data || []) as Agent[];
+  }, [userEmail]);
 
   const fetchAgentList = useCallback(async (newAgents?: Agent[]) => {
     if (!userEmail) return;
@@ -34,22 +40,31 @@ export const useAgentManager = (userEmail: string | undefined) => {
     };
 
     try {
-      // 如果提供了新的 agent 列表，直接使用它，否则重新获取
-      const res = newAgents || await agentAPI.getAgentList(userEmail);
+      // 统一数据源：用 UserAgents 表（/user_default_agents/list），避免 /agentmode 与 /user_agents/{id} 不一致导致“智能体下线”
+      const res = newAgents || await fetchUserAgentsFromDb();
       setAgents(res);
 
       if (res.length === 0) return;
 
       let orgDefaultAgentId: string | null | undefined;
+      let userDefaultAgentId: string | null | undefined;
       try {
-        const myOrg = await organizationsAPI.getMyOrg(userEmail);
+        const [myOrg, userDefault] = await Promise.all([
+          organizationsAPI.getMyOrg(userEmail).catch(() => null),
+          agentWorkerAPI.getUserDefaultAgent(userEmail).catch(() => null),
+        ]);
         orgDefaultAgentId = (myOrg?.default_agent_id as string) || null;
+        // Treat personal default as "explicitly set by user".
+        // Backend may return a resolved fallback in default_agent_id (e.g. Dr.Sai General)
+        // even when the user never chose one; stored_default_agent_id preserves intent.
+        userDefaultAgentId = userDefault?.stored_default_agent_id ?? null;
       } catch {
         orgDefaultAgentId = undefined;
+        userDefaultAgentId = undefined;
       }
 
       const { selectedAgent, agentId, mode } = useModeConfigStore.getState();
-      const policyDefault = pickLoginDefaultAgent(res, orgDefaultAgentId);
+      const policyDefault = pickLoginDefaultAgent(res, orgDefaultAgentId, userDefaultAgentId);
       const fallbackAgent =
         policyDefault ||
         pickPreferredAgentFromList(res) ||

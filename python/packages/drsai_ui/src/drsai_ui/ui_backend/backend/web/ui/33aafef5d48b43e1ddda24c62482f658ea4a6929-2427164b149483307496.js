@@ -16,7 +16,8 @@
 const useModeConfigStore=(0,zustand__WEBPACK_IMPORTED_MODULE_2__/* .create */ .v)()((0,zustand_middleware__WEBPACK_IMPORTED_MODULE_3__/* .persist */ .Zr)(set=>({mode:"",setMode:mode=>set({mode}),config:{},setConfig:config=>set({config}),selectedAgent:null,setSelectedAgent:selectedAgent=>set({selectedAgent}),lastSelectedAgentMode:"",setLastSelectedAgentMode:mode=>set({lastSelectedAgentMode:mode}),// update by yqsun
 agentId:null,setAgentId:agentId=>set({agentId}),agentInfo:null,setAgentInfo:agentInfo=>set({agentInfo})}),{name:"drsai-mode-config",storage:(0,zustand_middleware__WEBPACK_IMPORTED_MODULE_3__/* .createJSONStorage */ .KU)(()=>localStorage),// 刷新后恢复上次选中：持久化 agentId；mode 在 id 失效时作为备选匹配
 partialize:state=>({agentId:state.agentId,mode:state.mode}),// 与 drsai.recentAgents 对齐：有「最近使用」时 agentId 以列表第一条为准，便于 useAgentInfo 用正确 id 拉详情
-onRehydrateStorage:()=>state=>{if(!state)return;const recentFirst=(0,_utils_recentAgentsStorage__WEBPACK_IMPORTED_MODULE_4__/* .getFirstRecentAgentId */ .O)();if(recentFirst){useModeConfigStore.getState().setAgentId(recentFirst);}const{agentId}=useModeConfigStore.getState();if(agentId)return;const userId=(0,_components_utils__WEBPACK_IMPORTED_MODULE_1__/* .getLocalStorage */ .Lg)("user_email",false);if(!userId)return;void Promise.all([_components_views_api__WEBPACK_IMPORTED_MODULE_0__/* .agentAPI */ .cM.getAgentList(userId),_components_views_api__WEBPACK_IMPORTED_MODULE_0__/* .organizationsAPI */ .PB.getMyOrg(userId).catch(()=>null)]).then(_ref=>{let[agents,myOrg]=_ref;const orgDefault=(myOrg===null||myOrg===void 0?void 0:myOrg.default_agent_id)||null;const preferred=(0,_utils_agentPreference__WEBPACK_IMPORTED_MODULE_5__/* .pickLoginDefaultAgent */ .Tw)(agents||[],orgDefault);const id=preferred===null||preferred===void 0?void 0:preferred.id;if(!id||typeof id!=="string")return;const{agentId:cur,setAgentId:setId}=useModeConfigStore.getState();if(!cur){setId(id);console.log("\u9996\u6B21\u767B\u5F55\uFF0C\u8BBE\u7F6E\u9ED8\u8BA4 agentId\uFF08\u7EC4\u7EC7\u9ED8\u8BA4/is_default/Dr.Sai General\uFF09: "+id);}}).catch(err=>{console.warn("获取 agent 列表失败，无法设置默认 agentId:",err);});}}));
+onRehydrateStorage:()=>state=>{if(!state)return;const recentFirst=(0,_utils_recentAgentsStorage__WEBPACK_IMPORTED_MODULE_4__/* .getFirstRecentAgentId */ .O)();if(recentFirst){useModeConfigStore.getState().setAgentId(recentFirst);}const{agentId}=useModeConfigStore.getState();if(agentId)return;const userId=(0,_components_utils__WEBPACK_IMPORTED_MODULE_1__/* .getLocalStorage */ .Lg)("user_email",false);if(!userId)return;void Promise.all([_components_views_api__WEBPACK_IMPORTED_MODULE_0__/* .agentAPI */ .cM.getAgentList(userId),_components_views_api__WEBPACK_IMPORTED_MODULE_0__/* .organizationsAPI */ .PB.getMyOrg(userId).catch(()=>null),_components_views_api__WEBPACK_IMPORTED_MODULE_0__/* .agentWorkerAPI */ .Ml.getUserDefaultAgent(userId).catch(()=>null)]).then(_ref=>{var _userDefault$stored_d;let[agents,myOrg,userDefault]=_ref;const orgDefault=(myOrg===null||myOrg===void 0?void 0:myOrg.default_agent_id)||null;// Only treat explicitly stored default as personal preference.
+const userDefaultId=(_userDefault$stored_d=userDefault===null||userDefault===void 0?void 0:userDefault.stored_default_agent_id)!==null&&_userDefault$stored_d!==void 0?_userDefault$stored_d:null;const preferred=(0,_utils_agentPreference__WEBPACK_IMPORTED_MODULE_5__/* .pickLoginDefaultAgent */ .T)(agents||[],orgDefault,userDefaultId);const id=preferred===null||preferred===void 0?void 0:preferred.id;if(!id||typeof id!=="string")return;const{agentId:cur,setAgentId:setId}=useModeConfigStore.getState();if(!cur){setId(id);}}).catch(err=>{console.warn("获取 agent 列表失败，无法设置默认 agentId:",err);});}}));
 
 /***/ }),
 
@@ -24,18 +25,18 @@ onRehydrateStorage:()=>state=>{if(!state)return;const recentFirst=(0,_utils_rece
 /***/ (function(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
 
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   Tw: function() { return /* binding */ pickLoginDefaultAgent; },
-/* harmony export */   WZ: function() { return /* binding */ pickPreferredAgentFromList; }
+/* harmony export */   T: function() { return /* binding */ pickLoginDefaultAgent; },
+/* harmony export */   W: function() { return /* binding */ pickPreferredAgentFromList; }
 /* harmony export */ });
-/* unused harmony exports BUILTIN_DRSAI_GENERAL_AGENT_ID, findDrSaiGeneralAgent */
 /**
- * 内置 Dr.Sai General（ddf）在包数据中的固定 id，与后端 builtin_drsai_general.json 一致。
- */const BUILTIN_DRSAI_GENERAL_AGENT_ID="eab8c9e8-e5be-4bb2-9dd8-0fdc6938e357";/**
- * 与 AgentSquare 新用户默认逻辑一致：排除内部占位 mode，优先 is_default，其次 featured，最后列表首项。
+ * 排除内部占位 mode，优先 is_default，其次 featured，最后列表首项。
  */function pickPreferredAgentFromList(agents){if(!(agents!==null&&agents!==void 0&&agents.length))return undefined;const baseList=agents.filter(a=>a.mode!=="magentic-one"&&a.mode!=="besiii");const byDefault=baseList.find(a=>a.is_default);if(byDefault!==null&&byDefault!==void 0&&byDefault.id)return byDefault;const featured=baseList.find(a=>a.featured);if(featured!==null&&featured!==void 0&&featured.id)return featured;return agents[0];}/**
- * 登录后默认智能体：有组织且配置了 default_agent_id 且列表中存在 → 用组织默认；
- * 否则 → 优先 is_default；再否则 → Dr.Sai General（按 id 或名称）；再否则 → pickPreferredAgentFromList。
- */function findDrSaiGeneralAgent(agents){if(!(agents!==null&&agents!==void 0&&agents.length))return undefined;const byId=agents.find(a=>a.id===BUILTIN_DRSAI_GENERAL_AGENT_ID);if(byId)return byId;return agents.find(a=>(a.name||"").trim()==="Dr.Sai General");}function pickLoginDefaultAgent(agents,orgDefaultAgentId){if(!(agents!==null&&agents!==void 0&&agents.length))return undefined;const oid=(orgDefaultAgentId||"").trim();if(oid){const orgHit=agents.find(a=>a.id===oid);if(orgHit)return orgHit;}const byDefault=agents.find(a=>a.is_default);if(byDefault!==null&&byDefault!==void 0&&byDefault.id)return byDefault;const drsai=findDrSaiGeneralAgent(agents);if(drsai)return drsai;return pickPreferredAgentFromList(agents);}
+ * 登录后默认智能体选择优先级（完全来自 DB，无硬编码内置）：
+ * 1. 用户在后端设置的 default_agent_id（如果传入且在列表中存在）
+ * 2. 组织级别的 default_agent_id
+ * 3. 列表中标记 is_default 的
+ * 4. pickPreferredAgentFromList 兜底（featured / 首项）
+ */function pickLoginDefaultAgent(agents,orgDefaultAgentId,userDefaultAgentId){if(!(agents!==null&&agents!==void 0&&agents.length))return undefined;const uid=(userDefaultAgentId||"").trim();if(uid){const userHit=agents.find(a=>a.id===uid);if(userHit)return userHit;}const oid=(orgDefaultAgentId||"").trim();if(oid){const orgHit=agents.find(a=>a.id===oid);if(orgHit)return orgHit;}const byDefault=agents.find(a=>a.is_default);if(byDefault!==null&&byDefault!==void 0&&byDefault.id)return byDefault;return pickPreferredAgentFromList(agents);}
 
 /***/ }),
 
@@ -562,4 +563,4 @@ const create = (createState) => createState ? createImpl(createState) : createIm
 /***/ })
 
 }]);
-//# sourceMappingURL=33aafef5d48b43e1ddda24c62482f658ea4a6929-27d68124a07c96d32966.js.map
+//# sourceMappingURL=33aafef5d48b43e1ddda24c62482f658ea4a6929-2427164b149483307496.js.map
