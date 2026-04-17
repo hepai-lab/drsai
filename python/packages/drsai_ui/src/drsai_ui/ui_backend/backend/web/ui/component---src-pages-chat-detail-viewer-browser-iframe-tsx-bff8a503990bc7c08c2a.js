@@ -132,7 +132,7 @@ const BrowserIframe = _ref => {
   // const vncUrl = `https://drsai.ihep.ac.cn:42800/api/novnc?port=${novncPort}`;
   // const vncUrl = `http://202.122.37.162:${novncPort}/vnc.html?autoconnect=true&resize=${
   // const vncUrl = `https://drsai.ihep.ac.cn:42800/api/vncapi/${novncPort}/vnc.html?autoconnect=true&resize=${
-  const vncServiceUrl =  false || "/api/vncapi";
+  const vncServiceUrl = ({}).GATSBY_VNC_SERVICE_URL || "/api/vncapi";
   const vncUrl = vncServiceUrl + "/" + novncPort + "/vnc.html?autoconnect=true&resize=" + (scaling === "remote" ? "remote" : "scale") + "&show_dot=true&scaling=" + scaling + "&quality=" + quality + "&compression=0&view_only=" + (viewOnly ? 1 : 0);
 
   // const vncUrl = `https://drsai.ihep.ac.cn:42800/api/novnc?port=${novncPort}`;
@@ -300,4 +300,4 @@ const createLucideIcon = (iconName, iconNode) => {
 /***/ })
 
 }]);
-//# sourceMappingURL=component---src-pages-chat-detail-viewer-browser-iframe-tsx-a29b7e76fa8344170bc5.js.map
+//# sourceMappingURL=component---src-pages-chat-detail-viewer-browser-iframe-tsx-bff8a503990bc7c08c2a.js.map
