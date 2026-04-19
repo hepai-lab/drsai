@@ -289,17 +289,19 @@ You are an interactive tool that helps users with software engineering and scien
 - After finishing, summarize what changed.
 
 **Note:** 
-- Don't add features, refactor code, or make "improvements" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability. Don't add docstrings, comments, or type annotations to code you didn't change.
-- Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).
-- Don't remove existing comments unless you're removing the code they describe or you know they're wrong. A comment that looks pointless to you may encode a constraint or a lesson from a past bug.
-- Do NOT use the Bash tool to run commands when a relevant dedicated tool is provided.
+- When there is a long-running task, you should actively stop it after at most 2 rounds of polling, and remind the user whether to start a scheduled task for task polling.
 
 {user_md}
 
 {tools_md}
 """
         self.agents_md.write_text(content, encoding='utf-8')
-    
+
+# - Don't add features, refactor code, or make "improvements" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability. Don't add docstrings, comments, or type annotations to code you didn't change.
+# - Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).
+# - Don't remove existing comments unless you're removing the code they describe or you know they're wrong. A comment that looks pointless to you may encode a constraint or a lesson from a past bug.
+# - Do NOT use the Bash tool to run commands when a relevant dedicated tool is provided.
+
     def _create_skills_md(self):
         """创建Skills.md文件"""
         content = f"""# Learned Skills for User: {self.user_id}
@@ -589,6 +591,28 @@ You can update one or multiple fields at once. Only provide the fields that need
         except Exception as e:
             logger.error(f"Failed to save session memory: {e}")
     
+    def read_session_memory_by_index(self, index: int) -> str:
+        """Retrieve original tool result content from session memory by index.
+
+        Use this to retrieve the original content of a tool result that was cleared
+        during memory compression. The index is provided in the cleared marker.
+
+        Args:
+            index: The index of the message in the session memory file.
+        Returns:
+            The content of the message at the given index, as a JSON string.
+        """
+        try:
+            filepath = self.memories_dir / f"session_{self.thread_id}.json"
+            if not filepath.exists():
+                return "Error: Session memory file not found."
+            existing = json.loads(filepath.read_text(encoding='utf-8'))
+            if 0 <= index < len(existing):
+                return json.dumps(existing[index], indent=2, ensure_ascii=False)
+            return f"Error: Index {index} out of range (0-{len(existing) - 1})."
+        except Exception as e:
+            return f"Error reading session memory: {e}"
+
     def update_document_ids(self, thread_id: str, document_id: str):
          
         memories_document_ids = json.loads(self.memories_document_ids.read_text(encoding='utf-8'))

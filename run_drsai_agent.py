@@ -52,14 +52,14 @@ def create_agent(
         thread_id: str|None = None, 
         user_id: str|None = None, 
         db_manager: DatabaseManager|None = None,
-        defult_config_name: str|None = "deepseek-v3.2(No image)",
+        defult_config_name: str|None = "minimax-m2.7-highspeed",
 ) -> DrSaiAssistant:
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
 
-    def set_model_client(defult_config_name: str|None = "deepseek-v3.2(No image)") -> HepAIAnthropicChatCompletionClient| HepAIChatCompletionClient:
-        llm_model = llm_mode_config.get(defult_config_name, "deepseek-ai/deepseek-v3.2")
+    def set_model_client(defult_config_name: str|None = "minimax-m2.7-highspeed") -> HepAIAnthropicChatCompletionClient| HepAIChatCompletionClient:
+        llm_model = llm_mode_config.get(defult_config_name, "minimax-m2.7-highspeed")
         if ("claude" in llm_model) or ("minimax" in llm_model):
             model_info=_MODEL_INFO["claude-sonnet-4-5"]
             model_info["token_model"] = "claude-3-5-sonnet-20240620"
@@ -180,7 +180,7 @@ if __name__ == "__main__":
                 "如何设置定时任务？"
             ],
             agent_config = llm_mode_config,
-            defult_config_name="deepseek-v3.2(No image)",
+            defult_config_name="minimax-m2.7-highspeed",
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务配置

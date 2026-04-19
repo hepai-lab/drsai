@@ -37,6 +37,7 @@ from loguru import logger
 from datetime import datetime
 import json
 import os
+import re
 from datetime import datetime
 from dataclasses import asdict
 
@@ -57,42 +58,115 @@ class LocalMesssage(BaseModel):
 COMPRESSION_PROMPT_ZN = """
 你是一个负责压缩长对话记忆的助手。现在给你一段包含用户、智能助手{name}以及其他助手多轮对话的记录。你的任务是从中提取长期有价值的信息，并输出高度压缩、结构清晰的摘要。
 
-请从以下方面进行总结：
+请先在 <analysis> 标签内进行思考和中间推理（这部分不会保留在最终压缩结果中），然后在 <summary> 标签内输出最终摘要。
 
-1. **用户的初始任务、目标、背景信息、用户或者其他智能助手查询的记忆等信息**（只保留长期有用内容）。
-2. **智能助手{name}在对话中做出的关键回复、思考过程摘要和重要决策**：
-   - 包含每个关键动作使用的工具名称、调用目的、输入要点、输出或执行结果。
-   - 若工具失败或返回无效结果，也需简要记录原因。
-3. **当前轮对话结束时，用户或其他助手对{name}提出的最新需求或待办事项**。
+请严格按照以下格式和章节输出：
 
-同时请遵守以下要求：
+<analysis>
+[你的思考草稿——用于提高摘要质量的中间推理过程]
+[分析哪些信息是长期有价值的，哪些可以忽略]
+</analysis>
+
+<summary>
+1. Primary Request and Intent:
+   [详细描述用户的所有请求和意图]
+
+2. Key Technical Concepts:
+   - [概念1]
+   - [概念2]
+
+3. Files and Code Sections:
+   - [文件名1]
+     - [为什么这个文件重要]
+     - [关键代码片段]
+   - [文件名2]
+     - [关键代码片段]
+
+4. Errors and Fixes:
+   - [错误描述]:
+     - [修复方式]
+     - [用户反馈]
+
+5. Problem Solving:
+   [问题解决过程的关键步骤]
+
+6. All User Messages:
+   - [逐条列出所有非工具结果的用户消息]
+
+7. Pending Tasks:
+   - [待办事项1]
+   - [待办事项2]
+
+8. Current Work:
+   [精确描述当前工作内容，包含文件名和代码片段]
+
+9. Optional Next Step:
+   [下一步计划，包含最近对话的直接引用]
+</summary>
+
+要求：
 - 忽略闲聊、重复确认、无用解释等短期内容。
 - 若对话是中英文或混合语言，保留相应的语言。
 - 尽可能压缩 token，同时保持可读性与完整的因果链。
 - 输出必须客观、无臆测，仅基于对话内容进行总结。
-
-请最终按照每个部分进行输出。
-
+- 如果某个章节没有相关内容，写"N/A"即可。
 """
 
 COMPRESSION_PROMPT_EN = """
 You are an assistant responsible for compressing long multi-agent conversations into concise, long-term memory summaries. You will receive a conversation containing the user, assistant {name}, and possibly other agents. Your task is to extract only the high-value, long-term information and produce a highly compressed and structured summary.
 
-Please summarize the conversation from the following perspectives:
+First, think through your analysis inside <analysis> tags (this part will be discarded and NOT kept in the final compressed context), then output the final summary inside <summary> tags.
 
-1. **The user’s initial goal, task description, and any relevant background information** (keep only information that remains useful later).
-2. **Key actions, reasoning steps, and major decisions made by assistant {name}:**
-   - Include the tools used, the purpose of each tool call, the main inputs, and the outputs or results.
-   - If a tool call failed or returned an invalid result, briefly record the reason.
-3. **The current outstanding request or the latest requirement from the user or other agents toward assistant {name}.**
+You MUST follow this exact format and sections:
+
+<analysis>
+[Your reasoning draft — intermediate thinking to improve summary quality]
+[Analyze which information has long-term value and which can be ignored]
+</analysis>
+
+<summary>
+1. Primary Request and Intent:
+   [Describe all user requests and intentions in detail]
+
+2. Key Technical Concepts:
+   - [Concept 1]
+   - [Concept 2]
+
+3. Files and Code Sections:
+   - [filename1]
+     - [Why this file is important]
+     - [Key code snippet]
+   - [filename2]
+     - [Key code snippet]
+
+4. Errors and Fixes:
+   - [Error description]:
+     - [How it was fixed]
+     - [User feedback]
+
+5. Problem Solving:
+   [Key steps in the problem-solving process]
+
+6. All User Messages:
+   - [List every non-tool-result user message verbatim]
+
+7. Pending Tasks:
+   - [Task 1]
+   - [Task 2]
+
+8. Current Work:
+   [Precisely describe current work including filenames and code snippets]
+
+9. Optional Next Step:
+   [Next step plan with direct quotes from recent conversation]
+</summary>
 
 Additional instructions:
 - Ignore small talk, repeated confirmations, and temporary or low-value content.
-- The input may contain Chinese, English, or mixed languages; keep the origin languages**, clearly structured.
+- The input may contain Chinese, English, or mixed languages; keep the original languages, clearly structured.
 - Compress aggressively to minimize token usage while keeping essential causal chains.
 - Do not infer or invent any information that is not explicitly stated.
-
-Output the final result as a structured bullet-point summary.
+- If a section has no relevant content, write "N/A".
 """
 
 def get_judgment_tool(strict: bool = False,) -> ToolSchema:
@@ -148,6 +222,9 @@ class DrSaiChatCompletionContextConfig(BaseModel):
     learning_document_id: str|None = None
     initial_messages: List[LLMMessage] | None = None
     history_messages: List[LLMMessage] | None = None
+    tool_clear_whitelist: set[str] | None = None
+    keep_recent_tool_results: int = 2
+    min_content_length_to_clear: int = 200
 
 class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompletionContextConfig]):
     """
@@ -167,7 +244,7 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         *,
         user_id: str | None = None,
         thread_id: str | None = None,
-        work_dir: str | None = None, 
+        work_dir: str | None = None,
         token_limit: int | None = None,
         compression_prompt: str|None = None,
         summary_task_prompt: str|None = None,
@@ -180,6 +257,9 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         # upload_memory: bool = False,
         tool_schema: List[ToolSchema] = [],
         initial_messages: List[LLMMessage] | None = None,
+        tool_clear_whitelist: set[str] | None = None,
+        keep_recent_tool_results: int = 2,
+        min_content_length_to_clear: int = 200,
     ) -> None:
         """
         agent_name: The name of the agent.
@@ -228,6 +308,16 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         self._history_messages: list[dict] = []
 
         self._current_messages: list[LLMMessage] = []
+
+        # Layer 1: Tool result clearing config
+        self._tool_clear_whitelist: set[str] = tool_clear_whitelist or {
+            "run_bash", "run_read", "run_write", "run_edit",
+            "run_grep", "run_glob", "run_powershell",
+            "get_bash_task", "get_powershell_task",
+        }
+        self._keep_recent_tool_results: int = keep_recent_tool_results
+        self._min_content_length_to_clear: int = min_content_length_to_clear
+        self._cleared_tool_results: dict[str, int] = {}  # call_id -> _history_messages index
 
     async def add_message(
             self, 
@@ -282,6 +372,81 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
             )
         self._history_messages.append(local_messages.model_dump())
 
+    def _find_history_ref(self, call_id: str) -> int:
+        """Find the index in _history_messages where a tool result with the given call_id is stored."""
+        for i in range(len(self._history_messages) - 1, -1, -1):
+            entry = self._history_messages[i]
+            if entry.get("is_tool_call") and call_id in entry.get("content", ""):
+                return i
+        return -1
+
+    @staticmethod
+    def _extract_summary(llm_output: str) -> str:
+        """Extract the <summary> content from LLM compression output, discarding <analysis>.
+
+        If the LLM output contains <summary>...</summary> tags, return only the summary content.
+        Otherwise, return the full output as-is (fallback for malformed responses).
+        """
+        match = re.search(r'<summary>(.*?)</summary>', llm_output, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        # Fallback: if no <summary> tag found, return the full output
+        # but still strip <analysis> if present
+        cleaned = re.sub(r'<analysis>.*?</analysis>', '', llm_output, flags=re.DOTALL)
+        return cleaned.strip()
+
+    def _compress_tool_results(self) -> None:
+        """Layer 1 compression: replace old, large tool results in self._messages with cleared markers.
+
+        Keeps the most recent `_keep_recent_tool_results` FunctionExecutionResultMessages intact.
+        Only clears results from tools in the whitelist whose content exceeds the length threshold.
+        The original content is always preserved in _history_messages for later retrieval.
+        """
+        # Find all FunctionExecutionResultMessage indices
+        func_result_indices = [
+            i for i, msg in enumerate(self._messages)
+            if isinstance(msg, FunctionExecutionResultMessage)
+        ]
+
+        if len(func_result_indices) <= self._keep_recent_tool_results:
+            return  # Nothing to compress
+
+        # Indices to compress (all except the most recent N)
+        indices_to_compress = func_result_indices[:-self._keep_recent_tool_results]
+
+        for idx in indices_to_compress:
+            msg = self._messages[idx]
+            new_results = []
+            modified = False
+
+            for result in msg.content:
+                # Skip if already cleared
+                if result.call_id in self._cleared_tool_results:
+                    new_results.append(result)
+                    continue
+
+                # Check whitelist and content length
+                if (result.name in self._tool_clear_whitelist
+                        and len(result.content) > self._min_content_length_to_clear):
+                    history_idx = self._find_history_ref(result.call_id)
+                    cleared_content = (
+                        f"[Tool result cleared: {result.name}(call_id={result.call_id}). "
+                        f"Retrieve original via read_session_memory_by_index(index={history_idx})]"
+                    )
+                    new_results.append(FunctionExecutionResult(
+                        content=cleared_content,
+                        name=result.name,
+                        call_id=result.call_id,
+                        is_error=result.is_error,
+                    ))
+                    self._cleared_tool_results[result.call_id] = history_idx
+                    modified = True
+                else:
+                    new_results.append(result)
+
+            if modified:
+                self._messages[idx] = FunctionExecutionResultMessage(content=new_results)
+
     def format_messages_str(self, messages: List[LLMMessage]) -> str:
         """Summarize current messages."""
         content_str = "The conversations:\n\n"
@@ -299,68 +464,44 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
     async def get_messages(
             self,
             cancellation_token: CancellationToken = None) -> List[LLMMessage]:
-        """Get at most `token_limit` tokens in recent messages. If the token limit is not
-        provided, then return as many messages as the remaining token allowed by the model client.
+        """Get at most `token_limit` tokens in recent messages.
+
+        Two-layer compression:
+          Layer 1: Clear old tool results in-place (fast, no LLM call)
+          Layer 2: Incremental LLM summarization if still over token limit
 
         Args:
             cancellation_token: Token to cancel the operation
         """
+        # Layer 1: clear old tool results in-place on self._messages
+        self._compress_tool_results()
+
         messages = list(self._messages)
 
         try:
             if self._token_limit is not None:
                 token_count = self._model_client.count_tokens(messages, tools=self._tool_schema)
                 if token_count > self._token_limit:
-                    messages_str = self.format_messages_str(messages)
+                    logger.info(f"Token count {token_count} exceeds limit {self._token_limit}, starting Layer 2 compression")
 
-                    logger.info("Memory compression started due to token limit exceeded")
+                    # Layer 2: incremental LLM compression
+                    remaining = await self._incremental_compress(messages, cancellation_token)
 
-                    # Use streaming API to avoid timeout for long-running compression
-                    compressed_content = ""
-                    async for chunk in self._model_client.create_stream(
-                        messages=[
-                            UserMessage(source="user", content=self._compression_prompt+messages_str)
-                        ],
-                        cancellation_token=cancellation_token,
-                    ):
-                        # Only extract content from the final CreateResult, not from streaming chunks
-                        if not isinstance(chunk, str):
-                            # This is the final CreateResult
-                            compressed_content = chunk.content
-                            break
+                    # Update self._messages and self._current_messages
+                    self._messages = remaining
+                    # _current_messages: keep only messages that survived compression
+                    current_set = set(id(m) for m in remaining)
+                    surviving_current = [m for m in self._current_messages if id(m) in current_set]
+                    self._current_messages = surviving_current if surviving_current else list(remaining)
 
-                    logger.info("Memory compression completed successfully")
-                    
-                    # keep some key messages
-                    remaining_messages = []
-                    
-                    # Keep first two SystemMessage
-                    system_count = 0
-                    for message in messages:
-                        if isinstance(message, SystemMessage) and system_count < 2:
-                            remaining_messages.append(message)
-                            system_count += 1
-                    
-                    # Add compressed content as UserMessage in the middle
-                    remaining_messages.append(UserMessage(content=compressed_content, source="system"))
-                    
-                    # Keep last UserMessage
-                    user_messages = [msg for msg in messages if isinstance(msg, UserMessage)]
-                    for user_message in reversed(user_messages):
-                        if user_message.source == "user":
-                            remaining_messages.append(user_message)
-                            break
-                    
-                    # Update messages
-                    self._messages = remaining_messages
-                    return remaining_messages
+                    return remaining
                 else:
                     return messages
             else:
                 raise ValueError("token_limit must be provided.")
 
         except Exception as e:
-            logger.error(f"There is an error when compressing the memory using LLM: {e}. We have to truncate the memory.")
+            logger.error(f"Error during memory compression: {e}. Falling back to truncation.")
             if self._token_limit is None:
                 remaining_tokens = self._model_client.remaining_tokens(messages, tools=self._tool_schema)
                 while remaining_tokens < 0 and len(messages) > 0:
@@ -374,12 +515,88 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
                     messages.pop(middle_index)
                     token_count = self._model_client.count_tokens(messages, tools=self._tool_schema)
             if messages and isinstance(messages[0], FunctionExecutionResultMessage):
-                # Handle the first message is a function call result message.
-                # Remove the first message from the list.
                 messages = messages[1:]
-            # Update messages
             self._messages = messages
             return messages
+
+    # ---- Layer 2 helpers ----
+
+    def _find_safe_split_point(self, messages: List[LLMMessage], keep_count: int = 6) -> int:
+        """Return how many messages to keep from the end without breaking tool call/result pairs.
+
+        Ensures we don't split an AssistantMessage (with tool calls) from its
+        following FunctionExecutionResultMessage.
+        """
+        count = min(keep_count, len(messages))
+        idx = len(messages) - count
+        # Walk backward if the split lands on a FunctionExecutionResultMessage
+        while idx > 0 and isinstance(messages[idx], FunctionExecutionResultMessage):
+            idx -= 1
+            count += 1
+        return count
+
+    async def _incremental_compress(
+        self,
+        messages: List[LLMMessage],
+        cancellation_token: CancellationToken = None,
+    ) -> List[LLMMessage]:
+        """Layer 2: LLM compression with semantic continuity.
+
+        1. Split messages into 'to_compress' (older) and 'to_keep' (recent 6 messages).
+        2. Compress 'to_compress' as a SINGLE unit to preserve semantic continuity.
+        3. Return [compressed_summary] + to_keep.
+
+        Note: We do NOT chunk the compression anymore to avoid breaking semantic
+        coherence. The 9-section structured prompt requires global context.
+        Layer 1 (tool result clearing) should have already reduced tokens significantly.
+        """
+        # Determine split point - keep recent 6 messages uncompressed
+        keep_count = self._find_safe_split_point(messages, keep_count=6)
+        split_idx = len(messages) - keep_count
+        to_compress = messages[:split_idx]
+        to_keep = messages[split_idx:]
+
+        if not to_compress:
+            # Nothing to compress, only recent messages remain
+            return messages
+
+        # Compress all 'to_compress' messages in one pass to maintain semantic continuity
+        messages_str = self.format_messages_str(to_compress)
+        raw_content = ""
+
+        try:
+            logger.info(f"Layer 2 compression: compressing {len(to_compress)} messages as single unit, keeping {keep_count} recent")
+            async for result in self._model_client.create_stream(
+                messages=[
+                    UserMessage(
+                        source="user",
+                        content=self._compression_prompt + messages_str
+                    )
+                ],
+                cancellation_token=cancellation_token,
+            ):
+                if not isinstance(result, str):
+                    # Final CreateResult
+                    raw_content = result.content
+                    break
+        except Exception as e:
+            logger.warning(f"Failed to compress conversation, using truncated summary: {e}")
+            # Fallback: take first 1000 chars of formatted messages
+            raw_content = messages_str[:1000] + "\n...[truncated due to compression error]"
+
+        # Extract <summary> content, discard <analysis>
+        compressed_content = self._extract_summary(raw_content)
+
+        # Reassemble: compressed history + recent messages
+        remaining = [
+            UserMessage(
+                content=f"[Compressed conversation history]\n\n{compressed_content}",
+                source="system"
+            )
+        ] + to_keep
+
+        logger.info(f"Layer 2 compression completed, final context: 1 compressed message + {keep_count} recent messages")
+        return remaining
 
     async def create_new_session_document(
         self,
@@ -670,6 +887,9 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
             tool_schema=self._tool_schema,
             initial_messages=self._initial_messages,
             history_messages=self._history_messages,
+            tool_clear_whitelist=self._tool_clear_whitelist,
+            keep_recent_tool_results=self._keep_recent_tool_results,
+            min_content_length_to_clear=self._min_content_length_to_clear,
         )
 
     @classmethod
@@ -684,6 +904,9 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
             document_id=config.document_id,
             tool_schema=config.tool_schema,
             initial_messages=config.initial_messages,
+            tool_clear_whitelist=config.tool_clear_whitelist,
+            keep_recent_tool_results=config.keep_recent_tool_results,
+            min_content_length_to_clear=config.min_content_length_to_clear,
         )
 
 

@@ -363,6 +363,7 @@ class DrSai:
         thread_id = None
         rely_messages: List[BaseChatMessage] = []
         agent_result: TaskResult|None = None
+        agent: ChatAgent|None = None
         try:
             start_time = time.time()
             # 处理用户的kwargs参数，保存UserInput到数据库

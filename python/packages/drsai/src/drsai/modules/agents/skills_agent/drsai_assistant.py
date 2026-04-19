@@ -236,6 +236,7 @@ Current Session_ID is {self._thread_id}"""
         #     self._is_powershell = True
         self._basic_funcs: List[Callable] = get_operator_funcs(
             work_dir, 
+            thread_id=self._thread_id,
             only_in_workspace=self._only_in_workspace,
             extra_dirs = self._extra_work_dirs,
             is_powershell=is_powershell,
@@ -273,7 +274,11 @@ Current Session_ID is {self._thread_id}"""
         )
         if not self._model_context._rag_flow_manager:
             raise ValueError("RAGFlowManager is not initialized in DrSaiChatCompletionContext")
-        funcs = [self._model_context.retrieve_from_memory, self._model_context.summry_conversation_to_memory]
+        funcs = [
+            self._model_context.retrieve_from_memory,
+            self._model_context.summry_conversation_to_memory,
+            self._user_profile_manager.read_session_memory_by_index,
+        ]
         for func in funcs:
             self._tools.append(FunctionTool(func, description=func.__doc__))
                 
@@ -942,6 +947,14 @@ Current Session_ID is {self._thread_id}"""
                             format_string=format_string,
                         ):
                             if self.is_paused:
+                                await model_context.add_message(FunctionExecutionResultMessage(
+                                    content=[FunctionExecutionResult(
+                                        content = f"{tool_name} was cancelled.",
+                                        name = tool_name,
+                                        call_id = call_id,
+                                        is_error = False,
+                                    ),]
+                                ))
                                 raise asyncio.CancelledError()
                             if isinstance(message, Response):
                                 # yield ModelClientStreamingChunkEvent(content="<think>", source=agent_name)
@@ -1072,6 +1085,7 @@ Current Session_ID is {self._thread_id}"""
             if model_context._token_limit and token_count > model_context._token_limit:
                 # Notify frontend that compression is starting
                 yield AgentLogEvent(
+                    source="system",
                     title="Memory Compression",
                     content="正在压缩对话记忆以优化性能，这可能需要几分钟时间，请稍候...",
                     send_level=Send_level.INFO
@@ -1085,6 +1099,7 @@ Current Session_ID is {self._thread_id}"""
             if model_context._token_limit and token_count > model_context._token_limit:
                 # Notify completion
                 yield AgentLogEvent(
+                    source="system",
                     title="Memory Compression Complete",
                     content="对话记忆压缩完成，继续处理您的请求...",
                     send_level=Send_level.INFO
@@ -1454,6 +1469,7 @@ Complete the task and return a clear, concise summary."""
             content_type="tools")
 
         # STEP 4B: Execute tool calls
+        # TODO: 优化长时间操作与空返回
         executed_calls_and_results = await asyncio.gather(
             *[
                 cls._execute_tool_call(
