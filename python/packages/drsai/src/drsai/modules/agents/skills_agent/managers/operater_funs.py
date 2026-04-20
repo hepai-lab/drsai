@@ -89,6 +89,7 @@ def _detect_powershell() -> Optional[str]:
     return None
 
 
+# TODO: 增加前台运行
 def get_operator_funcs(
         worker_dir: str|Path,
         thread_id: str,
@@ -140,180 +141,6 @@ def get_operator_funcs(
 
     # Clean up old completed tasks (older than 7 days)
     task_persistence.cleanup_old_tasks(max_age_days=7)
-
-    def run_bash(
-        cmd: str,
-        timeout: float = 500.0,
-        wait_time: float = 5.0,
-    ) -> Union[str, Dict[str, Any]]:
-        """Execute shell command with smart background mode.
-
-        The function will wait for `wait_time` seconds after starting the command:
-        - If command completes within wait_time: returns the output directly (as string)
-        - If still running after wait_time: returns task info dict for later querying
-
-        Args:
-            cmd: Shell command to execute
-            timeout: Maximum execution time in seconds (default: 500, max: 600)
-            wait_time: Time to wait before switching to background mode (default: 5s, max: 30s)
-
-        Returns:
-            - If completed within wait_time: str (command output)
-            - If still running after wait_time: Dict with task info for querying via get_bash_task()
-
-        Note:
-            Don't operate the sleep shell command actively after a long-running task,
-            as it conflicts with the get_bash_task function.
-        """
-        # Check dangerous patterns
-        if not allolow_dangrous_cmd and _DANGEROUS_RE.search(cmd):
-            return "Error: Dangerous command detected"
-
-        # Check absolute paths referenced in command
-        if only_in_workspace:
-            path_err = _check_cmd_paths(cmd)
-            if path_err:
-                return path_err
-
-        # Clamp timeout to reasonable range
-        timeout = min(max(10.0, timeout), 600.0)
-        wait_time = min(max(1.0, wait_time), timeout)  # wait_time should not exceed timeout
-
-        # Append a sentinel so we can capture the resulting directory
-        wrapped = f'{cmd}\necho "__DRSAI_CWD__:$(pwd)"'
-
-        # Create task ID with short UUID (first 8 characters)
-        task_id = f"bash_task_{uuid.uuid4().hex[:8]}"
-
-        task_info = {
-            "task_id": task_id,
-            "command": cmd,
-            "status": "running",
-            "output": None,
-            "error": None,
-            "pid": None,
-            "pgid": None,
-            "start_time": datetime.now().isoformat(),
-            "timeout": timeout,
-        }
-        _bash_tasks[task_id] = task_info
-        # Save to persistent storage
-        task_persistence.save_task(task_id, task_info)
-
-        def run_bg_task():
-            """Background task execution with timeout protection."""
-            try:
-                # Create new process group for proper cleanup
-                proc = subprocess.Popen(
-                    wrapped,
-                    shell=True,
-                    cwd=str(_cwd[0]),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    preexec_fn=os.setsid  # Create new session
-                )
-
-                task_info["pid"] = proc.pid
-                task_info["pgid"] = os.getpgid(proc.pid)
-
-                # Wait with timeout
-                try:
-                    stdout, stderr = proc.communicate(timeout=timeout)
-                    raw_output = stdout + stderr
-
-                    # Parse output and update working directory
-                    lines = raw_output.splitlines()
-                    out_lines = []
-                    for line in lines:
-                        if line.startswith("__DRSAI_CWD__:"):
-                            new_dir_str = line[len("__DRSAI_CWD__:"):].strip()
-                            try:
-                                new_dir = Path(new_dir_str).resolve()
-                                # Update cwd based on only_in_workspace setting
-                                if only_in_workspace:
-                                    # Only update if within allowed directories
-                                    if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
-                                        _cwd[0] = new_dir
-                                    else:
-                                        out_lines.append(
-                                            f"Warning: cd target '{new_dir}' is outside workspace; cwd not updated"
-                                        )
-                                else:
-                                    # Allow cd to any directory when workspace restriction is off
-                                    _cwd[0] = new_dir
-                            except Exception:
-                                pass
-                        else:
-                            out_lines.append(line)
-
-                    output = "\n".join(out_lines).strip() or "(no output)"
-                    task_info["output"] = output[:50000]
-                    task_info["status"] = "completed"
-                    task_info["exit_code"] = proc.returncode
-                    # Update persistent storage
-                    task_persistence.update_task_status(task_id, "completed", output=task_info["output"])
-
-                except subprocess.TimeoutExpired:
-                    # Kill entire process group on timeout
-                    try:
-                        # First try graceful termination
-                        os.killpg(task_info["pgid"], signal.SIGTERM)
-                        time.sleep(2)  # Grace period for clean shutdown
-
-                        # Check if process group still exists
-                        try:
-                            os.killpg(task_info["pgid"], 0)  # Signal 0 checks existence
-                            # Still alive, force kill
-                            os.killpg(task_info["pgid"], signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass  # Already terminated gracefully
-                    except ProcessLookupError:
-                        pass  # Process group already gone
-                    except Exception as e:
-                        task_info["error"] = f"Error killing process group: {e}"
-
-                    task_info["error"] = f"Command timed out after {timeout}s (all child processes terminated)"
-                    task_info["status"] = "timeout"
-                    # Update persistent storage
-                    task_persistence.update_task_status(task_id, "timeout", error=task_info["error"])
-
-            except Exception as e:
-                task_info["error"] = f"Error: {e}"
-                task_info["status"] = "failed"
-                # Update persistent storage
-                task_persistence.update_task_status(task_id, "failed", error=task_info["error"])
-            finally:
-                task_info["end_time"] = datetime.now().isoformat()
-
-        # Start background thread
-        thread = threading.Thread(target=run_bg_task, daemon=True)
-        thread.start()
-
-        # Wait for wait_time to see if task completes quickly
-        time.sleep(wait_time)
-
-        # Check if task completed during wait period
-        if task_info["status"] == "completed":
-            # Task completed successfully - return output directly
-            return task_info["output"]
-        elif task_info["status"] in ["timeout", "failed"]:
-            # Task failed during wait period - return error directly
-            error_msg = task_info.get("error", "Unknown error")
-            return f"Error: {error_msg}"
-        else:
-            # Task still running - return task info for background querying
-            cmd_preview = cmd[:50] + "..." if len(cmd) > 50 else cmd
-            return {
-                "task_id": task_id,
-                "status": "running",
-                "command": cmd_preview,
-                "timeout": timeout,
-                "message": f"Task '{task_id}' is still running after {wait_time}s.\nUse get_bash_task('{task_id}') to check status and retrieve output.",
-                "pid": task_info.get("pid"),
-                "pgid": task_info.get("pgid"),
-            }
-
 
     def run_read(path: str, minilimit: int = None, maxlimit: int = -1) -> str:
         """
@@ -479,6 +306,267 @@ def get_operator_funcs(
         except Exception as e:
             return f"Error: {e}"
 
+    def run_bash(
+            cmd: str,
+            timeout: float = 120,
+            ) -> str:
+        """Execute a bash command synchronously and wait for completion.
+
+        **IMPORTANT: This is the default and preferred function for most shell commands.**
+        Example workflow:
+            1. Try: run_bash("npm test")  # Try synchronous first
+            2. If timeout → Use: run_bash_background("npm test", timeout=300)
+        """
+
+        task_info = {
+            "process": None,
+            "pgid": None,
+            "pid": None,
+            "output": "",
+            "error": "",
+            "status": "running",
+            "start_time": time.time(),
+            "timeout": timeout,
+        }
+        try:
+             # Append a sentinel so we can capture the resulting directory
+            wrapped = f'{cmd}\necho "__DRSAI_CWD__:$(pwd)"'
+            # Create new process group for proper cleanup
+            proc = subprocess.Popen(
+                wrapped,
+                shell=True,
+                cwd=str(_cwd[0]),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                preexec_fn=os.setsid  # Create new session
+            )
+
+            task_info["pid"] = proc.pid
+            task_info["pgid"] = os.getpgid(proc.pid)
+
+            # Wait with timeout
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+                raw_output = stdout + stderr
+
+                # Parse output and update working directory
+                lines = raw_output.splitlines()
+                out_lines = []
+                for line in lines:
+                    if line.startswith("__DRSAI_CWD__:"):
+                        new_dir_str = line[len("__DRSAI_CWD__:"):].strip()
+                        try:
+                            new_dir = Path(new_dir_str).resolve()
+                            # Update cwd based on only_in_workspace setting
+                            if only_in_workspace:
+                                # Only update if within allowed directories
+                                if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
+                                    _cwd[0] = new_dir
+                                else:
+                                    out_lines.append(
+                                        f"Warning: cd target '{new_dir}' is outside workspace; cwd not updated"
+                                    )
+                            else:
+                                # Allow cd to any directory when workspace restriction is off
+                                _cwd[0] = new_dir
+                        except Exception:
+                            pass
+                    else:
+                        out_lines.append(line)
+
+                output = "\n".join(out_lines).strip() or "(no output)"
+                return output[:50000]
+
+            except subprocess.TimeoutExpired:
+                # Kill entire process group on timeout
+                try:
+                    # First try graceful termination
+                    os.killpg(task_info["pgid"], signal.SIGTERM)
+                    time.sleep(2)  # Grace period for clean shutdown
+
+                    # Check if process group still exists
+                    try:
+                        os.killpg(task_info["pgid"], 0)  # Signal 0 checks existence
+                        # Still alive, force kill
+                        os.killpg(task_info["pgid"], signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass  # Already terminated gracefully
+                except ProcessLookupError:
+                    pass  # Process group already gone
+                except Exception as e:
+                    return f"Error: Command timed out after {timeout}s and failed to kill process group: {e}"
+
+                return f"Error: Command timed out after {timeout}s (all child processes terminated)"
+
+        except Exception as e:
+            return f"Error: {e}"
+            
+
+    def run_bash_background(
+        cmd: str,
+        timeout: float = 500.0,
+        wait_time: float = 5.0,
+    ) -> Union[str, Dict[str, Any]]:
+        """Execute shell command with smart background mode for LONG-RUNNING tasks.
+
+        **⚠️ WARNING: Use this function ONLY when:**
+        1. run_bash() returned a timeout error, OR
+        2. You know the command will take > 2 minutes (e.g., long builds, extensive tests)
+        **For most commands, use run_bash() first!**
+        Important Notes:
+            - Background tasks persist in storage and can be queried across sessions
+            - Don't use sleep commands after launching background tasks
+            - Use get_bash_task(task_id) to check status and retrieve output
+        """
+        # Check dangerous patterns
+        if not allolow_dangrous_cmd and _DANGEROUS_RE.search(cmd):
+            return "Error: Dangerous command detected"
+
+        # Check absolute paths referenced in command
+        if only_in_workspace:
+            path_err = _check_cmd_paths(cmd)
+            if path_err:
+                return path_err
+
+        # Clamp timeout to reasonable range
+        timeout = min(max(10.0, timeout), 600.0)
+        wait_time = min(max(1.0, wait_time), timeout)  # wait_time should not exceed timeout
+
+        # Append a sentinel so we can capture the resulting directory
+        wrapped = f'{cmd}\necho "__DRSAI_CWD__:$(pwd)"'
+
+        # Create task ID with short UUID (first 8 characters)
+        task_id = f"bash_task_{uuid.uuid4().hex[:8]}"
+
+        task_info = {
+            "task_id": task_id,
+            "command": cmd,
+            "status": "running",
+            "output": None,
+            "error": None,
+            "pid": None,
+            "pgid": None,
+            "start_time": datetime.now().isoformat(),
+            "timeout": timeout,
+        }
+        _bash_tasks[task_id] = task_info
+        # Save to persistent storage
+        task_persistence.save_task(task_id, task_info)
+
+        def run_bg_task():
+            """Background task execution with timeout protection."""
+            try:
+                # Create new process group for proper cleanup
+                proc = subprocess.Popen(
+                    wrapped,
+                    shell=True,
+                    cwd=str(_cwd[0]),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    preexec_fn=os.setsid  # Create new session
+                )
+
+                task_info["pid"] = proc.pid
+                task_info["pgid"] = os.getpgid(proc.pid)
+
+                # Wait with timeout
+                try:
+                    stdout, stderr = proc.communicate(timeout=timeout)
+                    raw_output = stdout + stderr
+
+                    # Parse output and update working directory
+                    lines = raw_output.splitlines()
+                    out_lines = []
+                    for line in lines:
+                        if line.startswith("__DRSAI_CWD__:"):
+                            new_dir_str = line[len("__DRSAI_CWD__:"):].strip()
+                            try:
+                                new_dir = Path(new_dir_str).resolve()
+                                # Update cwd based on only_in_workspace setting
+                                if only_in_workspace:
+                                    # Only update if within allowed directories
+                                    if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
+                                        _cwd[0] = new_dir
+                                    else:
+                                        out_lines.append(
+                                            f"Warning: cd target '{new_dir}' is outside workspace; cwd not updated"
+                                        )
+                                else:
+                                    # Allow cd to any directory when workspace restriction is off
+                                    _cwd[0] = new_dir
+                            except Exception:
+                                pass
+                        else:
+                            out_lines.append(line)
+
+                    output = "\n".join(out_lines).strip() or "(no output)"
+                    task_info["output"] = output[:50000]
+                    task_info["status"] = "completed"
+                    task_info["exit_code"] = proc.returncode
+                    # Update persistent storage
+                    task_persistence.update_task_status(task_id, "completed", output=task_info["output"])
+
+                except subprocess.TimeoutExpired:
+                    # Kill entire process group on timeout
+                    try:
+                        # First try graceful termination
+                        os.killpg(task_info["pgid"], signal.SIGTERM)
+                        time.sleep(2)  # Grace period for clean shutdown
+
+                        # Check if process group still exists
+                        try:
+                            os.killpg(task_info["pgid"], 0)  # Signal 0 checks existence
+                            # Still alive, force kill
+                            os.killpg(task_info["pgid"], signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass  # Already terminated gracefully
+                    except ProcessLookupError:
+                        pass  # Process group already gone
+                    except Exception as e:
+                        task_info["error"] = f"Error killing process group: {e}"
+
+                    task_info["error"] = f"Command timed out after {timeout}s (all child processes terminated)"
+                    task_info["status"] = "timeout"
+                    # Update persistent storage
+                    task_persistence.update_task_status(task_id, "timeout", error=task_info["error"])
+
+            except Exception as e:
+                task_info["error"] = f"Error: {e}"
+                task_info["status"] = "failed"
+                # Update persistent storage
+                task_persistence.update_task_status(task_id, "failed", error=task_info["error"])
+            finally:
+                task_info["end_time"] = datetime.now().isoformat()
+
+        # Start background thread
+        thread = threading.Thread(target=run_bg_task, daemon=True)
+        thread.start()
+
+        # Wait for wait_time to see if task completes quickly
+        time.sleep(wait_time)
+
+        # Check if task completed during wait period
+        if task_info["status"] == "completed":
+            # Task completed successfully - return output directly
+            return task_info["output"]
+        elif task_info["status"] in ["timeout", "failed"]:
+            # Task failed during wait period - return error directly
+            error_msg = task_info.get("error", "Unknown error")
+            return f"Error: {error_msg}"
+        else:
+            # Task still running - return task info for background querying
+            cmd_preview = cmd[:50] + "..." if len(cmd) > 50 else cmd
+            return {
+                "task_id": task_id,
+                "status": "running",
+                "command": cmd_preview,
+                "timeout": timeout,
+                "message": f"Task '{task_id}' is still running after {wait_time}s.\nUse get_bash_task('{task_id}') to check status and retrieve output.",
+                "pid": task_info.get("pid"),
+                "pgid": task_info.get("pgid"),
+            }
 
     def get_bash_task(task_id: str) -> Dict[str, Any]:
         """
@@ -902,6 +990,7 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
     else:
         return [
             run_bash,
+            run_bash_background,
             run_read,
             run_write,
             run_edit,
