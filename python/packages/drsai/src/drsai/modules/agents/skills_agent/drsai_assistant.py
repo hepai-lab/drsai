@@ -851,166 +851,46 @@ Current Session_ID is {self._thread_id}"""
                 assert isinstance(model_result.content, list) and all(
                     isinstance(item, FunctionCall) for item in model_result.content
                 )
-                
-                # handle tool call
-                for i in range(len(model_result.content)):
-                    tool_name = model_result.content[i].name
-                    call_id = model_result.content[i].id
-                    # argument = json.loads(model_result.content[i].arguments)
-                    argument = fix_and_parse_json(model_result.content[i].arguments)
-                    if isinstance(argument, str):
-                        await model_context.add_message(FunctionExecutionResultMessage(
-                            content=[FunctionExecutionResult(
-                                content = argument,
-                                name = tool_name,
-                                call_id = call_id,
-                                is_error = False,
-                            ),]
-                        ))
-                        continue
 
-                    if tool_name == "TodoWrite":
-                        async for message in self.handle_todo_write(
-                            argument = argument,
-                            tool_name = tool_name,
-                            call_id = call_id,
-                            agent_name = agent_name, 
-                            model_context = model_context):
-                            if isinstance(message, StopMessage):
-                                yield Response(
-                                    chat_message=message,
-                                    inner_messages=inner_messages,
-                                )
-                                return
-                            yield message
-                    elif tool_name == "Task":
-                        async for message in self.handle_subagent_repsonse(
-                            agent_name = agent_name,
-                            model_client = model_client,
-                            model_client_stream = model_client_stream,
-                            model_context = model_context,
-                            argument = argument,
-                            tool_name = tool_name,
-                            call_id = call_id,
-                            cancellation_token = cancellation_token,
-                            output_content_type = output_content_type,
-                        ):
-                            if isinstance(message, StopMessage):
-                                yield Response(
-                                    chat_message=message,
-                                    inner_messages=inner_messages,
-                                )
-                                return
-                            yield message
-                    elif tool_name == "Skill":
-                        skill_content = skills_loader.run_skill(argument["skill"])
-                        # await model_context.add_message(
-                        #     UserMessage(
-                        #         content=f"Skill for {argument["skill"]}: {skill_content}",
-                        #         source="user",
-                        #     )
-                        # )
+                # Process all tool calls through unified _process_model_result
+                async for message in self._process_model_result(
+                    model_result=model_result,
+                    inner_messages=inner_messages,
+                    cancellation_token=cancellation_token,
+                    agent_name=agent_name,
+                    system_messages=system_messages,
+                    model_context=model_context,
+                    workbench=workbench,
+                    handoff_tools=handoff_tools,
+                    handoffs=handoffs,
+                    model_client=model_client,
+                    model_client_stream=model_client_stream,
+                    reflect_on_tool_use=reflect_on_tool_use,
+                    tool_call_summary_format=tool_call_summary_format,
+                    tool_call_summary_prompt=self._tool_call_summary_prompt,
+                    output_content_type=output_content_type,
+                    format_string=format_string,
+                    skills_loader=skills_loader,
+                ):
+                    if self.is_paused:
+                        # Add cancellation message for all pending tools
+                        cancelled_results = []
+                        for tool_call in model_result.content:
+                            cancelled_results.append(FunctionExecutionResult(
+                                content=f"{tool_call.name} was cancelled.",
+                                name=tool_call.name,
+                                call_id=tool_call.id,
+                                is_error=False,
+                            ))
                         await model_context.add_message(FunctionExecutionResultMessage(
-                            content=[FunctionExecutionResult(
-                                content = f"Skill for {argument['skill']}:\n\n {skill_content}",
-                                name = tool_name,
-                                call_id = call_id,
-                                is_error = False,
-                            ),]
+                            content=cancelled_results
                         ))
-                        yield AgentLogEvent(
-                            title=f"I am reading skill: {argument['skill']}.",
-                            source=agent_name, 
-                            content=str(argument), 
-                            content_type="tools")
-                        yield ToolCallSummaryMessage(
-                            content=f"<think>Skill for {argument['skill']}:\n\n {skill_content}</think>\n",
-                            source=agent_name,
-                        )
-                    elif tool_name in self._tools_names:
-                        async for message in self._process_model_result(
-                            model_result=model_result,
-                            inner_messages=inner_messages,
-                            cancellation_token=cancellation_token,
-                            agent_name=agent_name,
-                            system_messages=system_messages,
-                            model_context=model_context,
-                            workbench=workbench,
-                            handoff_tools=handoff_tools,
-                            handoffs=handoffs,
-                            model_client=model_client,
-                            model_client_stream=model_client_stream,
-                            reflect_on_tool_use=reflect_on_tool_use,
-                            tool_call_summary_format=tool_call_summary_format,
-                            tool_call_summary_prompt=self._tool_call_summary_prompt,
-                            output_content_type=output_content_type,
-                            format_string=format_string,
-                        ):
-                            if self.is_paused:
-                                await model_context.add_message(FunctionExecutionResultMessage(
-                                    content=[FunctionExecutionResult(
-                                        content = f"{tool_name} was cancelled.",
-                                        name = tool_name,
-                                        call_id = call_id,
-                                        is_error = False,
-                                    ),]
-                                ))
-                                raise asyncio.CancelledError()
-                            if isinstance(message, Response):
-                                # yield ModelClientStreamingChunkEvent(content="<think>", source=agent_name)
-                                # yield ModelClientStreamingChunkEvent(content=str(message.chat_message.content), source=agent_name)
-                                # yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
-                                yield message.chat_message
-                            else:
-                                yield message
-                            
-                        break
-                    elif tool_name == "UpdateUserConfig":
-                        update_message = self._user_profile_manager.update_user_config(**argument)
-                        # await model_context.add_message(
-                        #     UserMessage(
-                        #         content=update_message,
-                        #         source="user",
-                        #     )
-                        # )
-                        await model_context.add_message(FunctionExecutionResultMessage(
-                            content=[FunctionExecutionResult(
-                                content = update_message,
-                                name = tool_name,
-                                call_id = call_id,
-                                is_error = False,
-                            ),]
-                        ))
-                        agent_name = self._user_profile_manager.agent_name
-                        yield AgentLogEvent(
-                            title=f"I am updating user's config.",
-                            source=agent_name,
-                            content=str(argument),
-                            content_type="tools")
-                    elif tool_name == "ScheduledTaskManager":
-                        async for message in self.handle_scheduled_task(
-                            argument=argument,
-                            tool_name=tool_name,
-                            call_id=call_id,
-                            agent_name=agent_name,
-                            model_context=model_context,
-                        ):
-                            yield message
+                        raise asyncio.CancelledError()
+
+                    if isinstance(message, Response):
+                        yield message.chat_message
                     else:
-                        await model_context.add_message(FunctionExecutionResultMessage(
-                            content=[FunctionExecutionResult(
-                                content = f"Unknown tool: {model_result.content[i].name}",
-                                name = tool_name,
-                                call_id = call_id,
-                                is_error = False,
-                            ),]
-                        ))
-                        # await model_context.add_message(
-                        #     UserMessage(
-                        #         content=f"Unknown tool: {model_result.content[i].name}",
-                        #         source="user",
-                        #     )
-                        # )
+                        yield message
 
                 turn_count += 1
                 if turn_count >= self._max_turn_count:
@@ -1428,9 +1308,8 @@ Complete the task and return a clear, concise summary."""
                 )
             )
 
-    @classmethod
     async def _process_model_result(
-        cls,
+        self,
         model_result: CreateResult,
         inner_messages: List[BaseAgentEvent | BaseChatMessage],
         cancellation_token: CancellationToken,
@@ -1447,12 +1326,13 @@ Complete the task and return a clear, concise summary."""
         tool_call_summary_prompt: str | None,
         output_content_type: type[BaseModel] | None,
         format_string: str | None = None,
+        skills_loader: SkillLoader | None = None,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
         """
         Handle final or partial responses from model_result, including tool calls, handoffs,
-        and reflection if needed.
+        and reflection if needed. Now supports all special tools.
         """
-        
+
         tool_call_msg = ToolCallRequestEvent(
             content=model_result.content,
             source=agent_name,
@@ -1461,30 +1341,418 @@ Complete the task and return a clear, concise summary."""
         inner_messages.append(tool_call_msg)
         logger.debug(tool_call_msg)
         yield tool_call_msg
-        tools_name = [tool.name for tool in model_result.content] 
+        tools_name = [tool.name for tool in model_result.content]
         yield AgentLogEvent(
             title="I am using tools: " + " ".join(tools_name),
-            source=agent_name, 
-            content=str(tool_call_msg.content), 
+            source=agent_name,
+            content=str(tool_call_msg.content),
             content_type="tools")
 
-        # STEP 4B: Execute tool calls
-        # TODO: 优化长时间操作与空返回
-        executed_calls_and_results = await asyncio.gather(
-            *[
-                cls._execute_tool_call(
-                    tool_call=call,
-                    workbench=workbench,
-                    handoff_tools=handoff_tools,
-                    agent_name=agent_name,
-                    cancellation_token=cancellation_token,
-                )
-                for call in model_result.content
-            ]
-        )
-        exec_results = [result for _, result in executed_calls_and_results]
+        # STEP 4B: Execute tool calls with special tool handling
+        exec_results: List[FunctionExecutionResult] = []
+
+        for tool_call in model_result.content:
+            tool_name = tool_call.name
+            call_id = tool_call.id
+
+            # Parse arguments
+            try:
+                arguments = fix_and_parse_json(tool_call.arguments)
+                if isinstance(arguments, str):
+                    # JSON parsing error
+                    exec_results.append(FunctionExecutionResult(
+                        content=arguments,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+                    continue
+            except Exception as e:
+                exec_results.append(FunctionExecutionResult(
+                    content=f"Error parsing arguments: {e}",
+                    name=tool_name,
+                    call_id=call_id,
+                    is_error=True,
+                ))
+                continue
+
+            # Handle special tools
+            if tool_name == "Skill":
+                # Skill tool handling
+                try:
+                    if skills_loader is None:
+                        raise ValueError("Skills loader not available")
+                    skill_content = skills_loader.run_skill(arguments["skill"])
+                    exec_results.append(FunctionExecutionResult(
+                        content=f"Skill for {arguments['skill']}:\n\n {skill_content}",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    ))
+                    # Yield events immediately for real-time feedback
+                    yield AgentLogEvent(
+                        title=f"I am reading skill: {arguments['skill']}.",
+                        source=agent_name,
+                        content=str(arguments),
+                        content_type="tools"
+                    )
+                    yield ToolCallSummaryMessage(
+                        content=f"<think>Skill for {arguments['skill']}:\n\n {skill_content}</think>\n",
+                        source=agent_name,
+                    )
+                except Exception as e:
+                    logger.exception(f"Error executing Skill tool: {e}")
+                    exec_results.append(FunctionExecutionResult(
+                        content=f"Error: {str(e)}",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+
+            elif tool_name == "TodoWrite":
+                # TodoWrite tool handling
+                try:
+                    todo_list = self._todo_manager.update(arguments["items"])
+                    exec_results.append(FunctionExecutionResult(
+                        content=self._todo_manager.get_task_prompt(),
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    ))
+                    # Yield text message immediately for user visibility
+                    yield TextMessage(
+                        content=todo_list,
+                        source=agent_name,
+                        metadata={"interal": "no"},
+                    )
+                except Exception as e:
+                    logger.exception(f"Error executing TodoWrite tool: {e}")
+                    exec_results.append(FunctionExecutionResult(
+                        content=str(e),
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+                    yield TextMessage(
+                        content=str(e) + "\n\n",
+                        source=agent_name,
+                        metadata={"interal": "no"},
+                    )
+                    yield StopMessage(
+                        content=str(e),
+                        source=agent_name,
+                    )
+                    # Early return on critical error
+                    return
+
+            elif tool_name == "Task":
+                # Subagent Task tool handling
+                try:
+                    description, prompt, sub_agent_name = arguments["description"], arguments["prompt"], arguments["agent_type"]
+
+                    # Get sub agent system prompt
+                    sub_system = f"""You are a {sub_agent_name} subagent at {self._work_dir}.
+
+    {self._user_sub_agents[sub_agent_name].get("prompt", "")}
+
+    Complete the task and return a clear, concise summary."""
+
+                    # Construct task messages
+                    task_messages: Sequence[BaseChatMessage] = []
+                    llm_messages = await model_context.get_messages()
+                    backgroud_message = "Below are the historical chat records between the user and various intelligent assistants, which can be referenced when executing the current task.\n\n"
+                    for llm_message in llm_messages:
+                        if isinstance(llm_message, UserMessage) or isinstance(llm_message, AssistantMessage):
+                            backgroud_message += f"{llm_message.source}: {llm_message.content}\n\n"
+                    task_messages.append(TextMessage(content=backgroud_message, source="user"))
+                    task_messages.append(TextMessage(content=f"Current task: \n\n{prompt}", source="user"))
+
+                    # Execute subagent
+                    subagent = await self.get_sub_agent_instance(
+                        sub_agent_name=sub_agent_name,
+                        model_client=model_client,
+                        model_client_stream=model_client_stream,
+                        sub_system=sub_system,
+                        output_content_type=output_content_type,
+                    )
+
+                    task_result_content = ""
+                    # Stream subagent messages immediately for real-time feedback
+                    async for message in subagent.on_messages_stream(messages=task_messages, cancellation_token=cancellation_token):
+                        if isinstance(message, Response):
+                            task_result_content = str(message.chat_message.content)
+                            yield message.chat_message
+                            break
+                        yield message  # Yield immediately for streaming experience
+
+                    # Add result
+                    exec_results.append(FunctionExecutionResult(
+                        content=task_result_content,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    ))
+
+                    # Close subagent
+                    try:
+                        await subagent.close()
+                    except Exception as close_error:
+                        logger.warning(f"Error closing subagent {sub_agent_name}: {close_error}")
+
+                except Exception as e:
+                    logger.exception(f"Error executing Task tool: {e}")
+                    exec_results.append(FunctionExecutionResult(
+                        content=f"Error: {str(e)}",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+                    yield TextMessage(
+                        content=str(e) + "\n\n",
+                        source=agent_name,
+                        metadata={"interal": "no"},
+                    )
+                    yield StopMessage(
+                        content=str(e),
+                        source=agent_name,
+                    )
+                    # Early return on critical error
+                    return
+
+            elif tool_name == "UpdateUserConfig":
+                # UpdateUserConfig tool handling
+                try:
+                    update_message = self._user_profile_manager.update_user_config(**arguments)
+                    exec_results.append(FunctionExecutionResult(
+                        content=update_message,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    ))
+                    # Yield log event immediately
+                    yield AgentLogEvent(
+                        title=f"I am updating user's config.",
+                        source=agent_name,
+                        content=str(arguments),
+                        content_type="tools"
+                    )
+                except Exception as e:
+                    logger.exception(f"Error executing UpdateUserConfig tool: {e}")
+                    exec_results.append(FunctionExecutionResult(
+                        content=f"Error: {str(e)}",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+
+            elif tool_name == "ScheduledTaskManager":
+                # ScheduledTaskManager tool handling
+                try:
+                    from .managers import ScheduledTask, ScheduleType, TaskStatus
+
+                    if self._task_manager is None:
+                        error_msg = "定时任务管理器未初始化。请联系管理员(ScheduledTaskManager not initialized.)。\n\n"
+                        exec_results.append(FunctionExecutionResult(
+                            content=error_msg,
+                            name=tool_name,
+                            call_id=call_id,
+                            is_error=True,
+                        ))
+                        yield TextMessage(
+                            content=error_msg,
+                            source=agent_name,
+                            metadata={"internal": "no"},
+                        )
+                        continue
+
+                    operation = arguments.get("operation")
+                    result_content = ""
+
+                    if operation == "create":
+                        execution_context = {
+                            "defult_config_name": getattr(self, '_defult_config_name', None),
+                        }
+                        task = ScheduledTask(
+                            user_id=self._user_id,
+                            session_id=self._thread_id,
+                            task_name=arguments["task_name"],
+                            task_description=arguments.get("task_description"),
+                            prompt=arguments["prompt"],
+                            schedule_type=ScheduleType(arguments["schedule_type"]),
+                            schedule_config=arguments["schedule_config"],
+                            timeout=arguments.get("timeout", 300),
+                            save_history=arguments.get("save_history", True),
+                            execution_context=execution_context,
+                        )
+                        task_id = self._task_manager.add_task(task)
+                        result_content = f"✅ 定时任务创建成功！\n\n"
+                        result_content += f"**任务ID:** `{task_id}`\n"
+                        result_content += f"**任务名称:** {task.task_name}\n"
+                        result_content += f"**调度类型:** {task.schedule_type}\n"
+                        result_content += f"**调度配置:** {task.schedule_config}\n"
+                        result_content += f"**下次执行:** {task.next_run}\n"
+
+                    elif operation == "list":
+                        session_id = arguments.get("session_id")
+                        status = TaskStatus(arguments["status"]) if arguments.get("status") else None
+                        tasks = self._task_manager.list_tasks(
+                            user_id=self._user_id,
+                            session_id=session_id,
+                            status=status
+                        )
+                        if not tasks:
+                            result_content = "当前没有定时任务(No scheduled tasks)。\n\n"
+                        else:
+                            result_content = f"共有 {len(tasks)} 个定时任务：\n\n"
+                            for task in tasks:
+                                result_content += f"- **{task.task_name}** (`{task.task_id}`)\n"
+                                result_content += f"  - 状态: {task.status.value}\n"
+                                result_content += f"  - 调度: {task.schedule_type.value} - {task.schedule_config}\n"
+                                result_content += f"  - 下次执行: {task.next_run or '无'}\n"
+                                result_content += f"  - 执行次数: {task.run_count}\n\n"
+
+                    elif operation == "get":
+                        task_id = arguments["task_id"]
+                        task = self._task_manager.get_task(task_id)
+                        if task is None:
+                            result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
+                        else:
+                            result_content = f"## 任务详情\n\n"
+                            result_content += f"**任务ID:** `{task.task_id}`\n"
+                            result_content += f"**任务名称:** {task.task_name}\n"
+                            result_content += f"**任务描述:** {task.task_description or '无'}\n"
+                            result_content += f"**提示词:** {task.prompt}\n"
+                            result_content += f"**调度类型:** {task.schedule_type.value}\n"
+                            result_content += f"**调度配置:** {task.schedule_config}\n"
+                            result_content += f"**状态:** {task.status.value}\n"
+                            result_content += f"**创建时间:** {task.created_at}\n"
+                            result_content += f"**上次执行:** {task.last_run or '从未执行'}\n"
+                            result_content += f"**下次执行:** {task.next_run or '无'}\n"
+                            result_content += f"**执行次数:** {task.run_count}\n"
+                            result_content += f"**错误次数:** {task.error_count}\n"
+                            if task.last_error:
+                                result_content += f"**最后错误:** {task.last_error}\n"
+
+                    elif operation == "delete":
+                        task_id = arguments["task_id"]
+                        success = self._task_manager.remove_task(task_id)
+                        if success:
+                            result_content = f"✅ 任务已删除(Task deleted successfully): `{task_id}`。\n\n"
+                        else:
+                            result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
+
+                    elif operation == "toggle":
+                        task_id = arguments["task_id"]
+                        enabled = arguments["enabled"]
+                        task = self._task_manager.get_task(task_id)
+                        if task is None:
+                            result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
+                        else:
+                            new_status = TaskStatus.ENABLED if enabled else TaskStatus.DISABLED
+                            self._task_manager.update_task_status(task_id, new_status)
+                            result_content = f"✅ 任务已{'启用' if enabled else '禁用'}: `{task_id}`"
+                            result_content += f"Task {'enabled' if enabled else 'disabled'} successfully\n\n."
+
+                    elif operation == "get_results":
+                        task_id = arguments["task_id"]
+                        limit = arguments.get("limit", 10)
+                        results = self._task_manager.get_task_results(task_id, limit=limit)
+                        if not results:
+                            result_content = f"任务 `{task_id}` 没有执行历史(No execution history)。\n\n"
+                        else:
+                            result_content = f"任务 `{task_id}` 的执行历史（最近 {len(results)} 次）：\n\n"
+                            for i, res in enumerate(results, 1):
+                                result_content += f"{i}. **{res.start_time}**\n"
+                                result_content += f"   - 状态: {res.status}\n"
+                                result_content += f"   - 耗时: {res.duration:.2f}秒\n"
+                                if res.error_message:
+                                    result_content += f"   - 错误: {res.error_message}\n"
+                                result_content += "\n"
+
+                    elif operation == "get_outputs":
+                        task_id = arguments["task_id"]
+                        limit = arguments.get("limit", 10)
+                        outputs = self._task_manager.get_task_outputs(task_id, limit=limit)
+                        if not outputs:
+                            result_content = f"任务 `{task_id}` 没有输出文件(No output files)。\n\n"
+                        else:
+                            result_content = f"任务 `{task_id}` 的输出文件（最近 {len(outputs)} 个）：\n\n"
+                            for i, output in enumerate(outputs, 1):
+                                result_content += f"{i}. **{output['timestamp']}**\n"
+                                result_content += f"   - 文件: `{output['file_path']}`\n"
+                                result_content += f"   - 大小: {output['size']} bytes\n"
+                                result_content += f"   - 修改时间: {output['mtime']}\n\n"
+                            result_content += "\n💡 使用 `read_output` 操作读取文件内容。\n"
+
+                    elif operation == "read_output":
+                        file_path = arguments["file_path"]
+                        try:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                content = f.read()
+                            result_content = f"## 输出文件内容\n\n**文件:** `{file_path}`\n\n---\n\n{content}"
+                        except FileNotFoundError:
+                            result_content = f"❌ 文件不存在(File not found): `{file_path}`\n\n."
+                        except Exception as e:
+                            result_content = f"❌ 读取文件失败(Failed to read file): {str(e)}\n\n."
+
+                    else:
+                        result_content = f"❌ 未知操作(Unknown operation): {operation}\n\n."
+
+                    # Add result
+                    exec_results.append(FunctionExecutionResult(
+                        content=result_content,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    ))
+                    # Yield text message immediately for user visibility
+                    yield TextMessage(
+                        content=result_content,
+                        source=agent_name,
+                        metadata={"internal": "no"},
+                    )
+
+                except Exception as e:
+                    logger.exception(f"Error executing ScheduledTaskManager tool: {e}")
+                    error_content = f"❌ 执行定时任务操作失败(Failed to execute scheduled task operation): {str(e)}\n\n"
+                    exec_results.append(FunctionExecutionResult(
+                        content=error_content,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+                    yield TextMessage(
+                        content=error_content,
+                        source=agent_name,
+                        metadata={"internal": "no"},
+                    )
+
+            else:
+                # Normal tool execution through workbench or handoff
+                try:
+                    _, result = await self._execute_tool_call(
+                        tool_call=tool_call,
+                        workbench=workbench,
+                        handoff_tools=handoff_tools,
+                        agent_name=agent_name,
+                        cancellation_token=cancellation_token,
+                    )
+                    exec_results.append(result)
+                except Exception as e:
+                    logger.exception(f"Error executing tool {tool_name}: {e}")
+                    exec_results.append(FunctionExecutionResult(
+                        content=f"Error: {str(e)}",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+
+        # Add all execution results to model context (ensures tool calls and results are paired)
         await model_context.add_message(FunctionExecutionResultMessage(content=exec_results))
-        normal_tool_calls = [(call, result) for call, result in executed_calls_and_results if call.name not in handoffs]
+
+        # Generate tool call summary for non-handoff tools
+        normal_tool_calls = [(call, result) for call, result in zip(model_result.content, exec_results)
+                            if call.name not in handoffs]
         tool_call_summaries: List[str] = []
         for tool_call, tool_call_result in normal_tool_calls:
             tool_call_summaries.append(

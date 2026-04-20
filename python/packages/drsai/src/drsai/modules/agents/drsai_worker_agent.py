@@ -493,7 +493,10 @@ class HepAIWorkerAgent(DrSaiAgent):
             #     for response in full_response:
             #         for key, value in response.items():
             #             full_response_str += f"{value}"
-            final_answer = final_message.content 
+            if hasattr(final_message, "content") and final_message.content:
+                final_answer = final_message.content 
+            else:
+                final_answer = "Sorry, something went wrong."
             model_result = CreateResult(
                 content=final_answer, 
                 finish_reason="stop",
