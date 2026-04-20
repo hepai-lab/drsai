@@ -26,6 +26,69 @@ _logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _agent_entry_display_name(entry: dict) -> str:
+    """Resolve display name from a stored agent dict (top-level or config.name)."""
+    if not entry:
+        return ""
+    n = entry.get("name")
+    if n is not None and str(n).strip():
+        return str(n).strip()
+    cfg = entry.get("config") or {}
+    n2 = cfg.get("name")
+    return str(n2).strip() if n2 is not None else ""
+
+
+def _same_agent_id(a: str, b: str) -> bool:
+    return str(a or "").strip() == str(b or "").strip()
+
+
+def _iter_agents_user_remote_rows(db: DatabaseManager, user_id: str) -> list[dict]:
+    """All agent dicts from every userremoteagents row (some DBs have multiple rows per user)."""
+    out: list[dict] = []
+    remote_resp = db.get(UserRemoteAgents, filters={"user_id": user_id})
+    if not (remote_resp.status and remote_resp.data):
+        return out
+    for row in remote_resp.data:
+        agents = getattr(row, "agents", None) or (row.get("agents") if isinstance(row, dict) else None) or []
+        out.extend(agents)
+    return out
+
+
+def _add_display_name_keys(
+    agents: list,
+    exclude_agent_id: str,
+    keys: set[str],
+) -> None:
+    for agent in agents:
+        if not isinstance(agent, dict):
+            continue
+        aid = str(agent.get("id") or "")
+        if exclude_agent_id and _same_agent_id(aid, exclude_agent_id):
+            continue
+        name = _agent_entry_display_name(agent)
+        if name:
+            keys.add(name.casefold())
+
+
+def _existing_saved_agent_display_name_keys(
+    db: DatabaseManager,
+    user_id: str,
+    exclude_agent_id: str,
+) -> set[str]:
+    """Display names used by defaults, DDF cache, and saved remote/custom agents (for save-time uniqueness)."""
+    keys: set[str] = set()
+    _add_display_name_keys(get_default_agent_mode_config(user_id), exclude_agent_id, keys)
+
+    ddf_resp = db.get(UserDDFAgents, filters={"user_id": user_id})
+    if ddf_resp.status and ddf_resp.data:
+        for ddf_row in ddf_resp.data:
+            _add_display_name_keys(ddf_row.agents or [], exclude_agent_id, keys)
+
+    _add_display_name_keys(_iter_agents_user_remote_rows(db, user_id), exclude_agent_id, keys)
+
+    return keys
+
 # @router.get("/ddf_agents")
 # async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
 
@@ -100,9 +163,32 @@ async def save_remote_agent(
     '''
     try:
         saved_agent_config = request.agent_config
-        agent_id: str|None = saved_agent_config.get("id")
-        if agent_id is None:
+        if saved_agent_config.get("id") is None:
             saved_agent_config.update({"id": str(uuid.uuid4())})
+        agent_id = str(saved_agent_config.get("id") or "")
+
+        mode_lc = str(saved_agent_config.get("mode") or "").lower()
+        if mode_lc in ("remote", "custom"):
+            proposed = _agent_entry_display_name(saved_agent_config)
+            if mode_lc == "remote" and not proposed:
+                raise HTTPException(
+                    status_code=400,
+                    detail="请填写智能体名称后再保存远程连接。",
+                )
+            if proposed:
+                taken = _existing_saved_agent_display_name_keys(db, request.user_id, agent_id)
+                if proposed.casefold() in taken:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="该名称与已有智能体重名，请更换名称后再保存。",
+                    )
+                if mode_lc == "remote":
+                    saved_agent_config["name"] = proposed
+                    cfg = saved_agent_config.get("config")
+                    if not isinstance(cfg, dict):
+                        cfg = {}
+                        saved_agent_config["config"] = cfg
+                    cfg["name"] = proposed
 
         # 获取用户现有的远程智能体配置
         response = db.get(UserRemoteAgents, filters={"user_id": request.user_id})
@@ -111,7 +197,7 @@ async def save_remote_agent(
             user_agents: UserRemoteAgents = response.data[0]
             agents_list = user_agents.agents or []
             for agent in agents_list:
-                if agent["id"] == agent_id:
+                if _same_agent_id(str(agent.get("id")), agent_id):
                     agents_list.remove(agent)
                     break
             agents_list.append(saved_agent_config)
@@ -128,6 +214,8 @@ async def save_remote_agent(
 
         return {"status": True, "message": "智能体配置保存/更新成功"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

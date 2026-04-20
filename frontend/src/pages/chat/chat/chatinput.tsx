@@ -176,12 +176,17 @@ const ChatInput = React.forwardRef<
     };
     // Handle textarea auto-resize
     React.useEffect(() => {
-      if (textAreaRef.current) {
-        textAreaRef.current.style.height = getTextAreaDefaultHeight();
-        const scrollHeight = textAreaRef.current.scrollHeight;
-        textAreaRef.current.style.height = `${scrollHeight}px`;
+      if (!textAreaRef.current) return;
+      const el = textAreaRef.current;
+      // Empty content: set min height only. Measuring scrollHeight here can keep a stale
+      // large value after clear, so the box never shrinks back (see clearText / resetInput).
+      if (text === "") {
+        el.style.height = getTextAreaDefaultHeight();
+        return;
       }
-
+      el.style.height = getTextAreaDefaultHeight();
+      const scrollHeight = el.scrollHeight;
+      el.style.height = `${Math.min(scrollHeight, 120)}px`;
     }, [text, inputRequest]);
 
     React.useEffect(() => {

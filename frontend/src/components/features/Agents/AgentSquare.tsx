@@ -287,18 +287,29 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     if (!user?.email) return;
 
     try {
+      // agentInfo first (metadata); then force UI name/url — get_info() name can differ from the form.
+      const ai = agentInfo && typeof agentInfo === "object" ? agentInfo : {};
+      const url = config.url;
+      const displayName = String(config.name ?? "").trim();
       await agentWorkerAPI.saveRemoteAgent(user.email, {
-        name: config.name,
-        url: config.url,
-        api_key: config.api_key ?? config.apiKey,
+        ...ai,
         mode: "remote",
-        ...agentInfo
+        name: displayName,
+        url,
+        api_key: config.api_key ?? config.apiKey,
+        config: {
+          ...(typeof ai.config === "object" && ai.config ? ai.config : {}),
+          name: displayName,
+          url,
+        },
       });
 
       await loadAgentList();
       setIsRemoteModalOpen(false);
     } catch (error) {
       console.error("Failed to save remote agent:", error);
+      message.error(error instanceof Error ? error.message : "保存远程智能体失败");
+      throw error;
     }
   }, [user?.email, loadAgentList]);
 
