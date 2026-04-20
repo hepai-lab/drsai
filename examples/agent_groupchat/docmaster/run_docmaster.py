@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Word文档编辑智能体 - 主启动脚本
+Word文档编辑智能体 - 主启动脚本 (Fixed Version)
 功能：上传、分析、修改Word文档
 """
 
@@ -23,6 +23,19 @@ from drsai.modules.components.model_context import DrSaiChatCompletionContext
 from drsai.modules.agents.skills_agent import SkillAgent, DrSaiAssistant
 from drsai.modules.managers.database import DatabaseManager
 from drsai.modules.managers.messages import TextMessage
+
+# Import document processing components
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent))
+try:
+    from document_processor import DocumentProcessor, print_document_summary
+    from document_skills.process_document_skill import DocumentProcessingSkill
+    DOCUMENT_PROCESSING_AVAILABLE = True
+except ImportError as e:
+    DOCUMENT_PROCESSING_AVAILABLE = False
+    print(f"⚠️ Document processing components not available: {e}")
+    print("Install with: pip install python-docx PyPDF2 python-pptx pandas openpyxl")
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -49,7 +62,7 @@ def create_word_editor_agent(
         thread_id: str|None = None, 
         user_id: str|None = None, 
         db_manager: DatabaseManager|None = None,
-        default_config_name: str|None = "gpt-4o",
+        default_config_name: str|None = None,
 ) -> DrSaiAssistant:
     """
     创建Word文档编辑智能体
@@ -65,39 +78,104 @@ def create_word_editor_agent(
         DrSaiAssistant实例
     """
     
-    def set_model_client(default_config_name: str|None = "gpt-4o"):
+    def set_model_client(default_config_name: str|None = None):
         """设置模型客户端"""
-        llm_model = llm_mode_config.get(default_config_name, "openai/gpt-4o")
+        # Try different models if the default fails
+        if default_config_name is None:
+            default_config_name = "gpt-4o"
         
-        if "claude" in llm_model or "minimax" in llm_model:
-            model_client = HepAIAnthropicChatCompletionClient(
-                model=llm_model,
+        # List of models to try in order (fastest/lightest first)
+        models_to_try = [
+            "gpt-4o",                   # Default - most reliable
+            "gpt-4.1",                  # Alternative GPT
+            "claude-haiku-4-5(Fast)",   # Fast Claude
+            "claude-sonnet-4-6(High)",  # High quality Claude
+            "deepseek-v3.2(No image)",  # Alternative
+            "minimax-m2.7"              # Last resort
+        ]
+        
+        # If specified model is in the list, try it first
+        if default_config_name in llm_mode_config:
+            models_to_try.insert(0, default_config_name)
+        
+        # Remove duplicates
+        models_to_try = list(dict.fromkeys(models_to_try))
+        
+        # Try each model until one works
+        for model_name in models_to_try:
+            if model_name in llm_mode_config:
+                llm_model = llm_mode_config[model_name]
+                print(f"🔄 Trying model: {model_name} ({llm_model})")
+                break
+        else:
+            # Fallback to default
+            llm_model = "openai/gpt-4o"
+            print(f"⚠️ Model not found in config, using default: {llm_model}")
+        
+        # Create model client with timeout and retry settings
+        try:
+            if "claude" in llm_model or "minimax" in llm_model:
+                model_client = HepAIAnthropicChatCompletionClient(
+                    model=llm_model,
+                    base_url="https://aiapi.ihep.ac.cn/apiv2/anthropic",
+                    api_key=api_key or os.environ.get("HEPAI_API_KEY"),
+                    model_info=_MODEL_INFO.get("claude-sonnet-4-5", _MODEL_INFO["claude-sonnet-4-5"]),
+                    max_tokens=16000,  # FIXED: Reduced from 40000 to 16000
+                    temperature=0.3,
+                    timeout=30.0,  # 30 second timeout
+                    max_retries=2,  # Retry twice on failure
+                )
+            else:
+                is_vision = "deepseek" not in llm_model
+                # Determine model family based on model name
+                if "gpt-4o" in llm_model:
+                    family = ModelFamily.GPT_4O
+                elif "gpt-4.1" in llm_model:
+                    family = ModelFamily.GPT_41
+                elif "deepseek" in llm_model:
+                    family = ModelFamily.DEEPSEEK_V3
+                elif "minimax" in llm_model:
+                    family = ModelFamily.MINIMAX_M2
+                else:
+                    family = ModelFamily.GPT_4O  # Default
+                
+                model_client = HepAIChatCompletionClient(
+                    model=llm_model,
+                    api_key=api_key or os.environ.get("HEPAI_API_KEY"),
+                    base_url="https://aiapi.ihep.ac.cn/apiv2",
+                    model_info={
+                        "vision": is_vision,
+                        "function_calling": True,
+                        "json_output": True,
+                        "structured_output": False,
+                        "family": family,
+                        "multiple_system_messages": True,
+                        "token_model": "gpt-4o",  # FIXED: Simplified token model
+                    },
+                    temperature=0.3,
+                    max_tokens=16000,  # FIXED: Reduced from 40000 to 16000
+                    timeout=30.0,  # 30 second timeout
+                    max_retries=2,  # Retry twice on failure
+                )
+            
+            print(f"✅ Successfully created model client for {model_name}")
+            return model_client
+            
+        except Exception as e:
+            print(f"❌ Failed to create model client for {model_name}: {e}")
+            print("🔄 Falling back to Claude Haiku (most reliable)")
+            
+            # Fallback to Claude Haiku
+            return HepAIAnthropicChatCompletionClient(
+                model="anthropic/claude-haiku-4-5",
                 base_url="https://aiapi.ihep.ac.cn/apiv2/anthropic",
                 api_key=api_key or os.environ.get("HEPAI_API_KEY"),
                 model_info=_MODEL_INFO.get("claude-sonnet-4-5", _MODEL_INFO["claude-sonnet-4-5"]),
-                max_tokens=40000,
+                max_tokens=16000,  # FIXED: Reduced from 40000 to 16000
                 temperature=0.3,
+                timeout=30.0,
+                max_retries=2,
             )
-        else:
-            is_vision = "deepseek" not in llm_model
-            model_client = HepAIChatCompletionClient(
-                model=llm_model,
-                api_key=api_key or os.environ.get("HEPAI_API_KEY"),
-                base_url="https://aiapi.ihep.ac.cn/apiv2",
-                model_info={
-                    "vision": is_vision,
-                    "function_calling": True,
-                    "json_output": True,
-                    "structured_output": False,
-                    "family": ModelFamily.GPT_41,
-                    "multiple_system_messages": True,
-                    "token_model": "gpt-4o-2024-11-20",
-                },
-                temperature=0.3,
-                max_tokens=40000,
-            )
-        
-        return model_client
 
     # 子智能体配置 - DocMaster的助手
     SUB_AGENTS = {
@@ -123,25 +201,366 @@ def create_word_editor_agent(
     }
 
     # 系统提示词 - 专注于Word文档处理
-    SYSTEM = """你是DocMaster，专业的Word文档处理大师。你的专长是：
-1. 分析Word文档内容，提取关键信息
-2. 根据用户需求编辑和修改文档内容
-3. 调整文档格式、样式和布局
-4. 处理文档中的各种元素（文本、表格、图片、超链接、页眉页脚等）
-5. 保持文档的专业性、一致性和可读性
-6. 提供文档优化建议
+    SYSTEM = """你是 DocMaster，一个以 DOCX 为核心的文档分析与编辑助手。
 
-请始终以专业、细致、高效的态度处理每一个Word文档。"""
+你的目标不是夸大能力，而是稳定、准确地理解用户意图，并选择最合适的工具完成任务。
 
-    # 创建Word文档处理工具（这里需要你实现具体的工具）
-    # from word_processing_tools import word_analyze_tool, word_modify_tool
+【能力边界】
+1. 你可以分析多种文档格式：DOCX、PDF、PPTX、XLSX、CSV、TXT、MD。
+2. 你主要支持对 DOCX 文件进行编辑。
+3. 你最擅长的 DOCX 操作包括：
+   - 提取段落和表格内容
+   - 创建结构化新文档
+   - 添加标题、段落、表格
+   - 执行结构化文本修改与替换
+   - 修改样式和字体
+   - 删除文档内容
+4. 对图片、超链接、页眉页脚、复杂版式重排等高级 Word 元素，不要假装已经可靠支持；如果用户提出这类需求，可以先说明当前能力更适合文本、标题、段落、表格和字体层面的处理。
+
+【核心工作原则】
+1. 先判断任务类型，再选择工具。
+2. 如果用户没有提供文件路径、文件内容或明确目标，不要猜，先提出一个简短的澄清问题。
+3. 对于非简单替换类编辑请求，优先先检查文档内容或结构，再执行修改。
+4. 不要声称已经完成工具未实际执行的操作。
+5. 若任务超出当前工具能力，要明确说明限制，并给出最接近的可执行方案。
+6. 编辑操作默认会直接覆盖原始 DOCX 文件，必要时应提醒用户这一点。
+
+【收到用户请求后的标准流程】
+第一步：判断任务属于哪一类：
+- 文档分析
+- DOCX 内容检查
+- 新建 DOCX
+- 修改现有 DOCX
+- 字体调整
+- 清空文档内容
+- 仅提供建议或说明
+
+第二步：判断是否具备执行条件：
+- 如果用户提到“这个文档/这份文件”，但没有给出文件路径或可识别文件，就先询问文件。
+- 如果用户要求修改现有 DOCX，但没有说明改哪里，先询问目标段落、目标文本，或先读取文档内容。
+- 如果用户要求“润色/改写/更专业/更简洁”这类语义编辑，不要直接盲改；应先查看相关内容，再生成修改方案或执行编辑。
+- 如果用户要求新建文档但没有给出内容，也要先确认要写入什么。
+
+第三步：选择工具：
+- 分析上传或给定文件：使用 process_document
+- 检查 DOCX 实际内容：使用 extract_docx_content_tool
+- 创建新 DOCX：使用 create_docx_with_content_tool
+- 修改现有 DOCX：使用 edit_docx_tool
+- 修改字体：使用 modify_docx_fonts_tool
+- 删除全部内容：使用 delete_docx_content_tool
+
+【工具选择规则】
+1. 如果用户只是想“了解文档是什么”，优先用 process_document。
+2. 如果用户要查看 DOCX 里的实际段落、表格或目标文本，使用 extract_docx_content_tool。
+3. 如果用户说“把 A 改成 B”“在末尾增加一段”“插入标题”“添加表格”，统一使用 edit_docx_tool。
+4. 如果用户说“把中文改成宋体、英文改成 Times New Roman”，使用 modify_docx_fonts_tool。
+5. 如果用户说“重写引言/缩短结论/让措辞更正式”，先用 extract_docx_content_tool 查看内容，再进行后续编辑。
+6. 如果用户要新建文档，使用 create_docx_with_content_tool。
+7. 如果用户只是咨询写作或格式建议，不必强行调用工具。
+
+【处理模糊请求的规则】
+遇到以下情况时，优先提一个简洁问题，而不是直接行动：
+- 不知道要操作哪个文件
+- 不知道要修改哪一段内容
+- 用户要求“优化一下”“改得更好”但没有说明目标
+- 用户要求的操作可能覆盖原文件且风险较高
+
+你的澄清问题应尽量短，例如：
+- “请提供要处理的 DOCX 文件路径。”
+- “你是想修改内容、格式，还是两者都改？”
+- “请指出要改写的段落，或让我先读取文档内容。”
+
+【语义编辑规则】
+当用户要求润色、改写、缩写、专业化、通俗化时，按以下方式处理：
+1. 先确定目标文件和目标段落/章节。
+2. 如果目标内容不明确，先读取文档内容。
+3. 先基于原文生成合适的新文本，再执行替换或结构化编辑。
+4. 完成后简要说明你改了什么。
+
+【edit_docx_tool 的编辑格式】
+使用 edit_docx_tool 时，edits 参数应为列表，每个元素是一个字典。常见格式如下：
+- 替换文本：{'type': 'replace_text', 'old_text': '原文本', 'new_text': '新文本'}
+- 也可使用等价替换格式：{'type': 'replace', 'target': '原文本', 'replacement': '新文本'}
+- 添加段落：{'type': 'add_paragraph', 'content': '段落内容', 'position': 'end'}
+- 添加标题：{'type': 'add_heading', 'content': '标题内容', 'level': 1}，其中 level=0 可作为 Title，level=2/3 适合子标题
+- 修改样式：{'type': 'modify_style', 'style_name': 'Normal', 'font_name': '宋体', 'font_size': 12, 'bold': True, 'italic': False, 'underline': False, 'color': '1F1F1F', 'alignment': 'justify', 'spacing_before': 6, 'spacing_after': 6}
+- 设置局部文字格式：{'type': 'format_text', 'target_text': '关键词', 'bold': True, 'italic': True, 'underline': True, 'font_size': 13, 'color': 'C00000'}
+- 设置段落格式：{'type': 'format_paragraph', 'position': 3, 'alignment': 'center', 'spacing_before': 6, 'spacing_after': 6, 'line_spacing': 1.5}
+- 插入分页符：{'type': 'add_page_break', 'position': 'end'}
+- 添加表格：{'type': 'add_table', 'data': [['A', 'B'], ['1', '2']], 'table_style': 'Table Grid'}
+- 设置表格样式：{'type': 'set_table_style', 'table_index': 0, 'table_style': 'Light Grid Accent 1'}
+- 注意：add_paragraph 的 position 支持整数索引；'end' 表示追加到文档末尾
+
+【输出风格】
+1. 回答要专业、直接、清楚。
+2. 执行工具前，内部先判断是否真的需要工具。
+3. 执行后，简洁说明结果，不要长篇空话。
+4. 如果失败，明确说明失败原因和下一步建议。
+
+记住：你的重点是正确理解用户对文档的真实意图，并以最小、最可靠的步骤完成任务。"""
+
+    # Define document processing tools - define as actual functions
+    tools = []
+    
+    if DOCUMENT_PROCESSING_AVAILABLE:
+        # Define document processing function - SIMPLIFIED
+        def process_document(file_path: str):
+            """
+            Analyze a document file and return a machine-readable summary.
+
+            Use this when the user wants to understand a file rather than edit it,
+            for example: summarize the document, identify its type, inspect its
+            structure, preview its contents, or extract high-level metadata.
+
+            Best for:
+            - DOCX, PDF, PPTX, XLSX, CSV, TXT, MD analysis
+            - first-pass inspection before deciding what to edit
+            - requests like "analyze this file", "what is in this document?",
+              "summarize this report"
+
+            Not for directly editing DOCX content.
+
+            Args:
+                file_path: Path to the input file.
+            """
+            processor = DocumentProcessor(str(WORKSPACE))
+            return processor.process_uploaded_file(file_path)
+        
+        # Define DOCX editing function
+        def edit_docx_tool(file_path: str, edits: list):
+            """
+            Apply one or more structured edits to an existing DOCX file.
+
+            This is the single general-purpose DOCX editing tool. Use it for
+            exact replacements, semantic rewrites after inspection, adding
+            headings or paragraphs, inserting tables, and style-related changes.
+
+            Best for:
+            - replace one phrase with another
+            - append or insert new content
+            - add headings or tables
+            - run several planned edits in one call
+            - execute semantic edits after reading the target content first
+
+            This tool overwrites the original DOCX file.
+
+            Args:
+                file_path: Path to the DOCX file.
+                edits: List of edit operations. Accepted examples:
+                    - {'type': 'replace_text', 'old_text': 'old', 'new_text': 'new'}
+                    - {'type': 'replace', 'target': 'old', 'replacement': 'new'}
+                    - {'type': 'add_paragraph', 'content': 'text', 'position': 'end', 'alignment': 'justify', 'spacing_after': 6}
+                    - {'type': 'add_heading', 'content': 'Section 2', 'level': 2, 'bold': True, 'color': '1F4E79'}
+                    - {'type': 'modify_style', 'style_name': 'Heading 2', 'font_name': 'Calibri', 'font_size': 14, 'bold': True, 'spacing_before': 12, 'spacing_after': 6}
+                    - {'type': 'format_text', 'target_text': 'important', 'bold': True, 'italic': True, 'underline': True, 'color': 'C00000'}
+                    - {'type': 'format_paragraph', 'position': 3, 'alignment': 'center', 'line_spacing': 1.5}
+                    - {'type': 'add_page_break', 'position': 'end'}
+                    - {'type': 'add_table', 'data': [['A', 'B'], ['1', '2']], 'table_style': 'Table Grid'}
+                    - {'type': 'set_table_style', 'table_index': 0, 'table_style': 'Light Grid Accent 1'}
+            """
+            import os
+            import json
+            
+            # Log the incoming request for debugging
+            print(f"🔧 edit_docx_tool called with:")
+            print(f"   File: {file_path}")
+            print(f"   Edits count: {len(edits)}")
+            print(f"   First edit sample: {json.dumps(edits[0] if edits else {}, ensure_ascii=False, indent=2)[:200]}...")
+            
+            # Check if file exists
+            if not os.path.exists(file_path):
+                error_msg = f"File not found: {file_path}"
+                print(f"❌ {error_msg}")
+                return {
+                    'success': False,
+                    'error': 'File not found',
+                    'message': error_msg,
+                    'debug_info': {
+                        'file_path': file_path,
+                        'file_exists': os.path.exists(file_path)
+                    }
+                }
+            
+            # Convert LLM format to standard format if needed
+            standardized_edits = []
+            conversion_stats = {'llm_format': 0, 'standard_format': 0, 'unknown': 0}
+            
+            for i, edit in enumerate(edits):
+                if isinstance(edit, dict):
+                    edit_type = edit.get('type', '')
+                    
+                    # Handle LLM format: 'replace' -> 'replace_text'
+                    if edit_type == 'replace':
+                        if 'target' in edit and 'replacement' in edit:
+                            standardized_edits.append({
+                                'type': 'replace_text',
+                                'old_text': edit['target'],
+                                'new_text': edit['replacement']
+                            })
+                            conversion_stats['llm_format'] += 1
+                            continue
+                    
+                    # Handle other potential LLM format variations
+                    if edit_type == 'add':
+                        if 'content' in edit:
+                            standardized_edits.append({
+                                'type': 'add_paragraph',
+                                'content': edit['content'],
+                                'position': edit.get('position', 'end')
+                            })
+                            conversion_stats['llm_format'] += 1
+                            continue
+                    
+                    # If it's already in standard format
+                    if edit_type in ['replace_text', 'add_paragraph', 'add_heading', 'modify_style', 'add_table', 'format_text', 'format_paragraph', 'add_page_break', 'set_table_style']:
+                        standardized_edits.append(edit)
+                        conversion_stats['standard_format'] += 1
+                    else:
+                        # Unknown format, try to use as-is
+                        standardized_edits.append(edit)
+                        conversion_stats['unknown'] += 1
+                        print(f"⚠️ Unknown edit format at index {i}: {edit_type}")
+                else:
+                    # If edit is not a dict, keep it as-is
+                    standardized_edits.append(edit)
+                    conversion_stats['unknown'] += 1
+            
+            print(f"📊 Edit conversion stats: {conversion_stats}")
+            print(f"📝 Standardized edits count: {len(standardized_edits)}")
+            
+            processor = DocumentProcessor(str(WORKSPACE))
+            result = processor.edit_docx(file_path, standardized_edits, overwrite_original=True)
+            
+            # Add debugging info to help diagnose issues
+            result['debug_info'] = {
+                'original_edits_count': len(edits),
+                'standardized_edits_count': len(standardized_edits),
+                'conversion_stats': conversion_stats,
+                'file_path': file_path,
+                'file_exists': os.path.exists(file_path),
+                'edits_sample': edits[:2] if edits else []
+            }
+            
+            print(f"✅ edit_docx_tool result: {result.get('success', False)}")
+            if not result.get('success', False):
+                print(f"❌ Error: {result.get('error', 'Unknown error')}")
+                print(f"📝 Message: {result.get('message', 'No message')}")
+            
+            return result
+        
+        # Define DOCX content extraction function
+        def extract_docx_content_tool(file_path: str):
+            """
+            Extract detailed DOCX content for inspection before editing.
+
+            Use this when you need the actual document text or structure, not
+            just metadata. This is the preferred inspection tool before nontrivial
+            rewrite, polish, shorten, reorganize, or section-level edits.
+
+            Best for:
+            - reading paragraphs and tables from a DOCX
+            - locating target text before semantic edits
+            - understanding document structure before applying changes
+
+            Not for editing by itself.
+
+            Args:
+                file_path: Path to the DOCX file.
+            """
+            processor = DocumentProcessor(str(WORKSPACE))
+            result = processor.extract_docx_content(file_path)
+            return result
+        
+        # ============ NEW ENHANCED EDITING TOOLS ============
+        
+        def delete_docx_content_tool(file_path: str):
+            """
+            Remove all content from an existing DOCX document.
+
+            Use this only when the user clearly wants the document emptied,
+            cleared, or reset. This is a destructive operation on the target file.
+
+            Best for:
+            - "clear this document"
+            - "delete all text/content"
+            - preparing an existing DOCX to be rebuilt
+
+            Args:
+                file_path: Path to the DOCX file.
+            """
+            processor = DocumentProcessor(str(WORKSPACE))
+            result = processor.delete_docx_content(file_path)
+            return result
+        
+        def modify_docx_fonts_tool(file_path: str, font_rules: dict = None):
+            """
+            Change DOCX fonts according to language or content-type rules.
+
+            Use this when the request is specifically about typography rather than
+            wording, for example changing Chinese text to 宋体 and English text to
+            Times New Roman.
+
+            Best for:
+            - document-wide font normalization
+            - Chinese/English font separation
+            - formatting requests focused on font family rules
+
+            Not for rewriting content.
+
+            Args:
+                file_path: Path to the DOCX file.
+                font_rules: Mapping of content categories to fonts, e.g.
+                    {'chinese': '宋体', 'english': 'Times New Roman'}
+            """
+            processor = DocumentProcessor(str(WORKSPACE))
+            result = processor.modify_docx_fonts(file_path, font_rules)
+            return result
+        
+        def create_docx_with_content_tool(output_path: str, content: list):
+            """
+            Create a new DOCX file from structured content elements.
+
+            This is the single document-creation tool. Use it whenever the user
+            wants a new Word document, whether simple or structured. If the user
+            only gives plain text, convert it into a reasonable structured content
+            list before calling this tool.
+
+            Best for:
+            - creating a new report or letter
+            - building a document from headings and paragraphs
+            - generating a formatted DOCX from an outline or structured data
+
+            Args:
+                output_path: Path where the new DOCX should be saved.
+                content: List of structured content items, for example:
+                    - {'type': 'heading', 'text': 'Document Title', 'level': 0}
+                    - {'type': 'heading', 'text': 'Introduction', 'level': 1}
+                    - {'type': 'subheading', 'text': 'Background', 'level': 2}
+                    - {'type': 'paragraph', 'text': 'Body text', 'font_name': 'Times New Roman', 'font_size': 12, 'alignment': 'justify', 'spacing_after': 6}
+                    - {'type': 'page_break'}
+                    - {'type': 'table', 'data': [['A', 'B'], ['1', '2']], 'table_style': 'Table Grid'}
+                    Optional fields may include font/font_name, bold, italic, underline, font_size, color, alignment, and spacing.
+            """
+            processor = DocumentProcessor(str(WORKSPACE))
+            result = processor.create_docx_with_content(output_path, content)
+            return result
+        
+        tools = [
+            process_document,
+            edit_docx_tool,
+            extract_docx_content_tool,
+            # New enhanced editing tools
+            delete_docx_content_tool,
+            modify_docx_fonts_tool,
+            create_docx_with_content_tool
+        ]
     
     return DrSaiAssistant(
         name="DocMaster",
         model_client=set_model_client(default_config_name),
         system_message=SYSTEM,
-        reflect_on_tool_use=True,
-        model_client_stream=True,
+        reflect_on_tool_use=False,  # Disable reflection to simplify
+        model_client_stream=True,  # Disable streaming to avoid timeout issues
         
         # DrSaiAgent特定配置
         thread_id=thread_id,
@@ -151,18 +570,18 @@ def create_word_editor_agent(
         llm_mode_config=llm_mode_config,
         
         # 技能和工作目录
-        skills_dir=os.getenv("SYSTEM_SKILLS_DIR"),
+        skills_dir=str(Path(__file__).parent / "document_skills") if DOCUMENT_PROCESSING_AVAILABLE else os.getenv("SYSTEM_SKILLS_DIR"),
         work_dir=WORKDIR,
         only_in_workspace=True,
         
-        # Word文档处理专用工具
-        # tools=[word_analyze_tool, word_modify_tool],
+        # Tools configuration
+        tools=tools,
         
         # 子智能体配置
         sub_agent_config=SUB_AGENTS,
         
         # 资源限制
-        token_limit=50000,
+        token_limit=15000,  # Set token limit below max_tokens
         
         # RAG集成（可选）
         rag_flow_url=os.getenv('RAGFLOW_URL'),
@@ -171,14 +590,11 @@ def create_word_editor_agent(
         
         # 额外配置
         max_turn_count=30,
-        enable_planning=True,
     )
 
 def main():
     """主函数：启动Word文档编辑智能体"""
     from drsai.backend import run_worker, run_console
-    
-    # 你可以选择启动方式：
     
     # 方式1：作为Worker服务运行（注册到HepAI平台）
     asyncio.run(
@@ -192,12 +608,12 @@ def main():
             
             # 示例对话
             examples=[
-                "DocMaster，请帮我分析这份Word报告的主要内容",
-                "修改这份文档的格式，使其更专业",
-                "将文档中的技术术语替换为通俗易懂的表达",
-                "检查文档中的拼写和语法错误",
-                "帮我重新组织这份文档的结构",
-                "为这份报告添加专业的页眉页脚",
+                "DocMaster，请帮我分析这份文档的主要内容",
+                "先读取这份 DOCX 的内容，再帮我润色引言部分",
+                "把文档中的技术术语替换为更通俗的表达",
+                "在这份 DOCX 末尾新增一个总结段落",
+                "新建一份 DOCX，包含标题、正文和一个简单表格",
+                "把这份 DOCX 的中文设为宋体、英文设为 Times New Roman",
             ],
             
             # 模型配置
@@ -233,3 +649,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# __DRSAI_CWD__:/aifs/user/home/haiuser01/drsai_code/workspace/runs
