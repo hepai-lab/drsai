@@ -1,4 +1,5 @@
 import type { Agent, AgentMode } from "@/types/common";
+import { useModeConfigStore } from "@/store/modeConfig";
 
 export type AgentModeConfig = Omit<Agent, "config" | "icon"> & {
   config: Record<string, any>;
@@ -119,5 +120,33 @@ export const normalizeAgentModeConfig = (
     config: ensureIdentityInConfig(config, resolvedName, resolvedMode),
   };
 };
+
+/**
+ * Stable agent id for outbound WS payloads when `useAgentInfo` is briefly null (e.g. after many turns / rerenders).
+ */
+export function resolveOutboundAgentId(agentInfo?: Partial<Agent> | null): string {
+  // Try multiple shapes. Session `agent_mode_config` is sometimes stored as a plain
+  // config blob (e.g. { config: { agent_id } }) without top-level `id`.
+  const candidates = [
+    (agentInfo as any)?.id,
+    (agentInfo as any)?.agent_id,
+    (agentInfo as any)?.config?.agent_id,
+    (agentInfo as any)?.config?.requested_agent_id,
+  ];
+  for (const c of candidates) {
+    if (c != null && String(c).trim() !== "") {
+      return String(c).trim();
+    }
+  }
+  const persisted = useModeConfigStore.getState().agentId;
+  if (persisted != null && String(persisted).trim() !== "") {
+    return String(persisted).trim();
+  }
+  const sel = useModeConfigStore.getState().selectedAgent?.id;
+  if (sel != null && String(sel).trim() !== "") {
+    return String(sel).trim();
+  }
+  return "";
+}
 
 

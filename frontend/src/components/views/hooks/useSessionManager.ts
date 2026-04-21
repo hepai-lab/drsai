@@ -248,6 +248,10 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
       const sessionData = {
         name: query.slice(0, 50) || `${agent.name} Chat`,
         agent_mode_config: {
+          // Persist agent identity on the session so later continues / input_response
+          // can't accidentally fall back to the globally-selected agent.
+          id: agent.id,
+          agent_id: agent.id,
           mode: agent.mode,
           name: agent.name,
           ...agent.config,

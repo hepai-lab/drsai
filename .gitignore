@@ -28,6 +28,7 @@ test/
 tmp/
 /workspace
 .claude/
+yqsun-test/
 
 # 忽略所有以.env 结尾的文件
 *.env

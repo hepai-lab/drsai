@@ -411,14 +411,18 @@ export default function ChatView({
         // When not visible, skip load to avoid overwriting streamed messages in currentRun
         if (!visible) return;
 
-        // When switching back: we already have currentRun (preserved when we switched away),
-        // don't overwrite with API data - just ensure WebSocket is connected for further chunks
+        // When returning to the same session: keep currentRun (streamed state) and only
+        // ensure the WebSocket is connected. If session changed, prev may be another
+        // session's run — must load that session's run or agent/message attribution "crosses".
         let skipLoad = false;
         setCurrentRun((prev) => {
-          if (prev?.id) {
+          if (prev?.id && prev.session_id === session.id) {
             setupWebSocket(prev.id, false, true);
             skipLoad = true;
             return prev;
+          }
+          if (prev && prev.session_id !== session.id) {
+            return null;
           }
           return prev;
         });

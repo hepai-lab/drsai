@@ -33,7 +33,7 @@ def create_agent(
     def set_model_client(defult_config_name: str|None = "deepseek-r1") ->  HepAIChatCompletionClient:
         model_client = HepAIChatCompletionClient(
             # model="deepseek-ai/deepseek-r1",
-            model=llm_mode_config.get(defult_config_name, "openai/gpt-4o"),
+            model=llm_mode_config.get(defult_config_name, "openai/gpt-5-nano-2025-08-07"),
             api_key=api_key or os.environ.get("HEPAI_API_KEY"),
             base_url="https://aiapi.ihep.ac.cn/apiv2",
         )

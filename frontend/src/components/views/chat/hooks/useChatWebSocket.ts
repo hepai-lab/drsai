@@ -170,10 +170,10 @@ export const useChatWebSocket = ({
                     config: {
                       ...lastMessage.config,
                       content: newContent,
-                      metadata: {
-                        ...(lastMessage.config.metadata || {}),
-                        ...(sanitizedChunkMetadata || {}),
-                      },
+                      metadata: ({
+                        ...(lastMessage.config.metadata as any),
+                        ...(sanitizedChunkMetadata as any),
+                      } as any),
                     },
                   };
 
@@ -439,23 +439,9 @@ export const useChatWebSocket = ({
           if (activeSocketRef.current !== socket) {
             return current;
           }
-          if (current.status === "awaiting_input") {
-            const updatedRun = {
-              ...current,
-              status: "stopped" as BaseRunStatus,
-              input_request: undefined,
-              team_result: {
-                task_result: {
-                  messages: [],
-                  stop_reason: "Cancelled by user",
-                },
-                usage: "",
-                duration: 0,
-              } as TeamResult,
-            };
-            cacheSessionRun(session.id, updatedRun);
-            return updatedRun;
-          }
+          // If we're awaiting user input, a websocket close is often transient
+          // (network blip / tab sleep). Do NOT mark the run as stopped here;
+          // let reconnection + backend replay the pending input_request.
           return current;
         });
         // Only clear active socket if this is the current active socket

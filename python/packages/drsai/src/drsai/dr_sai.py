@@ -88,6 +88,24 @@ import uuid
 
 from drsai.modules.managers.user_profile import UserApiKeyManager
 
+# Debug / reliability knobs (minimal, opt-in via env):
+# - DRSAI_STREAM_INACTIVITY_TIMEOUT: max seconds without any streamed message before aborting (0 disables)
+# - DRSAI_STREAM_TOTAL_TIMEOUT: max total seconds for a request before aborting (0 disables)
+def _get_stream_timeouts() -> tuple[float, float]:
+    def _f(name: str, default: str) -> float:
+        try:
+            return float(os.getenv(name, default))
+        except Exception:
+            return float(default)
+    inactivity = _f("DRSAI_STREAM_INACTIVITY_TIMEOUT", "0")
+    total = _f("DRSAI_STREAM_TOTAL_TIMEOUT", "0")
+    return max(inactivity, 0.0), max(total, 0.0)
+
+async def _anext_with_optional_timeout(agen, timeout_s: float):
+    if timeout_s and timeout_s > 0:
+        return await asyncio.wait_for(agen.__anext__(), timeout=timeout_s)
+    return await agen.__anext__()
+
 from dotenv import load_dotenv
 load_dotenv(dotenv_path = "drsai_test.env")
 
@@ -361,8 +379,11 @@ class DrSai:
         """
         user_id = None
         thread_id = None
+        trace_id = kwargs.get("trace_id") or uuid.uuid4().hex[:8]
         try:
             start_time = time.time()
+            start_mono = time.monotonic()
+            inactivity_timeout_s, total_timeout_s = _get_stream_timeouts()
             # 处理用户的kwargs参数，保存UserInput到数据库
             user_input: UserInput = await self.handle_input_info(**kwargs)
             user_id = user_input.user_id
@@ -422,9 +443,59 @@ class DrSai:
             rely_messages: List[BaseChatMessage] = []
             agent_result: TaskResult|None = None
             
+            logger.info(
+                f"[trace={trace_id}] ui_completions start user_id={user_id} thread_id={thread_id} "
+                f"stream={stream} inactivity_timeout_s={inactivity_timeout_s} total_timeout_s={total_timeout_s}"
+            )
+
             res = agent.run_stream(task=task)
             role = ""
-            async for message in res:
+            first_stream_msg_at: float | None = None
+            while True:
+                # Total timeout check (cheap, before awaiting)
+                if total_timeout_s and (time.monotonic() - start_mono) > total_timeout_s:
+                    logger.error(
+                        f"[trace={trace_id}] ui_completions total-timeout after {total_timeout_s}s "
+                        f"user_id={user_id} thread_id={thread_id}"
+                    )
+                    timeout_evt = AgentLogEvent(
+                        title="StreamTimeout",
+                        content=f"Request exceeded total timeout ({total_timeout_s}s).",
+                        send_level=Send_level.ERROR,
+                        metadata={"internal": "no"},
+                        source="system",
+                    )
+                    message_str = json.dumps(timeout_evt.model_dump(mode="json"))
+                    yield f"data: {message_str}\n\n"
+                    break
+
+                try:
+                    message = await _anext_with_optional_timeout(res, inactivity_timeout_s)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    logger.error(
+                        f"[trace={trace_id}] ui_completions inactivity-timeout after {inactivity_timeout_s}s "
+                        f"user_id={user_id} thread_id={thread_id}"
+                    )
+                    timeout_evt = AgentLogEvent(
+                        title="StreamTimeout",
+                        content=f"No stream output for {inactivity_timeout_s}s (inactivity timeout).",
+                        send_level=Send_level.ERROR,
+                        metadata={"internal": "no"},
+                        source="system",
+                    )
+                    message_str = json.dumps(timeout_evt.model_dump(mode="json"))
+                    yield f"data: {message_str}\n\n"
+                    break
+
+                if first_stream_msg_at is None:
+                    first_stream_msg_at = time.monotonic()
+                    logger.info(
+                        f"[trace={trace_id}] ui_completions first-message latency_s="
+                        f"{first_stream_msg_at - start_mono:.3f} user_id={user_id} thread_id={thread_id} "
+                        f"type={type(message).__name__}"
+                    )
                 if hasattr(message, "metadata"):
                     if message.metadata.get("internal", "no") == "no":
                         if isinstance(message, ModelClientStreamingChunkEvent):
@@ -506,6 +577,9 @@ class DrSai:
         """
         try:
             start_time = time.time()
+            start_mono = time.monotonic()
+            inactivity_timeout_s, total_timeout_s = _get_stream_timeouts()
+            trace_id = kwargs.get("trace_id") or uuid.uuid4().hex[:8]
 
             # 处理用户的kwargs参数，保存UserInput到数据库
             user_input: UserInput = await self.handle_input_info(**kwargs)
@@ -596,8 +670,60 @@ class DrSai:
             rely_messages: List[BaseChatMessage] = []
             agent_result: TaskResult|None = None
 
+            logger.info(
+                f"[trace={trace_id}] chat_completions start user_id={user_id} thread_id={thread_id} "
+                f"stream={stream} inactivity_timeout_s={inactivity_timeout_s} total_timeout_s={total_timeout_s}"
+            )
+
             res = agent.run_stream(task=task)
-            async for message in res:
+            first_stream_msg_at: float | None = None
+            while True:
+                if total_timeout_s and (time.monotonic() - start_mono) > total_timeout_s:
+                    logger.error(
+                        f"[trace={trace_id}] chat_completions total-timeout after {total_timeout_s}s "
+                        f"user_id={user_id} thread_id={thread_id}"
+                    )
+                    if stream:
+                        oai_chunk = copy.deepcopy(chatcompletionchunk)
+                        oai_chunk["created"] = int(time.time())
+                        oai_chunk["choices"][0]["delta"]["role"] = "assistant"
+                        oai_chunk["choices"][0]["delta"]["content"] = (
+                            f"\n\n[ERROR] Request exceeded total timeout ({total_timeout_s}s). trace={trace_id}\n\n"
+                        )
+                        yield f"data: {json.dumps(oai_chunk)}\n\n"
+                        chatcompletionchunkend["created"] = int(time.time())
+                        yield f"data: {json.dumps(chatcompletionchunkend)}\n\n"
+                    break
+
+                try:
+                    message = await _anext_with_optional_timeout(res, inactivity_timeout_s)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    logger.error(
+                        f"[trace={trace_id}] chat_completions inactivity-timeout after {inactivity_timeout_s}s "
+                        f"user_id={user_id} thread_id={thread_id}"
+                    )
+                    if stream:
+                        oai_chunk = copy.deepcopy(chatcompletionchunk)
+                        oai_chunk["created"] = int(time.time())
+                        oai_chunk["choices"][0]["delta"]["role"] = "assistant"
+                        oai_chunk["choices"][0]["delta"]["content"] = (
+                            f"\n\n[ERROR] No stream output for {inactivity_timeout_s}s (inactivity timeout). "
+                            f"trace={trace_id}\n\n"
+                        )
+                        yield f"data: {json.dumps(oai_chunk)}\n\n"
+                        chatcompletionchunkend["created"] = int(time.time())
+                        yield f"data: {json.dumps(chatcompletionchunkend)}\n\n"
+                    break
+
+                if first_stream_msg_at is None:
+                    first_stream_msg_at = time.monotonic()
+                    logger.info(
+                        f"[trace={trace_id}] chat_completions first-message latency_s="
+                        f"{first_stream_msg_at - start_mono:.3f} user_id={user_id} thread_id={thread_id} "
+                        f"type={type(message).__name__}"
+                    )
                 
                 # print(message)
                 oai_chunk = copy.deepcopy(chatcompletionchunk)
@@ -750,14 +876,15 @@ class DrSai:
                 thread: Thread = response.data[0]
                 thread.status = RunStatus.COMPLETE
                 thread.messages.extend([rely_message.model_dump(mode="json") for rely_message in rely_messages]) # 已经存在的Thread只添加最后一条消息
-                if thread.team_result is None:
-                        thread.team_result = TeamResult(
-                            task_result = agent_result,
-                            usage="",
-                            duration= time.time() - start_time,
-                        )
-                else:
-                    thread.team_result["task_result"] = agent_result.model_dump(mode="json")
+                if agent_result is not None:
+                    if thread.team_result is None:
+                            thread.team_result = TeamResult(
+                                task_result = agent_result,
+                                usage="",
+                                duration= time.time() - start_time,
+                            )
+                    else:
+                        thread.team_result["task_result"] = agent_result.model_dump(mode="json")
             response: Response = self.db_manager.upsert(thread)
             if not response.status:
                 raise RuntimeError(f"Failed to create thread: {response.message}")

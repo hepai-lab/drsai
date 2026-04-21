@@ -80,6 +80,9 @@ async def run_websocket(
     if not connected:
         await websocket.close(code=4002, reason="Failed to establish connection")
         return
+    # Capture a connection generation to prevent stale disconnects closing new sockets.
+    # (WebSocketManager increments conn_gen per run_id on connect.)
+    conn_gen = getattr(ws_manager, "_conn_gen", {}).get(run_id)
 
     try:
         logger.info(f"WebSocket connection established for run {run_id}")
@@ -104,18 +107,43 @@ async def run_websocket(
                         metadata=start_metadata,
                     )
                     if task and team_config:
-                        # await ws_manager.start_stream(run_id, task, team_config)
-                        asyncio.create_task(
-                            ws_manager.start_stream(
-                                run_id, task, team_config, settings_config, files=files
-                            )
-                        )
+                        async def _run_stream_guarded():
+                            try:
+                                await ws_manager.start_stream(
+                                    run_id, task, team_config, settings_config, files=files
+                                )
+                            except Exception as e:
+                                logger.exception(f"start_stream failed for run {run_id}: {e}")
+                                # Never send type=error to the frontend. Emit a completion(error) instead.
+                                try:
+                                    await ws_manager._handle_stream_error(run_id, e)  # type: ignore[attr-defined]
+                                except Exception:
+                                    pass
+
+                        # run in background, but never let exceptions get lost
+                        asyncio.create_task(_run_stream_guarded())
                     else:
                         logger.warning(f"Invalid start message format for run {run_id}")
+                        # Never send type=error to the frontend.
                         await websocket.send_json(
                             {
-                                "type": "error",
-                                "error": "Invalid start message format",
+                                "type": "completion",
+                                "status": "error",
+                                "data": {
+                                    "task_result": {
+                                        "messages": [
+                                            {
+                                                "source": "system",
+                                                "content": "Invalid request. Please resend your message.",
+                                                "metadata": {"internal": "no"},
+                                            }
+                                        ],
+                                        "stop_reason": "invalid_start_message",
+                                    },
+                                    "usage": "",
+                                    "duration": 0.0,
+                                    "files": None,
+                                },
                                 "timestamp": datetime.utcnow().isoformat(),
                             }
                         )
@@ -171,4 +199,5 @@ async def run_websocket(
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
     finally:
-        await ws_manager.disconnect(run_id)
+        # Do not stop the run on transient websocket disconnect; allow reconnect.
+        await ws_manager.disconnect(run_id, conn_gen=conn_gen, stop_run=False)

@@ -459,6 +459,10 @@ export class SettingsAPI {
                 headers: this.getHeaders(),
             }
         );
+        // For non-SSO / missing users, backend should return 4xx. Treat as "no settings".
+        if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 422) {
+            return {};
+        }
         const data = await response.json();
         if (!data.status)
             throw new Error(data.message || "Failed to fetch settings");

@@ -74,8 +74,12 @@ class WebSocketManager:
         self.inside_docker = inside_docker
         self.config = config
         self._connections: Dict[int, WebSocket] = {}
+        # Monotonic generation per run_id to avoid stale disconnect races:
+        # old websocket finally blocks must not close a newer websocket.
+        self._conn_gen: Dict[int, int] = {}
         self._cancellation_tokens: Dict[int, CancellationToken] = {}
-        # Track explicitly closed connections
+        # Runs that are terminal (stopped/error) and should not accept further streaming/input.
+        # IMPORTANT: do NOT treat transient websocket disconnect as "closed run".
         self._closed_connections: set[int] = set()
         self._input_responses: Dict[int, asyncio.Queue[str]] = {}
         self._team_managers: Dict[int, TeamManager] = {}
@@ -102,10 +106,15 @@ class WebSocketManager:
     async def connect(self, websocket: WebSocket, run_id: int) -> bool:
         try:
             await websocket.accept()
+            self._conn_gen[run_id] = self._conn_gen.get(run_id, 0) + 1
             self._connections[run_id] = websocket
-            self._closed_connections.discard(run_id)
-            # Initialize input queue for this connection
-            self._input_responses[run_id] = asyncio.Queue()
+            # A websocket reconnect does not imply the run is terminal; keep closed state as-is.
+            # Initialize input queue for this connection.
+            # IMPORTANT: do not overwrite an existing queue on reconnect, otherwise
+            # pending input/resume semantics can break (frontend sees "awaiting_input"
+            # but backend lost the queue).
+            if run_id not in self._input_responses:
+                self._input_responses[run_id] = asyncio.Queue()
 
             await self._send_message(
                 run_id,
@@ -115,6 +124,37 @@ class WebSocketManager:
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 },
             )
+
+            # If the run was waiting for user input, re-send the pending input_request
+            # so the frontend can recover after a transient websocket reconnect.
+            try:
+                run = await self._get_run(run_id)
+                if run and getattr(run, "status", None) == RunStatus.AWAITING_INPUT:
+                    pending = getattr(run, "input_request", None)
+                    if isinstance(pending, dict) and pending.get("prompt"):
+                        await self._send_message(
+                            run_id,
+                            {
+                                "type": "system",
+                                "status": RunStatus.AWAITING_INPUT,
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            },
+                        )
+                        await self._send_message(
+                            run_id,
+                            {
+                                "type": "input_request",
+                                "input_type": pending.get("input_type") or "text_input",
+                                "prompt": pending.get("prompt") or "",
+                                "data": {
+                                    "source": "system",
+                                    "content": pending.get("prompt") or "",
+                                },
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            },
+                        )
+            except Exception as e:
+                logger.warning(f"Failed to replay input_request for run {run_id}: {e}")
 
             return True
         except Exception as e:
@@ -140,21 +180,38 @@ class WebSocketManager:
             settings_config (Dict[str, Any]): Configuration for settings
             user_settings (Settings, optional): User settings for the run
         """
-        if run_id not in self._connections or run_id in self._closed_connections:
+        if run_id not in self._connections:
             raise ValueError(f"No active connection for run {run_id}")
+        # Starting a new stream explicitly re-opens the run even if a previous attempt stopped.
+        # This matches UI expectation: user can send a new prompt after stopping.
+        self._closed_connections.discard(run_id)
 
-        # do not create a new team manager if one already exists
-        if run_id not in self._team_managers:
-            team_manager = TeamManager(
-                internal_workspace_root=self.internal_workspace_root,
-                external_workspace_root=self.external_workspace_root,
-                inside_docker=self.inside_docker,
-                config=self.config,
-            )
-            self._team_managers[run_id] = team_manager
+        # IMPORTANT: if a previous stream is still around (paused / awaiting_input / half-closed),
+        # starting a new stream on the same run_id can deadlock state machines.
+        # Minimal safety: stop and close any existing run resources before starting anew.
+        if run_id in self._cancellation_tokens or run_id in self._team_managers:
+            try:
+                # Internal restart: clean up previous run resources but do not mark the run as terminal.
+                await self.stop_run(run_id, "Restarted by client", mark_closed=False)
+            except Exception as e:
+                logger.warning(f"Failed to stop previous run before restart (run {run_id}): {e}")
+            try:
+                old_tm = self._team_managers.pop(run_id, None)
+                if old_tm:
+                    await old_tm.close()
+            except Exception as e:
+                logger.warning(f"Failed to close previous TeamManager (run {run_id}): {e}")
+            self._streaming_buffers.pop(run_id, None)
+            # Ensure the new stream isn't immediately short-circuited by a terminal flag.
+            self._closed_connections.discard(run_id)
 
-        else:
-            team_manager = self._team_managers[run_id]
+        team_manager = TeamManager(
+            internal_workspace_root=self.internal_workspace_root,
+            external_workspace_root=self.external_workspace_root,
+            inside_docker=self.inside_docker,
+            config=self.config,
+        )
+        self._team_managers[run_id] = team_manager
         cancellation_token = CancellationToken()
         self._cancellation_tokens[run_id] = cancellation_token
         final_result = None
@@ -199,7 +256,17 @@ class WebSocketManager:
                 #     if 'RemoteAgent' in state_dict_decompress["agent_states"]:
                 #         state_dict_decompress = None
 
-            agent_id = settings_config.get("agent_id")
+            raw_agent_id = settings_config.get("agent_id")
+            agent_id = (
+                raw_agent_id.strip()
+                if isinstance(raw_agent_id, str)
+                else (str(raw_agent_id).strip() if raw_agent_id is not None else "")
+            )
+            if not agent_id:
+                resolved = self._resolve_default_agent_id(run.user_id)
+                if resolved:
+                    settings_config["agent_id"] = resolved
+                    agent_id = resolved
             agent_mode_config = await self._get_agent_mode_config(user_id=run.user_id, agent_id = agent_id)
             if agent_mode_config:
                 settings_config["agent_mode_config"] = agent_mode_config
@@ -330,10 +397,47 @@ class WebSocketManager:
                         run_id, RunStatus.COMPLETE, team_result=final_result
                     )
                 else:
-                    logger.warning(
-                        f"No final result captured for completed run {run_id}"
+                    # Hard safety net: never let a run "finish" without an explicit final result.
+                    # This avoids UI hangs when upstream ends a stream early (no final message / no TaskResult).
+                    logger.error(f"No final result captured for run {run_id}; emitting error completion")
+
+                    error_message = TeamResult(
+                        task_result=TaskResult(
+                            messages=[
+                                TextMessage(
+                                    source="system",
+                                    content=(
+                                        "The run ended unexpectedly before producing a final result. "
+                                        "Please try again: resend your message, or type 'continue'. "
+                                        "If this keeps happening, refresh the page."
+                                    ),
+                                    metadata={"internal": "no"},
+                                )
+                            ],
+                            stop_reason="upstream_stream_ended_without_final_result",
+                        ),
+                        usage="",
+                        duration=0,
+                    ).model_dump()
+
+                    # Mark run terminal so input handlers won't keep prompting.
+                    self._closed_connections.add(run_id)
+
+                    await self._send_message(
+                        run_id,
+                        {
+                            "type": "completion",
+                            "status": "error",
+                            "data": error_message,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        },
                     )
-                    await self._update_run_status(run_id, RunStatus.COMPLETE)
+                    await self._update_run(
+                        run_id,
+                        RunStatus.ERROR,
+                        team_result=error_message,
+                        error="No final result captured (upstream stream ended early)",
+                    )
             else:
                 await self._send_message(
                     run_id,
@@ -452,6 +556,12 @@ class WebSocketManager:
             input_type: InputRequestType = "text_input",
         ) -> str:
             try:
+                # If the run was explicitly stopped, never prompt for more input.
+                if run_id in self._closed_connections:
+                    raise asyncio.CancelledError("Run stopped while awaiting input")
+                if cancellation_token is not None and cancellation_token.is_cancelled():
+                    raise asyncio.CancelledError("Run cancelled while awaiting input")
+
                 # resume run if it is paused
                 await self.resume_run(run_id)
 
@@ -479,14 +589,24 @@ class WebSocketManager:
                     self.db_manager.upsert(run)
 
                 # Wait for response with timeout
+                # If a transient disconnect happened during/after sending input_request,
+                # we may have dropped the in-memory queue. Re-create it to avoid hard failure.
+                if run_id not in self._input_responses:
+                    self._input_responses[run_id] = asyncio.Queue()
+
                 if run_id in self._input_responses:
                     try:
 
                         async def poll_for_response():
                             while True:
-                                # Check if run was closed/cancelled
-                                if run_id in self._closed_connections:
-                                    raise ValueError("Run was closed")
+                                # Check if run was cancelled (user stop / restart)
+                                if (
+                                    cancellation_token is not None
+                                    and cancellation_token.is_cancelled()
+                                ):
+                                    raise asyncio.CancelledError(
+                                        "Run cancelled while awaiting input"
+                                    )
 
                                 # Try to get response with short timeout
                                 try:
@@ -532,23 +652,24 @@ class WebSocketManager:
         else:
             logger.warning(f"Received input response for inactive run {run_id}")
 
-    async def stop_run(self, run_id: int, reason: str) -> None:
+    async def stop_run(self, run_id: int, reason: str, *, mark_closed: bool = True) -> None:
         if run_id in self._cancellation_tokens:
             logger.info(f"Stopping run {run_id}")
 
             stop_message = self._get_stop_message(reason)
 
             try:
+                # Mark run as terminal (user stop/error). Internal restart should not mark terminal.
+                if mark_closed:
+                    self._closed_connections.add(run_id)
+
                 # Update run record first
                 await self._update_run(
                     run_id, status=RunStatus.STOPPED, team_result=stop_message
                 )
 
                 # Then handle websocket communication if connection is active
-                if (
-                    run_id in self._connections
-                    and run_id not in self._closed_connections
-                ):
+                if run_id in self._connections:
                     await self._send_message(
                         run_id,
                         {
@@ -560,35 +681,52 @@ class WebSocketManager:
                     )
 
                 # Finally cancel the token
-                self._cancellation_tokens[run_id].cancel()
+                tok = self._cancellation_tokens.get(run_id)
+                if tok is not None:
+                    tok.cancel()
                 # remove team manager
                 team_manager = self._team_managers.pop(run_id, None)
                 if team_manager:
                     await team_manager.close()
+
+                # Clean up in-memory run state so a subsequent start on the same run_id
+                # doesn't inherit cancelled tokens/buffers.
+                self._cancellation_tokens.pop(run_id, None)
+                self._streaming_buffers.pop(run_id, None)
             except Exception as e:
                 logger.error(f"Error stopping run {run_id}: {e}")
                 # We might want to force disconnect here if db update failed
                 # await self.disconnect(run_id)  # Optional
 
-    async def disconnect(self, run_id: int) -> None:
+    async def disconnect(
+        self, run_id: int, conn_gen: int | None = None, *, stop_run: bool = False
+    ) -> None:
         """
         Clean up connection and associated resources
 
         Args:
             run_id (int): ID of the run to disconnect
         """
+        # If this disconnect comes from an older websocket, ignore it.
+        if conn_gen is not None and self._conn_gen.get(run_id) != conn_gen:
+            logger.info(
+                f"Ignoring stale disconnect for run {run_id}: conn_gen={conn_gen}, current={self._conn_gen.get(run_id)}"
+            )
+            return
         logger.info(f"Disconnecting run {run_id}")
 
-        # Mark as closed before cleanup to prevent any new messages
-        self._closed_connections.add(run_id)
+        # IMPORTANT: websocket disconnect is often transient. Do NOT mark run as closed here.
 
-        # Cancel any running tasks
-        await self.stop_run(run_id, "Connection closed")
+        # IMPORTANT: a websocket disconnect may be transient (tab refresh, network blip).
+        # Do not stop the run by default; allow reconnect + continue. Only stop if explicitly asked.
+        if stop_run:
+            await self.stop_run(run_id, "Connection closed")
 
         # Clean up resources
         self._connections.pop(run_id, None)
-        self._cancellation_tokens.pop(run_id, None)
-        self._input_responses.pop(run_id, None)
+        if stop_run:
+            self._cancellation_tokens.pop(run_id, None)
+            self._input_responses.pop(run_id, None)
 
     async def _send_message(self, run_id: int, message: Dict[str, Any]) -> None:
         """Send a message through the WebSocket with connection state checking
@@ -597,27 +735,25 @@ class WebSocketManager:
             run_id (int): int of the run
             message (Dict[str, Any]): Message dictionary to send
         """
-        if run_id in self._closed_connections:
-            logger.warning(
-                f"Attempted to send message to closed connection for run {run_id}"
-            )
-            return
-
         try:
             if run_id in self._connections:
                 websocket = self._connections[run_id]
                 # print(message)
                 await websocket.send_json(message)
+            else:
+                logger.warning(
+                    f"Attempted to send message without active websocket for run {run_id}"
+                )
         except WebSocketDisconnect:
             logger.warning(
                 f"WebSocket disconnected while sending message for run {run_id}"
             )
-            await self.disconnect(run_id)
+            await self.disconnect(run_id, conn_gen=self._conn_gen.get(run_id), stop_run=False)
         except Exception as e:
             logger.error(f"Error sending message for run {run_id}: {e}, {message}")
             # Don't try to send error message here to avoid potential recursive loop
             await self._update_run_status(run_id, RunStatus.ERROR, str(e))
-            await self.disconnect(run_id)
+            await self.disconnect(run_id, conn_gen=self._conn_gen.get(run_id), stop_run=False)
 
     async def _handle_stream_error(self, run_id: int, error: Exception) -> None:
         """
@@ -627,29 +763,53 @@ class WebSocketManager:
             run_id (int): ID of the run
             error (Exception): Exception that occurred
         """
-        if run_id not in self._closed_connections:
-            error_result = TeamResult(
-                task_result=TaskResult(
-                    messages=[TextMessage(source="system", content=str(error))],
-                    stop_reason="An error occurred while processing this run",
-                ),
-                usage="",
-                duration=0,
-            ).model_dump()
+        # Always terminate the run on stream error, and only communicate via completion(error).
+        # This prevents the UI from hanging in awaiting_input after upstream failures.
+        self._closed_connections.add(run_id)
 
-            await self._send_message(
-                run_id,
-                {
-                    "type": "completion",
-                    "status": "error",
-                    "data": error_result,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                },
-            )
+        # Best-effort: cancel any running stream and close team resources.
+        tok = self._cancellation_tokens.get(run_id)
+        if tok is not None:
+            tok.cancel()
+        tm = self._team_managers.pop(run_id, None)
+        if tm:
+            try:
+                await tm.close()
+            except Exception:
+                pass
 
-            await self._update_run(
-                run_id, RunStatus.ERROR, team_result=error_result, error=str(error)
-            )
+        error_result = TeamResult(
+            task_result=TaskResult(
+                messages=[
+                    TextMessage(
+                        source="system",
+                        content=(
+                            "This run ended unexpectedly and was stopped safely. "
+                            "Please resend your message, or type 'continue'. "
+                            "If it keeps happening, refresh the page."
+                        ),
+                        metadata={"internal": "no"},
+                    )
+                ],
+                stop_reason="stream_error",
+            ),
+            usage="",
+            duration=0,
+        ).model_dump()
+
+        await self._send_message(
+            run_id,
+            {
+                "type": "completion",
+                "status": "error",
+                "data": error_result,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+        await self._update_run(
+            run_id, RunStatus.ERROR, team_result=error_result, error=str(error)
+        )
 
     def _format_message(self, message: Any) -> Optional[Dict[str, Any]]:
         """Format message for WebSocket transmission
@@ -662,6 +822,11 @@ class WebSocketManager:
         """
 
         try:
+            # Never forward agent error messages as normal chat messages.
+            if isinstance(message, TextMessage):
+                md = getattr(message, "metadata", None) or {}
+                if isinstance(md, dict) and ("error_message" in md):
+                    return None
             if isinstance(message, MultiModalMessage):
                 message_dump = message.model_dump()
 
@@ -761,6 +926,22 @@ class WebSocketManager:
         if updated_agent is None:
             logger.warning(f"Agent config not found in UserAgents for user_id={user_id}, agent_id={agent_id}")
         return updated_agent
+
+    def _resolve_default_agent_id(self, user_id: str) -> Optional[str]:
+        """When the client omits agent_id, pick default / first agent from UserAgents."""
+        response = self.db_manager.get(UserAgents, filters={"user_id": user_id}, return_json=False)
+        if not response.status or not response.data:
+            return None
+        agents_list = response.data[0].agents or []
+        for agent in agents_list:
+            if not isinstance(agent, dict):
+                continue
+            if agent.get("is_default") and isinstance(agent.get("id"), str) and agent["id"].strip():
+                return agent["id"].strip()
+        for agent in agents_list:
+            if isinstance(agent, dict) and isinstance(agent.get("id"), str) and agent["id"].strip():
+                return agent["id"].strip()
+        return None
 
     async def _get_settings(self, user_id: str) -> Optional[Settings]:
         """Get user settings from database

@@ -1095,7 +1095,8 @@ const RunView: React.FC<RunViewProps> = ({
                     }
                     onResendMessage={(content: string) => {
                       // 根据当前状态决定调用哪个函数
-                      if (run.status === "awaiting_input" || run.status === "paused") {
+                      // paused：不是 agent 追问，应走新一轮 WS `start`（同 run_id），不要用 input_response
+                      if (run.status === "awaiting_input") {
                         onInputResponse?.(content, false, undefined, []);
                       } else {
                         onRunTask?.(content, [], undefined, true);
@@ -1103,7 +1104,7 @@ const RunView: React.FC<RunViewProps> = ({
                     }}
                     onActionButtonClick={(action: string) => {
                       // 与 onResendMessage 相同逻辑：将 action 作为用户输入发送
-                      if (run.status === "awaiting_input" || run.status === "paused") {
+                      if (run.status === "awaiting_input") {
                         onInputResponse?.(action, false, undefined, []);
                       } else {
                         onRunTask?.(action, [], undefined, true);
@@ -1169,10 +1170,7 @@ const RunView: React.FC<RunViewProps> = ({
               llm?: { label: string; value: string }
             ) => {
               scrollToBottom("smooth");
-              if (
-                run.status === "awaiting_input" ||
-                run.status === "paused"
-              ) {
+              if (run.status === "awaiting_input") {
                 onInputResponse?.(
                   query,
                   accepted,
