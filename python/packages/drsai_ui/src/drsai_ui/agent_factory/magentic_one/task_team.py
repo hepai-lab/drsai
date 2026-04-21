@@ -34,6 +34,7 @@ from ...ui_backend.backend.utils.utils import decompress_state
 from ...agent_factory.remote_agent import StatusAgent
 # from drsai.modules.agents import HepAIWorkerAgent
 from ...agent_factory.local_agents.ragflow_agent import RAGFlowAgent
+from drsai.modules.agents import HepAIWorkerAgent
 
 import json, os
 import aiofiles
@@ -500,7 +501,7 @@ async def create_magentic_round_team(
         agent_config["url"] = agent_mode_config.get("url", "https://aiapi.ihep.ac.cn/apiv2")
         if agent_mode_config.get("defult_config_name"):
             agent_config["defult_config_name"] = agent_mode_config.get("defult_config_name")
-        agent = StatusAgent(
+        agent = HepAIWorkerAgent(
             name="RemoteAgent",
             model_client=get_model_client(model_client_config = model_config),
             model_remote_configs = agent_config,

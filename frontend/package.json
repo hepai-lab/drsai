@@ -1,6 +1,6 @@
 {
   "name": "open-drsai",
-  "version": "1.2.35",
+  "version": "1.2.38",
   "private": true,
   "description": "Dr.Sai",
   "author": "HepAI",
@@ -8,7 +8,7 @@
     "gatsby"
   ],
   "scripts": {
-    "develop": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port ${GATSBY_DEV_PORT:-8001} --host 0.0.0.0",
+    "develop": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port ${GATSBY_DEV_PORT:-8000} --host 0.0.0.0",
     "develop-clean": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby clean && NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port ${GATSBY_DEV_PORT:-8001} --host 0.0.0.0",
     "develop:8000": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port 8000 --host 0.0.0.0",
     "dev": "npm run develop",
@@ -49,6 +49,7 @@
     "react-syntax-highlighter": "^15.6.1",
     "react-vnc": "^3.0.8",
     "react-window": "^1.8.11",
+    "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.0",
     "tailwindcss": "^3.4.14",
     "yarn": "^1.22.22",

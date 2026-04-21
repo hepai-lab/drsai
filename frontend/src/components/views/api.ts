@@ -801,6 +801,33 @@ export class AgentWorkerAPI {
         }
         return data.data || [];
     }
+
+    async getUserDefaultAgent(userId: string): Promise<{ default_agent_id: string | null; stored_default_agent_id: string | null }> {
+        const url = `${this.getBaseUrl()}/agentworker/user_default_agent?user_id=${encodeURIComponent(userId)}`;
+        const response = await fetch(url, {
+            headers: { "Content-Type": "application/json" },
+        });
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || "Failed to fetch user default agent");
+        }
+        return data.data;
+    }
+
+    async setUserDefaultAgent(userId: string, agentId: string): Promise<void> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/agentworker/user_default_agent`,
+            {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id: userId, agent_id: agentId }),
+            },
+        );
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || "Failed to set default agent");
+        }
+    }
 }
 
 export const agentWorkerAPI = new AgentWorkerAPI();

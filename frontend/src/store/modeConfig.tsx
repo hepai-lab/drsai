@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { Agent } from "@/types/common";
-import { agentAPI, organizationsAPI } from "@/components/views/api";
+import { agentAPI, agentWorkerAPI, organizationsAPI } from "@/components/views/api";
 import { getLocalStorage } from "@/components/utils";
 import { getFirstRecentAgentId } from "@/utils/recentAgentsStorage";
 import { pickLoginDefaultAgent } from "@/utils/agentPreference";
@@ -51,13 +51,10 @@ export const useModeConfigStore = create<IModeConfig>()(
                 agentId: state.agentId,
                 mode: state.mode,
             }),
-            // 与 drsai.recentAgents 对齐：有「最近使用」时 agentId 以列表第一条为准，便于 useAgentInfo 用正确 id 拉详情
+            // 注意：recentAgents 仅用于 UI 展示，不应覆盖“默认智能体”选择。
+            // 否则一旦 recent[0] 恰好是历史遗留的 builtin（如 eab8...），会把用户显式默认顶掉。
             onRehydrateStorage: () => (state) => {
                 if (!state) return;
-                const recentFirst = getFirstRecentAgentId();
-                if (recentFirst) {
-                    useModeConfigStore.getState().setAgentId(recentFirst);
-                }
                 const { agentId } = useModeConfigStore.getState();
                 if (agentId) return;
 
@@ -67,14 +64,18 @@ export const useModeConfigStore = create<IModeConfig>()(
                 if (!userId) return;
 
                 void Promise.all([
-                    agentAPI.getAgentList(userId),
+                    agentWorkerAPI.getUserDefaultAgents(userId).then((r: any) => r?.data || []),
                     organizationsAPI.getMyOrg(userId).catch(() => null),
+                    agentWorkerAPI.getUserDefaultAgent(userId).catch(() => null),
                 ])
-                    .then(([agents, myOrg]) => {
+                    .then(([agents, myOrg, userDefault]) => {
                         const orgDefault = (myOrg?.default_agent_id as string) || null;
+                        // Only treat explicitly stored default as personal preference.
+                        const userDefaultId = userDefault?.stored_default_agent_id ?? null;
                         const preferred = pickLoginDefaultAgent(
                             agents || [],
                             orgDefault,
+                            userDefaultId,
                         );
                         const id = preferred?.id;
                         if (!id || typeof id !== "string") return;
@@ -82,9 +83,6 @@ export const useModeConfigStore = create<IModeConfig>()(
                             useModeConfigStore.getState();
                         if (!cur) {
                             setId(id);
-                            console.log(
-                                `首次登录，设置默认 agentId（组织默认/is_default/Dr.Sai General）: ${id}`,
-                            );
                         }
                     })
                     .catch((err) => {
