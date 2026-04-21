@@ -22,34 +22,44 @@ def _truthy_env(value: str | None) -> bool:
         return False
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
-def _builtin_drsai_general_enabled() -> bool:
-    """
-    Whether to inject the built-in "Dr.Sai General" agent into the agent list.
 
-    By default it's enabled for backwards-compatibility. Downstream users who
-    fork/use the source can disable it to avoid the frontend's hard-coded
-    Dr.Sai General login-default preference.
-    """
-    return not _truthy_env(os.getenv("DRSUI_DISABLE_BUILTIN_DRSAI_GENERAL"))
+def _int_env(name: str, default: int, min_value: int = 1) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(min_value, value)
+
+
+def _float_env(name: str, default: float, min_value: float = 0.1) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(min_value, value)
 
 
 def _mark_featured_and_default_agents(agents: List[Dict[str, Any]]) -> None:
     """
     Add UI-related flags to agent dicts.
 
+    Only environment overrides control which agent gets marked "featured" —
+    there is no hard-coded builtin fallback. If no env matches, no agent is
+    auto-featured; use DEFAULT_REMOTE_AGENTS ordering / is_default to drive
+    the default instead.
+
     Environment overrides (optional):
     - DRSUI_FEATURED_AGENT_ID / _NAME / _OWNER: match rule for "featured" agent
-    - DRSUI_DISABLE_BUILTIN_FEATURED: if true, disables built-in Dr.Sai General fallback
-    - DRSUI_DISABLE_BUILTIN_DRSAI_GENERAL: if true, do not inject builtin Dr.Sai General
     """
     featured_id = os.getenv("DRSUI_FEATURED_AGENT_ID")
     featured_name = os.getenv("DRSUI_FEATURED_AGENT_NAME")
     featured_owner = os.getenv("DRSUI_FEATURED_AGENT_OWNER")
-    disable_builtin = _truthy_env(os.getenv("DRSUI_DISABLE_BUILTIN_FEATURED"))
-
-    # Built-in fallback (current official featured agent)
-    builtin_name = "Dr.Sai General"
-    builtin_owner = "xiongdb@ihep.ac.cn"
 
     def _match(agent: Dict[str, Any]) -> bool:
         a_id = str(agent.get("id") or "").strip()
@@ -64,10 +74,7 @@ def _mark_featured_and_default_agents(agents: List[Dict[str, Any]]) -> None:
             return True
         if featured_owner and a_owner == featured_owner.strip().lower():
             return True
-
-        if disable_builtin:
-            return False
-        return a_name == builtin_name and a_owner == builtin_owner.lower()
+        return False
 
     featured_agent_id: str | None = None
     for agent in agents:
@@ -91,38 +98,45 @@ def _mark_featured_and_default_agents(agents: List[Dict[str, Any]]) -> None:
 
 
 
-_BUILTIN_DRSAI_GENERAL_ID = "eab8c9e8-e5be-4bb2-9dd8-0fdc6938e357"
-
-
-def _builtin_drsai_general_json_path() -> Path:
-    return Path(__file__).resolve().parent / "data" / "builtin_drsai_general.json"
-
-
-def load_builtin_drsai_general_agent() -> Dict[str, Any]:
-    """Canonical Dr.Sai General (ddf) row for DB / API; shipped as package data."""
-    with open(_builtin_drsai_general_json_path(), encoding="utf-8") as f:
-        return json.load(f)
-
-
-def append_builtin_drsai_general_if_missing(agents_list: List[Dict[str, Any]]) -> None:
-    if not _builtin_drsai_general_enabled():
-        return
-    if any(str(a.get("id")) == _BUILTIN_DRSAI_GENERAL_ID for a in agents_list):
-        return
-    agents_list.append(load_builtin_drsai_general_agent())
-
-
-def ensure_user_agents_list_has_builtin(agents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Return a copy of agents with builtin Dr.Sai General appended if absent (by id)."""
-    out = list(agents or [])
-    append_builtin_drsai_general_if_missing(out)
-    return out
-
-
 def get_agent_mode_config(
         user_id: str,
 ) -> list[dict[str, str]]:
     return [
+      {
+            "name": "Dr.Sai General",
+            "description": "A general assistant for PDF QA, writing code, implementing features, and fixing bugs.",
+            "version": "0.1.0",
+            "author": "xiongdb@ihep.ac.cn",
+            "logo": "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            "examples": [
+                  "你有什么技能，如何下载新技能?",
+                  "如何配置自己的子智能体，如何使用子智能体。",
+                  "如何构建自己的RAGFlow知识库，并不断更新自己的知识库？",
+            ],
+            "agent_config": {
+                  "claude-sonnet-4-6(High)": "anthropic/claude-sonnet-4-6",
+                  "claude-haiku-4-5(Fast)": "anthropic/claude-haiku-4-5",
+                  "minimax-m2.5": "minimax/minimax-m2.5",
+                  "minimax-m2.5-highspeed": "minimax/minimax-m2.5-highspeed",
+                  "minimax-m2.7": "minimax/minimax-m2.7",
+                  "minimax-m2.7-highspeed": "minimax/minimax-m2.7-highspeed",
+                  "gpt-4o": "openai/gpt-4o",
+                  "gpt-4.1": "openai/gpt-4.1",
+                  "gpt-5.2": "openai/gpt-5.2",
+                  "deepseek-r1(No image)": "deepseek-ai/deepseek-r1",
+                  "deepseek-v3.2(No image)": "deepseek-ai/deepseek-v3.2",
+            },
+            "default_config_name": "deepseek-v3.2(No image)",
+            "mode": "ddf",
+            "owner": "xiongdb@ihep.ac.cn",
+            "id": "eab8c9e8-e5be-4bb2-9dd8-0fdc6938e357",
+            "config": {
+                  "name": "Dr.Sai General",
+                  "url": "https://aiapi.ihep.ac.cn/apiv2",
+            },
+            "featured": True,
+            "is_default": True,
+      },
       { 
             "id": "010022126sdfnjsdnqw",
             "mode": "magentic-one", 
@@ -194,7 +208,6 @@ def get_default_agent_mode_config(user_id: str) -> List[Dict[str, Any]]:
             if not agent_mode.get("id"):
                 agent_mode["id"] = str(uuid.uuid4())
         agents_list.extend(default_agents_mode)
-    append_builtin_drsai_general_if_missing(agents_list)
     return agents_list
 
 async def get_agents_mode(user_id: str, db:DatabaseManager) -> Dict:
@@ -225,13 +238,15 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
     '''
     获取后端的mode种类设置
     '''
+    user_ddf_agents: UserDDFAgents | None = None
+    agents_old: List[Dict[str, Any]] = []
     try:
         # Check cache first
         response = db.get(UserDDFAgents, filters={"user_id": user_id})
         
         agents_name_old = {}
         if response.status and response.data:
-            user_ddf_agents: UserDDFAgents = response.data[0]
+            user_ddf_agents = response.data[0]
             agents_old = user_ddf_agents.agents or []
             agents_name_old = {agent["name"]: agent for agent in agents_old}
             if not is_refresh:
@@ -247,49 +262,60 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
             raise HTTPException(status_code=401, detail="Invalid authorization header format")
         
         apikey = authorization[7:]  # Remove "Bearer " prefix
+        if not apikey.strip():
+            return {"status": True, "data": agents_old}
 
         client = HepAI(
             api_key=apikey,
             base_url="https://aiapi.ihep.ac.cn/apiv2"
         )
         models = client.agents.list()
-        
-        agents = []
-        for model in models.data:
-            if model.id != "hepai/custom-model":
-                try:
-                    model = HRModel.connect(
-                        name=model.id, 
+
+        timeout_seconds = _float_env("DRSUI_DDF_AGENT_INFO_TIMEOUT", default=5.0, min_value=0.5)
+        max_concurrency = _int_env("DRSUI_DDF_AGENT_INFO_MAX_CONCURRENCY", default=8, min_value=1)
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def _fetch_model_info(model_id: str) -> Dict[str, Any] | None:
+            try:
+                async with semaphore:
+                    worker = HRModel.connect(
+                        name=model_id,
                         api_key=apikey,
                         base_url="https://aiapi.ihep.ac.cn/apiv2",
                     )
-                    # agent_info: dict|WorkerInfo = model.get_info()
-                    agent_info: dict|WorkerInfo = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                model.get_info
-                            ),
-                            timeout=5.0
-                        )
-                    if isinstance(agent_info, WorkerInfo):
-                        pass
-                        # agent_info = agent_info.to_dict()
-                        # agent_info.update({"owner": agent_info["resource_info"][0]["owned_by"]})
-                    else:
-                        agent_info.update({"mode": "ddf"})
-                        agent_info.update({"owner": agent_info["author"]})
-                        if agent_info.get("name") in agents_name_old:
-                            agent_info.update({"id": agents_name_old[agent_info.get("name")]["id"]})
-                        else:
-                            agent_info.update({"id": str(uuid.uuid4())})
-                        agents.append(agent_info)
-                except Exception as e:
-                    pass
+                    agent_info: dict | WorkerInfo = await asyncio.wait_for(
+                        asyncio.to_thread(worker.get_info),
+                        timeout=timeout_seconds,
+                    )
+                if isinstance(agent_info, WorkerInfo):
+                    return None
+                agent_info.update({"mode": "ddf"})
+                agent_info.update({"owner": agent_info.get("author")})
+                if agent_info.get("name") in agents_name_old:
+                    agent_info.update({"id": agents_name_old[agent_info.get("name")]["id"]})
+                else:
+                    agent_info.update({"id": str(uuid.uuid4())})
+                return agent_info
+            except Exception:
+                return None
+
+        model_ids = [model.id for model in models.data if model.id != "hepai/custom-model"]
+        if model_ids:
+            fetched_agents = await asyncio.gather(*(_fetch_model_info(model_id) for model_id in model_ids))
+        else:
+            fetched_agents = []
+        agents = [agent for agent in fetched_agents if agent]
+
+        # 保持用户体验：刷新失败时不要把已有列表变为空
+        if not agents and agents_old:
+            agents = agents_old
         
         # Update cache
         if response.status and response.data:
             # Update existing record
-            user_ddf_agents.agents = agents
-            db.upsert(user_ddf_agents)
+            if user_ddf_agents is not None and agents != agents_old:
+                user_ddf_agents.agents = agents
+                db.upsert(user_ddf_agents)
         else:
             # Create new record
             new_user_ddf_agents = UserDDFAgents(
@@ -301,8 +327,8 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
         return {"status": True, "data": agents}
     
     except Exception as e:
-        # raise HTTPException(status_code=500, detail=str(e)) from e
-        return {"status": True, "data": []}
+        logger.warning("Failed to refresh DDF agents for user %s: %s", user_id, str(e))
+        return {"status": True, "data": agents_old}
 
 async def get_user_remote_agents(user_id: str, db: DatabaseManager = None) -> Dict:
     '''

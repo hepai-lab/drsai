@@ -699,7 +699,8 @@ export const SessionManager: React.FC = () => {
         rightPanelFiles={rightPanelFiles}
         onRightPanelTabChange={(tab) => {
           if (tab === "files") {
-            navigateToView("file_preview");
+            // Keep the current canvas view when only switching to the file-space tab.
+            // The canvas should switch to file preview only after selecting a specific file.
             return;
           }
           navigateToView("chat");

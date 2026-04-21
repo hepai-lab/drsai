@@ -19,8 +19,10 @@ from .....agent_factory.agent_mode_cofigs import (
     get_agent_mode_config,
     get_default_agent_mode_config,
     get_user_agents,
-    ensure_user_agents_list_has_builtin,
 )
+
+import logging
+_logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -198,15 +200,11 @@ async def user_default_agents(user_id: str, db=Depends(get_db)) -> Dict:
                 "data": [],
             }
         user_agents_row: UserAgents = response.data[0]
-        agents_before = user_agents_row.agents or []
-        agents_out = ensure_user_agents_list_has_builtin(agents_before)
-        if agents_out != agents_before:
-            user_agents_row.agents = agents_out
-            db.upsert(user_agents_row)
+        agents_after = user_agents_row.agents or []
         return {
             "status": True,
             "message": "Get user's default agents successfully",
-            "data": agents_out,
+            "data": agents_after,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -365,5 +363,100 @@ async def get_recent_user_agents(
                 for r in rows
             ],
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ---------------------------------------------------------------------------
+# User default agent preference (server-side, persisted in AgentModeSettings)
+# ---------------------------------------------------------------------------
+
+class SetDefaultAgentRequest(BaseModel):
+    user_id: str
+    agent_id: str
+
+
+def _resolve_default_agent_id(
+    user_id: str,
+    db: DatabaseManager,
+    stored_default: str | None,
+) -> str | None:
+    """Resolve the effective default agent for a user.
+
+    Policy (no hard-coded builtin):
+    - If *stored_default* is set and still present in the user's agent list, use it.
+    - Otherwise, prefer an agent flagged ``is_default`` in the user's list.
+    - Otherwise, fall back to the first agent in the list.
+    - If the list is empty, return ``None``.
+    """
+    resp = db.get(UserAgents, filters={"user_id": user_id})
+    agents: list[dict] = []
+    if resp.status and resp.data:
+        agents = resp.data[0].agents or []
+
+    available_ids = {str(a.get("id") or "") for a in agents}
+
+    if stored_default and stored_default in available_ids:
+        return stored_default
+
+    if stored_default:
+        _logger.info(
+            "User %s default agent %s not available, falling back",
+            user_id, stored_default,
+        )
+
+    flagged = next(
+        (a for a in agents if bool(a.get("is_default")) and a.get("id")),
+        None,
+    )
+    if flagged:
+        return str(flagged["id"])
+
+    return agents[0]["id"] if agents else None
+
+
+@router.get("/user_default_agent")
+async def get_user_default_agent(user_id: str, db=Depends(get_db)) -> Dict:
+    """Return the user's chosen default agent id (with availability fallback)."""
+    try:
+        resp = db.get(AgentModeSettings, filters={"user_id": user_id})
+        stored = None
+        if resp.status and resp.data:
+            stored = getattr(resp.data[0], "default_agent_id", None)
+
+        resolved = _resolve_default_agent_id(user_id, db, stored)
+        return {
+            "status": True,
+            "data": {
+                "default_agent_id": resolved,
+                "stored_default_agent_id": stored,
+            },
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.put("/user_default_agent")
+async def set_user_default_agent(
+    request: SetDefaultAgentRequest,
+    db=Depends(get_db),
+) -> Dict:
+    """Persist the user's chosen default agent."""
+    try:
+        resp = db.get(AgentModeSettings, filters={"user_id": request.user_id})
+        if resp.status and resp.data:
+            settings: AgentModeSettings = resp.data[0]
+            settings.default_agent_id = request.agent_id
+            db.upsert(settings)
+        else:
+            default_agents = get_default_agent_mode_config(user_id=request.user_id)
+            settings = AgentModeSettings(
+                user_id=request.user_id,
+                agents_mode=default_agents,
+                default_agent_id=request.agent_id,
+            )
+            db.upsert(settings)
+
+        return {"status": True, "message": "Default agent updated"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e

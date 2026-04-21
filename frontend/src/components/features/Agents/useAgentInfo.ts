@@ -46,12 +46,16 @@ export const useAgentInfo = (userIdProp?: string) => {
       if (!id) {
         const sa = useModeConfigStore.getState().selectedAgent;
         try {
-          const [agents, myOrg] = await Promise.all([
-            agentAPI.getAgentList(userId),
+          const [agents, myOrg, userDefault] = await Promise.all([
+            // Use UserAgents list for consistency with getUserAgentById
+            agentWorkerAPI.getUserDefaultAgents(userId).then((r: any) => r?.data || []),
             organizationsAPI.getMyOrg(userId).catch(() => null),
+            agentWorkerAPI.getUserDefaultAgent(userId).catch(() => null),
           ]);
           if (cancelled) return;
           const orgDefault = (myOrg?.default_agent_id as string) || null;
+          // Use stored_default_agent_id so "not set" doesn't degrade into a forced builtin.
+          const userDefaultId = userDefault?.stored_default_agent_id ?? null;
           const match =
             (sa?.id && agents?.find((a) => a.id === sa.id)) ||
             (sa?.name &&
@@ -60,7 +64,7 @@ export const useAgentInfo = (userIdProp?: string) => {
                   a.name === sa.name ||
                   (Boolean(sa.mode) && a.mode === sa.mode),
               )) ||
-            pickLoginDefaultAgent(agents || [], orgDefault) ||
+            pickLoginDefaultAgent(agents || [], orgDefault, userDefaultId) ||
             pickPreferredAgentFromList(agents || []);
           if (match?.id) {
             setAgentId(match.id);
@@ -131,9 +135,10 @@ export const useAgentInfo = (userIdProp?: string) => {
         }
 
         try {
-          const [agents, myOrg] = await Promise.all([
-            agentAPI.getAgentList(userId),
+          const [agents, myOrg, userDefault] = await Promise.all([
+            agentWorkerAPI.getUserDefaultAgents(userId).then((r: any) => r?.data || []),
             organizationsAPI.getMyOrg(userId).catch(() => null),
+            agentWorkerAPI.getUserDefaultAgent(userId).catch(() => null),
           ]);
           const byId = agents?.find((a) => a.id === id);
           if (byId) {
@@ -141,8 +146,9 @@ export const useAgentInfo = (userIdProp?: string) => {
             return;
           }
           const orgDefault = (myOrg?.default_agent_id as string) || null;
+          const userDefaultId = userDefault?.stored_default_agent_id ?? null;
           const preferred =
-            pickLoginDefaultAgent(agents || [], orgDefault) ||
+            pickLoginDefaultAgent(agents || [], orgDefault, userDefaultId) ||
             pickPreferredAgentFromList(agents || []);
           if (
             preferred?.id &&

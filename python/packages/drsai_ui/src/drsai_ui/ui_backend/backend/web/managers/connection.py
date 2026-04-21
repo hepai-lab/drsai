@@ -43,6 +43,7 @@ from ...datamodel import (
 )
 from ...teammanager import TeamManager
 from ...utils.utils import compress_state, decompress_state
+from autogen_agentchat.messages import ThoughtEvent
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class WebSocketManager:
         self._closed_connections: set[int] = set()
         self._input_responses: Dict[int, asyncio.Queue[str]] = {}
         self._team_managers: Dict[int, TeamManager] = {}
+        self._streaming_buffers: Dict[int, Dict[str, Any]] = {}
         self._cancel_message = TeamResult(
             task_result=TaskResult(
                 messages=[TextMessage(source="user", content="Run cancelled by user")],
@@ -283,12 +285,19 @@ class WebSocketManager:
                         await self._save_message(run_id, message)
                     continue
 
+                if isinstance(message, ModelClientStreamingChunkEvent):
+                    is_start = str(message.metadata.get("start_flag", "")).lower() == "yes" if message.metadata else False
+                    if is_start and run_id in self._streaming_buffers:
+                        await self._flush_streaming_buffer(run_id)
+                    self._accumulate_chunk(run_id, message)
+                else:
+                    if run_id in self._streaming_buffers:
+                        await self._flush_streaming_buffer(run_id)
+
                 formatted_message = self._format_message(message)
-                # print(f"Send formatted_message to client: {formatted_message}" )
                 if formatted_message:
                     await self._send_message(run_id, formatted_message)
 
-                    # Save messages by concrete type
                     if isinstance(
                         message,
                         (
@@ -299,16 +308,19 @@ class WebSocketManager:
                             ToolCallRequestEvent,
                             ToolCallExecutionEvent,
                             AgentLogEvent,
+                            ThoughtEvent,
                             TaskEvent,
                             LLMCallEventMessage,
                             FilesEvent,
                         ),
                     ):
                         await self._save_message(run_id, message)
-                    # Capture final result if it's a TeamResult
                     elif isinstance(message, TeamResult):
                         final_result = message.model_dump()
-                    self._team_managers[run_id] = team_manager  # Track the team manager
+                    self._team_managers[run_id] = team_manager
+            # Flush any remaining streaming content after the stream ends
+            if run_id in self._streaming_buffers:
+                await self._flush_streaming_buffer(run_id)
             if (
                 not cancellation_token.is_cancelled()
                 and run_id not in self._closed_connections
@@ -344,6 +356,37 @@ class WebSocketManager:
         finally:
             self._cancellation_tokens.pop(run_id, None)
             self._team_managers.pop(run_id, None)  # Remove the team manager when done
+
+    async def _flush_streaming_buffer(self, run_id: int) -> None:
+        """Flush accumulated streaming chunks as a TextMessage and save to database."""
+        buf = self._streaming_buffers.pop(run_id, None)
+        if not buf or not buf.get("content"):
+            return
+        assembled = TextMessage(
+            source=buf["source"],
+            content=buf["content"],
+            metadata=buf.get("metadata", {}),
+        )
+        await self._save_message(run_id, assembled)
+
+    def _accumulate_chunk(self, run_id: int, message: ModelClientStreamingChunkEvent) -> None:
+        """Accumulate a streaming chunk into the buffer for the given run."""
+        source = message.source
+        content = message.content if isinstance(message.content, str) else ""
+        metadata = dict(message.metadata) if message.metadata else {}
+        is_start = str(metadata.get("start_flag", "")).lower() == "yes"
+
+        buf = self._streaming_buffers.get(run_id)
+        if is_start or buf is None or buf["source"] != source:
+            self._streaming_buffers[run_id] = {
+                "source": source,
+                "content": content,
+                "metadata": metadata,
+            }
+        else:
+            buf["content"] += content
+            if metadata:
+                buf["metadata"].update(metadata)
 
     async def _save_message(
         self, run_id: int, message: Union[AgentEvent | ChatMessage, LLMCallEventMessage]
