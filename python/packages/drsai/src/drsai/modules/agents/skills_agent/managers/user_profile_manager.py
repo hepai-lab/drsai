@@ -84,7 +84,6 @@ class UserProfileManager:
             work_dir: str | Path,
             user_id: str,
             thread_id: str,
-            user_config: UserProfile | None = None,
             ):
         """
         Args:
@@ -112,7 +111,7 @@ class UserProfileManager:
         self.memories_dir = self.config_path / "memories" # 用户所有的记忆文件
         self.memories_document_ids = self.memories_dir / "document_ids.json" # 记录每个记忆文件的RAGFlow文档ID
         self.skills_md = self.config_path / "SKILLS.md" # 调用技能描述，目前未用
-        self.skills_dir = self.config_path / "skills" # 用户的所有
+        self.skills_dir = self.config_path / "skills" # 用户的所有skills
         self.tools_md = self.config_path / "TOOLS.md" # 用户的工作环境配置
         self.tools_config_path = self.config_path / "TOOLS_CONFIG.json" # 工具配置
         self.user_md = self.config_path / "USER.md" # 用户的个人描述
@@ -121,15 +120,8 @@ class UserProfileManager:
             
         # user's user profile
         self.first_time_setup = True
-        if self.agents_md.exists():
+        if self.agents_md.exists() or self.user_md.exists():
             self.first_time_setup = False
-
-        if not self.first_time_setup:
-            self.user_config = self.load_user_config()
-        elif user_config:
-            self.user_config = user_config
-        else:
-            self.user_config = None
 
         # 初始化文件
         self._initialize_files()
@@ -139,6 +131,7 @@ class UserProfileManager:
  
         if not self.user_config_path.exists():
             self._create_user_config()
+        self.user_config = self.load_user_config()
         self.agent_name = self.user_config.agent_name
         self.user_name = self.user_config.user_name
 
@@ -267,6 +260,7 @@ The more you know, the better you can help. But remember — you're learning abo
 
         user_md = self.get_user_profile()
         tools_md = self.get_tools_preferences()
+        skill_md = self.get_skills_preferences()
        
         content = f"""# System
 
@@ -293,6 +287,8 @@ You are an interactive tool that helps users with software engineering and scien
 
 {user_md}
 
+{skill_md}
+
 {tools_md}
 """
         self.agents_md.write_text(content, encoding='utf-8')
@@ -304,16 +300,10 @@ You are an interactive tool that helps users with software engineering and scien
 
     def _create_skills_md(self):
         """创建Skills.md文件"""
-        content = f"""# Learned Skills for User: {self.user_id}
+        content = f"""# Skills Preference
 
-## Task Execution History Summary
-[This file summarizes successful task execution patterns]
+ - When conducting academic searches, users should give priority to `academic-search`. When performing web searches, they should give priority to `playwright-cli`.
 
-## Available Custom Skills
-[Skills are stored in skills/ directory with SKILL.md format]
-
-## Created: {datetime.now().isoformat()}
-## Updated: {datetime.now().isoformat()}
 """
         self.skills_md.write_text(content, encoding='utf-8')
 
@@ -511,7 +501,18 @@ You can update one or multiple fields at once. Only provide the fields that need
         except Exception as e:
             logger.error(f"Failed to update TOOLS.md: {e}")
 
-
+    def get_skills_preferences(self) -> str:
+        """
+        获取工具偏好
+        Returns:
+            TOOLS.md的内容
+        """
+        try:
+            return self.skills_md.read_text(encoding='utf-8')
+        except Exception as e:
+            logger.error(f"Failed to read SKILLS.md: {e}")
+            return ""
+        
     def save_learned_skill(self, skill_name: str, skill_content: str) -> str:
         """
         保存学习到的skill

@@ -157,15 +157,19 @@ class DrSaiAssistant(DrSaiAgent):
         set_model_client: Callable | None = None,
         llm_mode_config: Dict = {},
         defult_config_name: str | None = None,
+        # basic tools and userprofile config
+        work_dir: str | None = None,
+        only_system_message: bool = False,
         is_powershell: bool = False,
         allolow_dangrous_cmd: bool = False,
-        # skills and executor
-        skills_dir: Optional[str | List[str]] = None,
-        work_dir: str | None = None,
+        allolow_basic_tools: Optional[List[str]] = None,
         only_in_workspace: bool = True,
         extra_work_dirs: List[str] | None = None,
+        # skills, executor, sub_agents
+        skills_dir: Optional[str | List[str]] = [],
         executor: CodeExecutor | None = None,
         sub_agent_config: Dict = {},
+        # task loop and memory
         max_turn_count: int = 200,
         token_limit: int = 50000,
         rag_flow_url: str | None = None,
@@ -223,9 +227,13 @@ class DrSaiAssistant(DrSaiAgent):
         )
         self._update_user_config_tools = [self._user_profile_manager.get_user_config_tool()]
         # combine system messages
-        user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
-        enhanced_system_message = f"""{self._developer_system_message}\n{user_sys_prompt}\n
+        self._only_system_message = only_system_message
+        if not self._only_system_message:
+            user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
+            enhanced_system_message = f"""{self._developer_system_message}\n{user_sys_prompt}\n
 Current Session_ID is {self._thread_id}"""
+        else:
+            enhanced_system_message = self._developer_system_message
         self._system_messages = [SystemMessage(content=enhanced_system_message)]
 
         # === basic tools ===
@@ -242,7 +250,9 @@ Current Session_ID is {self._thread_id}"""
             is_powershell=is_powershell,
             allolow_dangrous_cmd=allolow_dangrous_cmd
             )
-        self._basic_funcs_names = [func.__name__ for func in self._basic_funcs]
+        if allolow_basic_tools is not None:
+            self._basic_funcs = [func for func in self._basic_funcs if func.__name__ in allolow_basic_tools]
+        # self._basic_funcs_names = [func.__name__ for func in self._basic_funcs]
         for func in self._basic_funcs:
             self._tools.append(FunctionTool(func, description=func.__doc__))
 
@@ -277,17 +287,16 @@ Current Session_ID is {self._thread_id}"""
         funcs = [
             self._model_context.retrieve_from_memory,
             self._model_context.summry_conversation_to_memory,
-            self._user_profile_manager.read_session_memory_by_index,
+            self._user_profile_manager.read_session_memory_by_index, # TODO: 后面进行测试修正
         ]
         for func in funcs:
             self._tools.append(FunctionTool(func, description=func.__doc__))
                 
         # === skills ===
-        self._skills_dir = skills_dir
+        self._skills_dir = skills_dir if isinstance(skills_dir, list) else [skills_dir]
         if self._user_profile_manager.first_time_setup and self._skills_dir:
-            src_dirs = self._skills_dir if isinstance(self._skills_dir, list) else [self._skills_dir]
             dst_root = self._user_profile_manager.skills_dir
-            for src_dir in src_dirs:
+            for src_dir in self._skills_dir:
                 src_path = Path(src_dir)
                 for skill_folder in src_path.iterdir():
                     if skill_folder.is_dir():
@@ -413,7 +422,7 @@ Current Session_ID is {self._thread_id}"""
             self._cached_tools_prompt = tools_prompt
 
         # update system prompt if AGENTS.md or tools prompt changed
-        if tools_changed or self._file_changed(self._user_profile_manager.agents_md):
+        if not self._only_system_message and (tools_changed or self._file_changed(self._user_profile_manager.agents_md)):
             try:
                 self.update_system_prompt(additional_prompt=self._cached_tools_prompt)
             except Exception as e:
@@ -433,9 +442,7 @@ Current Session_ID is {self._thread_id}"""
         # load/update skills only if skills directories changed
         skills_changed = self._file_changed(self._user_profile_manager.skills_dir)
         if self._skills_dir:
-            # TODO: 从skills_dir 更新技能
-            extra_dirs = self._skills_dir if isinstance(self._skills_dir, list) else [self._skills_dir]
-            skills_changed = skills_changed or any(self._file_changed(Path(d)) for d in extra_dirs)
+            skills_changed = skills_changed or any(self._file_changed(Path(d)) for d in self._skills_dir)
         if skills_changed or self._cached_skills_loader is None:
             skills_loader, skill_error = self.update_user_skills()
             if skill_error:
@@ -489,19 +496,41 @@ Current Session_ID is {self._thread_id}"""
         error_msg = None
 
         try:
-            # 首先尝试从用户的skills目录加载
             user_skills_dir = self._user_profile_manager.skills_dir
+
+            # 1. 先检查并同步系统skill目录到用户skill目录
+            if self._skills_dir:
+                for system_skills_dir in self._skills_dir:
+                    system_path = Path(system_skills_dir)
+                    if not system_path.exists():
+                        continue
+                    for skill_folder in system_path.iterdir():
+                        if not skill_folder.is_dir():
+                            continue
+                        skill_file = skill_folder / "SKILL.md"
+                        if not skill_file.exists():
+                            continue
+                        user_skill_folder = user_skills_dir / skill_folder.name
+                        user_skill_file = user_skill_folder / "SKILL.md"
+                        should_update = False
+                        if not user_skill_file.exists():
+                            should_update = True
+                        else:
+                            system_mtime = skill_file.stat().st_mtime
+                            user_mtime = user_skill_file.stat().st_mtime
+                            if system_mtime > user_mtime:
+                                should_update = True
+
+                        if should_update:
+                            if user_skill_folder.exists():
+                                shutil.rmtree(user_skill_folder)
+                            shutil.copytree(skill_folder, user_skill_folder)
+                            logger.info(f"Updated skill '{skill_folder.name}' from system to user directory")
+
+            # 2. 然后从用户的skills目录加载
             if user_skills_dir.exists() and list(user_skills_dir.glob("*/SKILL.md")):
                 skills_loader = SkillLoader(skills_dir=str(user_skills_dir))
-            # TODO: 从指定的skills目录加载/更新skills
-            # # 再从指定的skills目录加载
-            # if self._skills_dir:
-            #     if not skills_loader:
-            #         skills_loader = SkillLoader(skills_dir=self._skills_dir)
-            #     else:
-            #         skills_loader.add_skills_by_dir(skills_dir=self._skills_dir)
 
-            # 获取技能描述
             if skills_loader and skills_loader.skills:
                 self._agent_skills_tools = [get_agent_skills_tool(descriptions=skills_loader.get_descriptions())]
             else:
@@ -872,21 +901,6 @@ Current Session_ID is {self._thread_id}"""
                     format_string=format_string,
                     skills_loader=skills_loader,
                 ):
-                    if self.is_paused:
-                        # Add cancellation message for all pending tools
-                        cancelled_results = []
-                        for tool_call in model_result.content:
-                            cancelled_results.append(FunctionExecutionResult(
-                                content=f"{tool_call.name} was cancelled.",
-                                name=tool_call.name,
-                                call_id=tool_call.id,
-                                is_error=False,
-                            ))
-                        await model_context.add_message(FunctionExecutionResultMessage(
-                            content=cancelled_results
-                        ))
-                        raise asyncio.CancelledError()
-
                     if isinstance(message, Response):
                         yield message.chat_message
                     else:
@@ -932,13 +946,33 @@ Current Session_ID is {self._thread_id}"""
                 inner_messages=inner_messages,
             )
         finally:
+
+            # if the last message is a tool call, we need to repair it
+            msgs = self._model_context._messages
+            if msgs and isinstance(msgs[-1], AssistantMessage):
+                last = msgs[-1]
+                if isinstance(last.content, list) and all(
+                    isinstance(c, FunctionCall) for c in last.content
+                ):
+                    logger.info("Repairing unpaired tool_call after pause/cancel")
+                    await self._model_context.add_message(
+                        FunctionExecutionResultMessage(content=[
+                            FunctionExecutionResult(
+                                content=f"{fc.name} was cancelled.",
+                                name=fc.name,
+                                call_id=fc.id,
+                                is_error=False,
+                            ) for fc in last.content
+                        ])
+                    )
+
             # save/update the conversation to {worker_dir}/memories
             if isinstance(self._model_context, DrSaiChatCompletionContext):
                 if self._model_context._rag_flow_manager:
                     await self._model_context.upload_conversation_to_ragflow()
                 self._model_context._current_messages = []
                 current_session_memory = self._model_context._history_messages
-                # TODO: use updates instead of full writes
+                # TODO: 周期性总结用户的对话，形成一个总结
                 self._user_profile_manager.save_session_memory(current_session_memory)
                 
 
@@ -1351,9 +1385,21 @@ Complete the task and return a clear, concise summary."""
         # STEP 4B: Execute tool calls with special tool handling
         exec_results: List[FunctionExecutionResult] = []
 
-        for tool_call in model_result.content:
+        for idx, tool_call in enumerate(model_result.content):
             tool_name = tool_call.name
             call_id = tool_call.id
+
+            # Check for pause/cancellation before executing each tool
+            if self.is_paused or cancellation_token.is_cancelled():
+                # Add cancellation result for current and all remaining tools
+                for remaining_tool in model_result.content[idx:]:
+                    exec_results.append(FunctionExecutionResult(
+                        content=f"{remaining_tool.name} was cancelled.",
+                        name=remaining_tool.name,
+                        call_id=remaining_tool.id,
+                        is_error=False,
+                    ))
+                break
 
             # Parse arguments
             try:
@@ -1890,6 +1936,7 @@ Complete the task and return a clear, concise summary."""
             return subagent
         else:
             raise ValueError(f"Sub agent {sub_agent_name} not found")
+        
     async def handle_subagent_repsonse(
         self,
         agent_name: str,

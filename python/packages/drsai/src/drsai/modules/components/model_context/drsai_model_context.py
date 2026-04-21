@@ -258,7 +258,7 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         tool_schema: List[ToolSchema] = [],
         initial_messages: List[LLMMessage] | None = None,
         tool_clear_whitelist: set[str] | None = None,
-        keep_recent_tool_results: int = 2,
+        keep_recent_tool_results: int = 20,
         min_content_length_to_clear: int = 200,
     ) -> None:
         """

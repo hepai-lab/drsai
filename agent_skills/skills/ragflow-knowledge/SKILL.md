@@ -1,5 +1,5 @@
 ---
-name: ragflow_knowledge
+name: ragflow-knowledge
 description: 指导用户如何处理PDF格式的文献、使用RAGFlow矢量知识库框架进行个人的文献管理。当用户提到如何使用RAGFlow、如何上传PDF到RAGFlow知识库、如何处理长文档进行混合检索时立即使用此技能。
 ---
 

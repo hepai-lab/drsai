@@ -1,5 +1,5 @@
 ---
-name: download_skills
+name: download-skills
 description: 从clawhub.ai中的下载链接下载到指定的skill文件夹，并安装到用户的skills目录中。
 ---
 

@@ -48,8 +48,10 @@ RUN mkdir -p /etc/supervisor/conf.d
 # 升级pip和安装常用工具
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# 安装 pm2 进程管理器
-RUN npm install -g pm2
+# 安装 pm2 进程管理器# 安装 Chromium 浏览器驱动（用于 playwright-cli）
+RUN npm install -g pm2 @playwright/cli@latest \
+    && npx -y playwright install chromium \
+    && playwright-cli install chromium
 
 # 复制整个项目到容器内
 COPY . /app

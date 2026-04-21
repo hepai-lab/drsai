@@ -307,12 +307,14 @@ def get_operator_funcs(
             return f"Error: {e}"
 
     def run_bash(
-            cmd: str,
-            timeout: float = 120,
-            ) -> str:
+        cmd: str,
+        timeout: float = 60,
+    ) -> str:
         """Execute a bash command synchronously and wait for completion.
 
         **IMPORTANT: This is the default and preferred function for most shell commands.**
+        timeout: Timeout in seconds (max: 120).
+
         Example workflow:
             1. Try: run_bash("npm test")  # Try synchronous first
             2. If timeout → Use: run_bash_background("npm test", timeout=300)
@@ -406,7 +408,7 @@ def get_operator_funcs(
     def run_bash_background(
         cmd: str,
         timeout: float = 500.0,
-        wait_time: float = 5.0,
+        wait_time: float = 10.0,
     ) -> Union[str, Dict[str, Any]]:
         """Execute shell command with smart background mode for LONG-RUNNING tasks.
 
