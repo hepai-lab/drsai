@@ -117,7 +117,7 @@ const ToolConfigurationForm: React.FC<ToolConfigurationFormProps> = ({
                             (value) =>
                                 onConfigChange(config.id, "token", value),
                             "password",
-                            "Value"
+                            false
                         )}
                     </>
                 );
