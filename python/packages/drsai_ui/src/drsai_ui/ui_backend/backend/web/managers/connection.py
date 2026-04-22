@@ -504,15 +504,58 @@ class WebSocketManager:
         """
 
         run = await self._get_run(run_id)
-        if run:
-            db_message = Message(
-                created_at=datetime.now(),
-                session_id=run.session_id,
-                run_id=run_id,
-                config=message.model_dump(),
-                user_id=run.user_id,  # Pass the user_id from the run object
-            )
-            self.db_manager.upsert(db_message)
+        if not run:
+            return
+
+        msg_dump: Dict[str, Any] = message.model_dump()  # type: ignore[assignment]
+        msg_meta = msg_dump.get("metadata") if isinstance(msg_dump, dict) else None
+        msg_meta = msg_meta if isinstance(msg_meta, dict) else {}
+        is_start = str(msg_meta.get("start_flag", "")).lower() == "yes"
+
+        # Deduplicate a common pattern in non-magentic-one mode:
+        # An assistant reply may first be emitted/saved as an internal TextMessage (internal=yes,is_save=yes),
+        # then immediately emitted again as a user-visible TextMessage with start_flag=yes and the same content.
+        # In that case, "upgrade" the previously saved internal row instead of inserting a duplicate.
+        try:
+            if is_start and msg_dump.get("type") == "TextMessage":
+                prev = self.db_manager.get(
+                    Message, filters={"run_id": run_id}, order="desc", return_json=False
+                )
+                if prev.status and prev.data:
+                    last: Message = prev.data[0]
+                    last_cfg = last.config if isinstance(last.config, dict) else last.config.model_dump()
+                    last_meta = last_cfg.get("metadata") if isinstance(last_cfg, dict) else None
+                    last_meta = last_meta if isinstance(last_meta, dict) else {}
+
+                    same_core = (
+                        isinstance(last_cfg, dict)
+                        and last_cfg.get("type") == "TextMessage"
+                        and last_cfg.get("source") == msg_dump.get("source")
+                        and last_cfg.get("content") == msg_dump.get("content")
+                    )
+                    last_internal_saved = (
+                        str(last_meta.get("internal", "")).lower() == "yes"
+                        and str(last_meta.get("is_save", "")).lower() == "yes"
+                    )
+                    last_is_start = str(last_meta.get("start_flag", "")).lower() == "yes"
+
+                    if same_core and last_internal_saved and not last_is_start:
+                        last.config = msg_dump
+                        last.session_id = run.session_id
+                        last.user_id = run.user_id
+                        self.db_manager.upsert(last)
+                        return
+        except Exception as e:
+            logger.warning(f"Message dedup upgrade failed for run {run_id}: {e}")
+
+        db_message = Message(
+            created_at=datetime.now(),
+            session_id=run.session_id,
+            run_id=run_id,
+            config=msg_dump,
+            user_id=run.user_id,  # Pass the user_id from the run object
+        )
+        self.db_manager.upsert(db_message)
 
     async def _update_run(
         self,
