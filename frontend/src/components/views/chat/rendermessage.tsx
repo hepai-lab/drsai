@@ -903,6 +903,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     const { darkMode } = React.useContext(appContext);
     const [isEditing, setIsEditing] = useState(false);
     const [isCopied, setIsCopied] = useState(false);
+    const [thoughtExpanded, setThoughtExpanded] = useState(false);
     const editTriggerRef = React.useRef<(() => void) | null>(null);
 
     if (!message) return null;
@@ -1409,33 +1410,69 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                             : ""
                         }
                       >
-                        {isThoughtEvent && (
-                          <div className="mb-1 inline-flex items-center gap-1.5 text-xs font-medium text-secondary">
-                            <Zap size={14} />
-                            <span>Thought</span>
+                        {isThoughtEvent ? (
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => setThoughtExpanded((v) => !v)}
+                              className="mb-1 inline-flex items-center gap-1.5 text-xs font-medium text-secondary hover:text-primary transition-colors"
+                              aria-expanded={thoughtExpanded}
+                            >
+                              {thoughtExpanded ? (
+                                <ChevronDown size={14} />
+                              ) : (
+                                <ChevronRight size={14} />
+                              )}
+                              <Zap size={14} />
+                              <span>Thought</span>
+                            </button>
+                            {thoughtExpanded && (
+                              <MarkdownRenderer
+                                content={(() => {
+                                  if (typeof parsedContent.text === "string") {
+                                    return parsedContent.text;
+                                  } else if (Array.isArray(parsedContent.text)) {
+                                    // Filter out non-string items and join
+                                    const textArray = parsedContent.text as any[];
+                                    const stringItems = textArray.filter(
+                                      (item: any): item is string =>
+                                        typeof item === "string"
+                                    );
+                                    return stringItems.join("\n");
+                                  } else {
+                                    return stringifyForDisplay(parsedContent.text);
+                                  }
+                                })()}
+                                indented={
+                                  !orchestratorContent ||
+                                  orchestratorContent.type !== "default"
+                                }
+                              />
+                            )}
                           </div>
-                        )}
-                        <MarkdownRenderer
-                          content={(() => {
-                            if (typeof parsedContent.text === "string") {
-                              return parsedContent.text;
-                            } else if (Array.isArray(parsedContent.text)) {
-                              // Filter out non-string items and join
-                              const textArray = parsedContent.text as any[];
-                              const stringItems = textArray.filter(
-                                (item: any): item is string =>
-                                  typeof item === "string"
-                              );
-                              return stringItems.join("\n");
-                            } else {
-                              return stringifyForDisplay(parsedContent.text);
+                        ) : (
+                          <MarkdownRenderer
+                            content={(() => {
+                              if (typeof parsedContent.text === "string") {
+                                return parsedContent.text;
+                              } else if (Array.isArray(parsedContent.text)) {
+                                // Filter out non-string items and join
+                                const textArray = parsedContent.text as any[];
+                                const stringItems = textArray.filter(
+                                  (item: any): item is string =>
+                                    typeof item === "string"
+                                );
+                                return stringItems.join("\n");
+                              } else {
+                                return stringifyForDisplay(parsedContent.text);
+                              }
+                            })()}
+                            indented={
+                              !orchestratorContent ||
+                              orchestratorContent.type !== "default"
                             }
-                          })()}
-                          indented={
-                            !orchestratorContent ||
-                            orchestratorContent.type !== "default"
-                          }
-                        />
+                          />
+                        )}
                       </div>
                     )}
                   </div>
