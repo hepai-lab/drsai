@@ -1,71 +1,125 @@
 import { useState, useCallback } from 'react';
 import { Agent } from '../../../types/common';
 import { useModeConfigStore } from '../../../store/modeConfig';
-import { agentAPI } from '../api';
+import { getFirstRecentAgentId } from '../../../utils/recentAgentsStorage';
+import { pickLoginDefaultAgent, pickPreferredAgentFromList } from '../../../utils/agentPreference';
+import { agentAPI, agentWorkerAPI, organizationsAPI } from '../api';
 
 export const useAgentManager = (userEmail: string | undefined) => {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const { setSelectedAgent, setMode, setConfig } = useModeConfigStore();
+  const { setSelectedAgent, setMode, setConfig, setAgentId, setAgentInfo } =
+    useModeConfigStore();
+
+  const fetchUserAgentsFromDb = useCallback(async (): Promise<Agent[]> => {
+    if (!userEmail) return [];
+    const resp = await agentWorkerAPI.getUserDefaultAgents(userEmail);
+    return (resp?.data || []) as Agent[];
+  }, [userEmail]);
 
   const fetchAgentList = useCallback(async (newAgents?: Agent[]) => {
     if (!userEmail) return;
 
+    const applyAgent = async (agent: Agent) => {
+      setSelectedAgent(agent);
+      // 与 /agentmode 列表一致，先写入以便首屏渲染（getUserAgentById 依赖 UserAgents 可能尚未同步）
+      setAgentInfo(agent as Partial<Agent>);
+      setMode(agent.mode || "magentic-one");
+      if (agent.id) {
+        setAgentId(agent.id);
+      }
+      try {
+        const agentMode = agent.mode || "magentic-one";
+        const agentConfig = await agentAPI.getAgentConfig(userEmail, agentMode);
+        if (agentConfig) {
+          setConfig(agentConfig.config);
+        }
+      } catch (error) {
+        console.warn("Failed to load agent config:", error);
+      }
+    };
+
     try {
-      // 如果提供了新的 agent 列表，直接使用它，否则重新获取
-      const res = newAgents || await agentAPI.getAgentList(userEmail);
+      // 统一数据源：用 UserAgents 表（/user_default_agents/list），避免 /agentmode 与 /user_agents/{id} 不一致导致“智能体下线”
+      const res = newAgents || await fetchUserAgentsFromDb();
       setAgents(res);
 
-      // 如果用户刚登录且没有持久化的agent选择，设置默认agent
-      if (res.length > 0) {
-        const { selectedAgent } = useModeConfigStore.getState();
+      if (res.length === 0) return;
 
-        // 如果已经有选中的agent，检查它是否仍然存在于新列表中
-        if (selectedAgent && selectedAgent.mode) {
-          const existingAgent = res.find(agent => agent.mode === selectedAgent.mode);
-          // 如果之前选中的agent仍然存在，保持选中状态不变
-          // 这样连续添加智能体时，之前选中的智能体会保持选中状态
-          if (!existingAgent) {
-            // 如果之前选中的agent不存在了，设置默认agent为 magentic-one
-            const defaultAgent = res.find(agent => agent.mode === "magentic-one");
-            if (defaultAgent) {
-              setSelectedAgent(defaultAgent);
-              setMode("magentic-one");
+      let orgDefaultAgentId: string | null | undefined;
+      let userDefaultAgentId: string | null | undefined;
+      try {
+        const [myOrg, userDefault] = await Promise.all([
+          organizationsAPI.getMyOrg(userEmail).catch(() => null),
+          agentWorkerAPI.getUserDefaultAgent(userEmail).catch(() => null),
+        ]);
+        orgDefaultAgentId = (myOrg?.default_agent_id as string) || null;
+        // Treat personal default as "explicitly set by user".
+        // Backend may return a resolved fallback in default_agent_id (e.g. Dr.Sai General)
+        // even when the user never chose one; stored_default_agent_id preserves intent.
+        userDefaultAgentId = userDefault?.stored_default_agent_id ?? null;
+      } catch {
+        orgDefaultAgentId = undefined;
+        userDefaultAgentId = undefined;
+      }
 
-              // 获取agent的配置
-              try {
-                const agentConfig = await agentAPI.getAgentConfig(userEmail, "magentic-one");
-                if (agentConfig) {
-                  setConfig(agentConfig.config);
-                }
-              } catch (error) {
-                console.warn("Failed to load default agent config:", error);
-              }
-            }
-          }
-        } else {
-          // 如果没有选中的agent，设置默认agent为 magentic-one
-          const defaultAgent = res.find(agent => agent.mode === "magentic-one");
-          if (defaultAgent) {
-            setSelectedAgent(defaultAgent);
-            setMode("magentic-one");
+      const { selectedAgent, agentId, mode } = useModeConfigStore.getState();
+      const policyDefault = pickLoginDefaultAgent(res, orgDefaultAgentId, userDefaultAgentId);
+      const fallbackAgent =
+        policyDefault ||
+        pickPreferredAgentFromList(res) ||
+        res.find((agent) => agent.mode === "magentic-one") ||
+        res[0];
 
-            // 获取agent的配置
-            try {
-              const agentConfig = await agentAPI.getAgentConfig(userEmail, "magentic-one");
-              if (agentConfig) {
-                setConfig(agentConfig.config);
-              }
-            } catch (error) {
-              console.warn("Failed to load default agent config:", error);
-            }
-          }
+      // 与 drsai-mode-config 对齐：优先 drsai.recentAgents[0]，再 persisted agentId，再 mode
+      const resolveLastUsedFromPersist = (): Agent | undefined => {
+        const recentFirstId = getFirstRecentAgentId();
+        if (recentFirstId) {
+          const byRecent = res.find((a) => a.id === recentFirstId);
+          if (byRecent) return byRecent;
         }
+        if (agentId) {
+          const byId = res.find((a) => a.id === agentId);
+          if (byId) return byId;
+        }
+        if (mode) {
+          return res.find((a) => a.mode === mode);
+        }
+        return undefined;
+      };
+
+      // 如果已经有选中的 agent，检查它是否仍然存在于新列表中
+      if (selectedAgent && selectedAgent.mode) {
+        const existingAgent = res.find(
+          (agent) => agent.mode === selectedAgent.mode
+        );
+        if (existingAgent) {
+          setSelectedAgent(existingAgent);
+          setAgentId(existingAgent.id ?? null);
+          setAgentInfo(existingAgent as Partial<Agent>);
+          return;
+        }
+        const lastUsed = resolveLastUsedFromPersist() || fallbackAgent;
+        if (lastUsed) {
+          await applyAgent(lastUsed);
+        }
+        return;
+      }
+
+      // 刷新后 selectedAgent 未持久化时，用 agentId / mode 恢复上次使用的智能体
+      const lastUsed = resolveLastUsedFromPersist();
+      if (lastUsed) {
+        await applyAgent(lastUsed);
+        return;
+      }
+
+      if (fallbackAgent) {
+        await applyAgent(fallbackAgent);
       }
     } catch (error) {
       console.error("Error fetching agent list:", error);
     }
-  }, [userEmail, setSelectedAgent, setMode, setConfig]);
+  }, [userEmail, setSelectedAgent, setMode, setConfig, setAgentId, setAgentInfo]);
 
   const deleteAgent = useCallback(async (id: string, onSuccess?: () => void, onError?: (error: any) => void) => {
     if (!userEmail) return;

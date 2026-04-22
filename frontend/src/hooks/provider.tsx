@@ -53,7 +53,7 @@ const Provider = ({ children }: any) => {
   const [userState, setUserState] = useState<IUser | null>(null);
 
   React.useEffect(() => {
-    const storedEmail = getLocalStorage("user_email");
+    const storedEmail = getLocalStorage("user_email", false);
     if (storedEmail) {
       setUserState((prevUser) => ({
         ...prevUser,

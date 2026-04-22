@@ -54,6 +54,22 @@ const config: GatsbyConfig = {
       },
       __key: "pages",
     },
+    {
+      resolve: "gatsby-plugin-page-creator",
+      options: {
+        path: `${__dirname}/src/pages`,
+        ignore: [
+          "**/*.ts",
+          "**/hooks/**",
+          "**/config/**",
+          "**/panels/**",
+          "**/components/**",
+          "**/utils/**",
+          "**/types.*",
+          "**/*.d.ts",
+        ],
+      },
+    },
   ],
 };
 

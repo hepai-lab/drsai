@@ -1,6 +1,6 @@
 {
-  "name": "Dr.Sai",
-  "version": "1.0.0",
+  "name": "open-drsai",
+  "version": "1.2.38",
   "private": true,
   "description": "Dr.Sai",
   "author": "HepAI",
@@ -8,14 +8,15 @@
     "gatsby"
   ],
   "scripts": {
-    "develop": "gatsby develop --port 8000 --host 0.0.0.0",
-    "develop-clean": "gatsby clean && gatsby develop --port 8000 --host 0.0.0.0",
+    "develop": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port ${GATSBY_DEV_PORT:-8000} --host 0.0.0.0",
+    "develop-clean": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby clean && NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port ${GATSBY_DEV_PORT:-8001} --host 0.0.0.0",
+    "develop:8000": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port 8000 --host 0.0.0.0",
     "dev": "npm run develop",
-    "start": "gatsby clean && gatsby develop --port 8000 --host 0.0.0.0",
-    "build": "gatsby clean && rm -rf ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ && PREFIX_PATH_VALUE='' gatsby build --prefix-paths && rsync -a --delete public/ ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/",
-    "build:dev": "gatsby clean && rm -rf ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ && NODE_ENV=development GATSBY_SERVICE_MODE=DEV PREFIX_PATH_VALUE='' gatsby build --prefix-paths --no-uglify && rsync -a --delete public/ ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/",
-    "serve": "gatsby serve",
-    "clean": "gatsby clean",
+    "start": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby clean && NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby develop --port ${GATSBY_DEV_PORT:-8001} --host 0.0.0.0",
+    "build": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby clean && rm -rf ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ && PREFIX_PATH_VALUE='' NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby build --prefix-paths && (rsync -a --delete public/ ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ || (mkdir -p ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ && rm -rf ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/* && cp -a public/. ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/))",
+    "build:dev": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby clean && rm -rf ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ && NODE_ENV=development GATSBY_SERVICE_MODE=DEV PREFIX_PATH_VALUE='' NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby build --prefix-paths --no-uglify && (rsync -a --delete public/ ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ || (mkdir -p ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/ && rm -rf ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/* && cp -a public/. ../python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/))",
+    "serve": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby serve",
+    "clean": "NODE_OPTIONS=--max-old-space-size=32768 GATSBY_CPU_COUNT=16 gatsby clean",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -48,6 +49,7 @@
     "react-syntax-highlighter": "^15.6.1",
     "react-vnc": "^3.0.8",
     "react-window": "^1.8.11",
+    "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.0",
     "tailwindcss": "^3.4.14",
     "yarn": "^1.22.22",

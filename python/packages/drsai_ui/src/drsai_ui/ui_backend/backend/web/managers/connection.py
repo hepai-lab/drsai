@@ -24,7 +24,6 @@ from drsai.modules.managers.messages.agent_messages import (
     TaskEvent,
     FilesEvent,
 )
-from autogen_agentchat.messages import ThoughtEvent
 from ....input_func import InputFuncType, InputRequestType
 from autogen_core import CancellationToken
 from fastapi import WebSocket, WebSocketDisconnect
@@ -44,6 +43,7 @@ from ...datamodel import (
 )
 from ...teammanager import TeamManager
 from ...utils.utils import compress_state, decompress_state
+from autogen_agentchat.messages import ThoughtEvent
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,7 @@ class WebSocketManager:
         self._closed_connections: set[int] = set()
         self._input_responses: Dict[int, asyncio.Queue[str]] = {}
         self._team_managers: Dict[int, TeamManager] = {}
+        # self._streaming_buffers: Dict[int, Dict[str, Any]] = {}
         self._cancel_message = TeamResult(
             task_result=TaskResult(
                 messages=[TextMessage(source="user", content="Run cancelled by user")],
@@ -203,7 +204,10 @@ class WebSocketManager:
             if agent_mode_config:
                 settings_config["agent_mode_config"] = agent_mode_config
             else:
-                raise ValueError(f"No agent mode config for agent_id {agent_id}")
+                raise ValueError(
+                    f"No agent config found for agent_id {agent_id} in UserAgents "
+                    f"(user_id={run.user_id})."
+                )
 
             # add task as message
             if isinstance(task, str):
@@ -282,11 +286,9 @@ class WebSocketManager:
                     continue
 
                 formatted_message = self._format_message(message)
-                # print(f"Send formatted_message to client: {formatted_message}" )
                 if formatted_message:
                     await self._send_message(run_id, formatted_message)
 
-                    # Save messages by concrete type
                     if isinstance(
                         message,
                         (
@@ -298,16 +300,17 @@ class WebSocketManager:
                             ToolCallExecutionEvent,
                             AgentLogEvent,
                             ThoughtEvent,
-                            # TaskEvent,
                             LLMCallEventMessage,
                             FilesEvent,
                         ),
                     ):
                         await self._save_message(run_id, message)
-                    # Capture final result if it's a TeamResult
                     elif isinstance(message, TeamResult):
                         final_result = message.model_dump()
-                    self._team_managers[run_id] = team_manager  # Track the team manager
+                    self._team_managers[run_id] = team_manager
+            # # Flush any remaining streaming content after the stream ends
+            # if run_id in self._streaming_buffers:
+            #     await self._flush_streaming_buffer(run_id)
             if (
                 not cancellation_token.is_cancelled()
                 and run_id not in self._closed_connections
@@ -674,14 +677,9 @@ class WebSocketManager:
                     "type": "message_log",
                     "data": message.model_dump(),
                 }
-            # elif isinstance(message, TaskEvent):
-            #     return {
-            #         "type": "message_task",
-            #         "data": message.model_dump(),
-            #     }
             elif isinstance(message, ThoughtEvent):
                 return {
-                    "type": "message_thought",
+                    "type": "message_thinking",
                     "data": message.model_dump(),
                 }
             elif isinstance(message, FilesEvent):
@@ -708,25 +706,21 @@ class WebSocketManager:
         return response.data[0] if response.status and response.data else None
 
     async def _get_agent_mode_config(self, user_id: str, agent_id: str) -> Optional[Dict]:
-        """Get run from database
-
-        Args:
-            run_id (int): int of the run to retrieve
-
-        Returns:
-            Optional[Run]: Run object if found, None otherwise
-        """
+        """Resolve the selected agent config from UserAgents as single source of truth."""
         updated_agent = None
         response = self.db_manager.get(UserAgents, filters={"user_id": user_id}, return_json=False)
         if response.status and response.data:
-            # 用户已有配置，更新现有配置
+            # Use the user's agent list as the only runtime lookup source.
             user_agents: UserAgents = response.data[0]
             agents_list = user_agents.agents or []
             for agent in agents_list:
                 if agent["id"] == agent_id:
                     updated_agent = agent
                     break
+        if updated_agent is None:
+            logger.warning(f"Agent config not found in UserAgents for user_id={user_id}, agent_id={agent_id}")
         return updated_agent
+
     async def _get_settings(self, user_id: str) -> Optional[Settings]:
         """Get user settings from database
         Args:

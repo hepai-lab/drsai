@@ -94,7 +94,15 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
           // This ensures we always show welcome page when opening the app fresh
           saveSessionId(null);
           setSession(null);
-          window.history.replaceState({}, '', window.location.pathname);
+          // Preserve other query params (e.g. menu/view), only remove sessionId
+          const params = new URLSearchParams(window.location.search);
+          params.delete("sessionId");
+          const nextSearch = params.toString();
+          window.history.replaceState(
+            {},
+            "",
+            `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`
+          );
         }
         // The selected agent will be restored from localStorage separately
       }
@@ -291,7 +299,7 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
         // Create new session
         setSelectedAgent({
           mode: "magentic-one",
-          name: "Dr.Sai General",
+          name: "Dr.Sai WebSurfer",
         });
         
         const created = await sessionAPI.createSession(
@@ -306,7 +314,7 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
             })}`,
             agent_mode_config: {
               mode: "magentic-one",
-              name: "Dr.Sai General",
+              name: "Dr.Sai WebSurfer",
             },
           },
           userEmail
@@ -413,7 +421,15 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
     setIsIntentionalSessionClear(true);
     setSession(null);
     saveSessionId(null);
-    window.history.replaceState({}, '', window.location.pathname);
+    // Preserve other query params (e.g. menu/view), only remove sessionId
+    const params = new URLSearchParams(window.location.search);
+    params.delete("sessionId");
+    const nextSearch = params.toString();
+    window.history.replaceState(
+      {},
+      "",
+      `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`
+    );
   }, [setSession, saveSessionId]);
 
   // Update session run status
