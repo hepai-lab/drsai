@@ -32,13 +32,15 @@ MEMORY_DATASET_ID=os.getenv('MEMORY_DATASET_ID')
 SYSTEM_SKILLS_DIR=os.getenv('SYSTEM_SKILLS_DIR')
 
 llm_mode_config = {
+    "hepai/minimax-m2.7": ("hepai/minimax-m2.7", 204000),
+    "hepai/minimax-m2.7-highspeed": ("hepai/minimax-m2.7-highspeed", 204000),
+    "minimax-m2.5": ("minimax/minimax-m2.5", 204000),
+    "minimax-m2.5-highspeed": ("minimax/minimax-m2.5-highspeed", 204000),
+    "minimax-m2.7": ("minimax/minimax-m2.7", 204000),
+    "minimax-m2.7-highspeed": ("minimax/minimax-m2.7-highspeed", 204000),
     "claude-sonnet-4-6": ("anthropic/claude-sonnet-4-6", 200000),
     "claude-haiku-4-5": ("anthropic/claude-haiku-4-5", 200000),
     "claude-opus-4-6": ("anthropic/claude-opus-4-6", 200000),
-    "minimax-m2.5": ("minimax/minimax-m2.5", 204000),
-    "minimax-m2.5-highspeed": ("minimax/minimax-m2.5-highspeed", 2040000),
-    "minimax-m2.7": ("minimax/minimax-m2.7", 204000),
-    "minimax-m2.7-highspeed": ("minimax/minimax-m2.7-highspeed", 204000),
     "gpt-4o": ("openai/gpt-4o", 128000),
     "gpt-4.1": ("openai/gpt-4.1", 1000000),
     "gpt-5.2": ("openai/gpt-5.2", 1000000),
@@ -52,13 +54,13 @@ def create_agent(
         thread_id: str|None = None, 
         user_id: str|None = None, 
         db_manager: DatabaseManager|None = None,
-        defult_config_name: str|None = "minimax-m2.7-highspeed",
+        defult_config_name: str|None = "hepai/minimax-m2.7-highspeed",
 ) -> DrSaiAssistant:
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
     
-    def set_model_client(defult_config_name: str|None = "minimax-m2.7-highspeed") -> HepAIAnthropicChatCompletionClient| HepAIChatCompletionClient:
+    def set_model_client(defult_config_name: str|None = "hepai/minimax-m2.7-highspeed") -> HepAIAnthropicChatCompletionClient| HepAIChatCompletionClient:
         llm_model, token_limit = llm_mode_config.get(defult_config_name, "minimax-m2.7-highspeed")
         if ("claude" in llm_model) or ("minimax" in llm_model):
             model_info=_MODEL_INFO["claude-sonnet-4-5"]
@@ -69,7 +71,7 @@ def create_agent(
                 api_key=api_key,
                 model_info=model_info,
                 # temperature=0.5,
-                max_tokens=int(token_limit*0.9),
+                max_tokens=int(token_limit*0.8),
             )
         else:
             is_vision = True
@@ -123,7 +125,7 @@ def create_agent(
     # SYSTEM = f"""You are a personal assistant."""
     SYSTEM = None
 
-    defult_config_name = defult_config_name or "minimax-m2.7-highspeed"
+    defult_config_name = defult_config_name or "hepai/minimax-m2.7-highspeed"
     _, token_limit = llm_mode_config.get(defult_config_name)
     return DrSaiAssistant(
         name="Assistant",
@@ -152,7 +154,7 @@ def create_agent(
         # extra_work_dirs=[],
         # sub_agent_config = SUB_AGENTS,
         # max_turn_count=200,
-        token_limit=int(token_limit*0.8),
+        token_limit=int(token_limit*0.7),
         rag_flow_url=RAGFLOW_URL,
         rag_flow_token=RAGFLOW_TOKEN,
         memory_dataset_id=MEMORY_DATASET_ID,
@@ -166,7 +168,7 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册信息
-            agent_name="My Dr.Sai",
+            agent_name="My Dr.Sai 007",
             author = "xiongdb@ihep.ac.cn",
             # permission='groups: "drsai, payg"; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             # permission={
@@ -184,7 +186,7 @@ if __name__ == "__main__":
                 "如何设置定时任务？"
             ],
             agent_config = llm_mode_config,
-            defult_config_name="minimax-m2.7-highspeed",
+            defult_config_name="hepai/minimax-m2.7-highspeed",
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务配置
@@ -197,6 +199,6 @@ if __name__ == "__main__":
             # use_api_key_mode = "backend",
             # join_topics = ["drsai-agent"],
             # metadata={"others": "drsai-agent"},
-            link_wechat = False,
+            link_wechat = True,
         )
     )
