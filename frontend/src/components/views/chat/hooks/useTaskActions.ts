@@ -10,7 +10,11 @@ import {
 import { IPlan, IPlanStep, convertPlanStepsToJsonString } from "../../../types/plan";
 import { GeneralConfig, useSettingsStore } from "../../../store";
 import { settingsAPI } from "../../api";
-import { AgentModeConfig, DEFAULT_AGENT_MODE_CONFIG } from "@/utils/agent";
+import {
+  AgentModeConfig,
+  DEFAULT_AGENT_MODE_CONFIG,
+  resolveOutboundAgentId,
+} from "@/utils/agent";
 import { messageUtils } from "../rendermessage";
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 
@@ -90,7 +94,11 @@ export const useTaskActions = ({
   onSessionNameChange,
 }: UseTaskActionsProps) => {
 
-   const { agentInfo } = useAgentInfo(userEmail);
+  const { agentInfo } = useAgentInfo(userEmail);
+  const effectiveAgentInfo = React.useMemo(
+    () => (session?.agent_mode_config ? session.agent_mode_config : agentInfo),
+    [session?.agent_mode_config, agentInfo]
+  );
   const handleError = React.useCallback(
     (error: any) => {
       console.error("Error:", error);
@@ -162,7 +170,7 @@ export const useTaskActions = ({
           accepted: accepted,
           content: response,
           ...(planString !== "" && { plan: planString }),
-          ...buildLlmPayload(llm, agentInfo as Record<string, any>),
+          ...buildLlmPayload(llm, effectiveAgentInfo as Record<string, any>),
         };
         const responseString = JSON.stringify(responseJson);
 
@@ -171,7 +179,9 @@ export const useTaskActions = ({
           typeof inputMetadata === "object" &&
           Object.keys(inputMetadata).length > 0;
 
-        if (needsReconnect) {
+        const isAwaitingInput = currentRun?.status === "awaiting_input";
+
+        if (needsReconnect && !isAwaitingInput) {
           let currentSettings = settingsConfig;
           if (userEmail) {
             try {
@@ -184,41 +194,24 @@ export const useTaskActions = ({
             }
           }
 
-          if (currentRun) {
-            const continueMessage = {
-              type: "continue",
-              task: responseString,
-              metadata: {
-                team_config: teamConfig,
-                settings_config: {
-                  ...currentSettings,
-                  agent_mode_config: agentInfo,
-                  ...buildLlmPayload(llm, agentInfo as Record<string, any>),
-                },
-                ...(processedFiles.length > 0 && {
-                  // Keep both forms for backward/forward compatibility:
-                  // - `files`: consumed by backend
-                  // - stringified `files` / `attached_files`: consumed by UI renderers
-                  files: processedFiles,
-                  files_json: filesJson,
-                  attached_files: attachedFilesJson,
-                }),
-                ...(hasInputMetadata ? inputMetadata : {}),
-              },
-            };
-
-            socket.send(JSON.stringify(continueMessage));
-          }
-        } else {
-          const inputResponseMessage = {
-            type: "input_response",
-            response: responseString,
+          const outboundAgentId = resolveOutboundAgentId(effectiveAgentInfo as any);
+          const { agent_id: _ignoredAgentId, ...settingsWithoutAgentId } =
+            ((currentSettings as unknown) as Record<string, unknown>) || {};
+          const continueMessage = {
+            type: "continue",
+            task: responseString,
             metadata: {
+              team_config: teamConfig,
               settings_config: {
-                ...(agentInfo?.id && { agent_id: agentInfo.id }),
-                ...buildLlmPayload(llm, agentInfo as Record<string, any>),
+                ...settingsWithoutAgentId,
+                ...(outboundAgentId ? { agent_id: outboundAgentId } : {}),
+                agent_mode_config: effectiveAgentInfo,
+                ...buildLlmPayload(llm, effectiveAgentInfo as Record<string, any>),
               },
               ...(processedFiles.length > 0 && {
+                // Keep both forms for backward/forward compatibility:
+                // - `files`: consumed by backend
+                // - stringified `files` / `attached_files`: consumed by UI renderers
                 files: processedFiles,
                 files_json: filesJson,
                 attached_files: attachedFilesJson,
@@ -226,17 +219,39 @@ export const useTaskActions = ({
               ...(hasInputMetadata ? inputMetadata : {}),
             },
           };
-          socket.send(JSON.stringify(inputResponseMessage));
 
-          setCurrentRun((current: Run | null) => {
-            if (!current) return null;
-            return {
-              ...current,
-              status: "active" as BaseRunStatus,
-              input_request: undefined,
-            };
-          });
+          socket.send(JSON.stringify(continueMessage));
+          return;
         }
+
+        const outboundAgentId = resolveOutboundAgentId(effectiveAgentInfo as any);
+        const inputResponseMessage = {
+          type: "input_response",
+          response: responseString,
+          metadata: {
+            settings_config: {
+              ...(outboundAgentId ? { agent_id: outboundAgentId } : {}),
+              ...(effectiveAgentInfo ? { agent_mode_config: effectiveAgentInfo } : {}),
+              ...buildLlmPayload(llm, effectiveAgentInfo as Record<string, any>),
+            },
+            ...(processedFiles.length > 0 && {
+              files: processedFiles,
+              files_json: filesJson,
+              attached_files: attachedFilesJson,
+            }),
+            ...(hasInputMetadata ? inputMetadata : {}),
+          },
+        };
+        socket.send(JSON.stringify(inputResponseMessage));
+
+        setCurrentRun((current: Run | null) => {
+          if (!current) return null;
+          return {
+            ...current,
+            status: "active" as BaseRunStatus,
+            input_request: undefined,
+          };
+        });
       } catch (error) {
         handleError(error);
       }
@@ -252,6 +267,7 @@ export const useTaskActions = ({
       setCurrentRun,
       handleError,
       agentInfo,
+      effectiveAgentInfo,
     ]
   );
 
@@ -450,6 +466,9 @@ export const useTaskActions = ({
         };
 
         // 发送给后端：使用最新的settings配置（files / team / settings 均在 metadata）
+        const outboundAgentId = resolveOutboundAgentId(effectiveAgentInfo as any);
+        const { agent_id: _ignoredAgentId, ...settingsWithoutAgentId } =
+          ((currentSettings as unknown) as Record<string, unknown>) || {};
         const messageToSend = {
           type: "start",
           task: JSON.stringify(taskJson),
@@ -457,9 +476,10 @@ export const useTaskActions = ({
             files: processedFiles,
             team_config: teamConfig,
             settings_config: {
-              ...currentSettings,
-              agent_id: agentInfo?.id || "",
-              ...buildLlmPayload(llm, agentInfo as Record<string, any>),
+              ...settingsWithoutAgentId,
+              ...(outboundAgentId ? { agent_id: outboundAgentId } : {}),
+              agent_mode_config: effectiveAgentInfo,
+              ...buildLlmPayload(llm, effectiveAgentInfo as Record<string, any>),
             },
           },
         };
@@ -490,6 +510,7 @@ export const useTaskActions = ({
       setNoMessagesYet,
       onSessionNameChange,
       agentInfo?.id,
+      effectiveAgentInfo,
     ]
   );
 
