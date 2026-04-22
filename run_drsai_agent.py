@@ -71,7 +71,7 @@ def create_agent(
                 api_key=api_key,
                 model_info=model_info,
                 # temperature=0.5,
-                max_tokens=int(token_limit*0.8),
+                max_tokens=int(token_limit*0.25),
             )
         else:
             is_vision = True
@@ -168,7 +168,7 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册信息
-            agent_name="My Dr.Sai 007",
+            agent_name="My Dr.Sai",
             author = "xiongdb@ihep.ac.cn",
             # permission='groups: "drsai, payg"; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             # permission={
