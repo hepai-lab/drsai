@@ -22,7 +22,7 @@ export interface Agent {
     logo?: string;
     owner?: string;
     url?: string;
-    apiKey?: string;
+    api_key?: string;
     baseUrl?: string;
     type?: AgentType;
     examples?: string[];

@@ -13,7 +13,7 @@ const META_FIELDS: (keyof AgentModeConfig)[] = [
   "logo",
   "owner",
   "url",
-  "apiKey",
+  "api_key",
   "baseUrl",
   "type",
 ];
@@ -44,14 +44,14 @@ const ensureIdentityInConfig = (
 };
 
 export const DEFAULT_AGENT_MODE_CONFIG: AgentModeConfig = {
-  name: "Dr.Sai General",
+  name: "Dr.Sai WebSurfer",
   mode: "magentic-one",
-  description: "Dr.Sai通用智能体，适用于多种任务",
+  description: "Dr.Sai网页浏览智能体，适用于自动操控网页、文件等任务。",
   config: {
-    name: "Dr.Sai General",
+    name: "Dr.Sai WebSurfer",
     mode: "magentic-one",
     url: "",
-    apiKey: "",
+    api_key: "",
     base_url: "",
     model_client: {
       model: "",

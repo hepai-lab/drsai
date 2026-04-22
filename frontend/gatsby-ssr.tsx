@@ -1,4 +1,7 @@
 import React from "react";
+import AuthProvider from "./src/hooks/provider";
+import { StyleProvider, createCache, extractStyle } from "@ant-design/cssinjs";
+import { renderToString } from "react-dom/server";
 
 const codeToRunOnClient = `(function() {
   try {
@@ -6,6 +9,40 @@ const codeToRunOnClient = `(function() {
     document.getElementsByTagName("html")[0].className === 'dark' ? 'dark' : 'light';
   } catch (e) {}
 })();`;
+
+export const wrapRootElement = ({ element }: any) => {
+  return <AuthProvider element={element} />;
+};
+
+export const wrapPageElement = ({ element, props }: any) => {
+  // This app is primarily client-driven (localStorage/websocket/antd).
+  // During static HTML build, render a minimal shell to avoid SSR-only crashes.
+  // The real UI hydrates on the client.
+  void props;
+  void element;
+  return <div />;
+};
+
+export const replaceRenderer = ({
+  bodyComponent,
+  replaceBodyHTMLString,
+  setHeadComponents,
+}: any) => {
+  const cache = createCache();
+  const bodyHTML = renderToString(
+    <StyleProvider cache={cache} hashPriority="high">
+      {bodyComponent}
+    </StyleProvider>
+  );
+  replaceBodyHTMLString(bodyHTML);
+  setHeadComponents([
+    <style
+      key="antd-cssinjs"
+      data-antd="true"
+      dangerouslySetInnerHTML={{ __html: extractStyle(cache, true) }}
+    />,
+  ]);
+};
 
 export const onRenderBody = ({ setHeadComponents }) =>
   setHeadComponents([
