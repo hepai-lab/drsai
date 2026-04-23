@@ -133,6 +133,7 @@ const ChatInput = React.forwardRef<
       disabled ||
       runStatus === "active" ||
       runStatus === "pausing" ||
+      runStatus === "paused" ||
       inputRequest?.input_type === "approval";
 
     // Use custom hooks

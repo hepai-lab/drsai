@@ -2,6 +2,7 @@ import { Check, CheckCircle, Circle, Clock } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { appContext } from "../../../hooks/provider";
 import { BESIIIPanelProps, BESIIISubTask, BESIIITask } from "./types";
+import { useModeConfigStore } from "@/store/modeConfig";
 
 /**
  * BESIII Panel - 用于显示 BESIII Agent 的任务执行状态
@@ -41,7 +42,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     activeTab: controlledActiveTab,
     onTabChange,
 }) => {
-    const { darkMode } = React.useContext(appContext);
+    const { darkMode, user } = React.useContext(appContext);
     const [internalActiveTab, setInternalActiveTab] = useState<TabType>('global_info');
     // 使用受控的 activeTab（如果提供），否则使用内部状态
     const activeTab = controlledActiveTab !== undefined ? controlledActiveTab : internalActiveTab;
@@ -60,8 +61,31 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     const hasGlobalInfoTab = Boolean(
         serverGlobalInfo?.fields && Object.keys(serverGlobalInfo.fields).length > 0
     );
+
     const hasLogsTab = (logs?.length ?? 0) > 0;
     const hasTerminalTab = terminalOutput.trim().length > 0;
+    const agentInfo = useModeConfigStore((s) => s.agentInfo);
+    const agentOwnerRaw = agentInfo?.owner || "unknown";
+    const agentOwner = agentOwnerRaw.includes("@")
+        ? agentOwnerRaw.split("@")[0]
+        : agentOwnerRaw;
+
+    const emptyPanelQuips = useMemo(
+        () => [
+            "天啦噜 我不知道这里要展示 global_info 和 logs",
+            "救命 我还没想好怎么摆 global_info / logs",
+            "这块面板还在施工：global_info 和 logs 该怎么放我也很纠结",
+            "我在等灵感掉下来：global_info、logs 先空着吧",
+            "先别盯着我看，我也不知道 global_info 和 logs 要怎么展示",
+            "开发进度：global_info ✅？logs ✅？（都还没）",
+        ],
+        []
+    );
+    const emptyPanelQuip = useMemo(() => {
+        if (emptyPanelQuips.length === 0) return "";
+        const idx = Math.floor(Math.random() * emptyPanelQuips.length);
+        return emptyPanelQuips[idx] ?? emptyPanelQuips[0] ?? "";
+    }, [emptyPanelQuips]);
 
     const visibleTabs = useMemo((): { id: TabType; label: string }[] => {
         const t: { id: TabType; label: string }[] = [];
@@ -70,6 +94,20 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
         if (hasTerminalTab) t.push({ id: "terminal", label: "Terminal" });
         return t;
     }, [hasGlobalInfoTab, hasLogsTab, hasTerminalTab]);
+
+    // If the panel is empty for a while, show a nicer "coming soon" hint.
+    const [showEmptyHint, setShowEmptyHint] = useState(false);
+    useEffect(() => {
+        if (visibleTabs.length > 0) {
+            setShowEmptyHint(false);
+            return;
+        }
+
+        // visibleTabs 为空：先展示等待动画；10 秒后仍为空再展示小猫
+        setShowEmptyHint(false);
+        const t = window.setTimeout(() => setShowEmptyHint(true), 10_000);
+        return () => window.clearTimeout(t);
+    }, [visibleTabs.length]);
 
     useEffect(() => {
         const ids = visibleTabs.map((x) => x.id);
@@ -449,37 +487,192 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                         aria-label="加载中"
                     >
                         <style>{BESIII_IDLE_KEYFRAMES}</style>
-                        <div
-                            className={`pointer-events-none absolute inset-0 will-change-[opacity] ${darkMode === "dark"
-                                ? "bg-[radial-gradient(ellipse_at_50%_40%,rgba(129,140,248,0.14),transparent_58%)]"
-                                : "bg-[radial-gradient(ellipse_at_50%_40%,rgba(99,102,241,0.1),transparent_58%)]"
-                                }`}
-                            style={{
-                                animation:
-                                    darkMode === "dark"
-                                        ? "besiii-idle-glow 6s ease-in-out infinite"
-                                        : "besiii-idle-glow 2.2s ease-in-out infinite",
-                                opacity: darkMode === "dark" ? 0.14 : undefined,
-                            }}
-                            aria-hidden
-                        />
-                        <div className="relative z-10 flex h-11 items-end justify-center gap-1.5" aria-hidden>
-                            {(darkMode === "dark" ? [0, 1, 2, 3] : [0, 1, 2, 3, 4, 5]).map((i) => (
+                        {!showEmptyHint ? (
+                            <>
                                 <div
-                                    key={i}
-                                    className={`h-8 w-[5px] shrink-0 rounded-full will-change-transform ${darkMode === "dark" ? "bg-indigo-300/55" : "bg-indigo-500/65"
+                                    className={`pointer-events-none absolute inset-0 will-change-[opacity] ${darkMode === "dark"
+                                        ? "bg-[radial-gradient(ellipse_at_50%_40%,rgba(129,140,248,0.14),transparent_58%)]"
+                                        : "bg-[radial-gradient(ellipse_at_50%_40%,rgba(99,102,241,0.1),transparent_58%)]"
                                         }`}
                                     style={{
-                                        transformOrigin: "bottom center",
                                         animation:
                                             darkMode === "dark"
-                                                ? "besiii-idle-wave 1.65s ease-in-out infinite"
-                                                : "besiii-idle-wave 1.05s ease-in-out infinite",
-                                        animationDelay: `${i * (darkMode === "dark" ? 140 : 95)}ms`,
+                                                ? "besiii-idle-glow 6s ease-in-out infinite"
+                                                : "besiii-idle-glow 2.2s ease-in-out infinite",
+                                        opacity: darkMode === "dark" ? 0.14 : undefined,
                                     }}
+                                    aria-hidden
                                 />
-                            ))}
-                        </div>
+                                <div className="relative z-10 flex h-11 items-end justify-center gap-1.5" aria-hidden>
+                                    {(darkMode === "dark" ? [0, 1, 2, 3] : [0, 1, 2, 3, 4, 5]).map((i) => (
+                                        <div
+                                            key={i}
+                                            className={`h-8 w-[5px] shrink-0 rounded-full will-change-transform ${darkMode === "dark" ? "bg-indigo-300/55" : "bg-indigo-500/65"
+                                                }`}
+                                            style={{
+                                                transformOrigin: "bottom center",
+                                                animation:
+                                                    darkMode === "dark"
+                                                        ? "besiii-idle-wave 1.65s ease-in-out infinite"
+                                                        : "besiii-idle-wave 1.05s ease-in-out infinite",
+                                                animationDelay: `${i * (darkMode === "dark" ? 140 : 95)}ms`,
+                                            }}
+                                        />
+                                    ))}
+                                </div>
+                            </>
+                        ) : (
+                            <div className="relative z-10 w-full max-w-[380px]">
+                                <style>{`
+@keyframes ao-scan {
+  0% { transform: translateY(-140%); opacity: 0; }
+  10% { opacity: 0.65; }
+  50% { opacity: 0.65; }
+  100% { transform: translateY(140%); opacity: 0; }
+}
+@keyframes ao-glitch {
+  0%, 92%, 100% { transform: translateX(0); }
+  93% { transform: translateX(-1px); }
+  94% { transform: translateX(1px); }
+  95% { transform: translateX(-2px); }
+  96% { transform: translateX(2px); }
+  97% { transform: translateX(-1px); }
+  98% { transform: translateX(1px); }
+}
+@keyframes ao-blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  93%, 94% { transform: scaleY(0.12); }
+}
+@keyframes ao-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.9; }
+}
+@keyframes ao-dots {
+  0% { transform: translateX(0); opacity: 0.35; }
+  50% { opacity: 0.85; }
+  100% { transform: translateX(18px); opacity: 0.35; }
+}
+@keyframes ao-tail {
+  0%, 100% { transform: rotate(8deg); }
+  50% { transform: rotate(-10deg); }
+}
+@keyframes ao-zzz {
+  0% { transform: translate(0, 0); opacity: 0; }
+  15% { opacity: 0.75; }
+  80% { opacity: 0.75; }
+  100% { transform: translate(10px, -14px); opacity: 0; }
+}
+@keyframes ao-cat-breathe {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(1.5px); }
+}
+@keyframes ao-tail-sway {
+  0%, 100% { transform: rotate(10deg); }
+  50% { transform: rotate(-14deg); }
+}
+                                `}</style>
+
+                                <div
+                                    className={`relative overflow-hidden rounded-2xl border px-4 py-4 shadow-sm ${darkMode === "dark"
+                                        ? "border-[rgba(168,85,247,0.22)] bg-white/[0.03] text-zinc-100"
+                                        : "border-[rgba(168,85,247,0.28)] bg-white/85 text-slate-900"
+                                        }`}
+                                >
+                                    <div
+                                        className={`pointer-events-none absolute inset-0 ${darkMode === "dark"
+                                            ? "bg-[radial-gradient(circle_at_50%_35%,rgba(168,85,247,0.18),transparent_62%)]"
+                                            : "bg-[radial-gradient(circle_at_50%_35%,rgba(168,85,247,0.14),transparent_62%)]"
+                                            }`}
+                                        aria-hidden
+                                    />
+                                    <div
+                                        className={`pointer-events-none absolute -inset-px opacity-70 ${darkMode === "dark"
+                                            ? "bg-[linear-gradient(90deg,transparent,rgba(168,85,247,0.18),transparent)]"
+                                            : "bg-[linear-gradient(90deg,transparent,rgba(168,85,247,0.14),transparent)]"
+                                            }`}
+                                        style={{ animation: "ao-scan 2.8s ease-in-out infinite" }}
+                                        aria-hidden
+                                    />
+
+                                    <div className="relative flex items-center gap-3">
+                                        {/* lazy cyber cat */}
+                                        <div
+                                            className="relative h-14 w-14 shrink-0"
+                                            style={{ animation: "ao-cat-breathe 2.2s ease-in-out infinite" }}
+                                            aria-hidden
+                                        >
+                                            {/* Zzz */}
+                                            <div className="absolute -right-1 -top-1 text-[10px] font-mono tracking-[0.25em] text-[#a855f7]/80">
+                                                <span style={{ animation: "ao-zzz 1.8s ease-in-out infinite" }}>Z</span>
+                                                <span style={{ animation: "ao-zzz 1.8s ease-in-out infinite", animationDelay: "220ms" }}>Z</span>
+                                                <span style={{ animation: "ao-zzz 1.8s ease-in-out infinite", animationDelay: "440ms" }}>Z</span>
+                                            </div>
+
+                                            {/* Pixel cat */}
+                                            <svg
+                                                viewBox="0 0 16 16"
+                                                className="h-14 w-14"
+                                                shapeRendering="crispEdges"
+                                                style={{
+                                                    filter: darkMode === "dark"
+                                                        ? "drop-shadow(0 0 10px rgba(168,85,247,0.28))"
+                                                        : "drop-shadow(0 0 10px rgba(168,85,247,0.2))",
+                                                }}
+                                            >
+                                                {/* outline */}
+                                                <g fill={darkMode === "dark" ? "rgba(168,85,247,0.75)" : "rgba(168,85,247,0.55)"}>
+                                                    <rect x="3" y="3" width="1" height="1" />
+                                                    <rect x="4" y="2" width="1" height="1" />
+                                                    <rect x="5" y="2" width="1" height="1" />
+                                                    <rect x="6" y="3" width="1" height="1" />
+                                                    <rect x="10" y="3" width="1" height="1" />
+                                                    <rect x="11" y="2" width="1" height="1" />
+                                                    <rect x="12" y="2" width="1" height="1" />
+                                                    <rect x="13" y="3" width="1" height="1" />
+
+                                                    <rect x="2" y="5" width="1" height="6" />
+                                                    <rect x="14" y="5" width="1" height="6" />
+                                                    <rect x="3" y="11" width="11" height="1" />
+                                                    <rect x="4" y="12" width="9" height="1" />
+                                                </g>
+
+                                                {/* face fill */}
+                                                <g fill={darkMode === "dark" ? "rgba(0,0,0,0.22)" : "rgba(255,255,255,0.78)"}>
+                                                    <rect x="3" y="5" width="11" height="6" />
+                                                    <rect x="4" y="4" width="9" height="1" />
+                                                </g>
+
+                                                {/* eyes + mouth */}
+                                                <g fill={darkMode === "dark" ? "rgba(168,85,247,0.8)" : "rgba(168,85,247,0.65)"}>
+                                                    <rect x="6" y="7" width="1" height="1" />
+                                                    <rect x="10" y="7" width="1" height="1" />
+                                                    <rect x="8" y="9" width="1" height="1" />
+                                                    <rect x="7" y="10" width="3" height="1" />
+                                                </g>
+
+                                                {/* blush cheeks */}
+                                                <g fill={darkMode === "dark" ? "rgba(244,114,182,0.35)" : "rgba(244,114,182,0.28)"}>
+                                                    <rect x="5" y="9" width="1" height="1" />
+                                                    <rect x="11" y="9" width="1" height="1" />
+                                                </g>
+
+                                                {/* tail */}
+                                                <g fill={darkMode === "dark" ? "rgba(168,85,247,0.55)" : "rgba(168,85,247,0.45)"}>
+                                                    <rect x="14" y="10" width="1" height="1" />
+                                                    <rect x="15" y="9" width="1" height="2" />
+                                                </g>
+                                            </svg>
+                                        </div>
+
+                                        <div className="min-w-0 flex-1">
+                                            <div className={`text-[12px] font-mono ${darkMode === "dark" ? "text-zinc-200" : "text-slate-700"}`}>
+                                                <span className="font-semibold">{agentOwner}</span>: {emptyPanelQuip}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 ) : (
                     <>
