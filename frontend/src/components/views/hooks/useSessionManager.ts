@@ -14,7 +14,8 @@ interface UseSessionManagerProps {
 
 export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionManagerProps) => {
   const { session, setSession, sessions, setSessions } = useConfigStore();
-  const { selectedAgent, setSelectedAgent, setMode, setConfig } = useModeConfigStore();
+  const { selectedAgent, setSelectedAgent, setMode, setConfig, setAgentId, setAgentInfo } =
+    useModeConfigStore();
   const { saveSessionId, getSessionId } = useSessionStorage();
 
   const [isLoading, setIsLoading] = useState(false);
@@ -73,6 +74,12 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
               if (fullSessionData.agent_mode_config) {
                 setSelectedAgent(fullSessionData.agent_mode_config);
                 setMode(fullSessionData.agent_mode_config.mode);
+                const sid =
+                  (fullSessionData.agent_mode_config as any)?.agent_id ??
+                  (fullSessionData.agent_mode_config as any)?.id ??
+                  null;
+                if (sid) setAgentId(String(sid));
+                setAgentInfo(fullSessionData.agent_mode_config as any);
                 
                 try {
                   const agentConfig = await agentAPI.getAgentConfig(userEmail, fullSessionData.agent_mode_config.mode);
@@ -150,6 +157,12 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
       if (data.agent_mode_config) {
         setSelectedAgent(data.agent_mode_config);
         setMode(data.agent_mode_config.mode);
+        const sid =
+          (data.agent_mode_config as any)?.agent_id ??
+          (data.agent_mode_config as any)?.id ??
+          null;
+        if (sid) setAgentId(String(sid));
+        setAgentInfo(data.agent_mode_config as any);
         
         try {
           const agentConfig = await agentAPI.getAgentConfig(userEmail, data.agent_mode_config.mode);
@@ -253,6 +266,11 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
           agent_id: agent.id,
           mode: agent.mode,
           name: agent.name,
+          // Ensure per-agent default config label is stored with the session.
+          defult_config_name:
+            (agent as any)?.defult_config_name ??
+            (agent as any)?.config?.defult_config_name ??
+            (agent as any)?.agent_config?.defult_config_name,
           ...agent.config,
         },
       };
