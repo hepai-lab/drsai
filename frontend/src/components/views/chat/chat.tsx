@@ -415,10 +415,13 @@ export default function ChatView({
         // don't overwrite with API data - just ensure WebSocket is connected for further chunks
         let skipLoad = false;
         setCurrentRun((prev) => {
-          if (prev?.id) {
+          if (prev?.id && prev.session_id === session.id) {
             setupWebSocket(prev.id, false, true);
             skipLoad = true;
             return prev;
+          }
+          if (prev && prev.session_id !== session.id) {
+            return null;
           }
           return prev;
         });

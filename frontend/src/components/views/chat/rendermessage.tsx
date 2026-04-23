@@ -903,6 +903,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     const { darkMode } = React.useContext(appContext);
     const [isEditing, setIsEditing] = useState(false);
     const [isCopied, setIsCopied] = useState(false);
+    const [thoughtExpanded, setThoughtExpanded] = useState(false);
     const editTriggerRef = React.useRef<(() => void) | null>(null);
 
     if (!message) return null;
@@ -1090,6 +1091,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     // 判断是否是 TextMessage 类型（使用已存在的 messageAny）
     const normalizedMessageAny = normalizedMessage as any;
     const isTextMessage = normalizedMessageAny.type === "TextMessage";
+    const isThoughtEvent = normalizedMessageAny.type === "ThoughtEvent";
 
     // 判断是否是历史消息（没有 start_flag 或 metadata.is_save === "yes"）
     const isHistoricalMessage =
@@ -1401,26 +1403,77 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                         </div>
                       </div>
                     ) : (
-                      <MarkdownRenderer
-                        content={(() => {
-                          if (typeof parsedContent.text === "string") {
-                            return parsedContent.text;
-                          } else if (Array.isArray(parsedContent.text)) {
-                            // Filter out non-string items and join
-                            const textArray = parsedContent.text as any[];
-                            const stringItems = textArray.filter(
-                              (item: any): item is string => typeof item === "string"
-                            );
-                            return stringItems.join("\n");
-                          } else {
-                            return stringifyForDisplay(parsedContent.text);
-                          }
-                        })()}
-                        indented={
-                          !orchestratorContent ||
-                          orchestratorContent.type !== "default"
+                      <div
+                        className={
+                          isThoughtEvent
+                            ? "rounded-lg border border-secondary/60 bg-secondary/40 px-3 py-2 text-sm italic text-secondary"
+                            : ""
                         }
-                      />
+                      >
+                        {isThoughtEvent ? (
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => setThoughtExpanded((v) => !v)}
+                              className="mb-1 inline-flex items-center gap-1.5 text-xs font-medium text-secondary hover:text-primary transition-colors"
+                              aria-expanded={thoughtExpanded}
+                            >
+                              {thoughtExpanded ? (
+                                <ChevronDown size={14} />
+                              ) : (
+                                <ChevronRight size={14} />
+                              )}
+                              <Zap size={14} />
+                              <span>Thought</span>
+                            </button>
+                            {thoughtExpanded && (
+                              <MarkdownRenderer
+                                content={(() => {
+                                  if (typeof parsedContent.text === "string") {
+                                    return parsedContent.text;
+                                  } else if (Array.isArray(parsedContent.text)) {
+                                    // Filter out non-string items and join
+                                    const textArray = parsedContent.text as any[];
+                                    const stringItems = textArray.filter(
+                                      (item: any): item is string =>
+                                        typeof item === "string"
+                                    );
+                                    return stringItems.join("\n");
+                                  } else {
+                                    return stringifyForDisplay(parsedContent.text);
+                                  }
+                                })()}
+                                indented={
+                                  !orchestratorContent ||
+                                  orchestratorContent.type !== "default"
+                                }
+                              />
+                            )}
+                          </div>
+                        ) : (
+                          <MarkdownRenderer
+                            content={(() => {
+                              if (typeof parsedContent.text === "string") {
+                                return parsedContent.text;
+                              } else if (Array.isArray(parsedContent.text)) {
+                                // Filter out non-string items and join
+                                const textArray = parsedContent.text as any[];
+                                const stringItems = textArray.filter(
+                                  (item: any): item is string =>
+                                    typeof item === "string"
+                                );
+                                return stringItems.join("\n");
+                              } else {
+                                return stringifyForDisplay(parsedContent.text);
+                              }
+                            })()}
+                            indented={
+                              !orchestratorContent ||
+                              orchestratorContent.type !== "default"
+                            }
+                          />
+                        )}
+                      </div>
                     )}
                   </div>
                 )
