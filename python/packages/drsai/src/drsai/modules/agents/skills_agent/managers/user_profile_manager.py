@@ -131,7 +131,9 @@ class UserProfileManager:
  
         if not self.user_config_path.exists():
             self._create_user_config()
-        self.user_config = self.load_user_config()
+            self.user_config = self.load_user_config()
+        else:
+            self.user_config = self.load_user_config()
         self.agent_name = self.user_config.agent_name
         self.user_name = self.user_config.user_name
 
@@ -177,15 +179,14 @@ class UserProfileManager:
     def _create_user_config(self):
         """创建用户配置文件"""
         
-        if not self.user_config:
-            self.user_config = UserProfile(
-                user_id=self.user_id,
-                user_name=self.user_id,
-                agent_name=self.agent_name,
-                ask_before_plan=False,
-                created_at=datetime.now().isoformat(),
-                updated_at=datetime.now().isoformat(),
-            )
+        self.user_config = UserProfile(
+            user_id=self.user_id,
+            user_name=self.user_id,
+            agent_name=self.agent_name,
+            ask_before_plan=False,
+            created_at=datetime.now().isoformat(),
+            updated_at=datetime.now().isoformat(),
+        )
         with self.user_config_path.open("w", encoding='utf-8') as f:
             json.dump(self.user_config.model_dump(), f, indent=4, ensure_ascii=False)
 
@@ -303,7 +304,7 @@ You are an interactive tool that helps users with software engineering and scien
         content = f"""# Skills Preference
 
  - When conducting academic searches, users should give priority to `academic-search`. When performing web searches, they should give priority to `playwright-cli`.
-
+ - When users want to draw, generate photos, or perform image editing, they can use the `image-process` skill
 """
         self.skills_md.write_text(content, encoding='utf-8')
 
