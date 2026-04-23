@@ -61,6 +61,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     const hasGlobalInfoTab = Boolean(
         serverGlobalInfo?.fields && Object.keys(serverGlobalInfo.fields).length > 0
     );
+
     const hasLogsTab = (logs?.length ?? 0) > 0;
     const hasTerminalTab = terminalOutput.trim().length > 0;
     const agentInfo = useModeConfigStore((s) => s.agentInfo);
@@ -68,8 +69,6 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     const agentOwner = agentOwnerRaw.includes("@")
         ? agentOwnerRaw.split("@")[0]
         : agentOwnerRaw;
-    // (keep user fallback around; useful in cases where agentInfo isn't fetched yet)
-    const _viewer = user?.name || user?.email || "unknown";
 
     const emptyPanelQuips = useMemo(
         () => [
@@ -104,11 +103,9 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
             return;
         }
 
+        // visibleTabs 为空：先展示等待动画；10 秒后仍为空再展示小猫
         setShowEmptyHint(false);
-        const t = window.setTimeout(() => {
-            setShowEmptyHint(true);
-        }, 10_000);
-
+        const t = window.setTimeout(() => setShowEmptyHint(true), 10_000);
         return () => window.clearTimeout(t);
     }, [visibleTabs.length]);
 
