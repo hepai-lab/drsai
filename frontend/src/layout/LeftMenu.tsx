@@ -269,7 +269,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
         <div className="h-px bg-border-primary/25 my-1.5" />
 
         {/* ── 管理员 ── */}
-        <div>
+        {/* <div>
           <SectionHeader id="admin" icon={<Shield className="w-3.5 h-3.5" />} label="管理员" />
           {expanded.admin && (
             <div className="mt-0.5 space-y-0.5">
@@ -293,7 +293,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
               />
             </div>
           )}
-        </div>
+        </div> */}
       </div>
     </div>
   );
