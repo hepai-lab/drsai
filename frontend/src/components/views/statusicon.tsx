@@ -18,6 +18,8 @@ export const getStatusIcon = (
 ) => {
   switch (status) {
     case "active":
+    case "created":
+    case "connected":
       return (
         <div className="inline-block mr-1">
           <Loader2
