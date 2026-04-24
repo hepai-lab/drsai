@@ -22,7 +22,18 @@ from drsai.modules.components.model_client.anthropic import (
 from drsai.modules.components.model_context import DrSaiChatCompletionContext
 from drsai.modules.agents.skills_agent import SkillAgent, DrSaiAssistant
 from drsai.modules.managers.database import DatabaseManager
-from drsai.modules.managers.messages import TextMessage
+from drsai.modules.managers.messages import (
+    TextMessage,
+    FileInfo,
+    FilesContent,
+    FilesEvent,
+)
+from drsai.utils.utils import upload_to_hepai_filesystem
+import base64
+from typing import AsyncGenerator, Sequence
+from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage
+from autogen_agentchat.base import Response
+from autogen_core import CancellationToken
 
 # Import document processing components
 import sys
@@ -57,13 +68,100 @@ llm_mode_config = {
     "minimax-m2.7": "minimax/minimax-m2.7",
 }
 
+def _build_files_event_data(file_path: str, description: str) -> dict | None:
+    """
+    Build a serialized FilesEvent payload for a generated/edited file.
+
+    Tries to upload via HepAI filesystem (URL method) first.
+    Falls back to base64 encoding if the upload fails.
+
+    Returns a dict (serialized ``FilesContent``) to be appended to the
+    pending files-events side-channel, or *None* if both methods fail.
+    """
+    import mimetypes
+
+    file_path_obj = Path(file_path)
+    if not file_path_obj.exists():
+        return None
+
+    file_name = file_path_obj.name
+    file_size = file_path_obj.stat().st_size
+    mime_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+
+    file_info = None
+
+    # --- Primary: upload to HepAI filesystem for a URL ---
+    try:
+        file_obj = upload_to_hepai_filesystem(file_path=file_path)
+        url = file_obj["url"]
+        file_info = FileInfo(
+            name=file_name,
+            url=url,
+            description=description,
+            download_method="url",
+            size=file_size,
+            mime_type=mime_type,
+        )
+        print(f"📤 File uploaded for FilesEvent (URL): {url}")
+    except Exception as upload_err:
+        print(f"⚠️ HepAI upload failed, falling back to base64: {upload_err}")
+
+    # --- Fallback: base64 encode the file ---
+    if file_info is None:
+        try:
+            with open(file_path, "rb") as f:
+                encoded = base64.b64encode(f.read()).decode("utf-8")
+            file_info = FileInfo(
+                name=file_name,
+                base64_content=encoded,
+                description=description,
+                download_method="base64",
+                size=file_size,
+                mime_type=mime_type,
+            )
+            print(f"📦 File encoded for FilesEvent (base64): {file_name}")
+        except Exception as b64_err:
+            print(f"❌ base64 fallback also failed: {b64_err}")
+            return None
+
+    files_content = FilesContent(
+        files=[file_info],
+        title=file_name,
+        description=description,
+    )
+    return files_content.model_dump()
+
+
+class DocMasterAgent(DrSaiAssistant):
+    """DrSaiAssistant subclass that emits FilesEvent for generated/edited documents."""
+
+    def __init__(self, pending_files_events: list, **kwargs):
+        super().__init__(**kwargs)
+        self._pending_files_events = pending_files_events
+
+    async def on_messages_stream(
+        self,
+        messages: Sequence[BaseChatMessage],
+        cancellation_token: CancellationToken,
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
+        async for event in super().on_messages_stream(messages, cancellation_token):
+            yield event
+            # After each event, drain any pending file events that tools may have queued
+            while self._pending_files_events:
+                fe_data = self._pending_files_events.pop(0)
+                yield FilesEvent(
+                    content=FilesContent(**fe_data),
+                    source=self.name,
+                )
+
+
 def create_word_editor_agent(
         api_key: str|None = None, 
         thread_id: str|None = None, 
         user_id: str|None = None, 
         db_manager: DatabaseManager|None = None,
         default_config_name: str|None = None,
-) -> DrSaiAssistant:
+) -> DocMasterAgent:
     """
     创建Word文档编辑智能体
     
@@ -75,7 +173,7 @@ def create_word_editor_agent(
         default_config_name: 默认模型配置名称
     
     Returns:
-        DrSaiAssistant实例
+        DocMasterAgent实例
     """
     
     def set_model_client(default_config_name: str|None = None):
@@ -300,6 +398,10 @@ def create_word_editor_agent(
 记住：你的重点是正确理解用户对文档的真实意图，并以最小、最可靠的步骤完成任务。"""
 
     # Define document processing tools - define as actual functions
+    # Side-channel for file events: tool functions append here,
+    # DocMasterAgent.on_messages_stream drains it.
+    _pending_files_events: list = []
+
     tools = []
     
     if DOCUMENT_PROCESSING_AVAILABLE:
@@ -445,6 +547,10 @@ def create_word_editor_agent(
             if not result.get('success', False):
                 print(f"❌ Error: {result.get('error', 'Unknown error')}")
                 print(f"📝 Message: {result.get('message', 'No message')}")
+            else:
+                fe_data = _build_files_event_data(file_path, f"Edited DOCX: {Path(file_path).name}")
+                if fe_data:
+                    _pending_files_events.append(fe_data)
             
             return result
         
@@ -490,6 +596,10 @@ def create_word_editor_agent(
             """
             processor = DocumentProcessor(str(WORKSPACE))
             result = processor.delete_docx_content(file_path)
+            if result.get('success', False):
+                fe_data = _build_files_event_data(file_path, f"Cleared DOCX: {Path(file_path).name}")
+                if fe_data:
+                    _pending_files_events.append(fe_data)
             return result
         
         def modify_docx_fonts_tool(file_path: str, font_rules: dict = None):
@@ -514,6 +624,10 @@ def create_word_editor_agent(
             """
             processor = DocumentProcessor(str(WORKSPACE))
             result = processor.modify_docx_fonts(file_path, font_rules)
+            if result.get('success', False):
+                fe_data = _build_files_event_data(file_path, f"Font-modified DOCX: {Path(file_path).name}")
+                if fe_data:
+                    _pending_files_events.append(fe_data)
             return result
         
         def create_docx_with_content_tool(output_path: str, content: list):
@@ -543,6 +657,10 @@ def create_word_editor_agent(
             """
             processor = DocumentProcessor(str(WORKSPACE))
             result = processor.create_docx_with_content(output_path, content)
+            if result.get('success', False):
+                fe_data = _build_files_event_data(output_path, f"Created DOCX: {Path(output_path).name}")
+                if fe_data:
+                    _pending_files_events.append(fe_data)
             return result
         
         tools = [
@@ -555,7 +673,8 @@ def create_word_editor_agent(
             create_docx_with_content_tool
         ]
     
-    return DrSaiAssistant(
+    return DocMasterAgent(
+        pending_files_events=_pending_files_events,
         name="DocMaster",
         model_client=set_model_client(default_config_name),
         system_message=SYSTEM,
