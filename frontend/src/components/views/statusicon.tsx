@@ -76,10 +76,7 @@ export const getStatusIcon = (
     case "pausing":
       return (
         <div className="text-sm mb-2">
-          <Loader2
-            size={20}
-            className="inline-block mr-2 text-accent animate-spin"
-          />
+          <PauseCircle size={20} className="inline-block mr-2 text-accent" />
           <span className="inline-block mr-2 ml-1">Pausing</span>
         </div>
       );

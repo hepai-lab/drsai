@@ -319,10 +319,7 @@ export const useTaskActions = ({
     if (!currentRun) return;
 
     try {
-      if (
-        currentRun.status === "awaiting_input" ||
-        currentRun.status === "connected"
-      ) {
+      if (currentRun.status === "awaiting_input") {
         return;
       }
 
