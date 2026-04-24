@@ -484,7 +484,7 @@ const ChatInput = React.forwardRef<
 
     const handleAttachFileInputChange = async (
       e: React.ChangeEvent<HTMLInputElement>
-      ) => {
+    ) => {
       const list = e.target.files;
       if (list?.length) {
         for (const f of Array.from(list)) {
@@ -562,11 +562,10 @@ const ChatInput = React.forwardRef<
         {/* Attached Items Preview */}
         {(attachedPlan || fileList.length > 0) && (
           <div
-            className={`-mb-2 mx-1 ${
-              darkMode === "dark"
+            className={`-mb-2 mx-1 ${darkMode === "dark"
                 ? "bg-[#121826]/65 shadow-modern"
                 : "bg-violet-50/80 border-violet-200/60"
-            } rounded-t-2xl border-b-0 p-2 flex ${darkMode === "dark" ? "" : "border"} flex-wrap gap-2`}
+              } rounded-t-2xl border-b-0 p-2 flex ${darkMode === "dark" ? "" : "border"} flex-wrap gap-2`}
           >
             {/* Attached Plan */}
             {attachedPlan && (
@@ -785,8 +784,10 @@ const ChatInput = React.forwardRef<
                         <XMarkIcon className="h-4 w-4" />
                       </button>
                     )}
-                    {/* Pause button - only show when active */}
-                    {runStatus === "active" && (
+                    {/* Pause button - allow immediate stop after submit */}
+                    {(runStatus === "active" ||
+                      runStatus === "connected" ||
+                      runStatus === "created") && (
                       <button
                         type="button"
                         onClick={handlePause}
