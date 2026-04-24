@@ -304,6 +304,77 @@ export const useChatWebSocket = ({
             cacheSessionRun(session.id, updatedRun);
             return updatedRun;
 
+          case "tool_call_summary": {
+            if (!wsMessage.data) return current;
+            const summaryData = wsMessage.data as any;
+            const summaryContent =
+              typeof summaryData?.content === "string"
+                ? summaryData.content
+                : typeof summaryData?.summary === "string"
+                ? summaryData.summary
+                : typeof summaryData?.result === "string"
+                ? summaryData.result
+                : "";
+            if (!summaryContent) return current;
+
+            // ToolCallSummaryMessage may include <think>...</think>; we keep raw content here.
+            // Rendering layer will decide whether to parse think tags (see disableThinkTags).
+
+            // Aggregate into previous message_log title message if possible.
+            const lastIdx = current.messages.length - 1;
+            if (lastIdx < 0) return current;
+
+            const lastMessage = current.messages[lastIdx];
+            const lastMeta = (lastMessage.config.metadata || {}) as Record<
+              string,
+              unknown
+            >;
+            const isLastLogMessage =
+              lastMeta.type === "log" ||
+              (lastMessage.config as any).content_type === "log" ||
+              (lastMessage.config as any).type === "AgentLogEvent" ||
+              lastMeta.type === "AgentLogEvent";
+
+            const isLastThoughtEvent =
+              (lastMessage.config as any).type === "ThoughtEvent" ||
+              lastMeta.type === "ThoughtEvent";
+
+            if (!isLastLogMessage && !isLastThoughtEvent) {
+              return current;
+            }
+
+            const prevSummaryRaw = (lastMessage.config.metadata as any)
+              ?.tool_call_summary;
+            const prevSummary =
+              typeof prevSummaryRaw === "string" ? prevSummaryRaw.trim() : "";
+            const nextSummaryChunk = summaryContent.trim();
+            if (!nextSummaryChunk) return current;
+
+            const mergedSummary = prevSummary
+              ? `${prevSummary}\n\n${nextSummaryChunk}`
+              : nextSummaryChunk;
+
+            const updatedMessages = [...current.messages];
+            updatedMessages[lastIdx] = {
+              ...lastMessage,
+              config: {
+                ...lastMessage.config,
+                metadata: {
+                  ...(lastMessage.config.metadata || {}),
+                  tool_call_summary: mergedSummary,
+                },
+                version: ((lastMessage.config as any).version || 0) + 1,
+              } as any,
+            };
+
+            updatedRun = {
+              ...current,
+              messages: updatedMessages,
+            };
+            cacheSessionRun(session.id, updatedRun);
+            return updatedRun;
+          }
+
           case "message_files":
             if (!wsMessage.data) return current;
             const filesEvent = wsMessage.data as FilesEvent;
