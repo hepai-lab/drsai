@@ -29,7 +29,7 @@ from autogen_agentchat.messages import (
 from autogen_core import Image as AGImage
 
 from .agent_messages import (
-    AgentLongTaskMessage, 
+    AgentLongTaskMessage,
     LongTaskQueryMessage,
     ToolLongTaskEvent,
     AgentLogEvent,
@@ -39,6 +39,7 @@ from .agent_messages import (
     FileInfo,
     FilesContent,
     FilesEvent,
+    BackgroundTaskEvent,
     )
 
 from .groupchat_messages import (

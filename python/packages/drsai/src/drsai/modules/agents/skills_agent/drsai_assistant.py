@@ -69,7 +69,7 @@ from drsai.modules.managers.messages import (
     ToolCallSummaryMessage,
     UserInputRequestedEvent,
     ThoughtEvent,
-    AgentLogEvent,
+    AgentLogEvent,Send_level,
     StructuredMessage,
     StructuredMessageFactory,
     MultiModalMessage,
@@ -92,6 +92,9 @@ from .managers.get_managers_tools import (
     create_local_venv,
 )
 from .managers.get_scheduled_task_tools import get_scheduled_task_tool
+from .managers.scheduled_task_manager import (
+    TaskNotification,
+)
 from .utils.utils import HELP_TEXT
 
 
@@ -154,15 +157,20 @@ class DrSaiAssistant(DrSaiAgent):
         set_model_client: Callable | None = None,
         llm_mode_config: Dict = {},
         defult_config_name: str | None = None,
-        is_powershell: bool = False,
-        # skills and executor
-        skills_dir: Optional[str | List[str]] = None,
+        # basic tools and userprofile config
         work_dir: str | None = None,
+        only_system_message: bool = False,
+        is_powershell: bool = False,
+        allolow_dangrous_cmd: bool = False,
+        allolow_basic_tools: Optional[List[str]] = None,
         only_in_workspace: bool = True,
         extra_work_dirs: List[str] | None = None,
+        # skills, executor, sub_agents
+        skills_dir: Optional[str | List[str]] = [],
         executor: CodeExecutor | None = None,
         sub_agent_config: Dict = {},
-        max_turn_count: int = 100,
+        # task loop and memory
+        max_turn_count: int = 200,
         token_limit: int = 50000,
         rag_flow_url: str | None = None,
         rag_flow_token: str | None = None,
@@ -219,24 +227,32 @@ class DrSaiAssistant(DrSaiAgent):
         )
         self._update_user_config_tools = [self._user_profile_manager.get_user_config_tool()]
         # combine system messages
-        user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
-        enhanced_system_message = f"""{self._developer_system_message}\n{user_sys_prompt}\n
+        self._only_system_message = only_system_message
+        if not self._only_system_message:
+            user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
+            enhanced_system_message = f"""{self._developer_system_message}\n{user_sys_prompt}\n
 Current Session_ID is {self._thread_id}"""
+        else:
+            enhanced_system_message = self._developer_system_message
         self._system_messages = [SystemMessage(content=enhanced_system_message)]
 
         # === basic tools ===
         self._only_in_workspace = only_in_workspace
         self._extra_work_dirs = extra_work_dirs
-        self._is_powershell = is_powershell
+        # self._is_powershell = is_powershell
         # if _detect_powershell() is not None:
         #     self._is_powershell = True
         self._basic_funcs: List[Callable] = get_operator_funcs(
             work_dir, 
+            thread_id=self._thread_id,
             only_in_workspace=self._only_in_workspace,
             extra_dirs = self._extra_work_dirs,
-            is_powershell=self._is_powershell
+            is_powershell=is_powershell,
+            allolow_dangrous_cmd=allolow_dangrous_cmd
             )
-        self._basic_funcs_names = [func.__name__ for func in self._basic_funcs]
+        if allolow_basic_tools is not None:
+            self._basic_funcs = [func for func in self._basic_funcs if func.__name__ in allolow_basic_tools]
+        # self._basic_funcs_names = [func.__name__ for func in self._basic_funcs]
         for func in self._basic_funcs:
             self._tools.append(FunctionTool(func, description=func.__doc__))
 
@@ -249,9 +265,12 @@ Current Session_ID is {self._thread_id}"""
         self._memory_document_id = self._user_profile_manager.get_document_ids(self._thread_id)
         self._learning_document_id = self._user_profile_manager.get_document_ids(self._user_id)
         # memory manager
+        model_config = model_client.dump_component()
+        independent_model_client = ChatCompletionClient.load_component(model_config)
+        independent_model_client._model_info = model_client._model_info
         self._model_context = DrSaiChatCompletionContext(
             agent_name=self._user_profile_manager.agent_name,
-            model_client=self._model_client,
+            model_client=independent_model_client,
             user_id=self._user_id,
             thread_id=self._thread_id,
             work_dir=self._work_dir,
@@ -265,16 +284,19 @@ Current Session_ID is {self._thread_id}"""
         )
         if not self._model_context._rag_flow_manager:
             raise ValueError("RAGFlowManager is not initialized in DrSaiChatCompletionContext")
-        funcs = [self._model_context.retrieve_from_memory, self._model_context.summry_conversation_to_memory]
+        funcs = [
+            self._model_context.retrieve_from_memory,
+            self._model_context.summry_conversation_to_memory,
+            self._user_profile_manager.read_session_memory_by_index, # TODO: 后面进行测试修正
+        ]
         for func in funcs:
             self._tools.append(FunctionTool(func, description=func.__doc__))
                 
         # === skills ===
-        self._skills_dir = skills_dir
+        self._skills_dir = skills_dir if isinstance(skills_dir, list) else [skills_dir]
         if self._user_profile_manager.first_time_setup and self._skills_dir:
-            src_dirs = self._skills_dir if isinstance(self._skills_dir, list) else [self._skills_dir]
             dst_root = self._user_profile_manager.skills_dir
-            for src_dir in src_dirs:
+            for src_dir in self._skills_dir:
                 src_path = Path(src_dir)
                 for skill_folder in src_path.iterdir():
                     if skill_folder.is_dir():
@@ -299,7 +321,8 @@ Current Session_ID is {self._thread_id}"""
         # === scheduled task manager ===
         # 注意: task_manager 实例会在 run.py 中创建并注入到 app._task_manager
         # DrSaiAssistant 通过 app 访问，而不是直接持有实例
-        self._scheduled_task_tools = [get_scheduled_task_tool()]
+        # self._scheduled_task_tools = [get_scheduled_task_tool()]
+        self._scheduled_task_tools = []
         self._task_manager = None  # 将在 lazy_init 或 set_task_manager 中设置
 
         # 初始化实例变量供edge_agent_core使用
@@ -318,8 +341,9 @@ Current Session_ID is {self._thread_id}"""
     def set_task_manager(self, task_manager):
         """设置定时任务管理器实例"""
         self._task_manager = task_manager
+        self._scheduled_task_tools = [get_scheduled_task_tool()]
 
-    def _format_task_notifications(self, notifications) -> str:
+    def _format_task_notifications(self, notifications: List[TaskNotification]) -> str:
         """格式化定时任务完成通知"""
         text = "## 定时任务执行通知\n\n"
         for n in notifications:
@@ -344,6 +368,116 @@ Current Session_ID is {self._thread_id}"""
             return True
         return False
 
+    async def _emit_notification(self, content: str) -> TextMessage:
+        """Yield a notification to the user and inject it into the model context."""
+        await self._model_context.add_message(
+            UserMessage(source="system", content=f"[System Notification]\n{content}")
+        )
+        return TextMessage(
+            content=content,
+            source=self._user_profile_manager.agent_name,
+            metadata={"internal": "no"},
+        )
+
+    async def _init_memory_documents(self) -> None:
+        """Initialize learning memory and session documents on first use."""
+        if self._user_profile_manager.first_time_setup:
+            self._learning_document_id = await self._model_context.create_new_session_document(
+                dataset_id=self._learning_dataset_id, create_type="learning_memory"
+            )
+            self._user_profile_manager.update_document_ids(
+                thread_id=self._user_id, document_id=self._learning_document_id
+            )
+        if self._memory_document_id is None:
+            self._memory_document_id = await self._model_context.create_new_session_document(
+                user_id=self._user_id,
+                thread_id=self._thread_id,
+                work_dir=self._work_dir,
+            )
+            self._user_profile_manager.update_document_ids(
+                thread_id=self._thread_id, document_id=self._memory_document_id
+            )
+            self._model_context._document_id = self._memory_document_id
+
+    async def _run_startup_checks(self) -> List[str]:
+        """Reload configs if changed; return list of warning messages (side-effects: update caches)."""
+        warnings = []
+
+        # load/update tools only if TOOLS_CONFIG.json changed
+        tools_changed = self._file_changed(self._user_profile_manager.tools_config_path)
+        if tools_changed:
+            tools_prompt, tool_errors = await self.update_user_tools()
+            if tool_errors:
+                error_details = "\n".join(f"  - {err}" for err in tool_errors)
+                warnings.append(
+                    f"⚠️ **工具配置加载警告 / Tool Config Loading Warning**\n\n"
+                    f"部分工具配置加载失败,已跳过这些工具:\n"
+                    f"Some tool configurations failed to load and were skipped:\n\n"
+                    f"{error_details}\n\n"
+                    f"💡 请检查 `TOOLS_CONFIG.json` 文件格式是否正确。\n"
+                    f"💡 Please check if `TOOLS_CONFIG.json` format is correct.\n\n"
+                    f"✅ 其他工具已正常加载,系统将继续运行。\n"
+                    f"✅ Other tools loaded successfully, system will continue."
+                )
+            self._cached_tools_prompt = tools_prompt
+
+        # update system prompt if AGENTS.md or tools prompt changed
+        if not self._only_system_message and (tools_changed or self._file_changed(self._user_profile_manager.agents_md)):
+            try:
+                self.update_system_prompt(additional_prompt=self._cached_tools_prompt)
+            except Exception as e:
+                logger.error(f"Failed to update system prompt from AGENTS.md: {e}")
+                logger.error(traceback.format_exc())
+                warnings.append(
+                    f"⚠️ **配置文件加载警告 / Config Loading Warning**\n\n"
+                    f"无法加载智能体配置文件 `AGENTS.md`:\n"
+                    f"Failed to load agent config `AGENTS.md`:\n\n"
+                    f"```\n{str(e)}\n```\n\n"
+                    f"将继续使用之前的系统提示词。\n"
+                    f"Continuing with previous system prompt.\n\n"
+                    f"💡 请检查 `AGENTS.md` 文件是否存在且格式正确。\n"
+                    f"💡 Please check if `AGENTS.md` exists and is properly formatted."
+                )
+
+        # load/update skills only if skills directories changed
+        skills_changed = self._file_changed(self._user_profile_manager.skills_dir)
+        if self._skills_dir:
+            skills_changed = skills_changed or any(self._file_changed(Path(d)) for d in self._skills_dir)
+        if skills_changed or self._cached_skills_loader is None:
+            skills_loader, skill_error = self.update_user_skills()
+            if skill_error:
+                warnings.append(
+                    f"⚠️ **技能配置加载警告 / Skills Config Loading Warning**\n\n"
+                    f"无法加载技能配置:\n"
+                    f"Failed to load skills configuration:\n\n"
+                    f"```\n{skill_error}\n```\n\n"
+                    f"将继续使用之前的技能配置。\n"
+                    f"Continuing with previous skills configuration.\n\n"
+                    f"💡 请检查 skills 目录下的 SKILL.md 文件格式。\n"
+                    f"💡 Please check SKILL.md files in the skills directory."
+                )
+                if self._cached_skills_loader is None:
+                    self._agent_skills_tools = []
+            else:
+                self._cached_skills_loader = skills_loader
+
+        # load/update subagents only if SUBAGENT_CONFIG.json changed
+        if self._file_changed(self._user_profile_manager.subagent_config_path):
+            subagent_error = self.update_user_subagents()
+            if subagent_error:
+                warnings.append(
+                    f"⚠️ **子智能体配置加载警告 / Subagent Config Loading Warning**\n\n"
+                    f"无法加载子智能体配置文件 `SUBAGENT_CONFIG.json`:\n"
+                    f"Failed to load subagent config `SUBAGENT_CONFIG.json`:\n\n"
+                    f"```\n{subagent_error}\n```\n\n"
+                    f"将继续使用之前的子智能体配置。\n"
+                    f"Continuing with previous subagent configuration.\n\n"
+                    f"💡 请检查 `SUBAGENT_CONFIG.json` 文件格式是否正确。\n"
+                    f"💡 Please check if `SUBAGENT_CONFIG.json` format is correct."
+                )
+
+        return warnings
+
     def update_system_prompt(self, additional_prompt: str = "") -> str:
         """获取agent描述、用户画像并更新系统消息"""
         user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
@@ -352,35 +486,90 @@ Current Session_ID is {self._thread_id}"""
         enhanced_system_message += additional_prompt
         self._system_messages = [SystemMessage(content=enhanced_system_message)]
     
-    def update_user_skills(self) -> SkillLoader:
-        """加载/更新用户技能"""
+    def update_user_skills(self) -> Tuple[Optional[SkillLoader], Optional[str]]:
+        """加载/更新用户技能
+
+        Returns:
+            Tuple[Optional[SkillLoader], Optional[str]]: (skills_loader, error_message)
+        """
         skills_loader = None
-        # 首先尝试从用户的skills目录加载
-        user_skills_dir = self._user_profile_manager.skills_dir
-        if user_skills_dir.exists() and list(user_skills_dir.glob("*/SKILL.md")):
-            skills_loader = SkillLoader(skills_dir=str(user_skills_dir))
-        # TODO: 从指定的skills目录加载/更新skills
-        # # 再从指定的skills目录加载
-        # if self._skills_dir:
-        #     if not skills_loader:
-        #         skills_loader = SkillLoader(skills_dir=self._skills_dir)
-        #     else:
-        #         skills_loader.add_skills_by_dir(skills_dir=self._skills_dir)
-        # 获取技能描述
-        if skills_loader and skills_loader.skills:
-            self._agent_skills_tools = [get_agent_skills_tool(descriptions=skills_loader.get_descriptions())]
-        else:
-            self._agent_skills_tools = []
-        return skills_loader
+        error_msg = None
+
+        try:
+            user_skills_dir = self._user_profile_manager.skills_dir
+
+            # 1. 先检查并同步系统skill目录到用户skill目录
+            if self._skills_dir:
+                for system_skills_dir in self._skills_dir:
+                    system_path = Path(system_skills_dir)
+                    if not system_path.exists():
+                        continue
+                    for skill_folder in system_path.iterdir():
+                        if not skill_folder.is_dir():
+                            continue
+                        skill_file = skill_folder / "SKILL.md"
+                        if not skill_file.exists():
+                            continue
+                        user_skill_folder = user_skills_dir / skill_folder.name
+                        user_skill_file = user_skill_folder / "SKILL.md"
+                        should_update = False
+                        if not user_skill_file.exists():
+                            should_update = True
+                        else:
+                            system_mtime = skill_file.stat().st_mtime
+                            user_mtime = user_skill_file.stat().st_mtime
+                            if system_mtime > user_mtime:
+                                should_update = True
+
+                        if should_update:
+                            if user_skill_folder.exists():
+                                shutil.rmtree(user_skill_folder)
+                            shutil.copytree(skill_folder, user_skill_folder)
+                            logger.info(f"Updated skill '{skill_folder.name}' from system to user directory")
+
+            # 2. 然后从用户的skills目录加载
+            if user_skills_dir.exists() and list(user_skills_dir.glob("*/SKILL.md")):
+                skills_loader = SkillLoader(skills_dir=str(user_skills_dir))
+
+            if skills_loader and skills_loader.skills:
+                self._agent_skills_tools = [get_agent_skills_tool(descriptions=skills_loader.get_descriptions())]
+            else:
+                self._agent_skills_tools = []
+
+        except Exception as e:
+            error_msg = f"Failed to load skills: {str(e)}"
+            logger.error(f"Error in update_user_skills: {e}")
+            logger.error(traceback.format_exc())
+            # 保持之前的工具配置
+            self._agent_skills_tools = [] if not hasattr(self, '_agent_skills_tools') else self._agent_skills_tools
+
+        return skills_loader, error_msg
     
-    async def update_user_tools(self) -> str:
-        """将用户的自定义配置工具接入到agent中"""
+    async def update_user_tools(self) -> Tuple[str, List[str]]:
+        """将用户的自定义配置工具接入到agent中
+
+        Returns:
+            Tuple[str, List[str]]: (user_local_tools_prompt, error_messages)
+        """
         user_mcp_tools = []
         user_local_tools = []
-        tools_config = self._user_profile_manager.load_user_tools_config()
-        for tool in tools_config:
+        error_messages = []
+
+        try:
+            tools_config = self._user_profile_manager.load_user_tools_config()
+        except Exception as e:
+            error_msg = f"Failed to load TOOLS_CONFIG.json: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            error_messages.append(error_msg)
+            # 返回空配置
+            return "", error_messages
+
+        # 逐个加载工具，收集错误但不中断
+        for idx, tool in enumerate(tools_config):
+            tool_type = tool.get("type", "unknown")
             try:
-                if tool.get("type") == "mcp-std":
+                if tool_type == "mcp-std":
                     config = tool.get("config")
                     if "command" in config and "args" in config:
                         std_mcp_tools = await mcp_server_tools(StdioServerParams(
@@ -388,7 +577,9 @@ Current Session_ID is {self._thread_id}"""
                             args=config["args"]
                         ))
                         user_mcp_tools.extend(std_mcp_tools)
-                elif tool.get("type") == "mcp-sse":
+                    else:
+                        error_messages.append(f"Tool #{idx+1} (mcp-std): Missing 'command' or 'args' in config")
+                elif tool_type == "mcp-sse":
                     config = tool.get("config")
                     if "url" in config:
                         sse_mcp_tools = await mcp_server_tools(SseServerParams(
@@ -398,22 +589,30 @@ Current Session_ID is {self._thread_id}"""
                             sse_read_timeout=config.get("sse_read_timeout", float(300)),
                         ))
                         user_mcp_tools.extend(sse_mcp_tools)
+                    else:
+                        error_messages.append(f"Tool #{idx+1} (mcp-sse): Missing 'url' in config")
                 else:
+                    config = tool.get("config")
                     user_local_tools.append(str(config)+"\n")
 
             except Exception as e:
-                # print(f"Error loading tool: {e}")
-                pass
+                error_msg = f"Tool #{idx+1} ({tool_type}): {str(e)}"
+                logger.warning(f"Error loading tool: {error_msg}")
+                error_messages.append(error_msg)
+                # 继续加载其他工具
 
+        # 更新工具列表
         self._workbench._tools = self._tools + user_mcp_tools
         self._tools_names = [tool.name for tool in self._workbench._tools ]
 
+        # 生成本地工具提示
         if user_local_tools:
             user_local_tools_prompt = "The info about the user's local function is as follows. When needed, you can execute it on the command line using `run_bash` tool\n\n"
             user_local_tools_prompt += "\n".join(user_local_tools)
         else:
             user_local_tools_prompt = ""
-        return user_local_tools_prompt
+
+        return user_local_tools_prompt, error_messages
     
     def get_subagent_descriptions(self, sub_agent_config: dict) -> str:
         """Generate agent type descriptions for system prompt."""
@@ -528,53 +727,19 @@ Current Session_ID is {self._thread_id}"""
 
         inner_messages: List[BaseAgentEvent | BaseChatMessage] = []
         try:
-            # 检查定时任务完成通知
+            # task completion notifications
             if self._task_manager:
-                notifications = self._task_manager.get_pending_notifications(self._user_id)
+                notifications:List[TaskNotification] = self._task_manager.get_pending_notifications(self._user_id)
                 if notifications:
-                    notification_text = self._format_task_notifications(notifications)
-                    yield TextMessage(
-                        content=notification_text,
-                        source=self._user_profile_manager.agent_name,
-                        metadata={"internal": "no"},
-                    )
+                    yield await self._emit_notification(self._format_task_notifications(notifications))
 
-            # initialize the learning memory document
-            if self._user_profile_manager.first_time_setup:
-                self._learning_document_id = await self._model_context.create_new_session_document(dataset_id = self._learning_dataset_id, create_type="learning_memory" )
-                self._user_profile_manager.update_document_ids(thread_id=self._user_id, document_id=self._learning_document_id)
-            # create the new session document
-            if self._memory_document_id is None:
-                self._memory_document_id = await self._model_context.create_new_session_document(
-                    user_id = self._user_id,
-                    thread_id = self._thread_id,
-                    work_dir = self._work_dir,
-                )
-                self._user_profile_manager.update_document_ids(thread_id=self._thread_id, document_id=self._memory_document_id)
-                self._model_context._document_id = self._memory_document_id
+            # initialize memory documents
+            await self._init_memory_documents()
 
-
-            # load/update tools only if TOOLS_CONFIG.json changed
-            tools_changed = self._file_changed(self._user_profile_manager.tools_config_path)
-            if tools_changed:
-                self._cached_tools_prompt = await self.update_user_tools()
-
-            # update system prompt if AGENTS.md or tools prompt changed
-            if tools_changed or self._file_changed(self._user_profile_manager.agents_md):
-                self.update_system_prompt(additional_prompt=self._cached_tools_prompt)
-
-            # load/update skills only if skills directories changed
-            skills_changed = self._file_changed(self._user_profile_manager.skills_dir)
-            if self._skills_dir:
-                extra_dirs = self._skills_dir if isinstance(self._skills_dir, list) else [self._skills_dir]
-                skills_changed = skills_changed or any(self._file_changed(Path(d)) for d in extra_dirs)
-            if skills_changed or self._cached_skills_loader is None:
-                self._cached_skills_loader = self.update_user_skills()
+            # config reload checks — warnings injected into context and yielded to user
+            for warning in await self._run_startup_checks():
+                yield await self._emit_notification(warning)
             skills_loader = self._cached_skills_loader
-
-            # load/update subagents only if SUBAGENT_CONFIG.json changed
-            if self._file_changed(self._user_profile_manager.subagent_config_path):
-                self.update_user_subagents()
 
             # manager ToolSchema
             manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools
@@ -715,158 +880,31 @@ Current Session_ID is {self._thread_id}"""
                 assert isinstance(model_result.content, list) and all(
                     isinstance(item, FunctionCall) for item in model_result.content
                 )
-                
-                # handle tool call
-                for i in range(len(model_result.content)):
-                    tool_name = model_result.content[i].name
-                    call_id = model_result.content[i].id
-                    # argument = json.loads(model_result.content[i].arguments)
-                    argument = fix_and_parse_json(model_result.content[i].arguments)
-                    if isinstance(argument, str):
-                        await model_context.add_message(FunctionExecutionResultMessage(
-                            content=[FunctionExecutionResult(
-                                content = argument,
-                                name = tool_name,
-                                call_id = call_id,
-                                is_error = False,
-                            ),]
-                        ))
-                        continue
 
-                    if tool_name == "TodoWrite":
-                        async for message in self.handle_todo_write(
-                            argument = argument,
-                            tool_name = tool_name,
-                            call_id = call_id,
-                            agent_name = agent_name, 
-                            model_context = model_context):
-                            if isinstance(message, StopMessage):
-                                yield Response(
-                                    chat_message=message,
-                                    inner_messages=inner_messages,
-                                )
-                                return
-                            yield message
-                    elif tool_name == "Task":
-                        async for message in self.handle_subagent_repsonse(
-                            agent_name = agent_name,
-                            model_client = model_client,
-                            model_client_stream = model_client_stream,
-                            model_context = model_context,
-                            argument = argument,
-                            tool_name = tool_name,
-                            call_id = call_id,
-                            cancellation_token = cancellation_token,
-                            output_content_type = output_content_type,
-                        ):
-                            if isinstance(message, StopMessage):
-                                yield Response(
-                                    chat_message=message,
-                                    inner_messages=inner_messages,
-                                )
-                                return
-                            yield message
-                    elif tool_name == "Skill":
-                        skill_content = skills_loader.run_skill(argument["skill"])
-                        # await model_context.add_message(
-                        #     UserMessage(
-                        #         content=f"Skill for {argument["skill"]}: {skill_content}",
-                        #         source="user",
-                        #     )
-                        # )
-                        await model_context.add_message(FunctionExecutionResultMessage(
-                            content=[FunctionExecutionResult(
-                                content = f"Skill for {argument['skill']}:\n\n {skill_content}",
-                                name = tool_name,
-                                call_id = call_id,
-                                is_error = False,
-                            ),]
-                        ))
-                        yield AgentLogEvent(
-                            title=f"I am reading skill: {argument['skill']}.",
-                            source=agent_name, 
-                            content=str(argument), 
-                            content_type="tools")
-                        yield ToolCallSummaryMessage(
-                            content=f"<think>Skill for {argument['skill']}:\n\n {skill_content}</think>\n",
-                            source=agent_name,
-                        )
-                    elif tool_name in self._tools_names:
-                        async for message in self._process_model_result(
-                            model_result=model_result,
-                            inner_messages=inner_messages,
-                            cancellation_token=cancellation_token,
-                            agent_name=agent_name,
-                            system_messages=system_messages,
-                            model_context=model_context,
-                            workbench=workbench,
-                            handoff_tools=handoff_tools,
-                            handoffs=handoffs,
-                            model_client=model_client,
-                            model_client_stream=model_client_stream,
-                            reflect_on_tool_use=reflect_on_tool_use,
-                            tool_call_summary_format=tool_call_summary_format,
-                            tool_call_summary_prompt=self._tool_call_summary_prompt,
-                            output_content_type=output_content_type,
-                            format_string=format_string,
-                        ):
-                            if self.is_paused:
-                                raise asyncio.CancelledError()
-                            if isinstance(message, Response):
-                                # yield ModelClientStreamingChunkEvent(content="<think>", source=agent_name)
-                                # yield ModelClientStreamingChunkEvent(content=str(message.chat_message.content), source=agent_name)
-                                # yield ModelClientStreamingChunkEvent(content="</think>\n", source=agent_name)
-                                yield message.chat_message
-                            else:
-                                yield message
-                            
-                        break
-                    elif tool_name == "UpdateUserConfig":
-                        update_message = self._user_profile_manager.update_user_config(**argument)
-                        # await model_context.add_message(
-                        #     UserMessage(
-                        #         content=update_message,
-                        #         source="user",
-                        #     )
-                        # )
-                        await model_context.add_message(FunctionExecutionResultMessage(
-                            content=[FunctionExecutionResult(
-                                content = update_message,
-                                name = tool_name,
-                                call_id = call_id,
-                                is_error = False,
-                            ),]
-                        ))
-                        agent_name = self._user_profile_manager.agent_name
-                        yield AgentLogEvent(
-                            title=f"I am updating user's config.",
-                            source=agent_name,
-                            content=str(argument),
-                            content_type="tools")
-                    elif tool_name == "ScheduledTaskManager":
-                        async for message in self.handle_scheduled_task(
-                            argument=argument,
-                            tool_name=tool_name,
-                            call_id=call_id,
-                            agent_name=agent_name,
-                            model_context=model_context,
-                        ):
-                            yield message
+                # Process all tool calls through unified _process_model_result
+                async for message in self._process_model_result(
+                    model_result=model_result,
+                    inner_messages=inner_messages,
+                    cancellation_token=cancellation_token,
+                    agent_name=agent_name,
+                    system_messages=system_messages,
+                    model_context=model_context,
+                    workbench=workbench,
+                    handoff_tools=handoff_tools,
+                    handoffs=handoffs,
+                    model_client=model_client,
+                    model_client_stream=model_client_stream,
+                    reflect_on_tool_use=reflect_on_tool_use,
+                    tool_call_summary_format=tool_call_summary_format,
+                    tool_call_summary_prompt=self._tool_call_summary_prompt,
+                    output_content_type=output_content_type,
+                    format_string=format_string,
+                    skills_loader=skills_loader,
+                ):
+                    if isinstance(message, Response):
+                        yield message.chat_message
                     else:
-                        await model_context.add_message(FunctionExecutionResultMessage(
-                            content=[FunctionExecutionResult(
-                                content = f"Unknown tool: {model_result.content[i].name}",
-                                name = tool_name,
-                                call_id = call_id,
-                                is_error = False,
-                            ),]
-                        ))
-                        # await model_context.add_message(
-                        #     UserMessage(
-                        #         content=f"Unknown tool: {model_result.content[i].name}",
-                        #         source="user",
-                        #     )
-                        # )
+                        yield message
 
                 turn_count += 1
                 if turn_count >= self._max_turn_count:
@@ -908,15 +946,83 @@ Current Session_ID is {self._thread_id}"""
                 inner_messages=inner_messages,
             )
         finally:
+
+            # if the last message is a tool call, we need to repair it
+            msgs = self._model_context._messages
+            if msgs and isinstance(msgs[-1], AssistantMessage):
+                last = msgs[-1]
+                if isinstance(last.content, list) and all(
+                    isinstance(c, FunctionCall) for c in last.content
+                ):
+                    logger.info("Repairing unpaired tool_call after pause/cancel")
+                    await self._model_context.add_message(
+                        FunctionExecutionResultMessage(content=[
+                            FunctionExecutionResult(
+                                content=f"{fc.name} was cancelled.",
+                                name=fc.name,
+                                call_id=fc.id,
+                                is_error=False,
+                            ) for fc in last.content
+                        ])
+                    )
+
             # save/update the conversation to {worker_dir}/memories
             if isinstance(self._model_context, DrSaiChatCompletionContext):
                 if self._model_context._rag_flow_manager:
                     await self._model_context.upload_conversation_to_ragflow()
                 self._model_context._current_messages = []
                 current_session_memory = self._model_context._history_messages
-                # TODO: use updates instead of full writes
+                # TODO: 周期性总结用户的对话，形成一个总结
                 self._user_profile_manager.save_session_memory(current_session_memory)
                 
+
+    async def _get_messages_with_compression_notification(
+        self,
+        model_context: ChatCompletionContext,
+        cancellation_token: CancellationToken = None,
+    ) -> AsyncGenerator[Union[List[LLMMessage], AgentLogEvent], None]:
+        """
+        Get messages from context with compression notification support.
+
+        Yields:
+            AgentLogEvent: Notification events during compression
+            List[LLMMessage]: Final list of messages
+        """
+        if isinstance(model_context, DrSaiChatCompletionContext):
+            # Check if compression is needed
+            messages = list(model_context._messages)
+            token_count = model_context._model_client.count_tokens(
+                messages,
+                tools=model_context._tool_schema
+            )
+
+            if model_context._token_limit and token_count > model_context._token_limit:
+                # Notify frontend that compression is starting
+                yield AgentLogEvent(
+                    source="system",
+                    title="Memory Compression",
+                    content="正在压缩对话记忆以优化性能，这可能需要几分钟时间，请稍候...",
+                    send_level=Send_level.INFO
+                )
+
+            # Get messages (compression will happen if needed)
+            all_messages = await model_context.get_messages(
+                cancellation_token=cancellation_token
+            )
+
+            if model_context._token_limit and token_count > model_context._token_limit:
+                # Notify completion
+                yield AgentLogEvent(
+                    source="system",
+                    title="Memory Compression Complete",
+                    content="对话记忆压缩完成，继续处理您的请求...",
+                    send_level=Send_level.INFO
+                )
+
+            yield all_messages
+        else:
+            all_messages = await model_context.get_messages()
+            yield all_messages
 
     async def _call_llm(
         self,
@@ -935,10 +1041,19 @@ Current Session_ID is {self._thread_id}"""
         Perform a model inference and yield either streaming chunk events or the final CreateResult.
         """
 
-        if isinstance(model_context, DrSaiChatCompletionContext):
-            all_messages = await model_context.get_messages(cancellation_token = cancellation_token)
-        else:
-            all_messages = await model_context.get_messages()
+        # Get messages with compression notification
+        all_messages = None
+        async for item in self._get_messages_with_compression_notification(
+            model_context, cancellation_token
+        ):
+            if isinstance(item, list):
+                all_messages = item
+            else:
+                # Yield notification events
+                yield item
+
+        if all_messages is None:
+            raise ValueError("Failed to get messages from context")
         
         llm_messages: List[LLMMessage] = self._get_compatible_context(model_client=model_client, messages=system_messages + all_messages)
 
@@ -1227,9 +1342,8 @@ Complete the task and return a clear, concise summary."""
                 )
             )
 
-    @classmethod
     async def _process_model_result(
-        cls,
+        self,
         model_result: CreateResult,
         inner_messages: List[BaseAgentEvent | BaseChatMessage],
         cancellation_token: CancellationToken,
@@ -1246,12 +1360,13 @@ Complete the task and return a clear, concise summary."""
         tool_call_summary_prompt: str | None,
         output_content_type: type[BaseModel] | None,
         format_string: str | None = None,
+        skills_loader: SkillLoader | None = None,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
         """
         Handle final or partial responses from model_result, including tool calls, handoffs,
-        and reflection if needed.
+        and reflection if needed. Now supports all special tools.
         """
-        
+
         tool_call_msg = ToolCallRequestEvent(
             content=model_result.content,
             source=agent_name,
@@ -1260,29 +1375,430 @@ Complete the task and return a clear, concise summary."""
         inner_messages.append(tool_call_msg)
         logger.debug(tool_call_msg)
         yield tool_call_msg
-        tools_name = [tool.name for tool in model_result.content] 
+        tools_name = [tool.name for tool in model_result.content]
         yield AgentLogEvent(
             title="I am using tools: " + " ".join(tools_name),
-            source=agent_name, 
-            content=str(tool_call_msg.content), 
+            source=agent_name,
+            content=str(tool_call_msg.content),
             content_type="tools")
 
-        # STEP 4B: Execute tool calls
-        executed_calls_and_results = await asyncio.gather(
-            *[
-                cls._execute_tool_call(
-                    tool_call=call,
-                    workbench=workbench,
-                    handoff_tools=handoff_tools,
-                    agent_name=agent_name,
-                    cancellation_token=cancellation_token,
-                )
-                for call in model_result.content
-            ]
-        )
-        exec_results = [result for _, result in executed_calls_and_results]
+        # STEP 4B: Execute tool calls with special tool handling
+        exec_results: List[FunctionExecutionResult] = []
+
+        for idx, tool_call in enumerate(model_result.content):
+            tool_name = tool_call.name
+            call_id = tool_call.id
+
+            # Check for pause/cancellation before executing each tool
+            if self.is_paused or cancellation_token.is_cancelled():
+                # Add cancellation result for current and all remaining tools
+                for remaining_tool in model_result.content[idx:]:
+                    exec_results.append(FunctionExecutionResult(
+                        content=f"{remaining_tool.name} was cancelled.",
+                        name=remaining_tool.name,
+                        call_id=remaining_tool.id,
+                        is_error=False,
+                    ))
+                break
+
+            # Parse arguments
+            try:
+                arguments = fix_and_parse_json(tool_call.arguments)
+                if isinstance(arguments, str):
+                    # JSON parsing error
+                    exec_results.append(FunctionExecutionResult(
+                        content=arguments,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+                    continue
+            except Exception as e:
+                exec_results.append(FunctionExecutionResult(
+                    content=f"Error parsing arguments: {e}",
+                    name=tool_name,
+                    call_id=call_id,
+                    is_error=True,
+                ))
+                continue
+
+            # Handle special tools
+            if tool_name == "Skill":
+                # Skill tool handling
+                try:
+                    if skills_loader is None:
+                        raise ValueError("Skills loader not available")
+                    skill_content = skills_loader.run_skill(arguments["skill"])
+                    exec_results.append(FunctionExecutionResult(
+                        content=f"Skill for {arguments['skill']}:\n\n {skill_content}",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    ))
+                    # Yield events immediately for real-time feedback
+                    yield AgentLogEvent(
+                        title=f"I am reading skill: {arguments['skill']}.",
+                        source=agent_name,
+                        content=str(arguments),
+                        content_type="tools"
+                    )
+                    yield ToolCallSummaryMessage(
+                        content=f"<think>Skill for {arguments['skill']}:\n\n {skill_content}</think>\n",
+                        source=agent_name,
+                    )
+                except Exception as e:
+                    logger.exception(f"Error executing Skill tool: {e}")
+                    exec_results.append(FunctionExecutionResult(
+                        content=f"Error: {str(e)}",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+
+            elif tool_name == "TodoWrite":
+                # TodoWrite tool handling
+                try:
+                    todo_list = self._todo_manager.update(arguments["items"])
+                    exec_results.append(FunctionExecutionResult(
+                        content=self._todo_manager.get_task_prompt(),
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    ))
+                    # Yield text message immediately for user visibility
+                    yield TextMessage(
+                        content=todo_list,
+                        source=agent_name,
+                        metadata={"interal": "no"},
+                    )
+                except Exception as e:
+                    logger.exception(f"Error executing TodoWrite tool: {e}")
+                    exec_results.append(FunctionExecutionResult(
+                        content=str(e),
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+                    yield TextMessage(
+                        content=str(e) + "\n\n",
+                        source=agent_name,
+                        metadata={"interal": "no"},
+                    )
+                    yield StopMessage(
+                        content=str(e),
+                        source=agent_name,
+                    )
+                    # Early return on critical error
+                    return
+
+            elif tool_name == "Task":
+                # Subagent Task tool handling
+                try:
+                    description, prompt, sub_agent_name = arguments["description"], arguments["prompt"], arguments["agent_type"]
+
+                    # Get sub agent system prompt
+                    sub_system = f"""You are a {sub_agent_name} subagent at {self._work_dir}.
+
+    {self._user_sub_agents[sub_agent_name].get("prompt", "")}
+
+    Complete the task and return a clear, concise summary."""
+
+                    # Construct task messages
+                    task_messages: Sequence[BaseChatMessage] = []
+                    llm_messages = await model_context.get_messages()
+                    backgroud_message = "Below are the historical chat records between the user and various intelligent assistants, which can be referenced when executing the current task.\n\n"
+                    for llm_message in llm_messages:
+                        if isinstance(llm_message, UserMessage) or isinstance(llm_message, AssistantMessage):
+                            backgroud_message += f"{llm_message.source}: {llm_message.content}\n\n"
+                    task_messages.append(TextMessage(content=backgroud_message, source="user"))
+                    task_messages.append(TextMessage(content=f"Current task: \n\n{prompt}", source="user"))
+
+                    # Execute subagent
+                    subagent = await self.get_sub_agent_instance(
+                        sub_agent_name=sub_agent_name,
+                        model_client=model_client,
+                        model_client_stream=model_client_stream,
+                        sub_system=sub_system,
+                        output_content_type=output_content_type,
+                    )
+
+                    task_result_content = ""
+                    # Stream subagent messages immediately for real-time feedback
+                    async for message in subagent.on_messages_stream(messages=task_messages, cancellation_token=cancellation_token):
+                        if isinstance(message, Response):
+                            task_result_content = str(message.chat_message.content)
+                            yield message.chat_message
+                            break
+                        yield message  # Yield immediately for streaming experience
+
+                    # Add result
+                    exec_results.append(FunctionExecutionResult(
+                        content=task_result_content,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    ))
+
+                    # Close subagent
+                    try:
+                        await subagent.close()
+                    except Exception as close_error:
+                        logger.warning(f"Error closing subagent {sub_agent_name}: {close_error}")
+
+                except Exception as e:
+                    logger.exception(f"Error executing Task tool: {e}")
+                    exec_results.append(FunctionExecutionResult(
+                        content=f"Error: {str(e)}",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+                    yield TextMessage(
+                        content=str(e) + "\n\n",
+                        source=agent_name,
+                        metadata={"interal": "no"},
+                    )
+                    yield StopMessage(
+                        content=str(e),
+                        source=agent_name,
+                    )
+                    # Early return on critical error
+                    return
+
+            elif tool_name == "UpdateUserConfig":
+                # UpdateUserConfig tool handling
+                try:
+                    update_message = self._user_profile_manager.update_user_config(**arguments)
+                    exec_results.append(FunctionExecutionResult(
+                        content=update_message,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    ))
+                    # Yield log event immediately
+                    yield AgentLogEvent(
+                        title=f"I am updating user's config.",
+                        source=agent_name,
+                        content=str(arguments),
+                        content_type="tools"
+                    )
+                except Exception as e:
+                    logger.exception(f"Error executing UpdateUserConfig tool: {e}")
+                    exec_results.append(FunctionExecutionResult(
+                        content=f"Error: {str(e)}",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+
+            elif tool_name == "ScheduledTaskManager":
+                # ScheduledTaskManager tool handling
+                try:
+                    from .managers import ScheduledTask, ScheduleType, TaskStatus
+
+                    if self._task_manager is None:
+                        error_msg = "定时任务管理器未初始化。请联系管理员(ScheduledTaskManager not initialized.)。\n\n"
+                        exec_results.append(FunctionExecutionResult(
+                            content=error_msg,
+                            name=tool_name,
+                            call_id=call_id,
+                            is_error=True,
+                        ))
+                        yield TextMessage(
+                            content=error_msg,
+                            source=agent_name,
+                            metadata={"internal": "no"},
+                        )
+                        continue
+
+                    operation = arguments.get("operation")
+                    result_content = ""
+
+                    if operation == "create":
+                        execution_context = {
+                            "defult_config_name": getattr(self, '_defult_config_name', None),
+                        }
+                        task = ScheduledTask(
+                            user_id=self._user_id,
+                            session_id=self._thread_id,
+                            task_name=arguments["task_name"],
+                            task_description=arguments.get("task_description"),
+                            prompt=arguments["prompt"],
+                            schedule_type=ScheduleType(arguments["schedule_type"]),
+                            schedule_config=arguments["schedule_config"],
+                            timeout=arguments.get("timeout", 300),
+                            save_history=arguments.get("save_history", True),
+                            execution_context=execution_context,
+                        )
+                        task_id = self._task_manager.add_task(task)
+                        result_content = f"✅ 定时任务创建成功！\n\n"
+                        result_content += f"**任务ID:** `{task_id}`\n"
+                        result_content += f"**任务名称:** {task.task_name}\n"
+                        result_content += f"**调度类型:** {task.schedule_type}\n"
+                        result_content += f"**调度配置:** {task.schedule_config}\n"
+                        result_content += f"**下次执行:** {task.next_run}\n"
+
+                    elif operation == "list":
+                        session_id = arguments.get("session_id")
+                        status = TaskStatus(arguments["status"]) if arguments.get("status") else None
+                        tasks = self._task_manager.list_tasks(
+                            user_id=self._user_id,
+                            session_id=session_id,
+                            status=status
+                        )
+                        if not tasks:
+                            result_content = "当前没有定时任务(No scheduled tasks)。\n\n"
+                        else:
+                            result_content = f"共有 {len(tasks)} 个定时任务：\n\n"
+                            for task in tasks:
+                                result_content += f"- **{task.task_name}** (`{task.task_id}`)\n"
+                                result_content += f"  - 状态: {task.status.value}\n"
+                                result_content += f"  - 调度: {task.schedule_type.value} - {task.schedule_config}\n"
+                                result_content += f"  - 下次执行: {task.next_run or '无'}\n"
+                                result_content += f"  - 执行次数: {task.run_count}\n\n"
+
+                    elif operation == "get":
+                        task_id = arguments["task_id"]
+                        task = self._task_manager.get_task(task_id)
+                        if task is None:
+                            result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
+                        else:
+                            result_content = f"## 任务详情\n\n"
+                            result_content += f"**任务ID:** `{task.task_id}`\n"
+                            result_content += f"**任务名称:** {task.task_name}\n"
+                            result_content += f"**任务描述:** {task.task_description or '无'}\n"
+                            result_content += f"**提示词:** {task.prompt}\n"
+                            result_content += f"**调度类型:** {task.schedule_type.value}\n"
+                            result_content += f"**调度配置:** {task.schedule_config}\n"
+                            result_content += f"**状态:** {task.status.value}\n"
+                            result_content += f"**创建时间:** {task.created_at}\n"
+                            result_content += f"**上次执行:** {task.last_run or '从未执行'}\n"
+                            result_content += f"**下次执行:** {task.next_run or '无'}\n"
+                            result_content += f"**执行次数:** {task.run_count}\n"
+                            result_content += f"**错误次数:** {task.error_count}\n"
+                            if task.last_error:
+                                result_content += f"**最后错误:** {task.last_error}\n"
+
+                    elif operation == "delete":
+                        task_id = arguments["task_id"]
+                        success = self._task_manager.remove_task(task_id)
+                        if success:
+                            result_content = f"✅ 任务已删除(Task deleted successfully): `{task_id}`。\n\n"
+                        else:
+                            result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
+
+                    elif operation == "toggle":
+                        task_id = arguments["task_id"]
+                        enabled = arguments["enabled"]
+                        task = self._task_manager.get_task(task_id)
+                        if task is None:
+                            result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
+                        else:
+                            new_status = TaskStatus.ENABLED if enabled else TaskStatus.DISABLED
+                            self._task_manager.update_task_status(task_id, new_status)
+                            result_content = f"✅ 任务已{'启用' if enabled else '禁用'}: `{task_id}`"
+                            result_content += f"Task {'enabled' if enabled else 'disabled'} successfully\n\n."
+
+                    elif operation == "get_results":
+                        task_id = arguments["task_id"]
+                        limit = arguments.get("limit", 10)
+                        results = self._task_manager.get_task_results(task_id, limit=limit)
+                        if not results:
+                            result_content = f"任务 `{task_id}` 没有执行历史(No execution history)。\n\n"
+                        else:
+                            result_content = f"任务 `{task_id}` 的执行历史（最近 {len(results)} 次）：\n\n"
+                            for i, res in enumerate(results, 1):
+                                result_content += f"{i}. **{res.start_time}**\n"
+                                result_content += f"   - 状态: {res.status}\n"
+                                result_content += f"   - 耗时: {res.duration:.2f}秒\n"
+                                if res.error_message:
+                                    result_content += f"   - 错误: {res.error_message}\n"
+                                result_content += "\n"
+
+                    elif operation == "get_outputs":
+                        task_id = arguments["task_id"]
+                        limit = arguments.get("limit", 10)
+                        outputs = self._task_manager.get_task_outputs(task_id, limit=limit)
+                        if not outputs:
+                            result_content = f"任务 `{task_id}` 没有输出文件(No output files)。\n\n"
+                        else:
+                            result_content = f"任务 `{task_id}` 的输出文件（最近 {len(outputs)} 个）：\n\n"
+                            for i, output in enumerate(outputs, 1):
+                                result_content += f"{i}. **{output['timestamp']}**\n"
+                                result_content += f"   - 文件: `{output['file_path']}`\n"
+                                result_content += f"   - 大小: {output['size']} bytes\n"
+                                result_content += f"   - 修改时间: {output['mtime']}\n\n"
+                            result_content += "\n💡 使用 `read_output` 操作读取文件内容。\n"
+
+                    elif operation == "read_output":
+                        file_path = arguments["file_path"]
+                        try:
+                            with open(file_path, 'r', encoding='utf-8') as f:
+                                content = f.read()
+                            result_content = f"## 输出文件内容\n\n**文件:** `{file_path}`\n\n---\n\n{content}"
+                        except FileNotFoundError:
+                            result_content = f"❌ 文件不存在(File not found): `{file_path}`\n\n."
+                        except Exception as e:
+                            result_content = f"❌ 读取文件失败(Failed to read file): {str(e)}\n\n."
+
+                    else:
+                        result_content = f"❌ 未知操作(Unknown operation): {operation}\n\n."
+
+                    # Add result
+                    exec_results.append(FunctionExecutionResult(
+                        content=result_content,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    ))
+                    # Yield text message immediately for user visibility
+                    yield TextMessage(
+                        content=result_content,
+                        source=agent_name,
+                        metadata={"internal": "no"},
+                    )
+
+                except Exception as e:
+                    logger.exception(f"Error executing ScheduledTaskManager tool: {e}")
+                    error_content = f"❌ 执行定时任务操作失败(Failed to execute scheduled task operation): {str(e)}\n\n"
+                    exec_results.append(FunctionExecutionResult(
+                        content=error_content,
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+                    yield TextMessage(
+                        content=error_content,
+                        source=agent_name,
+                        metadata={"internal": "no"},
+                    )
+
+            else:
+                # Normal tool execution through workbench or handoff
+                try:
+                    _, result = await self._execute_tool_call(
+                        tool_call=tool_call,
+                        workbench=workbench,
+                        handoff_tools=handoff_tools,
+                        agent_name=agent_name,
+                        cancellation_token=cancellation_token,
+                    )
+                    exec_results.append(result)
+                except Exception as e:
+                    logger.exception(f"Error executing tool {tool_name}: {e}")
+                    exec_results.append(FunctionExecutionResult(
+                        content=f"Error: {str(e)}",
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=True,
+                    ))
+
+        # Add all execution results to model context (ensures tool calls and results are paired)
         await model_context.add_message(FunctionExecutionResultMessage(content=exec_results))
-        normal_tool_calls = [(call, result) for call, result in executed_calls_and_results if call.name not in handoffs]
+
+        # Generate tool call summary for non-handoff tools
+        normal_tool_calls = [(call, result) for call, result in zip(model_result.content, exec_results)
+                            if call.name not in handoffs]
         tool_call_summaries: List[str] = []
         for tool_call, tool_call_result in normal_tool_calls:
             tool_call_summaries.append(
@@ -1359,6 +1875,7 @@ Complete the task and return a clear, concise summary."""
             try:
                 model_config = model_client.dump_component()
                 independent_model_client = ChatCompletionClient.load_component(model_config)
+                independent_model_client._model_info = model_client._model_info
             except Exception as e:
                 logger.warning(f"Failed to create independent model_client for subagent {sub_agent_name}: {e}")
                 logger.warning("Falling back to shared model_client (may cause issues when subagent is closed)")
@@ -1419,6 +1936,7 @@ Complete the task and return a clear, concise summary."""
             return subagent
         else:
             raise ValueError(f"Sub agent {sub_agent_name} not found")
+        
     async def handle_subagent_repsonse(
         self,
         agent_name: str,

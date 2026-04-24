@@ -34,6 +34,7 @@ import { usePlanSearch } from "./hooks/usePlanSearch";
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 import { agentWorkerAPI } from "@/components/views/api";
 import { useModeConfigStore } from "@/store/modeConfig";
+import { useConfigStore } from "@/hooks/store";
 import DragDropOverlay from "./components/DragDropOverlay";
 import FilePreview from "./components/FilePreview";
 import PlanPreview from "./components/PlanPreview";
@@ -103,7 +104,10 @@ const ChatInput = React.forwardRef<
     };
     const userId = user?.email || "default_user";
     const { agentInfo, agentId } = useAgentInfo(user?.email);
+    const { session, setSession, sessions, setSessions } = useConfigStore();
     const setAgentInfo = useModeConfigStore((s) => s.setAgentInfo);
+    const selectedAgent = useModeConfigStore((s) => s.selectedAgent);
+    const setSelectedAgent = useModeConfigStore((s) => s.setSelectedAgent);
     const [llmList, setLlmList] = React.useState<{ label: string; value: string }[]>([]);
     const [selectedLlmLabel, setSelectedLlmLabel] = React.useState<string>("");
     React.useEffect(() => {
@@ -133,6 +137,7 @@ const ChatInput = React.forwardRef<
       disabled ||
       runStatus === "active" ||
       runStatus === "pausing" ||
+      runStatus === "paused" ||
       inputRequest?.input_type === "approval";
 
     // Use custom hooks
@@ -440,6 +445,34 @@ const ChatInput = React.forwardRef<
         // 调用后端 API 更新 agent
         await agentWorkerAPI.updateUserAgent(userId, updatedAgentConfig);
         setAgentInfo({ ...agentInfo, defult_config_name: llm.label });
+        if (selectedAgent) {
+          setSelectedAgent({ ...selectedAgent, defult_config_name: llm.label });
+        }
+        if (session?.id && session?.agent_mode_config) {
+          const updatedSession = {
+            ...session,
+            agent_mode_config: {
+              ...session.agent_mode_config,
+              defult_config_name: llm.label,
+            },
+          } as typeof session;
+          setSession(updatedSession);
+          if (Array.isArray(sessions) && sessions.length > 0) {
+            setSessions(
+              sessions.map((s) =>
+                s.id === session.id
+                  ? ({
+                    ...s,
+                    agent_mode_config: {
+                      ...(s as any).agent_mode_config,
+                      defult_config_name: llm.label,
+                    },
+                  } as any)
+                  : s
+              )
+            );
+          }
+        }
         setSelectedLlmLabel(llm.label);
         message.success(`已选择模型: ${llm.label}`);
         console.log("Selected LLM:", llm);
@@ -483,7 +516,7 @@ const ChatInput = React.forwardRef<
 
     const handleAttachFileInputChange = async (
       e: React.ChangeEvent<HTMLInputElement>
-      ) => {
+    ) => {
       const list = e.target.files;
       if (list?.length) {
         for (const f of Array.from(list)) {
@@ -561,11 +594,10 @@ const ChatInput = React.forwardRef<
         {/* Attached Items Preview */}
         {(attachedPlan || fileList.length > 0) && (
           <div
-            className={`-mb-2 mx-1 ${
-              darkMode === "dark"
-                ? "bg-[#121826]/65 shadow-modern"
-                : "bg-violet-50/80 border-violet-200/60"
-            } rounded-t-2xl border-b-0 p-2 flex ${darkMode === "dark" ? "" : "border"} flex-wrap gap-2`}
+            className={`-mb-2 mx-1 ${darkMode === "dark"
+              ? "bg-[#121826]/65 shadow-modern"
+              : "bg-violet-50/80 border-violet-200/60"
+              } rounded-t-2xl border-b-0 p-2 flex ${darkMode === "dark" ? "" : "border"} flex-wrap gap-2`}
           >
             {/* Attached Plan */}
             {attachedPlan && (
@@ -784,19 +816,21 @@ const ChatInput = React.forwardRef<
                         <XMarkIcon className="h-4 w-4" />
                       </button>
                     )}
-                    {/* Pause button - only show when active */}
-                    {runStatus === "active" && (
-                      <button
-                        type="button"
-                        onClick={handlePause}
-                        className={`rounded-full flex justify-center items-center w-10 h-10 transition-smooth hover-lift ${darkMode === "dark"
-                          ? "bg-warning-primary/20 hover:bg-warning-primary/30 text-warning-primary"
-                          : "bg-warning-primary/10 hover:bg-warning-primary/20 text-warning-primary"
-                          } shadow-modern`}
-                      >
-                        <PauseCircleIcon className="h-5 w-5" />
-                      </button>
-                    )}
+                    {/* Pause button - allow immediate stop after submit */}
+                    {(runStatus === "active" ||
+                      runStatus === "connected" ||
+                      runStatus === "created") && (
+                        <button
+                          type="button"
+                          onClick={handlePause}
+                          className={`rounded-full flex justify-center items-center w-10 h-10 transition-smooth hover-lift ${darkMode === "dark"
+                            ? "bg-warning-primary/20 hover:bg-warning-primary/30 text-warning-primary"
+                            : "bg-warning-primary/10 hover:bg-warning-primary/20 text-warning-primary"
+                            } shadow-modern`}
+                        >
+                          <PauseCircleIcon className="h-5 w-5" />
+                        </button>
+                      )}
 
                     {/* Submit button */}
                     <button

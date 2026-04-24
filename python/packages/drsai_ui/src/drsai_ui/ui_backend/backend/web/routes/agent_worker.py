@@ -21,8 +21,7 @@ from .....agent_factory.agent_mode_cofigs import (
     get_user_agents,
 )
 
-import logging
-_logger = logging.getLogger(__name__)
+from loguru import logger
 
 router = APIRouter()
 
@@ -400,7 +399,7 @@ def _resolve_default_agent_id(
         return stored_default
 
     if stored_default:
-        _logger.info(
+        logger.info(
             "User %s default agent %s not available, falling back",
             user_id, stored_default,
         )

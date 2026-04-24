@@ -81,7 +81,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
                   </span>
                   <span className={isActive ? "font-semibold" : ""}>{tab.label}</span>
                   {isActive && (
-                    <span className="absolute bottom-0 left-0 right-0 h-[3px] rounded-t bg-accent" />
+                    <span className="absolute bottom-0 left-2 right-2 h-[3px] rounded-full bg-accent" />
                   )}
                 </button>
               );
@@ -110,7 +110,12 @@ const RightPanel: React.FC<RightPanelProps> = ({
               {historyContent ?? <Empty icon={<Clock />} text="暂无历史会话" />}
             </div>
             <div className={activeTab === "files" ? "h-full" : "hidden"}>
-              {filesContent ?? <Empty icon={<FileText />} text="暂无文件" />}
+              {filesContent ??
+                <div className="border border-gray-200/70 rounded-lg m-4  h-full flex items-center justify-center bg-gray-100/60">
+                  <Empty icon={<FileText />} text="暂无文件" />
+                </div>
+
+              }
             </div>
           </div>
         </>

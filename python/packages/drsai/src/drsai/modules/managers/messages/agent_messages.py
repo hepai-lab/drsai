@@ -103,6 +103,26 @@ class ToolLongTaskEvent(BaseAgentEvent):
     def to_text(self) -> str:
         return f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.send_time_stamp))}] [{self.tool_name}] [{self.task_status}] {self.content}"
 
+## Background Command Task
+class BackgroundTaskEvent(BaseAgentEvent):
+    """Event for background bash/powershell task status updates."""
+
+    task_id: str
+    command: str
+    status: Literal["running", "completed", "timeout", "killed", "failed"]
+    content: str | Dict[str, Any]
+    pid: Optional[int] = None
+    pgid: Optional[int] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    timeout: Optional[int] = None
+    send_time_stamp: float = Field(default_factory=time.time)
+    type: Literal["BackgroundTaskEvent"] = "BackgroundTaskEvent"
+
+    def to_text(self) -> str:
+        cmd_preview = self.command[:50] + "..." if len(self.command) > 50 else self.command
+        return f"[Background Task] {self.task_id} ({self.status}): {cmd_preview}"
+
 
 # Messages
 

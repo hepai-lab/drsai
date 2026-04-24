@@ -384,7 +384,7 @@ class ScheduledTaskManager:
             result_data = TaskResult(
                 task_id=task_id,
                 user_id=task.user_id,
-                session_id=task.session_id,
+                session_id=task.task_id,
                 start_time=start_time.isoformat(),
                 status=TaskStatus.RUNNING.value,
             )
@@ -397,7 +397,8 @@ class ScheduledTaskManager:
                 f.write(f"**任务ID:** {task_id}\n")
                 f.write(f"**执行时间:** {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"**用户ID:** {task.user_id}\n")
-                f.write(f"**会话ID:** {task.session_id}\n\n")
+                f.write(f"**来源会话:** {task.session_id}\n")
+                f.write(f"**执行会话:** {task.task_id}\n\n")
                 f.write(f"---\n\n")
                 f.write(f"## 执行内容\n\n{task.prompt}\n\n")
                 f.write(f"---\n\n")
@@ -413,7 +414,7 @@ class ScheduledTaskManager:
                 result_content = await asyncio.wait_for(
                     self.agent_executor(
                         task.user_id,
-                        task.session_id,
+                        task.task_id,  # 使用 task_id 作为执行 session_id，隔离用户实时会话并继承记忆
                         task.prompt,
                         output_file,  # 传递输出文件路径
                         execution_context=task.execution_context,  # 传递执行上下文
