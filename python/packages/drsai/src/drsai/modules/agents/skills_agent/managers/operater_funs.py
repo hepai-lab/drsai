@@ -5,7 +5,17 @@ import re
 import shutil
 import platform
 import threading
+import time
+import os
+import signal
+import uuid
+import asyncio
 from typing import Union, List, Dict, Any, Optional
+from datetime import datetime
+
+import aiofiles
+
+from .bash_task_persistence import BashTaskPersistence
 
 # Dangerous command patterns (regex)
 _DANGEROUS_PATTERNS = [
@@ -82,15 +92,21 @@ def _detect_powershell() -> Optional[str]:
     return None
 
 
+# TODO: 增加前台运行
 def get_operator_funcs(
-        worker_dir: str|Path, 
-        extra_dirs: list[str|Path] = None, 
+        worker_dir: str|Path,
+        thread_id: str,
+        extra_dirs: list[str|Path] = None,
         only_in_workspace: bool = True,
-        is_powershell: bool = False, 
+        is_powershell: bool = False,
+        allolow_dangrous_cmd: bool = False,
         )->list[callable]:
 
     WORKDIR = Path(worker_dir).resolve()
     ALLOWED_DIRS = [WORKDIR] + [Path(d).resolve() for d in (extra_dirs or [])]
+
+    # Initialize persistence manager
+    task_persistence = BashTaskPersistence(worker_dir=WORKDIR, thread_id=thread_id)
 
     def safe_path(p: str) -> Path:
         """Ensure path stays within workspace or allowed directories."""
@@ -123,93 +139,83 @@ def get_operator_funcs(
     # Mutable current directory state (persists across run_bash calls)
     _cwd = [WORKDIR]
 
-    def run_bash(cmd: str) -> str:
-        """Execute shell command in workspace directory.
+    # Background tasks storage - load from persistent storage on initialization
+    _bash_tasks = task_persistence.load_all_tasks()
 
-        The working directory persists across calls: cd commands take effect
-        for subsequent invocations, as long as the target stays within the
-        allowed workspace.
-        """
-        # Check dangerous patterns
-        if _DANGEROUS_RE.search(cmd):
-            return "Error: Dangerous command detected"
-        # Check absolute paths referenced in command
-        if only_in_workspace:
-            path_err = _check_cmd_paths(cmd)
-            if path_err:
-                return path_err
-        try:
-            # Append a sentinel so we can capture the resulting directory
-            wrapped = f'{cmd}\necho "__DRSAI_CWD__:$(pwd)"'
-            r = subprocess.run(
-                wrapped, shell=True, cwd=_cwd[0],
-                capture_output=True, text=True, timeout=300
-            )
-            raw = r.stdout + r.stderr
-            # Parse and strip the sentinel line
-            lines = raw.splitlines()
-            out_lines = []
-            for line in lines:
-                if line.startswith("__DRSAI_CWD__:"):
-                    new_dir = Path(line[len("__DRSAI_CWD__:"):]).resolve()
-                    # Only update cwd if still within allowed dirs
-                    if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
-                        _cwd[0] = new_dir
-                    elif only_in_workspace:
-                        out_lines.append(
-                            f"Warning: cd target '{new_dir}' is outside workspace; "
-                            "cwd not updated"
-                        )
-                else:
-                    out_lines.append(line)
-            return ("\n".join(out_lines).strip() or "(no output)")[:50000]
-        except Exception as e:
-            return f"Error: {e}"
+    # Clean up old completed tasks (older than 7 days)
+    task_persistence.cleanup_old_tasks(max_age_days=7)
 
-
-    def run_read(path: str, minilimit: int = None, maxlimit: int = -1) -> str:
+    async def run_read(path: str, minilimit: int = None, maxlimit: int = -1, timeout: float = 30.0) -> str:
         """
         Read file contents.
-        
-        Args:
-            path : Path to file.
-            minilimit : The start of  Maximum number of lines to read.
-            maxlimit : The end of  Maximum number of lines to read.
         """
         try:
-            lines = safe_path(path).read_text().splitlines()
-            if minilimit:
-                lines = lines[minilimit:maxlimit]
-            return "\n".join(lines)[:50000]
+            fp = safe_path(path)
+            async with asyncio.timeout(timeout):
+                async with aiofiles.open(fp, 'r', encoding='utf-8') as f:
+                    text = await f.read()
+                    lines = text.splitlines()
+                    if minilimit:
+                        lines = lines[minilimit:maxlimit]
+                    return "\n".join(lines)[:50000]
+        except asyncio.TimeoutError:
+            return f"Error: Read operation timed out after {timeout}s"
         except Exception as e:
             return f"Error: {e}"
 
 
-    def run_write(path: str, content: str) -> str:
-        """Write content to file."""
+    async def run_write(path: str, content: str, timeout: float = 30.0) -> str:
+        """
+        Write content to file.
+        """
         try:
+            # Check content size before writing
+            content_size_mb = len(content.encode('utf-8')) / (1024 * 1024)
+            
             fp = safe_path(path)
+            # Create parent directories synchronously (quick operation)
             fp.parent.mkdir(parents=True, exist_ok=True)
-            fp.write_text(content)
-            return f"Wrote {len(content)} bytes to {path}"
+
+            async with asyncio.timeout(timeout):
+                async with aiofiles.open(fp, 'w', encoding='utf-8') as f:
+                    await f.write(content)
+                    return f"Wrote {len(content)} bytes ({content_size_mb:.2f}MB) to {path}"
+                    
+        except asyncio.TimeoutError:
+            return f"Error: Write operation timed out after {timeout}s (file may be partially written)"
         except Exception as e:
             return f"Error: {e}"
 
 
-    def run_edit(path: str, old_text: str, new_text: str) -> str:
-        """Replace exact text in file."""
+    async def run_edit(path: str, old_text: str, new_text: str, timeout: float = 30.0) -> str:
+        """
+        Replace exact text in file.
+        """
         try:
             fp = safe_path(path)
-            text = fp.read_text()
-            if old_text not in text:
-                return f"Error: Text not found in {path}"
-            fp.write_text(text.replace(old_text, new_text, 1))
-            return f"Edited {path}"
+
+            async with asyncio.timeout(timeout):
+                # Read operation
+                async with aiofiles.open(fp, 'r', encoding='utf-8') as f:
+                    text = await f.read()
+
+                if old_text not in text:
+                    return f"Error: Text not found in {path}"
+
+                # Write operation
+                new_content = text.replace(old_text, new_text, 1)
+                async with aiofiles.open(fp, 'w', encoding='utf-8') as f:
+                    await f.write(new_content)
+
+                return f"Edited {path}"
+        except asyncio.TimeoutError:
+            return f"Error: Operation timed out after {timeout}s (file may be partially written)"
+
         except Exception as e:
             return f"Error: {e}"
 
 
-    def run_grep(
+    async def run_grep(
         pattern: str,
         path: str = None,
         glob: str = None,
@@ -242,9 +248,13 @@ def get_operator_funcs(
         """
         try:
             # Use ripgrep if available, fallback to grep
-            rg_available = subprocess.run(
-                ["which", "rg"], capture_output=True, text=True
-            ).returncode == 0
+            proc = await asyncio.create_subprocess_exec(
+                "which", "rg",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await proc.communicate()
+            rg_available = proc.returncode == 0
 
             search_path = str(safe_path(path)) if path else str(WORKDIR)
 
@@ -282,10 +292,15 @@ def get_operator_funcs(
                 cmd.append(pattern)
                 cmd.append(search_path)
 
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=30
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
                 )
-                output = result.stdout
+
+                async with asyncio.timeout(30):
+                    stdout, stderr = await proc.communicate()
+                    output = stdout.decode('utf-8')
 
             else:
                 # Fallback to grep
@@ -310,10 +325,15 @@ def get_operator_funcs(
 
                 cmd.extend([pattern, search_path])
 
-                result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=30
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
                 )
-                output = result.stdout
+
+                async with asyncio.timeout(30):
+                    stdout, stderr = await proc.communicate()
+                    output = stdout.decode('utf-8')
 
             if not output:
                 return "No matches found"
@@ -326,13 +346,392 @@ def get_operator_funcs(
 
             return output.strip()[:50000]
 
-        except subprocess.TimeoutExpired:
+        except asyncio.TimeoutError:
             return "Error: Search timeout"
         except Exception as e:
             return f"Error: {e}"
 
+    async def run_bash(
+        cmd: str,
+        timeout: float = 60,
+    ) -> str:
+        """Execute a bash command asynchronously and wait for completion.
 
-    def run_glob(
+        **IMPORTANT: This is the default and preferred function for most shell commands.**
+        timeout: Timeout in seconds (max: 120).
+
+        Example workflow:
+            1. Try: run_bash("npm test")  # Try synchronous first
+            2. If timeout → Use: run_bash_background("npm test", timeout=300)
+        """
+
+        task_info = {
+            "process": None,
+            "pgid": None,
+            "pid": None,
+            "output": "",
+            "error": "",
+            "status": "running",
+            "start_time": time.time(),
+            "timeout": timeout,
+        }
+        try:
+             # Append a sentinel so we can capture the resulting directory
+            wrapped = f'{cmd}\necho "__DRSAI_CWD__:$(pwd)"'
+            # Create new process group for proper cleanup
+            proc = await asyncio.create_subprocess_shell(
+                wrapped,
+                cwd=str(_cwd[0]),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                preexec_fn=os.setsid  # Create new session
+            )
+
+            task_info["pid"] = proc.pid
+            task_info["pgid"] = os.getpgid(proc.pid)
+
+            # Wait with timeout
+            try:
+                async with asyncio.timeout(timeout):
+                    stdout, stderr = await proc.communicate()
+                    raw_output = (stdout.decode('utf-8') if stdout else '') + (stderr.decode('utf-8') if stderr else '')
+
+                    # Parse output and update working directory
+                    lines = raw_output.splitlines()
+                    out_lines = []
+                    for line in lines:
+                        if line.startswith("__DRSAI_CWD__:"):
+                            new_dir_str = line[len("__DRSAI_CWD__:"):].strip()
+                            try:
+                                new_dir = Path(new_dir_str).resolve()
+                                # Update cwd based on only_in_workspace setting
+                                if only_in_workspace:
+                                    # Only update if within allowed directories
+                                    if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
+                                        _cwd[0] = new_dir
+                                    else:
+                                        out_lines.append(
+                                            f"Warning: cd target '{new_dir}' is outside workspace; cwd not updated"
+                                        )
+                                else:
+                                    # Allow cd to any directory when workspace restriction is off
+                                    _cwd[0] = new_dir
+                            except Exception:
+                                pass
+                        else:
+                            out_lines.append(line)
+
+                    output = "\n".join(out_lines).strip() or "(no output)"
+                    return output[:50000]
+
+            except asyncio.TimeoutError:
+                # Kill entire process group on timeout
+                try:
+                    # First try graceful termination
+                    os.killpg(task_info["pgid"], signal.SIGTERM)
+                    await asyncio.sleep(2)  # Grace period for clean shutdown
+
+                    # Check if process group still exists
+                    try:
+                        os.killpg(task_info["pgid"], 0)  # Signal 0 checks existence
+                        # Still alive, force kill
+                        os.killpg(task_info["pgid"], signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass  # Already terminated gracefully
+                except ProcessLookupError:
+                    pass  # Process group already gone
+                except Exception as e:
+                    return f"Error: Command timed out after {timeout}s and failed to kill process group: {e}"
+
+                return f"Error: Command timed out after {timeout}s (all child processes terminated)"
+
+        except Exception as e:
+            return f"Error: {e}"
+            
+
+    async def run_bash_background(
+        cmd: str,
+        timeout: float = 500.0,
+        wait_time: float = 10.0,
+    ) -> Union[str, Dict[str, Any]]:
+        """Execute shell command with smart background mode for LONG-RUNNING tasks.
+
+        **⚠️ WARNING: Use this function ONLY when:**
+        1. run_bash() returned a timeout error, OR
+        2. You know the command will take > 2 minutes (e.g., long builds, extensive tests)
+        **For most commands, use run_bash() first!**
+        Important Notes:
+            - Background tasks persist in storage and can be queried across sessions
+            - Don't use sleep commands after launching background tasks
+            - Use get_bash_task(task_id) to check status and retrieve output
+        """
+        # Check dangerous patterns
+        if not allolow_dangrous_cmd and _DANGEROUS_RE.search(cmd):
+            return "Error: Dangerous command detected"
+
+        # Check absolute paths referenced in command
+        if only_in_workspace:
+            path_err = _check_cmd_paths(cmd)
+            if path_err:
+                return path_err
+
+        # Clamp timeout to reasonable range
+        timeout = min(max(10.0, timeout), 600.0)
+        wait_time = min(max(1.0, wait_time), timeout)  # wait_time should not exceed timeout
+
+        # Append a sentinel so we can capture the resulting directory
+        wrapped = f'{cmd}\necho "__DRSAI_CWD__:$(pwd)"'
+
+        # Create task ID with short UUID (first 8 characters)
+        task_id = f"bash_task_{uuid.uuid4().hex[:8]}"
+
+        task_info = {
+            "task_id": task_id,
+            "command": cmd,
+            "status": "running",
+            "output": None,
+            "error": None,
+            "pid": None,
+            "pgid": None,
+            "start_time": datetime.now().isoformat(),
+            "timeout": timeout,
+        }
+        _bash_tasks[task_id] = task_info
+        # Save to persistent storage
+        task_persistence.save_task(task_id, task_info)
+
+        async def run_bg_task():
+            """Background task execution with timeout protection."""
+            try:
+                # Create new process group for proper cleanup
+                proc = await asyncio.create_subprocess_shell(
+                    wrapped,
+                    cwd=str(_cwd[0]),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    preexec_fn=os.setsid  # Create new session
+                )
+
+                task_info["pid"] = proc.pid
+                task_info["pgid"] = os.getpgid(proc.pid)
+
+                # Wait with timeout
+                try:
+                    async with asyncio.timeout(timeout):
+                        stdout, stderr = await proc.communicate()
+                        raw_output = (stdout.decode('utf-8') if stdout else '') + (stderr.decode('utf-8') if stderr else '')
+
+                        # Parse output and update working directory
+                        lines = raw_output.splitlines()
+                        out_lines = []
+                        for line in lines:
+                            if line.startswith("__DRSAI_CWD__:"):
+                                new_dir_str = line[len("__DRSAI_CWD__:"):].strip()
+                                try:
+                                    new_dir = Path(new_dir_str).resolve()
+                                    # Update cwd based on only_in_workspace setting
+                                    if only_in_workspace:
+                                        # Only update if within allowed directories
+                                        if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
+                                            _cwd[0] = new_dir
+                                        else:
+                                            out_lines.append(
+                                                f"Warning: cd target '{new_dir}' is outside workspace; cwd not updated"
+                                            )
+                                    else:
+                                        # Allow cd to any directory when workspace restriction is off
+                                        _cwd[0] = new_dir
+                                except Exception:
+                                    pass
+                            else:
+                                out_lines.append(line)
+
+                        output = "\n".join(out_lines).strip() or "(no output)"
+                        task_info["output"] = output[:50000]
+                        task_info["status"] = "completed"
+                        task_info["exit_code"] = proc.returncode
+                        # Update persistent storage
+                        task_persistence.update_task_status(task_id, "completed", output=task_info["output"])
+
+                except asyncio.TimeoutError:
+                    # Kill entire process group on timeout
+                    try:
+                        # First try graceful termination
+                        os.killpg(task_info["pgid"], signal.SIGTERM)
+                        await asyncio.sleep(2)  # Grace period for clean shutdown
+
+                        # Check if process group still exists
+                        try:
+                            os.killpg(task_info["pgid"], 0)  # Signal 0 checks existence
+                            # Still alive, force kill
+                            os.killpg(task_info["pgid"], signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass  # Already terminated gracefully
+                    except ProcessLookupError:
+                        pass  # Process group already gone
+                    except Exception as e:
+                        task_info["error"] = f"Error killing process group: {e}"
+
+                    task_info["error"] = f"Command timed out after {timeout}s (all child processes terminated)"
+                    task_info["status"] = "timeout"
+                    # Update persistent storage
+                    task_persistence.update_task_status(task_id, "timeout", error=task_info["error"])
+
+            except Exception as e:
+                task_info["error"] = f"Error: {e}"
+                task_info["status"] = "failed"
+                # Update persistent storage
+                task_persistence.update_task_status(task_id, "failed", error=task_info["error"])
+            finally:
+                task_info["end_time"] = datetime.now().isoformat()
+
+        # Start background task
+        asyncio.create_task(run_bg_task())
+
+        # Wait for wait_time to see if task completes quickly
+        await asyncio.sleep(wait_time)
+
+        # Check if task completed during wait period
+        if task_info["status"] == "completed":
+            # Task completed successfully - return output directly
+            return task_info["output"]
+        elif task_info["status"] in ["timeout", "failed"]:
+            # Task failed during wait period - return error directly
+            error_msg = task_info.get("error", "Unknown error")
+            return f"Error: {error_msg}"
+        else:
+            # Task still running - return task info for background querying
+            cmd_preview = cmd[:50] + "..." if len(cmd) > 50 else cmd
+            return {
+                "task_id": task_id,
+                "status": "running",
+                "command": cmd_preview,
+                "timeout": timeout,
+                "message": f"Task '{task_id}' is still running after {wait_time}s.\nUse get_bash_task('{task_id}') to check status and retrieve output.",
+                "pid": task_info.get("pid"),
+                "pgid": task_info.get("pgid"),
+            }
+
+    async def get_bash_task(task_id: str) -> Dict[str, Any]:
+        """
+        Get status and output of a background bash task.
+
+        Args:
+            task_id: Task ID returned by run_bash with run_in_background=True
+
+        Note:
+            If a query is still running after being executed once, it should not be executed again. Instead, users should be prompted to actively query again later, or a scheduled task can be set.
+        """
+        if task_id not in _bash_tasks:
+            return {
+                "task_id": task_id,
+                "status": "not_found",
+                "error": f"Task {task_id} not found"
+            }
+
+        task_info = _bash_tasks[task_id]
+        result = {
+            "task_id": task_id,
+            "command": task_info["command"],
+            "status": task_info["status"],
+            "start_time": task_info["start_time"],
+        }
+
+        if task_info.get("pid"):
+            result["pid"] = task_info["pid"]
+        if task_info.get("pgid"):
+            result["pgid"] = task_info["pgid"]
+        if task_info.get("end_time"):
+            result["end_time"] = task_info["end_time"]
+        if task_info.get("exit_code") is not None:
+            result["exit_code"] = task_info["exit_code"]
+
+        if task_info["status"] == "completed" and task_info.get("output"):
+            result["output"] = task_info["output"]
+        elif task_info.get("error"):
+            result["error"] = task_info["error"]
+
+        return result
+
+
+    async def list_bash_tasks() -> str:
+        """
+        List all bash background tasks.
+
+        Returns:
+            Formatted string listing all tasks and their status
+        """
+        if not _bash_tasks:
+            return "No background bash tasks"
+
+        lines = ["Bash Background Tasks:"]
+        for task_id, info in _bash_tasks.items():
+            status = info["status"]
+            cmd_preview = info["command"][:50] + "..." if len(info["command"]) > 50 else info["command"]
+            lines.append(f"  {task_id}: {status} - {cmd_preview}")
+            if info.get("pid"):
+                lines.append(f"    PID: {info['pid']}, PGID: {info.get('pgid', 'N/A')}")
+
+        return "\n".join(lines)
+
+
+    async def kill_bash_task(task_id: str, force: bool = False) -> str:
+        """
+        Kill a running background bash task and its entire process group.
+
+        Args:
+            task_id: Task ID to kill
+            force: If True, use SIGKILL immediately; if False, try SIGTERM first
+
+        Returns:
+            Status message
+        """
+        if task_id not in _bash_tasks:
+            return f"Error: Task {task_id} not found"
+
+        task_info = _bash_tasks[task_id]
+
+        if task_info["status"] not in ["running"]:
+            return f"Task {task_id} is not running (status: {task_info['status']})"
+
+        pgid = task_info.get("pgid")
+        if not pgid:
+            return f"Error: No process group ID found for task {task_id}"
+
+        try:
+            if force:
+                # Force kill
+                os.killpg(pgid, signal.SIGKILL)
+                task_info["status"] = "killed"
+                task_info["error"] = "Killed by user (SIGKILL)"
+            else:
+                # Graceful termination
+                os.killpg(pgid, signal.SIGTERM)
+                await asyncio.sleep(2)
+                # Check if still alive, then force kill
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # Already dead
+                task_info["status"] = "killed"
+                task_info["error"] = "Terminated by user (SIGTERM)"
+
+            task_info["end_time"] = datetime.now().isoformat()
+            # Update persistent storage
+            task_persistence.update_task_status(task_id, "killed", error=task_info["error"])
+            return f"Task {task_id} (PGID: {pgid}) has been terminated"
+
+        except ProcessLookupError:
+            task_info["status"] = "completed"
+            task_info["error"] = "Process already terminated"
+            # Update persistent storage
+            task_persistence.update_task_status(task_id, "completed", error=task_info["error"])
+            return f"Task {task_id} process group already terminated"
+        except Exception as e:
+            return f"Error killing task {task_id}: {e}"
+
+
+    async def run_glob(
         pattern: str,
         search_path: str = None,
         max_results: int = 100
@@ -351,17 +750,21 @@ def get_operator_funcs(
         try:
             base_path = safe_path(search_path) if search_path else WORKDIR
 
-            # Use pathlib.glob for pattern matching
-            matches = []
-            if "**" in pattern:
-                # Recursive glob
-                matches = list(base_path.glob(pattern))
-            else:
-                # Non-recursive glob
-                matches = list(base_path.glob(pattern))
+            # Use pathlib.glob for pattern matching (runs in executor to avoid blocking)
+            def _glob_sync():
+                matches = []
+                if "**" in pattern:
+                    # Recursive glob
+                    matches = list(base_path.glob(pattern))
+                else:
+                    # Non-recursive glob
+                    matches = list(base_path.glob(pattern))
 
-            # Sort by modification time (newest first)
-            matches.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+                # Sort by modification time (newest first)
+                matches.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+                return matches
+
+            matches = await asyncio.get_event_loop().run_in_executor(None, _glob_sync)
 
             # Convert to relative paths
             rel_matches = []
@@ -391,13 +794,12 @@ def get_operator_funcs(
     _ps_cwd = [WORKDIR]
     # Background tasks storage
     _ps_background_tasks = {}
-    _ps_task_counter = [0]
 
-    def run_powershell(
+    async def run_powershell(
         command: str,
-        timeout: int = 300,
+        timeout: int = 200,
         run_in_background: bool = False,
-        dangerous_allowed: bool = False
+        # dangerous_allowed: bool = False # dangerous_allowed: Allow dangerous commands (default False)
     ) -> Union[str, Dict[str, Any]]:
         """
         Execute PowerShell command in workspace directory.
@@ -409,7 +811,7 @@ def get_operator_funcs(
             command: PowerShell command to execute
             timeout: Timeout in seconds (default 300, max 600)
             run_in_background: Run command in background (returns task info)
-            dangerous_allowed: Allow dangerous commands (default False)
+
 
         Returns:
             If run_in_background=False: Command output as string
@@ -429,7 +831,7 @@ def get_operator_funcs(
             return "Error: PowerShell not found. Please install PowerShell Core (pwsh) or use run_bash for Unix commands."
 
         # Check dangerous patterns (unless explicitly allowed)
-        if not dangerous_allowed and _DANGEROUS_RE.search(command):
+        if not allolow_dangrous_cmd and _DANGEROUS_RE.search(command):
             return "Error: Dangerous command detected"
 
         # Check absolute paths referenced in command
@@ -456,8 +858,8 @@ def get_operator_funcs(
 
         # Background execution
         if run_in_background:
-            task_id = f"ps_task_{_ps_task_counter[0]}"
-            _ps_task_counter[0] += 1
+            # Create task ID with short UUID (first 8 characters)
+            task_id = f"ps_task_{uuid.uuid4().hex[:8]}"
 
             task_info = {
                 "task_id": task_id,
@@ -468,7 +870,7 @@ def get_operator_funcs(
             }
             _ps_background_tasks[task_id] = task_info
 
-            def run_bg_task():
+            async def run_bg_task():
                 try:
                     # Build PowerShell command with cwd tracking
                     ps_command = f"""
@@ -477,43 +879,43 @@ Set-Location '{_ps_cwd[0]}'
 {command}
 Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
 """
-                    result = subprocess.run(
-                        [ps_path, "-NoProfile", "-NonInteractive", "-Command", ps_command],
-                        capture_output=True,
-                        text=True,
-                        timeout=timeout,
+                    proc = await asyncio.create_subprocess_exec(
+                        ps_path, "-NoProfile", "-NonInteractive", "-Command", ps_command,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
                         cwd=str(_ps_cwd[0])
                     )
 
-                    raw_output = result.stdout + result.stderr
-                    output_lines = []
-                    lines = raw_output.splitlines()
+                    async with asyncio.timeout(timeout):
+                        stdout, stderr = await proc.communicate()
+                        raw_output = (stdout.decode('utf-8') if stdout else '') + (stderr.decode('utf-8') if stderr else '')
+                        output_lines = []
+                        lines = raw_output.splitlines()
 
-                    for line in lines:
-                        if line.startswith("__DRSAI_PS_CWD__:"):
-                            new_dir_str = line[len("__DRSAI_PS_CWD__:"):].strip()
-                            try:
-                                new_dir = Path(new_dir_str).resolve()
-                                if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
-                                    _ps_cwd[0] = new_dir
-                            except Exception:
-                                pass
-                        else:
-                            output_lines.append(line)
+                        for line in lines:
+                            if line.startswith("__DRSAI_PS_CWD__:"):
+                                new_dir_str = line[len("__DRSAI_PS_CWD__:"):].strip()
+                                try:
+                                    new_dir = Path(new_dir_str).resolve()
+                                    if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
+                                        _ps_cwd[0] = new_dir
+                                except Exception:
+                                    pass
+                            else:
+                                output_lines.append(line)
 
-                    output = "\n".join(output_lines).strip() or "(no output)"
-                    task_info["output"] = output[:50000]
-                    task_info["status"] = "completed"
+                        output = "\n".join(output_lines).strip() or "(no output)"
+                        task_info["output"] = output[:50000]
+                        task_info["status"] = "completed"
 
-                except subprocess.TimeoutExpired:
+                except asyncio.TimeoutError:
                     task_info["error"] = f"Command timeout after {timeout}s"
                     task_info["status"] = "failed"
                 except Exception as e:
                     task_info["error"] = f"Error: {e}"
                     task_info["status"] = "failed"
 
-            thread = threading.Thread(target=run_bg_task, daemon=True)
-            thread.start()
+            asyncio.create_task(run_bg_task())
 
             return {
                 "task_id": task_id,
@@ -531,43 +933,44 @@ Set-Location '{_ps_cwd[0]}'
 Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
 """
 
-            result = subprocess.run(
-                [ps_path, "-NoProfile", "-NonInteractive", "-Command", ps_command],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
+            proc = await asyncio.create_subprocess_exec(
+                ps_path, "-NoProfile", "-NonInteractive", "-Command", ps_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 cwd=str(_ps_cwd[0])
             )
 
-            raw_output = result.stdout + result.stderr
-            output_lines = []
-            lines = raw_output.splitlines()
+            async with asyncio.timeout(timeout):
+                stdout, stderr = await proc.communicate()
+                raw_output = (stdout.decode('utf-8') if stdout else '') + (stderr.decode('utf-8') if stderr else '')
+                output_lines = []
+                lines = raw_output.splitlines()
 
-            for line in lines:
-                if line.startswith("__DRSAI_PS_CWD__:"):
-                    new_dir_str = line[len("__DRSAI_PS_CWD__:"):].strip()
-                    try:
-                        new_dir = Path(new_dir_str).resolve()
-                        if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
-                            _ps_cwd[0] = new_dir
-                        elif only_in_workspace:
-                            output_lines.append(
-                                f"Warning: cd target '{new_dir}' is outside workspace; cwd not updated"
-                            )
-                    except Exception:
-                        pass
-                else:
-                    output_lines.append(line)
+                for line in lines:
+                    if line.startswith("__DRSAI_PS_CWD__:"):
+                        new_dir_str = line[len("__DRSAI_PS_CWD__:"):].strip()
+                        try:
+                            new_dir = Path(new_dir_str).resolve()
+                            if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
+                                _ps_cwd[0] = new_dir
+                            elif only_in_workspace:
+                                output_lines.append(
+                                    f"Warning: cd target '{new_dir}' is outside workspace; cwd not updated"
+                                )
+                        except Exception:
+                            pass
+                    else:
+                        output_lines.append(line)
 
-            return ("\n".join(output_lines).strip() or "(no output)")[:50000]
+                return ("\n".join(output_lines).strip() or "(no output)")[:50000]
 
-        except subprocess.TimeoutExpired:
+        except asyncio.TimeoutError:
             return f"Error: Command timeout after {timeout}s"
         except Exception as e:
             return f"Error: {e}"
 
 
-    def get_powershell_task(task_id: str) -> Dict[str, Any]:
+    async def get_powershell_task(task_id: str) -> Dict[str, Any]:
         """
         Get status and output of a background PowerShell task.
 
@@ -604,7 +1007,7 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         return result
 
 
-    def list_powershell_tasks() -> str:
+    async def list_powershell_tasks() -> str:
         """
         List all PowerShell background tasks.
 
@@ -636,9 +1039,13 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
     else:
         return [
             run_bash,
+            run_bash_background,
             run_read,
             run_write,
             run_edit,
             run_grep,
             run_glob,
+            get_bash_task,
+            list_bash_tasks,
+            kill_bash_task,
         ]

@@ -84,7 +84,6 @@ class UserProfileManager:
             work_dir: str | Path,
             user_id: str,
             thread_id: str,
-            user_config: UserProfile | None = None,
             ):
         """
         Args:
@@ -112,7 +111,7 @@ class UserProfileManager:
         self.memories_dir = self.config_path / "memories" # 用户所有的记忆文件
         self.memories_document_ids = self.memories_dir / "document_ids.json" # 记录每个记忆文件的RAGFlow文档ID
         self.skills_md = self.config_path / "SKILLS.md" # 调用技能描述，目前未用
-        self.skills_dir = self.config_path / "skills" # 用户的所有
+        self.skills_dir = self.config_path / "skills" # 用户的所有skills
         self.tools_md = self.config_path / "TOOLS.md" # 用户的工作环境配置
         self.tools_config_path = self.config_path / "TOOLS_CONFIG.json" # 工具配置
         self.user_md = self.config_path / "USER.md" # 用户的个人描述
@@ -121,15 +120,8 @@ class UserProfileManager:
             
         # user's user profile
         self.first_time_setup = True
-        if self.agents_md.exists():
+        if self.agents_md.exists() or self.user_md.exists():
             self.first_time_setup = False
-
-        if not self.first_time_setup:
-            self.user_config = self.load_user_config()
-        elif user_config:
-            self.user_config = user_config
-        else:
-            self.user_config = None
 
         # 初始化文件
         self._initialize_files()
@@ -139,6 +131,9 @@ class UserProfileManager:
  
         if not self.user_config_path.exists():
             self._create_user_config()
+            self.user_config = self.load_user_config()
+        else:
+            self.user_config = self.load_user_config()
         self.agent_name = self.user_config.agent_name
         self.user_name = self.user_config.user_name
 
@@ -184,15 +179,14 @@ class UserProfileManager:
     def _create_user_config(self):
         """创建用户配置文件"""
         
-        if not self.user_config:
-            self.user_config = UserProfile(
-                user_id=self.user_id,
-                user_name=self.user_id,
-                agent_name=self.agent_name,
-                ask_before_plan=False,
-                created_at=datetime.now().isoformat(),
-                updated_at=datetime.now().isoformat(),
-            )
+        self.user_config = UserProfile(
+            user_id=self.user_id,
+            user_name=self.user_id,
+            agent_name=self.agent_name,
+            ask_before_plan=False,
+            created_at=datetime.now().isoformat(),
+            updated_at=datetime.now().isoformat(),
+        )
         with self.user_config_path.open("w", encoding='utf-8') as f:
             json.dump(self.user_config.model_dump(), f, indent=4, ensure_ascii=False)
 
@@ -267,6 +261,7 @@ The more you know, the better you can help. But remember — you're learning abo
 
         user_md = self.get_user_profile()
         tools_md = self.get_tools_preferences()
+        skill_md = self.get_skills_preferences()
        
         content = f"""# System
 
@@ -289,29 +284,27 @@ You are an interactive tool that helps users with software engineering and scien
 - After finishing, summarize what changed.
 
 **Note:** 
-- Don't add features, refactor code, or make "improvements" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability. Don't add docstrings, comments, or type annotations to code you didn't change.
-- Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).
-- Don't remove existing comments unless you're removing the code they describe or you know they're wrong. A comment that looks pointless to you may encode a constraint or a lesson from a past bug.
-- Do NOT use the Bash tool to run commands when a relevant dedicated tool is provided.
+- When there is a long-running task, you should actively stop it after at most 2 rounds of polling, and remind the user whether to start a scheduled task for task polling.
 
 {user_md}
+
+{skill_md}
 
 {tools_md}
 """
         self.agents_md.write_text(content, encoding='utf-8')
-    
+
+# - Don't add features, refactor code, or make "improvements" beyond what was asked. A bug fix doesn't need surrounding code cleaned up. A simple feature doesn't need extra configurability. Don't add docstrings, comments, or type annotations to code you didn't change.
+# - Don't add error handling, fallbacks, or validation for scenarios that can't happen. Trust internal code and framework guarantees. Only validate at system boundaries (user input, external APIs).
+# - Don't remove existing comments unless you're removing the code they describe or you know they're wrong. A comment that looks pointless to you may encode a constraint or a lesson from a past bug.
+# - Do NOT use the Bash tool to run commands when a relevant dedicated tool is provided.
+
     def _create_skills_md(self):
         """创建Skills.md文件"""
-        content = f"""# Learned Skills for User: {self.user_id}
+        content = f"""# Skills Preference
 
-## Task Execution History Summary
-[This file summarizes successful task execution patterns]
-
-## Available Custom Skills
-[Skills are stored in skills/ directory with SKILL.md format]
-
-## Created: {datetime.now().isoformat()}
-## Updated: {datetime.now().isoformat()}
+ - When conducting academic searches, users should give priority to `academic-search`. When performing web searches, they should give priority to `playwright-cli`.
+ - When users want to draw, generate photos, or perform image editing, they can use the `image-process` skill
 """
         self.skills_md.write_text(content, encoding='utf-8')
 
@@ -509,7 +502,18 @@ You can update one or multiple fields at once. Only provide the fields that need
         except Exception as e:
             logger.error(f"Failed to update TOOLS.md: {e}")
 
-
+    def get_skills_preferences(self) -> str:
+        """
+        获取工具偏好
+        Returns:
+            TOOLS.md的内容
+        """
+        try:
+            return self.skills_md.read_text(encoding='utf-8')
+        except Exception as e:
+            logger.error(f"Failed to read SKILLS.md: {e}")
+            return ""
+        
     def save_learned_skill(self, skill_name: str, skill_content: str) -> str:
         """
         保存学习到的skill
@@ -589,6 +593,28 @@ You can update one or multiple fields at once. Only provide the fields that need
         except Exception as e:
             logger.error(f"Failed to save session memory: {e}")
     
+    def read_session_memory_by_index(self, index: int) -> str:
+        """Retrieve original tool result content from session memory by index.
+
+        Use this to retrieve the original content of a tool result that was cleared
+        during memory compression. The index is provided in the cleared marker.
+
+        Args:
+            index: The index of the message in the session memory file.
+        Returns:
+            The content of the message at the given index, as a JSON string.
+        """
+        try:
+            filepath = self.memories_dir / f"session_{self.thread_id}.json"
+            if not filepath.exists():
+                return "Error: Session memory file not found."
+            existing = json.loads(filepath.read_text(encoding='utf-8'))
+            if 0 <= index < len(existing):
+                return json.dumps(existing[index], indent=2, ensure_ascii=False)
+            return f"Error: Index {index} out of range (0-{len(existing) - 1})."
+        except Exception as e:
+            return f"Error reading session memory: {e}"
+
     def update_document_ids(self, thread_id: str, document_id: str):
          
         memories_document_ids = json.loads(self.memories_document_ids.read_text(encoding='utf-8'))

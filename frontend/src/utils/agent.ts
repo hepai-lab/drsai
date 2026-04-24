@@ -120,4 +120,20 @@ export const normalizeAgentModeConfig = (
   };
 };
 
+export function resolveOutboundAgentId(agentInfo?: Partial<Agent> | null): string {
+  if (!agentInfo) return "";
+  const candidates = [
+    (agentInfo as any)?.id,
+    (agentInfo as any)?.agent_id,
+    (agentInfo as any)?.config?.agent_id,
+    (agentInfo as any)?.config?.requested_agent_id,
+  ];
+  for (const c of candidates) {
+    if (c != null && String(c).trim() !== "") {
+      return String(c).trim();
+    }
+  }
+  return "";
+}
+
 
