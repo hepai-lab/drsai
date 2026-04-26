@@ -1041,7 +1041,35 @@ const RunView: React.FC<RunViewProps> = ({
       }
     });
 
-    setLocalMessages(updatedMessages);
+    const mergedMessages: Message[] = [];
+    for (const msg of updatedMessages) {
+      const last = mergedMessages[mergedMessages.length - 1];
+      const isToolSummary = (m: Message | undefined) =>
+        !!m && (m.config as any)?.type === "ToolCallSummaryMessage";
+
+      if (
+        isToolSummary(last) &&
+        isToolSummary(msg) &&
+        typeof last!.config.content === "string" &&
+        typeof msg.config.content === "string"
+      ) {
+        const prev = last!.config.content.trim();
+        const next = msg.config.content.trim();
+        mergedMessages[mergedMessages.length - 1] = {
+          ...last!,
+          config: {
+            ...last!.config,
+            content: prev ? `${prev}\n\n${next}` : next,
+            version: ((last!.config as any).version || 0) + 1,
+          } as any,
+        };
+        continue;
+      }
+
+      mergedMessages.push(msg);
+    }
+
+    setLocalMessages(mergedMessages);
   }, [run.messages]);
 
   // Update useEffect to find the last plan message
