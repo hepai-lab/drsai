@@ -281,12 +281,12 @@ class WebSocketManager:
                         self.db_manager.upsert(run)
                     continue
                 
-                if isinstance(message, ToolCallSummaryMessage):
-                    message = TextMessage(
-                        content=message.content,
-                        source=message.source,
-                        metadata=message.metadata,
-                    )
+                # if isinstance(message, ToolCallSummaryMessage):
+                #     message = TextMessage(
+                #         content=message.content,
+                #         source=message.source,
+                #         metadata=message.metadata,
+                #     )
                     
                 # do not show internal messages
                 if (
@@ -305,6 +305,7 @@ class WebSocketManager:
                         message,
                         (
                             TextMessage,
+                            ToolCallSummaryMessage,
                             MultiModalMessage,
                             StopMessage,
                             HandoffMessage,
@@ -699,6 +700,11 @@ class WebSocketManager:
                 (TextMessage,),
             ):
                 return {"type": "message", "data": message.model_dump()}
+            elif isinstance(
+                message,
+                (ToolCallSummaryMessage,),
+            ):
+                return {"type": "tool_call_summary", "data": message.model_dump()}
             elif isinstance(message, str):
                 return {
                     "type": "message",

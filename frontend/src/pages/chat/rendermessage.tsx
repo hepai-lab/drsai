@@ -396,6 +396,47 @@ const RenderToolResult: React.FC<{ content: FunctionExecutionResult[] }> = memo(
   }
 );
 
+const RenderToolCallSummaryCard: React.FC<{
+  content: string;
+  defaultCollapsed?: boolean;
+}> = memo(({ content, defaultCollapsed = true }) => {
+  const [expanded, setExpanded] = useState(!defaultCollapsed);
+  const trimmed = (content || "").trim();
+
+  return (
+    <div className="rounded-md border border-secondary/70 bg-secondary/40">
+      <button
+        type="button"
+        className="w-full flex items-center justify-between gap-2 px-3 py-2"
+        onClick={(e) => {
+          e.stopPropagation();
+          setExpanded((v) => !v);
+        }}
+        aria-expanded={expanded}
+      >
+        <div className="text-xs font-medium text-secondary">Tool result</div>
+        {expanded ? (
+          <ChevronDown size={16} className="text-secondary" />
+        ) : (
+          <ChevronRight size={16} className="text-secondary" />
+        )}
+      </button>
+
+      {expanded ? (
+        <div className="px-3 pb-3">
+          <MarkdownRenderer
+            content={trimmed}
+            indented={true}
+            disableThinkTags={true}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+RenderToolCallSummaryCard.displayName = "RenderToolCallSummaryCard";
+
 const RenderPlan: React.FC<RenderPlanProps> = memo(
   ({ content, isEditable, onSavePlan, onRegeneratePlan, forceCollapsed }) => {
     // Make sure content.steps is an array before using it
@@ -1102,6 +1143,8 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     const normalizedMessageAny = normalizedMessage as any;
     const isTextMessage = normalizedMessageAny.type === "TextMessage";
     const isThoughtEvent = normalizedMessageAny.type === "ThoughtEvent";
+    const isToolCallSummaryMessage =
+      normalizedMessageAny.type === "ToolCallSummaryMessage";
 
     // 判断是否是历史消息（没有 start_flag 或 metadata.is_save === "yes"）
     const isHistoricalMessage =
@@ -1369,15 +1412,8 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                             onLogMessageClick();
                           } : undefined} />
 
-                        <div
-                          className="flex-1"
-                          onClick={onLogMessageClick ? (e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            onLogMessageClick();
-                          } : undefined}
-                        >
-                          <div style={{ pointerEvents: onLogMessageClick ? 'none' : 'auto' }}>
+                        <div className="flex-1">
+                          <div style={{ pointerEvents: onLogMessageClick ? "none" : "auto" }}>
                             <MarkdownRenderer
                               content={(() => {
                                 let contentText: string;
@@ -1410,6 +1446,23 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                               }
                             />
                           </div>
+
+                          {typeof (normalizedMessage.metadata as any)?.tool_call_summary === "string" &&
+                            (normalizedMessage.metadata as any).tool_call_summary.trim().length > 0 && (
+                              <div
+                                className="mt-2"
+                                style={{ pointerEvents: "auto" }}
+                                onClick={(e) => {
+                                  // Keep log card click for open-details, but allow expanding tool result.
+                                  e.stopPropagation();
+                                }}
+                              >
+                                <RenderToolCallSummaryCard
+                                  content={(normalizedMessage.metadata as any).tool_call_summary}
+                                  defaultCollapsed={true}
+                                />
+                              </div>
+                            )}
                         </div>
                       </div>
                     ) : (
@@ -1420,7 +1473,24 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                             : ""
                         }
                       >
-                        {isThoughtEvent ? (
+                        {isToolCallSummaryMessage ? (
+                          <RenderToolCallSummaryCard
+                            content={(() => {
+                              if (typeof parsedContent.text === "string") {
+                                return parsedContent.text;
+                              } else if (Array.isArray(parsedContent.text)) {
+                                const textArray = parsedContent.text as any[];
+                                const stringItems = textArray.filter(
+                                  (item: any): item is string =>
+                                    typeof item === "string"
+                                );
+                                return stringItems.join("\n");
+                              }
+                              return stringifyForDisplay(parsedContent.text);
+                            })()}
+                            defaultCollapsed={true}
+                          />
+                        ) : isThoughtEvent ? (
                           <div>
                             <button
                               type="button"
