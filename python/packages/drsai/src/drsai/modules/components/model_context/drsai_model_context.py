@@ -8,7 +8,8 @@ from typing import (
     Any,
     Self,
     Literal,
-    Optional
+    Optional,
+    Mapping
 )
 
 from autogen_core import(
@@ -29,7 +30,7 @@ from autogen_core.models import (
     FunctionExecutionResult,
     SystemMessage,
 )
-from autogen_core.model_context import ChatCompletionContext
+from autogen_core.model_context import ChatCompletionContext, ChatCompletionContextState
 
 from drsai.modules.components.memory.ragflow_memory import RAGFlowMemoryManager
 
@@ -281,6 +282,9 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
         if token_limit is not None and token_limit <= 0:
             raise ValueError("token_limit must be greater than 0.")
         self._token_limit = token_limit
+        self._token_count: int = 0
+        # self._remaining_tokens: int = 0
+        
         self._model_client = model_client
 
         self._thread_id = thread_id
@@ -460,7 +464,8 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
             elif isinstance(message, FunctionExecutionResultMessage):
                 content_str += f"Tool Calling: {str(message.content)}\n"
         return content_str
-    
+    def count_prompt_tokens(self) -> int:
+        return self._model_client.count_tokens(self._messages, tools=self._tool_schema)
     async def get_messages(
             self,
             cancellation_token: CancellationToken = None) -> List[LLMMessage]:
@@ -480,9 +485,9 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
 
         try:
             if self._token_limit is not None:
-                token_count = self._model_client.count_tokens(messages, tools=self._tool_schema)
-                if token_count > self._token_limit:
-                    logger.info(f"Token count {token_count} exceeds limit {self._token_limit}, starting Layer 2 compression")
+                self._token_count = self.count_prompt_tokens()
+                if self._token_count > self._token_limit:
+                    logger.info(f"Token count {self._token_count} exceeds limit {self._token_limit}, starting Layer 2 compression")
 
                     # Layer 2: incremental LLM compression
                     remaining = await self._incremental_compress(messages, cancellation_token)
@@ -493,7 +498,7 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
                     current_set = set(id(m) for m in remaining)
                     surviving_current = [m for m in self._current_messages if id(m) in current_set]
                     self._current_messages = surviving_current if surviving_current else list(remaining)
-
+                    self._token_count = self.count_prompt_tokens()
                     return remaining
                 else:
                     return messages
@@ -509,11 +514,11 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
                     messages.pop(middle_index)
                     remaining_tokens = self._model_client.remaining_tokens(messages, tools=self._tool_schema)
             else:
-                token_count = self._model_client.count_tokens(messages, tools=self._tool_schema)
-                while token_count > self._token_limit and len(messages) > 0:
+                self._token_count = self._model_client.count_tokens(messages, tools=self._tool_schema)
+                while self._token_count > self._token_limit and len(messages) > 0:
                     middle_index = len(messages) // 2
                     messages.pop(middle_index)
-                    token_count = self._model_client.count_tokens(messages, tools=self._tool_schema)
+                    self._token_count = self._model_client.count_tokens(messages, tools=self._tool_schema)
             if messages and isinstance(messages[0], FunctionExecutionResultMessage):
                 messages = messages[1:]
             self._messages = messages
@@ -874,6 +879,10 @@ class DrSaiChatCompletionContext(ChatCompletionContext, Component[DrSaiChatCompl
             )
         else:
             return "No relevant information found."
+
+    async def load_state(self, state: Mapping[str, Any]) -> None:
+        self._messages = ChatCompletionContextState.model_validate(state).messages
+        self._token_count = self.count_prompt_tokens()
 
     def _to_config(self) -> DrSaiChatCompletionContextConfig:
         return DrSaiChatCompletionContextConfig(

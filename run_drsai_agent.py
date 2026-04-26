@@ -199,6 +199,6 @@ if __name__ == "__main__":
             # use_api_key_mode = "backend",
             # join_topics = ["drsai-agent"],
             # metadata={"others": "drsai-agent"},
-            link_wechat = True,
+            link_wechat = False,
         )
     )
