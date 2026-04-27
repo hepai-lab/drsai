@@ -1,6 +1,10 @@
 from drsai import CancellationToken
 from drsai.modules.baseagent import DrSaiAgent
-from drsai.modules.components.model_client import HepAIChatCompletionClient
+from drsai.modules.components.model_client import HepAIChatCompletionClient, ModelFamily
+from drsai.modules.components.model_client.anthropic import (
+    HepAIAnthropicChatCompletionClient,
+    _MODEL_INFO
+)
 from drsai.modules.managers.database import DatabaseManager
 from drsai.backend import run_worker, DrSaiAPP, run_console
 import os, json, sys
@@ -11,12 +15,22 @@ class TestAgent(DrSaiAgent):
         """Initialize the tools and models needed by the agent."""
         return {"status": True, "content": "Lazy initialization testing....", "metadata": {"test": "test"}}
 
-
 llm_mode_config = {
-    "gpt-4o": "openai/gpt-4o",
-    "deepseek-r1": "deepseek-ai/deepseek-r1",
-    "深度思考": "deepseek-r1",
-    "多模态模式": "gpt-4o",
+    "hepai/minimax-m2.7": ("hepai/minimax-m2.7", 204000),
+    "hepai/minimax-m2.7-highspeed": ("hepai/minimax-m2.7-highspeed", 204000),
+    "minimax-m2.5": ("minimax/minimax-m2.5", 204000),
+    "minimax-m2.5-highspeed": ("minimax/minimax-m2.5-highspeed", 204000),
+    "minimax-m2.7": ("minimax/minimax-m2.7", 204000),
+    "minimax-m2.7-highspeed": ("minimax/minimax-m2.7-highspeed", 204000),
+    "claude-sonnet-4-6": ("anthropic/claude-sonnet-4-6", 200000),
+    "claude-haiku-4-5": ("anthropic/claude-haiku-4-5", 200000),
+    "claude-opus-4-6": ("anthropic/claude-opus-4-6", 200000),
+    "gpt-4o": ("openai/gpt-4o", 128000),
+    "gpt-4.1": ("openai/gpt-4.1", 1000000),
+    "gpt-5.2": ("openai/gpt-5.2", 1000000),
+    "gpt-5.4": ("openai/gpt-5.4", 1000000),
+    "deepseek-r1(No image)": ("deepseek-ai/deepseek-r1", 128000),
+    "deepseek-v3.2(No image)": ("deepseek-ai/deepseek-v3.2", 128000),
 }
 
 # Create a factory function to ensure isolated Agent instances for concurrent access.
@@ -25,18 +39,43 @@ def create_agent(
         thread_id: str|None = None, 
         user_id: str|None = None, 
         db_manager: DatabaseManager|None = None,
-        defult_config_name: str|None = "deepseek-r1",
+        defult_config_name: str|None = "hepai/minimax-m2.7-highspeed",
 ) -> TestAgent:
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
-    def set_model_client(defult_config_name: str|None = "deepseek-r1") ->  HepAIChatCompletionClient:
-        model_client = HepAIChatCompletionClient(
-            # model="deepseek-ai/deepseek-r1",
-            model=llm_mode_config.get(defult_config_name, "openai/gpt-4o"),
-            api_key=api_key or os.environ.get("HEPAI_API_KEY"),
-            base_url="https://aiapi.ihep.ac.cn/apiv2",
-        )
+    def set_model_client(defult_config_name: str|None = "hepai/minimax-m2.7-highspeed") -> HepAIAnthropicChatCompletionClient| HepAIChatCompletionClient:
+        llm_model, token_limit = llm_mode_config.get(defult_config_name, "hepai/minimax-m2.7-highspeed")
+        if ("claude" in llm_model) or ("minimax" in llm_model):
+            model_info=_MODEL_INFO["claude-sonnet-4-5"]
+            model_info["token_model"] = "claude-3-5-sonnet-20240620"
+            model_client = HepAIAnthropicChatCompletionClient(
+                model=llm_model,
+                base_url="https://aiapi.ihep.ac.cn/apiv2/anthropic",
+                api_key=api_key,
+                model_info=model_info,
+                # temperature=0.5,
+                max_tokens=int(token_limit*0.25),
+            )
+        else:
+            is_vision = True
+            if "deepseek" in llm_model:
+                is_vision = False
+            model_client = HepAIChatCompletionClient(
+                model=llm_model,
+                api_key=api_key,
+                base_url="https://aiapi.ihep.ac.cn/apiv2",
+                model_info={
+                        "vision": is_vision,
+                        "function_calling": True,  # You must sure that the model can handle function calling
+                        "json_output": True,
+                        "structured_output": False,
+                        "family": ModelFamily.GPT_41,
+                        "multiple_system_messages":True,
+                        "token_model": "gpt-4o-2024-11-20", # Default model for token counting
+                    }
+            )
+        
         return model_client
 
     # Define an AssistantAgent with the model, tool, system message, and reflection enabled.
@@ -111,7 +150,7 @@ if __name__ == "__main__":
                     "I want to write a python script to print hello world and run it in a shell. please plan before executing",
                 ],
             agent_config = llm_mode_config,
-            defult_config_name="deepseek-r1",
+            defult_config_name="hepai/minimax-m2.7-highspeed",
             # 智能体给前端展示的描述信息
             version = "0.1.0",
             # 智能体logo图像的url，使用git源码安装的目前支持png/jpg的logo_path

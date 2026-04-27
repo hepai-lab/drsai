@@ -51,16 +51,23 @@ dependencies = [
     "sqlmodel",
     "alembic",
 
+    # cli
+    "prompt_toolkit>=3.0",
 ]
 
 [project.scripts]
-drsai-chat = "drsai.backend.run_cli:run"
+drsai = "drsai.backend.run_cli:run"
 
 [project.optional-dependencies]
 eval = [
     "huggingface_hub",
     "pandas",
     "scipy",
+]
+
+cli = [
+    "prompt_toolkit>=3.0",
+    "pyperclip>=1.8",
 ]
 
 azure = [
