@@ -7,16 +7,27 @@ with:
 - A dim reasoning box for ``<think>...</think>`` content that auto-closes
   when visible content begins. Controlled by :attr:`show_reasoning`.
 - Token-level streaming of visible answers.
-- Yellow ``🔧 tool_name`` on tool requests; gray ``╎ preview`` on results.
+- Improved tool feedback using Hermes-style display module:
+  - Tool previews via `build_tool_preview`
+  - Cute completion messages via `get_cute_tool_message`
+  - Inline diff support for file edits
 - A Gold-bordered Rich panel for completed text messages.
 - Optional per-turn footer + terminal bell on completion.
 
 The renderer is intentionally **I/O-only** — it updates a :class:`SessionStats`
 but does not decide what to persist. The REPL owns persistence.
+
+TUI Integration:
+    Import from tui_tmp to get Hermes-style tool messages:
+        from drsai.backend.cli.tui_tmp.display import (
+            build_tool_preview, get_cute_tool_message, KawaiiSpinner,
+            LocalEditSnapshot, capture_local_edit_snapshot, render_edit_diff_with_delta,
+        )
 """
 
 from __future__ import annotations
 
+import time
 from typing import Any, AsyncGenerator, Optional
 
 from rich.box import ROUNDED
@@ -32,12 +43,44 @@ from autogen_agentchat.messages import (
     TextMessage,
     ToolCallExecutionEvent,
     ToolCallRequestEvent,
+    ToolCallSummaryMessage,
 )
 
 from .reasoning import ReasoningStreamState, split_reasoning
 from .stats import SessionStats, extract_usage, format_footer, play_bell
 
 __all__ = ["DrSaiCLIRenderer"]
+
+# Try to import Hermes-style display module (optional, graceful fallback)
+try:
+    from .display import (
+        build_tool_preview,
+        get_cute_tool_message,
+        LocalEditSnapshot,
+        capture_local_edit_snapshot,
+        render_edit_diff_with_delta,
+        set_tool_preview_max_len,
+        get_tool_preview_max_len,
+    )
+    TUI_MODULE_AVAILABLE = True
+except ImportError:
+    TUI_MODULE_AVAILABLE = False
+    # Stub implementations for fallback
+    def build_tool_preview(tool_name, args, max_len=None):  # type: ignore
+        return None
+    def get_cute_tool_message(tool_name, args, duration, result=None):  # type: ignore
+        return f"⚡ {tool_name}"
+    class LocalEditSnapshot:  # type: ignore
+        def __init__(self, paths=None, before=None):
+            self.paths = paths or []
+            self.before = before or {}
+    def capture_local_edit_snapshot(tool_name, args):  # type: ignore
+        return None
+    def render_edit_diff_with_delta(*args, **kwargs):  # type: ignore
+        return False
+    def set_tool_preview_max_len(n): pass  # type: ignore
+    def get_tool_preview_max_len():  # type: ignore
+        return 0
 
 
 class DrSaiCLIRenderer:
@@ -48,6 +91,7 @@ class DrSaiCLIRenderer:
         *,
         console: Optional[Console] = None,
         show_reasoning: bool = False,
+        tool_preview_max_len: int = 0,
     ) -> None:
         self.console = console or Console()
         self.show_reasoning = show_reasoning
@@ -64,6 +108,14 @@ class DrSaiCLIRenderer:
         # True right after a tool event — consume leading whitespace of the
         # next streaming chunk so we don't stack blank lines between tools.
         self._just_after_tool_event = False
+        # Tool execution tracking for Hermes-style feedback
+        self._current_tool_snapshot: LocalEditSnapshot | None = None
+        self._tool_start_time: float | None = None
+        # Store pending tool call info for result rendering
+        self._pending_tool_call: tuple[str, dict] | None = None  # (tool_name, args)
+        # Configure tool preview length
+        if TUI_MODULE_AVAILABLE:
+            set_tool_preview_max_len(tool_preview_max_len)
 
     # ── Main entry ──────────────────────────────────────────────────────────
     async def render(
@@ -80,6 +132,8 @@ class DrSaiCLIRenderer:
         self._streamed_visible_this_turn = False
         self._streaming_sources = set()
         self._just_after_tool_event = False
+        self._current_tool_snapshot = None
+        self._tool_start_time = None
 
         async for message in stream:
             if isinstance(message, ModelClientStreamingChunkEvent):
@@ -96,6 +150,12 @@ class DrSaiCLIRenderer:
                 self._close_stream()
                 self._close_reasoning()
                 self._render_tool_result(message)
+                self._just_after_tool_event = True
+            elif isinstance(message, ToolCallSummaryMessage):
+                # DrSaiAgent sends ToolCallSummaryMessage instead of ToolCallExecutionEvent
+                self._close_stream()
+                self._close_reasoning()
+                self._render_tool_summary(message)
                 self._just_after_tool_event = True
             elif isinstance(message, TextMessage):
                 # Capture usage metadata before any early return.
@@ -233,18 +293,125 @@ class DrSaiCLIRenderer:
 
     # ── Tool events ─────────────────────────────────────────────────────────
     def _render_tool_request(self, message: ToolCallRequestEvent) -> None:
+        """Render tool call request with Hermes-style preview."""
         calls = message.content or []
         for call in calls:
             if isinstance(call, FunctionCall):
-                self.console.print(f"[yellow]🔧[/yellow] [cyan]{call.name}[/cyan]")
+                tool_name = call.name
+                raw_args = getattr(call, "arguments", {}) or {}
+                # Parse JSON string arguments
+                if isinstance(raw_args, str):
+                    import json as _json
+                    try:
+                        args = _json.loads(raw_args)
+                    except (json.JSONDecodeError, ValueError):
+                        args = {}
+                else:
+                    args = raw_args if isinstance(raw_args, dict) else {}
+
+                # Save for result rendering
+                self._pending_tool_call = (tool_name, args)
+
+                # Capture snapshot for diff preview (Hermes-style)
+                if TUI_MODULE_AVAILABLE:
+                    self._current_tool_snapshot = capture_local_edit_snapshot(tool_name, args)
+                    self._tool_start_time = time.time()
+
+                if TUI_MODULE_AVAILABLE:
+                    # Use Hermes-style preview
+                    preview = build_tool_preview(tool_name, args)
+                    if preview:
+                        self.console.print(f"[yellow]🔧[/yellow] [cyan]{tool_name}[/cyan] {preview}")
+                    else:
+                        self.console.print(f"[yellow]🔧[/yellow] [cyan]{tool_name}[/cyan]")
+                else:
+                    # Fallback to original style
+                    self.console.print(f"[yellow]🔧[/yellow] [cyan]{call.name}[/cyan]")
 
     def _render_tool_result(self, message: ToolCallExecutionEvent) -> None:
+        """Render tool result with Hermes-style cute tool message."""
         results = message.content or []
+        result_str: str | None = None
+        duration: float = 0.0
+
+        # Get stored tool info
+        tool_name, args = self._pending_tool_call if self._pending_tool_call else ("tool", {})
+        self._pending_tool_call = None
+
+        # Track the tool execution for Hermes-style feedback
+        if self._tool_start_time:
+            duration = time.time() - self._tool_start_time
+            self._tool_start_time = None
+
         for r in results:
             content = getattr(r, "content", None)
-            if not content:
-                continue
-            text = str(content).strip().replace("\n", " ")
+            if content:
+                result_str = str(content)
+                # Try to extract tool name from result if available
+                tool_name = getattr(r, "name", tool_name)
+
+        # Generate Hermes-style completion message
+        if TUI_MODULE_AVAILABLE:
+            cute_msg = get_cute_tool_message(tool_name, args, duration, result_str)
+            print(cute_msg)
+
+            # Try to render diff for file edits
+            if self._current_tool_snapshot:
+                render_edit_diff_with_delta(
+                    tool_name, result_str,
+                    function_args=args,
+                    snapshot=self._current_tool_snapshot,
+                )
+                self._current_tool_snapshot = None
+        else:
+            # Fallback to original style
+            if result_str:
+                text = result_str.strip().replace("\n", " ")
+                if len(text) > 200:
+                    text = text[:200] + "…"
+                self.console.print(f"[dim]╎ {text}[/dim]")
+
+    def _render_tool_summary(self, message: ToolCallSummaryMessage) -> None:
+        """Render ToolCallSummaryMessage with Hermes-style cute tool message.
+
+        DrSaiAgent sends ToolCallSummaryMessage instead of ToolCallExecutionEvent.
+        """
+        content = getattr(message, "content", "") or ""
+        duration: float = 0.0
+
+        # Get stored tool info
+        tool_name, args = self._pending_tool_call if self._pending_tool_call else ("tool", {})
+        self._pending_tool_call = None
+
+        # Track the tool execution for Hermes-style feedback
+        if self._tool_start_time:
+            duration = time.time() - self._tool_start_time
+            self._tool_start_time = None
+
+        # Determine if this is an error
+        is_error = False
+        content_lower = content.lower()
+        error_patterns = ["error", "failed", "permission denied", "no such file", "cannot"]
+        if any(p in content_lower for p in error_patterns):
+            is_error = True
+
+        # Generate Hermes-style completion message
+        if TUI_MODULE_AVAILABLE:
+            result_str = str(content) if is_error else None
+            cute_msg = get_cute_tool_message(tool_name, args, duration, result_str)
+            print(cute_msg)
+
+            # Try to render diff for file edits
+            if self._current_tool_snapshot:
+                render_edit_diff_with_delta(
+                    tool_name, str(content),
+                    function_args=args,
+                    snapshot=self._current_tool_snapshot,
+                )
+                self._current_tool_snapshot = None
+        else:
+            # Fallback to original style
+            text = content.strip().replace("\n", " ")
             if len(text) > 200:
                 text = text[:200] + "…"
             self.console.print(f"[dim]╎ {text}[/dim]")
@@ -293,3 +460,9 @@ class DrSaiCLIRenderer:
 def _looks_markdown(text: str) -> bool:
     patterns = ("```", "**", "__", "##", "- ", "* ", "1. ", "[")
     return any(p in text for p in patterns)
+
+
+# Export TUI module availability for external use
+def is_tui_module_available() -> bool:
+    """Check if the Hermes-style TUI module is available."""
+    return TUI_MODULE_AVAILABLE

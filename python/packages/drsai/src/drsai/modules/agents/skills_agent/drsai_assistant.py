@@ -800,10 +800,14 @@ Current Session_ID is {self._thread_id}"""
             # TODO: Update model context with any relevant memory -> When? How?
 
             turn_count = 0
-            max_empty_turn = 3 
+            max_empty_turn = 3
             empty_turn_count = 0
             while turn_count < self._max_turn_count:
-                
+
+                # Sanitize messages to handle orphaned tool results / missing stubs
+                # This prevents tool_call_id mismatches after model switches
+                await self._sanitize_api_messages()
+
                 model_result = None
                 async for inference_output in self._call_llm(
                     model_client=model_client,

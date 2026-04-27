@@ -134,9 +134,17 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         "model",
-        "Show or switch model/agent on the server",
+        "Show/switch model or show model details: /model [name|info]",
         "Configuration",
-        args_hint="[name]",
+        args_hint="[name|info]",
+        aliases=("m",),
+    ),
+    CommandDef(
+        "models",
+        "List all available models with reasoning support",
+        "Configuration",
+        aliases=("listmodels",),
+        cli_only=True,
     ),
     CommandDef(
         "status",
