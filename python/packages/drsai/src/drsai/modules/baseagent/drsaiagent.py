@@ -179,6 +179,9 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         self._metadata = metadata or {}
         self._model_client = model_client
         self._model_client_stream = model_client_stream
+        # Store llm_mode_config and defult_config_name for token limit access
+        self._llm_mode_config = llm_mode_config or {}
+        self._defult_config_name = defult_config_name or ""
         self._output_content_type: type[BaseModel] | None = output_content_type
         self._output_content_type_format = output_content_type_format
         self._structured_message_factory: StructuredMessageFactory | None = None
@@ -1374,9 +1377,20 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             #     else:
             #         raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
                 assert isinstance(response, str)
+                # Calculate completion tokens for the response
+                # prompt_tokens is passed from _call_llm via kwargs
+                passed_prompt_tokens = kwargs.get('prompt_tokens', 0)
+                try:
+                    completion_tokens = model_client.count_tokens(
+                        [AssistantMessage(content=response, source=agent_name)]
+                    )
+                except Exception:
+                    completion_tokens = 0
+                # Use passed prompt_tokens if available, otherwise calculate
+                final_prompt_tokens = passed_prompt_tokens if passed_prompt_tokens > 0 else 0
                 model_result = CreateResult(
                     content=response, finish_reason="stop",
-                    usage = RequestUsage(prompt_tokens=0, completion_tokens=0),
+                    usage = RequestUsage(prompt_tokens=final_prompt_tokens, completion_tokens=completion_tokens),
                     cached=False)
         else:
             # 如果reply_function不是异步函数，或者是一个异步生成器，则会报错
@@ -1396,9 +1410,20 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 **self._user_params
                 )
             if isinstance(response, str):
+                # Calculate completion tokens for the response
+                # prompt_tokens is passed from _call_llm via kwargs
+                passed_prompt_tokens = kwargs.get('prompt_tokens', 0)
+                try:
+                    completion_tokens = model_client.count_tokens(
+                        [AssistantMessage(content=response, source=agent_name)]
+                    )
+                except Exception:
+                    completion_tokens = 0
+                # Use passed prompt_tokens if available, otherwise calculate
+                final_prompt_tokens = passed_prompt_tokens if passed_prompt_tokens > 0 else 0
                 model_result = CreateResult(
                     content=response, finish_reason="stop",
-                    usage = RequestUsage(prompt_tokens=0, completion_tokens=0),
+                    usage = RequestUsage(prompt_tokens=final_prompt_tokens, completion_tokens=completion_tokens),
                     cached=False)
             elif isinstance(response, CreateResult):
                 model_result = response
@@ -1421,12 +1446,13 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         model_result: Optional[CreateResult] = None
 
         if model_client_stream:
-                
+            # Pass stream_options to include usage in the final chunk
             async for chunk in model_client.create_stream(
                 llm_messages, 
                 tools=tools,
                 json_output=output_content_type,
-                cancellation_token=cancellation_token
+                cancellation_token=cancellation_token,
+                extra_create_args={"stream_options": {"include_usage": True}}
             ):
                 if isinstance(chunk, CreateResult):
                     model_result = chunk

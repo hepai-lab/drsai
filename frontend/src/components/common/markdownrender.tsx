@@ -64,22 +64,22 @@ function MarkdownCode(
       style={
         compact
           ? {
-              backgroundColor:
-                "color-mix(in oklab, var(--color-magenta-600) 18%, transparent)",
-              color: "var(--color-text-accent)",
-              padding: "2px 4px",
-              borderRadius: "3px",
-              fontSize: "0.8rem",
-            }
+            backgroundColor:
+              "color-mix(in oklab, var(--color-magenta-600) 18%, transparent)",
+            color: "var(--color-text-accent)",
+            padding: "2px 4px",
+            borderRadius: "3px",
+            fontSize: "0.8rem",
+          }
           : {
-              whiteSpace: "pre-wrap",
-              color: "var(--color-text-accent)",
-              backgroundColor:
-                "color-mix(in oklab, var(--color-magenta-600) 18%, transparent)",
-              display: "inline",
-              padding: "0.2em 0.4em",
-              borderRadius: "0.375rem",
-            }
+            whiteSpace: "pre-wrap",
+            color: "var(--color-text-accent)",
+            backgroundColor:
+              "color-mix(in oklab, var(--color-magenta-600) 18%, transparent)",
+            display: "inline",
+            padding: "0.2em 0.4em",
+            borderRadius: "0.375rem",
+          }
       }
       {...rest}
     >
@@ -99,6 +99,8 @@ interface MarkdownRendererProps {
   maxLength?: number;
   indented?: boolean;
   allowHtml?: boolean;
+  /** When true, do NOT parse <think>...</think> into ThinkBubble. */
+  disableThinkTags?: boolean;
 }
 
 // Stable key for CodeBlock to prevent remount on parent re-renders (avoids collapse on scroll)
@@ -356,7 +358,7 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
   const showDoneBadge =
     type === "reasoning" &&
     isDone &&
-    (cleanContent.length === 0 || durationSeconds === 0);
+    cleanContent.length === 0;
   const shouldShowSpinner = !isDone;
   const statusTextColor = isDone
     ? "var(--color-text-primary)"
@@ -367,7 +369,8 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
 
   const getReasoningTitle = () => {
     if (!isDone) return "Thinking...";
-    if (cleanContent.length === 0 || durationSeconds === 0) return "Thought complete";
+    if (cleanContent.length === 0) return "Thought";
+    if (durationSeconds < 1) return "Thought Completed";
     if (durationSeconds < 60) return `Thought for ${durationSeconds} seconds`;
     const minutes = Math.floor(durationSeconds / 60);
     const seconds = durationSeconds % 60;
@@ -398,39 +401,11 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
   const renderTitle = () => {
     if (showDoneBadge) {
       return (
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "6px",
-            padding: 0,
-            color: "var(--color-text-secondary)",
-            fontSize: "0.8rem",
-            fontWeight: 560,
-            lineHeight: 1.2,
-          }}
-        >
-          <span
-            aria-hidden
-            style={{
-              width: "14px",
-              height: "14px",
-              borderRadius: "999px",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              backgroundColor:
-                "color-mix(in oklab, var(--color-magenta-600) 36%, transparent)",
-              color: "var(--color-text-secondary)",
-              fontSize: "0.64rem",
-              fontWeight: 760,
-              lineHeight: 1,
-              flexShrink: 0,
-            }}
-          >
+        <span className="inline-flex items-center gap-2 rounded-md border border-secondary/70 bg-secondary/40 px-2 py-1 text-xs font-medium text-secondary">
+          <span aria-hidden className="text-secondary">
             ✓
           </span>
-          <span>Thought complete</span>
+          <span>Thought</span>
         </span>
       );
     }
@@ -590,15 +565,45 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
                         color: "var(--color-text-primary)",
                         fontSize: "0.85rem",
                         lineHeight: "1.62",
-                        margin: "0 0 10px 0",
+                        // Keep paragraphs compact inside the bubble (especially within list items)
+                        margin: "0 0 6px 0",
                       }}
                     >
                       {renderWithSingleNewlineBreaks(children)}
                     </p>
                   ),
                   code: MarkdownCode,
+                  ul: ({ children }) => (
+                    <ul
+                      style={{
+                        margin: "0 0 10px 0",
+                        paddingLeft: "1.15rem",
+                        color: "var(--color-text-primary)",
+                      }}
+                    >
+                      {children}
+                    </ul>
+                  ),
+                  ol: ({ children }) => (
+                    <ol
+                      style={{
+                        margin: "0 0 10px 0",
+                        paddingLeft: "1.15rem",
+                        color: "var(--color-text-primary)",
+                      }}
+                    >
+                      {children}
+                    </ol>
+                  ),
                   li: ({ children }) => (
-                    <li style={{ color: "var(--color-text-primary)" }}>{children}</li>
+                    <li
+                      style={{
+                        color: "var(--color-text-primary)",
+                        margin: "2px 0",
+                      }}
+                    >
+                      {children}
+                    </li>
                   ),
                   strong: ({ children }) => (
                     <strong style={{ color: "var(--color-text-primary)", fontWeight: 650 }}>
@@ -717,6 +722,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   maxLength,
   indented = false,
   allowHtml = false,
+  disableThinkTags = false,
 }) => {
 
   // Determine if we should render as a file preview
@@ -752,14 +758,18 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       ? content.slice(0, maxLength) + "..."
       : content;
 
+  const contentForThinkParsing = disableThinkTags
+    ? content.replaceAll("<think>", "").replaceAll("</think>", "")
+    : content;
+
   // Check if content contains think tags (both complete and incomplete)
-  const hasThinkTags = content.includes("<think>");
+  const hasThinkTags = !disableThinkTags && contentForThinkParsing.includes("<think>");
   // If allowHtml is true and content contains HTML, render it directly
   // But first check for think tags and process them
-  if (allowHtml && (content.includes("<div") || content.includes("<span")) || content.includes("<img")) {
+  if (allowHtml && (contentForThinkParsing.includes("<div") || contentForThinkParsing.includes("<span")) || contentForThinkParsing.includes("<img")) {
 
     if (hasThinkTags) {
-      const { parts } = parseThinkTags(content);
+      const { parts } = parseThinkTags(contentForThinkParsing);
       return (
         <div
           className="prose prose-code:before:content-[''] prose-code:after:content-[''] w-full"
@@ -815,7 +825,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           }}
           dangerouslySetInnerHTML={{
             __html: toHtmlWithLineBreaks(
-              content.replace(/<think>(.*?)<\/think>/gs, "")
+              contentForThinkParsing.replace(/<think>(.*?)<\/think>/gs, "")
             ),
           }}
         />
@@ -826,7 +836,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   // If content has think tags, parse and render them specially
   if (hasThinkTags) {
 
-    const { parts } = parseThinkTags(content);
+    const { parts } = parseThinkTags(contentForThinkParsing);
     return (
       <div
         className="prose prose-code:before:content-[''] prose-code:after:content-[''] w-full"

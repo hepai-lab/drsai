@@ -967,36 +967,59 @@ Current Session_ID is {self._thread_id}"""
                     )
 
             # save/update the conversation to {worker_dir}/memories
+            # Run slow operations in background to avoid blocking the CLI prompt
             if isinstance(self._model_context, DrSaiChatCompletionContext):
-                if self._model_context._rag_flow_manager:
-                    await self._model_context.upload_conversation_to_ragflow()
+                # Capture current state before clearing
+                current_messages = self._model_context._current_messages
+                history_messages = self._model_context._history_messages
+                model_context = self._model_context
+                user_profile_manager = self._user_profile_manager
+                
+                # Clear current messages immediately
                 self._model_context._current_messages = []
-                current_session_memory = self._model_context._history_messages
-                # TODO: 周期性总结用户的对话，形成一个总结
-                self._user_profile_manager.save_session_memory(current_session_memory)
+                
+                # Run slow operations in background (fire and forget)
+                async def background_save():
+                    try:
+                        # Upload to RAGFlow (network request)
+                        if model_context._rag_flow_manager:
+                            await model_context.upload_conversation_to_ragflow(
+                                current_messages=current_messages
+                            )
+                    except Exception as e:
+                        logger.warning(f"Background RAGFlow upload failed: {e}")
+                    
+                    try:
+                        # Save session memory (file I/O)
+                        import asyncio
+                        await asyncio.to_thread(user_profile_manager.save_session_memory, history_messages)
+                    except Exception as e:
+                        logger.warning(f"Background session save failed: {e}")
+                
+                # Schedule background task without awaiting
+                asyncio.create_task(background_save())
                 
 
     async def _get_messages_with_compression_notification(
         self,
         model_context: ChatCompletionContext,
         cancellation_token: CancellationToken = None,
-    ) -> AsyncGenerator[Union[List[LLMMessage], AgentLogEvent], None]:
+    ) -> AsyncGenerator[Union[List[LLMMessage], AgentLogEvent, int], None]:
         """
         Get messages from context with compression notification support.
 
         Yields:
             AgentLogEvent: Notification events during compression
             List[LLMMessage]: Final list of messages
+            int: Prompt token count (for usage tracking)
         """
+        prompt_tokens = 0
+        
         if isinstance(model_context, DrSaiChatCompletionContext):
-            # Check if compression is needed
-            messages = list(model_context._messages)
-            token_count = model_context._model_client.count_tokens(
-                messages,
-                tools=model_context._tool_schema
-            )
-
-            if model_context._token_limit and token_count > model_context._token_limit:
+            
+            prompt_tokens = model_context._token_count
+            
+            if model_context._token_limit and prompt_tokens > model_context._token_limit:
                 # Notify frontend that compression is starting
                 yield AgentLogEvent(
                     source="system",
@@ -1010,7 +1033,7 @@ Current Session_ID is {self._thread_id}"""
                 cancellation_token=cancellation_token
             )
 
-            if model_context._token_limit and token_count > model_context._token_limit:
+            if model_context._token_limit and prompt_tokens > model_context._token_limit:
                 # Notify completion
                 yield AgentLogEvent(
                     source="system",
@@ -1020,9 +1043,11 @@ Current Session_ID is {self._thread_id}"""
                 )
 
             yield all_messages
+            yield prompt_tokens
         else:
             all_messages = await model_context.get_messages()
             yield all_messages
+            yield prompt_tokens
 
     async def _call_llm(
         self,
@@ -1043,11 +1068,15 @@ Current Session_ID is {self._thread_id}"""
 
         # Get messages with compression notification
         all_messages = None
+        prompt_tokens = 0
         async for item in self._get_messages_with_compression_notification(
             model_context, cancellation_token
         ):
             if isinstance(item, list):
                 all_messages = item
+            elif isinstance(item, int):
+                # Get prompt token count from message compression
+                prompt_tokens = item
             else:
                 # Yield notification events
                 yield item
@@ -1074,12 +1103,13 @@ Current Session_ID is {self._thread_id}"""
                 agent_name=agent_name, 
                 cancellation_token=cancellation_token,
                 db_manager=self._db_manager,
+                prompt_tokens=prompt_tokens,  # Pass calculated prompt tokens
             ):
                 # if isinstance(chunk, CreateResult):
                 #     model_result = chunk
                 yield chunk
         else:
-           async for chunk in self.call_llm(
+            async for chunk in self.call_llm(
                 agent_name = agent_name,
                 model_client = model_client,
                 llm_messages = llm_messages, 
@@ -1088,7 +1118,10 @@ Current Session_ID is {self._thread_id}"""
                 cancellation_token = cancellation_token,
                 output_content_type = output_content_type,
            ):
-               yield chunk
+                # Fix CreateResult.usage if prompt_tokens is 0 (API may return 0)
+                if isinstance(chunk, CreateResult) and chunk.usage and chunk.usage.prompt_tokens == 0 and prompt_tokens > 0:
+                    chunk.usage.prompt_tokens = prompt_tokens
+                yield chunk
     
     async def _handle_default_subagent_mode(
         self,
@@ -1443,7 +1476,7 @@ Complete the task and return a clear, concise summary."""
                         content_type="tools"
                     )
                     yield ToolCallSummaryMessage(
-                        content=f"<think>Skill for {arguments['skill']}:\n\n {skill_content}</think>\n",
+                        content=f"Skill for {arguments['skill']}:\n\n {skill_content}\n",
                         source=agent_name,
                     )
                 except Exception as e:
@@ -1811,7 +1844,7 @@ Complete the task and return a clear, concise summary."""
         tool_call_summary = "\n".join(tool_call_summaries)
         yield Response(
                 chat_message=ToolCallSummaryMessage(
-                    content="<think>The results of execution:\n " + tool_call_summary + "</think>\n",
+                    content="The results of execution:\n "+tool_call_summary+"\n",
                     source=agent_name,
                 ),
                 inner_messages=inner_messages,
