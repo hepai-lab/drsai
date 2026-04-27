@@ -314,12 +314,10 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null }) => {
           <div className="h-full">
             {wordLoading && <div className="text-sm text-secondary">正在加载文件内容...</div>}
             {wordError && <div className="text-sm text-red-500">{wordError}</div>}
-            {!wordLoading && !wordError && (
-              <div
-                ref={wordContainerRef}
-                className="h-full overflow-auto bg-white rounded-md border border-border-primary/30 p-4"
-              />
-            )}
+            <div
+              ref={wordContainerRef}
+              className={`h-full overflow-auto bg-white rounded-md border border-border-primary/30 p-4${wordLoading || wordError ? " hidden" : ""}`}
+            />
           </div>
         )}
 
