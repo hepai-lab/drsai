@@ -1,5 +1,6 @@
 import React from "react";
 import { FileText, Download, PencilLine, Eye } from "lucide-react";
+
 import type { MessageFileItem } from "../components/types/datamodel";
 import MarkdownRenderer from "../components/common/markdownrender";
 
@@ -8,6 +9,7 @@ interface FilePreviewPageProps {
 }
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"]);
+const WORD_EXTENSIONS = new Set(["doc", "docx"]);
 const TEXT_EXTENSIONS = new Set([
   "txt",
   "md",
@@ -74,6 +76,15 @@ const isPdfFile = (file: MessageFileItem): boolean => {
   return getExtension(file.name || "") === "pdf";
 };
 
+const isWordFile = (file: MessageFileItem): boolean => {
+  if (
+    file.mime_type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    file.mime_type === "application/msword"
+  )
+    return true;
+  return WORD_EXTENSIONS.has(getExtension(file.name || ""));
+};
+
 const isMarkdownFile = (file: MessageFileItem): boolean => {
   const ext = getExtension(file.name || "");
   return ext === "md" || ext === "markdown";
@@ -115,6 +126,56 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null }) => {
   const markdownMode = React.useMemo(() => (file ? isMarkdownFile(file) : false), [file]);
   const imageMode = React.useMemo(() => (file ? isImageFile(file) : false), [file]);
   const pdfMode = React.useMemo(() => (file ? isPdfFile(file) : false), [file]);
+  const wordMode = React.useMemo(() => (file ? isWordFile(file) : false), [file]);
+
+  const wordContainerRef = React.useRef<HTMLDivElement>(null);
+  const [wordLoading, setWordLoading] = React.useState(false);
+  const [wordError, setWordError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!file || !wordMode) return;
+
+    const loadWord = async () => {
+      setWordLoading(true);
+      setWordError(null);
+      try {
+        let arrayBuffer: ArrayBuffer;
+        if (file.download_method === "base64" && file.base64_content) {
+          const binary = atob(file.base64_content);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          arrayBuffer = bytes.buffer;
+        } else if (file.download_method === "url" && file.url) {
+          const response = await fetch(file.url);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          arrayBuffer = await response.arrayBuffer();
+        } else {
+          throw new Error("当前文件没有可用内容");
+        }
+
+        if (cancelled) return;
+        const container = wordContainerRef.current;
+        if (!container) return;
+        container.innerHTML = "";
+        const { renderAsync } = await import("docx-preview");
+        await renderAsync(arrayBuffer, container);
+      } catch (e) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : "加载失败";
+        setWordError(`文件加载失败：${message}`);
+      } finally {
+        if (!cancelled) setWordLoading(false);
+      }
+    };
+
+    void loadWord();
+    return () => {
+      cancelled = true;
+    };
+  }, [file, wordMode]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -249,7 +310,20 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null }) => {
           <iframe src={dataUrl} title={file.name} className="w-full h-full min-h-[500px] rounded-md border border-border-primary/30" />
         )}
 
-        {!loading && !error && !textMode && !imageMode && !pdfMode && (
+        {!loading && !error && wordMode && (
+          <div className="h-full">
+            {wordLoading && <div className="text-sm text-secondary">正在加载文件内容...</div>}
+            {wordError && <div className="text-sm text-red-500">{wordError}</div>}
+            {!wordLoading && !wordError && (
+              <div
+                ref={wordContainerRef}
+                className="h-full overflow-auto bg-white rounded-md border border-border-primary/30 p-4"
+              />
+            )}
+          </div>
+        )}
+
+        {!loading && !error && !textMode && !imageMode && !pdfMode && !wordMode && (
           <div className="text-sm text-secondary">
             当前文件类型暂不支持在线编辑，可使用下载按钮查看。
           </div>
