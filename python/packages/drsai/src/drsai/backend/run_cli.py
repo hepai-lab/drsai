@@ -32,10 +32,85 @@ from drsai.backend.cli.prompt import DrSaiPrompt
 from drsai.backend.cli.renderer import DrSaiCLIRenderer
 from drsai.backend.cli.stats import SessionStats
 
+# ── Hermes-style TUI Integration ────────────────────────────────────────────
+# Import optional TUI modules for enhanced CLI experience
+try:
+    from drsai.backend.cli.interrupt import (
+        set_interrupt,
+        is_interrupted,
+        clear_interrupt,
+        get_current_thread_id,
+    )
+    from drsai.backend.cli.callbacks import (
+        approval_callback,
+        is_dangerous_command,
+        get_callback_state,
+    )
+    HAS_TUI = True
+except ImportError:
+    HAS_TUI = False
+    # Stub implementations
+    def set_interrupt(*args, **kwargs): pass
+    def is_interrupted(): return False
+    def clear_interrupt(*args, **kwargs): pass
+    def get_current_thread_id(): return 0
+    def approval_callback(*args, **kwargs): return "deny"
+    def is_dangerous_command(cmd): return False
+    def get_callback_state():
+        class FakeState:
+            _approval_state = None
+        return FakeState()
+
 
 # ── REPL persistent state ─────────────────────────────────────────────────────
 
 _pending_retry: Optional[str] = None   # set by /retry; main loop re-uses this message
+
+
+# ── Interrupt handling helper ─────────────────────────────────────────────────
+
+async def _handle_interrupt(agent, *, set_exit_flag: bool = False) -> bool:
+    """统一的中断处理函数。
+
+    Args:
+        agent: DrSaiAgent 实例
+        set_exit_flag: 是否设置退出标志（第二次 Ctrl+C 会退出）
+
+    Returns:
+        True: 已处理中断，可以继续输入
+        False: 需要退出 REPL
+    """
+    print("\n  \033[33m⚠ 正在中断当前命令...\033[0m")
+
+    if agent is not None:
+        try:
+            await agent.pause()
+            await asyncio.sleep(0.1)
+            await agent.resume()
+            print("  \033[32m✓ 已中断，状态已重置\033[0m")
+
+            if set_exit_flag:
+                print("  按 Enter 继续，或再次 Ctrl+C 退出\n")
+                if HAS_TUI:
+                    set_interrupt(True)
+                return True  # 继续循环
+            else:
+                print()  # 换行
+                return True  # 继续循环
+
+        except Exception as e:
+            logger.warning(f"Failed to pause/resume agent: {e}")
+            print(f"  \033[31m✗ 中断时出错: {e}\033[0m\n")
+            return True  # 继续尝试
+
+    # 无 agent，运行中的任务已取消
+    if set_exit_flag:
+        print("  按 Enter 继续，或再次 Ctrl+C 退出\n")
+        if HAS_TUI:
+            set_interrupt(True)
+        return True  # 继续循环
+
+    return False  # 退出 REPL
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -537,7 +612,8 @@ async def _run_repl(cfg: dict):
             skills_path = Path(skills_dir) if Path(skills_dir).exists() else None
         if not skills_path:
             # Try default location in workspace
-            default_skills = Path.home() / ".drsai" / "workspace" / "runs" / USERNAME / "configs" / "skills"
+            user_id = cfg.get("user_id", "anonymous")
+            default_skills = Path.home() / ".drsai" / "workspace" / "runs" / user_id / "configs" / "skills"
             if default_skills.exists():
                 skills_path = default_skills
 
@@ -691,17 +767,165 @@ async def _run_repl(cfg: dict):
         print(f"Session: {_current_label()}")
         print("Type /help for commands.\n" + "-" * 60)
 
-    def _cmd_model(args: str):
+    async def _cmd_model(args: str):
+        nonlocal agent
+        args = args.strip()
         if not args:
             current = cfg.get("defult_config_name") or "<default>"
             print(f"Current model alias: {current}")
             return
-        cfg["defult_config_name"] = args.strip()
+
+        # Handle "info" subcommand
+        if args.lower().startswith("info "):
+            model_name = args[5:].strip()
+            _cmd_model_info(model_name)
+            return
+
+        if args.lower() == "info":
+            print("Usage: /model info <alias>")
+            return
+
+        # Validate the model alias exists
+        from drsai.backend.run_drsai_agent_factory import load_llm_mode_config
+        llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+        llm_mode_config = load_llm_mode_config(llm_config_path)
+        if args not in llm_mode_config:
+            print(f"Unknown model alias: {args}")
+            print(f"Available aliases: {', '.join(sorted(llm_mode_config.keys()))}")
+            return
+
+        # Switch to the specified model
+        cfg["defult_config_name"] = args
         cli_config.save_config(cfg)
+
+        # Create new model client and switch the agent's model
+        if agent is not None and hasattr(agent, '_set_model_client'):
+            try:
+                new_client = agent._set_model_client(args)
+                await agent.switch_model(new_client)
+                print(f"Model switched to {args}")
+            except Exception as e:
+                print(f"Warning: model client creation failed: {e}")
+                print(f"Model alias set to {args} (will take effect on next session)")
+        else:
+            print(f"Model alias set to {args}")
+
         # Refresh bottom toolbar to show new model
         if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
             prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
-        print(f"Model alias set to {args.strip()}")
+
+    def _cmd_models(args: str):
+        """List all available models with reasoning support info."""
+        from drsai.backend.run_drsai_agent_factory import (
+            load_llm_mode_config,
+            DEFAULT_CONFIG_NAME,
+            ReasoningConfig,
+        )
+
+        # Load the model config (same logic as in create_agent)
+        llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+        llm_mode_config = load_llm_mode_config(llm_config_path)
+
+        # Parse args for filtering
+        show_reasoning_only = "reasoning" in args.lower() or "-r" in args.lower()
+        show_all = args.strip() == "" or args.strip() == "all"
+
+        # Get current model
+        current_alias = cfg.get("defult_config_name") or DEFAULT_CONFIG_NAME
+
+        print()
+        print(f"  Available models ({len(llm_mode_config)} total)")
+        print(f"  {'─' * 70}")
+        print(f"  {'Alias':<35} {'Reasoning':<15} {'Effort Levels':<25}")
+        print(f"  {'─' * 70}")
+
+        for alias in sorted(llm_mode_config.keys()):
+            entry = llm_mode_config[alias]
+            reasoning = entry.reasoning
+
+            # Filter logic
+            if show_reasoning_only and not reasoning.supported:
+                continue
+
+            # Format reasoning info
+            if reasoning.supported:
+                if reasoning.param_type == "is_r1_model":
+                    reasoning_str = "✅ R1 model"
+                    effort_str = "unlimited"
+                else:
+                    reasoning_str = f"✅ {reasoning.param_type}"
+                    effort_str = ", ".join(reasoning.effort_levels) if reasoning.effort_levels else "all"
+            else:
+                reasoning_str = "❌ none"
+                effort_str = "-"
+
+            # Mark current model
+            marker = " →" if alias == current_alias else "  "
+
+            print(f"  {marker} {alias:<33} {reasoning_str:<15} {effort_str:<25}")
+
+        print(f"  {'─' * 70}")
+        print()
+        print("  Usage:")
+        print("    /models              - List all models")
+        print("    /models reasoning    - Show only models with reasoning support")
+        print("    /model <alias>       - Switch to a model")
+        print("    /model info <alias>  - Show detailed info about a model")
+
+    def _cmd_model_info(args: str):
+        """Show detailed info about a specific model."""
+        from drsai.backend.run_drsai_agent_factory import (
+            load_llm_mode_config,
+            DEFAULT_CONFIG_NAME,
+        )
+
+        # Parse model name
+        model_name = args.strip()
+        if not model_name:
+            print("Usage: /model info <alias>")
+            return
+
+        # Load the model config
+        llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+        llm_mode_config = load_llm_mode_config(llm_config_path)
+
+        # Find the model
+        entry = llm_mode_config.get(model_name)
+
+        # Try case-insensitive match
+        if entry is None:
+            for alias in llm_mode_config.keys():
+                if alias.lower() == model_name.lower():
+                    entry = llm_mode_config[alias]
+                    model_name = alias  # Use correct casing
+                    break
+
+        if entry is None:
+            print(f"Model '{model_name}' not found in config.")
+            similar = [a for a in llm_mode_config.keys() if model_name.lower() in a.lower()]
+            if similar:
+                print(f"  Similar models: {', '.join(similar[:5])}")
+            return
+
+        # Print detailed info
+        print()
+        print(f"  Model: {model_name}")
+        print(f"  {'─' * 50}")
+        print(f"  Full model ID:  {entry.model}")
+        print(f"  Token limit:    {entry.token_limit:,}")
+        print(f"  Client type:    {entry.client_type}")
+        print()
+        print(f"  Reasoning:")
+        print(f"    Supported:     {'Yes' if entry.reasoning.supported else 'No'}")
+        if entry.reasoning.supported:
+            print(f"    Param type:    {entry.reasoning.param_type}")
+            if entry.reasoning.effort_levels:
+                print(f"    Effort levels: {', '.join(entry.reasoning.effort_levels)}")
+            elif entry.reasoning.param_type == "is_r1_model":
+                print(f"    Effort levels: unlimited (R1 models support all)")
+            else:
+                print(f"    Effort levels: not specified in config")
+        print()
 
     async def _cmd_resume(args: str):
         nonlocal current_session_id
@@ -846,6 +1070,9 @@ async def _run_repl(cfg: dict):
         "clear":     (_cmd_clear,     0),
         "cls":       (_cmd_clear,     0),
         "model":     (_cmd_model,    -1),
+        "m":         (_cmd_model,    -1),
+        "models":    (_cmd_models,   -1),
+        "listmodels":(_cmd_models,   -1),
         "resume":    (_cmd_resume,   -1),
         "search":    (_cmd_search,   -1),
         "copy":      (_cmd_copy,     -1),
@@ -892,8 +1119,11 @@ async def _run_repl(cfg: dict):
         if llm_config and config_name:
             entry = llm_config.get(config_name)
             if entry:
-                _, token_limit = entry
-                stats.token_limit = token_limit
+                # entry is a ModelEntry dataclass (V2) or [model, token_limit] tuple (V1)
+                if hasattr(entry, "token_limit"):
+                    stats.token_limit = entry.token_limit
+                elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                    stats.token_limit = entry[1]
 
         # 确保 Thread 存在且状态为 ACTIVE
         if current_thread is None:
@@ -902,11 +1132,58 @@ async def _run_repl(cfg: dict):
 
         stats.start_turn()
         try:
+            # ── Hermes-style: Pre-execution dangerous command check ───────────
+            if HAS_TUI and is_dangerous_command(user_input):
+                try:
+                    approval = approval_callback(
+                        prompt_func=None,  # Use terminal input fallback
+                        command=user_input,
+                        description="This command may be destructive. Approve?",
+                        timeout=60,
+                    )
+                    if approval == "deny":
+                        print("\n  \033[33m⚠ Command denied by user.\033[0m\n")
+                        return
+                    elif approval == "once":
+                        pass  # Execute once
+                    elif approval in ("session", "always"):
+                        # Store approval for session
+                        _session_approved_commands = getattr(
+                            _do_chat, "_approved_cmds", set()
+                        )
+                        _session_approved_commands.add(user_input)
+                        _do_chat._approved_cmds = _session_approved_commands
+                except Exception as e:
+                    print(f"\n  \033[33m⚠ Approval check failed: {e}\033[0m\n")
+                    # Continue anyway on error
+
+            # ── Hermes-style: Interrupt signal check ─────────────────────────
+            if HAS_TUI and is_interrupted():
+                clear_interrupt()
+
+                print("\n  \033[33m⚠ 正在中断当前命令...\033[0m")
+
+                try:
+                    # 1. 暂停 agent（取消当前 LLM/工具调用）
+                    await agent.pause()
+
+                    # 2. 等待任务被取消
+                    await asyncio.sleep(0.1)
+
+                    # 3. 恢复 agent 状态（以便后续对话可以继续）
+                    await agent.resume()
+
+                    print("  \033[32m✓ 已中断，状态已重置\033[0m\n")
+
+                except Exception as e:
+                    logger.warning(f"Failed to pause/resume agent: {e}")
+                    print(f"\n  \033[33m⚠ 中断时出现错误: {e}\033[0m\n")
+
+                return  # 中断当前命令执行
+
             # 使用 renderer 渲染消息流
             await renderer.render(agent.run_stream(task=user_input), stats)
 
-        except asyncio.CancelledError:
-            print("\n[Cancelled]")
         except Exception as e:
             print(f"Error: {e}")
             logger.debug("Chat error", exc_info=e)
@@ -940,7 +1217,9 @@ async def _run_repl(cfg: dict):
             _pending_retry = None
             try:
                 await _do_chat(user_input)
-            except asyncio.CancelledError:
+            except KeyboardInterrupt:
+                if await _handle_interrupt(agent, set_exit_flag=True):
+                    continue
                 break
             continue
 
@@ -950,10 +1229,17 @@ async def _run_repl(cfg: dict):
             print()
             break
         except KeyboardInterrupt:
-            # Ctrl+C at an empty prompt quits; caller's outer loop treats
-            # this as a clean exit via the same cleanup path.
-            print()
-            break
+            # Ctrl+C handling: gracefully interrupt agent or exit
+            print()  # newline after ^C
+
+            # Check for Hermes-style external interrupt signal first
+            if HAS_TUI and is_interrupted():
+                clear_interrupt()
+
+            # 处理中断
+            if await _handle_interrupt(agent, set_exit_flag=True):
+                continue  # 继续循环
+            break  # 无 agent，退出
 
         user_input = (raw or "").strip()
         if not user_input:
@@ -970,7 +1256,9 @@ async def _run_repl(cfg: dict):
 
         try:
             await _do_chat(user_input)
-        except asyncio.CancelledError:
+        except KeyboardInterrupt:
+            if await _handle_interrupt(agent, set_exit_flag=True):
+                continue
             break
 
     print("Bye!")

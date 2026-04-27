@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
@@ -41,24 +42,172 @@ WORKDIR = WORKSPACE / "runs"
 WORKDIR.mkdir(parents=True, exist_ok=True)
 
 
-# ── Default LLM catalog ──────────────────────────────────────────────────────
+# ── ReasoningConfig dataclass ─────────────────────────────────────────────────
 
-DEFAULT_LLM_MODE_CONFIG: dict[str, tuple[str, int]] = {
-    "hepai/minimax-m2.7": ("hepai/minimax-m2.7", 204000),
-    "hepai/minimax-m2.7-highspeed": ("hepai/minimax-m2.7-highspeed", 204000),
-    "minimax-m2.5": ("minimax/minimax-m2.5", 204000),
-    "minimax-m2.5-highspeed": ("minimax/minimax-m2.5-highspeed", 204000),
-    "minimax-m2.7": ("minimax/minimax-m2.7", 204000),
-    "minimax-m2.7-highspeed": ("minimax/minimax-m2.7-highspeed", 204000),
-    "claude-sonnet-4-6": ("anthropic/claude-sonnet-4-6", 200000),
-    "claude-haiku-4-5": ("anthropic/claude-haiku-4-5", 200000),
-    "claude-opus-4-6": ("anthropic/claude-opus-4-6", 200000),
-    "gpt-4o": ("openai/gpt-4o", 128000),
-    "gpt-4.1": ("openai/gpt-4.1", 1000000),
-    "gpt-5.2": ("openai/gpt-5.2", 1000000),
-    "gpt-5.4": ("openai/gpt-5.4", 1000000),
-    "deepseek-r1(No image)": ("deepseek-ai/deepseek-r1", 128000),
-    "deepseek-v3.2(No image)": ("deepseek-ai/deepseek-v3.2", 128000),
+@dataclass
+class ReasoningConfig:
+    """Configuration for extended thinking/reasoning features."""
+
+    supported: bool = False
+    effort_levels: list[str] = field(default_factory=lambda: [])
+    param_type: str = "none"  # adaptive | enabled | is_r1_model | reasoning_effort | minimax_format | zhipu_format | none
+
+    def supports_effort(self, effort: str) -> bool:
+        """Check if the given effort level is supported.
+        
+        For is_r1_model type: effort_levels=[] means "unlimited" (any effort works)
+        For other types: effort must be in effort_levels list
+        """
+        if not self.supported:
+            return False
+        if effort == "off" or effort == "hide":
+            return True
+        # is_r1_model supports all effort levels
+        if self.param_type == "is_r1_model":
+            return True
+        # For other types, effort must be in the supported levels list
+        # Empty list means no specific levels supported (but still enabled)
+        if not self.effort_levels:
+            return True
+        return effort in self.effort_levels
+
+
+# ── ModelEntry dataclass ──────────────────────────────────────────────────────
+
+@dataclass
+class ModelEntry:
+    """A single entry in the LLM mode config."""
+
+    model: str                           # Full model ID (e.g. "anthropic/claude-sonnet-4-6")
+    token_limit: int                     # Maximum token limit
+    client_type: str = "auto"            # anthropic | openai | auto
+    reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
+
+    @staticmethod
+    def from_dict(alias: str, data: Any) -> "ModelEntry":
+        """Parse a model entry from config dict.
+
+        Supports both old format (v1) and new format (v2).
+        """
+        # New format (v2): dict with explicit fields
+        if isinstance(data, dict):
+            reasoning_raw = data.get("reasoning", {})
+            if isinstance(reasoning_raw, dict):
+                reasoning = ReasoningConfig(
+                    supported=reasoning_raw.get("supported", False),
+                    effort_levels=reasoning_raw.get("effort_levels", []),
+                    param_type=reasoning_raw.get("param_type", "none"),
+                )
+            else:
+                reasoning = ReasoningConfig()
+
+            return ModelEntry(
+                model=str(data.get("model", alias)),
+                token_limit=int(data.get("token_limit", 128000)),
+                client_type=str(data.get("client_type", "auto")),
+                reasoning=reasoning,
+            )
+
+        # Old format (v1): [model, token_limit] list/tuple
+        if isinstance(data, (list, tuple)) and len(data) >= 2:
+            model = str(data[0])
+            token_limit = int(data[1])
+        else:
+            # Fallback: treat as model name
+            model = str(data)
+            token_limit = 128000
+
+        # Auto-detect client_type from model name
+        client_type = "auto"
+        if "claude" in model.lower() or "anthropic" in model.lower():
+            client_type = "anthropic"
+        else:
+            client_type = "openai"
+
+        return ModelEntry(
+            model=model,
+            token_limit=token_limit,
+            client_type=client_type,
+            reasoning=ReasoningConfig(),
+        )
+
+
+# ── Default LLM catalog (v2 format) ─────────────────────────────────────────
+# Synced with /home/xiongdb/drsai_test/llm_mode_config.example.json
+
+DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
+    "claude-sonnet-4-6": ModelEntry(
+        model="anthropic/claude-sonnet-4-6",
+        token_limit=1000000,
+        client_type="anthropic",
+        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+    ),
+    "claude-opus-4-7": ModelEntry(
+        model="anthropic/claude-opus-4-7",
+        token_limit=1000000,
+        client_type="anthropic",
+        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+    ),
+    "claude-haiku-4-5": ModelEntry(
+        model="anthropic/claude-haiku-4-5",
+        token_limit=200000,
+        client_type="anthropic",
+        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+    ),
+    "gpt-5.2": ModelEntry(
+        model="openai/gpt-5.2",
+        token_limit=1000000,
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+    ),
+    "gpt-5.4": ModelEntry(
+        model="openai/gpt-5.4",
+        token_limit=1000000,
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+    ),
+    "deepseek-r1": ModelEntry(
+        model="deepseek-ai/deepseek-r1",
+        token_limit=128000,
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="is_r1_model"),
+    ),
+    "deepseek-v3.2": ModelEntry(
+        model="deepseek-ai/deepseek-v3.2",
+        token_limit=128000,
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+    ),
+    "glm-5.1": ModelEntry(
+        model="zhipu/glm-5.1",
+        token_limit=200000,
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
+    ),
+    "minimax-m2.7": ModelEntry(
+        model="minimax/minimax-m2.7",
+        token_limit=204000,
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+    ),
+    "hepai/minimax-m2.7": ModelEntry(
+        model="hepai/minimax-m2.7",
+        token_limit=204000,
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+    ),
+    "hepai/minimax-m2.7-highspeed": ModelEntry(
+        model="hepai/minimax-m2.7-highspeed",
+        token_limit=204000,
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+    ),
+    "minimax-m2.7-highspeed": ModelEntry(
+        model="minimax/minimax-m2.7-highspeed",
+        token_limit=204000,
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+    ),
 }
 
 DEFAULT_CONFIG_NAME = "hepai/minimax-m2.7-highspeed"
@@ -69,18 +218,33 @@ _DEFAULT_OPENAI_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2"
 _DEFAULT_RAGFLOW_URL = "https://ragflow.ihep.ac.cn"
 
 
-def load_llm_mode_config(path: Optional[str]) -> dict[str, tuple[str, int]]:
+def load_llm_mode_config(path: Optional[str]) -> dict[str, ModelEntry]:
     """Load an external model catalog from YAML or JSON.
 
-    Expected shape::
+    Supports both v1 format (simple [model_id, token_limit] pairs) and
+    v2 format (structured dict with reasoning config).
+
+    V1 format::
 
         alias: [model_id, token_limit]
 
+    V2 format::
+
+        alias: {
+            "model": "model_id",
+            "token_limit": 200000,
+            "client_type": "anthropic",  # optional
+            "reasoning": {
+                "supported": true,
+                "effort_levels": ["low", "medium", "high"],
+                "param_type": "adaptive"
+            }
+        }
+
     If ``path`` is falsy or missing, returns ``DEFAULT_LLM_MODE_CONFIG``.
-    JSON stores tuples as 2-element lists — coerce back to tuples on load.
     """
     if not path:
-        return DEFAULT_LLM_MODE_CONFIG
+        return DEFAULT_LLM_MODE_CONFIG.copy()
 
     p = Path(os.path.expanduser(os.path.expandvars(path)))
     if not p.exists():
@@ -99,14 +263,12 @@ def load_llm_mode_config(path: Optional[str]) -> dict[str, tuple[str, int]]:
     if not isinstance(raw, dict):
         raise ValueError(f"llm_config_file must contain a mapping, got {type(raw).__name__}")
 
-    out: dict[str, tuple[str, int]] = {}
+    # Filter out metadata keys (those starting with underscore)
+    out: dict[str, ModelEntry] = {}
     for alias, val in raw.items():
-        if not (isinstance(val, (list, tuple)) and len(val) == 2):
-            raise ValueError(
-                f"Entry {alias!r} must be a [model_id, token_limit] pair, got {val!r}"
-            )
-        model_id, token_limit = val
-        out[str(alias)] = (str(model_id), int(token_limit))
+        if alias.startswith("_"):
+            continue
+        out[str(alias)] = ModelEntry.from_dict(alias, val)
     return out
 
 
@@ -222,11 +384,27 @@ def create_agent(
         entry = llm_mode_config.get(alias)
         if entry is None:
             entry = llm_mode_config[resolved_config_name]
-        llm_model, token_limit = entry
+        llm_model = entry.model
+        token_limit = entry.token_limit
+        client_type = entry.client_type
+        reasoning_config = entry.reasoning
 
-        if ("claude" in llm_model) or ("minimax" in llm_model):
-            model_info = dict(_MODEL_INFO["claude-sonnet-4-5"])
+        # Determine client type
+        if client_type == "auto":
+            if "claude" in llm_model or "anthropic" in llm_model or "minimax" in llm_model:
+                client_type = "anthropic"
+            else:
+                client_type = "openai"
+
+        # Handle "minimax" specially - use anthropic client with HepAI endpoint
+        if "minimax" in llm_model:
+            client_type = "anthropic"
+
+        if client_type == "anthropic":
+            model_info = dict(_MODEL_INFO.get("claude-sonnet-4-5", {}))
             model_info["token_model"] = "claude-3-5-sonnet-20240620"
+            # Add reasoning config to model_info for client to use
+            model_info["reasoning_config"] = reasoning_config
             return HepAIAnthropicChatCompletionClient(
                 model=llm_model,
                 base_url=anthropic_base_url,
@@ -236,22 +414,28 @@ def create_agent(
             )
 
         is_vision = "deepseek" not in llm_model
+        # Add reasoning config to model_info for client to use
+        model_info = {
+            "vision": is_vision,
+            "function_calling": True,
+            "json_output": True,
+            "structured_output": False,
+            "family": ModelFamily.GPT_41,
+            "multiple_system_messages": True,
+            "token_model": "gpt-4o-2024-11-20",
+            "reasoning_config": reasoning_config,
+        }
         return HepAIChatCompletionClient(
             model=llm_model,
             api_key=openai_api_key,
             base_url=openai_base_url,
-            model_info={
-                "vision": is_vision,
-                "function_calling": True,
-                "json_output": True,
-                "structured_output": False,
-                "family": ModelFamily.GPT_41,
-                "multiple_system_messages": True,
-                "token_model": "gpt-4o-2024-11-20",
-            },
+            model_info=model_info,
         )
 
-    _, token_limit = llm_mode_config[resolved_config_name]
+    entry = llm_mode_config.get(resolved_config_name)
+    if entry is None:
+        entry = next(iter(llm_mode_config.values()))
+    token_limit = entry.token_limit
 
     cwd_prompt = _build_cwd_prompt(cli_cfg)
 

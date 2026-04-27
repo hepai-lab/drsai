@@ -74,6 +74,12 @@ class DrSaiCLIAssistant(DrSaiAssistant):
         self._reasoning_effort: str = reasoning_effort
         self._token_stats = TokenStats()
 
+    # ── TODO: Reasoning effort ──────────────────────────────────────────────
+    # 完整的 reasoning_effort 实现需要:
+    # 1. 在此属性 setter 中验证并存储 reasoning_config
+    # 2. 在创建 LLM client 时传递 thinking/reasoning 参数
+    # 3. 不同模型需要差异化处理 (Anthropic/OAI兼容/Kimi/DeepSeek等)
+    # 4. 参考 hermes-agent/agent/transports/ 的实现模式
     # ── Reasoning effort ────────────────────────────────────────────────────
     @property
     def reasoning_effort(self) -> str:

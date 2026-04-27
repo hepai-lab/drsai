@@ -469,6 +469,10 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 inner_messages.append(event_msg)
                 yield event_msg
 
+            # STEP 2.5: Sanitize messages to handle orphaned tool results / missing stubs
+            # This prevents tool_call_id mismatches after model switches
+            await self._sanitize_api_messages()
+
             # STEP 3: Run the first inference
             model_result = None
             async for inference_output in self._call_llm(
@@ -1104,7 +1108,104 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 name=tool_call.name,
             ),
         )
-    
+
+    async def switch_model(self, new_model_client: ChatCompletionClient) -> None:
+        """Switch the model client to a new one.
+
+        This replaces the current model client, invalidates cached system prompt,
+        and clears the model context to avoid tool_call_id mismatches between models.
+
+        Args:
+            new_model_client: The new ChatCompletionClient to use.
+        """
+        # logger.info(
+        #     f"Switching model from {self._model_client._create_args.get('model', 'unknown')} "
+        #     f"to {new_model_client._create_args.get('model', 'unknown')}"
+        # )
+
+        # Close the old client
+        await self._model_client.close()
+        # Update to new client
+        self._model_client = new_model_client
+
+
+    async def _sanitize_api_messages(self) -> None:
+        """Remove orphaned tool results and inject stubs for missing ones.
+
+        This cleans up the model context before LLM calls to ensure:
+        1. No orphaned tool results (results without corresponding tool_call_id)
+        2. No missing tool results (tool_calls without corresponding results get a stub)
+
+        Should be called before each LLM inference.
+        """
+        from autogen_core.models import FunctionExecutionResult, FunctionExecutionResultMessage
+
+        messages = await self._model_context.get_messages()
+        if not messages:
+            return
+
+        # Collect tool_call_ids from assistant messages
+        surviving_call_ids: set[str] = set()
+        # Collect tool result call_ids
+        result_call_ids: set[str] = set()
+        # Track which messages need modification
+        messages_to_remove: list[int] = []
+
+        for i, msg in enumerate(messages):
+            if isinstance(msg, AssistantMessage):
+                if isinstance(msg.content, list):
+                    for call in msg.content:
+                        if isinstance(call, FunctionCall):
+                            surviving_call_ids.add(call.id)
+            elif isinstance(msg, FunctionExecutionResultMessage):
+                if isinstance(msg.content, list):
+                    for result in msg.content:
+                        if isinstance(result, FunctionExecutionResult):
+                            result_call_ids.add(result.call_id)
+                            # Check if this result is orphaned (no matching tool_call)
+                            if result.call_id not in surviving_call_ids:
+                                messages_to_remove.append(i)
+                                logger.debug(
+                                    f"Removing orphaned tool result: {result.call_id} "
+                                    f"(name={result.name})"
+                                )
+
+        # Remove orphaned tool result messages (iterate in reverse to preserve indices)
+        for i in reversed(messages_to_remove):
+            messages.pop(i)
+
+        # Find tool_calls that are missing results and inject stubs
+        missing_result_ids = surviving_call_ids - result_call_ids
+        if missing_result_ids:
+            for call_id in missing_result_ids:
+                # Find the assistant message that made this call
+                for i, msg in enumerate(messages):
+                    if isinstance(msg, AssistantMessage):
+                        if isinstance(msg.content, list):
+                            for call in msg.content:
+                                if isinstance(call, FunctionCall) and call.id == call_id:
+                                    # Find the function name
+                                    func_name = call.name
+                                    stub = FunctionExecutionResultMessage(
+                                        content=[
+                                            FunctionExecutionResult(
+                                                call_id=call_id,
+                                                name=func_name,
+                                                content="[Result unavailable - tool result missing after model switch]",
+                                                is_error=True,
+                                            )
+                                        ]
+                                    )
+                                    # Insert stub right after the assistant message
+                                    messages.insert(i + 1, stub)
+                                    logger.debug(f"Injected stub result for missing tool_call: {call_id}")
+                                    break
+
+            # Update the context with sanitized messages
+            await self._model_context.clear()
+            for msg in messages:
+                await self._model_context.add_message(msg)
+
     async def lazy_init(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Initialize the tools and models needed by the agent."""
         pass

@@ -10,6 +10,8 @@ Features:
 - ``Ctrl+D`` raises ``EOFError`` (quit); ``Ctrl+C`` raises ``KeyboardInterrupt``
   so the caller can decide cancel-vs-quit semantics.
 - Streamed output prints above the prompt via ``patch_stdout``.
+- **NEW**: Interactive confirmation support (clarify, approval, secret prompts)
+  integrated with Hermes-style TUI callbacks.
 
 ``prompt_toolkit`` is a required dep; when stdin isn't a TTY (piped / test)
 we still fall back to plain ``input()`` so batch runs work.
@@ -27,6 +29,36 @@ from drsai.configs.constant import CONFIG_DIR
 from .commands import COMMAND_REGISTRY
 
 __all__ = ["DrSaiPrompt", "HAS_PROMPT_TOOLKIT"]
+
+# Try to import Hermes-style TUI callbacks
+try:
+    from .callbacks import (
+        CallbackState,
+        get_callback_state,
+        submit_clarify_response,
+        submit_approval_response,
+        submit_secret_response,
+    )
+    from .curses_ui import (
+        curses_checklist,
+        curses_radiolist,
+        curses_single_select,
+        Colors,
+        color,
+    )
+    HAS_TUI_CALLBACKS = True
+except ImportError:
+    HAS_TUI_CALLBACKS = False
+    CallbackState = None  # type: ignore
+    get_callback_state = None  # type: ignore
+    submit_clarify_response = None  # type: ignore
+    submit_approval_response = None  # type: ignore
+    submit_secret_response = None  # type: ignore
+    curses_checklist = None  # type: ignore
+    curses_radiolist = None  # type: ignore
+    curses_single_select = None  # type: ignore
+    Colors = None  # type: ignore
+    color = None  # type: ignore
 
 
 from prompt_toolkit import PromptSession
@@ -54,11 +86,18 @@ _STYLE = Style.from_dict({
     "prompt.label":   "#FFD700 bold",      # gold
     "prompt.arrow":   "#5FAFFF bold",      # cyan-ish
     "bottom-toolbar": "bg:#222222 #888888",
+    # Hermes-style interactive prompt colors
+    "interactive.header": "#FFD700 bold",
+    "interactive.choice": "#5FAFFF",
+    "interactive.selected": "#00FF00 bold",
 })
 
 
 class DrSaiPrompt:
-    """One instance per REPL. Call ``await prompt()`` to read a line."""
+    """One instance per REPL. Call ``await prompt()`` to read a line.
+
+    Also supports interactive confirmations via Hermes-style TUI callbacks.
+    """
 
     def __init__(
         self,
@@ -72,8 +111,11 @@ class DrSaiPrompt:
         self._bottom_toolbar_fn = bottom_toolbar_fn
         self._use_toolkit = sys.stdin.isatty()
         self._session: Optional[PromptSession] = None
+        self._callback_state: CallbackState | None = None
         if self._use_toolkit:
             self._setup_toolkit()
+        if HAS_TUI_CALLBACKS:
+            self._callback_state = get_callback_state()
 
     def update_bottom_toolbar_fn(self, new_fn: Callable[[], str]) -> None:
         """Update the bottom toolbar function dynamically."""
@@ -138,6 +180,131 @@ class DrSaiPrompt:
         loop = asyncio.get_event_loop()
         label = self._label_fn()
         return await loop.run_in_executor(None, _blocking_input, f"[{label}] ❯ ")
+
+    # ── Interactive Confirmation Support (Hermes-style) ─────────────────────
+    def has_pending_clarify(self) -> bool:
+        """Check if there's a pending clarify request."""
+        if not HAS_TUI_CALLBACKS or self._callback_state is None:
+            return False
+        return self._callback_state._clarify_state is not None
+
+    def has_pending_approval(self) -> bool:
+        """Check if there's a pending approval request."""
+        if not HAS_TUI_CALLBACKS or self._callback_state is None:
+            return False
+        return self._callback_state._approval_state is not None
+
+    def has_pending_secret(self) -> bool:
+        """Check if there's a pending secret request."""
+        if not HAS_TUI_CALLBACKS or self._callback_state is None:
+            return False
+        return self._callback_state._secret_state is not None
+
+    def handle_clarify_input(self, input_text: str) -> bool:
+        """Handle input for a clarify request.
+
+        Returns True if the input was consumed as a clarify response.
+        """
+        if not self.has_pending_clarify():
+            return False
+
+        state = self._callback_state._clarify_state
+        if state is None:
+            return False
+
+        # Free-text input mode
+        if state.get("_freetext") or not state.get("choices"):
+            submit_clarify_response(input_text)
+            return True
+
+        # Numbered choice mode
+        try:
+            idx = int(input_text.strip()) - 1
+            choices = state.get("choices", [])
+            if 0 <= idx < len(choices):
+                submit_clarify_response(choices[idx])
+                return True
+        except ValueError:
+            pass
+
+        return False
+
+    def render_clarify_prompt(self) -> str | None:
+        """Render a clarify prompt for display in TUI.
+
+        Returns the formatted prompt string, or None if no pending clarify.
+        """
+        if not self.has_pending_clarify():
+            return None
+
+        state = self._callback_state._clarify_state
+        if state is None:
+            return None
+
+        question = state.get("question", "Please clarify:")
+        choices = state.get("choices", [])
+
+        lines = [f"\n  {question}\n"]
+        if choices:
+            for i, choice in enumerate(choices, 1):
+                lines.append(f"    {i}. {choice}")
+        else:
+            lines.append("  (Enter your response)")
+        return "\n".join(lines)
+
+    def render_approval_prompt(self) -> str | None:
+        """Render an approval prompt for display in TUI.
+
+        Returns the formatted prompt string, or None if no pending approval.
+        """
+        if not self.has_pending_approval():
+            return None
+
+        state = self._callback_state._approval_state
+        if state is None:
+            return None
+
+        command = state.get("command", "")
+        description = state.get("description", "This command may be destructive.")
+
+        lines = [
+            f"\n  ⚠️  {description}",
+            f"  Command: {command[:80]}{'...' if len(command) > 80 else ''}",
+            "\n  Approve this command?",
+            "    1. once (approve for this execution only)",
+            "    2. session (approve for this session)",
+            "    3. always (approve for all future executions)",
+            "    4. deny (don't execute)",
+        ]
+        choices = state.get("choices", [])
+        if "view" in choices:
+            lines.append("    5. view (see full command)")
+        return "\n".join(lines)
+
+    def render_secret_prompt(self) -> str | None:
+        """Render a secret prompt for display in TUI.
+
+        Returns the formatted prompt string, or None if no pending secret.
+        """
+        if not self.has_pending_secret():
+            return None
+
+        state = self._callback_state._secret_state
+        if state is None:
+            return None
+
+        prompt_text = state.get("prompt", "Enter secret:")
+        var_name = state.get("var_name", "secret")
+
+        return f"\n  🔐 {prompt_text}\n  Variable: {var_name}\n  (Press ESC or Enter empty to skip)"
+
+    def invalidate(self) -> None:
+        """Invalidate the prompt session to force redraw (for TUI updates)."""
+        if self._session is not None:
+            try:
+                self._session.app.invalidate()
+            except Exception:
+                pass
 
 
 def _blocking_input(prompt_text: str) -> str:
