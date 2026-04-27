@@ -64,22 +64,22 @@ function MarkdownCode(
       style={
         compact
           ? {
-              backgroundColor:
-                "color-mix(in oklab, var(--color-magenta-600) 18%, transparent)",
-              color: "var(--color-text-accent)",
-              padding: "2px 4px",
-              borderRadius: "3px",
-              fontSize: "0.8rem",
-            }
+            backgroundColor:
+              "color-mix(in oklab, var(--color-magenta-600) 18%, transparent)",
+            color: "var(--color-text-accent)",
+            padding: "2px 4px",
+            borderRadius: "3px",
+            fontSize: "0.8rem",
+          }
           : {
-              whiteSpace: "pre-wrap",
-              color: "var(--color-text-accent)",
-              backgroundColor:
-                "color-mix(in oklab, var(--color-magenta-600) 18%, transparent)",
-              display: "inline",
-              padding: "0.2em 0.4em",
-              borderRadius: "0.375rem",
-            }
+            whiteSpace: "pre-wrap",
+            color: "var(--color-text-accent)",
+            backgroundColor:
+              "color-mix(in oklab, var(--color-magenta-600) 18%, transparent)",
+            display: "inline",
+            padding: "0.2em 0.4em",
+            borderRadius: "0.375rem",
+          }
       }
       {...rest}
     >
@@ -370,6 +370,7 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
   const getReasoningTitle = () => {
     if (!isDone) return "Thinking...";
     if (cleanContent.length === 0) return "Thought";
+    if (durationSeconds < 1) return "Thought Completed";
     if (durationSeconds < 60) return `Thought for ${durationSeconds} seconds`;
     const minutes = Math.floor(durationSeconds / 60);
     const seconds = durationSeconds % 60;

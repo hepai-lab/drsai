@@ -150,6 +150,11 @@ const RunView: React.FC<RunViewProps> = ({
   const setIsRightPanelOpen = useRightPanelStore((s) => s.setIsOpen);
   const overviewSlot = useRightPanelStore((s) => s.overviewSlot);
   const threadContainerRef = useRef<HTMLDivElement | null>(null);
+  /** Inner content wrapper ref — observed for size changes during streaming.
+   *  threadContainerRef has fixed height (flex-1 constrained by parent), so its
+   *  ResizeObserver does NOT fire when scroll content grows.  This inner div DOES
+   *  resize as messages are added, giving us a reliable streaming-follow trigger. */
+  const messagesContentRef = useRef<HTMLDivElement | null>(null);
   const autoScrollLockedRef = useRef(false);
   const [autoScrollLocked, setAutoScrollLocked] = useState(false);
   /** Last scroll metrics — used so ResizeObserver can tell "was pinned to bottom" when content height grows (streaming). */
@@ -423,9 +428,12 @@ const RunView: React.FC<RunViewProps> = ({
 
     const handleScroll = () => {
       if (programmaticScrollRef.current) {
+        // During programmatic scroll, record the target (bottom) position rather than the
+        // intermediate animated position. This keeps wasAtBottom=true in the ResizeObserver
+        // so it keeps following new content even while the scroll animation plays.
         scrollMetricsRef.current = {
           scrollHeight: container.scrollHeight,
-          scrollTop: container.scrollTop,
+          scrollTop: container.scrollHeight - container.clientHeight,
           clientHeight: container.clientHeight,
         };
         return;
@@ -439,7 +447,7 @@ const RunView: React.FC<RunViewProps> = ({
 
       const distanceFromBottom =
         container.scrollHeight - container.scrollTop - container.clientHeight;
-      const isAtBottom = distanceFromBottom <= 48;
+      const isAtBottom = distanceFromBottom <= 32;
 
       if (!isAtBottom && !autoScrollLockedRef.current) {
         autoScrollLockedRef.current = true;
@@ -486,13 +494,39 @@ const RunView: React.FC<RunViewProps> = ({
     return () => ro.disconnect();
   }, [scrollToBottom]);
 
+  // Observe the inner messages content div — unlike threadContainerRef (fixed height via flex),
+  // this div actually grows as messages render during streaming, so ResizeObserver fires reliably.
+  useEffect(() => {
+    const content = messagesContentRef.current;
+    if (!content) return;
+
+    const ro = new ResizeObserver(() => {
+      if (autoScrollLockedRef.current) return;
+      // If a programmatic scroll is already in progress, its RAF will read the
+      // latest scrollHeight when it fires — no need to queue another scroll.
+      if (programmaticScrollRef.current) return;
+      scrollToBottom("auto");
+    });
+
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [scrollToBottom]);
+
   // Combine scroll behavior when messages or status change
   useEffect(() => {
-    if (
-      run.messages.length === 0 ||
-      !threadContainerRef.current ||
-      autoScrollLockedRef.current
-    ) {
+    if (run.messages.length === 0 || !threadContainerRef.current) {
+      return;
+    }
+
+    // When the user sends a new message, always unlock auto-scroll so the view
+    // follows the new content regardless of where the user was previously scrolled.
+    const lastMsg = run.messages[run.messages.length - 1];
+    if (lastMsg && messageUtils.isUser(lastMsg.config.source)) {
+      autoScrollLockedRef.current = false;
+      setAutoScrollLocked(false);
+    }
+
+    if (autoScrollLockedRef.current) {
       return;
     }
 
@@ -1120,6 +1154,8 @@ const RunView: React.FC<RunViewProps> = ({
           ref={threadContainerRef}
           className="w-full max-w-4xl mx-auto flex-1 min-h-0 overflow-y-auto scroll px-8 pt-4 pb-4"
         >
+          {/* Inner wrapper observed by ResizeObserver — grows with streaming content */}
+          <div ref={messagesContentRef}>
           {localMessages.length > 0 &&
             localMessages.map((msg: Message, idx: number) => {
               const isCurrentMessagePlan =
@@ -1252,6 +1288,7 @@ const RunView: React.FC<RunViewProps> = ({
               onRegeneratePlan={onRegeneratePlan}
             />
           </div>
+          </div>{/* end messagesContentRef wrapper */}
         </div>
 
         {/* ChatInput - floating fixed at bottom */}
@@ -1279,7 +1316,7 @@ const RunView: React.FC<RunViewProps> = ({
                 plan?: IPlan,
                 llm?: { label: string; value: string }
               ) => {
-                scrollToBottom("smooth");
+                scrollToBottom("auto");
                 if (run.status === "awaiting_input") {
                   onInputResponse?.(
                     query,
