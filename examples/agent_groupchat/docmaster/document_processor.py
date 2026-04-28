@@ -636,7 +636,89 @@ class DocumentProcessor:
                             raise IndexError('table_index out of range')
                         doc.tables[table_index].style = table_style
                         changes_made.append(f"Applied table style '{table_style}' to table {table_index}")
-                        
+
+                    elif edit_type == 'add_bullet_list':
+                        items = edit.get('items', [])
+                        position = edit.get('position')
+                        style_override = edit.get('style') or 'List Bullet'
+                        start_index = 0
+
+                        added_items = []
+                        for idx, item in enumerate(items):
+                            if isinstance(item, str):
+                                item_text = item
+                                item_level = 0
+                            elif isinstance(item, dict):
+                                item_text = item.get('text', '')
+                                item_level = item.get('level', 0)
+                            else:
+                                continue
+                            if not item_text:
+                                continue
+
+                            if isinstance(position, int) and 0 <= position < len(doc.paragraphs):
+                                para = doc.paragraphs[position].insert_paragraph_before(item_text)
+                            else:
+                                para = doc.add_paragraph(item_text)
+
+                            # Apply list style based on level
+                            list_style = f'List Bullet {item_level + 1}' if item_level > 0 else style_override
+                            try:
+                                para.style = doc.styles[list_style]
+                            except KeyError:
+                                try:
+                                    para.style = doc.styles['List Bullet']
+                                except KeyError:
+                                    para.style = doc.styles['Normal']
+
+                            apply_paragraph_and_run_formatting(para, edit)
+                            added_items.append(item_text[:50])
+                            if isinstance(position, int) and 0 <= position < len(doc.paragraphs):
+                                position += 1
+
+                        changes_made.append(f"Added bullet list with {len(added_items)} items")
+
+                    elif edit_type == 'add_numbered_list':
+                        items = edit.get('items', [])
+                        position = edit.get('position')
+                        style_override = edit.get('style') or 'List Number'
+                        start_index = 0
+
+                        added_items = []
+                        for idx, item in enumerate(items):
+                            if isinstance(item, str):
+                                item_text = item
+                                item_level = 0
+                            elif isinstance(item, dict):
+                                item_text = item.get('text', '')
+                                item_level = item.get('level', 0)
+                            else:
+                                continue
+                            if not item_text:
+                                continue
+
+                            if isinstance(position, int) and 0 <= position < len(doc.paragraphs):
+                                para = doc.paragraphs[position].insert_paragraph_before(item_text)
+                            else:
+                                para = doc.add_paragraph(item_text)
+
+                            # Apply list style based on level
+                            list_style = f'List Number {item_level + 1}' if item_level > 0 else style_override
+                            try:
+                                para.style = doc.styles[list_style]
+                            except KeyError:
+                                try:
+                                    para.style = doc.styles['List Number']
+                                except KeyError:
+                                    para.style = doc.styles['Normal']
+
+                            apply_paragraph_and_run_formatting(para, edit)
+                            added_items.append(item_text[:50])
+                            if isinstance(position, int) and 0 <= position < len(doc.paragraphs):
+                                position += 1
+
+                        changes_made.append(f"Added numbered list with {len(added_items)} items")
+
                 except Exception as e:
                     changes_made.append(f"Error applying edit {i+1} ({edit_type}): {str(e)}")
             
