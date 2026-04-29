@@ -15,6 +15,72 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+# ==================== Shared CJK Font Helpers ====================
+
+_CJK_FONT_KEYWORDS = (
+    '宋', '黑', '楷', '仿宋', '隶书', '幼圆', '华文', '微软雅黑',
+    'SimSun', 'NSimSun', 'SimHei', 'KaiTi', 'FangSong',
+    'STSong', 'STHeiti', 'STKaiti', 'STFangsong', 'STZhongsong',
+    'MingLiU', 'PMingLiU', 'MS Mincho', 'MS Gothic',
+    'Malgun', 'Batang', 'Gulim', 'DengXian', '等线',
+)
+
+
+def _contains_chinese(text: str) -> bool:
+    """Return True if *text* contains any CJK Unified Ideograph."""
+    import re
+    return bool(re.search(r'[\u4e00-\u9fff]', text))
+
+
+def _is_cjk_font(font_name: str) -> bool:
+    """Return True if *font_name* looks like a CJK (Chinese/Japanese/Korean) font."""
+    return any(kw in font_name for kw in _CJK_FONT_KEYWORDS)
+
+
+def _set_east_asia_font(run_element, font_name: str):
+    """Set the ``w:eastAsia`` attribute on a run's ``<w:rFonts>`` element.
+
+    This is required for Chinese/Japanese/Korean characters to render in the
+    correct font inside Word.  ``run.font.name`` in *python-docx* only writes
+    the ``w:ascii`` / ``w:hAnsi`` attributes.
+    """
+    from docx.oxml.ns import qn
+
+    rPr = run_element.get_or_add_rPr()
+    rFonts = rPr.find(qn('w:rFonts'))
+    if rFonts is None:
+        from docx.oxml import OxmlElement
+        rFonts = OxmlElement('w:rFonts')
+        rPr.insert(0, rFonts)
+    rFonts.set(qn('w:eastAsia'), font_name)
+
+
+def _apply_font_name_to_run(run, font_name: str):
+    """Set *font_name* on a run, including ``w:eastAsia`` for CJK fonts."""
+    if not font_name:
+        return
+    run.font.name = font_name
+    if _is_cjk_font(font_name):
+        _set_east_asia_font(run._element, font_name)
+
+
+def _apply_font_name_to_style(style, font_name: str):
+    """Set *font_name* on a style object, including ``w:eastAsia`` for CJK fonts."""
+    if not font_name:
+        return
+    from docx.oxml.ns import qn
+
+    style.font.name = font_name
+    if _is_cjk_font(font_name):
+        rPr = style.element.get_or_add_rPr()
+        rFonts = rPr.find(qn('w:rFonts'))
+        if rFonts is None:
+            from docx.oxml import OxmlElement
+            rFonts = OxmlElement('w:rFonts')
+            rPr.insert(0, rFonts)
+        rFonts.set(qn('w:eastAsia'), font_name)
+
+
 class DocumentProcessor:
     """
     Main document processor for handling various file types.
@@ -369,14 +435,7 @@ class DocumentProcessor:
                 return None
             
             def set_run_font_name(run, font_name):
-                if not font_name:
-                    return
-                run.font.name = font_name
-                if '宋体' in font_name or 'SimSun' in font_name or '微软雅黑' in font_name:
-                    try:
-                        run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
-                    except:
-                        pass
+                _apply_font_name_to_run(run, font_name)
             
             def apply_run_formatting(run, formatting):
                 if not formatting:
@@ -390,6 +449,11 @@ class DocumentProcessor:
                 
                 if font_name:
                     set_run_font_name(run, font_name)
+                    # If text contains Chinese but font is not CJK, set w:eastAsia separately
+                    # to ensure CJK characters render correctly
+                    run_text = run.text if run.text else ''
+                    if _contains_chinese(run_text) and not _is_cjk_font(font_name):
+                        _set_east_asia_font(run._element, '宋体')
                 if font_size is not None:
                     run.font.size = Pt(font_size)
                 if bold is not None:
@@ -450,18 +514,328 @@ class DocumentProcessor:
                             for paragraph in cell.paragraphs:
                                 yield paragraph
             
+            def _delete_text_from_paragraph(paragraph, target_text):
+                """Delete target_text from a paragraph, removing empty runs afterward.
+                
+                Args:
+                    paragraph: The paragraph to modify
+                    target_text: The text to delete
+                
+                Returns:
+                    Number of deletions made (0 or 1)
+                """
+                if not target_text or target_text not in paragraph.text:
+                    return 0
+                
+                from docx.oxml.ns import qn
+                
+                # Handle paragraphs without runs (simple case)
+                if not paragraph.runs:
+                    paragraph.text = paragraph.text.replace(target_text, '')
+                    # Check if paragraph is now empty and mark for removal
+                    return 1
+                
+                # Find runs containing the target text
+                runs_to_process = []
+                for run in paragraph.runs:
+                    if target_text in run.text:
+                        runs_to_process.append(run)
+                
+                if not runs_to_process:
+                    return 0
+                
+                # Process each run that contains the target text
+                for run in runs_to_process:
+                    run_text = run.text
+                    if target_text in run_text:
+                        run_elem = run._element
+                        p_elem = run_elem.getparent()
+                        
+                        # Get all text nodes in the paragraph
+                        text_elements = run_elem.findall('.//' + qn('w:t'))
+                        
+                        # Case 1: Target text spans the entire run text
+                        if run_text == target_text:
+                            # Remove the entire run
+                            p_elem.remove(run_elem)
+                            continue
+                        
+                        # Case 2: Target text is at the beginning of the run
+                        if run_text.startswith(target_text):
+                            # Update run text to remove prefix
+                            run.text = run_text[len(target_text):]
+                            continue
+                        
+                        # Case 3: Target text is at the end of the run
+                        if run_text.endswith(target_text):
+                            # Update run text to remove suffix
+                            run.text = run_text[:-len(target_text)]
+                            continue
+                        
+                        # Case 4: Target text is in the middle of the run
+                        # Need to split the run into: [before][after]
+                        idx = run_text.find(target_text)
+                        before_text = run_text[:idx]
+                        after_text = run_text[idx + len(target_text):]
+                        
+                        # Update source run to contain only 'before' text
+                        run.text = before_text
+                        
+                        # Create new run for 'after' text (clone formatting)
+                        from docx.oxml import OxmlElement
+                        new_run_after = OxmlElement('w:r')
+                        
+                        # Copy rPr (run properties) from source if it exists
+                        rPr_source = run_elem.find(qn('w:rPr'))
+                        if rPr_source is not None:
+                            new_run_after.append(rPr_source.copy())
+                        
+                        # Add text for 'after' portion
+                        t_after = OxmlElement('w:t')
+                        t_after.set(qn('xml:space'), 'preserve')
+                        t_after.text = after_text
+                        new_run_after.append(t_after)
+                        
+                        # Insert the 'after' run after the source run
+                        p_elem.insert(list(p_elem).index(run_elem) + 1, new_run_after)
+                
+                # Clean up empty runs after deletion
+                _cleanup_empty_runs(paragraph)
+                
+                return 1
+            
+            def _cleanup_empty_runs(paragraph):
+                """Remove runs that have empty text content."""
+                from docx.oxml.ns import qn
+                
+                runs_to_remove = []
+                for run in paragraph.runs:
+                    if not run.text or run.text == '':
+                        runs_to_remove.append(run)
+                
+                for run in runs_to_remove:
+                    run_elem = run._element
+                    p_elem = run_elem.getparent()
+                    if p_elem is not None:
+                        p_elem.remove(run_elem)
+            
+            def get_run_font_info(run):
+                """Extract font formatting from a run."""
+                font_info = {}
+                try:
+                    if run.font.name:
+                        font_info['font_name'] = run.font.name
+                except:
+                    pass
+                try:
+                    if run.font.size:
+                        font_info['font_size'] = run.font.size.pt
+                except:
+                    pass
+                try:
+                    if run.font.bold is not None:
+                        font_info['bold'] = run.font.bold
+                except:
+                    pass
+                try:
+                    if run.font.italic is not None:
+                        font_info['italic'] = run.font.italic
+                except:
+                    pass
+                try:
+                    if run.font.underline is not None:
+                        font_info['underline'] = run.font.underline
+                except:
+                    pass
+                try:
+                    if run.font.color.rgb is not None:
+                        font_info['color'] = run.font.color.rgb
+                except:
+                    pass
+                return font_info
+
+            def detect_context_formatting(position, doc):
+                """Detect formatting from surrounding context when inserting a new paragraph.
+                
+                Args:
+                    position: Integer index for insertion point, or 'end', 'start'
+                    doc: The document object
+                
+                Returns:
+                    Dictionary with formatting info to apply to new content
+                """
+                context_format = {}
+                
+                # Get the reference paragraph for formatting
+                ref_para = None
+                has_paragraphs = len(doc.paragraphs) > 0
+                
+                if isinstance(position, int):
+                    # Try to get the paragraph at the position for reference
+                    if 0 <= position < len(doc.paragraphs):
+                        ref_para = doc.paragraphs[position]
+                    elif position >= 0 and has_paragraphs:
+                        # position is non-negative but beyond doc length - use last paragraph
+                        ref_para = doc.paragraphs[-1]
+                    elif position < 0 and has_paragraphs:
+                        # Negative index - use first paragraph (or last if out of range)
+                        idx = len(doc.paragraphs) + position
+                        ref_para = doc.paragraphs[max(0, idx)]
+                    # else: position is int but doc is empty -> ref_para stays None
+                elif position == 'end':
+                    # Use the last paragraph as reference
+                    ref_para = doc.paragraphs[-1] if has_paragraphs else None
+                elif position == 'start':
+                    # Use the first paragraph as reference
+                    ref_para = doc.paragraphs[0] if has_paragraphs else None
+                else:
+                    # Unknown string value - default to 'end' behavior for safety
+                    ref_para = doc.paragraphs[-1] if has_paragraphs else None
+                
+                if ref_para:
+                    # Detect paragraph-level formatting
+                    try:
+                        # Use 'is not None' to properly detect LEFT (0) alignment
+                        if ref_para.alignment is not None:
+                            alignment_map = {
+                                0: 'left',  # LEFT
+                                1: 'center',  # CENTER
+                                2: 'right',  # RIGHT
+                                3: 'justify',  # JUSTIFY
+                                4: 'distribute',  # DISTRIBUTE
+                                5: 'justified_high',  # JUSTIFIED_H
+                                6: 'justified_low',  # JUSTIFIED_L
+                            }
+                            al = ref_para.alignment
+                            if al in alignment_map:
+                                context_format['alignment'] = alignment_map[al]
+                    except:
+                        pass
+                    
+                    try:
+                        # Check if space_before is explicitly set (not None or 0pt)
+                        sb = ref_para.paragraph_format.space_before
+                        if sb is not None and sb.pt != 0:
+                            context_format['spacing_before'] = sb.pt
+                    except:
+                        pass
+                    
+                    try:
+                        # Check if space_after is explicitly set (not None or 0pt)
+                        sa = ref_para.paragraph_format.space_after
+                        if sa is not None and sa.pt != 0:
+                            context_format['spacing_after'] = sa.pt
+                    except:
+                        pass
+                    
+                    try:
+                        # Check if line_spacing is explicitly set
+                        ls = ref_para.paragraph_format.line_spacing
+                        if ls is not None:
+                            if isinstance(ls, float) and ls > 0:
+                                context_format['line_spacing'] = ls
+                            elif hasattr(ls, 'pt') and ls.pt != 0:
+                                context_format['line_spacing'] = ls.pt
+                    except:
+                        pass
+                    
+                    # Detect run-level formatting from the first run with text
+                    for run in ref_para.runs:
+                        if run.text.strip():
+                            run_info = get_run_font_info(run)
+                            # Only inherit primary font properties
+                            if run_info:
+                                # Prefer font_name over font (for LLM compatibility)
+                                if 'font_name' in run_info:
+                                    context_format['font'] = run_info['font_name']
+                                if 'font_size' in run_info:
+                                    context_format['font_size'] = run_info['font_size']
+                                if 'bold' in run_info:
+                                    context_format['bold'] = run_info['bold']
+                                if 'italic' in run_info:
+                                    context_format['italic'] = run_info['italic']
+                                if 'underline' in run_info:
+                                    context_format['underline'] = run_info['underline']
+                                if 'color' in run_info:
+                                    context_format['color'] = run_info['color']
+                                break
+                
+                return context_format
+
             def apply_text_replacement_to_paragraph(paragraph, old_text, new_text):
+                """Replace text in a paragraph while preserving the original formatting of the run."""
                 if not old_text or old_text not in paragraph.text:
                     return 0
-                if paragraph.runs:
-                    replaced_in_runs = 0
-                    for run in paragraph.runs:
-                        if old_text in run.text:
-                            run.text = run.text.replace(old_text, new_text)
-                            replaced_in_runs += 1
-                    if replaced_in_runs > 0:
-                        return replaced_in_runs
-                paragraph.text = paragraph.text.replace(old_text, new_text)
+                
+                # If no runs, just do simple replacement
+                if not paragraph.runs:
+                    paragraph.text = paragraph.text.replace(old_text, new_text)
+                    return 1
+                
+                # Find the first run containing the target text
+                source_run = None
+                for run in paragraph.runs:
+                    if old_text in run.text:
+                        source_run = run
+                        break
+                
+                if source_run is None:
+                    # Text is split across multiple runs, need complex handling
+                    paragraph.text = paragraph.text.replace(old_text, new_text)
+                    return 1
+                
+                # Extract source formatting
+                source_font_info = get_run_font_info(source_run)
+                
+                # Check if old_text spans multiple runs or is within a single run
+                run_text = source_run.text
+                old_text_idx = run_text.find(old_text)
+                
+                # Handle case where old_text is the entire run text
+                if run_text == old_text:
+                    source_run.text = new_text
+                    # Re-apply the original formatting to ensure it sticks
+                    apply_run_formatting(source_run, source_font_info)
+                    return 1
+                
+                # Handle case where old_text is partial within a run
+                # We need to split the run into: [before][new_text][after]
+                from docx.oxml import OxmlElement
+                from docx.oxml.ns import qn
+                
+                before_text = run_text[:old_text_idx]
+                after_text = run_text[old_text_idx + len(old_text):]
+                
+                # Get the run's parent p element
+                run_elem = source_run._element
+                p_elem = run_elem.getparent()
+                
+                # Create new run for 'after' text (preserve source formatting)
+                new_run_after = OxmlElement('w:r')
+                
+                # Copy rPr (run properties) from source if it exists
+                rPr_source = run_elem.find(qn('w:rPr'))
+                if rPr_source is not None:
+                    new_run_after.append(rPr_source.copy())
+                
+                # Add text for 'after' portion
+                t_after = OxmlElement('w:t')
+                t_after.set(qn('xml:space'), 'preserve')
+                t_after.text = after_text
+                new_run_after.append(t_after)
+                
+                # Modify source run to contain: [before][new_text]
+                # First, update the existing text content
+                t_source = run_elem.find(qn('w:t'))
+                if t_source is None:
+                    t_source = OxmlElement('w:t')
+                    t_source.set(qn('xml:space'), 'preserve')
+                    run_elem.append(t_source)
+                t_source.text = before_text + new_text
+                
+                # Insert the 'after' run after the source run
+                p_elem.insert(list(p_elem).index(run_elem) + 1, new_run_after)
+                
                 return 1
             
             def fill_table(table, data, rows, cols):
@@ -481,7 +855,21 @@ class DocumentProcessor:
                         content = edit.get('content', '')
                         position = edit.get('position')
                         paragraph = insert_paragraph_at_position(content, position)
-                        apply_paragraph_and_run_formatting(paragraph, edit)
+                        
+                        # Detect and apply context formatting if no explicit formatting provided
+                        context_format = detect_context_formatting(position, doc)
+                        
+                        # Merge context formatting with explicit formatting (explicit takes precedence)
+                        merged_formatting = context_format.copy()
+                        # Explicit edit formatting overrides context
+                        for key in ['font_name', 'font', 'font_size', 'bold', 'italic', 
+                                    'underline', 'color', 'alignment', 'spacing_before', 
+                                    'spacing_after', 'line_spacing']:
+                            if key in edit and edit[key] is not None:
+                                merged_formatting[key] = edit[key]
+                        
+                        # Apply merged formatting
+                        apply_paragraph_and_run_formatting(paragraph, merged_formatting)
                         changes_made.append(f"Added paragraph: {content[:50]}...")
                         
                     elif edit_type == 'add_heading':
@@ -499,7 +887,19 @@ class DocumentProcessor:
                             heading_style = f'Heading {level}'
                             level_label = level
                         heading = insert_paragraph_at_position(content, position, heading_style)
-                        apply_paragraph_and_run_formatting(heading, edit)
+                        
+                        # Detect and apply context formatting if no explicit formatting provided
+                        context_format = detect_context_formatting(position, doc)
+                        
+                        # Merge context formatting with explicit formatting (explicit takes precedence)
+                        merged_formatting = context_format.copy()
+                        for key in ['font_name', 'font', 'font_size', 'bold', 'italic', 
+                                    'underline', 'color', 'alignment', 'spacing_before', 
+                                    'spacing_after', 'line_spacing']:
+                            if key in edit and edit[key] is not None:
+                                merged_formatting[key] = edit[key]
+                        
+                        apply_paragraph_and_run_formatting(heading, merged_formatting)
                         changes_made.append(f"Added heading (level {level_label}): {content}")
                         
                     elif edit_type == 'replace_text':
@@ -514,6 +914,65 @@ class DocumentProcessor:
                             changes_made.append(f"Replaced '{old_text}' with '{new_text}' in {replaced_count} places")
                         else:
                             changes_made.append(f"Text '{old_text}' not found for replacement")
+                    
+                    elif edit_type == 'delete_text':
+                        # Properly delete text instead of replacing with empty string
+                        target_text = edit.get('old_text', '')
+                        if not target_text:
+                            changes_made.append("Delete operation requires 'old_text' parameter")
+                        else:
+                            deleted_count = 0
+                            for paragraph in list(doc.paragraphs):
+                                deleted_count += _delete_text_from_paragraph(paragraph, target_text)
+                                # Remove empty paragraphs after deletion
+                                if not paragraph.text.strip():
+                                    p_elem = paragraph._element
+                                    p_elem.getparent().remove(p_elem)
+                            for paragraph in list(iter_table_paragraphs()):
+                                deleted_count += _delete_text_from_paragraph(paragraph, target_text)
+                            if deleted_count > 0:
+                                changes_made.append(f"Deleted '{target_text}' from {deleted_count} places")
+                            else:
+                                changes_made.append(f"Text '{target_text}' not found for deletion")
+                    
+                    elif edit_type == 'delete_paragraph':
+                        # Delete a specific paragraph by position
+                        position = edit.get('position')
+                        count = edit.get('count', 1)  # Number of paragraphs to delete
+                        deleted_count = 0
+                        
+                        if isinstance(position, int):
+                            paragraphs_to_delete = []
+                            for i in range(count):
+                                idx = position + i
+                                if 0 <= idx < len(doc.paragraphs):
+                                    paragraphs_to_delete.append(doc.paragraphs[idx])
+                            
+                            for para in paragraphs_to_delete:
+                                p_elem = para._element
+                                p_elem.getparent().remove(p_elem)
+                                deleted_count += 1
+                        elif position == 'end':
+                            # Delete last N paragraphs
+                            while count > 0 and doc.paragraphs:
+                                last_para = doc.paragraphs[-1]
+                                p_elem = last_para._element
+                                p_elem.getparent().remove(p_elem)
+                                deleted_count += 1
+                                count -= 1
+                        elif position == 'start':
+                            # Delete first N paragraphs
+                            while count > 0 and doc.paragraphs:
+                                first_para = doc.paragraphs[0]
+                                p_elem = first_para._element
+                                p_elem.getparent().remove(p_elem)
+                                deleted_count += 1
+                                count -= 1
+                        
+                        if deleted_count > 0:
+                            changes_made.append(f"Deleted {deleted_count} paragraph(s)")
+                        else:
+                            changes_made.append(f"No paragraphs found at position {position}")
                             
                     elif edit_type == 'modify_style':
                         style_name = edit.get('style_name', 'Normal')
@@ -536,7 +995,7 @@ class DocumentProcessor:
                         
                         style_font = style.font
                         if font_name:
-                            style_font.name = font_name
+                            _apply_font_name_to_style(style, font_name)
                         if font_size is not None:
                             style_font.size = Pt(font_size)
                         if bold is not None:
@@ -851,7 +1310,7 @@ class DocumentProcessor:
                 font_rules = {
                     'chinese': '宋体',
                     'english': 'Times New Roman',
-                    'default': 'Times New Roman'
+                    'default': '宋体'
                 }
             
             # Helper functions to detect text type
@@ -883,24 +1342,22 @@ class DocumentProcessor:
                     if contains_chinese(run_text):
                         # Apply Chinese font
                         chinese_font = font_rules.get('chinese', '宋体')
-                        run.font.name = chinese_font
-                        # For Chinese fonts, set East Asian font
-                        try:
-                            run._element.rPr.rFonts.set(qn('w:eastAsia'), chinese_font)
-                        except:
-                            pass
+                        _apply_font_name_to_run(run, chinese_font)
+                        # Always ensure w:eastAsia is set for the Chinese branch,
+                        # even if the font name isn't in the CJK keyword list.
+                        _set_east_asia_font(run._element, chinese_font)
                         chinese_changes += 1
                         
                     elif contains_english(run_text):
                         # Apply English font
                         english_font = font_rules.get('english', 'Times New Roman')
-                        run.font.name = english_font
+                        _apply_font_name_to_run(run, english_font)
                         english_changes += 1
                         
                     else:
                         # Apply default font (for numbers, punctuation, etc.)
                         default_font = font_rules.get('default', 'Times New Roman')
-                        run.font.name = default_font
+                        _apply_font_name_to_run(run, default_font)
                         other_changes += 1
             
             # Save the modified document
@@ -967,14 +1424,16 @@ class DocumentProcessor:
                 return None
             
             def apply_font_to_paragraph(paragraph, font_name=None, font_size=None, bold=None, italic=None, underline=None, color=None):
+                paragraph_text = paragraph.text if hasattr(paragraph, 'text') else str(paragraph)
+                has_cjk = _contains_chinese(paragraph_text)
+                
                 for run in paragraph.runs:
                     if font_name:
-                        run.font.name = font_name
-                        if '宋体' in font_name or 'SimSun' in font_name or '微软雅黑' in font_name:
-                            try:
-                                run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
-                            except:
-                                pass
+                        _apply_font_name_to_run(run, font_name)
+                        # If text contains Chinese but font is not CJK, set w:eastAsia separately
+                        # to ensure CJK characters render correctly
+                        if has_cjk and not _is_cjk_font(font_name):
+                            _set_east_asia_font(run._element, '宋体')
                     if font_size is not None:
                         run.font.size = Pt(font_size)
                     if bold is not None:
@@ -1011,6 +1470,10 @@ class DocumentProcessor:
                 element_type = element.get('type', 'paragraph')
                 text = element.get('text', '')
                 font = element.get('font') or element.get('font_name')
+                # No default font - user/agent must specify. If using Latin fonts with
+                # Chinese text, w:eastAsia will need to be set separately for proper rendering.
+                if not font and _contains_chinese(text):
+                    font = '宋体'
                 font_size = element.get('font_size')
                 bold = element.get('bold')
                 italic = element.get('italic')
