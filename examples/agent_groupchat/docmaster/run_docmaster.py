@@ -310,6 +310,7 @@ def create_word_editor_agent(
    - 提取段落和表格内容
    - 创建结构化新文档
    - 添加标题、段落、表格
+   - 添加项目符号列表和编号列表（支持嵌套层级）
    - 执行结构化文本修改与替换
    - 修改样式和字体
    - 删除文档内容
@@ -350,11 +351,12 @@ def create_word_editor_agent(
 【工具选择规则】
 1. 如果用户只是想“了解文档是什么”，优先用 process_document。
 2. 如果用户要查看 DOCX 里的实际段落、表格或目标文本，使用 extract_docx_content_tool。
-3. 如果用户说“把 A 改成 B”“在末尾增加一段”“插入标题”“添加表格”，统一使用 edit_docx_tool。
-4. 如果用户说“把中文改成宋体、英文改成 Times New Roman”，使用 modify_docx_fonts_tool。
-5. 如果用户说“重写引言/缩短结论/让措辞更正式”，先用 extract_docx_content_tool 查看内容，再进行后续编辑。
-6. 如果用户要新建文档，使用 create_docx_with_content_tool。
-7. 如果用户只是咨询写作或格式建议，不必强行调用工具。
+3. 如果用户说“添加项目符号列表”“添加编号列表”“列出以下要点”，使用 add_bullet_list_tool 或 add_numbered_list_tool。
+4. 如果用户说“把 A 改成 B”“在末尾增加一段”“插入标题”“添加表格”，统一使用 edit_docx_tool。
+5. 如果用户说“把中文改成宋体、英文改成 Times New Roman”，使用 modify_docx_fonts_tool。
+6. 如果用户说“重写引言/缩短结论/让措辞更正式”，先用 extract_docx_content_tool 查看内容，再进行后续编辑。
+7. 如果用户要新建文档，使用 create_docx_with_content_tool。
+8. 如果用户只是咨询写作或格式建议，不必强行调用工具。
 
 【处理模糊请求的规则】
 遇到以下情况时，优先提一个简洁问题，而不是直接行动：
@@ -387,7 +389,11 @@ def create_word_editor_agent(
 - 插入分页符：{'type': 'add_page_break', 'position': 'end'}
 - 添加表格：{'type': 'add_table', 'data': [['A', 'B'], ['1', '2']], 'table_style': 'Table Grid'}
 - 设置表格样式：{'type': 'set_table_style', 'table_index': 0, 'table_style': 'Light Grid Accent 1'}
-- 注意：add_paragraph 的 position 支持整数索引；'end' 表示追加到文档末尾
+- 添加项目符号列表：{'type': 'add_bullet_list', 'items': ['第一点', '第二点', '第三点'], 'position': 'end'}
+  也支持嵌套层级：{'type': 'add_bullet_list', 'items': ['主项', {'text': '子项1', 'level': 1}, {'text': '子项2', 'level': 1}], 'position': 'end'}
+- 添加编号列表：{'type': 'add_numbered_list', 'items': ['第一步', '第二步', '第三步'], 'position': 'end'}
+  也支持嵌套层级：{'type': 'add_numbered_list', 'items': ['步骤一', {'text': '子步骤A', 'level': 1}], 'position': 'end'}
+- 注意：add_paragraph 的 position 支持整数索引；'end' 表示追加到文档末尾；嵌套列表的 level 从 0 开始
 
 【输出风格】
 1. 回答要专业、直接、清楚。
@@ -459,6 +465,8 @@ def create_word_editor_agent(
                     - {'type': 'add_page_break', 'position': 'end'}
                     - {'type': 'add_table', 'data': [['A', 'B'], ['1', '2']], 'table_style': 'Table Grid'}
                     - {'type': 'set_table_style', 'table_index': 0, 'table_style': 'Light Grid Accent 1'}
+                    - {'type': 'add_bullet_list', 'items': ['要点一', '要点二'], 'position': 'end'}
+                    - {'type': 'add_numbered_list', 'items': ['第一步', '第二步'], 'position': 'end'}
             """
             import os
             import json
@@ -663,6 +671,111 @@ def create_word_editor_agent(
                     _pending_files_events.append(fe_data)
             return result
         
+        def add_bullet_list_tool(file_path: str, items: list, position: int | str = "end", style: str = "List Bullet"):
+            """
+            Add a bullet list to an existing DOCX file.
+
+            Use this when the user wants to add a bulleted list — for example a list
+            of key points, requirements, features, or any collection of items that
+            should be visually grouped.
+
+            Best for:
+            - "add a bullet list of ..."
+            - "insert a list of items"
+            - "list the following points"
+            - adding structured list content to a document
+
+            Args:
+                file_path: Path to the DOCX file.
+                items: List of item strings, or list of dicts with 'text' and optional
+                       'level' (0=normal, 1+=nested), e.g.
+                       ['Item one', {'text': 'Item two', 'level': 1}, 'Item three']
+                position: Integer index to insert before that paragraph, or 'end'
+                          to append at the end of the document.
+                style: Base list style to use; defaults to 'List Bullet'.
+            """
+            import os
+            import json
+
+            print(f"🔧 add_bullet_list_tool called:")
+            print(f"   File: {file_path}")
+            print(f"   Items: {json.dumps(items[:3], ensure_ascii=False)}...")
+
+            if not os.path.exists(file_path):
+                return {
+                    'success': False,
+                    'error': 'File not found',
+                    'message': f'File not found: {file_path}'
+                }
+
+            processor = DocumentProcessor(str(WORKSPACE))
+            edits = [{
+                'type': 'add_bullet_list',
+                'items': items,
+                'position': position,
+                'style': style,
+            }]
+            result = processor.edit_docx(file_path, edits, overwrite_original=True)
+
+            if result.get('success', False):
+                fe_data = _build_files_event_data(file_path, f"Bullet list added to: {Path(file_path).name}")
+                if fe_data:
+                    _pending_files_events.append(fe_data)
+
+            return result
+        
+        def add_numbered_list_tool(file_path: str, items: list, position: int | str = "end", style: str = "List Number"):
+            """
+            Add a numbered list to an existing DOCX file.
+
+            Use this when the user wants an ordered, sequential list — for example
+            steps in a process, a ranked list, or an enumerated set of items.
+
+            Best for:
+            - "add a numbered list of ..."
+            - "list the steps in order"
+            - "add these items as a numbered sequence"
+            - "insert a numbered sequence"
+
+            Args:
+                file_path: Path to the DOCX file.
+                items: List of item strings, or list of dicts with 'text' and optional
+                       'level' (0=normal, 1+=nested), e.g.
+                       ['Step 1: Do X', {'text': 'Step 2: Do Y', 'level': 1}, 'Step 3: Do Z']
+                position: Integer index to insert before that paragraph, or 'end'
+                          to append at the end of the document.
+                style: Base list style to use; defaults to 'List Number'.
+            """
+            import os
+            import json
+
+            print(f"🔧 add_numbered_list_tool called:")
+            print(f"   File: {file_path}")
+            print(f"   Items: {json.dumps(items[:3], ensure_ascii=False)}...")
+
+            if not os.path.exists(file_path):
+                return {
+                    'success': False,
+                    'error': 'File not found',
+                    'message': f'File not found: {file_path}'
+                }
+
+            processor = DocumentProcessor(str(WORKSPACE))
+            edits = [{
+                'type': 'add_numbered_list',
+                'items': items,
+                'position': position,
+                'style': style,
+            }]
+            result = processor.edit_docx(file_path, edits, overwrite_original=True)
+
+            if result.get('success', False):
+                fe_data = _build_files_event_data(file_path, f"Numbered list added to: {Path(file_path).name}")
+                if fe_data:
+                    _pending_files_events.append(fe_data)
+
+            return result
+        
         tools = [
             process_document,
             edit_docx_tool,
@@ -670,7 +783,9 @@ def create_word_editor_agent(
             # New enhanced editing tools
             delete_docx_content_tool,
             modify_docx_fonts_tool,
-            create_docx_with_content_tool
+            create_docx_with_content_tool,
+            add_bullet_list_tool,
+            add_numbered_list_tool
         ]
     
     return DocMasterAgent(
