@@ -183,10 +183,7 @@ async def run_backend(agent_factory: callable, **kwargs):
                 if thread_obj.state:
                     try:
                         if isinstance(thread_obj.state, str):
-                            try:
-                                state_dict = decompress_state(thread_obj.state)
-                            except Exception:
-                                state_dict = json.loads(thread_obj.state)
+                            state_dict = decompress_state(thread_obj.state)
                         else:
                             state_dict = thread_obj.state
                         await agent.load_state(state_dict)
@@ -692,10 +689,7 @@ async def run_worker(agent_factory: callable, **kwargs):
                 if thread_obj.state:
                     try:
                         if isinstance(thread_obj.state, str):
-                            try:
-                                state_dict = decompress_state(thread_obj.state)
-                            except Exception:
-                                state_dict = json.loads(thread_obj.state)
+                            state_dict = decompress_state(thread_obj.state)
                         else:
                             state_dict = thread_obj.state
                         await agent.load_state(state_dict)

@@ -150,6 +150,17 @@ if config.config_file_name is not None:
 
 target_metadata = SQLModel.metadata
 
+def include_object(object, name, type_, reflected, compare_to):
+    \"\"\"
+    Filter out FTS virtual tables from Alembic autogeneration.
+    FTS5 tables have special internal structures that Alembic cannot handle.
+    \"\"\"
+    if type_ == "table":
+        # Skip FTS tables and their internal tables
+        if "_fts_" in name or name.endswith(("_idx", "_content", "_docsize", "_data", "_config")):
+            return False
+    return True
+
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
@@ -157,7 +168,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        compare_type=True
+        compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -172,7 +184,8 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
-            compare_type=True
+            compare_type=True,
+            include_object=include_object,
         )
         with context.begin_transaction():
             context.run_migrations()
@@ -214,7 +227,7 @@ handlers =
 qualname = sqlalchemy.engine
 
 [logger_alembic]
-level = INFO
+level = WARN
 handlers =
 qualname = alembic
 
@@ -256,56 +269,9 @@ datefmt = %H:%M:%S
     def _update_env_py(self, env_path: Path) -> None:
         """
         Updates the env.py file to use SQLModel metadata.
+        Simply recreate the file with our desired content.
         """
-        if not env_path.exists():
-            self._create_minimal_env_py(env_path)
-            return
-        try:
-            with open(env_path, "r") as f:
-                content = f.read()
-
-            # Add SQLModel import if not present
-            if "from sqlmodel import SQLModel" not in content:
-                content = "from sqlmodel import SQLModel\n" + content
-
-            # Replace target_metadata
-            content = content.replace(
-                "target_metadata = None", "target_metadata = SQLModel.metadata"
-            )
-
-            # Update both configure blocks properly
-            content = content.replace(
-                """context.configure(
-            url=url,
-            target_metadata=target_metadata,
-            literal_binds=True,
-            dialect_opts={"paramstyle": "named"},
-        )""",
-                """context.configure(
-            url=url,
-            target_metadata=target_metadata,
-            literal_binds=True,
-            dialect_opts={"paramstyle": "named"},
-            compare_type=True,
-        )""",
-            )
-
-            content = content.replace(
-                """        context.configure(
-                connection=connection, target_metadata=target_metadata
-            )""",
-                """        context.configure(
-                connection=connection,
-                target_metadata=target_metadata,
-                compare_type=True,
-            )""",
-            )
-
-            with open(env_path, "w") as f:
-                f.write(content)
-        except Exception as e:
-            logger.error(f"Failed to update env.py: {e}")
-            raise
+        self._create_minimal_env_py(env_path)
 
     # Fixed: use keyword-only argument
 

@@ -27,6 +27,7 @@ TUI Integration:
 
 from __future__ import annotations
 
+import sys
 import time
 from typing import Any, AsyncGenerator, Optional
 
@@ -113,9 +114,45 @@ class DrSaiCLIRenderer:
         self._tool_start_time: float | None = None
         # Store pending tool call info for result rendering
         self._pending_tool_call: tuple[str, dict] | None = None  # (tool_name, args)
+        # ── Blank-line suppression ──────────────────────────────────────────
+        # Track whether the last byte written to stdout was a newline, so we
+        # never emit consecutive blank lines (hermes-style tight spacing).
+        self._last_ended_with_newline: bool = False
         # Configure tool preview length
         if TUI_MODULE_AVAILABLE:
             set_tool_preview_max_len(tool_preview_max_len)
+
+    # ── Output helpers with blank-line suppression ──────────────────────────
+    def _println(self, text: str = "") -> None:
+        """Print *text* (default empty) with blank-line suppression.
+
+        Routes Rich markup (``[color]...[/color]``) through Rich console;
+        plain text and ANSI escapes go directly to stdout.
+        """
+        if not text:
+            if self._last_ended_with_newline:
+                return
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            self._last_ended_with_newline = True
+            return
+
+        # Only use Rich console when text contains genuine Rich markup tags,
+        # not ANSI escapes (which also use [ ] brackets).
+        if _has_rich_markup(text):
+            self.console.print(text)
+            self._last_ended_with_newline = True
+        else:
+            sys.stdout.write(text + "\n")
+            sys.stdout.flush()
+            self._last_ended_with_newline = True
+
+    def _soft_newline(self) -> None:
+        """Emit a newline only if the last output didn't end with one."""
+        if not self._last_ended_with_newline:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            self._last_ended_with_newline = True
 
     # ── Main entry ──────────────────────────────────────────────────────────
     async def render(
@@ -134,6 +171,7 @@ class DrSaiCLIRenderer:
         self._just_after_tool_event = False
         self._current_tool_snapshot = None
         self._tool_start_time = None
+        self._last_ended_with_newline = False
 
         async for message in stream:
             if isinstance(message, ModelClientStreamingChunkEvent):
@@ -204,7 +242,7 @@ class DrSaiCLIRenderer:
         )
         footer = format_footer(stats)
         if footer:
-            print(footer)
+            self._println(footer)
         play_bell(stats.ring_bell)
 
     # ── Streaming chunks ────────────────────────────────────────────────────
@@ -247,7 +285,7 @@ class DrSaiCLIRenderer:
             if not self.show_reasoning:
                 return
             if self._stream_open:
-                print()
+                self._soft_newline()
                 self._stream_open = False
             if not self._reason_open:
                 self._open_reasoning()
@@ -258,42 +296,53 @@ class DrSaiCLIRenderer:
             # ReasoningStreamState already quarantines partial reasoning tags;
             # streaming chunks here are raw answer text. Do NOT call
             # strip_reasoning — its ``.strip()`` eats legitimate whitespace.
-            print(text, end="", flush=True)
+            sys.stdout.write(text)
+            sys.stdout.flush()
             self._stream_open = not text.endswith("\n")
             self._streamed_visible_this_turn = True
+            self._last_ended_with_newline = text.endswith("\n")
 
     # ── Reasoning box ───────────────────────────────────────────────────────
     def _open_reasoning(self) -> None:
-        print("\033[2m┌─ Reasoning ─\033[0m")
+        self._println("\033[2m┌─ Reasoning ─\033[0m")
         self._reason_open = True
         self._reason_first_line = True
 
     def _render_reasoning_text(self, text: str) -> None:
         for ch in text:
             if self._reason_first_line:
-                print("\033[2m│ \033[0m", end="", flush=True)
+                sys.stdout.write("\033[2m│ \033[0m")
                 self._reason_first_line = False
-            print(f"\033[2m{ch}\033[0m", end="", flush=True)
+                self._last_ended_with_newline = False
+            sys.stdout.write(f"\033[2m{ch}\033[0m")
             if ch == "\n":
                 self._reason_first_line = True
+                self._last_ended_with_newline = True
+            else:
+                self._last_ended_with_newline = False
+        sys.stdout.flush()
 
     def _close_reasoning(self) -> None:
         if not self._reason_open:
             return
         if not self._reason_first_line:
-            print()  # finish the last dim line
-        print("\033[2m└─\033[0m")
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            self._last_ended_with_newline = True
+        self._println("\033[2m└─\033[0m")
         self._reason_open = False
         self._reason_first_line = True
 
     def _close_stream(self) -> None:
         if self._stream_open:
-            print()
+            sys.stdout.write("\n")
+            sys.stdout.flush()
             self._stream_open = False
+            self._last_ended_with_newline = True
 
     # ── Tool events ─────────────────────────────────────────────────────────
     def _render_tool_request(self, message: ToolCallRequestEvent) -> None:
-        """Render tool call request with Hermes-style preview."""
+        """Render tool call request with Hermes-style compact preview."""
         calls = message.content or []
         for call in calls:
             if isinstance(call, FunctionCall):
@@ -318,18 +367,17 @@ class DrSaiCLIRenderer:
                     self._tool_start_time = time.time()
 
                 if TUI_MODULE_AVAILABLE:
-                    # Use Hermes-style preview
+                    # Use Hermes-style compact preview — one line, no extra spacing
                     preview = build_tool_preview(tool_name, args)
                     if preview:
-                        self.console.print(f"[yellow]🔧[/yellow] [cyan]{tool_name}[/cyan] {preview}")
+                        self._println(f"[yellow]🔧[/yellow] [cyan]{tool_name}[/cyan] {preview}")
                     else:
-                        self.console.print(f"[yellow]🔧[/yellow] [cyan]{tool_name}[/cyan]")
+                        self._println(f"[yellow]🔧[/yellow] [cyan]{tool_name}[/cyan]")
                 else:
-                    # Fallback to original style
-                    self.console.print(f"[yellow]🔧[/yellow] [cyan]{call.name}[/cyan]")
+                    self._println(f"[yellow]🔧[/yellow] [cyan]{call.name}[/cyan]")
 
     def _render_tool_result(self, message: ToolCallExecutionEvent) -> None:
-        """Render tool result with Hermes-style cute tool message."""
+        """Render tool result with Hermes-style compact completion line."""
         results = message.content or []
         result_str: str | None = None
         duration: float = 0.0
@@ -347,32 +395,32 @@ class DrSaiCLIRenderer:
             content = getattr(r, "content", None)
             if content:
                 result_str = str(content)
-                # Try to extract tool name from result if available
                 tool_name = getattr(r, "name", tool_name)
 
-        # Generate Hermes-style completion message
+        # Generate Hermes-style compact completion message (single line)
         if TUI_MODULE_AVAILABLE:
             cute_msg = get_cute_tool_message(tool_name, args, duration, result_str)
-            print(cute_msg)
+            self._println(cute_msg)
 
-            # Try to render diff for file edits
+            # Try to render diff for file edits (compact, below the tool line)
             if self._current_tool_snapshot:
                 render_edit_diff_with_delta(
                     tool_name, result_str,
                     function_args=args,
                     snapshot=self._current_tool_snapshot,
+                    print_fn=self._println,
                 )
                 self._current_tool_snapshot = None
         else:
-            # Fallback to original style
+            # Fallback: one-line truncated preview
             if result_str:
                 text = result_str.strip().replace("\n", " ")
                 if len(text) > 200:
                     text = text[:200] + "…"
-                self.console.print(f"[dim]╎ {text}[/dim]")
+                self._println(f"[dim]╎ {text}[/dim]")
 
     def _render_tool_summary(self, message: ToolCallSummaryMessage) -> None:
-        """Render ToolCallSummaryMessage with Hermes-style cute tool message.
+        """Render ToolCallSummaryMessage with Hermes-style compact completion.
 
         DrSaiAgent sends ToolCallSummaryMessage instead of ToolCallExecutionEvent.
         """
@@ -383,38 +431,34 @@ class DrSaiCLIRenderer:
         tool_name, args = self._pending_tool_call if self._pending_tool_call else ("tool", {})
         self._pending_tool_call = None
 
-        # Track the tool execution for Hermes-style feedback
         if self._tool_start_time:
             duration = time.time() - self._tool_start_time
             self._tool_start_time = None
 
-        # Determine if this is an error
         is_error = False
         content_lower = content.lower()
         error_patterns = ["error", "failed", "permission denied", "no such file", "cannot"]
         if any(p in content_lower for p in error_patterns):
             is_error = True
 
-        # Generate Hermes-style completion message
         if TUI_MODULE_AVAILABLE:
             result_str = str(content) if is_error else None
             cute_msg = get_cute_tool_message(tool_name, args, duration, result_str)
-            print(cute_msg)
+            self._println(cute_msg)
 
-            # Try to render diff for file edits
             if self._current_tool_snapshot:
                 render_edit_diff_with_delta(
                     tool_name, str(content),
                     function_args=args,
                     snapshot=self._current_tool_snapshot,
+                    print_fn=self._println,
                 )
                 self._current_tool_snapshot = None
         else:
-            # Fallback to original style
             text = content.strip().replace("\n", " ")
             if len(text) > 200:
                 text = text[:200] + "…"
-            self.console.print(f"[dim]╎ {text}[/dim]")
+            self._println(f"[dim]╎ {text}[/dim]")
 
     # ── Complete text messages ──────────────────────────────────────────────
     def _render_text_message(self, message: TextMessage) -> None:
@@ -442,6 +486,7 @@ class DrSaiCLIRenderer:
                 expand=False,
             )
             self.console.print(panel)
+        self._last_ended_with_newline = True  # Rich adds trailing newline
 
     # ── Usage capture ───────────────────────────────────────────────────────
     def _capture_usage(self, message: Any) -> None:
@@ -460,6 +505,12 @@ class DrSaiCLIRenderer:
 def _looks_markdown(text: str) -> bool:
     patterns = ("```", "**", "__", "##", "- ", "* ", "1. ", "[")
     return any(p in text for p in patterns)
+
+
+def _has_rich_markup(text: str) -> bool:
+    """Return True if *text* contains Rich-style ``[tag]...[/tag]`` markup
+    rather than ANSI escapes (``\\033[...m``)."""
+    return ("[/" in text and "[" in text and "\033" not in text)
 
 
 # Export TUI module availability for external use

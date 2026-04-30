@@ -1115,6 +1115,9 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         This replaces the current model client, invalidates cached system prompt,
         and clears the model context to avoid tool_call_id mismatches between models.
 
+        Also synchronizes the model_client inside the model_context so that
+        token counting, compression, and summary operations use the new model.
+
         Args:
             new_model_client: The new ChatCompletionClient to use.
         """
@@ -1127,6 +1130,26 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         await self._model_client.close()
         # Update to new client
         self._model_client = new_model_client
+
+        # Synchronize the model_client inside model_context so that token
+        # counting (count_prompt_tokens), Layer-2 compression
+        # (_incremental_compress) and summary generation
+        # (summry_conversation_to_memory) all use the new model client.
+        # 
+        # IMPORTANT: Create an independent copy for the context, similar to how
+        # DrSaiAssistant._create_context creates independent_model_client.
+        # This prevents the context from sharing the same client instance with
+        # the agent, which could cause issues when one is closed.
+        if hasattr(self._model_context, 'update_model_client'):
+            try:
+                model_config = new_model_client.dump_component()
+                independent_client = ChatCompletionClient.load_component(model_config)
+                # Preserve model_info from the new client
+                independent_client._model_info = new_model_client._model_info
+                await self._model_context.update_model_client(independent_client)
+            except Exception as e:
+                logger.warning(f"Failed to create independent model_client for context, using shared client: {e}")
+                await self._model_context.update_model_client(new_model_client)
 
 
     async def _sanitize_api_messages(self) -> None:

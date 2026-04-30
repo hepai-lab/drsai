@@ -32,6 +32,14 @@ from drsai.modules.managers.database import DatabaseManager
 load_dotenv()
 
 
+# ── Plan Mode Prompt ─────────────────────────────────────────────────────────
+PLAN_MODE_SYSTEM_PROMPT = """Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+
+Ask the questions one at a time.
+
+If a question can be answered by exploring the codebase, explore the codebase instead."""
+
+
 # ── Workspace ────────────────────────────────────────────────────────────────
 
 WORKSPACE = Path(FS_DIR) / "workspace"
@@ -79,7 +87,8 @@ class ModelEntry:
     """A single entry in the LLM mode config."""
 
     model: str                           # Full model ID (e.g. "anthropic/claude-sonnet-4-6")
-    token_limit: int                     # Maximum token limit
+    token_limit: int                     # Total context window size (input + output tokens combined)
+    max_tokens: int = 0                  # Maximum output tokens per request (0 = use token_limit * 0.25)
     client_type: str = "auto"            # anthropic | openai | auto
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
 
@@ -104,6 +113,7 @@ class ModelEntry:
             return ModelEntry(
                 model=str(data.get("model", alias)),
                 token_limit=int(data.get("token_limit", 128000)),
+                max_tokens=int(data.get("max_tokens", 0)),
                 client_type=str(data.get("client_type", "auto")),
                 reasoning=reasoning,
             )
@@ -136,75 +146,102 @@ class ModelEntry:
 # Synced with /home/xiongdb/drsai_test/llm_mode_config.example.json
 
 DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
+    # ── Anthropic Claude ──────────────────────────────────────────────
+    # token_limit = total context window (input + output share the same window)
+    # max_tokens  = maximum output tokens per request (Anthropic API requires this)
+    # Sources: litellm model_prices_and_context_window.json, Anthropic docs
     "claude-sonnet-4-6": ModelEntry(
         model="anthropic/claude-sonnet-4-6",
-        token_limit=1000000,
+        token_limit=1000000,     # context window: 1M (input+output shared)
+        max_tokens=64000,       # max output per request
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
     ),
     "claude-opus-4-7": ModelEntry(
         model="anthropic/claude-opus-4-7",
-        token_limit=1000000,
+        token_limit=1000000,     # context window: 1M (input+output shared)
+        max_tokens=128000,      # max output per request
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
     ),
     "claude-haiku-4-5": ModelEntry(
         model="anthropic/claude-haiku-4-5",
-        token_limit=200000,
+        token_limit=200000,      # context window: 200K (input+output shared)
+        max_tokens=64000,       # max output per request
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
     ),
+    # ── OpenAI GPT ───────────────────────────────────────────────────
+    # Sources: litellm, OpenRouter
     "gpt-5.2": ModelEntry(
         model="openai/gpt-5.2",
-        token_limit=1000000,
+        token_limit=272000,      # max input tokens (output comes from this pool)
+        max_tokens=128000,      # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
     ),
     "gpt-5.4": ModelEntry(
         model="openai/gpt-5.4",
-        token_limit=1000000,
+        token_limit=1050000,     # max input tokens (output comes from this pool)
+        max_tokens=128000,      # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
     ),
-    "deepseek-r1": ModelEntry(
-        model="deepseek-ai/deepseek-r1",
-        token_limit=128000,
-        client_type="openai",
+    # ── DeepSeek ─────────────────────────────────────────────────────
+    # DeepSeek V4 Pro: context=1M, output up to 384K (input/output are separate pools)
+    # DeepSeek V3.2: context=163,840 (shared input+output)
+    # Sources: DeepSeek API docs (api-docs.deepseek.com), litellm, OpenRouter
+    "deepseek-v4-pro": ModelEntry(
+        model="deepseek-ai/deepseek-v4-pro",
+        token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
+        max_tokens=384000,      # max output per request (DeepSeek supports extended output)
+        client_type="anthropic",
         reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="is_r1_model"),
     ),
     "deepseek-v3.2": ModelEntry(
         model="deepseek-ai/deepseek-v3.2",
-        token_limit=128000,
+        token_limit=163840,      # context window: 163,840 (shared input+output)
+        max_tokens=65536,       # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
     ),
+    # ── Zhipu GLM ────────────────────────────────────────────────────
+    # Sources: litellm (zai/glm-5), OpenRouter
     "glm-5.1": ModelEntry(
         model="zhipu/glm-5.1",
-        token_limit=200000,
+        token_limit=200000,      # context window: 200K
+        max_tokens=128000,      # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
     ),
+    # ── MiniMax ──────────────────────────────────────────────────────
+    # MiniMax M2.7: context≈196K, official API default max_output=8192 but supports up to 65K
+    # Sources: OpenRouter (context_length=196,608), litellm (MiniMax-M2.5 reference)
     "minimax-m2.7": ModelEntry(
         model="minimax/minimax-m2.7",
-        token_limit=204000,
+        token_limit=196608,      # context window: 196,608
+        max_tokens=65536,       # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
     ),
     "hepai/minimax-m2.7": ModelEntry(
         model="hepai/minimax-m2.7",
-        token_limit=204000,
+        token_limit=196608,
+        max_tokens=65536,
         client_type="openai",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
     ),
     "hepai/minimax-m2.7-highspeed": ModelEntry(
         model="hepai/minimax-m2.7-highspeed",
-        token_limit=204000,
+        token_limit=196608,
+        max_tokens=65536,
         client_type="openai",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
     ),
     "minimax-m2.7-highspeed": ModelEntry(
         model="minimax/minimax-m2.7-highspeed",
-        token_limit=204000,
+        token_limit=196608,
+        max_tokens=65536,
         client_type="openai",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
     ),
@@ -292,12 +329,21 @@ def _build_cwd_prompt(cli_cfg: dict[str, Any]) -> str:
     resolve relative paths and skill searches against the user's project.
     An explicit ``cli_cfg['system_message']`` or env ``DRSAI_SYSTEM_MESSAGE``
     is appended on top for user-supplied context.
+
+    If ``cli_cfg['plan_mode']`` is True, the plan mode prompt is prepended
+    to guide the agent to interview the user about their plan.
     """
     try:
         cwd = os.getcwd()
     except Exception:
         cwd = ""
     lines: list[str] = []
+
+    # Plan mode: prepend the plan mode prompt
+    if cli_cfg.get("plan_mode"):
+        lines.append(PLAN_MODE_SYSTEM_PROMPT)
+        lines.append("")  # Empty line separator
+
     if cwd:
         lines.append(
             "## Environment\n"
@@ -331,6 +377,9 @@ def create_agent(
         thread_id, user_id, db_manager: wired through to the assistant.
         defult_config_name: model alias within the loaded llm_mode_config.
         cli_cfg: merged CLI config dict (see cli/config.DEFAULT_CONFIG).
+            Supports plan_mode key: if True, the plan mode prompt is
+            prepended to the system message to guide the agent to interview
+            the user about their plan.
         assistant_cls: class to instantiate. Defaults to
             :class:`DrSaiCLIAssistant`; production callers (e.g. the worker)
             should pass the plain :class:`DrSaiAssistant`.
@@ -376,6 +425,9 @@ def create_agent(
     memory_dataset_id = _resolve(
         cli_cfg, "memory_dataset_id", "MEMORY_DATASET_ID",
     ) or None
+    context_type = _resolve(
+        cli_cfg, "context_type", "DRSAI_CONTEXT_TYPE", default="sqlite",
+    ) or "sqlite"
 
     def set_model_client(
         name: Optional[str] = resolved_config_name,
@@ -386,6 +438,7 @@ def create_agent(
             entry = llm_mode_config[resolved_config_name]
         llm_model = entry.model
         token_limit = entry.token_limit
+        max_tokens = entry.max_tokens if entry.max_tokens > 0 else int(token_limit * 0.25)
         client_type = entry.client_type
         reasoning_config = entry.reasoning
 
@@ -410,7 +463,7 @@ def create_agent(
                 base_url=anthropic_base_url,
                 api_key=anthropic_api_key,
                 model_info=model_info,
-                max_tokens=int(token_limit * 0.25),
+                max_tokens=max_tokens,
             )
 
         is_vision = "deepseek" not in llm_model
@@ -430,6 +483,7 @@ def create_agent(
             api_key=openai_api_key,
             base_url=openai_base_url,
             model_info=model_info,
+            max_tokens=max_tokens,
         )
 
     entry = llm_mode_config.get(resolved_config_name)
@@ -451,7 +505,7 @@ def create_agent(
         set_model_client=set_model_client,
         llm_mode_config=llm_mode_config,
         defult_config_name=resolved_config_name,
-        is_powershell=False,
+        # is_powershell=False,
         skills_dir=skills_dir,
         work_dir=WORKDIR,
         only_system_message=False,
@@ -462,4 +516,5 @@ def create_agent(
         rag_flow_url=rag_flow_url,
         rag_flow_token=rag_flow_token,
         memory_dataset_id=memory_dataset_id,
+        context_type=context_type,  # "ragflow" or "sqlite", from env DRSAI_CONTEXT_TYPE
     )

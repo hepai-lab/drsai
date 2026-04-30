@@ -24,6 +24,8 @@ DEFAULT_CONFIG: dict = {
     "user_id": "anonymous",
     # 默认模型名称（对应 defult_config_name）
     "defult_config_name": None,
+    # Plan mode: 启用后 AI 会先访谈用户确认计划再执行
+    "plan_mode": False,
 }
 
 # Config keys that hold sensitive values — always masked when displayed.
@@ -108,6 +110,8 @@ def show_config(cfg: Optional[dict] = None, *, as_json: bool = False) -> None:
     print()
     print(f"  {'User ID':<18} {cfg.get('user_id', 'anonymous'):<34}  (your identifier)")
     print(f"  {'Model':<18} {str(cfg.get('defult_config_name') or '<not set>'):<34}  (default model)")
+    plan_mode = cfg.get('plan_mode', False)
+    print(f"  {'Plan Mode':<18} {'on' if plan_mode else 'off':<34}  (AI interviews before acting)")
     print()
 
 
@@ -118,6 +122,7 @@ def config_as_dict_for_export(cfg: Optional[dict] = None) -> dict:
     return {
         "user_id": cfg.get("user_id", "anonymous"),
         "defult_config_name": cfg.get("defult_config_name"),
+        "plan_mode": cfg.get("plan_mode", False),
     }
 
 

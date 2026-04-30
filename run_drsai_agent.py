@@ -142,7 +142,7 @@ def create_agent(
         set_model_client=set_model_client,
         llm_mode_config=llm_mode_config,
         defult_config_name=defult_config_name,
-        is_powershell=False,
+        # is_powershell=False,
         # skills and executor
         skills_dir=SYSTEM_SKILLS_DIR,
         # executor=local_executor,
