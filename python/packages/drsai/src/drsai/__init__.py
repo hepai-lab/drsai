@@ -5,12 +5,14 @@ from drsai.modules.components.model_client.LLMClient import HepAIChatCompletionC
 from drsai.modules.components.memory.ragflow_memory import RAGFlowMemory, RAGFlowMemoryConfig
 from drsai.modules.components.tool._drsai_static_workbench import DrSaiStaticWorkbench
 from drsai.modules.components.sensor.base_sensor import BaseSensor, BaseSensorConfig
-from drsai.modules.components.model_context import DrSaiChatCompletionContext
+from drsai.modules.components.model_context import DrSaiChatCompletionContext, DrSaiSQLiteChatCompletionContext
 
 # Agents
 from drsai.modules.baseagent.drsaiagent import DrSaiAgent
 from drsai.modules.baseagent.drsaiagent import DrSaiAgent as AssistantAgent
 from drsai.modules.baseagent.user_proxy import DrSaiUserProxyAgent
+from drsai.modules.agents import HepAIWorkerAgent, RemoteAgent
+from drsai.modules.agents.skills_agent import DrSaiAssistant
 
 # Groupchat
 from drsai.modules.groupchat.ag_round_robin_group_chat import AGRoundRobinGroupChat, AGRoundRobinGroupChatManager

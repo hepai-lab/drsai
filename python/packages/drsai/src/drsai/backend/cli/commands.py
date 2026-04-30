@@ -158,6 +158,21 @@ COMMAND_REGISTRY: list[CommandDef] = [
         cli_only=True,
     ),
 
+    # ── Plan / Prompt ────────────────────────────────────────────────────────
+    CommandDef(
+        "plan_mode",
+        "Enable/disable plan mode (AI interviews you before acting)",
+        "Plan",
+        aliases=("pm",),
+        args_hint="on|off|status",
+    ),
+    CommandDef(
+        "inject",
+        "Inject custom prompts into system message",
+        "Plan",
+        args_hint="prefix|suffix|clear|status",
+    ),
+
     # ── Meta ─────────────────────────────────────────────────────────────────
     CommandDef(
         "help",
@@ -196,7 +211,7 @@ def resolve_command(name: str) -> Optional[CommandDef]:
 
 def commands_by_category() -> dict[str, list[CommandDef]]:
     """Return commands grouped by category, in fixed category order."""
-    order = ["Session", "Display", "Configuration", "Info"]
+    order = ["Session", "Display", "Configuration", "Plan", "Info"]
     groups: dict[str, list[CommandDef]] = {cat: [] for cat in order}
     for cmd in COMMAND_REGISTRY:
         if cmd.category in groups:

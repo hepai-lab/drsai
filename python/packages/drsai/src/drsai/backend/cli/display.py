@@ -450,7 +450,7 @@ def render_edit_diff_with_delta(
         result: Tool execution result
         function_args: Tool arguments dict
         snapshot: Pre-captured file snapshot
-        print_fn: Optional print function (default: print)
+        print_fn: Optional print function (default: writes to sys.stdout)
 
     Returns:
         True if diff was rendered, False otherwise
@@ -468,7 +468,8 @@ def render_edit_diff_with_delta(
         if print_fn:
             print_fn(text)
         else:
-            print(text)
+            sys.stdout.write(text + "\n")
+            sys.stdout.flush()
 
     try:
         rendered_lines = _summarize_rendered_diff_sections(diff)
@@ -708,7 +709,7 @@ def get_cute_tool_message(
 ) -> str:
     """Generate a formatted tool completion line for CLI.
 
-    Format: ``┊ {emoji} {verb:9} {detail}  {duration}``
+    Format: ``┊ {emoji} {verb:9} {detail}  {duration}`` (compact, single-line).
 
     Args:
         tool_name: Name of the tool
@@ -757,8 +758,6 @@ def get_cute_tool_message(
             extra = f" +{len(urls)-1}" if len(urls) > 1 else ""
             return _wrap(f"┊ 📄 fetch     {_trunc(domain, 35)}{extra}  {dur}")
         return _wrap(f"┊ 📄 fetch     pages  {dur}")
-    if tool_name == "terminal":
-        return _wrap(f"┊ 💻 $         {_trunc(args.get('command', ''), 42)}  {dur}")
     if tool_name == "read_file":
         return _wrap(f"┊ 📖 read      {_path(args.get('path', ''))}  {dur}")
     if tool_name == "write_file":

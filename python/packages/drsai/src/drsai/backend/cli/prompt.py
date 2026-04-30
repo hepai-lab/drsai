@@ -2,8 +2,8 @@
 
 Features:
 
-- Bottom-anchored, styled prompt line. ``Enter`` submits; ``Esc+Enter``
-  (or ``Alt+Enter``) inserts a newline for multi-line messages.
+- Bottom-anchored, styled prompt line. ``Enter`` submits; ``Esc+Enter`` or
+  ``Alt+Enter`` inserts a newline for multi-line messages.
 - Persistent history at ``~/.drsai/configs/cli_history.txt`` (up/down arrows).
 - Slash-command completion from ``COMMAND_REGISTRY`` + a dynamic hook for
   session names.
@@ -83,8 +83,8 @@ HISTORY_PATH = Path(CONFIG_DIR) / "cli_history.txt"
 
 _STYLE = Style.from_dict({
     "prompt.bracket": "#888888",
-    "prompt.label":   "#FFD700 bold",      # gold
-    "prompt.arrow":   "#5FAFFF bold",      # cyan-ish
+    "prompt.label":   "#FFD700 bold",
+    "prompt.arrow":   "#5FAFFF bold",
     "bottom-toolbar": "bg:#222222 #888888",
     # Hermes-style interactive prompt colors
     "interactive.header": "#FFD700 bold",
@@ -111,7 +111,7 @@ class DrSaiPrompt:
         self._bottom_toolbar_fn = bottom_toolbar_fn
         self._use_toolkit = sys.stdin.isatty()
         self._session: Optional[PromptSession] = None
-        self._callback_state: CallbackState | None = None
+        self._callback_state: Optional["CallbackState"] = None
         if self._use_toolkit:
             self._setup_toolkit()
         if HAS_TUI_CALLBACKS:
@@ -161,7 +161,7 @@ class DrSaiPrompt:
             return None
         if not text:
             return None
-        return FormattedText([("class:bottom-toolbar", f" {text} ")])
+        return FormattedText([("class:bottom-toolbar", f" {text}")])
 
     def _prompt_fragments(self):
         label = self._label_fn()
@@ -177,7 +177,7 @@ class DrSaiPrompt:
         if self._use_toolkit and self._session is not None:
             with patch_stdout(raw=True):
                 return await self._session.prompt_async(self._prompt_fragments)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         label = self._label_fn()
         return await loop.run_in_executor(None, _blocking_input, f"[{label}] ❯ ")
 
@@ -229,7 +229,7 @@ class DrSaiPrompt:
 
         return False
 
-    def render_clarify_prompt(self) -> str | None:
+    def render_clarify_prompt(self) -> Optional[str]:
         """Render a clarify prompt for display in TUI.
 
         Returns the formatted prompt string, or None if no pending clarify.
@@ -252,7 +252,7 @@ class DrSaiPrompt:
             lines.append("  (Enter your response)")
         return "\n".join(lines)
 
-    def render_approval_prompt(self) -> str | None:
+    def render_approval_prompt(self) -> Optional[str]:
         """Render an approval prompt for display in TUI.
 
         Returns the formatted prompt string, or None if no pending approval.
@@ -281,7 +281,7 @@ class DrSaiPrompt:
             lines.append("    5. view (see full command)")
         return "\n".join(lines)
 
-    def render_secret_prompt(self) -> str | None:
+    def render_secret_prompt(self) -> Optional[str]:
         """Render a secret prompt for display in TUI.
 
         Returns the formatted prompt string, or None if no pending secret.

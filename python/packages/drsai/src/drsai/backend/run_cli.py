@@ -141,6 +141,7 @@ def _chat_main(
     ragflow_url: Optional[str] = None,
     ragflow_token: Optional[str] = None,
     memory_dataset_id: Optional[str] = None,
+    plan_mode: bool = False,
 ):
     # Silence chatty internals before anything else imports loguru/alembic.
     configure_cli_logging(debug=bool(os.environ.get("DRSAI_CLI_DEBUG")))
@@ -172,6 +173,12 @@ def _chat_main(
 
     if not cfg.get("api_key"):
         cfg["api_key"] = os.environ.get("HEPAI_API_KEY", "")
+
+    # Plan mode configuration: CLI flag takes precedence; otherwise use saved config
+    if plan_mode:  # Only override if explicitly set to True via CLI flag
+        cfg["plan_mode"] = True
+    # If not explicitly set, cfg["plan_mode"] already has the value from load_config()
+
     # HEPAI key is legacy; new factory also accepts ANTHROPIC_API_KEY / OPENAI_API_KEY
     # env vars or anthropic_api_key / openai_api_key config entries.
     any_key = any([
@@ -227,6 +234,8 @@ def cli_default(
         help="RAGFlow API token"),
     memory_dataset_id: Optional[str] = typer.Option(None, "--memory-dataset-id",
         help="Long-term memory dataset id"),
+    plan_mode: bool = typer.Option(False, "--plan-mode", "-p",
+        help="Enable plan mode: AI will interview you about your plan before acting"),
 ):
     """Start an interactive chat session (default command when no subcommand is given)."""
     if ctx.invoked_subcommand is not None:
@@ -236,6 +245,7 @@ def cli_default(
         llm_config_file, anthropic_api_key, anthropic_base_url,
         openai_api_key, openai_base_url, skills_dir,
         ragflow_url, ragflow_token, memory_dataset_id,
+        plan_mode=plan_mode,
     )
 
 
@@ -269,6 +279,8 @@ def chat(
         help="RAGFlow API token"),
     memory_dataset_id: Optional[str] = typer.Option(None, "--memory-dataset-id",
         help="Long-term memory dataset id"),
+    plan_mode: bool = typer.Option(False, "--plan-mode", "-p",
+        help="Enable plan mode: AI will interview you about your plan before acting"),
 ):
     """Start an interactive chat session (alias: drsai with no subcommand)."""
     _chat_main(
@@ -276,6 +288,7 @@ def chat(
         llm_config_file, anthropic_api_key, anthropic_base_url,
         openai_api_key, openai_base_url, skills_dir,
         ragflow_url, ragflow_token, memory_dataset_id,
+        plan_mode=plan_mode,
     )
 
 
@@ -324,6 +337,8 @@ def config_cmd(
     ragflow_url: Optional[str] = typer.Option(None, "--ragflow-url"),
     ragflow_token: Optional[str] = typer.Option(None, "--ragflow-token"),
     memory_dataset_id: Optional[str] = typer.Option(None, "--memory-dataset-id"),
+    plan_mode: Optional[bool] = typer.Option(None, "--plan-mode", "-p",
+        help="Enable/disable plan mode (AI interviews you before acting)"),
     show: bool = typer.Option(False, "--show", "-s", help="Show current config (masked)"),
     json_fmt: bool = typer.Option(False, "--json", help="Show config as JSON"),
 ):
@@ -345,6 +360,7 @@ def config_cmd(
         ("ragflow_url", ragflow_url),
         ("ragflow_token", ragflow_token),
         ("memory_dataset_id", memory_dataset_id),
+        ("plan_mode", plan_mode),
     ]
 
     if show or not any(v is not None for _, v in updates):
@@ -413,11 +429,12 @@ async def _run_repl(cfg: dict):
 
     engine_uri = f"sqlite:///{DATASET}/drsai.db"
     db_manager = DatabaseManager(engine_uri=engine_uri, base_dir=str(DATASET))
-    init_response = db_manager.initialize_database()
-    assert init_response.status, init_response.message
 
     # Banner first — before the DB chatter that initialize_database can emit.
     print_banner()
+
+    init_response = db_manager.initialize_database()
+    assert init_response.status, init_response.message
 
     store = CLISessionStore(db_manager, user_id)
 
@@ -473,10 +490,7 @@ async def _run_repl(cfg: dict):
             state = thread.state
             if state:
                 if isinstance(state, str):
-                    try:
-                        return decompress_state(state)
-                    except Exception:
-                        return json.loads(state)
+                    return decompress_state(state)
                 return state
         return None
 
@@ -552,6 +566,18 @@ async def _run_repl(cfg: dict):
         print("  Check your environment / config.")
         return
 
+    # ── Auto-activate plan mode if configured ──────────────────────────────
+    PLAN_MODE_PROMPT = """Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+
+Ask the questions one at a time.
+
+If a question can be answered by exploring the codebase, explore the codebase instead."""
+
+    if cfg.get("plan_mode", False):
+        if hasattr(agent, "inject_system_prompt"):
+            agent.inject_system_prompt(prefix=PLAN_MODE_PROMPT)
+            print("  \033[1;36m⚡ Plan mode auto-enabled (from config)\033[0m")
+
     # ── Runtime state (renderer, stats, prompt) ─────────────────────────────
     stats = SessionStats(show_footer=True, ring_bell=False)
     renderer = DrSaiCLIRenderer(show_reasoning=False)
@@ -565,7 +591,6 @@ async def _run_repl(cfg: dict):
     def _bottom_toolbar() -> str:
         user_id = cfg.get("user_id", "anonymous")
         model_name = cfg.get("defult_config_name") or "auto"
-        # Shorten model name if too long
         if len(model_name) > 40:
             model_name = model_name[:37] + "..."
         
@@ -575,6 +600,8 @@ async def _run_repl(cfg: dict):
             parts.append(f"turns: {stats.turns}")
         if renderer.show_reasoning:
             parts.append("reasoning: on")
+        if cfg.get("plan_mode", False):
+            parts.append("plan_mode: on")
         return "  ·  ".join(parts)
 
     prompt_reader = DrSaiPrompt(
@@ -804,6 +831,11 @@ async def _run_repl(cfg: dict):
                 new_client = agent._set_model_client(args)
                 await agent.switch_model(new_client)
                 print(f"Model switched to {args}")
+
+                # Update token_limit for stats footer and agent context
+                entry = llm_mode_config.get(args)
+                if entry and hasattr(entry, "token_limit"):
+                    stats.token_limit = entry.token_limit
             except Exception as e:
                 print(f"Warning: model client creation failed: {e}")
                 print(f"Model alias set to {args} (will take effect on next session)")
@@ -1047,6 +1079,95 @@ async def _run_repl(cfg: dict):
         cli_config.save_config(cfg)
         print(f"Fast mode on — alias set to {fast_alias}; /new to apply.")
 
+    def _cmd_plan_mode(args: str):
+        """动态切换 plan mode：启用后 AI 会先访谈用户确认计划再执行"""
+        arg = args.strip().lower()
+        if not agent:
+            print("Agent not initialized.")
+            return
+        
+        if arg in {"on", "1", "true", "enable"}:
+            agent.inject_system_prompt(prefix=PLAN_MODE_PROMPT)
+            cfg["plan_mode"] = True
+            cli_config.save_config(cfg)
+            print("\033[1;36m⚡ Plan mode enabled\033[0m")
+            print("  The AI will interview you about your plan before acting.")
+            print("  Setting saved to config (persists across restarts).")
+            print()
+        elif arg in {"off", "0", "false", "disable"}:
+            agent.inject_system_prompt(prefix="")
+            cfg["plan_mode"] = False
+            cli_config.save_config(cfg)
+            print("\033[33m⚠ Plan mode disabled\033[0m")
+            print("  Setting saved to config (persists across restarts).")
+        elif arg == "status" or arg == "":
+            injected_prefix = getattr(agent, '_injected_prefix', "") or ""
+            if injected_prefix:
+                preview = injected_prefix[:100].replace("\n", " ")
+                if len(injected_prefix) > 100:
+                    preview += "..."
+                print(f"Plan mode: \033[1;32menabled\033[0m")
+                print(f"  Prefix: \"{preview}\"")
+            else:
+                print(f"Plan mode: \033[2mdisabled\033[0m")
+        else:
+            print("Usage: /plan_mode [on|off|status]")
+            print("  on/off   - Enable/disable plan mode (saved to config)")
+            print("  status   - Show current status (default)")
+
+        # Refresh toolbar to show plan_mode state
+        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
+            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+    
+    def _cmd_inject(args: str):
+        """注入自定义提示词到 system message。
+        
+        用法:
+            /inject prefix <text>   - 添加前缀提示词
+            /inject suffix <text>   - 添加后缀提示词
+            /inject clear           - 清除所有注入的提示词
+            /inject status          - 显示当前注入状态
+        """
+        if not agent:
+            print("Agent not initialized.")
+            return
+        
+        parts = args.strip().split(maxsplit=1)
+        if not parts:
+            print("Usage: /inject [prefix|suffix|clear|status] [text]")
+            return
+        
+        action = parts[0].lower()
+        text = parts[1] if len(parts) > 1 else ""
+        
+        if action == "prefix":
+            if not text:
+                print("Usage: /inject prefix <text>")
+                return
+            agent.inject_system_prompt(prefix=text)
+            print(f"\033[1;36m✓ Prefix injected:\033[0m \"{text[:60]}...\"" if len(text) > 60 else f"\033[1;36m✓ Prefix injected:\033[0m \"{text}\"")
+        elif action == "suffix":
+            if not text:
+                print("Usage: /inject suffix <text>")
+                return
+            agent.inject_system_prompt(suffix=text)
+            print(f"\033[1;36m✓ Suffix injected:\033[0m \"{text[:60]}...\"" if len(text) > 60 else f"\033[1;36m✓ Suffix injected:\033[0m \"{text}\"")
+        elif action == "clear":
+            agent.inject_system_prompt(prefix="", suffix="")
+            print("\033[33m⚠ All injected prompts cleared\033[0m")
+        elif action == "status":
+            prefix = getattr(agent, '_injected_prefix', "") or "(none)"
+            suffix = getattr(agent, '_injected_suffix', "") or "(none)"
+            if len(prefix) > 100:
+                prefix = prefix[:100] + "..."
+            if len(suffix) > 100:
+                suffix = suffix[:100] + "..."
+            print("Current injected prompts:")
+            print(f"  Prefix: \"{prefix}\"")
+            print(f"  Suffix: \"{suffix}\"")
+        else:
+            print("Usage: /inject [prefix|suffix|clear|status] [text]")
+
     # ── Dispatch table ──────────────────────────────────────────────────────
     # arity: 0 = no args, -1 = rest of line
     _handlers: dict = {
@@ -1080,6 +1201,9 @@ async def _run_repl(cfg: dict):
         "verbose":   (_cmd_verbose,   0),
         "bell":      (_cmd_bell,     -1),
         "fast":      (_cmd_fast,     -1),
+        "plan_mode": (_cmd_plan_mode,-1),
+        "pm":        (_cmd_plan_mode,-1),  # alias
+        "inject":    (_cmd_inject,   -1),
     }
 
     async def _dispatch(raw: str) -> bool:
