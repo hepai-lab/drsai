@@ -76,6 +76,8 @@ class WeChatBot:
         self._user_locks: dict[str, asyncio.Lock] = {}
         self._seen_ids: set = set()
 
+        self._user_context_tokens: dict[str, str] = {}
+
         self._msg_metadata = {}
 
     # ── 主循环 ────────────────────────────────────────────────────────────────
@@ -142,6 +144,11 @@ class WeChatBot:
         user_id = msg.get("from_user_id", "")
         if not user_id:
             return
+
+        # ✅ 缓存 context_token，用于后续主动推送
+        context_token = msg.get("context_token", "")
+        if user_id and context_token:
+            self._user_context_tokens[user_id] = context_token
 
         lock = self._user_locks.setdefault(user_id, asyncio.Lock())
         async with lock:
@@ -285,6 +292,32 @@ class WeChatBot:
                 await self.api.send_text(account_id, to_user_id, context_token, chunk)
             except Exception as e:
                 logger.error("发送消息失败 to=%s: %s", to_user_id, e)
+
+    # ── 主动推送通知 ───────────────────────────────────────────────────────
+
+    async def push_notification(self, user_id: str, text: str) -> bool:
+        """
+        主动推送通知给微信用户（不需要用户先发消息）。
+        使用缓存的 context_token 发送。
+
+        Args:
+            user_id: 微信用户的 from_user_id (ilink user ID)
+            text: 要推送的文本内容
+
+        Returns:
+            是否成功推送
+        """
+        context_token = self._user_context_tokens.get(user_id)
+        if not context_token:
+            logger.warning("No cached context_token for WeChat user %s, skip push", user_id)
+            return False
+        try:
+            await self._reply(user_id, context_token, text)
+            logger.info("WeChat push_notification sent to %s", user_id)
+            return True
+        except Exception as e:
+            logger.error("WeChat push_notification failed for %s: %s", user_id, e)
+            return False
 
     # ── 确保 agent 已初始化 ───────────────────────────────────────────────────
 

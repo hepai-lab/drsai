@@ -28,6 +28,9 @@ from drsai.configs.constant import CONFIG_DIR
 
 from .commands import COMMAND_REGISTRY
 
+# CLI history file path
+HISTORY_PATH = Path(CONFIG_DIR) / "cli_history.txt"
+
 __all__ = ["DrSaiPrompt", "HAS_PROMPT_TOOLKIT"]
 
 # Try to import Hermes-style TUI callbacks
@@ -66,7 +69,7 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.patch_stdout import patch_stdout
+
 from prompt_toolkit.styles import Style
 
 try:
@@ -78,19 +81,12 @@ except Exception:  # pragma: no cover
 HAS_PROMPT_TOOLKIT = True
 
 
-HISTORY_PATH = Path(CONFIG_DIR) / "cli_history.txt"
+from .theme import prompt_toolkit_style
 
 
-_STYLE = Style.from_dict({
-    "prompt.bracket": "#888888",
-    "prompt.label":   "#FFD700 bold",
-    "prompt.arrow":   "#5FAFFF bold",
-    "bottom-toolbar": "bg:#222222 #888888",
-    # Hermes-style interactive prompt colors
-    "interactive.header": "#FFD700 bold",
-    "interactive.choice": "#5FAFFF",
-    "interactive.selected": "#00FF00 bold",
-})
+def _STYLE():
+    """Build prompt_toolkit Style from the current CLI theme."""
+    return Style.from_dict(prompt_toolkit_style())
 
 
 class DrSaiPrompt:
@@ -146,7 +142,7 @@ class DrSaiPrompt:
             multiline=False,
             key_bindings=kb,
             mouse_support=False,
-            style=_STYLE,
+            style=_STYLE(),
             cursor=_CURSOR_SHAPE,
             enable_history_search=True,
             bottom_toolbar=self._bottom_toolbar,
@@ -175,8 +171,11 @@ class DrSaiPrompt:
     # ── Public API ──────────────────────────────────────────────────────────
     async def prompt(self) -> str:
         if self._use_toolkit and self._session is not None:
-            with patch_stdout(raw=True):
-                return await self._session.prompt_async(self._prompt_fragments)
+            # patch_stdout is now managed at the REPL level (see run_cli.py),
+            # keeping it active for the entire session so that streaming output
+            # from the renderer and background notifications are properly
+            # positioned above the user input line.
+            return await self._session.prompt_async(self._prompt_fragments)
         loop = asyncio.get_running_loop()
         label = self._label_fn()
         return await loop.run_in_executor(None, _blocking_input, f"[{label}] ❯ ")

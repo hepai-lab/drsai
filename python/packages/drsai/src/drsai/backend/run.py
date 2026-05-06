@@ -30,7 +30,7 @@ from drsai.modules.managers.messages import (
     AgentLogEvent,
 )
 from drsai.modules.managers.database import DatabaseManager
-from drsai.modules.agents.skills_agent.managers import ScheduledTaskManager
+from drsai.modules.agents.skills_agent.managers import ScheduledTaskManager, TaskNotification
 from drsai.modules.managers.user_profile import UserApiKeyManager
 from autogen_agentchat.base import (
     ChatAgent,
@@ -280,10 +280,22 @@ async def run_backend(agent_factory: callable, **kwargs):
                     pass
             raise
 
+    # ✅ 多通道通知分发器（run_backend 模式暂无微信，预留扩展）
+    _backend_notification_channels: list = []
+
+    async def on_backend_task_notification(notification):
+        """多通道通知分发：遍历所有已注册的通道回调"""
+        for channel in _backend_notification_channels:
+            try:
+                await channel(notification)
+            except Exception as e:
+                logger.error(f"Notification channel error: {e}")
+
     # 创建 ScheduledTaskManager
     task_manager = ScheduledTaskManager(
         work_dir=task_work_dir,
-        agent_executor=agent_executor
+        agent_executor=agent_executor,
+        on_notification=on_backend_task_notification,
     )
     drsaiapp._task_manager = task_manager
 
@@ -802,10 +814,44 @@ async def run_worker(agent_factory: callable, **kwargs):
                     pass
             raise
 
-    # 创建 ScheduledTaskManager 并传入 agent_executor
+    # ✅ 通知消息格式化函数（各推送通道共用）
+    def _format_notification_text(notification) -> str:
+        """将 TaskNotification 格式化为人类可读的推送文本"""
+        status_icon = {"success": "✅", "error": "❌", "timeout_partial": "⏱️"}.get(
+            notification.status, "❓"
+        )
+        status_text = {
+            "success": "成功",
+            "error": "失败",
+            "timeout_partial": "超时(部分结果已保存)",
+        }.get(notification.status, notification.status)
+
+        text = f"{status_icon} 定时任务通知\n\n"
+        text += f"任务：{notification.task_name}\n"
+        text += f"状态：{status_text}\n"
+        text += f"时间：{notification.timestamp}\n"
+        if notification.summary:
+            text += f"\n{notification.summary}\n"
+        if notification.output_file:
+            text += f"\n💡 可使用定时任务管理工具的 `read_output` 查看详细结果\n"
+        return text
+
+    # ✅ 多通道通知分发器（可变列表，支持延迟注册）
+    _notification_channels: list = []
+
+    async def on_task_notification(notification):
+        """多通道通知分发：遍历所有已注册的通道回调"""
+        for channel in _notification_channels:
+            try:
+                await channel(notification)
+            except Exception as e:
+                logger.error(f"Notification channel error: {e}")
+
+    # 创建 ScheduledTaskManager 并传入 agent_executor + on_notification
     task_manager = ScheduledTaskManager(
         work_dir=task_work_dir,
-        agent_executor=agent_executor
+        agent_executor=agent_executor,
+        on_notification=on_task_notification,
     )
     drsaiapp._task_manager = task_manager
 
@@ -854,6 +900,14 @@ async def run_worker(agent_factory: callable, **kwargs):
         _wechat_tasks.append(asyncio.create_task(
             idle_monitor(model, session_mgr), name="wechat_idle_monitor"
         ))
+
+        # ✅ 4. 注册微信推送通道到通知分发器
+        async def wechat_push_channel(notification: TaskNotification):
+            """微信推送通道：将定时任务通知主动推送给微信用户"""
+            text = _format_notification_text(notification)
+            await bot.push_notification(notification.user_id, text)
+
+        _notification_channels.append(wechat_push_channel)
         print("微信 Bot 已启动，发送 /help 查看命令列表。")
 
     enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)

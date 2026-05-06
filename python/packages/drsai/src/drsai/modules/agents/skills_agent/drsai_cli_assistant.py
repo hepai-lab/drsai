@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
+from loguru import logger
 from sqlmodel import Session, select
 
 from drsai.modules.managers.datamodel.db import Thread
@@ -91,6 +92,62 @@ class DrSaiCLIAssistant(DrSaiAssistant):
         if value not in allowed:
             raise ValueError(f"reasoning_effort must be one of {sorted(allowed)}")
         self._reasoning_effort = value
+
+    # ── Session-local state persistence ─────────────────────────────────────
+    # Override base class to persist session-local configuration alongside
+    # llm_context.  This ensures model selection, injected prompts (including
+    # plan_mode), and reasoning effort are restored when switching sessions.
+
+    async def save_state(self) -> Mapping[str, Any]:
+        """Save llm_context + session-local configuration (model, inject, project_instructions, reasoning)."""
+        model_context_state = await self._model_context.save_state()
+        return {
+            "llm_context": model_context_state,
+            "type": "DrSaiCLIAssistantState",
+            "defult_config_name": self._defult_config_name,
+            "injected_prefix": getattr(self, '_injected_prefix', ''),
+            "injected_suffix": getattr(self, '_injected_suffix', ''),
+            "project_instructions": getattr(self, '_project_instructions', ''),
+            "reasoning_effort": self._reasoning_effort,
+        }
+
+    async def load_state(self, state: Mapping[str, Any]) -> None:
+        """Restore session-local configuration then llm_context.
+
+        Backward-compatible: old states that lack the extra keys are handled
+        gracefully (model/inject/reasoning simply stay at their defaults).
+        """
+        # ── 1. Restore model client if saved config differs ────────────────
+        saved_config = state.get("defult_config_name")
+        if saved_config and saved_config != self._defult_config_name and self._set_model_client:
+            try:
+                new_client = self._set_model_client(saved_config)
+                await self.switch_model(new_client)
+                self._defult_config_name = saved_config
+            except Exception as e:
+                logger.warning(f"Failed to restore model '{saved_config}': {e}")
+
+        # ── 2. Restore llm_context (conversation history) ──────────────────
+        # Backward compat: old format is a flat dict like {"messages": [...]}
+        # without a "llm_context" key.
+        llm_context = state.get("llm_context", state)
+        await self._model_context.load_state(llm_context)
+
+        # ── 3. Restore injected prompts (covers plan_mode & /inject) ───────
+        prefix = state.get("injected_prefix", '')
+        suffix = state.get("injected_suffix", '')
+        project_instructions = state.get("project_instructions", '')
+        if prefix or suffix or project_instructions:
+            self.inject_system_prompt(
+                prefix=prefix,
+                suffix=suffix,
+                project_instructions=project_instructions,
+            )
+
+        # ── 4. Restore reasoning effort ────────────────────────────────────
+        effort = state.get("reasoning_effort")
+        if effort and effort in {"off", "low", "medium", "high", "xhigh"}:
+            self._reasoning_effort = effort
 
     # ── Token stats ─────────────────────────────────────────────────────────
     @property

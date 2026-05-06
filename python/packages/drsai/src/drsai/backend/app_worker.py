@@ -71,6 +71,9 @@ class DrSaiAPP(DrSai):
         DrSaiAPP.router.patch("/scheduled_tasks/{task_id}/toggle")(self.toggle_scheduled_task)
         DrSaiAPP.router.get("/scheduled_tasks/{task_id}/results")(self.get_task_results)
 
+        # ✅ 通知轮询接口（供 CLI/Web 客户端定期获取未读通知）
+        DrSaiAPP.router.get("/notifications")(self.get_notifications)
+
 
 
     #### --- 关于DrSai的路由 --- ####
@@ -198,18 +201,9 @@ class DrSaiAPP(DrSai):
                 ScheduledTask, ScheduleType
             )
             body = await request.json()
-            task = ScheduledTask(
-                user_id=body["user_id"],
-                session_id=body["session_id"],
-                task_name=body["task_name"],
-                task_description=body.get("task_description"),
-                prompt=body["prompt"],
-                schedule_type=ScheduleType(body["schedule_type"]),
-                schedule_config=body["schedule_config"],
-                max_retries=body.get("max_retries", 3),
-                timeout=body.get("timeout", 300),
-                save_history=body.get("save_history", True),
-            )
+            # 直接使用完整的 ScheduledTask 对象（包含 execution_context 等字段）
+            # 这样远程 CLI 创建的任务可以携带 defult_config_name 等执行上下文
+            task = ScheduledTask(**body)
             task_manager = self._get_task_manager()
             task_id = task_manager.add_task(task)
             return {"status": "ok", "task_id": task_id, "next_run": task.next_run}
@@ -218,7 +212,7 @@ class DrSaiAPP(DrSai):
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))
 
-    async def list_scheduled_tasks(self, request: Request, user_id: str, session_id: Optional[str] = None):
+    async def list_scheduled_tasks(self, request: Request, user_id: Optional[str] = None, session_id: Optional[str] = None):
         """
         获取用户的定时任务列表
         GET /apiv2/scheduled_tasks?user_id=xxx&session_id=xxx
@@ -279,6 +273,28 @@ class DrSaiAPP(DrSai):
             task_manager = self._get_task_manager()
             results = task_manager.get_task_results(task_id, limit=limit)
             return {"status": "ok", "task_id": task_id, "results": [r.model_dump() for r in results]}
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    ### --- 通知轮询接口 --- ###
+
+    async def get_notifications(self, request: Request, user_id: str):
+        """
+        获取并清除用户的未读定时任务通知
+        GET /apiv2/notifications?user_id=xxx
+        
+        CLI/Web 客户端定期调用此接口获取通知，调用后通知会被清除。
+        """
+        try:
+            task_manager = self._get_task_manager()
+            notifications = task_manager.get_pending_notifications(user_id)
+            return {
+                "status": "ok",
+                "count": len(notifications),
+                "notifications": [n.model_dump() for n in notifications],
+            }
         except HTTPException:
             raise
         except Exception as e:

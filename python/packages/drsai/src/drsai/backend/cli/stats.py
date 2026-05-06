@@ -11,6 +11,8 @@ import sys
 import time
 from dataclasses import dataclass, field
 
+from .theme import ansi, ansi_reset
+
 __all__ = [
     "SessionStats",
     "format_footer",
@@ -84,7 +86,7 @@ def format_footer(stats: SessionStats) -> str:
         toks = total
     
     model = f" · {stats.last_model}" if stats.last_model else ""
-    return f"\033[2m● {duration} · {toks} tok · turn {stats.turns}{model}\033[0m"
+    return f"{ansi('system_info')}● {duration} · {toks} tok · turn {stats.turns}{model}{ansi_reset()}"
 
 
 def play_bell(enabled: bool) -> None:

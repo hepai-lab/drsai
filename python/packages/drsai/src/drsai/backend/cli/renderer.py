@@ -49,6 +49,7 @@ from autogen_agentchat.messages import (
 
 from .reasoning import ReasoningStreamState, split_reasoning
 from .stats import SessionStats, extract_usage, format_footer, play_bell
+from .theme import ansi, ansi_reset, get_theme
 
 __all__ = ["DrSaiCLIRenderer"]
 
@@ -121,6 +122,74 @@ class DrSaiCLIRenderer:
         # Configure tool preview length
         if TUI_MODULE_AVAILABLE:
             set_tool_preview_max_len(tool_preview_max_len)
+
+    def reconfigure_output(self, file=None) -> None:
+        """Reconfigure the Rich Console to write through a stdout proxy.
+
+        Called when ``patch_stdout`` is activated at the REPL level so that
+        all Rich output (panels, markdown, tool messages) is routed through
+        the same proxy as raw ``sys.stdout.write`` calls.  This ensures
+        proper positioning of output above the prompt_toolkit input line.
+
+        Args:
+            file: File-like object to write through. Defaults to ``sys.stdout``
+                  (which is the ``patch_stdout`` proxy when activated).
+        """
+        target = file or sys.stdout
+        # Preserve the original Console's detected width — the proxy lacks
+        # a real fileno(), so Rich's primary width-detection path
+        # (os.get_terminal_size(proxy.fileno())) will fail.  Passing the
+        # pre-detected width as an explicit override ensures correct layout
+        # even if the fallback via shutil.get_terminal_size() misses.
+        original_width = self.console.width
+        # force_terminal=True ensures Rich emits ANSI escape codes through
+        # the proxy (which otherwise looks like a non-TTY to Rich's detector).
+        # legacy_windows follows the original Console's setting to avoid
+        # breaking VT100 output on Windows terminals that need legacy handling.
+        self.console = Console(
+            file=target,
+            force_terminal=True,
+            legacy_windows=self.console.legacy_windows,
+            width=original_width,
+        )
+
+    # ── User input echo ─────────────────────────────────────────────────────
+    def echo_user_input(self, text: str) -> None:
+        """Re-display the user's submitted input in a distinct colour.
+
+        Called from the REPL's ``_do_chat`` right before the agent begins
+        processing, so that the conversation history in the terminal clearly
+        distinguishes "what I typed" from "what the agent replied".
+
+        The colour is drawn from the active theme's ``user_echo`` slot, which
+        defaults to a soft cyan-blue (#6EC6FF) on dark terminals — easy to
+        spot against the default white agent text but not eye-searing.
+        """
+        theme = get_theme()
+        fg = ansi("user_echo", theme)
+        reset = ansi_reset()
+        # Truncate very long inputs for display (full text is still sent to
+        # the agent; this is purely a visual echo).
+        display_text = text
+        if len(display_text) > 300:
+            display_text = display_text[:297] + "…"
+        # Replace newlines with ↵ + continuation so the echo occupies one
+        # logical block but multi-line content stays readable.
+        display_text = display_text.replace("\n", f"{reset} ↵\n  {fg}")
+        self._println(f"{fg}  ▸ {display_text}{reset}")
+
+    # ── Turn separator ──────────────────────────────────────────────────────
+    def print_turn_separator(self) -> None:
+        """Draw a dim horizontal line between conversation turns.
+
+        Called at the end of each assistant turn (inside ``render()``) so
+        that the user's next prompt is visually isolated from the previous
+        agent output.  Uses the theme's ``separator`` colour.
+        """
+        theme = get_theme()
+        fg = ansi("separator", theme)
+        reset = ansi_reset()
+        self._println(f"{fg}──────────────────────────────────────────────{reset}")
 
     # ── Output helpers with blank-line suppression ──────────────────────────
     def _println(self, text: str = "") -> None:
@@ -245,6 +314,11 @@ class DrSaiCLIRenderer:
             self._println(footer)
         play_bell(stats.ring_bell)
 
+        # ── Turn separator ──────────────────────────────────────────────
+        # Draw a dim horizontal line so the user's next prompt is visually
+        # isolated from the agent's output.
+        self.print_turn_separator()
+
     # ── Streaming chunks ────────────────────────────────────────────────────
     def _handle_chunk(self, text: str, state: ReasoningStreamState) -> None:
         if not text:
@@ -304,17 +378,17 @@ class DrSaiCLIRenderer:
 
     # ── Reasoning box ───────────────────────────────────────────────────────
     def _open_reasoning(self) -> None:
-        self._println("\033[2m┌─ Reasoning ─\033[0m")
+        self._println(f"{ansi('system_info')}┌─ Reasoning ─{ansi_reset()}")
         self._reason_open = True
         self._reason_first_line = True
 
     def _render_reasoning_text(self, text: str) -> None:
         for ch in text:
             if self._reason_first_line:
-                sys.stdout.write("\033[2m│ \033[0m")
+                sys.stdout.write(f"{ansi('system_info')}│ {ansi_reset()}")
                 self._reason_first_line = False
                 self._last_ended_with_newline = False
-            sys.stdout.write(f"\033[2m{ch}\033[0m")
+            sys.stdout.write(f"{ansi('system_info')}{ch}{ansi_reset()}")
             if ch == "\n":
                 self._reason_first_line = True
                 self._last_ended_with_newline = True
@@ -329,7 +403,7 @@ class DrSaiCLIRenderer:
             sys.stdout.write("\n")
             sys.stdout.flush()
             self._last_ended_with_newline = True
-        self._println("\033[2m└─\033[0m")
+        self._println(f"{ansi('system_info')}└─{ansi_reset()}")
         self._reason_open = False
         self._reason_first_line = True
 
@@ -478,10 +552,11 @@ class DrSaiCLIRenderer:
         if _looks_markdown(visible):
             self.console.print(Markdown(visible))
         else:
+            theme = get_theme()
             panel = Panel(
                 visible,
-                title=f"[cyan]{source}[/cyan]",
-                border_style="#FFD700",
+                title=f"[{theme.assistant_panel_border}]{source}[/{theme.assistant_panel_border}]",
+                border_style=theme.assistant_panel_border,
                 box=ROUNDED,
                 expand=False,
             )
