@@ -179,6 +179,9 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         self._metadata = metadata or {}
         self._model_client = model_client
         self._model_client_stream = model_client_stream
+        # Store llm_mode_config and defult_config_name for token limit access
+        self._llm_mode_config = llm_mode_config or {}
+        self._defult_config_name = defult_config_name or ""
         self._output_content_type: type[BaseModel] | None = output_content_type
         self._output_content_type_format = output_content_type_format
         self._structured_message_factory: StructuredMessageFactory | None = None
@@ -465,6 +468,10 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             ):
                 inner_messages.append(event_msg)
                 yield event_msg
+
+            # STEP 2.5: Sanitize messages to handle orphaned tool results / missing stubs
+            # This prevents tool_call_id mismatches after model switches
+            await self._sanitize_api_messages()
 
             # STEP 3: Run the first inference
             model_result = None
@@ -1101,7 +1108,127 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 name=tool_call.name,
             ),
         )
-    
+
+    async def switch_model(self, new_model_client: ChatCompletionClient) -> None:
+        """Switch the model client to a new one.
+
+        This replaces the current model client, invalidates cached system prompt,
+        and clears the model context to avoid tool_call_id mismatches between models.
+
+        Also synchronizes the model_client inside the model_context so that
+        token counting, compression, and summary operations use the new model.
+
+        Args:
+            new_model_client: The new ChatCompletionClient to use.
+        """
+        # logger.info(
+        #     f"Switching model from {self._model_client._create_args.get('model', 'unknown')} "
+        #     f"to {new_model_client._create_args.get('model', 'unknown')}"
+        # )
+
+        # Close the old client
+        await self._model_client.close()
+        # Update to new client
+        self._model_client = new_model_client
+
+        # Synchronize the model_client inside model_context so that token
+        # counting (count_prompt_tokens), Layer-2 compression
+        # (_incremental_compress) and summary generation
+        # (summry_conversation_to_memory) all use the new model client.
+        # 
+        # IMPORTANT: Create an independent copy for the context, similar to how
+        # DrSaiAssistant._create_context creates independent_model_client.
+        # This prevents the context from sharing the same client instance with
+        # the agent, which could cause issues when one is closed.
+        if hasattr(self._model_context, 'update_model_client'):
+            try:
+                model_config = new_model_client.dump_component()
+                independent_client = ChatCompletionClient.load_component(model_config)
+                # Preserve model_info from the new client
+                independent_client._model_info = new_model_client._model_info
+                await self._model_context.update_model_client(independent_client)
+            except Exception as e:
+                logger.warning(f"Failed to create independent model_client for context, using shared client: {e}")
+                await self._model_context.update_model_client(new_model_client)
+
+
+    async def _sanitize_api_messages(self) -> None:
+        """Remove orphaned tool results and inject stubs for missing ones.
+
+        This cleans up the model context before LLM calls to ensure:
+        1. No orphaned tool results (results without corresponding tool_call_id)
+        2. No missing tool results (tool_calls without corresponding results get a stub)
+
+        Should be called before each LLM inference.
+        """
+        from autogen_core.models import FunctionExecutionResult, FunctionExecutionResultMessage
+
+        messages = await self._model_context.get_messages()
+        if not messages:
+            return
+
+        # Collect tool_call_ids from assistant messages
+        surviving_call_ids: set[str] = set()
+        # Collect tool result call_ids
+        result_call_ids: set[str] = set()
+        # Track which messages need modification
+        messages_to_remove: list[int] = []
+
+        for i, msg in enumerate(messages):
+            if isinstance(msg, AssistantMessage):
+                if isinstance(msg.content, list):
+                    for call in msg.content:
+                        if isinstance(call, FunctionCall):
+                            surviving_call_ids.add(call.id)
+            elif isinstance(msg, FunctionExecutionResultMessage):
+                if isinstance(msg.content, list):
+                    for result in msg.content:
+                        if isinstance(result, FunctionExecutionResult):
+                            result_call_ids.add(result.call_id)
+                            # Check if this result is orphaned (no matching tool_call)
+                            if result.call_id not in surviving_call_ids:
+                                messages_to_remove.append(i)
+                                logger.debug(
+                                    f"Removing orphaned tool result: {result.call_id} "
+                                    f"(name={result.name})"
+                                )
+
+        # Remove orphaned tool result messages (iterate in reverse to preserve indices)
+        for i in reversed(messages_to_remove):
+            messages.pop(i)
+
+        # Find tool_calls that are missing results and inject stubs
+        missing_result_ids = surviving_call_ids - result_call_ids
+        if missing_result_ids:
+            for call_id in missing_result_ids:
+                # Find the assistant message that made this call
+                for i, msg in enumerate(messages):
+                    if isinstance(msg, AssistantMessage):
+                        if isinstance(msg.content, list):
+                            for call in msg.content:
+                                if isinstance(call, FunctionCall) and call.id == call_id:
+                                    # Find the function name
+                                    func_name = call.name
+                                    stub = FunctionExecutionResultMessage(
+                                        content=[
+                                            FunctionExecutionResult(
+                                                call_id=call_id,
+                                                name=func_name,
+                                                content="[Result unavailable - tool result missing after model switch]",
+                                                is_error=True,
+                                            )
+                                        ]
+                                    )
+                                    # Insert stub right after the assistant message
+                                    messages.insert(i + 1, stub)
+                                    logger.debug(f"Injected stub result for missing tool_call: {call_id}")
+                                    break
+
+            # Update the context with sanitized messages
+            await self._model_context.clear()
+            for msg in messages:
+                await self._model_context.add_message(msg)
+
     async def lazy_init(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Initialize the tools and models needed by the agent."""
         pass
@@ -1374,9 +1501,20 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             #     else:
             #         raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
                 assert isinstance(response, str)
+                # Calculate completion tokens for the response
+                # prompt_tokens is passed from _call_llm via kwargs
+                passed_prompt_tokens = kwargs.get('prompt_tokens', 0)
+                try:
+                    completion_tokens = model_client.count_tokens(
+                        [AssistantMessage(content=response, source=agent_name)]
+                    )
+                except Exception:
+                    completion_tokens = 0
+                # Use passed prompt_tokens if available, otherwise calculate
+                final_prompt_tokens = passed_prompt_tokens if passed_prompt_tokens > 0 else 0
                 model_result = CreateResult(
                     content=response, finish_reason="stop",
-                    usage = RequestUsage(prompt_tokens=0, completion_tokens=0),
+                    usage = RequestUsage(prompt_tokens=final_prompt_tokens, completion_tokens=completion_tokens),
                     cached=False)
         else:
             # 如果reply_function不是异步函数，或者是一个异步生成器，则会报错
@@ -1396,9 +1534,20 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 **self._user_params
                 )
             if isinstance(response, str):
+                # Calculate completion tokens for the response
+                # prompt_tokens is passed from _call_llm via kwargs
+                passed_prompt_tokens = kwargs.get('prompt_tokens', 0)
+                try:
+                    completion_tokens = model_client.count_tokens(
+                        [AssistantMessage(content=response, source=agent_name)]
+                    )
+                except Exception:
+                    completion_tokens = 0
+                # Use passed prompt_tokens if available, otherwise calculate
+                final_prompt_tokens = passed_prompt_tokens if passed_prompt_tokens > 0 else 0
                 model_result = CreateResult(
                     content=response, finish_reason="stop",
-                    usage = RequestUsage(prompt_tokens=0, completion_tokens=0),
+                    usage = RequestUsage(prompt_tokens=final_prompt_tokens, completion_tokens=completion_tokens),
                     cached=False)
             elif isinstance(response, CreateResult):
                 model_result = response
@@ -1421,12 +1570,13 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         model_result: Optional[CreateResult] = None
 
         if model_client_stream:
-                
+            # Pass stream_options to include usage in the final chunk
             async for chunk in model_client.create_stream(
                 llm_messages, 
                 tools=tools,
                 json_output=output_content_type,
-                cancellation_token=cancellation_token
+                cancellation_token=cancellation_token,
+                extra_create_args={"stream_options": {"include_usage": True}}
             ):
                 if isinstance(chunk, CreateResult):
                     model_result = chunk

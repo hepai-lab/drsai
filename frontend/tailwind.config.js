@@ -1,11 +1,29 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
+  darkMode: 'class',
   content: [
     `./src/pages/**/*.{js,jsx,ts,tsx}`,
     `./src/components/**/*.{js,jsx,ts,tsx}`,
+    `./src/auth/**/*.{js,jsx,ts,tsx}`,
+    `./src/hooks/**/*.{js,jsx,ts,tsx}`,
+    `./src/layout/**/*.{js,jsx,ts,tsx}`,
   ],
   theme: {
     extend: {
+      fontFamily: {
+        agent: [
+          '"Plus Jakarta Sans"',
+          "ui-sans-serif",
+          "system-ui",
+          "sans-serif",
+        ],
+        "agent-mono": [
+          '"JetBrains Mono"',
+          "ui-monospace",
+          "SFMono-Regular",
+          "monospace",
+        ],
+      },
       keyframes: {
         'fade-in': {
           '0%': { opacity: '0' },
@@ -37,6 +55,11 @@ module.exports = {
           '0%, 100%': { transform: 'translateY(0px)' },
           '50%': { transform: 'translateY(-10px)' },
         },
+        /** 顶栏智能体图标：轻柔上下跳跃 */
+        'logo-hop': {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-5px)' },
+        },
       },
       animation: {
         'fade-in': 'fade-in 0.3s ease-out',
@@ -46,6 +69,7 @@ module.exports = {
         'bounce-in': 'bounce-in 0.6s ease-out',
         'pulse-glow': 'pulse-glow 2s infinite',
         'float': 'float 3s ease-in-out infinite',
+        'logo-hop': 'logo-hop 1.15s ease-in-out infinite',
       },
       typography: {
         DEFAULT: {

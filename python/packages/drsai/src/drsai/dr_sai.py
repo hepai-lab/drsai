@@ -274,14 +274,8 @@ class DrSai:
             state = thread.state
             if state:
                 if isinstance(state, str):
-                    try:
-                        # Try to decompress if it's compressed
-                        state_dict = decompress_state(state)
-                        await agent.load_state(state_dict)
-                    except Exception:
-                        # If decompression fails, assume it's a regular JSON string
-                        state_dict = json.loads(state)
-                        await agent.load_state(state_dict)
+                    state_dict = decompress_state(state)
+                    await agent.load_state(state_dict)
                 else:
                     await agent.load_state(state)
 

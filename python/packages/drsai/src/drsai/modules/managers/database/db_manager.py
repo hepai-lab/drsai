@@ -94,22 +94,23 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
                 logger.info("Creating database tables...")
                 SQLModel.metadata.create_all(self.engine)
 
-                if self.schema_manager.initialize_migrations(force=force_init_alembic):
-                    return Response(
-                        message="Database initialized successfully", status=True
-                    )
-                return Response(message="Failed to initialize migrations", status=False)
+                if not self.schema_manager.initialize_migrations(force=force_init_alembic):
+                    return Response(message="Failed to initialize migrations", status=False)
 
-            # Handle existing database
-            if auto_upgrade or self._should_auto_upgrade():
+                result_message = "Database initialized successfully"
+
+            elif auto_upgrade or self._should_auto_upgrade():
                 logger.info("Checking database schema...")
-                if self.schema_manager.ensure_schema_up_to_date():
-                    return Response(
-                        message="Database schema is up to date", status=True
-                    )
-                return Response(message="Database upgrade failed", status=False)
+                if not self.schema_manager.ensure_schema_up_to_date():
+                    return Response(message="Database upgrade failed", status=False)
+                result_message = "Database schema is up to date"
 
-            return Response(message="Database is ready", status=True)
+            else:
+                result_message = "Database is ready"
+
+            # 统一出口：确保 FTS 表存在（幂等）
+            self._create_fts_tables()
+            return Response(message=result_message, status=True)
 
         except Exception as e:
             error_msg = f"Database initialization failed: {str(e)}"
@@ -117,6 +118,181 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
             return Response(message=error_msg, status=False)
         finally:
             self._init_lock.release()
+
+    # ------------------------------------------------------------------
+    # FTS5 full-text search tables (managed outside Alembic)
+    # ------------------------------------------------------------------
+
+    def _create_fts_tables(self) -> None:
+        """Create FTS5 virtual tables and triggers for session message search.
+
+        Uses the external-content pattern:
+          - ``session_messages_fts`` / ``session_messages_fts_trigram``: content
+            is read directly from ``sessionmessage.content`` via ``content_rowid=id``.
+          - ``session_summaries_fts`` / ``session_summaries_fts_trigram``: summary
+            and keywords are read from ``sessionsummary`` via ``content_rowid=id``.
+          - Triggers keep all FTS indexes in sync on INSERT / UPDATE / DELETE
+            with zero application-level overhead.
+          - ``..._trigram`` variants use the trigram tokenizer for CJK and
+            substring search.
+
+        All statements use IF NOT EXISTS — safe to call on every startup.
+        Old standalone summaries FTS tables (without ``content=``) are migrated
+        automatically.
+        """
+        # ------------------------------------------------------------------
+        # Migrate old standalone summaries FTS tables to external-content
+        # ------------------------------------------------------------------
+        with self.engine.connect() as conn:
+            for table_name in ("session_summaries_fts", "session_summaries_fts_trigram"):
+                row = conn.execute(
+                    text("SELECT sql FROM sqlite_master WHERE type='table' AND name=:name"),
+                    {"name": table_name},
+                ).fetchone()
+                if row and row[0] and "content=" not in (row[0] or ""):
+                    logger.info(
+                        f"Migrating {table_name} from standalone to external-content mode"
+                    )
+                    conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+                    conn.commit()
+
+        fts_sql = """
+        CREATE VIRTUAL TABLE IF NOT EXISTS session_messages_fts USING fts5(
+            content,
+            content=sessionmessage,
+            content_rowid=id
+        );
+
+        CREATE TRIGGER IF NOT EXISTS session_messages_fts_insert
+            AFTER INSERT ON sessionmessage
+        BEGIN
+            INSERT INTO session_messages_fts(rowid, content)
+            VALUES (new.id, new.content);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS session_messages_fts_delete
+            AFTER DELETE ON sessionmessage
+        BEGIN
+            INSERT INTO session_messages_fts(session_messages_fts, rowid, content)
+            VALUES('delete', old.id, old.content);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS session_messages_fts_update
+            AFTER UPDATE ON sessionmessage
+        BEGIN
+            INSERT INTO session_messages_fts(session_messages_fts, rowid, content)
+                VALUES('delete', old.id, old.content);
+            INSERT INTO session_messages_fts(rowid, content)
+                VALUES (new.id, new.content);
+        END;
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS session_messages_fts_trigram USING fts5(
+            content,
+            content=sessionmessage,
+            content_rowid=id,
+            tokenize='trigram'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS session_messages_fts_trigram_insert
+            AFTER INSERT ON sessionmessage
+        BEGIN
+            INSERT INTO session_messages_fts_trigram(rowid, content)
+            VALUES (new.id, new.content);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS session_messages_fts_trigram_delete
+            AFTER DELETE ON sessionmessage
+        BEGIN
+            INSERT INTO session_messages_fts_trigram(session_messages_fts_trigram, rowid, content)
+            VALUES('delete', old.id, old.content);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS session_messages_fts_trigram_update
+            AFTER UPDATE ON sessionmessage
+        BEGIN
+            INSERT INTO session_messages_fts_trigram(session_messages_fts_trigram, rowid, content)
+                VALUES('delete', old.id, old.content);
+            INSERT INTO session_messages_fts_trigram(rowid, content)
+                VALUES (new.id, new.content);
+        END;
+
+        -- Summaries: external-content (content is read from sessionsummary).
+        -- Triggers keep the index in sync — no manual INSERTs needed.
+        CREATE VIRTUAL TABLE IF NOT EXISTS session_summaries_fts USING fts5(
+            summary,
+            keywords,
+            content=sessionsummary,
+            content_rowid=id,
+            tokenize='porter unicode61'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS session_summaries_fts_insert
+            AFTER INSERT ON sessionsummary
+        BEGIN
+            INSERT INTO session_summaries_fts(rowid, summary, keywords)
+            VALUES (new.id, new.summary, new.keywords);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS session_summaries_fts_delete
+            AFTER DELETE ON sessionsummary
+        BEGIN
+            INSERT INTO session_summaries_fts(session_summaries_fts, rowid, summary, keywords)
+            VALUES('delete', old.id, old.summary, old.keywords);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS session_summaries_fts_update
+            AFTER UPDATE ON sessionsummary
+        BEGIN
+            INSERT INTO session_summaries_fts(session_summaries_fts, rowid, summary, keywords)
+                VALUES('delete', old.id, old.summary, old.keywords);
+            INSERT INTO session_summaries_fts(rowid, summary, keywords)
+                VALUES (new.id, new.summary, new.keywords);
+        END;
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS session_summaries_fts_trigram USING fts5(
+            summary,
+            keywords,
+            content=sessionsummary,
+            content_rowid=id,
+            tokenize='trigram'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS session_summaries_fts_trigram_insert
+            AFTER INSERT ON sessionsummary
+        BEGIN
+            INSERT INTO session_summaries_fts_trigram(rowid, summary, keywords)
+            VALUES (new.id, new.summary, new.keywords);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS session_summaries_fts_trigram_delete
+            AFTER DELETE ON sessionsummary
+        BEGIN
+            INSERT INTO session_summaries_fts_trigram(session_summaries_fts_trigram, rowid, summary, keywords)
+            VALUES('delete', old.id, old.summary, old.keywords);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS session_summaries_fts_trigram_update
+            AFTER UPDATE ON sessionsummary
+        BEGIN
+            INSERT INTO session_summaries_fts_trigram(session_summaries_fts_trigram, rowid, summary, keywords)
+                VALUES('delete', old.id, old.summary, old.keywords);
+            INSERT INTO session_summaries_fts_trigram(rowid, summary, keywords)
+                VALUES (new.id, new.summary, new.keywords);
+        END;
+        """
+
+        try:
+            with self.engine.connect() as conn:
+                # 直接使用底层 sqlite3 连接的 executescript，
+                # 它会正确处理 trigger body 中的分号，不会被截断。
+                # executescript 内部已隐式提交，无需再 conn.commit()。
+                raw_conn = conn.connection
+                raw_conn.executescript(fts_sql)
+            logger.info("FTS5 tables initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize FTS5 tables: {e}")
+
+    # ------------------------------------------------------------------
 
     def reset_db(self, recreate_tables: bool = True) -> Response:
         """

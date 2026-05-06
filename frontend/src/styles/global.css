@@ -1,24 +1,28 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap");
+
 .dark {
-    /* 主要背景色 - 更深邃的黑色系 */
-    --color-bg-primary: #0f0f0f;
-    --color-bg-secondary: rgba(168, 141, 168, 0.08);
-    --color-bg-light: #1e1e1e;
-    --color-bg-tertiary: #2a2a2a;
+    /* 主要背景色 - 深邃的深蓝黑色，有层次感 */
+    --color-bg-primary: #0d1117;
+    --color-bg-secondary: rgba(30, 41, 59, 0.55);
+    --color-bg-light: #1e293b;
+    --color-bg-tertiary: #293548;
     --color-bg-opposite: #edf2f7;
     --color-bg-white: #ffffff;
-    --color-bg-dark: #0f0f0f;
+    --color-bg-dark: #0d1117;
     --color-bg-accent: #8b5cf6;
-    --color-inline-code-bg: rgba(139, 92, 246, 0.22);
+    --color-inline-code-bg: rgba(139, 92, 246, 0.18);
 
-    /* 文字颜色 - 更好的对比度 */
-    --color-text-primary: #f8fafc;
-    --color-text-secondary: rgba(148, 163, 184, 0.8);
+    /* 文字颜色 */
+    --color-text-primary: #f1f5f9;
+    /* 行内 code 紫底上勿用 secondary；仅作用于 code 芯片 */
+    --color-inline-code-text: var(--color-text-primary);
+    --color-text-secondary: rgba(148, 163, 184, 0.95);
     --color-text-accent: #a78bfa;
-    --color-text-message: #000000;
+    --color-text-message: #f1f5f9;
 
     /* 边框颜色 - 更细腻的分割线 */
-    --color-border-primary: rgba(255, 255, 255, 0.1);
-    --color-border-secondary: rgba(255, 255, 255, 0.05);
+    --color-border-primary: rgba(148, 163, 184, 0.11);
+    --color-border-secondary: rgba(148, 163, 184, 0.06);
     --color-border-accent: #8b5cf6;
 
     /* 状态颜色 */
@@ -32,7 +36,7 @@
     --color-magenta-800: #7c3aed;
     --color-magenta-900: #5b21b6;
 
-    /* 蓝色系 - 更现代的配色 */
+    /* 蓝色系 */
     --color-blue-400: #dbeafe;
     --color-blue-700: #60a5fa;
     --color-blue-800: #2563eb;
@@ -42,17 +46,18 @@
     --color-gray-700: #374151;
     --color-gray-800: #1f2937;
 
-    /* 渐变色 */
-    --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    --gradient-secondary: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-    --gradient-accent: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-    --gradient-text: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+    /* 渐变色 - 深色主题专用 */
+    --gradient-primary: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    --gradient-secondary: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
+    --gradient-accent: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+    --gradient-text: linear-gradient(135deg, #a78bfa 0%, #60a5fa 50%, #c084fc 100%);
+    --gradient-surface: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.85) 100%);
 
-    /* 阴影 */
-    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
-    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+    /* 阴影 - 更有深度感 */
+    --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.5), 0 1px 2px -1px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.6), 0 2px 4px -2px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.7), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.8), 0 8px 10px -6px rgba(0, 0, 0, 0.6);
 }
 
 .light {
@@ -69,6 +74,7 @@
 
     /* 文字颜色 - 更好的层次感 */
     --color-text-primary: #0f172a;
+    --color-inline-code-text: var(--color-text-primary);
     --color-text-secondary: #64748b;
     --color-text-accent: #7c3aed;
     --color-text-message: #000000;
@@ -126,10 +132,10 @@
     }
 
     .glass-dark {
-        background: rgba(0, 0, 0, 0.2);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(13, 17, 23, 0.6);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(71, 85, 105, 0.5);
     }
 
     /* 渐变背景 */
@@ -651,13 +657,13 @@
     .message-content p,
     .message-content div,
     .message-content span {
-        font-size: 16px !important;
+        font-size: 14px !important;
         line-height: 1.6 !important;
     }
 }
 
 /* Import chat view styles */
-@import "../components/views/chat/chatview.css";
+@import "../pages/chat/chatview.css";
 
 /* Think bubble styles */
 .think-bubble {
@@ -755,7 +761,7 @@ body {
     /* border: 2px solid green; */
     width: 100%;
     height: 100%;
-    font-size: 0.9rem; /* Ensure consistent font size */
+    font-size: 0.8rem; /* Ensure consistent font size */
     font-family: "Segoe UI", "Open Sans", sans-serif;
 }
 

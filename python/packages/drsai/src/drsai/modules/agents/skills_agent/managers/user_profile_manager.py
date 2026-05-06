@@ -75,7 +75,7 @@ class SessionMemory(BaseModel):
 
 class UserProfileManager:
     """
-    管理EdgeAgent用户画像、记忆、技能和偏好设置的文件管理器
+    管理用户画像、记忆、技能和偏好设置的文件管理器
     """
 
     def __init__(
@@ -87,8 +87,9 @@ class UserProfileManager:
             ):
         """
         Args:
-            work_dir: 工作目录根路径
+            work_dir: 工作目录根路径 (Agent Internal Storage)
             user_id: 用户唯一标识
+            thread_id: 会话ID
         """
         
         self.agent_name = agent_name
@@ -221,27 +222,26 @@ The more you know, the better you can help. But remember — you're learning abo
 
 ## Environment Setup
 
-### Working Directory: 
+### Agent Internal Storage (DrSai Workspace)
+This is where DrSai stores its own internal configuration and data. **This is NOT the user's project directory.**
+
+#### Root Directory
     - {self.work_dir}
 
-### Temporary Directory
-    - {self.tmp_dir}
+#### Configuration Files
+    - {self.config_path}/AGENTS.md        # System prompt and agent configuration
+    - {self.config_path}/SUBAGENT_CONFIG.json  # Subagent settings
+    - {self.config_path}/SKILLS.md        # Skill preferences
+    - {self.config_path}/TOOLS.md         # This file
+    - {self.config_path}/TOOLS_CONFIG.json  # Tool configuration
+    - {self.config_path}/USER.md          # User profile description
+    - {self.config_path}/USER_CONFIG.json  # User settings
+    - {self.config_path}/memories/        # Session memories
+    - {self.config_path}/skills/          # User's learned skills
 
-### Download Directory
-    - {self.download_dir}
-
-### Congiguration Files
-    - {self.config_path}/AGENTS.md
-    - {self.config_path}/SUBAGENT_CONFIG.json
-    - {self.config_path}/SKILLS.md
-    - {self.config_path}/TOOLS.md
-    - {self.config_path}/TOOLS_CONFIG.json
-    - {self.config_path}/USER.md
-    - {self.config_path}/USER_CONFIG.json
-
-### Personal Skills and Memory dirs: 
-    - {self.config_path}/skills
-    - {self.config_path}/memories
+### Temporary & Download Directories
+    - {self.tmp_dir}        # For code generation/testing
+    - {self.download_dir}   # For downloaded files
 
 ## Usage Preferences
 [To be learned from user interactions]
@@ -249,10 +249,11 @@ The more you know, the better you can help. But remember — you're learning abo
 ## Frequently Used Tools and Skills
 [To be tracked automatically]
 
-**Note:** 
+**Important Usage Rules:**
 
-- Remember to perform operations such as downloading files in the Download Directory, and avoid interfering with the contents of other configured files.
-- When generating and testing code, if the user does not explicitly specify a folder, it should be created and run in the Temporary Directory.
+- **User's Project Files:** User's code, config, and project files are NOT in the Agent Internal Storage above. They are in the user's project directory (injected via system prompt).
+- **DrSai Internal Files:** The "Agent Internal Storage" is for DrSai's own configuration. Don't modify files there unless explicitly asked.
+- **File Operations:** Download files to the Download Directory. Generate and test code in the Temporary Directory.
 """
         self.tools_md.write_text(content, encoding='utf-8')
 

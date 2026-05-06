@@ -438,10 +438,17 @@ def compress_state(state: Dict[Any, Any]) -> str:
 
 
 def decompress_state(compressed_state: str) -> Dict[Any, Any]:
-    """Decompress base64 encoded string back to state dictionary"""
-    compressed = base64.b64decode(compressed_state.encode("utf-8"))
-    decompressed = zlib.decompress(compressed)
-    return json.loads(decompressed.decode("utf-8"))
+    """Decompress base64 encoded string back to state dictionary.
+    
+    If decompression fails (e.g. the string is a plain JSON string from legacy data),
+    fall back to parsing it directly as JSON.
+    """
+    try:
+        compressed = base64.b64decode(compressed_state.encode("utf-8"))
+        decompressed = zlib.decompress(compressed)
+        return json.loads(decompressed.decode("utf-8"))
+    except Exception:
+        return json.loads(compressed_state)
 
 def auto_worker_address(worker_address, host, port):
     import socket

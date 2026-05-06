@@ -94,8 +94,8 @@ def get_subagent_tools(sub_agents: list[str], description: str, strict: bool = F
         additionalProperties=False,
     )
     tool_schema = ToolSchema(
-        name="Task",
-        description=f"Spawn a subagent for a focused subtask.\n\nAgent types:\n{description}",
+        name="Delegate",
+        description=f"Delegate a subtask to a specialized subagent. Use this when you need focused work by an agent with specific capabilities or domain knowledge.\n\nAvailable agent types:\n{description}",
         parameters=parameters,
         strict=strict,
     )

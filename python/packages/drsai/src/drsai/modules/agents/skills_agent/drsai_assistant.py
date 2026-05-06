@@ -42,7 +42,9 @@ from drsai.modules.components.model_client import ChatCompletionClient, HepAICha
 from drsai.modules.components.model_context import (
     ChatCompletionContext,
     DrSaiChatCompletionContext,
+    DrSaiSQLiteChatCompletionContext
 )
+
 from drsai.modules.components.memory import Memory
 from drsai.modules.components.tool import (
     BaseTool, 
@@ -96,7 +98,7 @@ from .managers.scheduled_task_manager import (
     TaskNotification,
 )
 from .utils.utils import HELP_TEXT
-
+from .managers import ScheduledTask, ScheduleType, TaskStatus
 
 class DrSaiAssistantConfig(DrSaiAgentConfig):
     skills_dir: Optional[str | List[str]]
@@ -111,6 +113,7 @@ class DrSaiAssistantConfig(DrSaiAgentConfig):
     rag_flow_token: str
     memory_dataset_id: str
     learning_dataset_id: str
+    context_type: str  # "ragflow" | "sqlite"
     
 
 class DrSaiAssistant(DrSaiAgent):
@@ -132,39 +135,39 @@ class DrSaiAssistant(DrSaiAgent):
         name: str,
         *,
         model_client: ChatCompletionClient = None,
-        tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
-        workbench: Workbench | None = None,
+        tools: Optional[List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]]] = None,
+        workbench: Optional[Workbench] = None,
         handoffs: List[HandoffBase | str] | None = None,
-        model_context: ChatCompletionContext | None = None,
+        model_context: Optional[ChatCompletionContext] = None,
         description: str = "An agent that provides assistance with ability to use tools.",
         system_message: (
             str | None
         ) = "You are a helpful AI assistant. Solve tasks using your tools. Reply with TERMINATE when the task has been completed.",
         model_client_stream: bool = True,
-        reflect_on_tool_use: bool | None = None,
+        reflect_on_tool_use: Optional[bool] = None,
         tool_call_summary_format: str = "{result}",
-        tool_call_summary_prompt: str| None = None,
-        output_content_type: type[BaseModel] | None = None,
-        output_content_type_format: str | None = None,
-        memory: Sequence[Memory] | None = None,
-        metadata: Dict[str, str] | None = None,
+        tool_call_summary_prompt: Optional[bool] = None,
+        output_content_type: Optional[type[BaseModel]] = None,
+        output_content_type_format: Optional[str] = None,
+        memory: Optional[Sequence[Memory]]= None,
+        metadata:Optional[ Dict[str, str]] = None,
         # drsaiAgent specific
-        memory_function: Callable | None = None,
-        reply_function: Callable | None = None,
-        db_manager: DatabaseManager | None = None,
-        thread_id: str | None = None,
-        user_id: str | None = None,
-        set_model_client: Callable | None = None,
+        memory_function: Optional[Callable] = None,
+        reply_function: Optional[Callable] = None,
+        db_manager: Optional[DatabaseManager] = None,
+        thread_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        set_model_client: Optional[Callable] = None,
         llm_mode_config: Dict = {},
-        defult_config_name: str | None = None,
+        defult_config_name: Optional[str] = None,
         # basic tools and userprofile config
-        work_dir: str | None = None,
+        work_dir: Optional[str] = None,
         only_system_message: bool = False,
-        is_powershell: bool = False,
+        is_powershell: Optional[bool] = None,
         allolow_dangrous_cmd: bool = False,
         allolow_basic_tools: Optional[List[str]] = None,
         only_in_workspace: bool = True,
-        extra_work_dirs: List[str] | None = None,
+        extra_work_dirs: Optional[List[str]] = None,
         # skills, executor, sub_agents
         skills_dir: Optional[str | List[str]] = [],
         executor: CodeExecutor | None = None,
@@ -172,10 +175,12 @@ class DrSaiAssistant(DrSaiAgent):
         # task loop and memory
         max_turn_count: int = 200,
         token_limit: int = 50000,
-        rag_flow_url: str | None = None,
-        rag_flow_token: str | None = None,
-        memory_dataset_id: str | None = None,
-        learning_dataset_id: str| None = None,
+        rag_flow_url: Optional[str] = None,
+        rag_flow_token: Optional[str] = None,
+        memory_dataset_id: Optional[str] = None,
+        learning_dataset_id: Optional[str] = None,
+        # context type selection
+        context_type: str = "sqlite",  # "ragflow" or "sqlite"
     ):
         super().__init__(
             name=name,
@@ -205,6 +210,11 @@ class DrSaiAssistant(DrSaiAgent):
         )
 
         self._developer_system_message = system_message or ""
+
+        # Injected prompt slots (set by inject_system_prompt or /inject command)
+        self._injected_prefix: str = ""
+        self._injected_suffix: str = ""
+        self._project_instructions: str = ""  # 项目级指令 (DRSAI.md/CLAUDE.md)
 
         # === workspace for assistant ===
         if not work_dir:
@@ -239,9 +249,11 @@ Current Session_ID is {self._thread_id}"""
         # === basic tools ===
         self._only_in_workspace = only_in_workspace
         self._extra_work_dirs = extra_work_dirs
-        # self._is_powershell = is_powershell
-        # if _detect_powershell() is not None:
-        #     self._is_powershell = True
+        self._is_powershell = is_powershell
+        if self._is_powershell is None and _detect_powershell():
+            self._is_powershell = True
+        else:
+            self._is_powershell = False
         self._basic_funcs: List[Callable] = get_operator_funcs(
             work_dir, 
             thread_id=self._thread_id,
@@ -264,33 +276,18 @@ Current Session_ID is {self._thread_id}"""
         self._learning_dataset_id = learning_dataset_id or memory_dataset_id
         self._memory_document_id = self._user_profile_manager.get_document_ids(self._thread_id)
         self._learning_document_id = self._user_profile_manager.get_document_ids(self._user_id)
+        
         # memory manager
         model_config = model_client.dump_component()
         independent_model_client = ChatCompletionClient.load_component(model_config)
         independent_model_client._model_info = model_client._model_info
-        self._model_context = DrSaiChatCompletionContext(
-            agent_name=self._user_profile_manager.agent_name,
-            model_client=independent_model_client,
-            user_id=self._user_id,
-            thread_id=self._thread_id,
-            work_dir=self._work_dir,
-            token_limit=self._token_limit,
-            rag_flow_url=self._rag_flow_url,
-            rag_flow_token=self._rag_flow_token,
-            dataset_id=self._memory_dataset_id,
-            document_id=self._memory_document_id,
-            learning_dataset_id=self._learning_dataset_id,
-            learning_document_id=self._learning_document_id,
+        self._model_context = self._create_context(
+            model_context=model_context,
+            context_type=context_type,
+            independent_model_client=independent_model_client,
+            db_manager=db_manager,
         )
-        if not self._model_context._rag_flow_manager:
-            raise ValueError("RAGFlowManager is not initialized in DrSaiChatCompletionContext")
-        funcs = [
-            self._model_context.retrieve_from_memory,
-            self._model_context.summry_conversation_to_memory,
-            self._user_profile_manager.read_session_memory_by_index, # TODO: 后面进行测试修正
-        ]
-        for func in funcs:
-            self._tools.append(FunctionTool(func, description=func.__doc__))
+        self._register_context_tools()
                 
         # === skills ===
         self._skills_dir = skills_dir if isinstance(skills_dir, list) else [skills_dir]
@@ -338,10 +335,91 @@ Current Session_ID is {self._thread_id}"""
         self._cached_tools_prompt: str = ""
         self._cached_skills_loader = None
 
+    def _create_context(
+        self,
+        model_context: Optional[ChatCompletionContext],
+        context_type: str,
+        independent_model_client: ChatCompletionClient,
+        db_manager: Optional[Any] = None,
+    ) -> ChatCompletionContext:
+        """
+        创建或返回 ChatCompletionContext 实例。
+        
+        优先级：
+        1. 如果已传入 model_context，直接使用
+        2. 根据 context_type 创建对应类型的 Context
+        """
+        # 1. 如果已传入 model_context，直接使用
+        if model_context is not None:
+            self._context_type = "custom"
+            return model_context
+        
+        # 2. 根据 context_type 创建
+        if context_type == "sqlite":
+            self._context_type = "sqlite"
+            return DrSaiSQLiteChatCompletionContext(
+                agent_name=self._user_profile_manager.agent_name,
+                model_client=independent_model_client,
+                db_manager=db_manager,
+                thread_id=self._thread_id,
+                user_id=self._user_id,
+                token_limit=self._token_limit,
+            )
+        else:
+            # 默认使用 RAGFlow 上下文
+            self._context_type = "ragflow"
+            return self._create_ragflow_context(independent_model_client)
+
+    def _create_ragflow_context(self, model_client: ChatCompletionClient) -> "DrSaiChatCompletionContext":
+        """创建 RAGFlow ChatCompletionContext"""
+        ctx = DrSaiChatCompletionContext(
+            agent_name=self._user_profile_manager.agent_name,
+            model_client=model_client,
+            user_id=self._user_id,
+            thread_id=self._thread_id,
+            work_dir=self._work_dir,
+            token_limit=self._token_limit,
+            rag_flow_url=self._rag_flow_url,
+            rag_flow_token=self._rag_flow_token,
+            dataset_id=self._memory_dataset_id,
+            document_id=self._memory_document_id,
+            learning_dataset_id=self._learning_dataset_id,
+            learning_document_id=self._learning_document_id,
+        )
+        if not ctx._rag_flow_manager:
+            raise ValueError("RAGFlowManager is not initialized in DrSaiChatCompletionContext")
+        return ctx
+
+    def _register_context_tools(self) -> None:
+        """根据 context 类型注册相应的工具"""
+        # 通用工具：记忆读取（所有 context 都支持）
+        funcs = [
+            self._user_profile_manager.read_session_memory_by_index,  # TODO: 后面进行测试修正
+        ]
+        
+        if hasattr(self._model_context, 'retrieve_from_memory'):
+            funcs.append(self._model_context.retrieve_from_memory)
+        if hasattr(self._model_context, 'summry_conversation_to_memory'):
+            funcs.append(self._model_context.summry_conversation_to_memory)
+        
+        for func in funcs:
+            if func and callable(func):
+                self._tools.append(FunctionTool(func, description=func.__doc__ or str(func)))
+
     def set_task_manager(self, task_manager):
-        """设置定时任务管理器实例"""
+        """设置定时任务管理器实例
+        
+        支持两种类型：
+        - ScheduledTaskManager (本地): 任务在当前进程执行
+        - RemoteScheduledTaskManager (远程): 任务委托给 worker 进程执行
+        """
         self._task_manager = task_manager
         self._scheduled_task_tools = [get_scheduled_task_tool()]
+    
+    def _is_remote_task_manager(self) -> bool:
+        """判断当前 task_manager 是否为远程代理"""
+        from .managers import RemoteScheduledTaskManager
+        return isinstance(self._task_manager, RemoteScheduledTaskManager)
 
     def _format_task_notifications(self, notifications: List[TaskNotification]) -> str:
         """格式化定时任务完成通知"""
@@ -380,7 +458,15 @@ Current Session_ID is {self._thread_id}"""
         )
 
     async def _init_memory_documents(self) -> None:
-        """Initialize learning memory and session documents on first use."""
+        """Initialize learning memory and session documents on first use.
+
+        Only applicable when using RAGFlow-based context (DrSaiChatCompletionContext).
+        SQLite-based context (DrSaiSQLiteChatCompletionContext) doesn't need document initialization.
+        """
+        # Skip document initialization for SQLite context (no RAGFlow)
+        if not hasattr(self._model_context, '_rag_flow_manager') or self._model_context._rag_flow_manager is None:
+            return
+
         if self._user_profile_manager.first_time_setup:
             self._learning_document_id = await self._model_context.create_new_session_document(
                 dataset_id=self._learning_dataset_id, create_type="learning_memory"
@@ -479,13 +565,83 @@ Current Session_ID is {self._thread_id}"""
         return warnings
 
     def update_system_prompt(self, additional_prompt: str = "") -> str:
-        """获取agent描述、用户画像并更新系统消息"""
+        """获取agent描述、用户画像并更新系统消息
+        
+        保持与 inject_system_prompt() 的层级一致：
+            ① prefix          — session级覆盖
+            ② developer_msg   — 硬编码基础提示词
+            ③ user_sys_prompt — 全局用户级 (AGENTS.md)
+            ④ project_instr   — 项目级 (DRSAI.md/CLAUDE.md)
+            ⑤ Session_ID      — 固定标识行
+            ⑥ suffix          — session级覆盖
+            additional_prompt  — 工具提示词（在 ⑥ 之后追加）
+        """
         user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
-        enhanced_system_message = f"""{self._developer_system_message}\n\n{user_sys_prompt}\n
-Current Session_ID is {self._thread_id}"""
-        enhanced_system_message += additional_prompt
+        parts = []
+        if self._injected_prefix:
+            parts.extend([self._injected_prefix, ""])
+        if self._developer_system_message:
+            parts.extend([self._developer_system_message, ""])
+        if user_sys_prompt:
+            parts.extend([user_sys_prompt, ""])
+        if self._project_instructions:
+            parts.extend([self._project_instructions, ""])
+        parts.append(f"Current Session_ID is {self._thread_id}")
+        if self._injected_suffix:
+            parts.extend(["", self._injected_suffix])
+        if additional_prompt:
+            parts.extend(["", additional_prompt])
+        enhanced_system_message = "\n".join(parts).strip()
         self._system_messages = [SystemMessage(content=enhanced_system_message)]
-    
+
+    def inject_system_prompt(
+        self,
+        prefix: str = "",
+        suffix: str = "",
+        project_instructions: Optional[str] = None,
+    ) -> None:
+        """动态注入额外提示词到 system message。
+
+        系统提示词层级（从上到下，越靠后 LLM 越重视）:
+            ① prefix          — session级覆盖 (plan_mode 等)
+            ② developer_msg   — 硬编码基础提示词
+            ③ user_sys_prompt — 全局用户级 (AGENTS.md，来自 workspace)
+            ④ project_instr   — 🆕 项目级 (DRSAI.md/CLAUDE.md，来自 cwd 向上遍历)
+            ⑤ Session_ID      — 固定标识行
+            ⑥ suffix          — session级覆盖 (/inject suffix)
+
+        Args:
+            prefix: 要添加到 system message 开头的前缀提示词
+            suffix: 要添加到 system message 结尾的后缀提示词
+            project_instructions: 项目级指令内容。
+                None 表示保持当前的 _project_instructions 不变（推荐用于
+                只更新 prefix/suffix 的场景，如 /plan_mode、/inject 命令）。
+                空字符串 "" 表示清除项目级指令。
+                非空字符串表示设置新的项目级指令。
+        """
+        self._injected_prefix = prefix
+        self._injected_suffix = suffix
+        # None → 保持不变；"" → 清除；非空 → 设置新值
+        if project_instructions is not None:
+            self._project_instructions = project_instructions
+
+        user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
+
+        parts = []
+        if prefix:
+            parts.extend([prefix, ""])
+        if self._developer_system_message:
+            parts.extend([self._developer_system_message, ""])
+        if user_sys_prompt:
+            parts.extend([user_sys_prompt, ""])
+        if self._project_instructions:
+            parts.extend([self._project_instructions, ""])
+        parts.append(f"Current Session_ID is {self._thread_id}")
+        if suffix:
+            parts.extend(["", suffix])
+
+        self._system_messages = [SystemMessage(content="\n".join(parts).strip())]
+
     def update_user_skills(self) -> Tuple[Optional[SkillLoader], Optional[str]]:
         """加载/更新用户技能
 
@@ -729,7 +885,7 @@ Current Session_ID is {self._thread_id}"""
         try:
             # task completion notifications
             if self._task_manager:
-                notifications:List[TaskNotification] = self._task_manager.get_pending_notifications(self._user_id)
+                notifications: List[TaskNotification] = await self._task_manager.get_pending_notifications(self._user_id)
                 if notifications:
                     yield await self._emit_notification(self._format_task_notifications(notifications))
 
@@ -744,8 +900,8 @@ Current Session_ID is {self._thread_id}"""
             # manager ToolSchema
             manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools
 
-            # count the number of tools
-            if isinstance(self._model_context, DrSaiChatCompletionContext):
+            # count the number of tools (only for DrSaiChatCompletionContext which has _tool_schema)
+            if hasattr(self._model_context, '_tool_schema'):
                 self._model_context._tool_schema = await self._workbench.list_tools()
                 self._model_context._tool_schema += manager_tools
 
@@ -800,10 +956,14 @@ Current Session_ID is {self._thread_id}"""
             # TODO: Update model context with any relevant memory -> When? How?
 
             turn_count = 0
-            max_empty_turn = 3 
+            max_empty_turn = 3
             empty_turn_count = 0
             while turn_count < self._max_turn_count:
-                
+
+                # Sanitize messages to handle orphaned tool results / missing stubs
+                # This prevents tool_call_id mismatches after model switches
+                await self._sanitize_api_messages()
+
                 model_result = None
                 async for inference_output in self._call_llm(
                     model_client=model_client,
@@ -966,37 +1126,57 @@ Current Session_ID is {self._thread_id}"""
                         ])
                     )
 
-            # save/update the conversation to {worker_dir}/memories
-            if isinstance(self._model_context, DrSaiChatCompletionContext):
-                if self._model_context._rag_flow_manager:
-                    await self._model_context.upload_conversation_to_ragflow()
+            # Save conversation on response completion
+            if self._context_type == "ragflow" and hasattr(self._model_context, '_current_messages'):
+                # RAGFlow: background upload + file save
+                current_messages = self._model_context._current_messages
+                history_messages = getattr(self._model_context, '_history_messages', [])
+                rag_manager = getattr(self._model_context, '_rag_flow_manager', None)
+                user_profile_manager = self._user_profile_manager
+
                 self._model_context._current_messages = []
-                current_session_memory = self._model_context._history_messages
-                # TODO: 周期性总结用户的对话，形成一个总结
-                self._user_profile_manager.save_session_memory(current_session_memory)
+
+                async def background_save():
+                    if rag_manager:
+                        try:
+                            await self._model_context.upload_conversation_to_ragflow(current_messages=current_messages)
+                        except Exception as e:
+                            logger.warning(f"RAGFlow upload failed: {e}")
+
+                    if history_messages:
+                        try:
+                            await asyncio.to_thread(user_profile_manager.save_session_memory, history_messages)
+                        except Exception as e:
+                            logger.warning(f"Session save failed: {e}")
+
+                asyncio.create_task(background_save())
+
+            elif self._context_type == "sqlite":
+                # SQLite: flush pending messages to ensure persistence
+                if hasattr(self._model_context, '_flush_to_db'):
+                    self._model_context._flush_to_db()
                 
 
     async def _get_messages_with_compression_notification(
         self,
         model_context: ChatCompletionContext,
         cancellation_token: CancellationToken = None,
-    ) -> AsyncGenerator[Union[List[LLMMessage], AgentLogEvent], None]:
+    ) -> AsyncGenerator[Union[List[LLMMessage], AgentLogEvent, int], None]:
         """
         Get messages from context with compression notification support.
 
         Yields:
             AgentLogEvent: Notification events during compression
             List[LLMMessage]: Final list of messages
+            int: Prompt token count (for usage tracking)
         """
-        if isinstance(model_context, DrSaiChatCompletionContext):
-            # Check if compression is needed
-            messages = list(model_context._messages)
-            token_count = model_context._model_client.count_tokens(
-                messages,
-                tools=model_context._tool_schema
-            )
-
-            if model_context._token_limit and token_count > model_context._token_limit:
+        prompt_tokens = 0
+        
+        # 只有支持 token 计数和压缩的 context 类型才进行压缩检查
+        if hasattr(model_context, '_token_count') and hasattr(model_context, '_token_limit'):
+            prompt_tokens = model_context._token_count
+            
+            if model_context._token_limit and prompt_tokens > model_context._token_limit:
                 # Notify frontend that compression is starting
                 yield AgentLogEvent(
                     source="system",
@@ -1010,7 +1190,7 @@ Current Session_ID is {self._thread_id}"""
                 cancellation_token=cancellation_token
             )
 
-            if model_context._token_limit and token_count > model_context._token_limit:
+            if model_context._token_limit and prompt_tokens > model_context._token_limit:
                 # Notify completion
                 yield AgentLogEvent(
                     source="system",
@@ -1020,9 +1200,11 @@ Current Session_ID is {self._thread_id}"""
                 )
 
             yield all_messages
+            yield prompt_tokens
         else:
             all_messages = await model_context.get_messages()
             yield all_messages
+            yield prompt_tokens
 
     async def _call_llm(
         self,
@@ -1043,11 +1225,15 @@ Current Session_ID is {self._thread_id}"""
 
         # Get messages with compression notification
         all_messages = None
+        prompt_tokens = 0
         async for item in self._get_messages_with_compression_notification(
             model_context, cancellation_token
         ):
             if isinstance(item, list):
                 all_messages = item
+            elif isinstance(item, int):
+                # Get prompt token count from message compression
+                prompt_tokens = item
             else:
                 # Yield notification events
                 yield item
@@ -1074,12 +1260,13 @@ Current Session_ID is {self._thread_id}"""
                 agent_name=agent_name, 
                 cancellation_token=cancellation_token,
                 db_manager=self._db_manager,
+                prompt_tokens=prompt_tokens,  # Pass calculated prompt tokens
             ):
                 # if isinstance(chunk, CreateResult):
                 #     model_result = chunk
                 yield chunk
         else:
-           async for chunk in self.call_llm(
+            async for chunk in self.call_llm(
                 agent_name = agent_name,
                 model_client = model_client,
                 llm_messages = llm_messages, 
@@ -1088,7 +1275,10 @@ Current Session_ID is {self._thread_id}"""
                 cancellation_token = cancellation_token,
                 output_content_type = output_content_type,
            ):
-               yield chunk
+                # Fix CreateResult.usage if prompt_tokens is 0 (API may return 0)
+                if isinstance(chunk, CreateResult) and chunk.usage and chunk.usage.prompt_tokens == 0 and prompt_tokens > 0:
+                    chunk.usage.prompt_tokens = prompt_tokens
+                yield chunk
     
     async def _handle_default_subagent_mode(
         self,
@@ -1443,7 +1633,7 @@ Complete the task and return a clear, concise summary."""
                         content_type="tools"
                     )
                     yield ToolCallSummaryMessage(
-                        content=f"<think>Skill for {arguments['skill']}:\n\n {skill_content}</think>\n",
+                        content=f"Skill for {arguments['skill']}:\n\n {skill_content}\n",
                         source=agent_name,
                     )
                 except Exception as e:
@@ -1491,8 +1681,8 @@ Complete the task and return a clear, concise summary."""
                     # Early return on critical error
                     return
 
-            elif tool_name == "Task":
-                # Subagent Task tool handling
+            elif tool_name == "Delegate":
+                # Subagent delegation tool handling
                 try:
                     description, prompt, sub_agent_name = arguments["description"], arguments["prompt"], arguments["agent_type"]
 
@@ -1611,6 +1801,8 @@ Complete the task and return a clear, concise summary."""
                         )
                         continue
 
+                    is_remote = self._is_remote_task_manager()
+                    tm = self._task_manager
                     operation = arguments.get("operation")
                     result_content = ""
 
@@ -1630,18 +1822,20 @@ Complete the task and return a clear, concise summary."""
                             save_history=arguments.get("save_history", True),
                             execution_context=execution_context,
                         )
-                        task_id = self._task_manager.add_task(task)
+                        task_id = await tm.add_task(task)
                         result_content = f"✅ 定时任务创建成功！\n\n"
                         result_content += f"**任务ID:** `{task_id}`\n"
                         result_content += f"**任务名称:** {task.task_name}\n"
                         result_content += f"**调度类型:** {task.schedule_type}\n"
                         result_content += f"**调度配置:** {task.schedule_config}\n"
                         result_content += f"**下次执行:** {task.next_run}\n"
+                        if is_remote:
+                            result_content += "\n💡 任务在后台 worker 进程中执行，CLI 关闭不影响任务运行。\n"
 
                     elif operation == "list":
                         session_id = arguments.get("session_id")
                         status = TaskStatus(arguments["status"]) if arguments.get("status") else None
-                        tasks = self._task_manager.list_tasks(
+                        tasks = await tm.list_tasks(
                             user_id=self._user_id,
                             session_id=session_id,
                             status=status
@@ -1659,7 +1853,7 @@ Complete the task and return a clear, concise summary."""
 
                     elif operation == "get":
                         task_id = arguments["task_id"]
-                        task = self._task_manager.get_task(task_id)
+                        task = await tm.get_task(task_id)
                         if task is None:
                             result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
                         else:
@@ -1681,7 +1875,7 @@ Complete the task and return a clear, concise summary."""
 
                     elif operation == "delete":
                         task_id = arguments["task_id"]
-                        success = self._task_manager.remove_task(task_id)
+                        success = await tm.remove_task(task_id)
                         if success:
                             result_content = f"✅ 任务已删除(Task deleted successfully): `{task_id}`。\n\n"
                         else:
@@ -1690,19 +1884,19 @@ Complete the task and return a clear, concise summary."""
                     elif operation == "toggle":
                         task_id = arguments["task_id"]
                         enabled = arguments["enabled"]
-                        task = self._task_manager.get_task(task_id)
+                        task = await tm.get_task(task_id)
                         if task is None:
                             result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
                         else:
                             new_status = TaskStatus.ENABLED if enabled else TaskStatus.DISABLED
-                            self._task_manager.update_task_status(task_id, new_status)
+                            await tm.update_task_status(task_id, new_status)
                             result_content = f"✅ 任务已{'启用' if enabled else '禁用'}: `{task_id}`"
                             result_content += f"Task {'enabled' if enabled else 'disabled'} successfully\n\n."
 
                     elif operation == "get_results":
                         task_id = arguments["task_id"]
                         limit = arguments.get("limit", 10)
-                        results = self._task_manager.get_task_results(task_id, limit=limit)
+                        results = await tm.get_task_results(task_id, limit=limit)
                         if not results:
                             result_content = f"任务 `{task_id}` 没有执行历史(No execution history)。\n\n"
                         else:
@@ -1718,9 +1912,20 @@ Complete the task and return a clear, concise summary."""
                     elif operation == "get_outputs":
                         task_id = arguments["task_id"]
                         limit = arguments.get("limit", 10)
-                        outputs = self._task_manager.get_task_outputs(task_id, limit=limit)
+                        outputs = await tm.get_task_outputs(task_id, limit=limit)
                         if not outputs:
                             result_content = f"任务 `{task_id}` 没有输出文件(No output files)。\n\n"
+                        elif is_remote and outputs and outputs[0].get("error"):
+                            # 远程模式下输出文件在 worker 服务器上，无法直接读取
+                            result_content = f"💡 远程模式下，输出文件保存在 worker 服务器上。\n\n"
+                            result_content += f"请通过 worker 的 Web UI 查看，或使用 `get_results` 查看执行摘要。\n\n"
+                            results = await tm.get_task_results(task_id, limit=limit)
+                            if results:
+                                result_content += f"最近执行摘要：\n\n"
+                                for i, res in enumerate(results, 1):
+                                    result_content += f"{i}. **{res.start_time}** — {res.status}\n"
+                                    if res.result_content:
+                                        result_content += f"   结果: {res.result_content[:200]}...\n"
                         else:
                             result_content = f"任务 `{task_id}` 的输出文件（最近 {len(outputs)} 个）：\n\n"
                             for i, output in enumerate(outputs, 1):
@@ -1732,14 +1937,18 @@ Complete the task and return a clear, concise summary."""
 
                     elif operation == "read_output":
                         file_path = arguments["file_path"]
-                        try:
-                            with open(file_path, 'r', encoding='utf-8') as f:
-                                content = f.read()
-                            result_content = f"## 输出文件内容\n\n**文件:** `{file_path}`\n\n---\n\n{content}"
-                        except FileNotFoundError:
-                            result_content = f"❌ 文件不存在(File not found): `{file_path}`\n\n."
-                        except Exception as e:
-                            result_content = f"❌ 读取文件失败(Failed to read file): {str(e)}\n\n."
+                        if is_remote:
+                            result_content = f"❌ 远程模式下不支持直接读取输出文件。\n\n"
+                            result_content += f"输出文件保存在 worker 服务器上，请通过 worker 的 Web UI 查看。\n\n."
+                        else:
+                            try:
+                                with open(file_path, 'r', encoding='utf-8') as f:
+                                    content = f.read()
+                                result_content = f"## 输出文件内容\n\n**文件:** `{file_path}`\n\n---\n\n{content}"
+                            except FileNotFoundError:
+                                result_content = f"❌ 文件不存在(File not found): `{file_path}`\n\n."
+                            except Exception as e:
+                                result_content = f"❌ 读取文件失败(Failed to read file): {str(e)}\n\n."
 
                     else:
                         result_content = f"❌ 未知操作(Unknown operation): {operation}\n\n."
@@ -1811,7 +2020,7 @@ Complete the task and return a clear, concise summary."""
         tool_call_summary = "\n".join(tool_call_summaries)
         yield Response(
                 chat_message=ToolCallSummaryMessage(
-                    content="<think>The results of execution:\n " + tool_call_summary + "</think>\n",
+                    content="The results of execution:\n "+tool_call_summary+"\n",
                     source=agent_name,
                 ),
                 inner_messages=inner_messages,
@@ -2118,8 +2327,7 @@ Complete the task and return a clear, concise summary."""
         处理定时任务管理操作
         """
         try:
-            from .managers import ScheduledTask, ScheduleType, TaskStatus
-
+            
             if self._task_manager is None:
                 error_msg = "定时任务管理器未初始化。请联系管理员(ScheduledTaskManager not initialized.)。\n\n"
                 await model_context.add_message(FunctionExecutionResultMessage(
@@ -2137,6 +2345,8 @@ Complete the task and return a clear, concise summary."""
                 )
                 return
 
+            is_remote = self._is_remote_task_manager()
+            tm = self._task_manager
             operation = argument.get("operation")
             result_content = ""
 
@@ -2157,19 +2367,21 @@ Complete the task and return a clear, concise summary."""
                     save_history=argument.get("save_history", True),
                     execution_context=execution_context,
                 )
-                task_id = self._task_manager.add_task(task)
+                task_id = await tm.add_task(task)
                 result_content = f"✅ 定时任务创建成功！\n\n"
                 result_content += f"**任务ID:** `{task_id}`\n"
                 result_content += f"**任务名称:** {task.task_name}\n"
                 result_content += f"**调度类型:** {task.schedule_type}\n"
                 result_content += f"**调度配置:** {task.schedule_config}\n"
                 result_content += f"**下次执行:** {task.next_run}\n"
+                if is_remote:
+                    result_content += "\n💡 任务在后台 worker 进程中执行，CLI 关闭不影响任务运行。\n"
 
             elif operation == "list":
                 # 列出任务
                 session_id = argument.get("session_id")
                 status = TaskStatus(argument["status"]) if argument.get("status") else None
-                tasks = self._task_manager.list_tasks(
+                tasks = await tm.list_tasks(
                     user_id=self._user_id,
                     session_id=session_id,
                     status=status
@@ -2188,7 +2400,7 @@ Complete the task and return a clear, concise summary."""
             elif operation == "get":
                 # 查询任务详情
                 task_id = argument["task_id"]
-                task = self._task_manager.get_task(task_id)
+                task = await tm.get_task(task_id)
                 if task is None:
                     result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
                 else:
@@ -2211,7 +2423,7 @@ Complete the task and return a clear, concise summary."""
             elif operation == "delete":
                 # 删除任务
                 task_id = argument["task_id"]
-                success = self._task_manager.remove_task(task_id)
+                success = await tm.remove_task(task_id)
                 if success:
                     result_content = f"✅ 任务已删除(Task deleted successfully): `{task_id}`。\n\n"
                 else:
@@ -2221,12 +2433,12 @@ Complete the task and return a clear, concise summary."""
                 # 启用/禁用任务
                 task_id = argument["task_id"]
                 enabled = argument["enabled"]
-                task = self._task_manager.get_task(task_id)
+                task = await tm.get_task(task_id)
                 if task is None:
                     result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
                 else:
                     new_status = TaskStatus.ENABLED if enabled else TaskStatus.DISABLED
-                    self._task_manager.update_task_status(task_id, new_status)
+                    await tm.update_task_status(task_id, new_status)
                     result_content = f"✅ 任务已{'启用' if enabled else '禁用'}: `{task_id}`"
                     result_content += f"Task {'enabled' if enabled else 'disabled'} successfully\n\n."
 
@@ -2234,7 +2446,7 @@ Complete the task and return a clear, concise summary."""
                 # 查询执行历史
                 task_id = argument["task_id"]
                 limit = argument.get("limit", 10)
-                results = self._task_manager.get_task_results(task_id, limit=limit)
+                results = await tm.get_task_results(task_id, limit=limit)
                 if not results:
                     result_content = f"任务 `{task_id}` 没有执行历史(No execution history)。\n\n"
                 else:
@@ -2251,9 +2463,20 @@ Complete the task and return a clear, concise summary."""
                 # 获取输出文件列表
                 task_id = argument["task_id"]
                 limit = argument.get("limit", 10)
-                outputs = self._task_manager.get_task_outputs(task_id, limit=limit)
+                outputs = await tm.get_task_outputs(task_id, limit=limit)
                 if not outputs:
                     result_content = f"任务 `{task_id}` 没有输出文件(No output files)。\n\n"
+                elif is_remote and outputs and outputs[0].get("error"):
+                    # 远程模式下输出文件在 worker 服务器上，无法直接读取
+                    result_content = f"💡 远程模式下，输出文件保存在 worker 服务器上。\n\n"
+                    result_content += f"请通过 worker 的 Web UI 查看，或使用 `get_results` 查看执行摘要。\n\n"
+                    results = await tm.get_task_results(task_id, limit=limit)
+                    if results:
+                        result_content += f"最近执行摘要：\n\n"
+                        for i, res in enumerate(results, 1):
+                            result_content += f"{i}. **{res.start_time}** — {res.status}\n"
+                            if res.result_content:
+                                result_content += f"   结果: {res.result_content[:200]}...\n"
                 else:
                     result_content = f"任务 `{task_id}` 的输出文件（最近 {len(outputs)} 个）：\n\n"
                     for i, output in enumerate(outputs, 1):
@@ -2266,14 +2489,18 @@ Complete the task and return a clear, concise summary."""
             elif operation == "read_output":
                 # 读取输出文件
                 file_path = argument["file_path"]
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    result_content = f"## 输出文件内容\n\n**文件:** `{file_path}`\n\n---\n\n{content}"
-                except FileNotFoundError:
-                    result_content = f"❌ 文件不存在(File not found): `{file_path}`\n\n."
-                except Exception as e:
-                    result_content = f"❌ 读取文件失败(Failed to read file): {str(e)}\n\n."
+                if is_remote:
+                    result_content = f"❌ 远程模式下不支持直接读取输出文件。\n\n"
+                    result_content += f"输出文件保存在 worker 服务器上，请通过 worker 的 Web UI 查看。\n\n."
+                else:
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        result_content = f"## 输出文件内容\n\n**文件:** `{file_path}`\n\n---\n\n{content}"
+                    except FileNotFoundError:
+                        result_content = f"❌ 文件不存在(File not found): `{file_path}`\n\n."
+                    except Exception as e:
+                        result_content = f"❌ 读取文件失败(Failed to read file): {str(e)}\n\n."
 
             else:
                 result_content = f"❌ 未知操作(Unknown operation): {operation}\n\n."
