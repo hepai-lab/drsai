@@ -264,7 +264,10 @@ detailed instructions and access to resources.""",
         )
         tool_schema = ToolSchema(
             name="Task",
-            description=f"Spawn a subagent for a focused subtask.\n\nAgent types:\n{self._subagent_descriptions}",
+            description=f"""Spawn a subagent for a focused subtask.
+
+Agent types:
+{self._subagent_descriptions}""",
             parameters=parameters,
             strict=strict,
         )
@@ -436,7 +439,7 @@ detailed instructions and access to resources.""",
                         skill_content = self._skills_loader.run_skill(argument["skill"])
                         await model_context.add_message(
                             UserMessage(
-                                content=f"Skill for {argument["skill"]}: {skill_content}",
+                                content=f'Skill for {argument["skill"]}: {skill_content}',
                                 source="user",
                             )
                         )
@@ -475,7 +478,7 @@ detailed instructions and access to resources.""",
                     else:
                         await model_context.add_message(
                             UserMessage(
-                                content=f"Unknown tool: {argument["name"]}",
+                                content=f'Unknown tool: {argument["name"]}',
                                 source="user",
                             )
                         )
@@ -638,12 +641,12 @@ detailed instructions and access to resources.""",
             
             # construct task messages
             task_messages: Sequence[BaseChatMessage] = []
-            task_messages.append(TextMessage(content=f"Current task: \n\n{prompt}", source="user"))
+            task_messages.append(TextMessage(content=f"Current task: " + "\n\n" + f"{prompt}", source="user"))
             llm_messages = await model_context.get_messages()
             backgroud_message = "Below are the historical chat records between the user and various intelligent assistants, which can be referenced when executing the current task.\n\n"
             for llm_message in llm_messages:
                 if isinstance(llm_message, UserMessage) or isinstance(llm_message, AssistantMessage):
-                    backgroud_message += f"{llm_message.source}: {llm_message.content}\n\n"
+                    backgroud_message += f"{llm_message.source}: {llm_message.content}" + "\n\n"
             task_messages.append(TextMessage(content=backgroud_message, source="user"))
 
             #  TODO: handle turn count fro multi-turn task.
