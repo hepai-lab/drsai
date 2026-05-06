@@ -290,7 +290,13 @@ Current Session_ID is {self._thread_id}"""
         self._register_context_tools()
                 
         # === skills ===
-        self._skills_dir = skills_dir if isinstance(skills_dir, list) else [skills_dir]
+        # 将 skills_dir 规范化为非空字符串列表，过滤掉 None/空字符串
+        if isinstance(skills_dir, list):
+            self._skills_dir = [d for d in skills_dir if d]
+        elif skills_dir:
+            self._skills_dir = [skills_dir]
+        else:
+            self._skills_dir = []
         if self._user_profile_manager.first_time_setup and self._skills_dir:
             dst_root = self._user_profile_manager.skills_dir
             for src_dir in self._skills_dir:
