@@ -19,7 +19,7 @@ DATASET.mkdir(parents=True, exist_ok=True)
 if __name__ == "__main__":
     ui(
         # reload=True,
-        port=8086,
+        port=8081,
         appdir=DATASET,
         database_uri= f"sqlite:////{DATASET}/drsai_ui.db",
     )

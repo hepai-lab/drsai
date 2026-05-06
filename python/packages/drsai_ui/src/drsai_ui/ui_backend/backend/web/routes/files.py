@@ -8,6 +8,7 @@ from fastapi import (
     Request,
     HTTPException,
     )
+from fastapi.responses import FileResponse
 # from fastapi.responses import FileResponse, HTMLResponse
 import uuid
 from dotenv import load_dotenv
@@ -64,22 +65,26 @@ async def upload_files(
 
         # 保存文件到本地
         for file in files:
-            
-            # 首先判断文件大小是否超过了10MB
-            if file.size > 10485760:
-                raise HTTPException(status_code=413, detail="单个文件大小不能超过10MB，需要使用知识库进行上传：https://ragflow.ihep.ac.cn(Size limit exceeded 10MB)")
-            
             file_path = os.path.join(userfiles_path, file.filename)
             file_id = str(uuid.uuid4())
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
+
+            # Starlette UploadFile.size 在部分客户端下可能为 None，以落盘后的实际大小为准
+            byte_size = file.size if file.size is not None else os.path.getsize(file_path)
+            if byte_size > 10485760:
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+                raise HTTPException(status_code=413, detail="单个文件大小不能超过10MB，需要使用知识库进行上传：https://ragflow.ihep.ac.cn(Size limit exceeded 10MB)")
             
             files_info[file_id] = {
                 "name": file.filename,
                 "type": file.content_type,
                 "path": file_path,
                 "suffix": os.path.splitext(file.filename)[1],
-                "size": file.size,
+                "size": byte_size,
                 "uuid": file_id,
             }
 
@@ -115,22 +120,42 @@ async def upload_files(
         # Clean up session if run creation failed
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-# @router.get("/")
-# async def get_user_files(user_id: str, db=Depends(get_db)) -> Dict:
-#     """
-#     检索用户上传的文件列表
-#     """
-#     response = db.get(UserFiles, filters={"user_id": user_id})
-#     if not response.status or not response.data:
-#         return {"status": False, "data": {}}
-#     else:
-#         # 处理多个session
-#         user_files = {}
-#         for files_i in response.data:
-#             if "files" in files_i:
-#                 user_files.update(files_i["files"])
+@router.get("/download/{file_uuid}")
+async def download_user_file(file_uuid: str, user_id: str, db=Depends(get_db)) -> FileResponse:
+    """Download a file previously uploaded by the user (local disk path)."""
+    response = db.get(UserFiles, filters={"user_id": user_id})
+    if not response.status or not response.data:
+        raise HTTPException(status_code=404, detail="No files for user")
+    userfiles: UserFiles = response.data[0]
+    if not userfiles.files or file_uuid not in userfiles.files:
+        raise HTTPException(status_code=404, detail="File not found")
+    info = userfiles.files[file_uuid]
+    path = info.get("path")
+    name = info.get("name") or "download"
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File missing on disk")
+    return FileResponse(path, filename=name, media_type=info.get("type") or "application/octet-stream")
 
-#         return {"status": True, "data": response.data[0]["files"]}
+
+@router.delete("/item/{file_uuid}")
+async def delete_user_file(file_uuid: str, user_id: str, db=Depends(get_db)) -> Dict:
+    """Remove one file from the user's library and delete it from disk if present."""
+    response = db.get(UserFiles, filters={"user_id": user_id})
+    if not response.status or not response.data:
+        raise HTTPException(status_code=404, detail="No files for user")
+    userfiles: UserFiles = response.data[0]
+    if not userfiles.files or file_uuid not in userfiles.files:
+        raise HTTPException(status_code=404, detail="File not found")
+    info = userfiles.files.pop(file_uuid)
+    path = info.get("path")
+    if path and os.path.isfile(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    db.upsert(userfiles)
+    return {"status": True, "data": {"uuid": file_uuid}}
+
 
 @router.get("/{session_id}")
 async def get_user_session_files(session_id: str, user_id: str, db=Depends(get_db)) -> Dict:
@@ -144,6 +169,6 @@ async def get_user_session_files(session_id: str, user_id: str, db=Depends(get_d
         userfiles: UserFiles = response.data[0]
         if userfiles.files:
             files_list = [userfiles.files[file] for file in userfiles.files]
-            return {"status": False, "data": files_list}
+            return {"status": True, "data": files_list}
 
-        return {"status": False, "data": {}}
+        return {"status": True, "data": []}

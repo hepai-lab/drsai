@@ -19,6 +19,7 @@ export interface GeneralConfig {
   websurfer_loop: boolean;
   model_configs?: string;
   model_name?: string;
+  default_agent_id?: string;
   retrieve_relevant_plans: "never" | "hint" | "reuse"; // this is for using task centric memory to retrieve relevant plans
 }
 
@@ -100,7 +101,23 @@ export const useSettingsStore = create<SettingsState>()(
       {
           name: "drsai_settings",
           storage: createJSONStorage(() => localStorage),
-          partialize: (state: SettingsState) => ({ config: state.config }),
+          // 旧版 localStorage 可能没有 version，migrate 不会跑；merge 在每次恢复时都会执行
+          merge: (persistedState, currentState) => {
+              const p = persistedState as { config?: GeneralConfig } | null | undefined;
+              const mergedConfig = {
+                  ...currentState.config,
+                  ...p?.config,
+              };
+              if (mergedConfig && "default_agent_id" in mergedConfig) {
+                  const { default_agent_id: _d, ...rest } = mergedConfig;
+                  return { ...currentState, config: rest as GeneralConfig };
+              }
+              return { ...currentState, config: mergedConfig };
+          },
+          partialize: (state: SettingsState) => {
+              const { default_agent_id: _d, ...config } = state.config;
+              return { config };
+          },
       }
   )
 );

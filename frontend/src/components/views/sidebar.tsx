@@ -48,7 +48,6 @@ interface SidebarProps {
   activeSubMenuItem: string;
   onSubMenuChange: (tabId: string) => void;
   onStopSession: (sessionId: number) => void;
-  onLogoClick?: () => void;
   agents?: Agent[];
   selectedAgent?: Partial<Agent> | null;
   onAgentClick?: (agent: Agent) => void;
@@ -68,7 +67,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeSubMenuItem,
   onSubMenuChange,
   onStopSession,
-  onLogoClick,
   agents = [],
   selectedAgent,
   onAgentClick,
@@ -170,11 +168,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return (
           <div key={s.id} className="relative mb-0.5">
             <div
-              className={`group flex items-center justify-between pl-1 py-1.5 rounded-lg transition-all duration-200 ${isLoading
+              className={`group flex items-center justify-between pl-1 py-1.5 rounded-xl transition-all duration-200 ${isLoading
                 ? "pointer-events-none opacity-50"
-                : "cursor-pointer hover:bg-tertiary/20"
+                : "cursor-pointer hover:bg-tertiary/25"
                 } ${currentSession?.id === s.id
-                  ? ""
+                  ? darkMode === "dark"
+                    ? "bg-accent/10"
+                    : "bg-violet-50"
                   : ""
                 }`}
               onClick={() => !isLoading && onSelectSession(s)}
@@ -182,7 +182,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="flex items-center gap-2 flex-1 min-w-0">
                 <div className={`rounded-full flex-shrink-0`} />
                 {currentSession?.id === s.id && (
-                  <div className="w-[3px] h-4 bg-[#851fe773] rounded-full"></div>
+                  <div className="w-[3px] h-4 bg-accent/70 rounded-full flex-shrink-0"></div>
                 )}
                 <div className="session-title-container">
                   <Tooltip
@@ -191,7 +191,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     mouseEnterDelay={0.5}
                   >
                     <span
-                      className={`text-sm font-medium session-title !inline-flex items-center gap-1.5  ${s.id && sessionRunStatuses[s.id] ? 'session-title-with-status' : ''
+                      className={`text-sm session-title !inline-flex items-center gap-1.5 ${
+                        currentSession?.id === s.id ? "font-semibold text-accent" : "font-medium"
+                      } ${s.id && sessionRunStatuses[s.id] ? 'session-title-with-status' : ''
                         }`}
                     >
                       {s.name}
@@ -326,14 +328,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
 
     return (
-      <div className={`h-full flex flex-col ${darkMode === "dark" ? "bg-[#0f0f0f]" : "bg-gray-50/90"}`}>
+      <div className="h-full flex flex-col bg-transparent">
         {/* 固定头部 */}
         <div className="flex-shrink-0 p-3">
           <div className="flex items-center justify-between mb-2">
             {/* Logo */}
             <div
-              className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity flex-shrink-0"
-              onClick={onLogoClick}
+              className="flex items-center gap-2 flex-shrink-0"
             >
               <img
                 src="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview"
@@ -446,9 +447,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <button
                           type="button"
                           onClick={() => onAgentClick && onAgentClick(agent)}
-                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors duration-150 ${isSelected
-                            ? "bg-accent/10 text-accent hover:bg-accent/15 dark:bg-accent/15 dark:hover:bg-accent/20"
-                            : "text-secondary hover:text-primary hover:bg-tertiary/20"
+                          className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-all duration-150 ${isSelected
+                            ? darkMode === "dark"
+                              ? "bg-accent/15 text-accent shadow-sm"
+                              : "bg-violet-50 text-accent shadow-sm"
+                            : "text-secondary hover:text-primary hover:bg-tertiary/25"
                             }`}
                         >
                           {agent.logo ? (
@@ -562,7 +565,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="mb-3">
               <Tooltip title="Create new session">
                 <Button
-                  className="w-full bg-[#7c0fe4bf] hover:bg-accent/90 !shadow-none !text-base !font-normal"
+                  className={`w-full !shadow-none !font-medium !rounded-xl !text-sm ${
+                    darkMode === "dark"
+                      ? "!bg-violet-600/80 hover:!bg-violet-600 !text-white"
+                      : "!bg-violet-600 hover:!bg-violet-700 !text-white"
+                  }`}
                   variant="primary"
                   size="xs"
                   icon={<Plus className="w-4 h-4" />}
@@ -582,47 +589,43 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             {sortedSessions.length === 0 ? (
               <div className="p-6 text-center">
-                <div className="w-12 h-12 rounded-2xl bg-tertiary/30 flex items-center justify-center mx-auto mb-3">
-                  <InfoIcon className="w-6 h-6 text-secondary" />
+                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3 ${
+                  darkMode === "dark" ? "bg-white/5" : "bg-violet-50 border border-violet-100"
+                }`}>
+                  <InfoIcon className="w-5 h-5 text-secondary" />
                 </div>
-                <p className="text-secondary text-sm">No recent sessions found</p>
-                <p className="text-secondary/60 text-xs mt-1">Create a new session to get started</p>
+                <p className="text-secondary text-sm font-medium">No recent sessions</p>
+                <p className="text-secondary/50 text-xs mt-1">Create a new session to get started</p>
               </div>
             ) : (
               <>
                 {groupedSessions.today.length > 0 && (
                   <div>
-                    <div className="py-1 text-xs text-secondary">Today</div>
+                    <div className="py-1 px-1 text-[10px] font-semibold uppercase tracking-widest text-secondary/60">Today</div>
                     {renderSessionGroup(groupedSessions.today)}
                   </div>
                 )}
                 {groupedSessions.yesterday.length > 0 && (
-                  <div>
-                    <div className="py-1 text-xs text-secondary">
-                      Yesterday
-                    </div>
+                  <div className="mt-2">
+                    <div className="py-1 px-1 text-[10px] font-semibold uppercase tracking-widest text-secondary/60">Yesterday</div>
                     {renderSessionGroup(groupedSessions.yesterday)}
                   </div>
                 )}
                 {groupedSessions.last7Days.length > 0 && (
-                  <div>
-                    <div className="py-1 text-xs text-secondary">
-                      Last 7 Days
-                    </div>
+                  <div className="mt-2">
+                    <div className="py-1 px-1 text-[10px] font-semibold uppercase tracking-widest text-secondary/60">Last 7 Days</div>
                     {renderSessionGroup(groupedSessions.last7Days)}
                   </div>
                 )}
                 {groupedSessions.last30Days.length > 0 && (
-                  <div>
-                    <div className="py-1 text-xs text-secondary">
-                      Last 30 Days
-                    </div>
+                  <div className="mt-2">
+                    <div className="py-1 px-1 text-[10px] font-semibold uppercase tracking-widest text-secondary/60">Last 30 Days</div>
                     {renderSessionGroup(groupedSessions.last30Days)}
                   </div>
                 )}
                 {groupedSessions.older.length > 0 && (
-                  <div>
-                    <div className="py-1 text-xs text-secondary">Older</div>
+                  <div className="mt-2">
+                    <div className="py-1 px-1 text-[10px] font-semibold uppercase tracking-widest text-secondary/60">Older</div>
                     {renderSessionGroup(groupedSessions.older)}
                   </div>
                 )}
@@ -633,7 +636,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* 用户菜单 - 固定在底部 */}
         {user && (
-          <div className="flex-shrink-0 p-3 border-t border-border-primary/20">
+          <div className={`flex-shrink-0 p-3 ${darkMode === "dark" ? "" : "border-t border-gray-200/60"}`}>
             <Dropdown
               trigger={["click"]}
               menu={{
@@ -668,7 +671,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
               placement="topLeft"
             >
               <button
-                className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full text-left text-secondary hover:text-accent hover:bg-tertiary/20"
+                className={`flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all w-full text-left ${
+                  darkMode === "dark"
+                    ? "text-secondary hover:text-accent hover:bg-white/5"
+                    : "text-secondary hover:text-accent hover:bg-violet-50"
+                }`}
               >
                 <div className="flex items-center justify-center w-5 h-5">
                   {user.avatar_url ? (

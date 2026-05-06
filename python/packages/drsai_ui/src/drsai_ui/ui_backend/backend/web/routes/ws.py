@@ -14,6 +14,42 @@ from ...utils.utils import construct_task
 router = APIRouter()
 
 
+def _enrich_input_response_with_files(
+    response: str | dict | None, metadata: dict | None
+) -> dict | None:
+    """
+    Mirror start/continue: run construct_task so metadata gets attached_files (echo + parity).
+    Keeps metadata[\"files\"] so the agent runtime can still expand paths downstream.
+    """
+    if not metadata or not isinstance(metadata, dict):
+        return metadata
+    files_list = metadata.get("files") or []
+    if not files_list:
+        return metadata
+    query = ""
+    if isinstance(response, str):
+        try:
+            inner = json.loads(response)
+            if isinstance(inner, dict):
+                query = str(inner.get("content", "") or "")
+        except (json.JSONDecodeError, TypeError):
+            query = ""
+    elif isinstance(response, dict):
+        query = str(response.get("content", "") or "")
+    md_for_task = {k: v for k, v in metadata.items() if k != "files"}
+    try:
+        msgs = construct_task(query=query, files=files_list, metadata=md_for_task)
+        if msgs:
+            last = msgs[-1]
+            lm = getattr(last, "metadata", None) or {}
+            att = lm.get("attached_files")
+            if att:
+                metadata["attached_files"] = att
+    except Exception as e:
+        logger.exception(f"input_response construct_task failed: {e}")
+    return metadata
+
+
 @router.websocket("/runs/{run_id}")
 async def run_websocket(
     websocket: WebSocket,
@@ -60,7 +96,7 @@ async def run_websocket(
                     start_metadata: dict = message.get("metadata")
                     team_config = start_metadata.pop("team_config")
                     settings_config = start_metadata.pop("settings_config")
-                    files = start_metadata.pop("files")
+                    files = start_metadata.pop("files", [])
                     task = construct_task(
                         query=task, 
                         files=files,
@@ -71,7 +107,7 @@ async def run_websocket(
                         # await ws_manager.start_stream(run_id, task, team_config)
                         asyncio.create_task(
                             ws_manager.start_stream(
-                                run_id, task, team_config, settings_config, files=message.get("files")
+                                run_id, task, team_config, settings_config, files=files
                             )
                         )
                     else:
@@ -99,13 +135,9 @@ async def run_websocket(
                     # Handle input response from client
                     response = message.get("response")
                     metadata = message.get("metadata")
-                    # files = metadata.get("files")
-                    # settings_config = metadata.get("settings_config")
-                    # if files or settings_config:
-                    #     response = {
-                    #         "response": response, 
-                    #         "attached_files": json.dumps(files),
-                    #         "settings_config": json.dumps(settings_config), }
+                    if isinstance(metadata, dict):
+                        metadata = dict(metadata)
+                        _enrich_input_response_with_files(response, metadata)
                     if metadata:
                         response = {
                             "response": response,
