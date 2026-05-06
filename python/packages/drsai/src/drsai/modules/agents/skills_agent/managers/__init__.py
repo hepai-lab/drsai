@@ -11,6 +11,7 @@ from .scheduled_task_manager import (
     ScheduleType,
     TaskStatus,
 )
+from .remote_scheduled_task_manager import RemoteScheduledTaskManager
 from .get_managers_tools import (
     create_local_venv,
     get_agent_skills_tool,

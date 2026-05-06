@@ -120,7 +120,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         "fast",
-        "Switch to the fastest alias in the llm_mode_config",
+        "Switch to the fastest alias in the llm_mode_config (session-local)",
         "Display",
         args_hint="on|off",
     ),
@@ -134,10 +134,17 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         "model",
-        "Show/switch model or show model details: /model [name|info]",
+        "Show/switch model (session-local) or show model details: /model [name|info]",
         "Configuration",
         args_hint="[name|info]",
         aliases=("m",),
+    ),
+    CommandDef(
+        "model_global",
+        "Switch model for current session AND save as global default",
+        "Configuration",
+        args_hint="[name]",
+        aliases=("mg",),
     ),
     CommandDef(
         "models",
@@ -161,9 +168,16 @@ COMMAND_REGISTRY: list[CommandDef] = [
     # ── Plan / Prompt ────────────────────────────────────────────────────────
     CommandDef(
         "plan_mode",
-        "Enable/disable plan mode (AI interviews you before acting)",
+        "Enable/disable plan mode (session-local)",
         "Plan",
         aliases=("pm",),
+        args_hint="on|off|status",
+    ),
+    CommandDef(
+        "pm_global",
+        "Enable/disable plan mode (session + global default)",
+        "Plan",
+        aliases=("pmg",),
         args_hint="on|off|status",
     ),
     CommandDef(
@@ -171,6 +185,19 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Inject custom prompts into system message",
         "Plan",
         args_hint="prefix|suffix|clear|status",
+    ),
+
+    # ── Project Instructions ──────────────────────────────────────────────
+    CommandDef(
+        "init",
+        "Create DRSAI.md project instructions file (Claude Code /init equivalent)",
+        "Project",
+    ),
+    CommandDef(
+        "memory",
+        "View/reload project-level instructions (DRSAI.md / CLAUDE.md)",
+        "Project",
+        args_hint="show|reload|status",
     ),
 
     # ── Meta ─────────────────────────────────────────────────────────────────
@@ -211,7 +238,7 @@ def resolve_command(name: str) -> Optional[CommandDef]:
 
 def commands_by_category() -> dict[str, list[CommandDef]]:
     """Return commands grouped by category, in fixed category order."""
-    order = ["Session", "Display", "Configuration", "Plan", "Info"]
+    order = ["Session", "Display", "Configuration", "Plan", "Project", "Info"]
     groups: dict[str, list[CommandDef]] = {cat: [] for cat in order}
     for cmd in COMMAND_REGISTRY:
         if cmd.category in groups:

@@ -17,10 +17,11 @@ import json
 import os
 import sys
 import uuid
-from typing import Optional
+from typing import Optional,Any
 
 import typer
 from loguru import logger
+from prompt_toolkit.patch_stdout import patch_stdout
 
 from drsai.configs.constant import APPNAME, VERSION
 from drsai.backend.cli import config as cli_config
@@ -30,6 +31,7 @@ from drsai.backend.cli.commands import format_help, resolve_command
 from drsai.backend.cli.history import CLISessionStore
 from drsai.backend.cli.prompt import DrSaiPrompt
 from drsai.backend.cli.renderer import DrSaiCLIRenderer
+from drsai.backend.cli.theme import ansi, ansi_reset
 from drsai.backend.cli.stats import SessionStats
 
 # ── Hermes-style TUI Integration ────────────────────────────────────────────
@@ -80,14 +82,14 @@ async def _handle_interrupt(agent, *, set_exit_flag: bool = False) -> bool:
         True: 已处理中断，可以继续输入
         False: 需要退出 REPL
     """
-    print("\n  \033[33m⚠ 正在中断当前命令...\033[0m")
+    print(f"\n  {ansi('notify_warn')}⚠ 正在中断当前命令...{ansi_reset()}")
 
     if agent is not None:
         try:
             await agent.pause()
             await asyncio.sleep(0.1)
             await agent.resume()
-            print("  \033[32m✓ 已中断，状态已重置\033[0m")
+            print(f"  {ansi('notify_ok')}✓ 已中断，状态已重置{ansi_reset()}")
 
             if set_exit_flag:
                 print("  按 Enter 继续，或再次 Ctrl+C 退出\n")
@@ -100,7 +102,7 @@ async def _handle_interrupt(agent, *, set_exit_flag: bool = False) -> bool:
 
         except Exception as e:
             logger.warning(f"Failed to pause/resume agent: {e}")
-            print(f"  \033[31m✗ 中断时出错: {e}\033[0m\n")
+            print(f"  {ansi('notify_error')}✗ 中断时出错: {e}{ansi_reset()}\n")
             return True  # 继续尝试
 
     # 无 agent，运行中的任务已取消
@@ -450,7 +452,7 @@ async def _run_repl(cfg: dict):
         existing = store.resolve(current_session_id)
         if existing:
             current_session_id = existing.thread_id
-            print(f"  Resuming: \033[33m{existing.name}\033[0m [{current_session_id[:8]}] (workdir: {current_workdir})")
+            print(f"  Resuming: {ansi('notify_info')}{existing.name}{ansi_reset()} [{current_session_id[:8]}] (workdir: {current_workdir})")
         else:
             # Session was deleted, create new one
             current_session_id = None
@@ -462,7 +464,7 @@ async def _run_repl(cfg: dict):
             session_name = "default"
         current_session_id = store.create(name=session_name, workdir=current_workdir)
         cli_config.set_workdir_session(current_workdir, current_session_id)
-        print(f"  New session: \033[33m{session_name}\033[0m [{current_session_id[:8]}] (workdir: {current_workdir})")
+        print(f"  New session: {ansi('notify_info')}{session_name}{ansi_reset()} [{current_session_id[:8]}] (workdir: {current_workdir})")
 
     # ── Agent lifecycle ─────────────────────────────────────────────────────
     agent: Optional[DrSaiCLIAssistant] = None
@@ -562,9 +564,90 @@ async def _run_repl(cfg: dict):
     try:
         agent = await _init_agent(current_session_id)
     except Exception as e:
-        print(f"  \033[31mFailed to initialize agent:\033[0m {e}")
+        print(f"  {ansi('notify_error')}Failed to initialize agent:{ansi_reset()} {e}")
         print("  Check your environment / config.")
         return
+
+    # ── Load project-level instructions (DRSAI.md / CLAUDE.md) ────────────
+    from drsai.backend.cli.drsaimd_loader import load_project_instructions
+
+    # 只在全新 session 或没有从 load_state 恢复项目指令时才加载
+    existing_project_instr = getattr(agent, '_project_instructions', '') or ''
+    if not existing_project_instr:
+        project_instructions, loaded_paths = load_project_instructions(str(Path.cwd()))
+        if project_instructions:
+            # 注入项目指令到 system prompt 的 project_instructions 层
+            prefix = getattr(agent, '_injected_prefix', '') or ''
+            suffix = getattr(agent, '_injected_suffix', '') or ''
+            agent.inject_system_prompt(
+                prefix=prefix,
+                suffix=suffix,
+                project_instructions=project_instructions,
+            )
+            # 显示加载信息
+            for p in loaded_paths:
+                short_path = Path(p).name if Path(p).parent == Path.cwd() else str(Path(p).relative_to(Path.cwd())) if Path.cwd() in Path(p).parents else p
+                print(f"  {ansi('notify_ok')}✓ Project instructions loaded: {short_path}{ansi_reset()}")
+            # 保存状态以持久化项目指令
+            state_dict = await agent.save_state()
+            await _save_thread_state(current_session_id, state_dict)
+    else:
+        # 从 session state 恢复的项目指令
+        logger.info(f"Project instructions restored from session state ({len(existing_project_instr)} chars)")
+
+    # ── ✅ 定时任务 + 通知推送（远程 worker 模式）───────────────────────────
+    # 当配置了 worker URL 时，定时任务委托给后台 worker 进程，
+    # CLI 后台轮询 /notifications 接口，有通知时打印到终端。
+    _notification_poller_task: Optional[asyncio.Task] = None
+    _remote_task_manager: Optional[Any] = None
+
+    worker_url = cfg.get("url")  # 如 "http://localhost:42858/apiv2"
+    if worker_url:
+        from drsai.modules.agents.skills_agent.managers import RemoteScheduledTaskManager
+
+        # 构造远程 task_manager 代理
+        remote_api_key = cfg.get("api_key") or os.environ.get("HEPAI_API_KEY", "")
+        _remote_task_manager = RemoteScheduledTaskManager(
+            worker_url=worker_url,
+            api_key=remote_api_key,
+        )
+
+        # 注入到 agent（让 ScheduledTaskManager tool 可以使用远程 API）
+        if hasattr(agent, "set_task_manager"):
+            agent.set_task_manager(_remote_task_manager)
+            print(f"  {ansi('notify_ok')}✓ 定时任务已连接到 worker: {worker_url}{ansi_reset()}")
+
+        # ✅ 后台轮询通知
+        async def _notification_poller():
+            """每 30 秒轮询 worker 的 /notifications 接口，有通知时打印到终端"""
+            poll_interval = 30
+            while True:
+                try:
+                    await asyncio.sleep(poll_interval)
+                    notifications = await _remote_task_manager.get_pending_notifications(user_id)
+                    if notifications:
+                        for n in notifications:
+                            status_icon = {"success": "✅", "error": "❌", "timeout_partial": "⏱️"}.get(n.status, "❓")
+                            status_text = {
+                                "success": "成功",
+                                "error": "失败",
+                                "timeout_partial": "超时(部分结果已保存)",
+                            }.get(n.status, n.status)
+                            color = ansi('notify_ok') if n.status == "success" else ansi('notify_error')
+                            print(f"\n  {color}{status_icon} 定时任务通知: {n.task_name} — {status_text} ({n.timestamp}){ansi_reset()}")
+                            if n.summary:
+                                print(f"    {ansi('system_info')}{n.summary}{ansi_reset()}")
+                        # 通知已由 worker 端 get_pending_notifications 清除
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.debug(f"Notification poller error: {e}")
+
+        _notification_poller_task = asyncio.create_task(_notification_poller(), name="notification_poller")
+        print(f"  {ansi('notify_ok')}✓ 通知轮询已启动 (每30秒){ansi_reset()}")
+    else:
+        # 无 worker URL：本地模式，暂不支持定时任务推送
+        print(f"  {ansi('system_info')}ℹ 定时任务推送需要 worker 后端 (配置 --url){ansi_reset()}")
 
     # ── Auto-activate plan mode if configured ──────────────────────────────
     PLAN_MODE_PROMPT = """Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
@@ -575,8 +658,14 @@ If a question can be answered by exploring the codebase, explore the codebase in
 
     if cfg.get("plan_mode", False):
         if hasattr(agent, "inject_system_prompt"):
-            agent.inject_system_prompt(prefix=PLAN_MODE_PROMPT)
-            print("  \033[1;36m⚡ Plan mode auto-enabled (from config)\033[0m")
+            # Only inject from global config if agent doesn't already have
+            # a prefix from a restored session state (load_state)
+            existing_prefix = getattr(agent, '_injected_prefix', "") or ""
+            if not existing_prefix:
+                agent.inject_system_prompt(prefix=PLAN_MODE_PROMPT)
+                print(f"  {ansi('notify_ok')}⚡ Plan mode auto-enabled (from config){ansi_reset()}")
+            else:
+                print(f"  {ansi('notify_ok')}⚡ Plan mode restored (from session state){ansi_reset()}")
 
     # ── Runtime state (renderer, stats, prompt) ─────────────────────────────
     stats = SessionStats(show_footer=True, ring_bell=False)
@@ -590,7 +679,8 @@ If a question can be answered by exploring the codebase, explore the codebase in
 
     def _bottom_toolbar() -> str:
         user_id = cfg.get("user_id", "anonymous")
-        model_name = cfg.get("defult_config_name") or "auto"
+        # Read model from agent (session-local), fallback to global default
+        model_name = getattr(agent, '_defult_config_name', None) or cfg.get("defult_config_name") or "auto"
         if len(model_name) > 40:
             model_name = model_name[:37] + "..."
         
@@ -600,7 +690,9 @@ If a question can be answered by exploring the codebase, explore the codebase in
             parts.append(f"turns: {stats.turns}")
         if renderer.show_reasoning:
             parts.append("reasoning: on")
-        if cfg.get("plan_mode", False):
+        # Read plan_mode from agent (injected_prefix = PLAN_MODE_PROMPT)
+        injected_prefix = getattr(agent, '_injected_prefix', "") or ""
+        if injected_prefix:
             parts.append("plan_mode: on")
         return "  ·  ".join(parts)
 
@@ -616,6 +708,19 @@ If a question can be answered by exploring the codebase, explore the codebase in
 
     async def _cmd_quit():
         print("Bye!")
+        # ✅ 停止通知轮询器
+        if _notification_poller_task:
+            _notification_poller_task.cancel()
+            try:
+                await _notification_poller_task
+            except asyncio.CancelledError:
+                pass
+        # ✅ 关闭远程 task_manager
+        if _remote_task_manager:
+            try:
+                await _remote_task_manager.close()
+            except Exception:
+                pass
         # Fire-and-forget close; os._exit will tear down any threads the
         # assistant left behind without waiting on the GIL.
         try:
@@ -659,7 +764,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
 
         print_config_info(
             user_id=cfg.get("user_id", "anonymous"),
-            model_name=cfg.get("defult_config_name") or "auto",
+            model_name=getattr(agent, '_defult_config_name', None) or cfg.get("defult_config_name") or "auto",
             session_id=current_session_id,
             work_dir=str(Path.cwd()),
             tools=tools,
@@ -736,14 +841,14 @@ If a question can be answered by exploring the codebase, explore the codebase in
             return
         current_workdir = str(Path.cwd().resolve())
         for info in infos:
-            cur = " \033[93m<-- current\033[0m" if info.thread_id == current_session_id else ""
+            cur = f" {ansi('notify_info')}<-- current{ansi_reset()}" if info.thread_id == current_session_id else ""
             workdir_hint = ""
             if info.workdir:
                 # Show last part of workdir if it's the current one
                 if info.workdir == current_workdir:
-                    workdir_hint = " \033[92m[current workdir]\033[0m"
+                    workdir_hint = f" {ansi('notify_ok')}[current workdir]{ansi_reset()}"
                 else:
-                    workdir_hint = f" \033[2m({Path(info.workdir).name})\033[0m"
+                    workdir_hint = f" {ansi('system_info')}({Path(info.workdir).name}){ansi_reset()}"
             print(
                 f"  [{info.thread_id[:8]}] {info.name:<24} "
                 f"msgs={info.message_count:<3} {info.updated_at[:19]}{cur}{workdir_hint}"
@@ -798,8 +903,14 @@ If a question can be answered by exploring the codebase, explore the codebase in
         nonlocal agent
         args = args.strip()
         if not args:
-            current = cfg.get("defult_config_name") or "<default>"
-            print(f"Current model alias: {current}")
+            # Show current model with source info (session-local vs global default)
+            current = getattr(agent, '_defult_config_name', None) or cfg.get("defult_config_name") or "<default>"
+            global_default = cfg.get("defult_config_name") or "<default>"
+            if current != global_default:
+                print(f"Current model: {current} (session-local)")
+                print(f"Global default: {global_default}")
+            else:
+                print(f"Current model: {current} (default)")
             return
 
         # Handle "info" subcommand
@@ -821,21 +932,25 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print(f"Available aliases: {', '.join(sorted(llm_mode_config.keys()))}")
             return
 
-        # Switch to the specified model
-        cfg["defult_config_name"] = args
-        cli_config.save_config(cfg)
+        # Switch to the specified model (session-local only)
+        # NOTE: cfg dict is NOT modified — toolbar reads from agent directly
 
         # Create new model client and switch the agent's model
         if agent is not None and hasattr(agent, '_set_model_client'):
             try:
                 new_client = agent._set_model_client(args)
                 await agent.switch_model(new_client)
-                print(f"Model switched to {args}")
+                agent._defult_config_name = args
+                print(f"Model switched to {args} (session-local)")
 
                 # Update token_limit for stats footer and agent context
                 entry = llm_mode_config.get(args)
                 if entry and hasattr(entry, "token_limit"):
                     stats.token_limit = entry.token_limit
+
+                # Immediately persist session-local state
+                state_dict = await agent.save_state()
+                await _save_thread_state(current_session_id, state_dict)
             except Exception as e:
                 print(f"Warning: model client creation failed: {e}")
                 print(f"Model alias set to {args} (will take effect on next session)")
@@ -843,6 +958,55 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print(f"Model alias set to {args}")
 
         # Refresh bottom toolbar to show new model
+        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
+            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+
+    async def _cmd_model_global(args: str):
+        """Switch model for current session AND save as global default.
+
+        Usage:
+            /model_global <alias>  - Switch model (session + global default)
+            /model_global          - Show global default model
+        """
+        if not args:
+            global_default = cfg.get("defult_config_name") or "<default>"
+            print(f"Global default model: {global_default}")
+            return
+
+        # Validate the model alias exists
+        from drsai.backend.run_drsai_agent_factory import load_llm_mode_config
+        llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+        llm_mode_config = load_llm_mode_config(llm_config_path)
+        if args not in llm_mode_config:
+            print(f"Unknown model alias: {args}")
+            print(f"Available aliases: {', '.join(sorted(llm_mode_config.keys()))}")
+            return
+
+        # Save as global default
+        cfg["defult_config_name"] = args
+        cli_config.save_config(cfg)
+
+        # Also switch the current session's model
+        if agent is not None and hasattr(agent, '_set_model_client'):
+            try:
+                new_client = agent._set_model_client(args)
+                await agent.switch_model(new_client)
+                agent._defult_config_name = args
+                print(f"Model switched to {args} (session + global default)")
+
+                entry = llm_mode_config.get(args)
+                if entry and hasattr(entry, "token_limit"):
+                    stats.token_limit = entry.token_limit
+
+                # Immediately persist session-local state
+                state_dict = await agent.save_state()
+                await _save_thread_state(current_session_id, state_dict)
+            except Exception as e:
+                print(f"Warning: model client creation failed: {e}")
+                print(f"Global default set to {args} (will take effect on next session)")
+        else:
+            print(f"Global default set to {args}")
+
         if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
             prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
 
@@ -863,7 +1027,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
         show_all = args.strip() == "" or args.strip() == "all"
 
         # Get current model
-        current_alias = cfg.get("defult_config_name") or DEFAULT_CONFIG_NAME
+        current_alias = getattr(agent, '_defult_config_name', None) or cfg.get("defult_config_name") or DEFAULT_CONFIG_NAME
 
         print()
         print(f"  Available models ({len(llm_mode_config)} total)")
@@ -1019,7 +1183,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print(text)
             print("--- end ---")
 
-    def _cmd_reasoning(args: str):
+    async def _cmd_reasoning(args: str):
         arg = args.strip().lower()
         if not arg or arg in {"toggle", ""}:
             renderer.show_reasoning = not renderer.show_reasoning
@@ -1037,6 +1201,9 @@ If a question can be answered by exploring the codebase, explore the codebase in
             try:
                 if agent is not None:
                     agent.reasoning_effort = arg
+                    # Immediately persist session-local state
+                    state_dict = await agent.save_state()
+                    await _save_thread_state(current_session_id, state_dict)
                 renderer.show_reasoning = arg in {"high", "xhigh"}
                 print(f"reasoning_effort={arg}; box={'on' if renderer.show_reasoning else 'off'}")
             except Exception as e:
@@ -1058,10 +1225,11 @@ If a question can be answered by exploring the codebase, explore the codebase in
             stats.ring_bell = not stats.ring_bell
         print(f"Bell: {'on' if stats.ring_bell else 'off'}")
 
-    def _cmd_fast(args: str):
+    async def _cmd_fast(args: str):
         arg = args.strip().lower()
         from drsai.backend.run_drsai_agent_factory import load_llm_mode_config
-        catalog = load_llm_mode_config(cfg.get("llm_config_file"))
+        llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+        catalog = load_llm_mode_config(llm_config_path)
         fast_alias = next(
             (k for k in catalog if "highspeed" in k or "flash" in k or "haiku" in k),
             None,
@@ -1070,17 +1238,101 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print("No obviously-fast alias in the catalog; set one via /model.")
             return
         if arg == "off":
+            # Switch back to the first (default) alias in catalog
             default_alias = next(iter(catalog))
-            cfg["defult_config_name"] = default_alias
-            cli_config.save_config(cfg)
-            print(f"Fast mode off — alias back to {default_alias}; /new to apply.")
-            return
-        cfg["defult_config_name"] = fast_alias
-        cli_config.save_config(cfg)
-        print(f"Fast mode on — alias set to {fast_alias}; /new to apply.")
+            if agent is not None and hasattr(agent, '_set_model_client'):
+                try:
+                    new_client = agent._set_model_client(default_alias)
+                    await agent.switch_model(new_client)
+                    agent._defult_config_name = default_alias
+                    print(f"Fast mode off — switched back to {default_alias} (session-local)")
+                    
+                    entry = catalog.get(default_alias)
+                    if entry and hasattr(entry, "token_limit"):
+                        stats.token_limit = entry.token_limit
 
-    def _cmd_plan_mode(args: str):
-        """动态切换 plan mode：启用后 AI 会先访谈用户确认计划再执行"""
+                    # Immediately persist session-local state
+                    state_dict = await agent.save_state()
+                    await _save_thread_state(current_session_id, state_dict)
+                except Exception as e:
+                    print(f"Warning: model switch failed: {e}")
+            else:
+                print(f"Fast mode off — alias back to {default_alias}")
+            return
+
+        # Switch to fast model (session-local only)
+        if agent is not None and hasattr(agent, '_set_model_client'):
+            try:
+                new_client = agent._set_model_client(fast_alias)
+                await agent.switch_model(new_client)
+                agent._defult_config_name = fast_alias
+                print(f"Fast mode on — switched to {fast_alias} (session-local)")
+
+                entry = catalog.get(fast_alias)
+                if entry and hasattr(entry, "token_limit"):
+                    stats.token_limit = entry.token_limit
+
+                # Immediately persist session-local state
+                state_dict = await agent.save_state()
+                await _save_thread_state(current_session_id, state_dict)
+            except Exception as e:
+                print(f"Warning: model switch failed: {e}")
+        else:
+            print(f"Fast mode on — alias set to {fast_alias}")
+
+        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
+            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+
+    async def _cmd_plan_mode(args: str):
+        """动态切换 plan mode (session-local)：启用后 AI 会先访谈用户确认计划再执行"""
+        arg = args.strip().lower()
+        if not agent:
+            print("Agent not initialized.")
+            return
+        
+        if arg in {"on", "1", "true", "enable"}:
+            agent.inject_system_prompt(prefix=PLAN_MODE_PROMPT)
+            # cfg["plan_mode"] is NOT modified — toolbar reads from agent
+            print(f"{ansi('notify_ok')}⚡ Plan mode enabled (session-local){ansi_reset()}")
+            print("  The AI will interview you about your plan before acting.")
+            print()
+
+            # Immediately persist session-local state
+            state_dict = await agent.save_state()
+            await _save_thread_state(current_session_id, state_dict)
+        elif arg in {"off", "0", "false", "disable"}:
+            agent.inject_system_prompt(prefix="")
+            print(f"{ansi('notify_warn')}⚠ Plan mode disabled (session-local){ansi_reset()}")
+
+            # Immediately persist session-local state
+            state_dict = await agent.save_state()
+            await _save_thread_state(current_session_id, state_dict)
+        elif arg == "status" or arg == "":
+            injected_prefix = getattr(agent, '_injected_prefix', "") or ""
+            global_plan = cfg.get("plan_mode", False)
+            if injected_prefix:
+                preview = injected_prefix[:100].replace("\n", " ")
+                if len(injected_prefix) > 100:
+                    preview += "..."
+                print(f"Plan mode: {ansi('notify_ok')}enabled (session-local){ansi_reset()}")
+                print(f"  Prefix: \"{preview}\"")
+                print(f"  Global default: {'on' if global_plan else 'off'}")
+            else:
+                print(f"Plan mode: {ansi('system_info')}disabled{ansi_reset()}")
+                if global_plan:
+                    print(f"  Global default: on")
+        else:
+            print("Usage: /plan_mode [on|off|status]")
+            print("  on/off   - Enable/disable plan mode (session-local)")
+            print("  status   - Show current status (default)")
+            print("  /pm_global [on|off] - Set global default")
+
+        # Refresh toolbar to show plan_mode state
+        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
+            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+    
+    async def _cmd_pm_global(args: str):
+        """切换 plan mode (session + global default)"""
         arg = args.strip().lower()
         if not agent:
             print("Agent not initialized.")
@@ -1090,36 +1342,36 @@ If a question can be answered by exploring the codebase, explore the codebase in
             agent.inject_system_prompt(prefix=PLAN_MODE_PROMPT)
             cfg["plan_mode"] = True
             cli_config.save_config(cfg)
-            print("\033[1;36m⚡ Plan mode enabled\033[0m")
+            print(f"{ansi('notify_ok')}⚡ Plan mode enabled (session + global default){ansi_reset()}")
             print("  The AI will interview you about your plan before acting.")
-            print("  Setting saved to config (persists across restarts).")
+            print("  Setting saved to global config (new sessions will use this).")
             print()
+
+            # Immediately persist session-local state
+            state_dict = await agent.save_state()
+            await _save_thread_state(current_session_id, state_dict)
         elif arg in {"off", "0", "false", "disable"}:
             agent.inject_system_prompt(prefix="")
             cfg["plan_mode"] = False
             cli_config.save_config(cfg)
-            print("\033[33m⚠ Plan mode disabled\033[0m")
-            print("  Setting saved to config (persists across restarts).")
-        elif arg == "status" or arg == "":
-            injected_prefix = getattr(agent, '_injected_prefix', "") or ""
-            if injected_prefix:
-                preview = injected_prefix[:100].replace("\n", " ")
-                if len(injected_prefix) > 100:
-                    preview += "..."
-                print(f"Plan mode: \033[1;32menabled\033[0m")
-                print(f"  Prefix: \"{preview}\"")
-            else:
-                print(f"Plan mode: \033[2mdisabled\033[0m")
-        else:
-            print("Usage: /plan_mode [on|off|status]")
-            print("  on/off   - Enable/disable plan mode (saved to config)")
-            print("  status   - Show current status (default)")
+            print(f"{ansi('notify_warn')}⚠ Plan mode disabled (session + global default){ansi_reset()}")
+            print("  Setting saved to global config (new sessions will use this).")
 
-        # Refresh toolbar to show plan_mode state
+            # Immediately persist session-local state
+            state_dict = await agent.save_state()
+            await _save_thread_state(current_session_id, state_dict)
+        elif arg == "status" or arg == "":
+            global_plan = cfg.get("plan_mode", False)
+            print(f"Global default plan_mode: {'on' if global_plan else 'off'}")
+        else:
+            print("Usage: /pm_global [on|off|status]")
+            print("  on/off   - Enable/disable (session + global default)")
+            print("  status   - Show global default (default)")
+
         if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
             prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
-    
-    def _cmd_inject(args: str):
+
+    async def _cmd_inject(args: str):
         """注入自定义提示词到 system message。
         
         用法:
@@ -1139,22 +1391,26 @@ If a question can be answered by exploring the codebase, explore the codebase in
         
         action = parts[0].lower()
         text = parts[1] if len(parts) > 1 else ""
+        needs_persist = False
         
         if action == "prefix":
             if not text:
                 print("Usage: /inject prefix <text>")
                 return
             agent.inject_system_prompt(prefix=text)
-            print(f"\033[1;36m✓ Prefix injected:\033[0m \"{text[:60]}...\"" if len(text) > 60 else f"\033[1;36m✓ Prefix injected:\033[0m \"{text}\"")
+            needs_persist = True
+            print(f"{ansi('notify_ok')}✓ Prefix injected:{ansi_reset()} \"{text[:60]}...\"" if len(text) > 60 else f"{ansi('notify_ok')}✓ Prefix injected:{ansi_reset()} \"{text}\"")
         elif action == "suffix":
             if not text:
                 print("Usage: /inject suffix <text>")
                 return
             agent.inject_system_prompt(suffix=text)
-            print(f"\033[1;36m✓ Suffix injected:\033[0m \"{text[:60]}...\"" if len(text) > 60 else f"\033[1;36m✓ Suffix injected:\033[0m \"{text}\"")
+            needs_persist = True
+            print(f"{ansi('notify_ok')}✓ Suffix injected:{ansi_reset()} \"{text[:60]}...\"" if len(text) > 60 else f"{ansi('notify_ok')}✓ Suffix injected:{ansi_reset()} \"{text}\"")
         elif action == "clear":
             agent.inject_system_prompt(prefix="", suffix="")
-            print("\033[33m⚠ All injected prompts cleared\033[0m")
+            needs_persist = True
+            print(f"{ansi('notify_warn')}⚠ All injected prompts cleared{ansi_reset()}")
         elif action == "status":
             prefix = getattr(agent, '_injected_prefix', "") or "(none)"
             suffix = getattr(agent, '_injected_suffix', "") or "(none)"
@@ -1167,6 +1423,153 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print(f"  Suffix: \"{suffix}\"")
         else:
             print("Usage: /inject [prefix|suffix|clear|status] [text]")
+
+        # Immediately persist session-local state when prompts changed
+        if needs_persist:
+            state_dict = await agent.save_state()
+            await _save_thread_state(current_session_id, state_dict)
+
+    # ── Project instructions commands ──────────────────────────────────────
+
+    def _cmd_init():
+        """在当前项目目录生成初始 DRSAI.md 文件。
+
+        类似 Claude Code 的 /init 命令。分析项目结构，自动生成
+        包含构建命令、编码标准、架构说明的初始项目指令文件。
+        """
+        from drsai.backend.cli.drsaimd_loader import init_project_instructions
+        filepath, is_new = init_project_instructions(str(Path.cwd()))
+        if is_new:
+            print(f"  {ansi('notify_ok')}✓ Created project instructions at: {filepath}{ansi_reset()}")
+            print("  Edit this file to add project-specific instructions.")
+            print("  Use /memory reload to apply changes to the current session.")
+            print()
+            print("  Tip: Add DRSAI.local.md for personal preferences (auto-ignored by git).")
+        else:
+            print(f"  {ansi('notify_warn')}⚠ Project instructions already exists at: {filepath}{ansi_reset()}")
+            print("  Edit it manually. Use /memory reload after editing.")
+
+    async def _cmd_memory(args: str):
+        """查看和管理项目级指令。
+
+        类似 Claude Code 的 /memory 命令。可以查看当前加载的项目指令文件、
+        重新加载（在编辑 DRSAI.md 后使用），或显示注入状态。
+
+        用法:
+            /memory           - 显示当前加载的项目指令文件
+            /memory reload    - 从磁盘重新加载项目指令
+            /memory status    - 显示所有 system prompt 层的注入状态
+        """
+        from drsai.backend.cli.drsaimd_loader import (
+            load_project_instructions,
+            get_memory_status,
+        )
+
+        arg = args.strip().lower()
+
+        if arg == "reload":
+            # 重新加载项目指令（用户编辑了 DRSAI.md 后使用）
+            if not agent:
+                print("Agent not initialized.")
+                return
+
+            project_instructions, loaded_paths = load_project_instructions(str(Path.cwd()))
+            # 获取当前 prefix/suffix，保持不变
+            prefix = getattr(agent, '_injected_prefix', '') or ''
+            suffix = getattr(agent, '_injected_suffix', '') or ''
+            agent.inject_system_prompt(
+                prefix=prefix,
+                suffix=suffix,
+                project_instructions=project_instructions,  # 明式更新项目指令
+            )
+
+            if loaded_paths:
+                print(f"  {ansi('notify_ok')}✓ Project instructions reloaded:{ansi_reset()}")
+                for p in loaded_paths:
+                    short = Path(p).name if Path(p).parent == Path.cwd() else str(Path(p).relative_to(Path.cwd())) if Path.cwd() in Path(p).parents else p
+                    lines = Path(p).read_text(encoding="utf-8").split("\n")
+                    print(f"    {short} ({len(lines)} lines)")
+            else:
+                print(f"  {ansi('system_info')}ℹ No project instruction files found.{ansi_reset()}")
+                print("  Use /init to create one in the current project directory.")
+
+            # 持久化状态
+            state_dict = await agent.save_state()
+            await _save_thread_state(current_session_id, state_dict)
+            return
+
+        if arg == "status":
+            # 显示所有 system prompt 层的注入状态
+            if not agent:
+                print("Agent not initialized.")
+                return
+
+            prefix = getattr(agent, '_injected_prefix', '') or ""
+            suffix = getattr(agent, '_injected_suffix', '') or ""
+            project_instr = getattr(agent, '_project_instructions', '') or ""
+
+            print()
+            print("  System prompt layers:")
+            print(f"  {'─' * 60}")
+            print(f"  ① Prefix (session):          {len(prefix)} chars")
+            if prefix:
+                preview = prefix[:80].replace("\n", " ")
+                if len(prefix) > 80: preview += "..."
+                print(f"     Preview: \"{preview}\"")
+            print(f"  ② Developer msg (hardcoded): {len(agent._developer_system_message)} chars")
+            user_sys = agent._user_profile_manager.get_agent_system_prompt()
+            print(f"  ③ AGENTS.md (global):         {len(user_sys)} chars")
+            print(f"  ④ Project instructions:       {len(project_instr)} chars")
+            if project_instr:
+                # 显示来源文件
+                mem_status = get_memory_status(str(Path.cwd()))
+                for f in mem_status.get("project_files", []):
+                    print(f"     Source: {f['path']} ({f['lines']} lines, {f['scope']})")
+            print(f"  ⑤ Session_ID:                 fixed")
+            print(f"  ⑥ Suffix (session):           {len(suffix)} chars")
+            if suffix:
+                preview = suffix[:80].replace("\n", " ")
+                if len(suffix) > 80: preview += "..."
+                print(f"     Preview: \"{preview}\"")
+            print(f"  {'─' * 60}")
+            print()
+            return
+
+        # Default: show (显示当前加载的项目指令文件列表)
+        mem_status = get_memory_status(str(Path.cwd()))
+        org = mem_status.get("org_file")
+        project_files = mem_status.get("project_files", [])
+        total_lines = mem_status.get("total_lines", 0)
+        total_size_kb = mem_status.get("total_size_kb", 0.0)
+
+        if not project_files and not org:
+            print()
+            print("  No project instruction files found in current directory tree.")
+            print()
+            print("  Use /init to create one, or place DRSAI.md / CLAUDE.md in your project.")
+            print("  Project instructions are loaded from:")
+            print("    - .drsai/DRSAI.md  or  .drsai/CLAUDE.md")
+            print("    - DRSAI.md         or  CLAUDE.md        (in project root)")
+            print("    - DRSAI.local.md   or  CLAUDE.local.md  (personal, gitignored)")
+            print()
+            return
+
+        print()
+        print("  Project instruction files (loaded at session start):")
+        print(f"  {'─' * 60}")
+        if org:
+            print(f"  🏢 Organization: {org['path']} ({org['lines']} lines)")
+        for f in project_files:
+            icon = "🔒" if "local" in f["scope"] else "📁"
+            print(f"  {icon} {f['path']:<50} {f['lines']} lines  {f['size_kb']}KB  ({f['scope']})")
+        print(f"  {'─' * 60}")
+        print(f"  Total: {total_lines} lines, {total_size_kb}KB")
+        print()
+        print("  Commands:")
+        print("    /memory reload  - Reload after editing DRSAI.md")
+        print("    /memory status  - Show all system prompt layers")
+        print("    /init           - Create DRSAI.md for this project")
+        print()
 
     # ── Dispatch table ──────────────────────────────────────────────────────
     # arity: 0 = no args, -1 = rest of line
@@ -1192,6 +1595,8 @@ If a question can be answered by exploring the codebase, explore the codebase in
         "cls":       (_cmd_clear,     0),
         "model":     (_cmd_model,    -1),
         "m":         (_cmd_model,    -1),
+        "model_global": (_cmd_model_global, -1),
+        "mg":        (_cmd_model_global, -1),  # alias
         "models":    (_cmd_models,   -1),
         "listmodels":(_cmd_models,   -1),
         "resume":    (_cmd_resume,   -1),
@@ -1203,7 +1608,11 @@ If a question can be answered by exploring the codebase, explore the codebase in
         "fast":      (_cmd_fast,     -1),
         "plan_mode": (_cmd_plan_mode,-1),
         "pm":        (_cmd_plan_mode,-1),  # alias
+        "pm_global": (_cmd_pm_global, -1),
+        "pmg":       (_cmd_pm_global, -1),  # alias
         "inject":    (_cmd_inject,   -1),
+        "init":      (_cmd_init,      0),
+        "memory":    (_cmd_memory,   -1),
     }
 
     async def _dispatch(raw: str) -> bool:
@@ -1266,7 +1675,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
                         timeout=60,
                     )
                     if approval == "deny":
-                        print("\n  \033[33m⚠ Command denied by user.\033[0m\n")
+                        print(f"\n  {ansi('notify_warn')}⚠ Command denied by user.{ansi_reset()}\n")
                         return
                     elif approval == "once":
                         pass  # Execute once
@@ -1278,14 +1687,14 @@ If a question can be answered by exploring the codebase, explore the codebase in
                         _session_approved_commands.add(user_input)
                         _do_chat._approved_cmds = _session_approved_commands
                 except Exception as e:
-                    print(f"\n  \033[33m⚠ Approval check failed: {e}\033[0m\n")
+                    print(f"\n  {ansi('notify_warn')}⚠ Approval check failed: {e}{ansi_reset()}\n")
                     # Continue anyway on error
 
             # ── Hermes-style: Interrupt signal check ─────────────────────────
             if HAS_TUI and is_interrupted():
                 clear_interrupt()
 
-                print("\n  \033[33m⚠ 正在中断当前命令...\033[0m")
+                print(f"\n  {ansi('notify_warn')}⚠ 正在中断当前命令...{ansi_reset()}")
 
                 try:
                     # 1. 暂停 agent（取消当前 LLM/工具调用）
@@ -1297,11 +1706,11 @@ If a question can be answered by exploring the codebase, explore the codebase in
                     # 3. 恢复 agent 状态（以便后续对话可以继续）
                     await agent.resume()
 
-                    print("  \033[32m✓ 已中断，状态已重置\033[0m\n")
+                    print(f"  {ansi('notify_ok')}✓ 已中断，状态已重置{ansi_reset()}\n")
 
                 except Exception as e:
                     logger.warning(f"Failed to pause/resume agent: {e}")
-                    print(f"\n  \033[33m⚠ 中断时出现错误: {e}\033[0m\n")
+                    print(f"\n  {ansi('notify_warn')}⚠ 中断时出现错误: {e}{ansi_reset()}\n")
 
                 return  # 中断当前命令执行
 
@@ -1331,6 +1740,28 @@ If a question can be answered by exploring the codebase, explore the codebase in
 
             except Exception as e:
                 logger.warning(f"Failed to save conversation state: {e}", exc_info=True)
+
+    # ── Activate patch_stdout for the entire REPL session ──────────────────
+    # When active, sys.stdout is replaced with a prompt_toolkit proxy that:
+    #  1. During prompt_async(): positions output ABOVE the input line,
+    #     keeping the user's editing area isolated from streaming output,
+    #     notification prints, and slash-command feedback.
+    #  2. Outside prompt_async(): passes output through to real stdout.
+    # This replaces the per-call patch_stdout that was previously in
+    # DrSaiPrompt.prompt(), which only covered the brief interval when
+    # prompt_async() was running and left streaming output un-isolated.
+    _patch_stdout_cm = None
+    if sys.stdin.isatty():
+        try:
+            _patch_stdout_cm = patch_stdout(raw=True)
+            _patch_stdout_cm.__enter__()
+            # Route the renderer's Rich Console through the same proxy so that
+            # Rich panels/markdown also respect the input-area boundary.
+            renderer.reconfigure_output()
+        except Exception as e:
+            logger.warning(f"Failed to activate patch_stdout: {e}; "
+                           "output isolation may be limited")
+            _patch_stdout_cm = None
 
     # ── Main input loop ─────────────────────────────────────────────────────
     while True:
@@ -1390,6 +1821,15 @@ If a question can be answered by exploring the codebase, explore the codebase in
         await asyncio.wait_for(_close_agent(), timeout=1.0)
     except Exception:
         pass
+
+    # Restore original stdout before hard exit (cosmetic — _hard_exit
+    # calls os._exit so the process terminates regardless).
+    if _patch_stdout_cm is not None:
+        try:
+            _patch_stdout_cm.__exit__(None, None, None)
+        except Exception:
+            pass
+
     _hard_exit(0)
 
 
