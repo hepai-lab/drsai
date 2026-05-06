@@ -83,6 +83,14 @@ DrSai CLI 的 Session 系统与**工作目录**绑定：
 
 ## 2 启动与配置
 
+事先配置好环境变量：
+
+```env
+SYSTEM_SKILLS_DIR="/path/to/skills"
+LLM_CONFIG_FILE="/path/to/llm_config.json"
+HEPAI_API_KEY="<enter your key here>"
+```
+
 ### 2.1 启动方式
 
 ```bash
