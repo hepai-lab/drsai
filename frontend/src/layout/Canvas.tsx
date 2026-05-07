@@ -39,6 +39,7 @@ const Canvas: React.FC<CanvasProps> = ({
   const session = useConfigStore((s) => s.session);
   const agentInfo = useModeConfigStore((s) => s.agentInfo);
   const selectedAgent = useModeConfigStore((s) => s.selectedAgent);
+  const agentOfflineSnapshot = useModeConfigStore((s) => s.agentOfflineSnapshot);
 
   const { agentDisplayName, defaultConfigLabel } = useMemo(() => {
     const sessionAgentModeConfig = (session?.agent_mode_config || null) as
@@ -104,9 +105,25 @@ const Canvas: React.FC<CanvasProps> = ({
           >
             <div className="flex max-w-[min(480px,52vw)] min-w-0 items-center gap-2.5 p-0">
               <Bot
-                className="h-6 w-6 flex-shrink-0 text-accent opacity-90 animate-logo-hop motion-reduce:animate-none"
+                className={`h-6 w-6 flex-shrink-0 motion-reduce:animate-none ${
+                  agentOfflineSnapshot
+                    ? `opacity-45 grayscale ${
+                        darkMode === "dark"
+                          ? "text-white/45"
+                          : "text-slate-400"
+                      }`
+                    : "text-accent opacity-90 animate-logo-hop"
+                }`}
                 strokeWidth={2}
-                aria-hidden
+                aria-hidden={!agentOfflineSnapshot}
+                {...(agentOfflineSnapshot
+                  ? {
+                      "aria-label":
+                        "智能体已从列表移除，当前为会话中的存档配置",
+                      title:
+                        "智能体已从列表移除，当前为会话中的存档配置",
+                    }
+                  : {})}
               />
               <div className="flex min-w-0 flex-1 flex-row flex-nowrap items-baseline gap-x-1 text-left font-agent">
                 {agentDisplayName ? (

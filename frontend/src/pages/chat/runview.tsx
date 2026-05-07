@@ -13,6 +13,10 @@ import AgentPanel from "./panels/AgentPanel";
 import { AgentConfiguration } from "./config/agentConfigs";
 import { BESIIITask, BESIIIServerGlobalInfo } from "./panels/types";
 import { useRightPanelStore } from "../../store/rightPanel";
+import {
+  formatApiDateTimeZhCN,
+  formatUnixForDisplayZhCN,
+} from "../../utils/apiDatetime";
 const DETAIL_VIEWER_CONTAINER_ID = "detail-viewer-container";
 const CHAT_INPUT_BASE_HEIGHT_PX = 78;
 
@@ -328,16 +332,14 @@ const RunView: React.FC<RunViewProps> = ({
         status = 'running';
       }
 
-      // 处理时间戳：如果是数字（秒级），转换为毫秒；如果已经是字符串，直接使用
+      // 后端 naive ISO 按 UTC；Unix 为瞬时秒/毫秒 → 统一格式化为北京时间
       const formatTimestamp = (ts: any): string | undefined => {
         if (!ts) return undefined;
-        if (typeof ts === 'number') {
-          // 判断是秒级还是毫秒级时间戳
-          const timestamp = ts > 1e12 ? ts : ts * 1000;
-          return new Date(timestamp).toISOString();
+        if (typeof ts === "number") {
+          return formatUnixForDisplayZhCN(ts);
         }
-        if (typeof ts === 'string') {
-          return ts;
+        if (typeof ts === "string") {
+          return formatApiDateTimeZhCN(ts);
         }
         return undefined;
       };

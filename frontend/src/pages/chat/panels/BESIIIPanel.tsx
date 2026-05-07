@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { appContext } from "../../../hooks/provider";
 import { BESIIIPanelProps, BESIIISubTask, BESIIITask } from "./types";
 import { useModeConfigStore } from "@/store/modeConfig";
+import { formatUnixForDisplayZhCN } from "../../../utils/apiDatetime";
 
 /**
  * BESIII Panel - 用于显示 BESIII Agent 的任务执行状态
@@ -342,13 +343,8 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
         if (timestamp === undefined || timestamp === null) {
             return "--";
         }
-        const numericValue =
-            typeof timestamp === "number" ? timestamp : Number(timestamp);
-        if (!Number.isFinite(numericValue)) {
-            return "--";
-        }
-        const millis = numericValue > 1e12 ? numericValue : numericValue * 1000;
-        return new Date(millis).toLocaleString();
+        const formatted = formatUnixForDisplayZhCN(timestamp as number | string);
+        return formatted === "—" ? "--" : formatted;
     };
 
     const getLevelBadgeClasses = (level: string) => {
