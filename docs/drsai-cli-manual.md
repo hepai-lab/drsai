@@ -16,10 +16,11 @@
 7. [记忆管理](#7-记忆管理)
 8. [Plan Mode 与 Prompt 注入](#8-plan-mode-与-prompt-注入)
 9. [状态与信息查看](#9-状态与信息查看)
-10. [显示与交互控制](#10-显示与交互控制)
-11. [中断与退出](#11-中断与退出)
-12. [定时任务与通知推送](#12-定时任务与通知推送)
-13. [完整命令速查表](#13-完整命令速查表)
+10. [安全控制](#10-安全控制)
+11. [显示与交互控制](#11-显示与交互控制)
+12. [中断与退出](#12-中断与退出)
+13. [定时任务与通知推送](#13-定时任务与通知推送)
+14. [完整命令速查表](#14-完整命令速查表)
 
 ---
 
@@ -41,7 +42,8 @@ DrSai CLI 是 DrSai 智能体框架的**本地交互式终端客户端**。它�
 - **Prompt 注入**: 可动态注入 prefix/suffix 到 system prompt，灵活控制 AI 行为
 - **推理控制**: 支持推理过程可视化、推理强度调节 (off/low/medium/high/xhigh)
 - **定时任务**: 配合 Worker 后端可创建后台定时任务，终端自动推送完成通知
-- **危险命令审批**: TUI 模式下对潜在破坏性命令进行交互式审批
+- **Workspace 限制**: 默认开启，将 AI 的文件操作和 Shell 命令限制在项目目录 + 内部存储目录内，防止越界访问
+- **危险命令控制**: 默认拦截 `sudo`、`rm -rf` 等系统级危险命令和 `python script.py`、`bash script.sh` 等脚本执行命令，可通过 `/dangerous on` 临时授权
 
 ### 1.2 特色功能详解
 
@@ -65,6 +67,8 @@ DrSai CLI 的记忆系统分为两层：
 - **注入提示词** (`injected_prefix`, `injected_suffix`): 动态注入的 prefix/suffix
 - **项目指令** (`project_instructions`): 从 DRSAI.md 加载的项目级指令内容
 - **推理强度** (`reasoning_effort`): 当前会话的推理设置
+- **Workspace 限制** (`only_in_workspace`): 是否限制文件操作路径
+- **危险命令控制** (`dangerous_allowed`): 是否允许危险和脚本执行命令
 
 切换 Session 时，当前状态自动保存，新 Session 的状态自动恢复，实现无缝切换。
 
@@ -528,7 +532,123 @@ Plan Mode 让 AI 在执行复杂任务前先访谈用户，逐个确认设计决
 
 ---
 
-## 10 显示与交互控制
+## 10 安全控制
+
+### 10.1 Workspace 限制 (`/workspace`)
+
+Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围：
+
+| 状态 | 含义 | 行为 |
+|------|------|------|
+| **on** (默认) | 🔒 限制开启 | 所有文件操作和 Shell 命令被限制在项目目录 (`cwd`) + 内部存储目录 |
+| **off** | 🔓 限制关闭 | AI 可访问文件系统上的任何路径 |
+
+```
+/workspace on         # 启用限制（默认状态）
+/workspace off        # 关闭限制（AI 可访问任意路径）
+/workspace status     # 显示当前状态（默认行为）
+
+/ws on                # 简写
+/ws off               # 简写
+/ws                   # 等同于 /ws status
+```
+
+**`/workspace status` 输出示例**：
+
+```
+  🔒 Workspace restriction: enabled
+    Work dir:  /data/myproject
+    Allowed:   /data/myproject, ~/.drsai/workspace/runs/user
+    All file/shell operations are restricted to these directories.
+
+  Usage: /workspace [on|off|status]
+    on/off   - Enable/disable restriction (session-local)
+    status   - Show current status (default)
+```
+
+### 10.2 危险命令控制 (`/dangerous`)
+
+危险命令控制决定 AI 智能体的 `run_bash` / `run_bash_background` / `run_powershell` 是否拦截两类危险命令：
+
+| 类别 | 拦截模式 | 被拦截的命令示例 |
+|------|----------|-----------------|
+| **`_DANGEROUS_PATTERNS`** | 系统级危险命令 | `sudo`, `rm -rf`, `shutdown`, `reboot`, `mkfs`, `dd`, `chmod 777 /` 等 |
+| **`_SCRIPT_EXEC_PATTERNS`** | 脚本执行命令 | `python script.py`, `bash script.sh`, `sh script.sh`, `source script.sh`, `. ./script` |
+
+**脚本执行模式的精确性**：`_SCRIPT_EXEC_PATTERNS` 只拦截**脚本文件执行**，不会误拦内联命令：
+
+| 命令 | 是否被拦截 | 原因 |
+|------|-----------|------|
+| `python3 script.py` | ✅ 拦截 | 执行 .py 脚本文件 |
+| `python3 -c "print(1)"` | ❌ 不拦截 | `-c` 是内联表达式，不是脚本执行 |
+| `python3 -m pip install numpy` | ❌ 不拦截 | `-m` 是模块模式，不是脚本执行 |
+| `bash script.sh` | ✅ 拦截 | 执行 shell 脚本文件 |
+| `bash -c 'echo hello'` | ❌ 不拦截 | `-c` 是内联命令 |
+| `pip install numpy` | ❌ 不拦截 | 不是脚本执行模式 |
+
+| 状态 | 含义 | 行为 |
+|------|------|------|
+| **off** (默认) | 🛡 保护开启 | `_DANGEROUS_PATTERNS` + `_SCRIPT_EXEC_PATTERNS` 双重拦截 |
+| **on** | ⚠️ 保护关闭 | 所有危险和脚本执行命令不被拦截 |
+
+```
+/dangerous on         # 允许所有危险和脚本执行命令
+/dangerous off        # 重新开启保护（默认状态）
+/dangerous status     # 显示当前状态（默认行为）
+
+/dg on                # 简写
+/dg off               # 简写
+/dg                   # 等同于 /dg status
+```
+
+**被拦截时的返回信息**：
+
+```
+  Error: Dangerous command detected. Use /dangerous on to authorize.
+  Error: Script execution command detected. Use /dangerous on to authorize.
+```
+
+被拦截的 tool call 返回错误字符串给 LLM，LLM 可继续对话并选择安全命令替代，不会中断整个对话流。
+
+### 10.3 状态持久化
+
+`/workspace` 和 `/dangerous` 的状态通过 `save_state()` 持久化到 Session 数据库：
+
+```json
+{
+  "only_in_workspace": true,
+  "dangerous_allowed": false
+}
+```
+
+- 切换 Session 时，当前状态自动保存，新 Session 的状态自动恢复
+- 重启 CLI 后，workspace 和 dangerous 状态从 Session 数据库恢复
+- 通过 `load_state()` 中的 toggle helpers 同步闭包变量 (`_only_in_workspace[0]`, `_dangerous_allowed[0]`)
+
+### 10.4 防篡改保护
+
+`set_workspace_restriction`、`get_workspace_status`、`set_dangerous_allowed`、`get_dangerous_status` 四个 toggle 辅助函数被列入 `_TOGGLE_FUNC_NAMES` 过滤集。LLM 无法自行调用这些函数解除限制——只有用户通过 `/workspace` 或 `/dangerous` 命令才能切换状态。
+
+### 10.5 底部工具栏指示
+
+底部工具栏实时显示 workspace 和 dangerous 状态：
+
+| 指示 | 含义 |
+|------|------|
+| `🔒 ws:on` | Workspace 限制已开启 |
+| `🔓 ws:off` | Workspace 限制已关闭 |
+| `🛡 dg:off` | 危险命令保护已开启（拦截模式，默认） |
+| `⚠️ dg:on` | 危险命令保护已关闭（允许模式） |
+
+工具栏完整示例：
+
+```
+  user@example.com @ minimax-m2.7-highspeed  ·  turns: 5  ·  🔒 ws:on  ·  🛡 dg:off
+```
+
+---
+
+## 11 显示与交互控制
 
 | 命令 | 说明 |
 |------|------|
@@ -537,17 +657,24 @@ Plan Mode 让 AI 在执行复杂任务前先访谈用户，逐个确认设计决
 | `/bell on/off` | 切换终端响铃（响应完成时响铃提示） |
 | `/retry` | 重试上一条用户消息 |
 
-**底部工具栏** (Bottom Toolbar)：始终显示当前用户 ID、模型名、turn 数、推理状态、Plan Mode 状态：
+**底部工具栏** (Bottom Toolbar)：始终显示当前用户 ID、模型名、turn 数、推理状态、Plan Mode 状态、Workspace 和 Dangerous 状态：
 
 ```
-  user@example.com @ minimax-m2.7-highspeed  ·  turns: 5  ·  plan_mode: on
+  user@example.com @ minimax-m2.7-highspeed  ·  turns: 5  ·  🔒 ws:on  ·  🛡 dg:off
 ```
+
+| 指示 | 含义 |
+|------|------|
+| `🔒 ws:on` | Workspace 限制已开启（默认） |
+| `🔓 ws:off` | Workspace 限制已关闭 |
+| `🛡 dg:off` | 危险命令保护已开启（拦截，默认） |
+| `⚠️ dg:on` | 危险命令保护已关闭（允许） |
 
 ---
 
-## 11 中断与退出
+## 12 中断与退出
 
-### 11.1 Ctrl+C 中断
+### 12.1 Ctrl+C 中断
 
 - **第一次 Ctrl+C**: 中断当前命令/LLM 调用，agent 进入 pause → resume 状态重置，可继续对话
 - **第二次 Ctrl+C**: 退出 REPL
@@ -557,7 +684,7 @@ Plan Mode 让 AI 在执行复杂任务前先访谈用户，逐个确认设计决
 Ctrl+C → agent.pause() → await 0.1s → agent.resume() → "已中断，状态已重置"
 ```
 
-### 11.2 退出命令
+### 12.2 退出命令
 
 | 命令 | 别名 | 说明 |
 |------|------|------|
@@ -572,9 +699,9 @@ Ctrl+C → agent.pause() → await 0.1s → agent.resume() → "已中断，状�
 
 ---
 
-## 12 定时任务与通知推送
+## 13 定时任务与通知推送
 
-### 12.1 远程 Worker 模式
+### 13.1 远程 Worker 模式
 
 配置了 Worker URL (`--url` 或 `cfg.url`) 时，CLI 启动远程定时任务管理：
 
@@ -593,7 +720,7 @@ drsai --url http://localhost:42858/apiv2
     构建完成，所有测试通过
 ```
 
-### 12.2 本地模式
+### 13.2 本地模式
 
 无 Worker URL 时，定时任务推送不可用，终端提示：
 
@@ -603,7 +730,7 @@ drsai --url http://localhost:42858/apiv2
 
 ---
 
-## 13 完整命令速查表
+## 14 完整命令速查表
 
 ### Session 管理
 
@@ -654,6 +781,13 @@ drsai --url http://localhost:42858/apiv2
 | `/info` | Session 配置详情 |
 | `/config` | CLI 连接配置 |
 
+### 安全控制
+
+| 命令 | 别名 | 参数 | 说明 |
+|------|------|------|------|
+| `/workspace` | `/ws` | `on|off|status` | Workspace 路径限制（默认 on） |
+| `/dangerous` | `/dg` | `on|off|status` | 危险命令执行权限（默认 off，即拦截） |
+
 ### 显示控制
 
 | 命令 | 参数 | 说明 |
@@ -691,7 +825,9 @@ drsai --url http://localhost:42858/apiv2
   "injected_prefix": "",               // Plan Mode 前缀或自定义 prefix
   "injected_suffix": "",               // 自定义 suffix
   "project_instructions": "...",       // DRSAI.md 合并内容
-  "reasoning_effort": "medium"         // 推理强度
+  "reasoning_effort": "medium",        // 推理强度
+  "only_in_workspace": true,           // Workspace 限制是否开启
+  "dangerous_allowed": false           // 危险命令是否允许执行
 }
 ```
 
@@ -711,9 +847,9 @@ drsai --url http://localhost:42858/apiv2
 2. 初始化本地 SQLite 数据库
 3. 打印 Banner
 4. 检查 cwd 对应的 Session（恢复或创建）
-5. 创建 Agent 实例 (DrSaiCLIAssistant)
+5. 创建 Agent 实例 (DrSaiCLIAssistant) — 默认 only_in_workspace=True, dangerous_allowed=False
 6. Agent.lazy_init()
-7. 加载 Thread 状态 (load_state)
+7. 加载 Thread 状态 (load_state) — 恢复 workspace 和 dangerous 状态
 8. 加载项目指令 (DRSAI.md) — 仅在未从状态恢复时
 9. 配置远程定时任务（如有 Worker URL）
 10. 自动启用 Plan Mode（如配置要求）

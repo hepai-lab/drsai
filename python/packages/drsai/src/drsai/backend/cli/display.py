@@ -46,25 +46,6 @@ def _diff_ansi() -> dict[str, str]:
     minus = "\033[38;2;255;255;255;48;2;120;20;20m"
     plus = "\033[38;2;255;255;255;48;2;20;90;20m"
 
-    # Try to load from skin engine if available
-    try:
-        from drsai.backend.cli.skin_engine import get_active_skin
-        skin = get_active_skin()
-        if skin:
-            def _hex_fg(key: str, fallback_rgb: tuple[int, int, int]) -> str:
-                h = skin.get_color(key, "")
-                if h and len(h) == 7 and h[0] == "#":
-                    r, g, b = int(h[1:3], 16), int(h[3:5], 16), int(h[5:7], 16)
-                    return f"\033[38;2;{r};{g};{b}m"
-                r, g, b = fallback_rgb
-                return f"\033[38;2;{r};{g};{b}m"
-
-            dim = _hex_fg("banner_dim", (150, 150, 150))
-            file_c = _hex_fg("session_label", (180, 160, 255))
-            hunk = _hex_fg("session_border", (120, 120, 140))
-    except ImportError:
-        pass
-
     _diff_colors_cached = {
         "dim": dim, "file": file_c, "hunk": hunk,
         "minus": minus, "plus": plus,

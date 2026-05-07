@@ -68,12 +68,21 @@ class DrSaiCLIAssistant(DrSaiAssistant):
         # Nudge defaults for single-user terminal workflows.
         kwargs.setdefault("model_client_stream", True)
         kwargs.setdefault("is_powershell", False)
-        kwargs.setdefault("only_in_workspace", False)
-        kwargs.setdefault("allolow_dangrous_cmd", True)
+        kwargs.setdefault("only_in_workspace", True)
+        kwargs.setdefault("allolow_dangrous_cmd", False)  # CLI 默认拦截危险命令，用 /dangerous on 授权
         super().__init__(*args, **kwargs)
 
         self._reasoning_effort: str = reasoning_effort
         self._token_stats = TokenStats()
+
+        # ── Dangerous-command toggle helpers ─────────────────────────────────
+        # These closures come from operater_funs.get_operator_funcs() and allow
+        # the CLI (/dangerous on|off) to dynamically toggle the restriction.
+        # NOT registered as LLM tools — only accessible via CLI slash commands.
+        _DANGEROUS_FUNC_NAMES = {"set_dangerous_allowed", "get_dangerous_status"}
+        self._dangerous_toggle_funcs = [
+            func for func in self._basic_funcs if func.__name__ in _DANGEROUS_FUNC_NAMES
+        ]
 
     # ── TODO: Reasoning effort ──────────────────────────────────────────────
     # 完整的 reasoning_effort 实现需要:
@@ -99,7 +108,7 @@ class DrSaiCLIAssistant(DrSaiAssistant):
     # plan_mode), and reasoning effort are restored when switching sessions.
 
     async def save_state(self) -> Mapping[str, Any]:
-        """Save llm_context + session-local configuration (model, inject, project_instructions, reasoning)."""
+        """Save llm_context + session-local configuration (model, inject, project_instructions, reasoning, workspace, dangerous)."""
         model_context_state = await self._model_context.save_state()
         return {
             "llm_context": model_context_state,
@@ -109,6 +118,8 @@ class DrSaiCLIAssistant(DrSaiAssistant):
             "injected_suffix": getattr(self, '_injected_suffix', ''),
             "project_instructions": getattr(self, '_project_instructions', ''),
             "reasoning_effort": self._reasoning_effort,
+            "only_in_workspace": getattr(self, '_only_in_workspace', True),
+            "dangerous_allowed": self._get_dangerous_allowed(),
         }
 
     async def load_state(self, state: Mapping[str, Any]) -> None:
@@ -148,6 +159,33 @@ class DrSaiCLIAssistant(DrSaiAssistant):
         effort = state.get("reasoning_effort")
         if effort and effort in {"off", "low", "medium", "high", "xhigh"}:
             self._reasoning_effort = effort
+
+        # ── 5. Restore workspace restriction ───────────────────────────────
+        ws_enabled = state.get("only_in_workspace")
+        if ws_enabled is not None:
+            # Use toggle helpers from operater_funs to sync the closure state
+            toggle_funcs = getattr(self, '_workspace_toggle_funcs', [])
+            set_ws_fn = next((f for f in toggle_funcs if f.__name__ == "set_workspace_restriction"), None)
+            if set_ws_fn:
+                set_ws_fn(ws_enabled)
+            self._only_in_workspace = ws_enabled  # sync agent-level flag
+
+        # ── 6. Restore dangerous command restriction ───────────────────────
+        dangerous_allowed = state.get("dangerous_allowed")
+        if dangerous_allowed is not None:
+            toggle_funcs = getattr(self, '_dangerous_toggle_funcs', [])
+            set_fn = next((f for f in toggle_funcs if f.__name__ == "set_dangerous_allowed"), None)
+            if set_fn:
+                set_fn(dangerous_allowed)
+
+    def _get_dangerous_allowed(self) -> bool:
+        """Get current dangerous_allowed state from the closure."""
+        toggle_funcs = getattr(self, '_dangerous_toggle_funcs', [])
+        get_fn = next((f for f in toggle_funcs if f.__name__ == "get_dangerous_status"), None)
+        if get_fn:
+            status = get_fn()
+            return status.get("dangerous_allowed", False)
+        return getattr(self, '_dangerous_allowed', False)
 
     # ── Token stats ─────────────────────────────────────────────────────────
     @property

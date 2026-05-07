@@ -200,6 +200,22 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="show|reload|status",
     ),
 
+    # ── Workspace ──────────────────────────────────────────────────────
+    CommandDef(
+        "workspace",
+        "Toggle workspace restriction (only_in_workspace) on/off or show status",
+        "Workspace",
+        aliases=("ws",),
+        args_hint="on|off|status",
+    ),
+    CommandDef(
+        "dangerous",
+        "Toggle dangerous command execution permission on/off or show status",
+        "Workspace",
+        aliases=("dg",),
+        args_hint="on|off|status",
+    ),
+
     # ── Meta ─────────────────────────────────────────────────────────────────
     CommandDef(
         "help",
@@ -238,7 +254,7 @@ def resolve_command(name: str) -> Optional[CommandDef]:
 
 def commands_by_category() -> dict[str, list[CommandDef]]:
     """Return commands grouped by category, in fixed category order."""
-    order = ["Session", "Display", "Configuration", "Plan", "Project", "Info"]
+    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Info"]
     groups: dict[str, list[CommandDef]] = {cat: [] for cat in order}
     for cmd in COMMAND_REGISTRY:
         if cmd.category in groups:
