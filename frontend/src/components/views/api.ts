@@ -952,6 +952,51 @@ export class FileAPI {
             fileUuid
         )}?user_id=${encodeURIComponent(userId)}`;
     }
+
+    async editDocx(
+        userId: string,
+        fileName: string,
+        filePath: string,
+        originalParagraphs: string[],
+        edits: Array<{
+            type: string;
+            old_text?: string;
+            new_text?: string;
+            text?: string;
+            content?: string;
+            formatting?: { bold?: boolean | null; italic?: boolean | null };
+            position?: number;
+        }>
+    ): Promise<{
+        success: boolean;
+        saved_name?: string;
+        uuid?: string;
+        path?: string;
+        url?: string;
+        changes?: string[];
+        message?: string;
+    }> {
+        const url = `${this.getBaseUrl()}/files/docx/edit`;
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                user_id: userId,
+                file_name: fileName,
+                file_path: filePath,
+                original_paragraphs: originalParagraphs,
+                edits: edits,
+            }),
+        });
+
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || data.detail || "Failed to edit docx");
+        }
+        return data.data;
+    }
 }
 
 export class AuthAPI {

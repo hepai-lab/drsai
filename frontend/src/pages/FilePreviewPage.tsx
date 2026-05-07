@@ -1,12 +1,340 @@
 import React from "react";
-import { FileText, Download, PencilLine, Eye } from "lucide-react";
+import { FileText, Download, PencilLine, Eye, X } from "lucide-react";
+import { useEditor, EditorContent } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Underline from "@tiptap/extension-underline";
+import TextAlign from "@tiptap/extension-text-align";
+import Typography from "@tiptap/extension-typography";
 
 import type { MessageFileItem } from "../components/types/datamodel";
 import MarkdownRenderer from "../components/common/markdownrender";
+import { fileAPI } from "../components/views/api";
+import { appContext } from "../hooks/provider";
 
 interface FilePreviewPageProps {
   file?: MessageFileItem | null;
 }
+
+/* ============================================================
+   WordEditor: Online .docx editor with STRUCTURED EDITS
+   - Loads .docx via mammoth.js for display
+   - Tracks edits as structured operations
+   - Preserves original formatting when saving
+   ============================================================ */
+interface EditOperation {
+  type: string;
+  old_text?: string;
+  new_text?: string;
+  text?: string;
+  content?: string;
+  formatting?: { bold?: boolean | null; italic?: boolean | null };
+  paragraph_index?: number;
+}
+
+interface WordEditorProps {
+  file: MessageFileItem;
+  onClose: () => void;
+}
+
+// Helper: Extract plain text from HTML
+const extractTextFromHTML = (html: string): string[] => {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  const paragraphs: string[] = [];
+  const children = div.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li");
+  children.forEach((el) => {
+    paragraphs.push(el.textContent?.trim() || "");
+  });
+  if (paragraphs.length === 0) {
+    return div.textContent?.split(/\n+/).map((s) => s.trim()).filter(Boolean) || [];
+  }
+  return paragraphs;
+};
+
+// WordEditor component with TipTap
+const WordEditor: React.FC<WordEditorProps> = ({ file, onClose }) => {
+  const { user, darkMode } = React.useContext(appContext);
+  const userId = user?.email || "";
+  const isDark = darkMode === "dark";
+  
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const [htmlContent, setHtmlContent] = React.useState<string>("");
+  const [originalParagraphs, setOriginalParagraphs] = React.useState<string[]>([]);
+  const [contentLoaded, setContentLoaded] = React.useState(false);
+  
+  // Load mammoth.js and convert docx to HTML
+  React.useEffect(() => {
+    const initMammoth = async () => {
+      try {
+        const { convertToHtml } = await import("mammoth");
+        
+        let arrayBuffer: ArrayBuffer;
+        if (file.download_method === "base64" && file.base64_content) {
+          const binary = atob(file.base64_content);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          arrayBuffer = bytes.buffer;
+        } else if (file.download_method === "url" && file.url) {
+          const response = await fetch(file.url);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          arrayBuffer = await response.arrayBuffer();
+        } else {
+          throw new Error("当前文件没有可用内容");
+        }
+        
+        // Try markdown first (TipTap handles this better)
+        let content = "";
+        try {
+          const { value: mdValue } = await import("mammoth").then(m => m.convertToMarkdown({ arrayBuffer }));
+          content = mdValue;
+          console.log("[WordEditor] Markdown length:", mdValue.length);
+        } catch {
+          // Fallback to HTML if markdown conversion fails
+          const { value } = await convertToHtml({ arrayBuffer });
+          content = value
+            .replace(/<img[^>]*>/gi, "")
+            .replace(/<table[^>]*>[\s\S]*?<\/table>/gi, "\n[表格内容]\n");
+          console.log("[WordEditor] HTML length:", value.length);
+        }
+        console.log("[WordEditor] Content length:", content.length);
+        console.log("[WordEditor] First 300 chars:", content.slice(0, 300));
+        
+        // Extract paragraphs from content (handle both markdown and HTML)
+        const originalParas = content
+          .split(/\n+/)
+          .map((s) => s.replace(/<[^>]*>/g, "").trim())
+          .filter(Boolean);
+        
+        setOriginalParagraphs(originalParas);
+        setHtmlContent(content);
+        setLoading(false);
+      } catch (e) {
+        console.error("[WordEditor] Error:", e);
+        setError(e instanceof Error ? e.message : "加载失败");
+        setLoading(false);
+      }
+    };
+    
+    void initMammoth();
+  }, [file]);
+  
+  const editor = useEditor({
+    extensions: [
+      StarterKit,
+      Underline,
+      Typography,
+      TextAlign.configure({ types: ["heading", "paragraph"] }),
+    ],
+    content: "",
+    immediatelyRender: false,
+    editorProps: {
+      attributes: {
+        class: "prose max-w-none focus:outline-none min-h-[350px] p-4",
+      },
+    },
+  });
+  
+  // Update editor content when mammoth finishes loading
+  React.useEffect(() => {
+    if (editor && htmlContent) {
+      console.log("[WordEditor] Setting content, length:", htmlContent.length);
+      // Try setting as markdown first (more reliable), fall back to HTML
+      try {
+        editor.commands.setContent(htmlContent);
+      } catch (e) {
+        console.error("[WordEditor] setContent error:", e);
+      }
+      setContentLoaded(true);
+    }
+  }, [editor, htmlContent]);
+  
+  // Simple similarity calculation for change detection
+  const calculateSimilarity = (s1: string, s2: string): number => {
+    if (s1 === s2) return 1;
+    if (!s1 || !s2) return 0;
+    const words1 = new Set(s1.toLowerCase().split(/\s+/).filter(Boolean));
+    const words2 = new Set(s2.toLowerCase().split(/\s+/).filter(Boolean));
+    if (words1.size === 0 && words2.size === 0) return 1;
+    if (words1.size === 0 || words2.size === 0) return 0;
+    const intersection = new Set([...words1].filter((x) => words2.has(x))).size;
+    const union = new Set([...words1, ...words2]).size;
+    return union > 0 ? (2 * intersection) / union : 0;
+  };
+  
+  const generateEdits = React.useCallback((): EditOperation[] => {
+    if (!editor) return [];
+    const doc = editor.getJSON();
+    const edits: EditOperation[] = [];
+    
+    const currentParagraphs: string[] = [];
+    const traverse = (content: any[]) => {
+      content.forEach((node) => {
+        if (node.type === "paragraph" || node.type?.startsWith("heading")) {
+          let text = "";
+          if (node.content) {
+            node.content.forEach((child: any) => {
+              if (child.type === "text" && child.text) text += child.text;
+            });
+          }
+          currentParagraphs.push(text);
+        } else if (node.content) {
+          traverse(node.content);
+        }
+      });
+    };
+    if (doc.content) traverse(doc.content);
+    
+    for (let i = 0; i < currentParagraphs.length; i++) {
+      const currentText = currentParagraphs[i];
+      let bestMatchIdx = -1;
+      let bestSimilarity = 0;
+      
+      for (let j = 0; j < originalParagraphs.length; j++) {
+        if (i === j || originalParagraphs[j] === currentText) {
+          bestMatchIdx = j;
+          bestSimilarity = 1;
+          break;
+        }
+        const similarity = calculateSimilarity(originalParagraphs[j], currentText);
+        if (similarity > bestSimilarity && similarity > 0.5) {
+          bestSimilarity = similarity;
+          bestMatchIdx = j;
+        }
+      }
+      
+      if (bestMatchIdx === -1) {
+        edits.push({ type: "add_paragraph", content: currentText, paragraph_index: i });
+      } else if (originalParagraphs[bestMatchIdx] !== currentText) {
+        edits.push({ type: "replace_text", old_text: originalParagraphs[bestMatchIdx], new_text: currentText, paragraph_index: bestMatchIdx });
+      }
+    }
+    
+    return edits;
+  }, [editor, originalParagraphs]);
+  
+  const handleSave = React.useCallback(async () => {
+    if (!file.path || originalParagraphs.length === 0) {
+      alert("文件路径不可用或无法获取原始内容");
+      return;
+    }
+    
+    setSaving(true);
+    try {
+      const edits = generateEdits();
+      if (edits.length === 0) {
+        alert("没有检测到任何更改");
+        setSaving(false);
+        return;
+      }
+      
+      const result = await fileAPI.editDocx(userId, file.name || "", file.path, originalParagraphs, edits);
+      
+      if (result.success) {
+        alert(`文件已保存到文件空间：${result.saved_name}`);
+        onClose();
+      } else {
+        alert(`保存失败：${result.message}`);
+      }
+    } catch (e) {
+      alert(`保存失败：${e instanceof Error ? e.message : "未知错误"}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [userId, file, originalParagraphs, generateEdits, onClose]);
+  
+  const bg = isDark ? "bg-[#11151c]" : "bg-white";
+  const textColor = isDark ? "text-white" : "text-gray-900";
+  const borderColor = isDark ? "border-white/10" : "border-gray-200";
+  const hoverBg = isDark ? "hover:bg-white/5" : "hover:bg-gray-100";
+  
+  const toolbarButton = (label: string, onClick: () => void, active = false) => (
+    <button type="button" onClick={onClick} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${active ? "bg-blue-600 text-white" : `${hoverBg} ${textColor}`}`}>
+      {label}
+    </button>
+  );
+  
+  if (loading) {
+    return (
+      <div className={`fixed inset-0 flex items-center justify-center z-50 ${isDark ? "bg-gray-900" : "bg-white"}`}>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent mx-auto mb-4" />
+          <p className={textColor}>正在加载文档...</p>
+        </div>
+      </div>
+    );
+  }
+  
+  if (error) {
+    return (
+      <div className={`fixed inset-0 flex items-center justify-center z-50 ${isDark ? "bg-gray-900" : "bg-white"}`}>
+        <div className="text-center p-8">
+          <div className="text-red-500 text-5xl mb-4">⚠️</div>
+          <p className="text-xl mb-4">{error}</p>
+          <button onClick={onClose} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">关闭</button>
+        </div>
+      </div>
+    );
+  }
+  
+  return (
+    <div className={`fixed inset-0 flex flex-col z-50 ${bg}`}>
+      <div className={`flex items-center justify-between px-4 py-3 border-b ${borderColor}`}>
+        <div className="flex items-center gap-2">
+          {editor && (
+            <>
+              {toolbarButton("B", () => editor.chain().focus().toggleBold().run(), editor.isActive("bold"))}
+              {toolbarButton("I", () => editor.chain().focus().toggleItalic().run(), editor.isActive("italic"))}
+              {toolbarButton("U", () => editor.chain().focus().toggleUnderline().run(), editor.isActive("underline"))}
+              <div className="w-px h-6 bg-gray-400 mx-1" />
+              {toolbarButton("H1", () => editor.chain().focus().toggleHeading({ level: 1 }).run(), editor.isActive("heading", { level: 1 }))}
+              {toolbarButton("H2", () => editor.chain().focus().toggleHeading({ level: 2 }).run(), editor.isActive("heading", { level: 2 }))}
+              {toolbarButton("P", () => editor.chain().focus().setParagraph().run(), editor.isActive("paragraph"))}
+              <div className="w-px h-6 bg-gray-400 mx-1" />
+              {toolbarButton("≡L", () => editor.chain().focus().setTextAlign("left").run(), editor.isActive({ textAlign: "left" }))}
+              {toolbarButton("≡C", () => editor.chain().focus().setTextAlign("center").run(), editor.isActive({ textAlign: "center" }))}
+              {toolbarButton("≡R", () => editor.chain().focus().setTextAlign("right").run(), editor.isActive({ textAlign: "right" }))}
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={() => void handleSave()} disabled={saving} className="px-4 py-1.5 bg-green-600 text-white rounded font-medium hover:bg-green-700 disabled:opacity-50">
+            {saving ? "保存中..." : "保存到文件空间"}
+          </button>
+          <button onClick={onClose} className={`px-4 py-1.5 rounded font-medium ${hoverBg} ${textColor}`}>
+            关闭
+          </button>
+        </div>
+      </div>
+      
+      <div className="flex-1 overflow-auto p-6">
+        <div className={`max-w-4xl mx-auto rounded-lg shadow-lg overflow-hidden ${isDark ? "bg-gray-800" : "bg-white"}`}>
+          <style>{`
+            .ProseMirror { outline: none; min-height: 500px; padding: 20px; font-size: 16px; line-height: 1.6; }
+            .ProseMirror p { margin: 0.5em 0; }
+            .ProseMirror h1 { font-size: 1.75em; font-weight: bold; margin: 1em 0 0.5em; }
+            .ProseMirror h2 { font-size: 1.4em; font-weight: bold; margin: 0.8em 0 0.4em; }
+            .ProseMirror h3 { font-size: 1.2em; font-weight: bold; margin: 0.6em 0 0.3em; }
+            .ProseMirror ul, .ProseMirror ol { padding-left: 1.5em; margin: 0.5em 0; }
+            .ProseMirror blockquote { border-left: 3px solid #ccc; padding-left: 1em; margin-left: 0; color: #666; }
+            .ProseMirror code { background: #f4f4f4; padding: 0.2em 0.4em; border-radius: 3px; font-family: monospace; }
+            .ProseMirror.ProseMirror-focused { outline: none; }
+            .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: #aaa; float: left; height: 0; pointer-events: none; }
+            ${isDark ? `
+            .ProseMirror h1, .ProseMirror h2, .ProseMirror h3 { color: #fff; }
+            .ProseMirror p { color: #e5e5e5; }
+            .ProseMirror li { color: #e5e5e5; }
+            ` : ''}
+          `}</style>
+          <EditorContent editor={editor} />
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"]);
 const WORD_EXTENSIONS = new Set(["doc", "docx"]);
@@ -115,11 +443,15 @@ const normalizeMarkdownForPreview = (raw: string): string => {
 };
 
 const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null }) => {
+  const { darkMode } = React.useContext(appContext);
+  const isDark = darkMode === "dark";
+  
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [originalText, setOriginalText] = React.useState("");
   const [editedText, setEditedText] = React.useState("");
   const [isEditing, setIsEditing] = React.useState(true);
+  const [showWordEditor, setShowWordEditor] = React.useState(false);
 
   const dataUrl = React.useMemo(() => (file ? fileToDataUrl(file) : null), [file]);
   const textMode = React.useMemo(() => (file ? isTextFile(file) : false), [file]);
@@ -246,6 +578,11 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null }) => {
   }
 
   return (
+    <>
+      {showWordEditor && file && (
+        <WordEditor key={Date.now()} file={file} onClose={() => setShowWordEditor(false)} />
+      )}
+    
     <div className="h-full min-h-0 flex flex-col">
       <div className="flex-shrink-0 px-4 py-3 border-b border-border-primary/30 flex items-center justify-between gap-3">
         <div className="min-w-0">
@@ -275,6 +612,16 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null }) => {
               保存为副本
             </button>
           </div>
+        )}
+        {wordMode && (
+          <button
+            type="button"
+            onClick={() => setShowWordEditor(true)}
+            className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-accent/15 text-accent hover:bg-accent/25"
+          >
+            <PencilLine className="w-3.5 h-3.5" />
+            在线编辑
+          </button>
         )}
       </div>
 
@@ -328,6 +675,7 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null }) => {
         )}
       </div>
     </div>
+    </>
   );
 };
 
