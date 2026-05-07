@@ -256,17 +256,16 @@ Current Session_ID is {self._thread_id}"""
         # === basic tools ===
         self._only_in_workspace = only_in_workspace
         self._extra_work_dirs = extra_work_dirs
-        self._is_powershell = is_powershell
-        if self._is_powershell is None and _detect_powershell():
-            self._is_powershell = True
+        if is_powershell is None:
+            self._is_powershell = bool(_detect_powershell())
         else:
-            self._is_powershell = False
+            self._is_powershell = is_powershell
         self._basic_funcs: List[Callable] = get_operator_funcs(
             work_dir, 
             thread_id=self._thread_id,
             only_in_workspace=self._only_in_workspace,
             extra_dirs = self._extra_work_dirs,
-            is_powershell=is_powershell,
+            is_powershell=self._is_powershell,
             allolow_dangrous_cmd=allolow_dangrous_cmd,
             storage_dir=storage_dir,
             )

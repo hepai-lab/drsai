@@ -96,6 +96,11 @@ def _detect_powershell() -> Optional[str]:
         if ps_path:
             _POWERSHELL_PATH_CACHE = ps_path
             return ps_path
+        # Also try just "powershell" (without .exe extension)
+        ps_path = shutil.which("powershell")
+        if ps_path:
+            _POWERSHELL_PATH_CACHE = ps_path
+            return ps_path
 
     # No PowerShell found
     _POWERSHELL_PATH_CACHE = False
