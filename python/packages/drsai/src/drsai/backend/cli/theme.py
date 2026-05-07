@@ -389,6 +389,8 @@ def prompt_toolkit_style(theme: Optional[CLITheme] = None) -> dict:
     """Return a ``prompt_toolkit.styles.Style.from_dict`` dict for the given theme."""
     t = theme or get_theme()
     return {
+        # Default input text colour — what the user types in the prompt
+        "":                _rich_to_prompt_toolkit_color(t.user_echo),
         "prompt.bracket":  _rich_to_prompt_toolkit_color(t.prompt_bracket),
         "prompt.label":    _rich_to_prompt_toolkit_color(t.prompt_label),
         "prompt.arrow":    _rich_to_prompt_toolkit_color(t.prompt_arrow),

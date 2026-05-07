@@ -103,6 +103,7 @@ from .managers import ScheduledTask, ScheduleType, TaskStatus
 class DrSaiAssistantConfig(DrSaiAgentConfig):
     skills_dir: Optional[str | List[str]]
     work_dir: str | None
+    storage_dir: str | None  # Internal storage dir (overrides work_dir/user_id computation)
     only_in_workspace: bool
     extra_work_dirs: List[str]
     executor: ComponentModel
@@ -162,6 +163,7 @@ class DrSaiAssistant(DrSaiAgent):
         defult_config_name: Optional[str] = None,
         # basic tools and userprofile config
         work_dir: Optional[str] = None,
+        storage_dir: Optional[str] = None,
         only_system_message: bool = False,
         is_powershell: Optional[bool] = None,
         allolow_dangrous_cmd: bool = False,
@@ -217,7 +219,12 @@ class DrSaiAssistant(DrSaiAgent):
         self._project_instructions: str = ""  # 项目级指令 (DRSAI.md/CLAUDE.md)
 
         # === workspace for assistant ===
-        if not work_dir:
+        # storage_dir: explicit internal storage path (used by CLI where work_dir=cwd but configs stored elsewhere)
+        # When storage_dir is provided, _work_dir = storage_dir (no user_id appending)
+        # Otherwise, _work_dir = work_dir / user_id (or RUNS_DIR / user_id if work_dir not set)
+        if storage_dir:
+            self._work_dir = Path(storage_dir)
+        elif not work_dir:
             if self._db_manager:
                 DEFAULT_RUN_DIR: Path = self._db_manager.schema_manager.base_dir / "runs"
                 self._work_dir = DEFAULT_RUN_DIR / self._user_id
@@ -260,13 +267,21 @@ Current Session_ID is {self._thread_id}"""
             only_in_workspace=self._only_in_workspace,
             extra_dirs = self._extra_work_dirs,
             is_powershell=is_powershell,
-            allolow_dangrous_cmd=allolow_dangrous_cmd
+            allolow_dangrous_cmd=allolow_dangrous_cmd,
+            storage_dir=storage_dir,
             )
         if allolow_basic_tools is not None:
             self._basic_funcs = [func for func in self._basic_funcs if func.__name__ in allolow_basic_tools]
         # self._basic_funcs_names = [func.__name__ for func in self._basic_funcs]
+        # Names of toggle helper functions that should NOT be registered as LLM tools
+        _TOGGLE_FUNC_NAMES = {"set_workspace_restriction", "get_workspace_status", "set_dangerous_allowed", "get_dangerous_status"}
+        # Store toggle helpers separately for CLI access (not registered as LLM tools)
+        self._workspace_toggle_funcs = [
+            func for func in self._basic_funcs if func.__name__ in _TOGGLE_FUNC_NAMES
+        ]
         for func in self._basic_funcs:
-            self._tools.append(FunctionTool(func, description=func.__doc__))
+            if func.__name__ not in _TOGGLE_FUNC_NAMES:
+                self._tools.append(FunctionTool(func, description=func.__doc__))
 
         # === model context ===
         self._token_limit = token_limit
@@ -2584,6 +2599,7 @@ Complete the task and return a clear, concise summary."""
             # skills and executor
             skills_dir=self._skills_dir,
             work_dir=self._work_dir,
+            storage_dir=str(self._work_dir),  # storage_dir = _work_dir (already includes user_id)
             only_in_workspace=self._only_in_workspace,
             extra_work_dirs=self._extra_work_dirs,
             executor=self._local_executor.dump_component(),
@@ -2640,6 +2656,7 @@ Complete the task and return a clear, concise summary."""
             # skills and executor
             skills_dir=config.skills_dir,
             work_dir=config.work_dir,
+            storage_dir=config.storage_dir,
             only_in_workspace=config.only_in_workspace,
             extra_work_dirs=config.extra_work_dirs,
             executor=CodeExecutor.load_component(config.executor),

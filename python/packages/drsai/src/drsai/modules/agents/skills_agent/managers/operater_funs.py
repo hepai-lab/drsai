@@ -61,6 +61,16 @@ _DANGEROUS_PATTERNS = [
 ]
 _DANGEROUS_RE = re.compile('|'.join(_DANGEROUS_PATTERNS), re.IGNORECASE)
 
+# Script execution patterns (regex) — commands that execute script files
+_SCRIPT_EXEC_PATTERNS = [
+    r'\bpython[3]?\s+(?!-)[^\s;|&><]+\.py\b',   # python script.py (must end with .py, excludes -c/-m flags)
+    r'\bbash\s+(?!-)\S+',                        # bash script.sh (excludes bash -c '...')
+    r'\bsh\s+(?!-)\S+',                          # sh script.sh (excludes sh -c '...')
+    r'\bsource\s+\S+',                           # source script.sh
+    r'\.\s+\./\S+',                              # . ./script (shell source shorthand)
+]
+_SCRIPT_EXEC_RE = re.compile('|'.join(_SCRIPT_EXEC_PATTERNS), re.IGNORECASE)
+
 # Regex to extract absolute paths from shell commands
 _ABS_PATH_RE = re.compile(r'(?:^|[\s=\'",;|&<>(){}])(/(?:[^\s;|&><\'"\\{}()]+))')
 
@@ -100,25 +110,38 @@ def get_operator_funcs(
         only_in_workspace: bool = True,
         is_powershell: bool = False,
         allolow_dangrous_cmd: bool = False,
+        storage_dir: str|Path = None,
         )->list[callable]:
 
     WORKDIR = Path(worker_dir).resolve()
     ALLOWED_DIRS = [WORKDIR] + [Path(d).resolve() for d in (extra_dirs or [])]
 
-    # Initialize persistence manager
-    task_persistence = BashTaskPersistence(worker_dir=WORKDIR, thread_id=thread_id)
+    # Mutable workspace-restriction flag (list wrapper so closures can read/write)
+    # Toggle from CLI via /workspace on|off  — all tool functions consult this list.
+    _only_in_workspace = [only_in_workspace]
+
+    # Mutable dangerous-command flag (list wrapper so closures can read/write)
+    # When _dangerous_allowed[0] = True: _DANGEROUS_PATTERNS check is skipped
+    # When _dangerous_allowed[0] = False: both _DANGEROUS_PATTERNS and _SCRIPT_EXEC_PATTERNS are enforced
+    # Toggle from CLI via /dangerous on|off
+    _dangerous_allowed = [allolow_dangrous_cmd]
+
+    # Initialize persistence manager — use storage_dir for internal files if provided,
+    # otherwise fall back to WORKDIR (the tool workspace).
+    _persistence_dir = Path(storage_dir).resolve() if storage_dir else WORKDIR
+    task_persistence = BashTaskPersistence(worker_dir=_persistence_dir, thread_id=thread_id)
 
     def safe_path(p: str) -> Path:
         """Ensure path stays within workspace or allowed directories."""
         resolved = Path(p).resolve()
         # If path is absolute, check directly against allowed dirs
         if Path(p).is_absolute():
-            if only_in_workspace and not any(resolved.is_relative_to(d) for d in ALLOWED_DIRS):
+            if _only_in_workspace[0] and not any(resolved.is_relative_to(d) for d in ALLOWED_DIRS):
                 raise ValueError(f"Path escapes workspace: {p}")
             return resolved
         # Relative path: resolve against WORKDIR
         path = (WORKDIR / p).resolve()
-        if only_in_workspace and not any(path.is_relative_to(d) for d in ALLOWED_DIRS):
+        if _only_in_workspace[0] and not any(path.is_relative_to(d) for d in ALLOWED_DIRS):
             raise ValueError(f"Path escapes workspace: {p}")
         return path
 
@@ -365,6 +388,20 @@ def get_operator_funcs(
             2. If timeout → Use: run_bash_background("npm test", timeout=300)
         """
 
+        # Check dangerous patterns (unless explicitly allowed via /dangerous on)
+        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(cmd):
+            return "Error: Dangerous command detected. Use /dangerous on to authorize."
+
+        # Check script execution patterns (unless explicitly allowed via /dangerous on)
+        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(cmd):
+            return "Error: Script execution command detected. Use /dangerous on to authorize."
+
+        # Check absolute paths referenced in command
+        if _only_in_workspace[0]:
+            path_err = _check_cmd_paths(cmd)
+            if path_err:
+                return path_err
+
         task_info = {
             "process": None,
             "pgid": None,
@@ -404,8 +441,8 @@ def get_operator_funcs(
                             new_dir_str = line[len("__DRSAI_CWD__:"):].strip()
                             try:
                                 new_dir = Path(new_dir_str).resolve()
-                                # Update cwd based on only_in_workspace setting
-                                if only_in_workspace:
+                                # Update cwd based on workspace restriction setting
+                                if _only_in_workspace[0]:
                                     # Only update if within allowed directories
                                     if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
                                         _cwd[0] = new_dir
@@ -465,12 +502,16 @@ def get_operator_funcs(
             - Don't use sleep commands after launching background tasks
             - Use get_bash_task(task_id) to check status and retrieve output
         """
-        # Check dangerous patterns
-        if not allolow_dangrous_cmd and _DANGEROUS_RE.search(cmd):
-            return "Error: Dangerous command detected"
+        # Check dangerous patterns (unless explicitly allowed via /dangerous on)
+        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(cmd):
+            return "Error: Dangerous command detected. Use /dangerous on to authorize."
+
+        # Check script execution patterns (unless explicitly allowed via /dangerous on)
+        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(cmd):
+            return "Error: Script execution command detected. Use /dangerous on to authorize."
 
         # Check absolute paths referenced in command
-        if only_in_workspace:
+        if _only_in_workspace[0]:
             path_err = _check_cmd_paths(cmd)
             if path_err:
                 return path_err
@@ -529,8 +570,8 @@ def get_operator_funcs(
                                 new_dir_str = line[len("__DRSAI_CWD__:"):].strip()
                                 try:
                                     new_dir = Path(new_dir_str).resolve()
-                                    # Update cwd based on only_in_workspace setting
-                                    if only_in_workspace:
+                                    # Update cwd based on workspace restriction setting
+                                    if _only_in_workspace[0]:
                                         # Only update if within allowed directories
                                         if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
                                             _cwd[0] = new_dir
@@ -830,12 +871,16 @@ def get_operator_funcs(
         if not ps_path:
             return "Error: PowerShell not found. Please install PowerShell Core (pwsh) or use run_bash for Unix commands."
 
-        # Check dangerous patterns (unless explicitly allowed)
-        if not allolow_dangrous_cmd and _DANGEROUS_RE.search(command):
-            return "Error: Dangerous command detected"
+        # Check dangerous patterns (unless explicitly allowed via /dangerous on)
+        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(command):
+            return "Error: Dangerous command detected. Use /dangerous on to authorize."
+
+        # Check script execution patterns (unless explicitly allowed via /dangerous on)
+        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(command):
+            return "Error: Script execution command detected. Use /dangerous on to authorize."
 
         # Check absolute paths referenced in command
-        if only_in_workspace:
+        if _only_in_workspace[0]:
             # Also check Windows-style paths (C:\, D:\, etc.)
             win_path_re = re.compile(r'[A-Za-z]:\\')
             if win_path_re.search(command):
@@ -953,7 +998,7 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
                             new_dir = Path(new_dir_str).resolve()
                             if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
                                 _ps_cwd[0] = new_dir
-                            elif only_in_workspace:
+                            elif _only_in_workspace[0]:
                                 output_lines.append(
                                     f"Warning: cd target '{new_dir}' is outside workspace; cwd not updated"
                                 )
@@ -1025,6 +1070,38 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         return "\n".join(lines)
 
 
+    # ── Workspace-restriction toggle helpers ───────────────────────────────
+    # These are NOT registered as agent tools — they're called from CLI slash
+    # commands (/workspace on|off|status) to dynamically toggle the restriction.
+
+    def set_workspace_restriction(enabled: bool) -> str:
+        """Toggle only_in_workspace for all tool functions (called by /workspace command)."""
+        _only_in_workspace[0] = enabled
+        return f"workspace restriction {'enabled' if enabled else 'disabled'}"
+
+    def get_workspace_status() -> Dict[str, Any]:
+        """Return current workspace restriction info (called by /workspace status)."""
+        return {
+            "only_in_workspace": _only_in_workspace[0],
+            "work_dir": str(WORKDIR),
+            "allowed_dirs": [str(d) for d in ALLOWED_DIRS],
+        }
+
+    # ── Dangerous-command toggle helpers ───────────────────────────────────
+    # These are NOT registered as agent tools — they're called from CLI slash
+    # commands (/dangerous on|off|status) to dynamically toggle the restriction.
+
+    def set_dangerous_allowed(enabled: bool) -> str:
+        """Toggle dangerous_command_allowed for all tool functions (called by /dangerous command)."""
+        _dangerous_allowed[0] = enabled
+        return f"dangerous command execution {'allowed' if enabled else 'blocked'}"
+
+    def get_dangerous_status() -> Dict[str, Any]:
+        """Return current dangerous command restriction info (called by /dangerous status)."""
+        return {
+            "dangerous_allowed": _dangerous_allowed[0],
+        }
+
     if is_powershell:
         return [
             run_read,
@@ -1034,7 +1111,12 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
             run_glob,
             run_powershell,
             get_powershell_task,
-            list_powershell_tasks
+            list_powershell_tasks,
+            # toggles (not agent tools — for CLI use only)
+            set_workspace_restriction,
+            get_workspace_status,
+            set_dangerous_allowed,
+            get_dangerous_status,
             ]
     else:
         return [
@@ -1048,4 +1130,9 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
             get_bash_task,
             list_bash_tasks,
             kill_bash_task,
-        ]
+            # toggles (not agent tools — for CLI use only)
+            set_workspace_restriction,
+            get_workspace_status,
+            set_dangerous_allowed,
+            get_dangerous_status,
+            ]
