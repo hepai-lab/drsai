@@ -22,6 +22,9 @@ interface IModeConfig {
     setAgentId: (agentId: string | null) => void;
     agentInfo: Partial<Agent> | null;
     setAgentInfo: (agentInfo: Partial<Agent> | null) => void;
+    /** true when showing session snapshot: agent id no longer in UserAgents catalog */
+    agentOfflineSnapshot: boolean;
+    setAgentOfflineSnapshot: (v: boolean) => void;
 }
 
 export const useModeConfigStore = create<IModeConfig>()(
@@ -42,6 +45,9 @@ export const useModeConfigStore = create<IModeConfig>()(
             setAgentId: (agentId) => set({ agentId }),
             agentInfo: null,
             setAgentInfo: (agentInfo) => set({ agentInfo }),
+            agentOfflineSnapshot: false,
+            setAgentOfflineSnapshot: (agentOfflineSnapshot) =>
+                set({ agentOfflineSnapshot }),
         }),
         {
             name: "drsai-mode-config",

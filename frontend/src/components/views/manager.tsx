@@ -40,6 +40,7 @@ import {
   getCanvasViewFromSearch,
   getMenuIdFromSearch,
 } from "./menuRoutes";
+import { apiDatetimeToUtcMs, formatApiDateTimeZhCN } from "../../utils/apiDatetime";
 import { SessionEditor } from "./session_editor";
 import { AppLayout } from "../../layout";
 import { useRightPanelStore } from "../../store/rightPanel";
@@ -538,8 +539,8 @@ export const SessionManager: React.FC = () => {
     const sortedSessions = Array.isArray(sessions)
       ? [...sessions].sort(
         (a, b) =>
-          new Date(b.updated_at || b.created_at || 0).getTime() -
-          new Date(a.updated_at || a.created_at || 0).getTime()
+          apiDatetimeToUtcMs(b.updated_at || b.created_at) -
+          apiDatetimeToUtcMs(a.updated_at || a.created_at)
       )
       : [];
 
@@ -616,7 +617,7 @@ export const SessionManager: React.FC = () => {
                       {historySession.name || `Session ${sid ?? ""}`}
                     </div>
                     <div className="text-xs text-secondary mt-1">
-                      {lastTime ? new Date(lastTime).toLocaleString() : "-"}
+                      {lastTime ? formatApiDateTimeZhCN(lastTime) : "-"}
                     </div>
                   </button>
                   {sid != null && (

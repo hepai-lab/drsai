@@ -32,6 +32,12 @@ import SettingsMenu from "../settings";
 import type { RunStatus, Session } from "../types/datamodel";
 import UserProfileModal from "../userProfile";
 import { SessionRunStatusIndicator } from "./statusicon";
+import {
+  addCalendarDaysAsiaShanghai,
+  apiDatetimeToUtcMs,
+  shanghaiMidnightUtcMs,
+  todayCalendarAsiaShanghai,
+} from "../../utils/apiDatetime";
 
 
 
@@ -100,38 +106,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return null;
     }
   };
-  // Group sessions by time period
+  // Group sessions by calendar period in Asia/Shanghai (backend timestamps are UTC-naive ISO).
   const groupSessions = (sessions: Session[]) => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const last7Days = new Date(today);
-    last7Days.setDate(last7Days.getDate() - 7);
-    const last30Days = new Date(today);
-    last30Days.setDate(last30Days.getDate() - 30);
+    const todayStr = todayCalendarAsiaShanghai();
+    const yesterdayStr = addCalendarDaysAsiaShanghai(todayStr, -1);
+    const day7Str = addCalendarDaysAsiaShanghai(todayStr, -7);
+    const day30Str = addCalendarDaysAsiaShanghai(todayStr, -30);
+
+    const todayStart = shanghaiMidnightUtcMs(todayStr);
+    const yesterdayStart = shanghaiMidnightUtcMs(yesterdayStr);
+    const day7Start = shanghaiMidnightUtcMs(day7Str);
+    const day30Start = shanghaiMidnightUtcMs(day30Str);
 
     return {
-      today: sessions.filter((s) => {
-        const date = new Date(s.created_at || "");
-        return date >= today;
-      }),
+      today: sessions.filter((s) => apiDatetimeToUtcMs(s.created_at) >= todayStart),
       yesterday: sessions.filter((s) => {
-        const date = new Date(s.created_at || "");
-        return date >= yesterday && date < today;
+        const t = apiDatetimeToUtcMs(s.created_at);
+        return t >= yesterdayStart && t < todayStart;
       }),
       last7Days: sessions.filter((s) => {
-        const date = new Date(s.created_at || "");
-        return date >= last7Days && date < yesterday;
+        const t = apiDatetimeToUtcMs(s.created_at);
+        return t >= day7Start && t < yesterdayStart;
       }),
       last30Days: sessions.filter((s) => {
-        const date = new Date(s.created_at || "");
-        return date >= last30Days && date < last7Days;
+        const t = apiDatetimeToUtcMs(s.created_at);
+        return t >= day30Start && t < day7Start;
       }),
-      older: sessions.filter((s) => {
-        const date = new Date(s.created_at || "");
-        return date < last30Days;
-      }),
+      older: sessions.filter((s) => apiDatetimeToUtcMs(s.created_at) < day30Start),
     };
   };
 
@@ -139,12 +140,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const sortedSessions = useMemo(
     () =>
       Array.isArray(sessions) && sessions
-        ? [...sessions].sort((a, b) => {
-          return (
-            new Date(b.created_at || "").getTime() -
-            new Date(a.created_at || "").getTime()
-          );
-        })
+        ? [...sessions].sort(
+          (a, b) =>
+            apiDatetimeToUtcMs(b.created_at) - apiDatetimeToUtcMs(a.created_at)
+        )
         : [],
     [sessions]
   );

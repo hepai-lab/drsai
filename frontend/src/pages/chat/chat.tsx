@@ -26,6 +26,7 @@ import { messageUtils } from "./rendermessage";
 import RunView from "./runview";
 import WelcomeScreen from "./WelcomeScreen";
 import type { ServerUploadedFileInfo } from "./chat/hooks/useFileUpload";
+import { parseFlexibleTimestampToUnixSeconds } from "../../utils/apiDatetime";
 
 // Extend RunStatus for sidebar status reporting
 type SidebarRunStatus = BaseRunStatus | "final_answer_awaiting_input";
@@ -259,6 +260,7 @@ export default function ChatView({
         content.files &&
         Array.isArray(content.files)
       ) {
+        const tsSec = parseFlexibleTimestampToUnixSeconds(rawTimestamp);
         // 转换为 FilesEvent 格式
         const filesEvent: any = {
           source: config.source,
@@ -268,20 +270,10 @@ export default function ChatView({
             files: content.files,
             title: content.title,
             description: content.description,
-            send_time_stamp:
-              typeof rawTimestamp === "number"
-                ? rawTimestamp
-                : typeof rawTimestamp === "string"
-                  ? Number(rawTimestamp) || Date.parse(rawTimestamp) / 1000
-                  : undefined,
+            send_time_stamp: tsSec,
           },
           // 优先使用后端发送的 send_time_stamp；如果没有则回退到 message.created_at
-          send_time_stamp:
-            typeof rawTimestamp === "number"
-              ? rawTimestamp
-              : typeof rawTimestamp === "string"
-                ? Number(rawTimestamp) || Date.parse(rawTimestamp) / 1000
-                : undefined,
+          send_time_stamp: tsSec,
           type: config.type || 'FilesEvent',
         };
         fileEvents.push(filesEvent);
@@ -342,12 +334,7 @@ export default function ChatView({
           content: contentValue,
           title: messageAny.title,
           source: messageAny.source || config.source,
-          send_time_stamp:
-            typeof rawTimestamp === "number"
-              ? rawTimestamp
-              : typeof rawTimestamp === "string"
-                ? Number(rawTimestamp) || Date.parse(rawTimestamp) / 1000
-                : undefined,
+          send_time_stamp: parseFlexibleTimestampToUnixSeconds(rawTimestamp),
           send_level: messageAny.send_level,
           content_type: messageAny.content_type || "log",
         };
