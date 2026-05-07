@@ -92,7 +92,7 @@ async def _handle_interrupt(agent, *, set_exit_flag: bool = False) -> bool:
             print(f"  {ansi('notify_ok')}✓ 已中断，状态已重置{ansi_reset()}")
 
             if set_exit_flag:
-                print("  按 Enter 继续，或再次 Ctrl+C 退出\n")
+                print("  按 Enter 继续，或再次 Ctrl+D 退出\n")
                 if HAS_TUI:
                     set_interrupt(True)
                 return True  # 继续循环
@@ -694,6 +694,20 @@ If a question can be answered by exploring the codebase, explore the codebase in
         injected_prefix = getattr(agent, '_injected_prefix', "") or ""
         if injected_prefix:
             parts.append("plan_mode: on")
+        # Read workspace restriction from agent
+        ws_enabled = getattr(agent, '_only_in_workspace', None)
+        if ws_enabled is True:
+            parts.append("🔒 ws:on")
+        elif ws_enabled is False:
+            parts.append("🔓 ws:off")
+        # Read dangerous command permission from agent
+        dangerous_allowed = getattr(agent, '_get_dangerous_allowed', None)
+        if dangerous_allowed is not None:
+            da = dangerous_allowed()
+            if da:
+                parts.append("⚠️  dg:on")
+            else:
+                parts.append("🛡 dg:off")
         return "  ·  ".join(parts)
 
     prompt_reader = DrSaiPrompt(
@@ -1371,6 +1385,153 @@ If a question can be answered by exploring the codebase, explore the codebase in
         if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
             prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
 
+    async def _cmd_workspace(args: str):
+        """Toggle workspace restriction (only_in_workspace) on/off or show status.
+
+        When enabled, all file operations and shell commands are restricted to
+        the user's project directory (cwd) + internal storage directory.
+        When disabled, the agent can access any path on the filesystem.
+        """
+        arg = args.strip().lower()
+        if not agent:
+            print("Agent not initialized.")
+            return
+
+        # Find toggle helpers in _workspace_toggle_funcs
+        toggle_funcs = getattr(agent, '_workspace_toggle_funcs', [])
+        set_fn = next((f for f in toggle_funcs if f.__name__ == "set_workspace_restriction"), None)
+        get_fn = next((f for f in toggle_funcs if f.__name__ == "get_workspace_status"), None)
+
+        if not set_fn or not get_fn:
+            print("Workspace toggle functions not available (agent may be using an older version).")
+            return
+
+        if arg in {"on", "1", "true", "enable"}:
+            result = set_fn(True)
+            agent._only_in_workspace = True  # sync agent-level flag
+            status = get_fn()
+            print(f"{ansi('notify_ok')}🔒 Workspace restriction enabled{ansi_reset()}")
+            print(f"  Work dir:  {status['work_dir']}")
+            allowed = status['allowed_dirs']
+            if len(allowed) > 3:
+                shown = allowed[:3]
+                print(f"  Allowed:   {', '.join(str(d) for d in shown)}, ... ({len(allowed)} dirs total)")
+            else:
+                print(f"  Allowed:   {', '.join(str(d) for d in allowed)}")
+            print("  All file/shell operations are restricted to these directories.")
+            print()
+
+            # Persist session-local state
+            state_dict = await agent.save_state()
+            await _save_thread_state(current_session_id, state_dict)
+
+        elif arg in {"off", "0", "false", "disable"}:
+            result = set_fn(False)
+            agent._only_in_workspace = False  # sync agent-level flag
+            print(f"{ansi('notify_warn')}⚠ Workspace restriction disabled{ansi_reset()}")
+            print("  The agent can now access any path on the filesystem.")
+            print()
+
+            # Persist session-local state
+            state_dict = await agent.save_state()
+            await _save_thread_state(current_session_id, state_dict)
+
+        elif arg == "status" or arg == "":
+            status = get_fn()
+            enabled = status['only_in_workspace']
+            icon = "🔒" if enabled else "🔓"
+            style = ansi('notify_ok') if enabled else ansi('notify_warn')
+            reset = ansi_reset()
+            print(f"{icon} Workspace restriction: {style}{'enabled' if enabled else 'disabled'}{reset}")
+            print(f"  Work dir:  {status['work_dir']}")
+            allowed = status['allowed_dirs']
+            if len(allowed) > 3:
+                shown = allowed[:3]
+                print(f"  Allowed:   {', '.join(str(d) for d in shown)}, ... ({len(allowed)} dirs total)")
+            else:
+                print(f"  Allowed:   {', '.join(str(d) for d in allowed)}")
+            print()
+            print("Usage: /workspace [on|off|status]")
+            print("  on/off   - Enable/disable restriction (session-local)")
+            print("  status   - Show current status (default)")
+
+        else:
+            print("Usage: /workspace [on|off|status]")
+            print("  on/off   - Enable/disable restriction (session-local)")
+            print("  status   - Show current status")
+
+        # Refresh toolbar to show workspace state
+        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
+            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+
+    async def _cmd_dangerous(args: str):
+        """Toggle dangerous command execution permission on/off or show status.
+
+        When disabled (default), both _DANGEROUS_PATTERNS (system-level commands
+        like sudo, rm -rf) and _SCRIPT_EXEC_PATTERNS (python/bash/sh script
+        execution) are blocked in run_bash/run_bash_background/run_powershell.
+        When enabled (/dangerous on), all dangerous and script execution commands
+        are allowed without restriction.
+        """
+        arg = args.strip().lower()
+        if not agent:
+            print("Agent not initialized.")
+            return
+
+        # Find toggle helpers in _dangerous_toggle_funcs
+        toggle_funcs = getattr(agent, '_dangerous_toggle_funcs', [])
+        set_fn = next((f for f in toggle_funcs if f.__name__ == "set_dangerous_allowed"), None)
+        get_fn = next((f for f in toggle_funcs if f.__name__ == "get_dangerous_status"), None)
+
+        if not set_fn or not get_fn:
+            print("Dangerous toggle functions not available (agent may be using an older version).")
+            return
+
+        if arg in {"on", "1", "true", "enable"}:
+            result = set_fn(True)
+            print(f"{ansi('notify_warn')}⚠️ Dangerous command execution allowed{ansi_reset()}")
+            print("  sudo, rm -rf, python, bash, sh and similar commands will NOT be blocked.")
+            print("  Use /dangerous off to re-enable protection.")
+            print()
+
+            # Persist session-local state
+            state_dict = await agent.save_state()
+            await _save_thread_state(current_session_id, state_dict)
+
+        elif arg in {"off", "0", "false", "disable"}:
+            result = set_fn(False)
+            print(f"{ansi('notify_ok')}🛡 Dangerous command protection enabled{ansi_reset()}")
+            print("  sudo, rm -rf, shutdown, python, bash, sh etc. are BLOCKED.")
+            print("  Use /dangerous on to temporarily allow.")
+            print()
+
+            # Persist session-local state
+            state_dict = await agent.save_state()
+            await _save_thread_state(current_session_id, state_dict)
+
+        elif arg == "status" or arg == "":
+            status = get_fn()
+            allowed = status['dangerous_allowed']
+            icon = "⚠️" if allowed else "🛡"
+            style = ansi('notify_warn') if allowed else ansi('notify_ok')
+            reset = ansi_reset()
+            state_str = 'ALLOWED (all commands pass)' if allowed else 'BLOCKED (dangerous + script exec filtered)'
+            print(f"{icon} Dangerous command protection: {style}{state_str}{reset}")
+            print()
+            print("Usage: /dangerous [on|off|status]")
+            print("  on    - Allow all dangerous and script execution commands")
+            print("  off   - Block dangerous and script execution commands (default)")
+            print("  status - Show current status (default)")
+
+        else:
+            print("Usage: /dangerous [on|off|status]")
+            print("  on    - Allow all dangerous and script execution commands")
+            print("  off   - Block dangerous and script execution commands (default)")
+
+        # Refresh toolbar to show dangerous state
+        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
+            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+
     async def _cmd_inject(args: str):
         """注入自定义提示词到 system message。
         
@@ -1613,6 +1774,10 @@ If a question can be answered by exploring the codebase, explore the codebase in
         "inject":    (_cmd_inject,   -1),
         "init":      (_cmd_init,      0),
         "memory":    (_cmd_memory,   -1),
+        "workspace": (_cmd_workspace, -1),
+        "ws":        (_cmd_workspace, -1),  # alias
+        "dangerous": (_cmd_dangerous, -1),
+        "dg":        (_cmd_dangerous, -1),  # alias
     }
 
     async def _dispatch(raw: str) -> bool:
@@ -1665,31 +1830,6 @@ If a question can be answered by exploring the codebase, explore the codebase in
 
         stats.start_turn()
         try:
-            # ── Hermes-style: Pre-execution dangerous command check ───────────
-            if HAS_TUI and is_dangerous_command(user_input):
-                try:
-                    approval = approval_callback(
-                        prompt_func=None,  # Use terminal input fallback
-                        command=user_input,
-                        description="This command may be destructive. Approve?",
-                        timeout=60,
-                    )
-                    if approval == "deny":
-                        print(f"\n  {ansi('notify_warn')}⚠ Command denied by user.{ansi_reset()}\n")
-                        return
-                    elif approval == "once":
-                        pass  # Execute once
-                    elif approval in ("session", "always"):
-                        # Store approval for session
-                        _session_approved_commands = getattr(
-                            _do_chat, "_approved_cmds", set()
-                        )
-                        _session_approved_commands.add(user_input)
-                        _do_chat._approved_cmds = _session_approved_commands
-                except Exception as e:
-                    print(f"\n  {ansi('notify_warn')}⚠ Approval check failed: {e}{ansi_reset()}\n")
-                    # Continue anyway on error
-
             # ── Hermes-style: Interrupt signal check ─────────────────────────
             if HAS_TUI and is_interrupted():
                 clear_interrupt()
@@ -1715,6 +1855,8 @@ If a question can be answered by exploring the codebase, explore the codebase in
                 return  # 中断当前命令执行
 
             # 使用 renderer 渲染消息流
+            # 用户输入前加分隔线，与 AI 回复视觉分隔
+            renderer.print_turn_separator()
             await renderer.render(agent.run_stream(task=user_input), stats)
 
         except Exception as e:
