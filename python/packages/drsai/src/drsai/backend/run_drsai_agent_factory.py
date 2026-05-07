@@ -383,6 +383,12 @@ def create_agent(
         assistant_cls: class to instantiate. Defaults to
             :class:`DrSaiCLIAssistant`; production callers (e.g. the worker)
             should pass the plain :class:`DrSaiAssistant`.
+
+    Plan-C workspace strategy (CLI mode):
+        - work_dir = cwd  (user's project directory is the primary workspace for tools)
+        - storage_dir = WORKDIR / user_id  (internal configs/memories stored separately)
+        - only_in_workspace = True  (tools restricted to cwd + storage_dir)
+        - extra_work_dirs = [storage_dir]  (agent can access its own internal files)
     """
     cli_cfg = cli_cfg or {}
 
@@ -428,6 +434,16 @@ def create_agent(
     context_type = _resolve(
         cli_cfg, "context_type", "DRSAI_CONTEXT_TYPE", default="sqlite",
     ) or "sqlite"
+
+    # ── Plan-C: workspace strategy ──────────────────────────────────────
+    # Resolve effective user_id for storage_dir computation.
+    effective_user_id = user_id or os.environ.get("DRSAI_USER_ID") or "anonymous"
+    # cwd is the primary tool workspace; internal configs go to WORKDIR/<user_id>
+    try:
+        cwd = os.getcwd()
+    except Exception:
+        cwd = str(WORKDIR)
+    user_storage_dir = str(WORKDIR / effective_user_id)
 
     def set_model_client(
         name: Optional[str] = resolved_config_name,
@@ -507,10 +523,13 @@ def create_agent(
         defult_config_name=resolved_config_name,
         # is_powershell=False,
         skills_dir=skills_dir,
-        work_dir=WORKDIR,
+        # ── Plan-C workspace strategy ──
+        work_dir=cwd,                    # Primary tool workspace = user's cwd
+        storage_dir=user_storage_dir,     # Internal configs/memories stored separately
+        only_in_workspace=True,           # Restrict tools to cwd + storage_dir
+        extra_work_dirs=[user_storage_dir],  # Allow access to internal storage
         only_system_message=False,
-        only_in_workspace=False,
-        allolow_dangrous_cmd=True,
+        allolow_dangrous_cmd=False,       # CLI default: block dangerous commands; use /dangerous on to authorize
         allolow_basic_tools=None,
         token_limit=int(token_limit * 0.7),
         rag_flow_url=rag_flow_url,

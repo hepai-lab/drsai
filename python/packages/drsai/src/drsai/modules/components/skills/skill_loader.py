@@ -68,7 +68,7 @@ class SkillLoader(Component[SkillLoaderConfig], ComponentBase[BaseModel]):
         Returns dict with: name, description, compatibility, body, path, dir
         Returns None if file doesn't match format.
         """
-        content = path.read_text()
+        content = path.read_text(encoding='utf-8')
 
         # Match YAML frontmatter between --- markers
         match = re.match(r"^---\s*\n(.*?)\n---\s*\n(.*)$", content, re.DOTALL)

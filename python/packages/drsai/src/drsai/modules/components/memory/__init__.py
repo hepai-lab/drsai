@@ -9,7 +9,7 @@ from autogen_core.memory import (
     UpdateContextResult,
     ListMemory
 )
-from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
+# from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
 
 __all__ = [
     "RAGFlowMemory",
@@ -21,6 +21,6 @@ __all__ = [
     "UpdateContextResult",
     "MemoryMimeType",
     "ListMemory",
-    "ChromaDBVectorMemory",
-    "PersistentChromaDBVectorMemoryConfig",
+    # "ChromaDBVectorMemory",
+    # "PersistentChromaDBVectorMemoryConfig",
 ]

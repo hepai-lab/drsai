@@ -35,7 +35,7 @@ class BashTaskPersistence:
 
         # Create tasks directory structure
         self.tasks_dir = self.worker_dir / "tool_tasks"
-        self.tasks_dir.mkdir(exist_ok=True)
+        self.tasks_dir.mkdir(parents=True, exist_ok=True)
 
         # Thread-specific tasks file
         self.tasks_file = self.tasks_dir / f"{thread_id}_bash_tasks.json"
