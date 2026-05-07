@@ -90,9 +90,9 @@ DrSai CLI 的 Session 系统与**工作目录**绑定：
 事先配置好环境变量：
 
 ```env
-SYSTEM_SKILLS_DIR="/path/to/skills"
-LLM_CONFIG_FILE="/path/to/llm_config.json"
-HEPAI_API_KEY="<enter your key here>"
+SYSTEM_SKILLS_DIR="/path/to/skills" # 可以使用项目中的agent_skills/skills
+LLM_CONFIG_FILE="/path/to/llm_config.json" # 可以使用项目中的llm_mode_config.example.json
+HEPAI_API_KEY="<enter your key here>" # 任何hepai/openai/ahthropic
 ```
 
 ### 2.1 启动方式

@@ -67,7 +67,7 @@ class DrSaiCLIAssistant(DrSaiAssistant):
     ) -> None:
         # Nudge defaults for single-user terminal workflows.
         kwargs.setdefault("model_client_stream", True)
-        kwargs.setdefault("is_powershell", False)
+        kwargs.setdefault("is_powershell", None)
         kwargs.setdefault("only_in_workspace", True)
         kwargs.setdefault("allolow_dangrous_cmd", False)  # CLI 默认拦截危险命令，用 /dangerous on 授权
         super().__init__(*args, **kwargs)
