@@ -172,3 +172,131 @@ async def get_user_session_files(session_id: str, user_id: str, db=Depends(get_d
             return {"status": True, "data": files_list}
 
         return {"status": True, "data": []}
+
+
+@router.post("/docx/edit")
+async def edit_docx_file(
+    user_id: str,
+    file_name: str,
+    file_path: str,
+    original_paragraphs: List[str],
+    edits: List[Dict[str, Any]],
+    db=Depends(get_db)
+) -> Dict:
+    """
+    Edit a .docx file using structured edits with content-based paragraph matching.
+    
+    This endpoint:
+    1. Applies edits to the docx using DocumentProcessor
+    2. Copies the edited file to user's files space
+    3. Registers the new file in UserFiles database
+    
+    Args:
+        user_id: User identifier
+        file_name: Original file name
+        file_path: Path to the docx file on disk
+        original_paragraphs: List of original paragraph texts for content matching
+        edits: List of edit operations (replace_text, format_text, etc.)
+    
+    Returns:
+        {status: True, data: {success, saved_name, path, uuid, ...}}
+    """
+    from .....drsai_ext.tools.docx_processor import edit_docx_by_content_match
+    import datetime
+    
+    try:
+        # Validate file exists
+        if not os.path.isfile(file_path):
+            raise HTTPException(status_code=404, detail="Source file not found")
+        
+        # Get user's files directory
+        initializer = get_initializer()
+        userfiles_path = str(initializer.user_files / user_id)
+        if not os.path.exists(userfiles_path):
+            os.makedirs(userfiles_path, exist_ok=True)
+        
+        # Generate new file name with timestamp
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        name_parts = file_name.rsplit(".", 1)
+        if len(name_parts) == 2:
+            new_file_name = f"{name_parts[0]}_edited_{timestamp}.{name_parts[1]}"
+        else:
+            new_file_name = f"{file_name}_edited_{timestamp}.docx"
+        
+        # Create a copy for editing (don't modify original)
+        temp_copy_path = os.path.join(userfiles_path, f"temp_{timestamp}_{file_name}")
+        shutil.copy2(file_path, temp_copy_path)
+        
+        # Apply edits using DocumentProcessor
+        result = edit_docx_by_content_match(
+            file_path=temp_copy_path,
+            edits=edits,
+            original_paragraphs=original_paragraphs,
+            preserve_format=True
+        )
+        
+        if not result.get("success", False):
+            # Clean up temp file
+            if os.path.exists(temp_copy_path):
+                os.remove(temp_copy_path)
+            raise HTTPException(status_code=500, detail=result.get("message", "Edit failed"))
+        
+        # Move to final location
+        final_path = os.path.join(userfiles_path, new_file_name)
+        if os.path.exists(final_path):
+            os.remove(final_path)
+        shutil.move(temp_copy_path, final_path)
+        
+        # Register in database
+        file_id = str(uuid.uuid4())
+        file_info = {
+            "name": new_file_name,
+            "type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "path": final_path,
+            "suffix": ".docx",
+            "size": os.path.getsize(final_path),
+            "uuid": file_id,
+            "description": f"Edited version of {file_name}",
+        }
+        
+        # Upload to HepAI filesystem if enabled
+        USE_HEPAI_FILE = os.getenv("USE_HEPAI_FILE", False)
+        if USE_HEPAI_FILE:
+            try:
+                file_obj = upload_to_filesystem(final_path, user_id)
+                file_info["url"] = file_obj["url"]
+            except Exception as upload_err:
+                print(f"Warning: HepAI upload failed: {upload_err}")
+        
+        # Save to database
+        response = db.get(UserFiles, filters={"user_id": user_id})
+        if not response.status or not response.data:
+            userfiles = UserFiles(
+                user_id=user_id,
+                files={file_id: file_info},
+            )
+        else:
+            userfiles: UserFiles = response.data[0]
+            if userfiles.files:
+                userfiles.files[file_id] = file_info
+            else:
+                userfiles.files = {file_id: file_info}
+        db.upsert(userfiles)
+        
+        return {
+            "status": True,
+            "data": {
+                "success": True,
+                "saved_name": new_file_name,
+                "uuid": file_id,
+                "path": final_path,
+                "url": file_info.get("url"),
+                "changes": result.get("changes_made", []),
+                "message": result.get("message", ""),
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
