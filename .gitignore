@@ -70,6 +70,8 @@ MANIFEST
 # PyInstaller
 *.manifest
 *.spec
+# Hand-maintained build configs — keep tracked
+!python/packages/drsai/drsai-tray.spec
 
 # Installer logs
 pip-log.txt
