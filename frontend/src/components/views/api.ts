@@ -952,6 +952,65 @@ export class FileAPI {
             fileUuid
         )}?user_id=${encodeURIComponent(userId)}`;
     }
+
+    async editDocx(
+        userId: string,
+        fileName: string,
+        originalParagraphs: string[],
+        edits: Array<{
+            type: string;
+            old_text?: string;
+            new_text?: string;
+            text?: string;
+            content?: string;
+            formatting?: { bold?: boolean | null; italic?: boolean | null };
+            position?: number;
+        }>,
+        fileUrl?: string | null,
+        fileBase64?: string | null,
+    ): Promise<{
+        success: boolean;
+        saved_name?: string;
+        uuid?: string;
+        path?: string;
+        url?: string;
+        changes?: string[];
+        message?: string;
+    }> {
+        const url = `${this.getBaseUrl()}/files/docx/edit`;
+        const body: Record<string, unknown> = {
+            user_id: userId,
+            file_name: fileName,
+            original_paragraphs: originalParagraphs,
+            edits: edits,
+        };
+        if (fileUrl) body.file_url = fileUrl;
+        if (fileBase64) body.file_base64 = fileBase64;
+
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+        });
+
+        const text = await response.text();
+        let data: any;
+        try {
+            data = JSON.parse(text);
+        } catch {
+            throw new Error(text || `Server error (${response.status})`);
+        }
+        if (!data.status) {
+            const detail = data.detail;
+            const errMsg = data.message
+                || (Array.isArray(detail) ? detail.map((d: any) => d.msg || JSON.stringify(d)).join("; ") : detail)
+                || "Failed to edit docx";
+            throw new Error(errMsg);
+        }
+        return data.data;
+    }
 }
 
 export class AuthAPI {

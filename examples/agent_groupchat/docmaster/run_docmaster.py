@@ -839,6 +839,8 @@ def main():
             description="专业的Word文档处理大师，支持上传、分析、编辑、格式化Word文档",
             version="1.0.0",
             logo="https://example.com/word-editor-logo.png",  # 需要提供logo URL
+
+            permission='groups: drsai; users: admin, haiuser01@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: haiuser01@ihep.ac.cn',
             
             # 示例对话
             examples=[
