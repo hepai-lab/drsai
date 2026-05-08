@@ -2515,4 +2515,45 @@ def main() -> None:
     app.run()
 
 if __name__ == "__main__":
-    main()
+    # ── Crash-logging shim for windowed PyInstaller exe ─────────────────────
+    # In windowed mode sys.stdout / sys.stderr are None and any unhandled
+    # exception just kills the process silently. Capture EVERYTHING to a
+    # crash log before invoking main().
+    import datetime as _dt
+    import traceback as _tb
+
+    _crash_dir = Path.home() / ".drsai" / "logs"
+    try:
+        _crash_dir.mkdir(parents=True, exist_ok=True)
+        _crash_log = _crash_dir / "drsai-tray-crash.log"
+    except Exception:
+        _crash_log = Path.home() / "drsai-tray-crash.log"
+
+    _crash_fp = open(_crash_log, "a", encoding="utf-8", buffering=1)
+    _crash_fp.write(f"\n=== {_dt.datetime.now().isoformat()} drsai-tray launching ===\n")
+    _crash_fp.flush()
+
+    # Redirect dead std streams so print() and tracebacks aren't lost
+    if sys.stdout is None:
+        sys.stdout = _crash_fp
+    if sys.stderr is None:
+        sys.stderr = _crash_fp
+
+    def _excepthook(etype, evalue, etb):
+        _crash_fp.write("\n=== Unhandled exception ===\n")
+        _tb.print_exception(etype, evalue, etb, file=_crash_fp)
+        _crash_fp.flush()
+    sys.excepthook = _excepthook
+
+    try:
+        main()
+    except SystemExit as _e:
+        _crash_fp.write(f"\n=== sys.exit({_e.code}) called ===\n")
+        _tb.print_stack(file=_crash_fp)
+        _crash_fp.flush()
+        raise
+    except BaseException:
+        _crash_fp.write("\n=== Top-level exception ===\n")
+        _tb.print_exc(file=_crash_fp)
+        _crash_fp.flush()
+        raise
