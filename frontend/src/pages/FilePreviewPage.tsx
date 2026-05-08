@@ -6,13 +6,15 @@ import Underline from "@tiptap/extension-underline";
 import TextAlign from "@tiptap/extension-text-align";
 import Typography from "@tiptap/extension-typography";
 
-import type { MessageFileItem } from "../components/types/datamodel";
+import type { MessageFileItem, FilesEvent } from "../components/types/datamodel";
 import MarkdownRenderer from "../components/common/markdownrender";
 import { fileAPI } from "../components/views/api";
 import { appContext } from "../hooks/provider";
 
 interface FilePreviewPageProps {
   file?: MessageFileItem | null;
+  sessionId?: number | null;
+  onFileEvent?: (event: FilesEvent) => void;
 }
 
 /* ============================================================
@@ -34,6 +36,7 @@ interface EditOperation {
 interface WordEditorProps {
   file: MessageFileItem;
   onClose: () => void;
+  onFileEvent?: (event: FilesEvent) => void;
 }
 
 // Helper: Extract plain text from HTML
@@ -52,7 +55,7 @@ const extractTextFromHTML = (html: string): string[] => {
 };
 
 // WordEditor component with TipTap
-const WordEditor: React.FC<WordEditorProps> = ({ file, onClose }) => {
+const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) => {
   const { user, darkMode } = React.useContext(appContext);
   const userId = user?.email || "";
   const isDark = darkMode === "dark";
@@ -86,28 +89,17 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose }) => {
           throw new Error("当前文件没有可用内容");
         }
         
-        // Try markdown first (TipTap handles this better)
-        let content = "";
-        try {
-          const { value: mdValue } = await import("mammoth").then(m => m.convertToMarkdown({ arrayBuffer }));
-          content = mdValue;
-          console.log("[WordEditor] Markdown length:", mdValue.length);
-        } catch {
-          // Fallback to HTML if markdown conversion fails
-          const { value } = await convertToHtml({ arrayBuffer });
-          content = value
-            .replace(/<img[^>]*>/gi, "")
-            .replace(/<table[^>]*>[\s\S]*?<\/table>/gi, "\n[表格内容]\n");
-          console.log("[WordEditor] HTML length:", value.length);
-        }
-        console.log("[WordEditor] Content length:", content.length);
+        // Always use HTML conversion — TipTap natively understands HTML
+        // (markdown would be treated as a single text blob)
+        const { value: rawHtml } = await convertToHtml({ arrayBuffer });
+        const content = rawHtml
+          .replace(/<img[^>]*>/gi, "")
+          .replace(/<table[^>]*>[\s\S]*?<\/table>/gi, "<p>[表格内容]</p>");
+        console.log("[WordEditor] HTML length:", content.length);
         console.log("[WordEditor] First 300 chars:", content.slice(0, 300));
         
-        // Extract paragraphs from content (handle both markdown and HTML)
-        const originalParas = content
-          .split(/\n+/)
-          .map((s) => s.replace(/<[^>]*>/g, "").trim())
-          .filter(Boolean);
+        // Extract paragraphs from HTML using DOM parsing for accurate structure
+        const originalParas = extractTextFromHTML(content);
         
         setOriginalParagraphs(originalParas);
         setHtmlContent(content);
@@ -142,7 +134,6 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose }) => {
   React.useEffect(() => {
     if (editor && htmlContent) {
       console.log("[WordEditor] Setting content, length:", htmlContent.length);
-      // Try setting as markdown first (more reliable), fall back to HTML
       try {
         editor.commands.setContent(htmlContent);
       } catch (e) {
@@ -217,8 +208,12 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose }) => {
   }, [editor, originalParagraphs]);
   
   const handleSave = React.useCallback(async () => {
-    if (!file.path || originalParagraphs.length === 0) {
-      alert("文件路径不可用或无法获取原始内容");
+    if (originalParagraphs.length === 0) {
+      alert("无法获取原始内容");
+      return;
+    }
+    if (!file.url && !file.base64_content) {
+      alert("文件内容不可用（无 URL 或 base64）");
       return;
     }
     
@@ -231,9 +226,38 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose }) => {
         return;
       }
       
-      const result = await fileAPI.editDocx(userId, file.name || "", file.path, originalParagraphs, edits);
+      const result = await fileAPI.editDocx(
+        userId,
+        file.name || "",
+        originalParagraphs,
+        edits,
+        file.url || null,
+        file.base64_content || null,
+      );
       
       if (result.success) {
+        // Emit a FilesEvent so the file shows up in 文件空间 immediately
+        if (onFileEvent) {
+          const savedFile: MessageFileItem = {
+            name: result.saved_name || file.name || "edited.docx",
+            url: result.url || "",
+            base64_content: "",
+            size: file.size,
+            mime_type: file.mime_type || "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            description: `Edited version of ${file.name || "document"}`,
+            download_method: result.url ? "url" : "base64",
+          };
+          onFileEvent({
+            source: "WordEditor",
+            content: {
+              files: [savedFile],
+              title: result.saved_name || "Edited Document",
+              description: `Edited version of ${file.name || "document"}`,
+              send_time_stamp: Date.now(),
+            },
+            type: "FilesEvent",
+          });
+        }
         alert(`文件已保存到文件空间：${result.saved_name}`);
         onClose();
       } else {
@@ -244,7 +268,7 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose }) => {
     } finally {
       setSaving(false);
     }
-  }, [userId, file, originalParagraphs, generateEdits, onClose]);
+  }, [userId, file, originalParagraphs, generateEdits, onClose, onFileEvent]);
   
   const bg = isDark ? "bg-[#11151c]" : "bg-white";
   const textColor = isDark ? "text-white" : "text-gray-900";
@@ -313,13 +337,17 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose }) => {
       <div className="flex-1 overflow-auto p-6">
         <div className={`max-w-4xl mx-auto rounded-lg shadow-lg overflow-hidden ${isDark ? "bg-gray-800" : "bg-white"}`}>
           <style>{`
-            .ProseMirror { outline: none; min-height: 500px; padding: 20px; font-size: 16px; line-height: 1.6; }
-            .ProseMirror p { margin: 0.5em 0; }
-            .ProseMirror h1 { font-size: 1.75em; font-weight: bold; margin: 1em 0 0.5em; }
-            .ProseMirror h2 { font-size: 1.4em; font-weight: bold; margin: 0.8em 0 0.4em; }
-            .ProseMirror h3 { font-size: 1.2em; font-weight: bold; margin: 0.6em 0 0.3em; }
+            .ProseMirror { outline: none; min-height: 500px; padding: 32px 40px; font-size: 15px; line-height: 1.75; }
+            .ProseMirror p { margin: 0.6em 0; text-indent: 0; }
+            .ProseMirror p:first-child { margin-top: 0; }
+            .ProseMirror p + p { margin-top: 0.6em; }
+            .ProseMirror h1 { font-size: 1.75em; font-weight: bold; margin: 1.2em 0 0.6em; }
+            .ProseMirror h2 { font-size: 1.4em; font-weight: bold; margin: 1em 0 0.5em; }
+            .ProseMirror h3 { font-size: 1.2em; font-weight: bold; margin: 0.8em 0 0.4em; }
+            .ProseMirror h4, .ProseMirror h5, .ProseMirror h6 { font-size: 1.1em; font-weight: bold; margin: 0.6em 0 0.3em; }
             .ProseMirror ul, .ProseMirror ol { padding-left: 1.5em; margin: 0.5em 0; }
-            .ProseMirror blockquote { border-left: 3px solid #ccc; padding-left: 1em; margin-left: 0; color: #666; }
+            .ProseMirror li { margin: 0.25em 0; }
+            .ProseMirror blockquote { border-left: 3px solid #ccc; padding-left: 1em; margin: 0.8em 0; margin-left: 0; color: #666; }
             .ProseMirror code { background: #f4f4f4; padding: 0.2em 0.4em; border-radius: 3px; font-family: monospace; }
             .ProseMirror.ProseMirror-focused { outline: none; }
             .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: #aaa; float: left; height: 0; pointer-events: none; }
@@ -442,7 +470,7 @@ const normalizeMarkdownForPreview = (raw: string): string => {
   return text.replace(/\n{3,}/g, "\n\n").trim();
 };
 
-const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null }) => {
+const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionId, onFileEvent }) => {
   const { darkMode } = React.useContext(appContext);
   const isDark = darkMode === "dark";
   
@@ -580,7 +608,7 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null }) => {
   return (
     <>
       {showWordEditor && file && (
-        <WordEditor key={Date.now()} file={file} onClose={() => setShowWordEditor(false)} />
+        <WordEditor key={Date.now()} file={file} onClose={() => setShowWordEditor(false)} onFileEvent={onFileEvent} />
       )}
     
     <div className="h-full min-h-0 flex flex-col">

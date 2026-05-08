@@ -694,7 +694,14 @@ export const SessionManager: React.FC = () => {
         onSubMenuChange={(tabId) => navigateToMenu(tabId as MenuId)}
         canvasActiveView={activeCanvasView}
         onCanvasViewChange={navigateToView}
-        canvasFilePreviewContent={<FilePreviewPage file={selectedPreviewFile} />}
+        canvasFilePreviewContent={<FilePreviewPage file={selectedPreviewFile} sessionId={session?.id ?? null} onFileEvent={(evt) => {
+          const sid = session?.id;
+          if (!sid) return;
+          setSessionFileEvents((prev) => ({
+            ...prev,
+            [sid]: [...(prev[sid] || []), evt],
+          }));
+        }} />}
         rightPanelHistory={rightPanelHistory}
         rightPanelFiles={rightPanelFiles}
         onRightPanelTabChange={(tab) => {
