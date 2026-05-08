@@ -60,12 +60,10 @@ WORKDIR.mkdir(parents=True, exist_ok=True)
 
 # 支持的模型配置
 llm_mode_config = {
-    "claude-sonnet-4-6(High)": "anthropic/claude-sonnet-4-6",
-    "claude-haiku-4-5(Fast)": "anthropic/claude-haiku-4-5",
-    "gpt-4o": "openai/gpt-4o",
-    "gpt-4.1": "openai/gpt-4.1",
-    "deepseek-v3.2(No image)": "deepseek-ai/deepseek-v3.2",
-    "minimax-m2.7": "minimax/minimax-m2.7",
+    "deepseek-v4-flash(Fast)": "hepai/deepseek-v4-flash",
+    "qwen3_30b": "hepai/qwen3_30b",
+    "minimax-m2.7": "hepai/minimax-m2.7",
+    "minimax-m2.7-highspeed": "hepai/minimax-m2.7-highspeed",
 }
 
 def _build_files_event_data(file_path: str, description: str) -> dict | None:
@@ -180,16 +178,14 @@ def create_word_editor_agent(
         """设置模型客户端"""
         # Try different models if the default fails
         if default_config_name is None:
-            default_config_name = "gpt-4o"
+            default_config_name = "deepseek-v4-flash(Fast)"
         
         # List of models to try in order (fastest/lightest first)
         models_to_try = [
-            "gpt-4o",                   # Default - most reliable
-            "gpt-4.1",                  # Alternative GPT
-            "claude-haiku-4-5(Fast)",   # Fast Claude
-            "claude-sonnet-4-6(High)",  # High quality Claude
-            "deepseek-v3.2(No image)",  # Alternative
-            "minimax-m2.7"              # Last resort
+            "deepseek-v4-flash(Fast)",   # Default - fast and reliable
+            "qwen3_30b",                  # Qwen 30B
+            "minimax-m2.7-highspeed",    # Fast minimax
+            "minimax-m2.7",              # Standard minimax
         ]
         
         # If specified model is in the list, try it first
@@ -207,53 +203,43 @@ def create_word_editor_agent(
                 break
         else:
             # Fallback to default
-            llm_model = "openai/gpt-4o"
+            llm_model = "hepai/deepseek-v4-flash"
+            model_name = "deepseek-v4-flash(Fast)"
             print(f"⚠️ Model not found in config, using default: {llm_model}")
         
         # Create model client with timeout and retry settings
         try:
-            if "claude" in llm_model or "minimax" in llm_model:
+            # minimax models use Anthropic API
+            if llm_model.startswith("hepai/minimax"):
                 model_client = HepAIAnthropicChatCompletionClient(
                     model=llm_model,
                     base_url="https://aiapi.ihep.ac.cn/apiv2/anthropic",
                     api_key=api_key or os.environ.get("HEPAI_API_KEY"),
                     model_info=_MODEL_INFO.get("claude-sonnet-4-5", _MODEL_INFO["claude-sonnet-4-5"]),
-                    max_tokens=16000,  # FIXED: Reduced from 40000 to 16000
+                    max_tokens=16000,
                     temperature=0.3,
-                    timeout=30.0,  # 30 second timeout
-                    max_retries=2,  # Retry twice on failure
+                    timeout=30.0,
+                    max_retries=2,
                 )
             else:
-                is_vision = "deepseek" not in llm_model
-                # Determine model family based on model name
-                if "gpt-4o" in llm_model:
-                    family = ModelFamily.GPT_4O
-                elif "gpt-4.1" in llm_model:
-                    family = ModelFamily.GPT_41
-                elif "deepseek" in llm_model:
-                    family = ModelFamily.DEEPSEEK_V3
-                elif "minimax" in llm_model:
-                    family = ModelFamily.MINIMAX_M2
-                else:
-                    family = ModelFamily.GPT_4O  # Default
-                
+                # deepseek-v4-flash and qwen3_30b use OpenAI-compatible API
                 model_client = HepAIChatCompletionClient(
                     model=llm_model,
                     api_key=api_key or os.environ.get("HEPAI_API_KEY"),
                     base_url="https://aiapi.ihep.ac.cn/apiv2",
                     model_info={
-                        "vision": is_vision,
+                        "vision": False,
                         "function_calling": True,
                         "json_output": True,
                         "structured_output": False,
-                        "family": family,
+                        "family": ModelFamily.UNKNOWN,
                         "multiple_system_messages": True,
-                        "token_model": "gpt-4o",  # FIXED: Simplified token model
+                        "token_model": "hepai/deepseek-v4-flash",
                     },
                     temperature=0.3,
-                    max_tokens=16000,  # FIXED: Reduced from 40000 to 16000
-                    timeout=30.0,  # 30 second timeout
-                    max_retries=2,  # Retry twice on failure
+                    max_tokens=16000,
+                    timeout=30.0,
+                    max_retries=2,
                 )
             
             print(f"✅ Successfully created model client for {model_name}")
@@ -261,16 +247,24 @@ def create_word_editor_agent(
             
         except Exception as e:
             print(f"❌ Failed to create model client for {model_name}: {e}")
-            print("🔄 Falling back to Claude Haiku (most reliable)")
+            print("🔄 Falling back to deepseek-v4-flash")
             
-            # Fallback to Claude Haiku
-            return HepAIAnthropicChatCompletionClient(
-                model="anthropic/claude-haiku-4-5",
-                base_url="https://aiapi.ihep.ac.cn/apiv2/anthropic",
+            # Fallback to deepseek-v4-flash
+            return HepAIChatCompletionClient(
+                model="hepai/deepseek-v4-flash",
                 api_key=api_key or os.environ.get("HEPAI_API_KEY"),
-                model_info=_MODEL_INFO.get("claude-sonnet-4-5", _MODEL_INFO["claude-sonnet-4-5"]),
-                max_tokens=16000,  # FIXED: Reduced from 40000 to 16000
+                base_url="https://aiapi.ihep.ac.cn/apiv2",
+                model_info={
+                    "vision": False,
+                    "function_calling": True,
+                    "json_output": True,
+                    "structured_output": False,
+                    "family": ModelFamily.UNKNOWN,
+                    "multiple_system_messages": True,
+                    "token_model": "hepai/deepseek-v4-flash",
+                },
                 temperature=0.3,
+                max_tokens=16000,
                 timeout=30.0,
                 max_retries=2,
             )
@@ -854,7 +848,7 @@ def main():
             
             # 模型配置
             agent_config=llm_mode_config,
-            default_config_name="gpt-4o",
+            default_config_name="deepseek-v4-flash(Fast)",
             
             # 智能体工厂
             agent_factory=create_word_editor_agent,
