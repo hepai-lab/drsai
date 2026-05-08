@@ -2485,7 +2485,15 @@ If a question can be answered by exploring the codebase, explore the codebase in
 def main() -> None:
     """Entry point for ``drsai-tray`` command."""
     logger.remove()
-    logger.add(sys.stderr, level="WARNING")
+    # In PyInstaller windowed mode (console=False), sys.stderr is None.
+    if sys.stderr is not None:
+        logger.add(sys.stderr, level="WARNING")
+    try:
+        log_file = Path(FS_DIR) / "logs" / "drsai-tray.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        logger.add(str(log_file), level="WARNING", rotation="5 MB", retention=3)
+    except Exception:
+        pass  # never let logging setup crash the app
 
     # ── Check tkinter availability ──────────────────────────────────────────
     # Do NOT create a Tk root here — DrSaiChatWindow is itself a tk.Tk root.
