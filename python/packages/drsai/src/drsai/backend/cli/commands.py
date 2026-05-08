@@ -133,6 +133,12 @@ COMMAND_REGISTRY: list[CommandDef] = [
         cli_only=True,
     ),
     CommandDef(
+        "setup",
+        "Re-open setup wizard to change API key / configuration",
+        "Configuration",
+        aliases=("env",),
+    ),
+    CommandDef(
         "model",
         "Show/switch model (session-local) or show model details: /model [name|info]",
         "Configuration",
@@ -215,6 +221,27 @@ COMMAND_REGISTRY: list[CommandDef] = [
         aliases=("dg",),
         args_hint="on|off|status",
     ),
+    CommandDef(
+        "cd",
+        "Switch working directory (Tray GUI only; CLI uses cwd automatically)",
+        "Workspace",
+        aliases=("workdir",),
+        args_hint="<path>",
+    ),
+
+    # ── Desktop ────────────────────────────────────────────────────────────
+    CommandDef(
+        "install",
+        "Create desktop shortcut for DrSai tray app",
+        "Desktop",
+        args_hint="shortcut|icons|uninstall",
+    ),
+    CommandDef(
+        "tray",
+        "Check/recreate tray icon (status|create|hide)",
+        "Desktop",
+        args_hint="status|create|hide",
+    ),
 
     # ── Meta ─────────────────────────────────────────────────────────────────
     CommandDef(
@@ -254,7 +281,7 @@ def resolve_command(name: str) -> Optional[CommandDef]:
 
 def commands_by_category() -> dict[str, list[CommandDef]]:
     """Return commands grouped by category, in fixed category order."""
-    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Info"]
+    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Desktop", "Info"]
     groups: dict[str, list[CommandDef]] = {cat: [] for cat in order}
     for cmd in COMMAND_REGISTRY:
         if cmd.category in groups:

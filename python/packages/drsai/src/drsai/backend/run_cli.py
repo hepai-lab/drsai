@@ -191,12 +191,23 @@ def _chat_main(
         os.environ.get("OPENAI_API_KEY"),
     ])
     if not any_key:
-        typer.echo(
-            "No API key. Set one of: HEPAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY\n"
-            "or use --api-key / --anthropic-api-key / --openai-api-key,\n"
-            "or run: drsai config --show"
-        )
-        raise typer.Exit(1)
+        # Instead of hard exit, prompt user to input a key interactively
+        cfg = _interactive_setup(api_key_only=True)
+        # Re-check after setup
+        any_key = any([
+            cfg.get("api_key"),
+            cfg.get("anthropic_api_key"),
+            cfg.get("openai_api_key"),
+            os.environ.get("ANTHROPIC_API_KEY"),
+            os.environ.get("OPENAI_API_KEY"),
+        ])
+        if not any_key:
+            typer.echo(typer.style(
+                "  No API key configured. Set one via environment variables:\n"
+                "    HEPAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY\n",
+                fg=typer.colors.RED,
+            ))
+            raise typer.Exit(1)
 
     asyncio.run(_run_repl(cfg))
 
@@ -294,32 +305,139 @@ def chat(
     )
 
 
-def _interactive_setup() -> dict:
-    """First-time setup wizard - minimal config for user identity."""
-    typer.echo(typer.style(
-        "\n  Welcome to DrSai CLI! Let's configure your profile.\n",
-        fg=typer.colors.GREEN, bold=True,
-    ))
+def _interactive_setup(*, api_key_only: bool = False) -> dict:
+    """First-time setup wizard — configure user identity and/or API keys.
+
+    Args:
+        api_key_only: If True, only prompt for API keys (skip user_id/model).
+                      Used when the app starts without any key and needs one
+                      before it can proceed.
+
+    Returns:
+        Updated config dict.
+    """
+    if api_key_only:
+        typer.echo(typer.style(
+            "\n  \u26a0 No API key found \u2014 let\u2019s set one up first.\n",
+            fg=typer.colors.YELLOW, bold=True,
+        ))
+    else:
+        typer.echo(typer.style(
+            "\n  Welcome to DrSai CLI! Let\u2019s configure your profile.\n",
+            fg=typer.colors.GREEN, bold=True,
+        ))
     typer.echo(f"  Config will be saved to: {cli_config.CLI_CONFIG_PATH}\n")
 
-    cfg = dict(cli_config.DEFAULT_CONFIG)
+    cfg = cli_config.load_config() if cli_config.CLI_CONFIG_PATH.exists() else dict(cli_config.DEFAULT_CONFIG)
 
-    # ── User identity ────────────────────────────────────────────────────────
-    cfg["user_id"] = typer.prompt(
-        "  Your user id",
-        default=cfg.get("user_id", "anonymous"),
-    ).strip()
+    # ── User identity (skip if api_key_only) ──────────────────────────────────────────────────────────────────────────────────────────
+    if not api_key_only:
+        cfg["user_id"] = typer.prompt(
+            "  Your user id",
+            default=cfg.get("user_id", "anonymous"),
+        ).strip()
 
-    # ── Default model ────────────────────────────────────────────────────────
-    typer.echo("")
-    cfg["defult_config_name"] = typer.prompt(
-        "  Default model name (e.g. minimax-m2.7-highspeed)",
-        default=cfg.get("defult_config_name") or "",
-    ).strip() or None
+        # ── Default model ──────────────────────────────────────────────────────────────────────────────────────
+        typer.echo("")
+        cfg["defult_config_name"] = typer.prompt(
+            "  Default model name (e.g. hepai/minimax-m2.7-highspeed)",
+            default=cfg.get("defult_config_name") or "",
+        ).strip() or None
 
+    # ── API Key setup ──────────────────────────────────────────────────────────────────────────────────────
+    # Check if any key is already configured (config + env vars)
+    existing_keys = any([
+        cfg.get("api_key"),
+        cfg.get("anthropic_api_key"),
+        cfg.get("openai_api_key"),
+        os.environ.get("HEPAI_API_KEY"),
+        os.environ.get("ANTHROPIC_API_KEY"),
+        os.environ.get("OPENAI_API_KEY"),
+    ])
+
+    if not existing_keys or api_key_only:
+        typer.echo("")
+        typer.echo(typer.style("  \u2500\u2500 API Key Configuration \u2500\u2500", fg=typer.colors.CYAN, bold=True))
+        typer.echo("  Choose an API provider:")
+        typer.echo("    1. HepAI     (\u63a8\u8350 \u2014 \u56fd\u5185\u9ad8\u901f\u6a21\u578b, https://hepai.ai)")
+        typer.echo("    2. Anthropic (Claude \u7cfb\u5217)")
+        typer.echo("    3. OpenAI    (GPT \u7cfb\u5217)")
+        typer.echo("    4. \u8df3\u8fc7 \u2014 \u6211\u4f1a\u901a\u8fc7\u73af\u5883\u53d8\u91cf\u8bbe\u5b9a")
+        typer.echo("")
+
+        choice = typer.prompt("  \u9009\u62e9 (1-4)", default="1").strip()
+
+        import getpass
+
+        if choice == "1":
+            # ── HepAI ──────────────────────────────────────────────────────────────────────────────────────
+            typer.echo(typer.style("\n  HepAI API Key", fg=typer.colors.CYAN))
+            key = getpass.getpass("  Enter your HepAI API Key (input hidden): ").strip()
+            if key:
+                cfg["api_key"] = key
+                os.environ["HEPAI_API_KEY"] = key
+                typer.echo(typer.style(f"  \u2705 HepAI Key saved: {cli_config.mask_key(key)}", fg=typer.colors.GREEN))
+            else:
+                typer.echo(typer.style("  \u26a0 Empty key \u2014 skipped", fg=typer.colors.YELLOW))
+
+            base_url = typer.prompt(
+                "  HepAI Base URL (optional, press Enter for default)",
+                default="",
+            ).strip()
+            if base_url:
+                cfg["openai_base_url"] = base_url
+                os.environ["OPENAI_BASE_URL"] = base_url
+
+        elif choice == "2":
+            # ── Anthropic ──────────────────────────────────────────────────────────────────────────────────────
+            typer.echo(typer.style("\n  Anthropic API Key", fg=typer.colors.CYAN))
+            key = getpass.getpass("  Enter your Anthropic API Key (input hidden): ").strip()
+            if key:
+                cfg["anthropic_api_key"] = key
+                os.environ["ANTHROPIC_API_KEY"] = key
+                typer.echo(typer.style(f"  \u2705 Anthropic Key saved: {cli_config.mask_key(key)}", fg=typer.colors.GREEN))
+            else:
+                typer.echo(typer.style("  \u26a0 Empty key \u2014 skipped", fg=typer.colors.YELLOW))
+
+            base_url = typer.prompt(
+                "  Anthropic Base URL (optional, default: https://api.anthropic.com)",
+                default="",
+            ).strip()
+            if base_url:
+                cfg["anthropic_base_url"] = base_url
+                os.environ["ANTHROPIC_BASE_URL"] = base_url
+
+        elif choice == "3":
+            # ── OpenAI ──────────────────────────────────────────────────────────────────────────────────────
+            typer.echo(typer.style("\n  OpenAI API Key", fg=typer.colors.CYAN))
+            key = getpass.getpass("  Enter your OpenAI API Key (input hidden): ").strip()
+            if key:
+                cfg["openai_api_key"] = key
+                os.environ["OPENAI_API_KEY"] = key
+                typer.echo(typer.style(f"  \u2705 OpenAI Key saved: {cli_config.mask_key(key)}", fg=typer.colors.GREEN))
+            else:
+                typer.echo(typer.style("  \u26a0 Empty key \u2014 skipped", fg=typer.colors.YELLOW))
+
+            base_url = typer.prompt(
+                "  OpenAI Base URL (optional, default: https://api.openai.com/v1)",
+                default="",
+            ).strip()
+            if base_url:
+                cfg["openai_base_url"] = base_url
+                os.environ["OPENAI_BASE_URL"] = base_url
+
+        elif choice == "4":
+            typer.echo(typer.style("  \u2139 Skipped \u2014 set env vars before running:", fg=typer.colors.YELLOW))
+            typer.echo("    HEPAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY")
+
+        else:
+            typer.echo(typer.style(f"  \u26a0 Unknown choice: {choice}", fg=typer.colors.YELLOW))
+
+    # ── Save config ──────────────────────────────────────────────────────────────────────────────────────
     cli_config.save_config(cfg)
     typer.echo(typer.style("\n  Config saved!\n", fg=typer.colors.GREEN))
     return cfg
+
 
 
 @app.command()
@@ -745,6 +863,31 @@ If a question can be answered by exploring the codebase, explore the codebase in
 
     def _cmd_config():
         cli_config.show_config(cfg)
+
+    async def _cmd_setup():
+        """Re-open the setup wizard to change API key / configuration.
+
+        This allows the user to reconfigure at any time via /setup
+        command, similar to the tray app's /setup command and "配置" menu.
+        """
+        nonlocal cfg, agent
+        print()
+        print(typer.style("  Opening setup wizard...", fg=typer.colors.CYAN))
+        new_cfg = _interactive_setup()
+
+        # If we had a previous agent, close it first
+        if agent is not None:
+            try:
+                await _close_agent()
+            except Exception:
+                pass
+
+        # Update cfg with new values and re-initialize
+        cfg = new_cfg
+        agent = await _init_agent(current_session_id)
+
+        print(typer.style("  ✅ Setup complete! Agent re-initialized.", fg=typer.colors.GREEN))
+        print()
 
     def _cmd_info():
         import os
@@ -1742,6 +1885,8 @@ If a question can be answered by exploring the codebase, explore the codebase in
         "exit":      (_cmd_quit,      0),
         "q":         (_cmd_quit,      0),
         "config":    (_cmd_config,    0),
+        "setup":     (_cmd_setup,     0),
+        "env":       (_cmd_setup,     0),
         "status":    (_cmd_status,    0),
         "info":      (_cmd_info,      0),
         "new":       (_cmd_new,      -1),
