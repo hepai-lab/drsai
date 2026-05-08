@@ -321,7 +321,7 @@ def _resolve(cli_cfg: dict[str, Any], cfg_key: str, *env_keys: str, default: str
     return default
 
 
-def _build_cwd_prompt(cli_cfg: dict[str, Any]) -> str:
+def _build_cwd_prompt(cli_cfg: dict[str, Any], work_dir: str = "") -> str:
     """Compose a small system-prompt prefix that tells the agent the user's
     current working directory.
 
@@ -333,10 +333,13 @@ def _build_cwd_prompt(cli_cfg: dict[str, Any]) -> str:
     If ``cli_cfg['plan_mode']`` is True, the plan mode prompt is prepended
     to guide the agent to interview the user about their plan.
     """
-    try:
-        cwd = os.getcwd()
-    except Exception:
-        cwd = ""
+    if work_dir:
+        cwd = work_dir
+    else:
+        try:
+            cwd = os.getcwd()
+        except Exception:
+            cwd = ""
     lines: list[str] = []
 
     # Plan mode: prepend the plan mode prompt
@@ -368,6 +371,7 @@ def create_agent(
     defult_config_name: Optional[str] = DEFAULT_CONFIG_NAME,
     cli_cfg: Optional[dict[str, Any]] = None,
     assistant_cls: type[DrSaiAssistant] = DrSaiCLIAssistant,
+    work_dir: Optional[str] = None,
 ) -> DrSaiAssistant:
     """Build a local DrSai assistant from CLI config.
 
@@ -439,10 +443,14 @@ def create_agent(
     # Resolve effective user_id for storage_dir computation.
     effective_user_id = user_id or os.environ.get("DRSAI_USER_ID") or "anonymous"
     # cwd is the primary tool workspace; internal configs go to WORKDIR/<user_id>
-    try:
-        cwd = os.getcwd()
-    except Exception:
-        cwd = str(WORKDIR)
+    # When work_dir is explicitly provided (e.g. by Tray GUI), use it instead of os.getcwd()
+    if work_dir:
+        cwd = work_dir
+    else:
+        try:
+            cwd = os.getcwd()
+        except Exception:
+            cwd = str(WORKDIR)
     user_storage_dir = str(WORKDIR / effective_user_id)
 
     def set_model_client(
@@ -507,7 +515,7 @@ def create_agent(
         entry = next(iter(llm_mode_config.values()))
     token_limit = entry.token_limit
 
-    cwd_prompt = _build_cwd_prompt(cli_cfg)
+    cwd_prompt = _build_cwd_prompt(cli_cfg, work_dir=cwd)
 
     return assistant_cls(
         name="Assistant",

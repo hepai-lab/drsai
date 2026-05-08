@@ -18,6 +18,8 @@ model_status.yaml
 config.yaml
 structure.md
 overleaf_project_points_en.md
+.playwright-cli
+.drsai
 
 # 工作目录
 /workspace
