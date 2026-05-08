@@ -956,7 +956,6 @@ export class FileAPI {
     async editDocx(
         userId: string,
         fileName: string,
-        filePath: string,
         originalParagraphs: string[],
         edits: Array<{
             type: string;
@@ -966,7 +965,9 @@ export class FileAPI {
             content?: string;
             formatting?: { bold?: boolean | null; italic?: boolean | null };
             position?: number;
-        }>
+        }>,
+        fileUrl?: string | null,
+        fileBase64?: string | null,
     ): Promise<{
         success: boolean;
         saved_name?: string;
@@ -977,23 +978,36 @@ export class FileAPI {
         message?: string;
     }> {
         const url = `${this.getBaseUrl()}/files/docx/edit`;
+        const body: Record<string, unknown> = {
+            user_id: userId,
+            file_name: fileName,
+            original_paragraphs: originalParagraphs,
+            edits: edits,
+        };
+        if (fileUrl) body.file_url = fileUrl;
+        if (fileBase64) body.file_base64 = fileBase64;
+
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify({
-                user_id: userId,
-                file_name: fileName,
-                file_path: filePath,
-                original_paragraphs: originalParagraphs,
-                edits: edits,
-            }),
+            body: JSON.stringify(body),
         });
 
-        const data = await response.json();
+        const text = await response.text();
+        let data: any;
+        try {
+            data = JSON.parse(text);
+        } catch {
+            throw new Error(text || `Server error (${response.status})`);
+        }
         if (!data.status) {
-            throw new Error(data.message || data.detail || "Failed to edit docx");
+            const detail = data.detail;
+            const errMsg = data.message
+                || (Array.isArray(detail) ? detail.map((d: any) => d.msg || JSON.stringify(d)).join("; ") : detail)
+                || "Failed to edit docx";
+            throw new Error(errMsg);
         }
         return data.data;
     }
