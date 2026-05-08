@@ -59,9 +59,9 @@ from drsai.modules.managers.datamodel.db import RunStatus
 from drsai.modules.managers.datamodel.types import Response
 from drsai.utils.utils import compress_state, decompress_state
 
-from .chat_window import DrSaiChatWindow
-from .gui_renderer import DrSaiGUIRenderer
-from .tray_icon import DrSaiTrayApp
+from drsai.backend.gui.chat_window import DrSaiChatWindow
+from drsai.backend.gui.gui_renderer import DrSaiGUIRenderer
+from drsai.backend.gui.tray_icon import DrSaiTrayApp
 
 # ── Setup dialog theme (Catppuccin Mocha dark theme, matching chat_window) ─
 _SETUP_THEME = {
