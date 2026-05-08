@@ -245,6 +245,9 @@ $ErrorActionPreference = $prevEAP
 
 if ($LASTEXITCODE -ne 0) {
     Write-Err "PyInstaller packaging failed!"
+    Write-Info "----- PyInstaller output -----"
+    $pyinstallerResult | ForEach-Object { Write-Host $_ }
+    Write-Info "------------------------------"
     Write-Info "Check hiddenimports in drsai-tray.spec"
     Write-Info "Common fix: ModuleNotFoundError -> add --hidden-import"
     exit 1

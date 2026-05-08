@@ -47,10 +47,11 @@ _BULK_PACKAGES = [
 ]
 for _pkg in _BULK_PACKAGES:
     try:
-        _h, _d, _b = collect_all(_pkg)
-        hidden_imports += _h
+        # PyInstaller's collect_all returns (datas, binaries, hiddenimports)
+        _d, _b, _h = collect_all(_pkg)
         datas          += _d
         binaries       += _b
+        hidden_imports += _h
     except Exception as _err:
         # A missing optional package shouldn't fail the whole build.
         print(f"[drsai-tray.spec] WARN: collect_all({_pkg!r}) failed: {_err}")
