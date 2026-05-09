@@ -373,6 +373,280 @@ class DocumentProcessor:
                 'message': f'Failed to create Word document: {e}'
             }
     
+    def _add_footer_with_page_numbers(self, doc, footer_type: str, text: str, font_name: str, font_size: float, alignment: str):
+        """
+        Add a footer with optional page numbers to a document section.
+
+        footer_type options:
+            - 'page_number'        → "Page X of Y" centered
+            - 'page_x'             → "Page X" centered
+            - 'custom'             → just the 'text' string, no fields
+        """
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+
+        section = doc.sections[-1]
+        footer = section.footer
+
+        # Clear existing footer paragraphs
+        for para in footer.paragraphs:
+            for run in para.runs:
+                run.text = ''
+        # Ensure at least one paragraph
+        if not footer.paragraphs:
+            footer.add_paragraph()
+
+        para = footer.paragraphs[0]
+        para.clear()
+
+        # Map alignment string → WD_ALIGN_PARAGRAPH constant
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        alignment_map = {
+            'left': WD_ALIGN_PARAGRAPH.LEFT,
+            'right': WD_ALIGN_PARAGRAPH.RIGHT,
+            'center': WD_ALIGN_PARAGRAPH.CENTER,
+            'centre': WD_ALIGN_PARAGRAPH.CENTER,
+            'justify': WD_ALIGN_PARAGRAPH.JUSTIFY,
+            'distribute': WD_ALIGN_PARAGRAPH.DISTRIBUTE,
+        }
+        para.alignment = alignment_map.get(alignment, WD_ALIGN_PARAGRAPH.CENTER)
+
+        # Helper: apply font name + size to a Run (not a Paragraph)
+        def apply_run_font(run, name, size):
+            from docx.shared import Pt
+            if name:
+                run.font.name = name
+                if _is_cjk_font(name):
+                    _set_east_asia_font(run._r, name)
+            if size:
+                run.font.size = Pt(size)  # Pt() creates a Length object in points
+
+        # Helper: build run properties element for field runs
+        def make_rPr():
+            rPr = OxmlElement('w:rPr')
+            if font_name:
+                rFonts = OxmlElement('w:rFonts')
+                rFonts.set(qn('w:ascii'), font_name)
+                rFonts.set(qn('w:hAnsi'), font_name)
+                if _is_cjk_font(font_name):
+                    rFonts.set(qn('w:eastAsia'), font_name)
+                rPr.append(rFonts)
+            if font_size:
+                sz = OxmlElement('w:sz')
+                sz.set(qn('w:val'), str(int(font_size * 2)))
+                rPr.append(sz)
+                szCs = OxmlElement('w:szCs')
+                szCs.set(qn('w:val'), str(int(font_size * 2)))
+                rPr.append(szCs)
+            return rPr
+
+        # Helper: append a complex field (fldChar/instrText) to the paragraph.
+        # Complex fields are rendered reliably across Word, LibreOffice, and web viewers.
+        def append_field_run(field_code: str):
+            # BEGIN run
+            r_begin = OxmlElement('w:r')
+            r_begin.append(make_rPr())
+            fldChar_begin = OxmlElement('w:fldChar')
+            fldChar_begin.set(qn('w:fldCharType'), 'begin')
+            r_begin.append(fldChar_begin)
+            para._p.append(r_begin)
+
+            # INSTRUCTION run
+            r_instr = OxmlElement('w:r')
+            r_instr.append(make_rPr())
+            instrText = OxmlElement('w:instrText')
+            instrText.set(qn('xml:space'), 'preserve')
+            instrText.text = f' {field_code} '
+            r_instr.append(instrText)
+            para._p.append(r_instr)
+
+            # SEPARATE run
+            r_sep = OxmlElement('w:r')
+            r_sep.append(make_rPr())
+            fldChar_sep = OxmlElement('w:fldChar')
+            fldChar_sep.set(qn('w:fldCharType'), 'separate')
+            r_sep.append(fldChar_sep)
+            para._p.append(r_sep)
+
+            # DISPLAY VALUE run (placeholder — recalculated when document opens)
+            r_val = OxmlElement('w:r')
+            r_val.append(make_rPr())
+            t = OxmlElement('w:t')
+            t.set(qn('xml:space'), 'preserve')
+            t.text = '1'
+            r_val.append(t)
+            para._p.append(r_val)
+
+            # END run
+            r_end = OxmlElement('w:r')
+            r_end.append(make_rPr())
+            fldChar_end = OxmlElement('w:fldChar')
+            fldChar_end.set(qn('w:fldCharType'), 'end')
+            r_end.append(fldChar_end)
+            para._p.append(r_end)
+
+        if footer_type == 'custom':
+            run = para.add_run(text)
+            apply_run_font(run, font_name, font_size)
+            return
+
+        if footer_type == 'page_number':
+            # "Page X of Y"  →  run("Page ") + field(PAGE) + run(" of ") + field(NUMPAGES)
+            run0 = para.add_run('Page ')
+            apply_run_font(run0, font_name, font_size)
+            append_field_run('PAGE')
+            run2 = para.add_run(' of ')
+            apply_run_font(run2, font_name, font_size)
+            append_field_run('NUMPAGES')
+
+        elif footer_type == 'page_x':
+            run0 = para.add_run('Page ')
+            apply_run_font(run0, font_name, font_size)
+            append_field_run('PAGE')
+
+    def _add_header_with_page_numbers(self, doc, header_type: str, text: str, font_name: str, font_size: float, alignment: str):
+        """
+        Add a header with optional content to a document section.
+
+        header_type options:
+            - 'page_number'   → "Page X of Y" centered
+            - 'page_x'        → "Page X" centered
+            - 'custom'        → just the 'text' string, no fields
+            - 'title'         → document title (docx title property or 'text' arg)
+            - 'filename'      → use 'text' as filename content
+        """
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+
+        section = doc.sections[-1]
+        header = section.header
+
+        # Clear existing header paragraphs
+        for para in header.paragraphs:
+            for run in para.runs:
+                run.text = ''
+        if not header.paragraphs:
+            header.add_paragraph()
+
+        para = header.paragraphs[0]
+        para.clear()
+
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        alignment_map = {
+            'left': WD_ALIGN_PARAGRAPH.LEFT,
+            'right': WD_ALIGN_PARAGRAPH.RIGHT,
+            'center': WD_ALIGN_PARAGRAPH.CENTER,
+            'centre': WD_ALIGN_PARAGRAPH.CENTER,
+            'justify': WD_ALIGN_PARAGRAPH.JUSTIFY,
+            'distribute': WD_ALIGN_PARAGRAPH.DISTRIBUTE,
+        }
+        para.alignment = alignment_map.get(alignment, WD_ALIGN_PARAGRAPH.CENTER)
+
+        # Helper: apply font name + size to a Run
+        def apply_run_font(run, name, size):
+            from docx.shared import Pt
+            if name:
+                run.font.name = name
+                if _is_cjk_font(name):
+                    _set_east_asia_font(run._r, name)
+            if size:
+                run.font.size = Pt(size)  # Pt() creates a Length object in points
+
+        # Helper: build run properties element for field runs
+        def make_rPr():
+            rPr = OxmlElement('w:rPr')
+            if font_name:
+                rFonts = OxmlElement('w:rFonts')
+                rFonts.set(qn('w:ascii'), font_name)
+                rFonts.set(qn('w:hAnsi'), font_name)
+                if _is_cjk_font(font_name):
+                    rFonts.set(qn('w:eastAsia'), font_name)
+                rPr.append(rFonts)
+            if font_size:
+                sz = OxmlElement('w:sz')
+                sz.set(qn('w:val'), str(int(font_size * 2)))
+                rPr.append(sz)
+                szCs = OxmlElement('w:szCs')
+                szCs.set(qn('w:val'), str(int(font_size * 2)))
+                rPr.append(szCs)
+            return rPr
+
+        # Helper: append a complex field (fldChar/instrText) to the paragraph.
+        # Complex fields are rendered reliably across Word, LibreOffice, and web viewers.
+        def append_field_run(field_code: str):
+            # BEGIN run
+            r_begin = OxmlElement('w:r')
+            r_begin.append(make_rPr())
+            fldChar_begin = OxmlElement('w:fldChar')
+            fldChar_begin.set(qn('w:fldCharType'), 'begin')
+            r_begin.append(fldChar_begin)
+            para._p.append(r_begin)
+
+            # INSTRUCTION run
+            r_instr = OxmlElement('w:r')
+            r_instr.append(make_rPr())
+            instrText = OxmlElement('w:instrText')
+            instrText.set(qn('xml:space'), 'preserve')
+            instrText.text = f' {field_code} '
+            r_instr.append(instrText)
+            para._p.append(r_instr)
+
+            # SEPARATE run
+            r_sep = OxmlElement('w:r')
+            r_sep.append(make_rPr())
+            fldChar_sep = OxmlElement('w:fldChar')
+            fldChar_sep.set(qn('w:fldCharType'), 'separate')
+            r_sep.append(fldChar_sep)
+            para._p.append(r_sep)
+
+            # DISPLAY VALUE run (placeholder — recalculated when document opens)
+            r_val = OxmlElement('w:r')
+            r_val.append(make_rPr())
+            t = OxmlElement('w:t')
+            t.set(qn('xml:space'), 'preserve')
+            t.text = '1'
+            r_val.append(t)
+            para._p.append(r_val)
+
+            # END run
+            r_end = OxmlElement('w:r')
+            r_end.append(make_rPr())
+            fldChar_end = OxmlElement('w:fldChar')
+            fldChar_end.set(qn('w:fldCharType'), 'end')
+            r_end.append(fldChar_end)
+            para._p.append(r_end)
+
+        if header_type == 'custom':
+            run = para.add_run(text)
+            apply_run_font(run, font_name, font_size)
+            return
+
+        if header_type == 'page_number':
+            run0 = para.add_run('Page ')
+            apply_run_font(run0, font_name, font_size)
+            append_field_run('PAGE')
+            run2 = para.add_run(' of ')
+            apply_run_font(run2, font_name, font_size)
+            append_field_run('NUMPAGES')
+
+        elif header_type == 'page_x':
+            run0 = para.add_run('Page ')
+            apply_run_font(run0, font_name, font_size)
+            append_field_run('PAGE')
+
+        elif header_type == 'title':
+            title_text = ''
+            if hasattr(doc, 'core_properties') and doc.core_properties.title:
+                title_text = doc.core_properties.title
+            if not title_text:
+                title_text = text or 'Document'
+            run = para.add_run(title_text)
+            apply_run_font(run, font_name, font_size)
+
+        elif header_type == 'filename':
+            run = para.add_run(text or 'Document')
+            apply_run_font(run, font_name, font_size)
+
     def edit_docx(self, file_path: str, edits: List[Dict[str, Any]], overwrite_original: bool = True) -> Dict[str, Any]:
         """
         Edit an existing Word document.
@@ -380,12 +654,14 @@ class DocumentProcessor:
         Args:
             file_path: Path to the DOCX file
             edits: List of edit operations. Each operation should be a dict with:
-                  - 'type': 'add_paragraph', 'add_heading', 'add_table', 'replace_text', 'modify_style'
+                  - 'type': 'add_paragraph', 'add_heading', 'add_table', 'replace_text', 'modify_style', 'insert_image'
                   - 'content': Content to add or text to replace
                   - 'position': Position index (for paragraphs)
                   - 'style': Style information
                   - 'old_text': Text to replace (for replace_text type)
                   - 'new_text': New text (for replace_text type)
+                  - 'image_path': Path to image file (for insert_image type)
+                  - 'width_inches': Width in inches (for insert_image type, optional)
             overwrite_original: If True, overwrite the original file. If False, create a new file.
         
         Returns:
@@ -1096,6 +1372,41 @@ class DocumentProcessor:
                         doc.tables[table_index].style = table_style
                         changes_made.append(f"Applied table style '{table_style}' to table {table_index}")
 
+                    elif edit_type == 'insert_image':
+                        image_path = edit.get('image_path')
+                        if not image_path:
+                            changes_made.append("Error in insert_image: image_path is required")
+                        elif not Path(image_path).is_file():
+                            changes_made.append(f"Error in insert_image: file not found: {image_path}")
+                        else:
+                            try:
+                                from docx.shared import Inches
+                                # Support both 'position' (agent convention) and 'insert_after_paragraph' (explicit)
+                                raw_pos = edit.get('position', edit.get('insert_after_paragraph', -1))
+                                try:
+                                    insert_after = int(raw_pos)
+                                except (TypeError, ValueError):
+                                    insert_after = -1
+                                width_inches = edit.get('width_inches')
+                                total_paras = len(doc.paragraphs)
+
+                                if insert_after == -1 or insert_after >= total_paras:
+                                    target_para = doc.add_paragraph()
+                                    log_pos = f"end (of {total_paras} paragraphs)"
+                                else:
+                                    target_para = doc.paragraphs[insert_after].insert_paragraph_before("")
+                                    log_pos = f"after paragraph {insert_after} (of {total_paras})"
+
+                                run = target_para.add_run()
+                                if width_inches:
+                                    run.add_picture(image_path, width=Inches(width_inches))
+                                else:
+                                    run.add_picture(image_path)
+
+                                changes_made.append(f"Inserted image at {log_pos}: {Path(image_path).name}")
+                            except Exception as img_err:
+                                changes_made.append(f"Error in insert_image: {img_err}")
+
                     elif edit_type == 'add_bullet_list':
                         items = edit.get('items', [])
                         position = edit.get('position')
@@ -1177,6 +1488,30 @@ class DocumentProcessor:
                                 position += 1
 
                         changes_made.append(f"Added numbered list with {len(added_items)} items")
+
+                    elif edit_type == 'add_footer':
+                        footer_type = edit.get('footer_type', 'page_number')  # 'page_number' | 'page_x' | 'custom'
+                        text = edit.get('text', '')
+                        font_name = edit.get('font_name', 'Calibri')
+                        font_size = edit.get('font_size', 9)
+                        alignment = edit.get('alignment', 'center')
+
+                        self._add_footer_with_page_numbers(
+                            doc, footer_type, text, font_name, font_size, alignment
+                        )
+                        changes_made.append(f"Added footer (type={footer_type})")
+
+                    elif edit_type == 'add_header':
+                        header_type = edit.get('header_type', 'custom')  # 'page_number' | 'page_x' | 'custom' | 'title' | 'filename'
+                        text = edit.get('text', '')
+                        font_name = edit.get('font_name', 'Calibri')
+                        font_size = edit.get('font_size', 9)
+                        alignment = edit.get('alignment', 'center')
+
+                        self._add_header_with_page_numbers(
+                            doc, header_type, text, font_name, font_size, alignment
+                        )
+                        changes_made.append(f"Added header (type={header_type})")
 
                 except Exception as e:
                     changes_made.append(f"Error applying edit {i+1} ({edit_type}): {str(e)}")
