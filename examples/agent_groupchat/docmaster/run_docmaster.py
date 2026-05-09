@@ -31,7 +31,7 @@ from drsai.modules.managers.messages import (
 from drsai.utils.utils import upload_to_hepai_filesystem
 import base64
 from typing import AsyncGenerator, Sequence
-from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage
+from autogen_agentchat.messages import BaseAgentEvent, BaseChatMessage, ToolCallSummaryMessage
 from autogen_agentchat.base import Response
 from autogen_core import CancellationToken
 
@@ -53,6 +53,27 @@ load_dotenv()
 
 # 工作目录设置
 HERE = Path(__file__).parent
+
+# ── Auto-install missing Python dependencies ──────────────────────────────
+def _ensure_python_deps():
+    """Install missing Python packages from requirements.txt at startup."""
+    import subprocess
+    req_file = HERE / "requirements.txt"
+    if not req_file.exists():
+        return
+    try:
+        result = subprocess.run(
+            ["pip", "install", "-r", str(req_file), "--quiet"],
+            capture_output=True, text=True, timeout=120
+        )
+        if result.returncode == 0:
+            print("✅ Python dependencies installed from requirements.txt")
+        else:
+            print(f"⚠️ Some Python dependencies could not be installed: {result.stderr[:200]}")
+    except Exception as e:
+        print(f"⚠️ Could not run pip install: {e}")
+
+_ensure_python_deps()
 WORKSPACE = HERE / "workspace"
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 WORKDIR = WORKSPACE / "runs"
@@ -131,26 +152,93 @@ def _build_files_event_data(file_path: str, description: str) -> dict | None:
 
 
 class DocMasterAgent(DrSaiAssistant):
-    """DrSaiAssistant subclass that emits FilesEvent for generated/edited documents."""
+    """DrSaiAssistant subclass that emits FilesEvent for generated/edited documents.
+    
+    Uses filesystem-scanning approach: snapshots file mtimes before tool execution,
+    then detects new/modified files after — works regardless of HOW files are changed
+    (run_write, run_bash, python scripts, etc.).
+    """
+
+    # File extensions to track for FilesEvent registration
+    TRACKED_EXTENSIONS = {
+        '.docx', '.pdf', '.pptx', '.xlsx', '.csv',
+        '.txt', '.md', '.rtf', '.tex', '.json', '.xml', '.yaml', '.yml',
+        '.ini', '.cfg', '.conf', '.log', '.html', '.htm', '.css', '.js',
+    }
 
     def __init__(self, pending_files_events: list, **kwargs):
         super().__init__(**kwargs)
         self._pending_files_events = pending_files_events
+
+    def _snapshot_workspace(self) -> dict[str, float]:
+        """Snapshot all tracked files in workspace with their modification times."""
+        snapshot: dict[str, float] = {}
+        for ext in self.TRACKED_EXTENSIONS:
+            for f in WORKSPACE.rglob(f'*{ext}'):
+                if f.is_file():
+                    try:
+                        snapshot[str(f)] = f.stat().st_mtime
+                    except OSError:
+                        pass
+        return snapshot
+
+    def _detect_changed_files(self, before: dict[str, float]) -> list[str]:
+        """Compare current workspace state with a previous snapshot.
+        Returns list of new or modified file paths."""
+        after = self._snapshot_workspace()
+        changed: list[str] = []
+        for fpath, mtime in after.items():
+            if fpath not in before or mtime > before[fpath]:
+                changed.append(fpath)
+        return changed
 
     async def on_messages_stream(
         self,
         messages: Sequence[BaseChatMessage],
         cancellation_token: CancellationToken,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
+        """
+        Override on_messages_stream to detect file changes via filesystem scanning.
+        Takes a snapshot before processing, then emits FilesEvent for any
+        new/modified files after each Response.
+        """
+        # Snapshot workspace BEFORE any tool execution
+        snapshot_before = self._snapshot_workspace()
+        already_emitted: set[str] = set()
+
         async for event in super().on_messages_stream(messages, cancellation_token):
             yield event
-            # After each event, drain any pending file events that tools may have queued
+
+            # Check for changed files after:
+            # - ToolCallSummaryMessage: yielded after each tool execution round
+            #   (parent unwraps Response from _process_model_result into chat_message)
+            # - Response: yielded for final text response, paused state, etc.
+            if isinstance(event, (ToolCallSummaryMessage, Response)):
+                changed_files = self._detect_changed_files(snapshot_before)
+                for fpath in changed_files:
+                    if fpath not in already_emitted:
+                        desc = f"File created/modified: {Path(fpath).name}"
+                        fe_data = _build_files_event_data(fpath, desc)
+                        if fe_data:
+                            print(f"📄 File event emitted: {Path(fpath).name}")
+                            already_emitted.add(fpath)
+                            yield FilesEvent(
+                                content=FilesContent(**fe_data),
+                                source=self.name,
+                            )
+                # Update snapshot for next round of tool calls
+                snapshot_before = self._snapshot_workspace()
+
+            # Also drain any pending file events from docx tools (edit_docx_tool etc.)
             while self._pending_files_events:
                 fe_data = self._pending_files_events.pop(0)
-                yield FilesEvent(
-                    content=FilesContent(**fe_data),
-                    source=self.name,
-                )
+                fpath = fe_data.get('files', [{}])[0].get('file_path', '')
+                if fpath not in already_emitted:
+                    already_emitted.add(fpath)
+                    yield FilesEvent(
+                        content=FilesContent(**fe_data),
+                        source=self.name,
+                    )
 
 
 def create_word_editor_agent(
@@ -218,7 +306,7 @@ def create_word_editor_agent(
                     model_info=_MODEL_INFO.get("claude-sonnet-4-5", _MODEL_INFO["claude-sonnet-4-5"]),
                     max_tokens=16000,
                     temperature=0.3,
-                    timeout=30.0,
+                    timeout=120.0,
                     max_retries=2,
                 )
             else:
@@ -238,7 +326,7 @@ def create_word_editor_agent(
                     },
                     temperature=0.3,
                     max_tokens=16000,
-                    timeout=30.0,
+                    timeout=120.0,
                     max_retries=2,
                 )
             
@@ -265,7 +353,7 @@ def create_word_editor_agent(
                 },
                 temperature=0.3,
                 max_tokens=16000,
-                timeout=30.0,
+                timeout=120.0,
                 max_retries=2,
             )
 
@@ -461,6 +549,13 @@ def create_word_editor_agent(
                     - {'type': 'set_table_style', 'table_index': 0, 'table_style': 'Light Grid Accent 1'}
                     - {'type': 'add_bullet_list', 'items': ['要点一', '要点二'], 'position': 'end'}
                     - {'type': 'add_numbered_list', 'items': ['第一步', '第二步'], 'position': 'end'}
+                    - {'type': 'insert_image', 'image_path': '/abs/path/to/image.png', 'position': 0, 'width_inches': 5.0}
+                    - {'type': 'add_footer', 'footer_type': 'page_number'}   # adds "Page X of Y" centered footer
+                    - {'type': 'add_footer', 'footer_type': 'page_x'}        # adds "Page X" centered footer
+                    - {'type': 'add_footer', 'footer_type': 'custom', 'text': 'Confidential'}  # custom text footer
+                    - {'type': 'add_header', 'header_type': 'custom', 'text': 'Document Title'}  # custom text header
+                    - {'type': 'add_header', 'header_type': 'title'}         # document title from file properties
+                    - {'type': 'add_header', 'header_type': 'filename', 'text': 'filename.docx'}  # filename header
             """
             import os
             import json
@@ -516,7 +611,7 @@ def create_word_editor_agent(
                             continue
                     
                     # If it's already in standard format
-                    if edit_type in ['replace_text', 'add_paragraph', 'add_heading', 'modify_style', 'add_table', 'format_text', 'format_paragraph', 'add_page_break', 'set_table_style']:
+                    if edit_type in ['replace_text', 'add_paragraph', 'add_heading', 'modify_style', 'add_table', 'format_text', 'format_paragraph', 'add_page_break', 'set_table_style', 'insert_image', 'add_footer', 'add_header']:
                         standardized_edits.append(edit)
                         conversion_stats['standard_format'] += 1
                     else:
@@ -798,7 +893,10 @@ def create_word_editor_agent(
         llm_mode_config=llm_mode_config,
         
         # 技能和工作目录
-        skills_dir=str(Path(__file__).parent / "document_skills") if DOCUMENT_PROCESSING_AVAILABLE else os.getenv("SYSTEM_SKILLS_DIR"),
+        skills_dir=[
+            str(Path(__file__).parent / "document_skills") if DOCUMENT_PROCESSING_AVAILABLE else os.getenv("SYSTEM_SKILLS_DIR"),
+            str(Path(__file__).parent / "skills"),
+        ],
         work_dir=WORKDIR,
         only_in_workspace=True,
         
@@ -864,7 +962,13 @@ def main():
             metadata={
                 "category": "文档处理大师",
                 "tags": ["docmaster", "word", "文档编辑", "办公自动化", "专业文档"],
-                "capabilities": ["文档分析", "内容编辑", "格式优化", "结构重组", "专业排版"]
+                "capabilities": ["文档分析", "内容编辑", "格式优化", "结构重组", "专业排版"],
+                "dependencies": {
+                    "python": ["python-docx", "PyPDF2", "python-pptx", "pandas", "openpyxl"],
+                    "system": ["pandoc", "libreoffice", "poppler-utils (pdftoppm)"],
+                    "npm": ["docx"],
+                    "install_system": "sudo apt install pandoc libreoffice poppler-utils && npm install -g docx",
+                }
             },
         )
     )
