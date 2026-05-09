@@ -293,7 +293,7 @@ Step 1: 环境检查
   └── drsai[tray] pip 安装 ✓
 
 Step 2: 生成图标文件
-  ├── python -m drsai.backend.gui.icon_generator → drsai_robot.ico
+  ├── python -m drsai.backend.gui.icon_generator ".\build\icons" drsai_robot.ico
   └── 存放到 build/icons/
 
 Step 3: 读取版本号
