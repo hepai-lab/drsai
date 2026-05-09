@@ -47,21 +47,25 @@ import tkinter as tk
 
 from loguru import logger
 
+# ── Lightweight imports (always needed, unlikely to fail) ──────────────────
 from drsai.configs.constant import APPNAME, VERSION, FS_DIR
 from drsai.backend.cli import config as cli_config
 from drsai.backend.cli.commands import resolve_command, format_help
-from drsai.backend.cli.stats import SessionStats
-from drsai.backend.run_drsai_agent_factory import create_agent
-from drsai.modules.agents.skills_agent import DrSaiCLIAssistant
-from drsai.modules.managers.database import DatabaseManager
-from drsai.modules.managers.datamodel import Thread
-from drsai.modules.managers.datamodel.db import RunStatus
-from drsai.modules.managers.datamodel.types import Response
-from drsai.utils.utils import compress_state, decompress_state
 
-from drsai.backend.gui.chat_window import DrSaiChatWindow
-from drsai.backend.gui.gui_renderer import DrSaiGUIRenderer
-from drsai.backend.gui.tray_icon import DrSaiTrayApp
+# ── Deferred imports (heavy dependencies — loaded at runtime) ──────────────
+# These are imported inside methods to avoid import-chain crashes in
+# PyInstaller packaged exe.  Module-level import failures silently
+# kill the process in windowed (console=False) mode.
+#
+#   SessionStats          — cli/stats.py
+#   create_agent          — run_drsai_agent_factory.py (very heavy)
+#   DrSaiCLIAssistant     — agents/skills_agent.py (very heavy)
+#   DatabaseManager       — managers/database.py
+#   Thread, RunStatus, Response — datamodel/
+#   compress/decompress_state — utils/
+#   DrSaiChatWindow       — gui/chat_window.py
+#   DrSaiGUIRenderer      — gui/gui_renderer.py
+#   DrSaiTrayApp          — gui/tray_icon.py
 
 # ── Setup dialog theme (Catppuccin Mocha dark theme, matching chat_window) ─
 _SETUP_THEME = {
@@ -401,12 +405,11 @@ class DrSaiSetupDialog(tk.Toplevel):
 
         # Close dialog (destroy triggers wait_window() to return)
         # NOTE: Do NOT call self.master.quit() here!
-        # When the dialog is a Toplevel on the main chat_window root,
+        # The dialog is a Toplevel on the main DrSaiChatWindow root.
         # quit() would terminate the ENTIRE tkinter mainloop, causing
         # the GUI to freeze. Instead, we just destroy the dialog.
-        # - In _show_setup_dialog (initial setup): the temporary root's
-        #   mainloop() is exited by root.quit() called AFTER this dialog
-        #   closes, in the _show_setup_dialog function.
+        # - In run() (initial setup): wait_window(dialog) detects
+        #   dialog destruction and returns to run().
         # - In _cmd_setup (re-configure): wait_window(dialog) detects
         #   the dialog destruction and returns to _cmd_setup.
         self.destroy()
@@ -421,64 +424,6 @@ class DrSaiSetupDialog(tk.Toplevel):
         # will handle the rest.
         self.destroy()
 
-# ── Helper: check API key availability without creating the app ────────────
-
-def _check_setup_needed() -> tuple[bool, dict]:
-    """Check if first-time setup is needed.
-
-    Returns (needs_setup, current_config).
-    """
-    cfg = dict(cli_config.DEFAULT_CONFIG)
-    if cli_config.CLI_CONFIG_PATH.exists():
-        saved = cli_config.load_config()
-        cfg = {**cli_config.DEFAULT_CONFIG, **saved}
-
-    has_key = any([
-        cfg.get("api_key"),
-        cfg.get("anthropic_api_key"),
-        cfg.get("openai_api_key"),
-        os.environ.get("HEPAI_API_KEY"),
-        os.environ.get("ANTHROPIC_API_KEY"),
-        os.environ.get("OPENAI_API_KEY"),
-    ])
-
-    return (not has_key, cfg)
-
-def _show_setup_dialog(cfg: dict) -> Optional[DrSaiSetupDialog]:
-    """Show the setup dialog and return the dialog object after completion.
-
-    Creates a temporary tk.Tk root for the dialog, then destroys it.
-    Returns None if the user cancelled.
-    """
-    import tkinter as tk
-    root = tk.Tk()
-    root.withdraw()
-
-    dialog = DrSaiSetupDialog(root, cfg=cfg)
-
-    # After the dialog closes (self.destroy() in _on_save/_on_cancel),
-    # quit the temporary root's mainloop so we can continue.
-    def _on_dialog_closed():
-        root.quit()
-
-    # Bind to the dialog's <Destroy> event to quit the root mainloop
-    # when the dialog closes. This replaces the old self.master.quit()
-    # calls that were inside the dialog's _on_save/_on_cancel.
-    dialog.bind("<Destroy>", lambda e: _on_dialog_closed())
-
-    root.mainloop()
-
-    if not dialog.completed:
-        root.destroy()
-        return None
-
-    # Save configuration to disk
-    cfg.update(dialog.config_values)
-    cli_config.save_config(cfg)
-
-    root.destroy()
-    return dialog
-
 # ── Desktop Application ────────────────────────────────────────────────────
 
 class DrSaiDesktopApp:
@@ -491,6 +436,53 @@ class DrSaiDesktopApp:
     - Window minimize → hide to tray
     """
 
+    # ── Lazy import helpers ──────────────────────────────────────────────────
+    # Heavy dependencies are imported at runtime to avoid import-chain
+    # crashes in PyInstaller packaged exe.  These helpers cache the
+    # imported module/class for reuse.
+
+    @staticmethod
+    def _import_SessionStats():
+        from drsai.backend.cli.stats import SessionStats
+        return SessionStats
+
+    @staticmethod
+    def _import_DatabaseManager():
+        from drsai.modules.managers.database import DatabaseManager
+        return DatabaseManager
+
+    @staticmethod
+    def _import_create_agent():
+        from drsai.backend.run_drsai_agent_factory import create_agent
+        return create_agent
+
+    @staticmethod
+    def _import_DrSaiChatWindow():
+        from drsai.backend.gui.chat_window import DrSaiChatWindow
+        return DrSaiChatWindow
+
+    @staticmethod
+    def _import_DrSaiGUIRenderer():
+        from drsai.backend.gui.gui_renderer import DrSaiGUIRenderer
+        return DrSaiGUIRenderer
+
+    @staticmethod
+    def _import_DrSaiTrayApp():
+        from drsai.backend.gui.tray_icon import DrSaiTrayApp
+        return DrSaiTrayApp
+
+    @staticmethod
+    def _import_datamodel():
+        from drsai.modules.managers.datamodel import Thread
+        from drsai.modules.managers.datamodel.db import RunStatus
+        from drsai.modules.managers.datamodel.types import Response
+        return Thread, RunStatus, Response
+
+    @staticmethod
+    def _import_state_utils():
+        from drsai.utils.utils import compress_state, decompress_state
+        return compress_state, decompress_state
+
     def __init__(self) -> None:
         # ── Load config ─────────────────────────────────────────────────────
         self.cfg: dict = self._load_or_setup_config()
@@ -501,10 +493,10 @@ class DrSaiDesktopApp:
         # ── Core state ──────────────────────────────────────────────────────
         self.user_id: str = self.cfg.get("user_id", "anonymous")
         self.defult_config_name: str = self.cfg.get("defult_config_name", "hepai/minimax-m2.7-highspeed")
-        self.db_manager: Optional[DatabaseManager] = None
-        self.agent: Optional[DrSaiCLIAssistant] = None
+        self.db_manager = None   # DatabaseManager — lazy import in _init_agent
+        self.agent = None        # DrSaiCLIAssistant — lazy import in _init_agent
         self.current_session_id: Optional[str] = None
-        self.current_thread: Optional[Thread] = None
+        self.current_thread = None   # Thread — lazy import
         self._show_reasoning: bool = self.cfg.get("show_reasoning", False)
 
         # ── Work directory (mirrors CLI's cwd-based session strategy) ────────
@@ -513,7 +505,8 @@ class DrSaiDesktopApp:
         self._work_dir: str = self.cfg.get("work_dir", "") or os.environ.get("DRSAI_WORK_DIR", "") or str(Path.home().resolve())
 
         # ── Stats tracking (mirrors run_cli.py's SessionStats) ──────────────
-        self.stats: SessionStats = SessionStats(show_footer=True, ring_bell=False)
+        SessionStats = self._import_SessionStats()
+        self.stats = SessionStats(show_footer=True, ring_bell=False)
 
         # ── Asyncio loop (runs in background thread) ───────────────────────
         # Only start if we have API key; deferred init will start it later
@@ -527,8 +520,8 @@ class DrSaiDesktopApp:
             self._start_async_loop_and_init_agent()
 
         # ── GUI components (created later on tkinter thread) ────────────────
-        self._chat_window: Optional[DrSaiChatWindow] = None
-        self._tray_app: Optional[DrSaiTrayApp] = None
+        self._chat_window = None   # DrSaiChatWindow — lazy import in run()
+        self._tray_app = None      # DrSaiTrayApp — lazy import in run()
 
     # ── Chat task tracking (for interrupt/cancel support) ───────────────
         self._current_chat_task: Optional[asyncio.Future] = None
@@ -703,26 +696,38 @@ class DrSaiDesktopApp:
         self._chat_window.after(500, self._poll_init_done)
 
     def _poll_init_done(self) -> None:
-        """Poll whether agent initialization has completed (non-blocking)."""
+        """Poll whether agent initialization has completed (non-blocking).
+
+        Called via root.after() from both:
+        - run() when _needs_setup=False (normal init)
+        - _deferred_init_async() after setup dialog
+        """
         if self._init_done.is_set():
             # Initialization completed
             if self._init_error:
                 if self._chat_window and not self._chat_window._destroyed:
                     self._chat_window.append_text(f"❌ Agent 初始化失败: {self._init_error}\n", "error")
-                logger.error(f"Deferred init failed: {self._init_error}")
+                    # Show messagebox for critical errors
+                    try:
+                        import tkinter.messagebox as messagebox
+                        messagebox.showerror(
+                            "DrSai 初始化失败",
+                            f"Agent 初始化失败:\n{self._init_error}\n\n请检查 API Key 和配置后重启。",
+                        )
+                    except Exception:
+                        pass
+                logger.error(f"Init failed: {self._init_error}")
                 return
 
             # Update GUI with initialized state
             if self._chat_window and not self._chat_window._destroyed:
                 self._chat_window.set_status("就绪")
-                self._chat_window.append_text(f"🤖 重新初始化完成！Model: {self.defult_config_name}\n\n", "system")
+                self._chat_window.append_text(f"🤖 初始化完成！Model: {self.defult_config_name}\n\n", "system")
                 self._update_status_bar()
                 self._chat_window.append_text("──────────────────────────────────────────────\n", "separator")
             return
 
-        # Not done yet — check elapsed time for timeout
-        # (We started _start_async_loop_and_init_agent which sets _init_done)
-        # Poll again after 500ms
+        # Not done yet — poll again after 500ms
         if self._chat_window and not self._chat_window._destroyed:
             self._chat_window.after(500, self._poll_init_done)
 
@@ -739,6 +744,10 @@ class DrSaiDesktopApp:
 
     async def _init_agent(self) -> None:
         try:
+            # ── Lazy imports (heavy deps, may fail in PyInstaller) ────────
+            DatabaseManager = self._import_DatabaseManager()
+            create_agent = self._import_create_agent()
+
             WORKSPACE = Path(FS_DIR) / "workspace"
             WORKSPACE.mkdir(parents=True, exist_ok=True)
             DATASET = WORKSPACE / "drsai"
@@ -795,6 +804,8 @@ class DrSaiDesktopApp:
     async def _load_thread_state(self, thread_id: str) -> Optional[dict]:
         if not self.db_manager:
             return None
+        Thread, RunStatus, Response = self._import_datamodel()
+        decompress_state, _ = self._import_state_utils()
         response: Response = self.db_manager.get(
             Thread,
             filters={"user_id": self.user_id, "thread_id": thread_id},
@@ -810,6 +821,8 @@ class DrSaiDesktopApp:
     async def _save_thread_state(self, thread_id: str, state_dict: dict) -> bool:
         if not self.db_manager:
             return False
+        Thread, RunStatus, Response = self._import_datamodel()
+        _, compress_state = self._import_state_utils()
         response: Response = self.db_manager.get(
             Thread,
             filters={"user_id": self.user_id, "thread_id": thread_id},
@@ -822,7 +835,8 @@ class DrSaiDesktopApp:
             return self.db_manager.upsert(thread).status
         return False
 
-    async def _get_or_create_thread(self, thread_id: str) -> Thread:
+    async def _get_or_create_thread(self, thread_id: str) -> None:
+        Thread, RunStatus, Response = self._import_datamodel()
         response: Response = self.db_manager.get(
             Thread,
             filters={"user_id": self.user_id, "thread_id": thread_id},
@@ -859,10 +873,13 @@ class DrSaiDesktopApp:
                 self._chat_window.show_error("Agent 未初始化，请重启。")
             return
 
+        Thread, RunStatus, Response = self._import_datamodel()
+
         try:
             if self.current_thread:
                 self.current_thread.status = RunStatus.ACTIVE
 
+            DrSaiGUIRenderer = self._import_DrSaiGUIRenderer()
             renderer = DrSaiGUIRenderer(
                 append_fn=self._chat_window.append_text,
                 show_reasoning=self._show_reasoning,
@@ -1198,6 +1215,7 @@ class DrSaiDesktopApp:
                     self._tray_app.stop()
                     self._tray_app = None
 
+                DrSaiTrayApp = self._import_DrSaiTrayApp()
                 self._tray_app = DrSaiTrayApp(
                     show_window_fn=self._on_show_window,
                     setup_fn=self._on_setup_from_tray,
@@ -2373,47 +2391,34 @@ If a question can be answered by exploring the codebase, explore the codebase in
     # ── Main run ────────────────────────────────────────────────────────────
 
     def run(self) -> None:
-        """Start the entire desktop application."""
-        import tkinter as tk
+        """Start the entire desktop application.
+
+        Startup flow ( redesigned for PyInstaller exe stability ):
+
+        1. Create DrSaiChatWindow as the SINGLE Tk root
+           ( no temporary ghost roots that conflict and crash )
+        2. If no API key found → show DrSaiSetupDialog as Toplevel on
+           the main window → non-blocking deferred init via root.after()
+        3. If API key exists → start agent init in background thread
+           → poll via root.after() until ready
+        4. Create tray icon, start mainloop
+
+        This flow avoids two critical crash causes in PyInstaller windowed exe:
+        a) Creating two Tk root instances ( temporary root for setup dialog +
+           then main DrSaiChatWindow root ) → TclError / silent crash
+        b) Blocking the tkinter main thread with Event.wait() → freeze / crash
+        """
         import tkinter.messagebox as messagebox
 
-        # ── First-time setup: show dialog if no API key ──────────────────────
-        if self._needs_setup:
-            logger.info("No API key found — showing setup dialog...")
-            result = _show_setup_dialog(self.cfg)
-            if result is None:
-                # User cancelled → exit
-                logger.info("Setup cancelled — exiting.")
-                sys.exit(0)
+        # ── Lazy-import GUI components ( heavy, may fail in PyInstaller ) ──
+        DrSaiChatWindow = self._import_DrSaiChatWindow()
+        DrSaiTrayApp = self._import_DrSaiTrayApp()
 
-            # Apply configuration from setup dialog
-            new_cfg = result.config_values
-            self._deferred_init(new_cfg)
-
-            if self._init_error:
-                root = tk.Tk()
-                root.withdraw()
-                messagebox.showerror(
-                    "DrSai 初始化失败",
-                    f"Agent 初始化失败:\n{self._init_error}\n\n请检查 API Key 和配置。",
-                )
-                sys.exit(1)
-
-        else:
-            # Normal init — wait for agent
-            logger.info("Waiting for agent initialization...")
-            self._init_done.wait(timeout=30)
-
-            if self._init_error:
-                root = tk.Tk()
-                root.withdraw()
-                messagebox.showerror(
-                    "DrSai 初始化失败",
-                    f"Agent 初始化失败:\n{self._init_error}\n\n请检查 API Key 和配置。",
-                )
-                sys.exit(1)
-
-        # ── Create chat window ──────────────────────────────────────────────
+        # ── Create chat window as the SINGLE Tk root ──────────────────────
+        # This is the first and only tk.Tk() instance. The setup dialog
+        # (DrSaiSetupDialog) will be a Toplevel on this root, not on a
+        # separate temporary root.  This eliminates the "double Tk root"
+        # crash that was the primary cause of exe 闪退.
         self._chat_window = DrSaiChatWindow(
             send_message_fn=self._on_user_message,
             on_command_fn=self._on_command,
@@ -2423,11 +2428,53 @@ If a question can be answered by exploring the codebase, explore the codebase in
             title=f"DrSai Chat — {self.user_id} @ {self.defult_config_name}",
         )
 
-        # ── Set initial status bar info ────────────────────────────────────
-        self._update_status_bar()
+        # ── First-time setup or normal init ─────────────────────────────────
+        if self._needs_setup:
+            # No API key → show setup dialog as Toplevel on the main window
+            logger.info("No API key found — showing setup dialog on main window...")
+            self._chat_window.append_text("🤖 欢迎使用 DrSai！首次使用需要配置 API Key。\n\n", "system")
+            self._chat_window.append_text("📝 正在打开配置对话框...\n", "system")
 
-        model_info = f"🤖 Model: {self.defult_config_name}\n"
-        self._chat_window.append_text(model_info, "system")
+            # Show setup dialog immediately — it's a Toplevel on the main root
+            # ( no temporary ghost root, no double-Tk-root crash )
+            dialog = DrSaiSetupDialog(self._chat_window, cfg=self.cfg)
+            self._chat_window.wait_window(dialog)
+
+            if not dialog.completed:
+                # User cancelled → exit gracefully
+                logger.info("Setup cancelled — exiting.")
+                self._on_quit()
+                return
+
+            # Apply configuration from setup dialog
+            new_cfg = dialog.config_values
+            self._chat_window.append_text("✅ 配置已保存！正在初始化...\n", "system")
+
+            # Start non-blocking deferred init via root.after() polling
+            # ( NEVER call _deferred_init which blocks with _init_done.wait() )
+            self._deferred_init_async(new_cfg)
+
+        else:
+            # Normal init — agent was started in __init__, just poll for
+            # completion via root.after() ( non-blocking )
+            logger.info("Waiting for agent initialization (non-blocking poll)...")
+
+            if self._init_done.is_set() and self._init_error:
+                # Agent init already failed in __init__
+                messagebox.showerror(
+                    "DrSai 初始化失败",
+                    f"Agent 初始化失败:\n{self._init_error}\n\n请检查 API Key 和配置。",
+                )
+                self._on_quit()
+                return
+
+            # Update status bar & show welcome message
+            self._update_status_bar()
+            model_info = f"🤖 Model: {self.defult_config_name}\n"
+            self._chat_window.append_text(model_info, "system")
+
+            # Poll for agent init completion (non-blocking)
+            self._chat_window.after(500, self._poll_init_done)
 
         # ── Create tray icon ────────────────────────────────────────────────
         try:
@@ -2483,7 +2530,15 @@ If a question can be answered by exploring the codebase, explore the codebase in
 # ── CLI entry point ─────────────────────────────────────────────────────────
 
 def main() -> None:
-    """Entry point for ``drsai-tray`` command."""
+    """Entry point for ``drsai-tray`` command.
+
+    Startup sequence ( redesigned for PyInstaller exe stability ):
+    1. Set up crash logging ( captures everything to ~/.drsai/logs/ )
+    2. Verify tkinter availability ( exit with clear message if missing )
+    3. Verify essential lightweight imports ( drsai.configs, drsai.backend.cli )
+    4. Create DrSaiDesktopApp ( heavy imports are deferred — lazy import )
+    5. Call app.run() ( single Tk root, non-blocking init )
+    """
     logger.remove()
     # In PyInstaller windowed mode (console=False), sys.stderr is None.
     if sys.stderr is not None:
@@ -2496,23 +2551,72 @@ def main() -> None:
         pass  # never let logging setup crash the app
 
     # ── Check tkinter availability ──────────────────────────────────────────
-    # Do NOT create a Tk root here — DrSaiChatWindow is itself a tk.Tk root.
-    # A hidden "ghost" root window would conflict with the real one later.
     try:
         import tkinter as tk  # noqa: F401 — just check importability
     except ImportError as e:
-        print(f"tkinter is not available: {e}")
+        # In PyInstaller windowed mode, we can't print() (sys.stdout is None)
+        # Write to crash log instead.
+        _crash_log = Path.home() / ".drsai" / "logs" / "drsai-tray-crash.log"
+        try:
+            _crash_log.parent.mkdir(parents=True, exist_ok=True)
+            with open(_crash_log, "a", encoding="utf-8") as f:
+                f.write(f"\n=== tkinter not available: {e} ===\n")
+        except Exception:
+            pass
         sys.exit(1)
 
-    # ── Check pystray availability ──────────────────────────────────────────
+    # ── Check essential lightweight imports ─────────────────────────────────
+    # These are module-level imports that must succeed. If they fail,
+    # the exe has a packaging issue — log it clearly.
+    try:
+        import drsai.configs.constant   # noqa: F401
+        import drsai.backend.cli.config  # noqa: F401
+    except ImportError as e:
+        _crash_log = Path.home() / ".drsai" / "logs" / "drsai-tray-crash.log"
+        try:
+            _crash_log.parent.mkdir(parents=True, exist_ok=True)
+            with open(_crash_log, "a", encoding="utf-8") as f:
+                f.write(f"\n=== Essential import failed: {e} ===\n")
+                import traceback; traceback.print_exc(file=f)
+        except Exception:
+            pass
+        sys.exit(1)
+
+    # ── Check pystray availability (optional, warn only) ────────────────────
     try:
         import pystray  # noqa: F401 — just check importability
     except ImportError:
-        print("pystray not installed. Tray icon unavailable.")
-        print("Install: pip install drsai[tray]")
+        logger.warning("pystray not installed. Tray icon unavailable.")
 
-    app = DrSaiDesktopApp()
-    app.run()
+    # ── Create app ( heavy imports deferred — won't crash here ) ────────────
+    try:
+        app = DrSaiDesktopApp()
+    except Exception as e:
+        logger.error(f"DrSaiDesktopApp creation failed: {e}", exc_info=True)
+        _crash_log = Path.home() / ".drsai" / "logs" / "drsai-tray-crash.log"
+        try:
+            _crash_log.parent.mkdir(parents=True, exist_ok=True)
+            with open(_crash_log, "a", encoding="utf-8") as f:
+                f.write(f"\n=== DrSaiDesktopApp creation failed: {e} ===\n")
+                import traceback; traceback.print_exc(file=f)
+        except Exception:
+            pass
+        sys.exit(1)
+
+    # ── Run app ─────────────────────────────────────────────────────────────
+    try:
+        app.run()
+    except Exception as e:
+        logger.error(f"app.run() failed: {e}", exc_info=True)
+        _crash_log = Path.home() / ".drsai" / "logs" / "drsai-tray-crash.log"
+        try:
+            _crash_log.parent.mkdir(parents=True, exist_ok=True)
+            with open(_crash_log, "a", encoding="utf-8") as f:
+                f.write(f"\n=== app.run() failed: {e} ===\n")
+                import traceback; traceback.print_exc(file=f)
+        except Exception:
+            pass
+        sys.exit(1)
 
 if __name__ == "__main__":
     # ── Crash-logging shim for windowed PyInstaller exe ─────────────────────

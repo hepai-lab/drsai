@@ -58,6 +58,10 @@ dependencies = [
 
     # ── WeChat integration ───────────────────────────────────────────────
     "qrcode[pil]",
+
+    # 
+    "pystray>=0.19",
+    "Pillow>=9.0"
 ]
 
 [project.scripts]
@@ -70,10 +74,10 @@ drsai-tray = "drsai.backend.gui.run_tray:main"
 
 [project.optional-dependencies]
 # Desktop tray app (drsai-tray command) — CLI already in core
-tray = [
-    "pystray>=0.19",
-    "Pillow>=9.0",
-]
+#tray = [
+#    "pystray>=0.19",
+#    "Pillow>=9.0",
+#]
 
 # OpenWebUI pipeline adapter — auth + session handling
 pipeline = [
@@ -107,7 +111,7 @@ eval = [
 
 # Convenience: install everything (worker deps already in core)
 all = [
-    "drsai[tray,pipeline,chromadb,azure,ollama,eval]",
+    "drsai[pipeline,chromadb,azure,ollama,eval]",
 ]
 
 
