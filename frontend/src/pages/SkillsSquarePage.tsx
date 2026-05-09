@@ -1,71 +1,73 @@
-import { Drawer, Empty, Input, Modal, Spin, Tooltip, message } from "antd";
-import { BookOpen, Download, RefreshCw, Search, Upload, Zap } from "lucide-react";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import MarkdownRenderer from "../components/common/markdownrender";
-import { skillsAPI, type SkillsCatalogItem } from "../components/views/api";
+import { Drawer, Input, Modal, Spin, message } from "antd";
+import { Copy, Download, Eye, Search, Upload, Zap } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
 import { Button } from "../components/common/Button";
+import MarkdownRenderer from "../components/common/markdownrender";
+import { useSettingsStore } from "../components/store";
+import { fileAPI, skillsAPI, type SkillsCatalogItem } from "../components/views/api";
+import { appContext } from "../hooks/provider";
 
 const ENABLE_SKILL_DOWNLOAD = false;
-const ENABLE_SKILL_UPLOAD = false;
+const ENABLE_HEPAI_SKILL_ZIP_UPLOAD = true;
+
+type HepAIUploadRow = {
+    id: string;
+    filename: string;
+    previewUrl: string;
+    createdAtMs: number;
+};
 
 const SkillsSquarePage: React.FC = () => {
-    const [items, setItems] = useState<SkillsCatalogItem[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const { user } = React.useContext(appContext);
     const [search, setSearch] = useState("");
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [active, setActive] = useState<SkillsCatalogItem | null>(null);
     const [detailBody, setDetailBody] = useState<string | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
-    const [uploadOpen, setUploadOpen] = useState(false);
-    const [uploadSlug, setUploadSlug] = useState("");
-    const [uploading, setUploading] = useState(false);
     const [downloadSlug, setDownloadSlug] = useState<string | null>(null);
-    const uploadInputRef = useRef<HTMLInputElement>(null);
-
-    const load = useCallback(async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const rows = await skillsAPI.listCatalog();
-            setItems(rows);
-        } catch (e) {
-            setError(e instanceof Error ? e.message : String(e));
-            setItems([]);
-        } finally {
-            setLoading(false);
-        }
-    }, []);
+    const hepaiUploadInputRef = useRef<HTMLInputElement>(null);
+    const [hepaiUploadOpen, setHepaiUploadOpen] = useState(false);
+    const [hepaiUploading, setHepaiUploading] = useState(false);
+    const [hepaiRows, setHepaiRows] = useState<HepAIUploadRow[]>([]);
+    const [skillMdOpen, setSkillMdOpen] = useState(false);
+    const [skillMdLoading, setSkillMdLoading] = useState(false);
+    const [skillMdTitle, setSkillMdTitle] = useState<string>("");
+    const [skillMdBody, setSkillMdBody] = useState<string>("");
+    const { config: _config } = useSettingsStore();
 
     useEffect(() => {
-        void load();
-    }, [load]);
+        const userId = user?.email || "";
+        if (!userId) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const rows = await fileAPI.listHepaiFiles(userId);
+                if (cancelled) return;
+                setHepaiRows(
+                    rows.map((r) => ({
+                        id: r.id,
+                        filename: r.filename,
+                        previewUrl: r.url,
+                        createdAtMs: r.createdAtMs,
+                    }))
+                );
+            } catch {
+                // keep UI quiet; list is best-effort
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [user?.email]);
 
-    const filtered = useMemo(() => {
-        const q = search.trim().toLowerCase();
-        if (!q) return items;
-        return items.filter(
-            (s) =>
-                s.name.toLowerCase().includes(q) ||
-                s.description.toLowerCase().includes(q) ||
-                s.slug.toLowerCase().includes(q)
-        );
-    }, [items, search]);
-
-    const openDetail = async (row: SkillsCatalogItem) => {
-        setActive(row);
-        setDrawerOpen(true);
-        setDetailBody(null);
-        setDetailLoading(true);
+    const copyText = async (text: string) => {
         try {
-            const d = await skillsAPI.getCatalogEntry(row.slug);
-            setDetailBody(d.body);
-        } catch (e) {
-            setDetailBody(`_加载失败：${e instanceof Error ? e.message : String(e)}_`);
-        } finally {
-            setDetailLoading(false);
+            await navigator.clipboard.writeText(text);
+        } catch {
+            message.error("复制失败");
         }
     };
+
 
     const handleDownload = async (slug: string) => {
         setDownloadSlug(slug);
@@ -78,9 +80,8 @@ const SkillsSquarePage: React.FC = () => {
             setDownloadSlug(null);
         }
     };
-
-    const submitUpload = async () => {
-        const input = uploadInputRef.current;
+    const submitHepaiUpload = async () => {
+        const input = hepaiUploadInputRef.current;
         const file = input?.files?.[0];
         if (!file) {
             message.warning("请选择 .zip 文件");
@@ -90,18 +91,55 @@ const SkillsSquarePage: React.FC = () => {
             message.warning("请上传 .zip 格式的技能包");
             return;
         }
-        setUploading(true);
+
+        const userId = user?.email || "";
+        if (!userId) {
+            message.error("未登录或缺少 user_id（email）");
+            return;
+        }
+
+        setHepaiUploading(true);
         try {
-            await skillsAPI.uploadCatalogZip(file, uploadSlug.trim() || undefined);
-            message.success("上传成功");
-            setUploadOpen(false);
-            setUploadSlug("");
+            const uploaded = await fileAPI.uploadToHepAI(userId, file);
+            const id = uploaded.id;
+            const previewUrl = uploaded.url;
+            setHepaiRows((prev) => [
+                {
+                    id,
+                    filename: file.name,
+                    previewUrl,
+                    createdAtMs: Date.now(),
+                },
+                ...prev,
+            ]);
+            message.success("已上传到 HepAI Files");
+            setHepaiUploadOpen(false);
             if (input) input.value = "";
-            await load();
         } catch (e) {
             message.error(e instanceof Error ? e.message : String(e));
         } finally {
-            setUploading(false);
+            setHepaiUploading(false);
+        }
+    };
+
+    const openSkillMdPreview = async (fileId: string, filename: string) => {
+        const userId = user?.email || "";
+        if (!userId) {
+            message.error("未登录或缺少 user_id（email）");
+            return;
+        }
+        setSkillMdTitle(filename);
+        setSkillMdBody("");
+        setSkillMdOpen(true);
+        setSkillMdLoading(true);
+        try {
+            const { content } = await fileAPI.getHepaiZipSkillMd(userId, fileId);
+            setSkillMdBody(content);
+        } catch (e) {
+            message.error(e instanceof Error ? e.message : String(e));
+            setSkillMdOpen(false);
+        } finally {
+            setSkillMdLoading(false);
         }
     };
 
@@ -119,31 +157,24 @@ const SkillsSquarePage: React.FC = () => {
                         </p>
                     </div>
                     <div className="flex items-center gap-2 w-full sm:w-auto">
-                        {ENABLE_SKILL_UPLOAD ? (
+                        {ENABLE_HEPAI_SKILL_ZIP_UPLOAD ? (
                             <span
                                 role="button"
-                                tabIndex={loading ? -1 : 0}
-                                aria-disabled={loading}
+                                tabIndex={0}
                                 className={[
                                     "inline-flex shrink-0 h-8 items-center gap-1.5 rounded-lg px-3 text-sm font-medium",
-                                    "border border-tertiary/50 bg-gradient-to-b from-tertiary/25 to-tertiary/10 text-primary",
+                                    "border border-accent/30 bg-gradient-to-b from-accent/15 to-tertiary/10 text-primary",
                                     "shadow-[0_1px_0_rgba(255,255,255,0.04)_inset,0_1px_2px_rgba(0,0,0,0.25)]",
                                     "transition-[color,background-color,border-color,box-shadow,transform] duration-200 ease-out",
-                                    "hover:border-accent/40 hover:from-tertiary/35 hover:to-tertiary/18 hover:shadow-[0_1px_0_rgba(255,255,255,0.06)_inset,0_4px_12px_rgba(0,0,0,0.2)]",
+                                    "hover:border-accent/50 hover:from-accent/20 hover:to-tertiary/18",
                                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                                    "active:scale-[0.98]",
-                                    loading
-                                        ? "pointer-events-none cursor-not-allowed opacity-45"
-                                        : "cursor-pointer",
+                                    "active:scale-[0.98] cursor-pointer",
                                 ].join(" ")}
-                                onClick={() => {
-                                    if (!loading) setUploadOpen(true);
-                                }}
+                                onClick={() => setHepaiUploadOpen(true)}
                                 onKeyDown={(e) => {
-                                    if (loading) return;
                                     if (e.key === "Enter" || e.key === " ") {
                                         e.preventDefault();
-                                        setUploadOpen(true);
+                                        setHepaiUploadOpen(true);
                                     }
                                 }}
                             >
@@ -151,6 +182,7 @@ const SkillsSquarePage: React.FC = () => {
                                 上传
                             </span>
                         ) : null}
+
                         <Input
                             allowClear
                             prefix={<Search className="w-4 h-4 text-secondary" />}
@@ -159,112 +191,85 @@ const SkillsSquarePage: React.FC = () => {
                             onChange={(e) => setSearch(e.target.value)}
                             className="max-w-md"
                         />
-                        <Tooltip title="刷新列表">
-                            <span
-                                role="button"
-                                tabIndex={loading ? -1 : 0}
-                                aria-disabled={loading}
-                                aria-label="刷新列表"
-                                className={[
-                                    "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
-                                    "border border-tertiary/50 bg-gradient-to-b from-tertiary/25 to-tertiary/10 text-secondary",
-                                    "shadow-[0_1px_0_rgba(255,255,255,0.04)_inset,0_1px_2px_rgba(0,0,0,0.25)]",
-                                    "transition-[color,background-color,border-color,box-shadow,transform] duration-200 ease-out",
-                                    "hover:border-accent/40 hover:text-accent hover:from-tertiary/35 hover:to-tertiary/18",
-                                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                                    "active:scale-[0.98]",
-                                    loading
-                                        ? "pointer-events-none cursor-not-allowed opacity-45"
-                                        : "cursor-pointer",
-                                ].join(" ")}
-                                onClick={() => {
-                                    if (!loading) void load();
-                                }}
-                                onKeyDown={(e) => {
-                                    if (loading) return;
-                                    if (e.key === "Enter" || e.key === " ") {
-                                        e.preventDefault();
-                                        void load();
-                                    }
-                                }}
-                            >
-                                <RefreshCw
-                                    className={`h-4 w-4 ${loading ? "animate-spin text-accent" : ""}`}
-                                    aria-hidden
-                                />
-                            </span>
-                        </Tooltip>
                     </div>
                 </div>
             </div>
 
             <div className="flex-1 min-h-0 overflow-auto px-4 py-4">
                 <div className="max-w-6xl mx-auto">
-                    {loading ? (
-                        <div className="flex justify-center py-20">
-                            <Spin size="large" />
-                        </div>
-                    ) : error ? (
-                        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-                            {error}
-                        </div>
-                    ) : filtered.length === 0 ? (
-                        <Empty
-                            className="py-16"
-                            description={items.length === 0 ? "暂无技能或目录未找到" : "无匹配项"}
-                        />
-                    ) : (
-                        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                            {filtered.map((s) => (
-                                <li key={s.slug} className="h-full">
-                                    <div className="h-[168px] rounded-2xl border border-tertiary/50 bg-tertiary/10 hover:bg-tertiary/20 hover:border-accent/30 transition-colors flex flex-col overflow-hidden dark:border-transparent dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.045),rgba(255,255,255,0.018))] dark:shadow-[0_1px_0_rgba(255,255,255,0.06)_inset,0_14px_32px_rgba(0,0,0,0.5)] dark:hover:bg-[linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.022))] dark:hover:shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_22px_48px_rgba(0,0,0,0.6)] dark:hover:ring-1 dark:hover:ring-white/10">
-                                        <button
-                                            type="button"
-                                            onClick={() => void openDetail(s)}
-                                            className="w-full text-left p-4 flex flex-col gap-2 flex-1"
-                                        >
-                                            <div className="flex items-start justify-between gap-2">
-                                                <span className="font-semibold text-primary line-clamp-2">
-                                                    {s.name}
-                                                </span>
-                                                <BookOpen className="w-4 h-4 shrink-0 text-accent opacity-80" />
-                                            </div>
-                                            <p className="text-sm text-secondary line-clamp-3 flex-1">
-                                                {s.description}
-                                            </p>
-                                        </button>
-                                        <div className="flex items-center justify-between gap-2 px-4 pb-3 pt-0 text-xs text-secondary/80 border-t border-tertiary/30 dark:border-transparent dark:bg-white/[0.02] dark:shadow-[0_1px_0_rgba(255,255,255,0.05)_inset] dark:text-secondary dark:[&_code]:text-primary dark:[&_code]:font-medium">
-                                            <div className="min-w-0 flex-1 flex items-center gap-2">
-                                                <code className="truncate">{s.slug}</code>
-                                                {s.compatibility ? (
-                                                    <span className="truncate hidden sm:inline" title={s.compatibility}>
-                                                        {s.compatibility}
-                                                    </span>
-                                                ) : null}
-                                            </div>
-                                            {ENABLE_SKILL_DOWNLOAD ? (
-                                                <Tooltip title="下载 ZIP">
-                                                    <Button
-                                                        type="button"
-                                                        variant="ghost"
-                                                        className="shrink-0 h-7 px-2"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            void handleDownload(s.slug);
-                                                        }}
-                                                        disabled={downloadSlug === s.slug}
-                                                        isLoading={downloadSlug === s.slug}
-                                                    >
-                                                        <Download className="w-4 h-4" />
-                                                    </Button>
-                                                </Tooltip>
-                                            ) : null}
-                                        </div>
+                    {hepaiRows.length > 0 ? (
+                        <div className="mb-4 overflow-hidden rounded-2xl border border-tertiary/50 bg-tertiary/10 dark:border-transparent dark:bg-white/[0.02]">
+                            <div className="flex items-center justify-between px-4 py-3 border-b border-tertiary/40 dark:border-white/10">
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <div className="text-sm font-semibold text-primary">已上传文件</div>
+                                        <span className="inline-flex items-center rounded-full border border-tertiary/50 bg-background/30 px-2 py-0.5 text-[11px] text-secondary">
+                                            {hepaiRows.length} 条
+                                        </span>
                                     </div>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
+                                </div>
+                            </div>
+
+                            <ul className="p-3 space-y-2 text-sm">
+                                {hepaiRows.map((r) => (
+                                    <li
+                                        key={r.id}
+                                        className={[
+                                            "group rounded-xl border border-tertiary/40 bg-background/30 px-3 py-2.5",
+                                            "shadow-[0_1px_0_rgba(255,255,255,0.04)_inset]",
+                                            "transition-[border-color,background-color,transform] duration-200 ease-out",
+                                            "hover:border-accent/40 hover:bg-background/45",
+                                        ].join(" ")}
+                                    >
+                                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                            <div className="min-w-0">
+                                                <div className="flex items-center gap-2 min-w-0">
+                                                    <div className="text-primary font-medium truncate" title={r.filename}>
+                                                        {r.filename}
+                                                    </div>
+                                                </div>
+                                                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-secondary">
+                                                    <span>{new Date(r.createdAtMs).toLocaleString()}</span>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-2 sm:justify-end">
+                                                <button
+                                                    type="button"
+                                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-tertiary/50 bg-background/20 text-secondary transition-colors hover:border-accent/40 hover:text-primary"
+                                                    onClick={() => void openSkillMdPreview(r.id, r.filename)}
+                                                    title="预览 SKILL.md"
+                                                    aria-label="预览 SKILL.md"
+                                                >
+                                                    <Eye className="w-4 h-4" aria-hidden />
+                                                </button>
+                                                <a
+                                                    href={r.previewUrl}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-tertiary/50 bg-background/20 text-secondary transition-colors hover:border-accent/40 hover:text-primary"
+                                                    title="下载"
+                                                    aria-label="下载"
+                                                >
+                                                    <Download className="w-4 h-4" aria-hidden />
+                                                </a>
+                                                <button
+                                                    type="button"
+                                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-tertiary/50 bg-background/20 text-secondary transition-colors hover:border-accent/40 hover:text-primary"
+                                                    onClick={() => void copyText(r.previewUrl)}
+                                                    title="复制链接"
+                                                    aria-label="复制链接"
+                                                >
+                                                    <Copy className="w-4 h-4" aria-hidden />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    ) : null}
+
                 </div>
             </div>
 
@@ -322,41 +327,55 @@ const SkillsSquarePage: React.FC = () => {
             </Drawer>
 
             <Modal
-                title="上传技能（ZIP）"
-                open={ENABLE_SKILL_UPLOAD && uploadOpen}
+                title="上传技能包到 HepAI Files（ZIP）"
+                open={ENABLE_HEPAI_SKILL_ZIP_UPLOAD && hepaiUploadOpen}
                 onCancel={() => {
-                    setUploadOpen(false);
-                    setUploadSlug("");
-                    if (uploadInputRef.current) uploadInputRef.current.value = "";
+                    setHepaiUploadOpen(false);
+                    if (hepaiUploadInputRef.current) hepaiUploadInputRef.current.value = "";
                 }}
-                onOk={() => void submitUpload()}
-                confirmLoading={uploading}
+                onOk={() => void submitHepaiUpload()}
+                confirmLoading={hepaiUploading}
                 okText="上传"
                 destroyOnClose
             >
                 <p className="text-sm text-secondary mb-3">
-                    支持两种结构：（1）ZIP 内仅一个子目录，且内含 <code>SKILL.md</code>，目录名将作为技能
-                    slug；（2）ZIP 根目录直接包含 <code>SKILL.md</code>，此时请在下方填写 slug。
+                    这里会把 ZIP 当作普通文件通过本服务端转发上传到 HepAI（purpose=<code>user_data</code>），并生成
+                    <code>/files/&lt;id&gt;/preview</code> 链接，避免浏览器 CORS。该列表只在本页展示，不会混入技能广场目录。
                 </p>
                 <div className="space-y-3">
                     <div>
-                        <div className="text-xs text-secondary mb-1">slug（可选，根目录 SKILL.md 时必填）</div>
-                        <Input
-                            placeholder="例如 my-skill"
-                            value={uploadSlug}
-                            onChange={(e) => setUploadSlug(e.target.value)}
-                            allowClear
-                        />
-                    </div>
-                    <div>
                         <input
-                            ref={uploadInputRef}
+                            ref={hepaiUploadInputRef}
                             type="file"
                             accept=".zip,application/zip"
                             className="block w-full text-sm text-secondary file:mr-3 file:rounded-lg file:border file:border-tertiary/50 file:bg-tertiary/20 file:px-3 file:py-1.5"
                         />
                     </div>
                 </div>
+            </Modal>
+
+            <Modal
+                title={skillMdTitle ? `${skillMdTitle} · SKILL.md` : "SKILL.md"}
+                open={skillMdOpen}
+                onCancel={() => {
+                    setSkillMdOpen(false);
+                    setSkillMdBody("");
+                }}
+                footer={null}
+                destroyOnClose
+                width={720}
+            >
+                {skillMdLoading ? (
+                    <div className="flex justify-center py-10">
+                        <Spin />
+                    </div>
+                ) : skillMdBody ? (
+                    <div className="prose prose-invert prose-sm max-w-none">
+                        <MarkdownRenderer content={skillMdBody} />
+                    </div>
+                ) : (
+                    <div className="text-sm text-secondary">暂无可预览内容</div>
+                )}
             </Modal>
         </div>
     );

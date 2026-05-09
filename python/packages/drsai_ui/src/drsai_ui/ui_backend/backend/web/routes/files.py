@@ -1,5 +1,5 @@
 from typing import Dict, List, Any, Optional
-import os, shutil, tempfile, base64
+import os, shutil, tempfile, base64, io, zipfile
 from fastapi import (
     APIRouter, 
     File, 
@@ -45,6 +45,154 @@ def upload_to_filesystem(file_path: str, user_id: str) -> Dict[str, Any]:
     file_obj = file_obj.model_dump()
     file_obj["url"] = url
     return file_obj
+
+
+def _download_hepai_file_bytes(file_id: str, user_id: str) -> bytes:
+    SERVICE_MODE = os.getenv("SERVICE_MODE", "DEV")
+    client = OpenAI(
+        base_url="https://aiapi.ihep.ac.cn/apiv2",
+        api_key=fetcher.get_personal_key(username=user_id)
+        if SERVICE_MODE == "PROD"
+        else os.environ.get("HEPAI_API_KEY"),
+    )
+
+    resp = client.files.content(file_id)
+    if hasattr(resp, "read"):
+        return resp.read()
+    if hasattr(resp, "content"):
+        return resp.content  # type: ignore[return-value]
+    if isinstance(resp, (bytes, bytearray)):
+        return bytes(resp)
+    return bytes(resp)  # best-effort fallback
+
+
+def _extract_skill_md_from_zip(zip_bytes: bytes) -> Dict[str, str]:
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid zip: {e}") from e
+
+    names = [n for n in zf.namelist() if not n.endswith("/")]
+    candidates = [n for n in names if n.upper().endswith("SKILL.MD")]
+    if not candidates:
+        raise HTTPException(status_code=404, detail="SKILL.md not found in zip")
+
+    def _rank(p: str) -> tuple[int, int, str]:
+        # prefer root SKILL.md, then single-subdir, then shortest path
+        segs = [s for s in p.split("/") if s]
+        root_bonus = 0 if (len(segs) == 1 and segs[0].upper() == "SKILL.MD") else 1
+        depth = len(segs)
+        return (root_bonus, depth, p.lower())
+
+    chosen = sorted(candidates, key=_rank)[0]
+    try:
+        raw = zf.read(chosen)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail="SKILL.md missing in zip") from e
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", errors="replace")
+    return {"path": chosen, "content": text}
+
+@router.post("/hepai/upload")
+async def upload_file_to_hepai(
+    user_id: str,
+    file: UploadFile = File(...),
+    db=Depends(get_db),
+) -> Dict:
+    """
+    Upload a single file to HepAI Files (purpose=user_data) and return its preview URL.
+
+    This endpoint exists to avoid browser CORS issues when uploading directly to
+    `https://aiapi.ihep.ac.cn/apiv2/files`.
+    """
+    if not user_id:
+        raise HTTPException(status_code=400, detail="missing user_id")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="missing file")
+
+    tmp_dir = tempfile.mkdtemp(prefix="hepai-upload-")
+    try:
+        tmp_path = os.path.join(tmp_dir, file.filename)
+        with open(tmp_path, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+
+        file_obj = upload_to_filesystem(tmp_path, user_id)
+        # Persist hepai file info into DB for refresh/reload
+        try:
+            response = db.get(UserFiles, filters={"user_id": user_id})
+            if not response.status or not response.data:
+                userfiles = UserFiles(user_id=user_id, files={})
+            else:
+                userfiles: UserFiles = response.data[0]
+                if userfiles.files is None:
+                    userfiles.files = {}
+
+            hepai_files = userfiles.files.get("hepai_files")
+            if not isinstance(hepai_files, dict):
+                hepai_files = {}
+            hepai_files[file_obj["id"]] = {
+                "id": file_obj["id"],
+                "filename": file.filename,
+                "url": file_obj.get("url"),
+                "createdAtMs": int(__import__("time").time() * 1000),
+                "source": "hepai",
+            }
+            userfiles.files["hepai_files"] = hepai_files
+            db.upsert(userfiles)
+        except Exception:
+            # best-effort persistence; upload already succeeded
+            pass
+        return {"status": True, "data": file_obj}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@router.get("/hepai/list")
+async def list_hepai_files(user_id: str, db=Depends(get_db)) -> Dict:
+    """List HepAI uploaded files persisted for the user."""
+    if not user_id:
+        raise HTTPException(status_code=400, detail="missing user_id")
+    response = db.get(UserFiles, filters={"user_id": user_id})
+    if not response.status or not response.data:
+        return {"status": True, "data": []}
+    userfiles: UserFiles = response.data[0]
+    if not userfiles.files:
+        return {"status": True, "data": []}
+    hepai_files = userfiles.files.get("hepai_files")
+    if not isinstance(hepai_files, dict):
+        return {"status": True, "data": []}
+    rows = list(hepai_files.values())
+    # newest first when createdAtMs exists
+    rows.sort(key=lambda x: x.get("createdAtMs", 0), reverse=True)
+    return {"status": True, "data": rows}
+
+
+@router.get("/hepai/skill-md/{file_id}")
+async def get_hepai_zip_skill_md(file_id: str, user_id: str) -> Dict:
+    """
+    Read `SKILL.md` from a ZIP stored in HepAI Files (purpose=user_data).
+
+    - Supports root `SKILL.md`
+    - Supports single-subdir `*/SKILL.md`
+    """
+    if not user_id:
+        raise HTTPException(status_code=400, detail="missing user_id")
+    if not file_id:
+        raise HTTPException(status_code=400, detail="missing file_id")
+
+    zip_bytes = _download_hepai_file_bytes(file_id=file_id, user_id=user_id)
+    extracted = _extract_skill_md_from_zip(zip_bytes)
+    return {"status": True, "data": extracted}
 
 @router.post("/")
 async def upload_files(

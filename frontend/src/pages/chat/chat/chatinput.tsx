@@ -93,7 +93,6 @@ const ChatInput = React.forwardRef<
     ref
   ) => {
     const textAreaRef = React.useRef<HTMLTextAreaElement>(null);
-    /** 放在 Dropdown 外，避免菜单关闭时卸载 Upload 导致 beforeUpload/回显失败 */
     const attachFileInputRef = React.useRef<HTMLInputElement>(null);
     const [text, setText] = React.useState("");
     const [dragOver, setDragOver] = React.useState(false);
