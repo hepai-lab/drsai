@@ -1011,6 +1011,56 @@ export class FileAPI {
         }
         return data.data;
     }
+
+    async uploadToHepAI(userId: string, file: File): Promise<{ id: string; url: string }> {
+        const form = new FormData();
+        form.append("file", file);
+        const url = `${this.getBaseUrl()}/files/hepai/upload?user_id=${encodeURIComponent(userId)}`;
+        const response = await fetch(url, { method: "POST", body: form });
+        const data = await response.json();
+        if (!response.ok || !data?.status) {
+            throw new Error(data?.detail || data?.message || "上传到 HepAI 失败");
+        }
+        const raw = data.data || {};
+        if (!raw.id || !raw.url) {
+            throw new Error("上传成功但未返回 HepAI 文件信息");
+        }
+        return { id: raw.id, url: raw.url };
+    }
+
+    async getHepaiZipSkillMd(userId: string, fileId: string): Promise<{ path: string; content: string }> {
+        const url = `${this.getBaseUrl()}/files/hepai/skill-md/${encodeURIComponent(fileId)}?user_id=${encodeURIComponent(
+            userId
+        )}`;
+        const response = await fetch(url);
+        const data = await response.json();
+        if (!response.ok || !data?.status) {
+            throw new Error(data?.detail || data?.message || "读取 SKILL.md 失败");
+        }
+        const raw = data.data || {};
+        if (typeof raw.content !== "string") {
+            throw new Error("读取成功但未返回 SKILL.md 内容");
+        }
+        return { path: String(raw.path || "SKILL.md"), content: raw.content };
+    }
+
+    async listHepaiFiles(userId: string): Promise<Array<{ id: string; filename: string; url: string; createdAtMs: number }>> {
+        const url = `${this.getBaseUrl()}/files/hepai/list?user_id=${encodeURIComponent(userId)}`;
+        const response = await fetch(url);
+        const data = await response.json();
+        if (!response.ok || !data?.status) {
+            throw new Error(data?.detail || data?.message || "获取 HepAI 文件列表失败");
+        }
+        const rows = Array.isArray(data.data) ? data.data : [];
+        return rows
+            .filter((r: any) => r && typeof r.id === "string" && typeof r.url === "string")
+            .map((r: any) => ({
+                id: r.id,
+                filename: String(r.filename || r.name || "file.zip"),
+                url: r.url,
+                createdAtMs: Number(r.createdAtMs || Date.now()),
+            }));
+    }
 }
 
 export class AuthAPI {
@@ -1463,3 +1513,71 @@ export class SkillsAPI {
 }
 
 export const skillsAPI = new SkillsAPI();
+
+export type HepAIUploadedFile = {
+    id: string;
+    filename?: string;
+    bytes?: number;
+    purpose?: string;
+    created_at?: number;
+};
+
+/**
+ * Upload a file to HepAI "files" endpoint and return its preview URL.
+ * Mirrors Python usage: client.files.create(file=..., purpose="user_data").
+ */
+export async function uploadToHepAI(
+    file: File,
+    apiKey: string,
+    baseUrl: string = "https://aiapi.ihep.ac.cn/apiv2",
+    purpose: string = "user_data"
+): Promise<{ file: HepAIUploadedFile; previewUrl: string }> {
+    const trimmedKey = apiKey.trim();
+    if (!trimmedKey) {
+        throw new Error("缺少 HepAI API Key");
+    }
+
+    const form = new FormData();
+    form.append("file", file);
+    form.append("purpose", purpose);
+
+    const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/files`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${trimmedKey}`,
+        },
+        body: form,
+    });
+
+    const text = await res.text();
+    let data: any;
+    try {
+        data = text ? JSON.parse(text) : null;
+    } catch {
+        data = text;
+    }
+
+    if (!res.ok) {
+        const msg =
+            typeof data === "object" && data
+                ? data.error?.message || data.detail || data.message || res.statusText
+                : res.statusText || "上传失败";
+        throw new Error(msg);
+    }
+
+    // OpenAI-style response: { id, ... }
+    const fileObj: HepAIUploadedFile | null =
+        data && typeof data === "object"
+            ? (data.data && typeof data.data === "object" ? data.data : data)
+            : null;
+    const id = fileObj?.id;
+    if (!id || typeof id !== "string") {
+        throw new Error("上传成功但未返回 file id");
+    }
+
+    const normalizedBase = baseUrl.replace(/\/+$/, "");
+    return {
+        file: fileObj,
+        previewUrl: `${normalizedBase}/files/${encodeURIComponent(id)}/preview`,
+    };
+}
