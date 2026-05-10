@@ -692,7 +692,7 @@ async def _run_repl(cfg: dict):
     # 只在全新 session 或没有从 load_state 恢复项目指令时才加载
     existing_project_instr = getattr(agent, '_project_instructions', '') or ''
     if not existing_project_instr:
-        project_instructions, loaded_paths = load_project_instructions(str(Path.cwd()))
+        project_instructions, loaded_paths, md_warnings = load_project_instructions(str(Path.cwd()))
         if project_instructions:
             # 注入项目指令到 system prompt 的 project_instructions 层
             prefix = getattr(agent, '_injected_prefix', '') or ''
@@ -706,6 +706,9 @@ async def _run_repl(cfg: dict):
             for p in loaded_paths:
                 short_path = Path(p).name if Path(p).parent == Path.cwd() else str(Path(p).relative_to(Path.cwd())) if Path.cwd() in Path(p).parents else p
                 print(f"  {ansi('notify_ok')}✓ Project instructions loaded: {short_path}{ansi_reset()}")
+            # 显示超限警告
+            for w in md_warnings:
+                print(f"  {ansi('warn')}{w}{ansi_reset()}")
             # 保存状态以持久化项目指令
             state_dict = await agent.save_state()
             await _save_thread_state(current_session_id, state_dict)
@@ -1777,7 +1780,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
                 print("Agent not initialized.")
                 return
 
-            project_instructions, loaded_paths = load_project_instructions(str(Path.cwd()))
+            project_instructions, loaded_paths, md_warnings = load_project_instructions(str(Path.cwd()))
             # 获取当前 prefix/suffix，保持不变
             prefix = getattr(agent, '_injected_prefix', '') or ''
             suffix = getattr(agent, '_injected_suffix', '') or ''
@@ -1793,6 +1796,9 @@ If a question can be answered by exploring the codebase, explore the codebase in
                     short = Path(p).name if Path(p).parent == Path.cwd() else str(Path(p).relative_to(Path.cwd())) if Path.cwd() in Path(p).parents else p
                     lines = Path(p).read_text(encoding="utf-8").split("\n")
                     print(f"    {short} ({len(lines)} lines)")
+            # 显示超限警告
+            for w in md_warnings:
+                print(f"  {ansi('warn')}{w}{ansi_reset()}")
             else:
                 print(f"  {ansi('system_info')}ℹ No project instruction files found.{ansi_reset()}")
                 print("  Use /init to create one in the current project directory.")

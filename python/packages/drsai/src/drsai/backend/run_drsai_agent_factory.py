@@ -416,7 +416,7 @@ def create_agent(
         default=_DEFAULT_ANTHROPIC_BASE_URL,
     )
     anthropic_api_key = _resolve(
-        cli_cfg, "anthropic_api_key", "ANTHROPIC_API_KEY",
+        cli_cfg, "anthropic_api_key", "ANTHROPIC_API_KEY", "HEPAI_API_KEY",
     ) or api_key
 
     openai_base_url = _resolve(

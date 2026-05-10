@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -237,27 +238,46 @@ class DrSaiTrayApp:
         logger.info("DrSai tray icon starting (detached)...")
         # pystray's own run_detached handles the Win32 message loop correctly
         self._icon.run_detached()
+        logger.info("Tray icon thread launched — icon will become visible once pystray setup completes")
 
-        # ── Diagnostic: verify icon is actually visible ──────────────────────
-        import time
-        time.sleep(1.0)  # Brief wait for Win32 to process the notification
-        try:
-            if hasattr(self._icon, '_visible'):
-                visible = self._icon._visible
-                logger.info(f"Tray icon visibility: {visible}")
-                if not visible:
-                    logger.warning(
-                        "Tray icon reports _visible=False after run_detached. "
-                        "The icon may be in the overflow area (click ↑ in taskbar)."
-                    )
-            if hasattr(self._icon, '_icon_valid'):
-                valid = self._icon._icon_valid
-                logger.info(f"Tray icon valid: {valid}")
-            if hasattr(self._icon, '_hwnd'):
-                hwnd = self._icon._hwnd
-                logger.info(f"Tray icon HWND: {hwnd}")
-        except Exception as e:
-            logger.debug(f"Tray icon diagnostic check failed: {e}")
+        # ── Deferred diagnostic: poll _visible without blocking caller ──────
+        # pystray's run_detached() spawns a setup_thread that asynchronously
+        # sets self.visible = True (which sets _visible = True).  Checking
+        # _visible immediately after run_detached() is unreliable because
+        # the setup_thread may not have executed yet.  Instead, we launch a
+        # background poll that waits up to 5 seconds and logs the result.
+        _diag_icon = self._icon  # capture for closure
+        def _visibility_poll(max_wait: float = 5.0, step: float = 0.2) -> None:
+            elapsed = 0.0
+            while elapsed < max_wait:
+                time.sleep(step)
+                elapsed += step
+                try:
+                    if hasattr(_diag_icon, '_visible') and _diag_icon._visible:
+                        logger.info(f"Tray icon confirmed visible after {elapsed:.1f}s")
+                        return
+                except Exception:
+                    pass
+            # Final check after timeout
+            try:
+                if hasattr(_diag_icon, '_visible'):
+                    visible = _diag_icon._visible
+                    if not visible:
+                        logger.warning(
+                            "Tray icon reports _visible=False after %.1fs. "
+                            "The icon may be in the overflow area (click ↑ in taskbar).",
+                            elapsed,
+                        )
+                    else:
+                        logger.info(f"Tray icon visible (late confirmation at {elapsed:.1f}s)")
+                if hasattr(_diag_icon, '_icon_valid'):
+                    logger.info(f"Tray icon valid: {_diag_icon._icon_valid}")
+                if hasattr(_diag_icon, '_hwnd'):
+                    logger.info(f"Tray icon HWND: {_diag_icon._hwnd}")
+            except Exception as e:
+                logger.debug(f"Tray icon diagnostic check failed: {e}")
+
+        threading.Thread(target=_visibility_poll, daemon=True, name="tray-visibility-diag").start()
 
     def stop(self) -> None:
         """Stop the tray icon (called from any thread, idempotent)."""
