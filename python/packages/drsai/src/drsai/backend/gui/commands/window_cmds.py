@@ -70,6 +70,16 @@ class WindowCommands:
             if orig_ui is None:
                 orig_ui = self.ctx.ui
 
+            # Save the ORIGINAL session's state BEFORE register_session()
+            # changes ctx.agent, ctx.stats, ctx.current_thread, etc.
+            # These are needed to create a SessionContext for the original
+            # session when entering multi-window mode.
+            orig_session_id = self.ctx.current_session_id
+            orig_agent = self.ctx.agent
+            orig_stats = self.ctx.stats
+            orig_current_thread = self.ctx.current_thread
+            orig_show_reasoning = self.ctx._show_reasoning
+
             # Create new session via CLISessionStore
             CLISessionStore = get_CLISessionStore()
             store = CLISessionStore(self.ctx.db_manager, self.ctx.user_id)
@@ -137,12 +147,11 @@ class WindowCommands:
                 return
 
             # Schedule window creation on the tkinter main thread.
-            # The callback will report success/error via orig_ui directly.
-            # Pass orig_session_id so we can create a SessionContext for it.
-            orig_session_id = self.ctx.current_session_id
+            # Pass original session data so we can create a SessionContext for it.
             root_window.after(0, self._create_window_on_main_thread,
                               new_session_id, sctx, app, name, orig_ui,
-                              orig_session_id)
+                              orig_session_id, orig_agent, orig_stats,
+                              orig_current_thread, orig_show_reasoning)
 
             logger.info(f"New window creation scheduled for session: {new_session_id}")
 
@@ -163,6 +172,11 @@ class WindowCommands:
         app: Any,
         name: Optional[str],
         orig_ui: Any,
+        orig_session_id: Optional[str] = None,
+        orig_agent: Any = None,
+        orig_stats: Any = None,
+        orig_current_thread: Any = None,
+        orig_show_reasoning: bool = False,
     ) -> None:
         """Create the Toplevel window on the tkinter main thread.
 
@@ -183,14 +197,10 @@ class WindowCommands:
         """
         try:
             # ── Step 0: Ensure original session has a SessionContext ────────
-            # The original (root) window starts with global callbacks that
-            # reference ctx.agent, ctx.stats, etc. (global pointers).  When
-            # set_active_session() switches to the new window's session,
-            # those global pointers change, causing the original window to
-            # "talk" to the wrong agent.  Fix this by:
-            #   1. Creating a SessionContext for the original session
-            #   2. Rebinding the root window to session-specific callbacks
-            self._ensure_original_session_context(app)
+            self._ensure_original_session_context(
+                app, orig_session_id, orig_agent, orig_stats,
+                orig_current_thread, orig_show_reasoning
+            )
 
             # ── Step 1: Create the new Toplevel window ──────────────────────
             DrSaiChatWindow = get_DrSaiChatWindow()
@@ -243,76 +253,76 @@ class WindowCommands:
                 orig_ui.section_end()
             self.ctx.unregister_session(session_id)
 
-    def _ensure_original_session_context(self, app: Any) -> None:
+    def _ensure_original_session_context(
+        self,
+        app: Any,
+        orig_session_id: Optional[str] = None,
+        orig_agent: Any = None,
+        orig_stats: Any = None,
+        orig_current_thread: Any = None,
+        orig_show_reasoning: bool = False,
+    ) -> None:
         """Ensure the original (root) session has a proper SessionContext.
 
-        The root window is created with global callbacks (_on_user_message,
-        _on_command) that reference ctx.agent, ctx.stats, etc. — all global
-        pointers.  When we enter multi-window mode and set_active_session()
-        switches to a new window's session, those global pointers change.
+        The root window starts with global callbacks (_on_user_message,
+        _on_command) that reference ctx.agent, ctx.stats, etc. (global
+        pointers).  When set_active_session() switches to a new window's
+        session, those global pointers change, making the original window
+        "talk" to the wrong agent.
 
-        This means the original window would "talk" to the WRONG agent
-        after the session switch.  To prevent this, we:
+        This method creates a SessionContext for the original session
+        (using saved references passed from Phase 1) and rebinds the
+        root window to session-specific callbacks, so each window
+        independently talks to its own agent/session.
 
-        1. Check if the original session_id already has a SessionContext
-           in ctx._sessions
-        2. If not, create one from the current global state (ctx.agent,
-           ctx.stats, ctx.current_thread, etc.)
-        3. Rebind the root window's callbacks to session-specific versions
-           (_on_user_message_for_session, _on_command_for_session) so it
-           always talks to its own agent, regardless of which session is
-           currently "active" in the global context.
-
-        This is called once, when the FIRST new window is created.
-        After this, the root window is independent of global state.
+        Called once when the FIRST new window is created.
         """
-        orig_sid = self.ctx.current_session_id
-        if orig_sid is None or orig_sid == "":
-            logger.warning("No original session_id found — skipping SessionContext creation for root window")
+        if not orig_session_id:
+            logger.warning("No original session_id — skipping SessionContext creation for root")
             return
 
-        # Already has a SessionContext — just check if root window needs rebinding
-        if orig_sid in self.ctx._sessions:
-            orig_sctx = self.ctx._sessions[orig_sid]
+        # Already has a SessionContext — just check if rebinding is needed
+        if orig_session_id in self.ctx._sessions:
+            orig_sctx = self.ctx._sessions[orig_session_id]
             root_win = self.ctx._root
-
-            # Check if root window still uses global callbacks
             if root_win and hasattr(root_win, '_on_command_fn'):
-                # If _on_command_fn is NOT a session-specific closure (_fn),
-                # then it's using the global _on_command and needs rebinding.
-                fn = root_win._on_command_fn
-                fn_name = getattr(fn, '__name__', '')
+                fn_name = getattr(root_win._on_command_fn, '__name__', '')
                 if fn_name != '_fn':
                     app._rebind_window_callbacks(root_win, orig_sctx)
-                    logger.info(f"Root window callbacks rebound to original session: {orig_sid}")
+                    logger.info(f"Root window callbacks rebound: {orig_session_id}")
             return
 
         # ── Create SessionContext for the original session ──────────────
-        # Populate from current global state (agent, stats, thread, etc.)
+        # Use saved references from Phase 1 (before register_session
+        # changed ctx.agent etc. to point to the new session).
+        root_win = self.ctx._root
+
         orig_sctx = SessionContext(
-            session_id=orig_sid,
+            session_id=orig_session_id,
             session_name="desktop",
             app=app,
-            agent=self.ctx.agent,
-            stats=self.ctx.stats,
-            current_thread=self.ctx.current_thread,
-            _chat_window=self.ctx._chat_window,
-            ui=self.ctx.ui,
-            _show_reasoning=self.ctx._show_reasoning,
+            agent=orig_agent,
+            stats=orig_stats,
+            current_thread=orig_current_thread,
+            _chat_window=root_win,
+            ui=self.ctx.ui,  # May be None if switched, but we recover below
+            _show_reasoning=orig_show_reasoning,
         )
 
-        # Register in sessions dict (but DON'T call register_session which
-        # would call set_active_session and change all global pointers)
-        self.ctx._sessions[orig_sid] = orig_sctx
+        # Recover the original UIFormatter if ctx.ui was switched to None
+        if orig_sctx.ui is None and root_win is not None:
+            from drsai.backend.gui.ui_formatter import UIFormatter
+            orig_sctx.ui = UIFormatter(root_win)
 
-        # Also register the root window in _windows dict
-        self.ctx._windows[orig_sid] = self.ctx._root
+        # Register in sessions dict WITHOUT calling set_active_session
+        # (we don't want to change the global pointers right now)
+        self.ctx._sessions[orig_session_id] = orig_sctx
+        self.ctx._windows[orig_session_id] = root_win
 
         # ── Rebind root window to session-specific callbacks ────────────
-        root_win = self.ctx._root
         if root_win is not None:
             app._rebind_window_callbacks(root_win, orig_sctx)
-            logger.info(f"Root window SessionContext created and callbacks rebound to: {orig_sid}")
+            logger.info(f"Root window SessionContext created and callbacks rebound to: {orig_session_id}")
 
     # ── /win_close ──────────────────────────────────────────────────────────
 
