@@ -79,6 +79,36 @@ _WIN_ABS_PATH_RE = re.compile(r'([A-Za-z]:\\[^\s;|&><\'"]+)')
 # Cache for PowerShell path detection
 _POWERSHELL_PATH_CACHE = None
 
+
+def _win_subprocess_hide_kwargs() -> dict:
+    """Return Windows-specific subprocess kwargs to prevent console window flash.
+
+    On Windows, when a console subprocess (powershell.exe, cmd.exe, etc.)
+    is launched from a windowed (no-console) parent process, Windows will
+    allocate a new console window for it.  This function returns kwargs
+    that suppress that behavior:
+
+    - STARTUPINFO with STARTF_USESHOWWINDOW + SW_HIDE: tells CreateProcess
+      to hide any allocated console window
+    - CREATE_NO_WINDOW (0x08000000): tells CreateProcess not to allocate
+      a console at all
+
+    Both are applied for maximum reliability across all Windows configs.
+
+    Returns an empty dict on non-Windows platforms.
+    """
+    if platform.system() != "Windows":
+        return {}
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0  # SW_HIDE
+    return {
+        "startupinfo": startupinfo,
+        "creationflags": subprocess.CREATE_NO_WINDOW,
+    }
+
+
 def _detect_powershell() -> Optional[str]:
     """Detect available PowerShell executable (pwsh or powershell)."""
     global _POWERSHELL_PATH_CACHE
@@ -122,6 +152,7 @@ def _kill_process_tree(pid: int) -> bool:
             result = subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
                 capture_output=True, timeout=5,
+                **_win_subprocess_hide_kwargs(),
             )
             return result.returncode == 0 or "not found" in (result.stderr or "").lower()
         else:
@@ -340,11 +371,13 @@ def get_operator_funcs(
             grep_available = False
 
             # Check for ripgrep
+            _hide_kwargs = _win_subprocess_hide_kwargs()
             rg_check = await asyncio.create_subprocess_exec(
                 shutil.which("rg") or "rg",
                 "--version",
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                **_hide_kwargs,
             )
             await rg_check.communicate()
             rg_available = rg_check.returncode == 0
@@ -398,7 +431,8 @@ def get_operator_funcs(
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
+                    stderr=asyncio.subprocess.PIPE,
+                    **_hide_kwargs,
                 )
 
                 async with asyncio.timeout(30):
@@ -1006,6 +1040,11 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         
         Only includes ``cwd`` if the current _ps_cwd exists on this platform,
         so Unix-style paths on Windows don't cause subprocess startup failure.
+        
+        On Windows: adds STARTUPINFO + CREATE_NO_WINDOW to prevent a console
+        window from flashing when PowerShell is launched from a windowed
+        (no-console) parent process (e.g. PyInstaller --windowed exe,
+        pythonw.exe, or tkinter GUI app).
         """
         kwargs = dict(
             stdout=asyncio.subprocess.PIPE,
@@ -1016,6 +1055,10 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
                 kwargs["cwd"] = str(_ps_cwd[0])
         except Exception:
             pass  # Skip cwd if path validation fails (e.g. Unix path on Windows)
+
+        # ── Windows: hide console window (see _win_subprocess_hide_kwargs) ──
+        kwargs.update(_win_subprocess_hide_kwargs())
+
         return kwargs
 
     def _parse_ps_output(raw_output: str) -> tuple[str, str]:

@@ -71,8 +71,8 @@ IMPORT_RE = re.compile(r"@([\w./\-~]+)")
 
 # 安全限制
 MAX_IMPORT_DEPTH = 5
-MAX_LINES = 200
-MAX_SIZE_KB = 25
+MAX_LINES = 500
+MAX_SIZE_KB = 50
 
 # 组织级（Managed policy）路径
 ORG_MD_PATHS = {
@@ -248,7 +248,7 @@ def discover_org_md_file() -> Optional[Path]:
 
 # ── 加载与合并 ──────────────────────────────────────────────────────────────
 
-def load_project_instructions(workdir: str) -> Tuple[str, List[str]]:
+def load_project_instructions(workdir: str) -> Tuple[str, List[str], List[str]]:
     """加载并合并所有项目级指令文件的内容。
 
     模仿 Claude Code 的加载逻辑:
@@ -262,12 +262,14 @@ def load_project_instructions(workdir: str) -> Tuple[str, List[str]]:
         workdir: 当前工作目录
 
     Returns:
-        Tuple of (combined_text, loaded_file_paths)
+        Tuple of (combined_text, loaded_file_paths, warnings)
         - combined_text: 合并后的指令文本（空字符串表示无项目指令）
         - loaded_file_paths: 成功加载的文件路径列表（用于状态显示）
+        - warnings: 用户可见的警告列表（超限提醒等）
     """
     sections: List[str] = []
     loaded_paths: List[str] = []
+    warnings: List[str] = []
 
     # 1. 组织级指令（如果有）
     org_file = discover_org_md_file()
@@ -298,7 +300,7 @@ def load_project_instructions(workdir: str) -> Tuple[str, List[str]]:
             logger.warning(f"Failed to read {filepath}: {e}")
 
     if not sections:
-        return "", loaded_paths
+        return "", loaded_paths, warnings
 
     combined = "\n\n".join(sections)
 
@@ -306,20 +308,24 @@ def load_project_instructions(workdir: str) -> Tuple[str, List[str]]:
     lines = combined.split("\n")
     line_count = len(lines)
     if line_count > MAX_LINES:
-        logger.warning(
-            f"Combined project instructions exceed {MAX_LINES} lines "
-            f"({line_count} lines). Consider using .drsai/rules/ for path-scoped rules."
+        msg = (
+            f"⚠ 项目指令超过 {MAX_LINES} 行限制（当前 {line_count} 行）。"
+            f"建议拆分为多个文件或使用 .drsai/rules/ 进行路径级规则。"
         )
+        logger.warning(msg)
+        warnings.append(msg)
 
     # 大小检查
     size_kb = len(combined.encode("utf-8")) / 1024
     if size_kb > MAX_SIZE_KB:
-        logger.warning(
-            f"Combined project instructions exceed {MAX_SIZE_KB}KB "
-            f"({size_kb:.1f}KB). Consider splitting into smaller files."
+        msg = (
+            f"⚠ 项目指令超过 {MAX_SIZE_KB}KB 限制（当前 {size_kb:.1f}KB）。"
+            f"建议拆分为多个文件以节省 context token。"
         )
+        logger.warning(msg)
+        warnings.append(msg)
 
-    return combined, loaded_paths
+    return combined, loaded_paths, warnings
 
 
 # ── /init 命令 ──────────────────────────────────────────────────────────────

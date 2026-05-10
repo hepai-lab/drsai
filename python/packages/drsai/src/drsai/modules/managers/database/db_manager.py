@@ -41,7 +41,10 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
             engine_uri (str): Database connection URI (e.g. sqlite:///db.sqlite3)
             base_dir (Path, optional): Base directory for migration files. If None, uses current directory. Default: None.
         """
-        connection_args = {"check_same_thread": True} if "sqlite" in engine_uri else {}
+        # check_same_thread=False allows SQLite connections to be shared across
+        # threads (asyncio thread, tkinter main thread, pystray thread).
+        # SQLAlchemy's QueuePool handles connection reuse safely.
+        connection_args = {"check_same_thread": False} if "sqlite" in engine_uri else {}
 
         # check if base_dir is valid
         if base_dir is None:
