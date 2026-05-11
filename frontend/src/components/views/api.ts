@@ -1044,7 +1044,19 @@ export class FileAPI {
         return { path: String(raw.path || "SKILL.md"), content: raw.content };
     }
 
-    async listHepaiFiles(userId: string): Promise<Array<{ id: string; filename: string; url: string; createdAtMs: number }>> {
+    async listHepaiFiles(
+        userId: string
+    ): Promise<
+        Array<{
+            id: string;
+            filename: string;
+            url: string;
+            createdAtMs: number;
+            description?: string;
+            uploadedBy?: string;
+            metadata?: Record<string, unknown>;
+        }>
+    > {
         const url = `${this.getBaseUrl()}/files/hepai/list?user_id=${encodeURIComponent(userId)}`;
         const response = await fetch(url);
         const data = await response.json();
@@ -1054,12 +1066,24 @@ export class FileAPI {
         const rows = Array.isArray(data.data) ? data.data : [];
         return rows
             .filter((r: any) => r && typeof r.id === "string" && typeof r.url === "string")
-            .map((r: any) => ({
-                id: r.id,
-                filename: String(r.filename || r.name || "file.zip"),
-                url: r.url,
-                createdAtMs: Number(r.createdAtMs || Date.now()),
-            }));
+            .map((r: any) => {
+                const uploadedRaw = r.uploadedBy ?? r.uploaded_by;
+                return {
+                    id: r.id,
+                    filename: String(r.filename || r.name || "file.zip"),
+                    url: r.url,
+                    createdAtMs: Number(r.createdAtMs || Date.now()),
+                    description: typeof r.description === "string" ? r.description : undefined,
+                    uploadedBy:
+                        typeof uploadedRaw === "string" && uploadedRaw.trim()
+                            ? uploadedRaw.trim()
+                            : undefined,
+                    metadata:
+                        r.metadata && typeof r.metadata === "object" && r.metadata !== null
+                            ? r.metadata
+                            : undefined,
+                };
+            });
     }
 }
 

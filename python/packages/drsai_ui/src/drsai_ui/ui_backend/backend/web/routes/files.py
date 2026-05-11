@@ -1,5 +1,5 @@
 from typing import Dict, List, Any, Optional
-import os, shutil, tempfile, base64, io, zipfile
+import os, re, shutil, tempfile, base64, io, zipfile
 from fastapi import (
     APIRouter, 
     File, 
@@ -95,6 +95,34 @@ def _extract_skill_md_from_zip(zip_bytes: bytes) -> Dict[str, str]:
         text = raw.decode("utf-8", errors="replace")
     return {"path": chosen, "content": text}
 
+
+def _parse_skill_md_description_from_text(content: str) -> Optional[str]:
+    """YAML frontmatter `description:` from SKILL.md (aligned with SkillLoader frontmatter parsing)."""
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
+    if not match:
+        return None
+    frontmatter = match.group(1)
+    for line in frontmatter.strip().split("\n"):
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        if key.strip() != "description":
+            continue
+        out = value.strip().strip("\"'")
+        return out or None
+    return None
+
+
+def _skill_md_description_from_zip_path(zip_path: str) -> Optional[str]:
+    try:
+        with open(zip_path, "rb") as zf_in:
+            zb = zf_in.read()
+        extracted = _extract_skill_md_from_zip(zb)
+        return _parse_skill_md_description_from_text(extracted["content"])
+    except Exception:
+        return None
+
+
 @router.post("/hepai/upload")
 async def upload_file_to_hepai(
     user_id: str,
@@ -123,6 +151,17 @@ async def upload_file_to_hepai(
                 out.write(chunk)
 
         file_obj = upload_to_filesystem(tmp_path, user_id)
+        raw_meta = file_obj.get("metadata")
+        api_metadata: Dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
+        meta_desc_raw = api_metadata.get("description")
+        meta_description = (
+            meta_desc_raw.strip()
+            if isinstance(meta_desc_raw, str) and meta_desc_raw.strip()
+            else None
+        )
+        skill_md_description = _skill_md_description_from_zip_path(tmp_path)
+        resolved_description = meta_description or skill_md_description
+
         # Persist hepai file info into DB for refresh/reload
         try:
             response = db.get(UserFiles, filters={"user_id": user_id})
@@ -142,6 +181,9 @@ async def upload_file_to_hepai(
                 "url": file_obj.get("url"),
                 "createdAtMs": int(__import__("time").time() * 1000),
                 "source": "hepai",
+                "uploadedBy": user_id,
+                "metadata": api_metadata,
+                **({"description": resolved_description} if resolved_description else {}),
             }
             userfiles.files["hepai_files"] = hepai_files
             db.upsert(userfiles)
