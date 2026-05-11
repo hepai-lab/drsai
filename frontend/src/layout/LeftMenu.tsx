@@ -17,6 +17,7 @@ import {
   Users,
   Zap,
   ChevronDown,
+  Wrench,
 } from "lucide-react";
 import React, { useContext, useEffect, useState } from "react";
 import { appContext } from "../hooks/provider";
@@ -223,7 +224,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
               />
               <NavItem
                 id="skills_square"
-                icon={<Zap className="w-3.5 h-3.5" />}
+                icon={<Wrench className="w-3.5 h-3.5" />}
                 label="技能广场"
                 onClick={() => onSubMenuChange("skills_square")}
               />

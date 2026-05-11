@@ -5,17 +5,21 @@ import {
   XMarkIcon,
 } from "@heroicons/react/24/outline";
 import {
+  Checkbox,
   Dropdown,
+  Input,
   Menu,
   message,
   Modal,
+  Spin,
   Tooltip,
 } from "antd";
 import type { RcFile } from "antd/es/upload/interface";
 import {
   BotIcon,
   PaperclipIcon,
-  PlusIcon
+  PlusIcon,
+  WrenchIcon
 } from "lucide-react";
 import * as React from "react";
 import { appContext } from "../../../hooks/provider";
@@ -32,12 +36,17 @@ import { usePlanSearch } from "./hooks/usePlanSearch";
 
 // Import components
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
-import { agentWorkerAPI } from "@/components/views/api";
+import { agentWorkerAPI, fileAPI } from "@/components/views/api";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { useConfigStore } from "@/hooks/store";
 import DragDropOverlay from "./components/DragDropOverlay";
 import FilePreview from "./components/FilePreview";
 import PlanPreview from "./components/PlanPreview";
+
+/** HepAI 技能 ZIP（与 SkillsSquarePage / fileAPI.listHepaiFiles 一致） */
+type HepaiSkillPickRow = { id: string; filename: string; url: string };
+
+const SKILL_INSTALL_DEFAULT_LINE = "帮我安装这些智能体";
 
 interface ChatInputProps {
   onSubmit: (
@@ -94,6 +103,14 @@ const ChatInput = React.forwardRef<
   ) => {
     const textAreaRef = React.useRef<HTMLTextAreaElement>(null);
     const attachFileInputRef = React.useRef<HTMLInputElement>(null);
+    const [skillModalOpen, setSkillModalOpen] = React.useState(false);
+    const [skillModalLoading, setSkillModalLoading] = React.useState(false);
+    const [skillModalRows, setSkillModalRows] = React.useState<HepaiSkillPickRow[]>([]);
+    const [skillModalSearch, setSkillModalSearch] = React.useState("");
+    const [skillModalSelectedIds, setSkillModalSelectedIds] = React.useState<Set<string>>(
+      () => new Set()
+    );
+    const [attachedSkills, setAttachedSkills] = React.useState<HepaiSkillPickRow[]>([]);
     const [text, setText] = React.useState("");
     const [dragOver, setDragOver] = React.useState(false);
     const [isDragActive, setIsDragActive] = React.useState(false);
@@ -155,6 +172,50 @@ const ChatInput = React.forwardRef<
       sessionId,
       serverFilesPrefill,
     });
+
+    const filteredSkillModalRows = React.useMemo(() => {
+      const q = skillModalSearch.trim().toLowerCase();
+      if (!q) return skillModalRows;
+      return skillModalRows.filter((r) => r.filename.toLowerCase().includes(q));
+    }, [skillModalRows, skillModalSearch]);
+
+    const openSkillAttachModal = () => {
+      if (!userId || userId === "default_user") {
+        message.warning("请先登录后再选择技能包");
+        return;
+      }
+
+      if (isInputDisabled) return;
+
+      setSkillModalOpen(true);
+      setSkillModalSearch("");
+      setSkillModalLoading(true);
+      void fileAPI
+        .listHepaiFiles(userId)
+        .then((rows) => {
+          setSkillModalRows(
+            rows.map((r) => ({ id: r.id, filename: r.filename, url: r.url }))
+          );
+          setSkillModalSelectedIds(new Set(attachedSkills.map((s) => s.id)));
+        })
+        .catch((e) => {
+          message.error(e instanceof Error ? e.message : String(e));
+          setSkillModalRows([]);
+        })
+        .finally(() => {
+          setSkillModalLoading(false);
+        });
+    };
+
+    const confirmSkillPicker = () => {
+      const next = skillModalRows.filter((r) => skillModalSelectedIds.has(r.id));
+      setAttachedSkills(next);
+      setSkillModalOpen(false);
+    };
+
+    const removeAttachedSkill = (id: string) => {
+      setAttachedSkills((prev) => prev.filter((s) => s.id !== id));
+    };
 
     const {
       isSearching,
@@ -242,6 +303,7 @@ const ChatInput = React.forwardRef<
         textAreaRef.current.style.height = getTextAreaDefaultHeight();
         setText("");
         clearFiles();
+        setAttachedSkills([]);
         setRelevantPlans([]);
         clearAttachedPlan();
       }
@@ -306,8 +368,11 @@ const ChatInput = React.forwardRef<
     };
 
     const handleSubmit = async () => {
+      const trimmedInput = (textAreaRef.current?.value || "").trim();
       if (
-        (textAreaRef.current?.value || fileList.length > 0) &&
+        (trimmedInput ||
+          fileList.length > 0 ||
+          attachedSkills.length > 0) &&
         !isInputDisabled
       ) {
         let query = textAreaRef.current?.value || "";
@@ -318,6 +383,14 @@ const ChatInput = React.forwardRef<
         // 如果只有文件没有文字，添加默认提示
         if (!query.trim() && files.length > 0) {
           query = "请帮我分析这些文件。";
+        }
+
+        if (attachedSkills.length > 0) {
+          const urlBlock = attachedSkills.map((s) => s.url).join("\n");
+          const base = query.trim();
+          query = base
+            ? `${base}\n\n${SKILL_INSTALL_DEFAULT_LINE}\n\n${urlBlock}`
+            : `${SKILL_INSTALL_DEFAULT_LINE}\n\n${urlBlock}`;
         }
 
         // 注意：文件上传已经在 handleFileValidationAndAdd 中处理了
@@ -591,7 +664,7 @@ const ChatInput = React.forwardRef<
         <DragDropOverlay isDragActive={isDragActive && enable_upload} darkMode={darkMode} />
 
         {/* Attached Items Preview */}
-        {(attachedPlan || fileList.length > 0) && (
+        {(attachedPlan || fileList.length > 0 || attachedSkills.length > 0) && (
           <div
             className={`-mb-2 mx-1 ${darkMode === "dark"
               ? "bg-[#121826]/65 shadow-modern"
@@ -607,6 +680,50 @@ const ChatInput = React.forwardRef<
                 onClick={handlePlanClick}
               />
             )}
+
+            {/* Attached HepAI skills (URLs appended on send with default install line) */}
+            {attachedSkills.map((s) => (
+              <div
+                key={s.id}
+                className={`flex items-center gap-2 max-w-[min(100%,22rem)] ${darkMode === "dark"
+                  ? "bg-[#444444] text-white border border-gray-600"
+                  : "bg-white text-magenta-800 border border-magenta-200"
+                  } rounded-lg px-3 py-2 text-xs shadow-sm`}
+              >
+                <WrenchIcon
+                  className={`w-3.5 h-3.5 shrink-0 ${darkMode === "dark" ? "text-gray-300" : "text-magenta-600"
+                    }`}
+                  aria-hidden
+                />
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span
+                    className={`truncate font-medium ${darkMode === "dark" ? "text-white" : "text-magenta-800"
+                      }`}
+                    title={s.filename}
+                  >
+                    {s.filename}
+                  </span>
+                  <span
+                    className={`truncate text-[11px] ${darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
+                      }`}
+                    title={s.url}
+                  >
+                    {s.url}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeAttachedSkill(s.id)}
+                  className={`shrink-0 rounded-full p-1 ${darkMode === "dark"
+                    ? "hover:bg-red-500/20 hover:text-red-400 text-gray-400"
+                    : "hover:bg-red-100 hover:text-red-600 text-magenta-600"
+                    }`}
+                  aria-label={`移除 ${s.filename}`}
+                >
+                  <XMarkIcon className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
 
             {/* Attached Files */}
             <FilePreview
@@ -633,6 +750,89 @@ const ChatInput = React.forwardRef<
               viewOnly={true}
               setPlan={() => { }}
             />
+          )}
+        </Modal>
+
+        <Modal
+          title="选择技能包（HepAI）"
+          open={skillModalOpen}
+          onCancel={() => setSkillModalOpen(false)}
+          onOk={() => confirmSkillPicker()}
+          okText="添加"
+          cancelText="取消"
+          destroyOnClose
+          width={560}
+          okButtonProps={{ disabled: skillModalLoading }}
+        >
+          <p
+            className={`mb-3 text-xs ${darkMode === "dark" ? "text-gray-400" : "text-secondary"
+              }`}
+          >
+            发送时会自动附带「{SKILL_INSTALL_DEFAULT_LINE}」与所选 ZIP 的下载链接。
+          </p>
+          <Input
+            allowClear
+            placeholder="按文件名筛选"
+            value={skillModalSearch}
+            onChange={(e) => setSkillModalSearch(e.target.value)}
+            className="mb-3"
+          />
+          {skillModalLoading ? (
+            <div className="flex justify-center py-12">
+              <Spin />
+            </div>
+          ) : filteredSkillModalRows.length === 0 ? (
+            <div
+              className={`rounded-lg border border-dashed py-10 text-center text-sm ${darkMode === "dark"
+                ? "border-gray-600 text-gray-400"
+                : "border-gray-200 text-gray-500"
+                }`}
+            >
+              {skillModalRows.length === 0 ? "暂无技能包，请先到技能广场上传 ZIP" : "无匹配项"}
+            </div>
+          ) : (
+            <ul
+              className={`max-h-[min(60vh,22rem)] space-y-1 overflow-auto rounded-lg border p-2 ${darkMode === "dark" ? "border-gray-600" : "border-gray-200"
+                }`}
+            >
+              {filteredSkillModalRows.map((r) => (
+                <li key={r.id}>
+                  <label
+                    className={`flex cursor-pointer items-start gap-2 rounded-md px-2 py-2 ${darkMode === "dark" ? "hover:bg-white/5" : "hover:bg-violet-50/80"
+                      }`}
+                  >
+                    <Checkbox
+                      checked={skillModalSelectedIds.has(r.id)}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setSkillModalSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (checked) next.add(r.id);
+                          else next.delete(r.id);
+                          return next;
+                        });
+                      }}
+                      className="mt-0.5"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span
+                        className={`block text-sm font-medium ${darkMode === "dark" ? "text-gray-100" : "text-gray-800"
+                          }`}
+                      >
+                        {r.filename}
+                      </span>
+                      <span
+                        className={`mt-0.5 block truncate text-xs ${darkMode === "dark" ? "text-gray-500" : "text-gray-500"
+                          }`}
+                        title={r.url}
+                      >
+                        {r.url}
+                      </span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
           )}
         </Modal>
 
@@ -694,6 +894,24 @@ const ChatInput = React.forwardRef<
                                 <span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Attach File</span>
                               </div>
                             </Menu.Item>
+                            <Menu.Item
+                              key="attach-skill"
+                              onClick={({ domEvent }) => {
+                                domEvent?.preventDefault();
+                                domEvent?.stopPropagation();
+                                openSkillAttachModal();
+                              }}
+                            >
+                              <div className="flex items-center gap-2">
+                                <WrenchIcon
+                                  className={`w-4 h-4 flex-shrink-0 ${darkMode === "dark"
+                                    ? "text-gray-300"
+                                    : "text-magenta-600"
+                                    }`}
+                                />
+                                <span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Attach Skill</span>
+                              </div>
+                            </Menu.Item>
                             <Menu.SubMenu
                               key="llm-options"
                               title={<span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Agent Mode</span>}
@@ -744,9 +962,15 @@ const ChatInput = React.forwardRef<
                         <Tooltip
                           title={
                             <span className="text-sm">
-                              {fileList.length > 0
-                                ? `${fileList.length} file(s) attached`
-                                : "Attach File"}
+                              {(() => {
+                                const n = fileList.length;
+                                const m = attachedSkills.length;
+                                if (n + m === 0) return "Attach File";
+                                const parts: string[] = [];
+                                if (n) parts.push(`${n} 个文件`);
+                                if (m) parts.push(`${m} 个技能包`);
+                                return parts.join("，");
+                              })()}
                             </span>
                           }
                           placement="top"
@@ -754,7 +978,7 @@ const ChatInput = React.forwardRef<
                           <button
                             type="button"
                             disabled={isInputDisabled}
-                            className={`flex justify-center items-center w-8 h-8 rounded-xl transition-smooth hover-lift relative ${fileList.length > 0
+                            className={`flex justify-center items-center w-8 h-8 rounded-xl transition-smooth hover-lift relative ${fileList.length + attachedSkills.length > 0
                               ? "text-accent bg-accent/10"
                               : darkMode === "dark"
                                 ? "text-secondary hover:text-accent hover:bg-accent/10"
@@ -762,9 +986,9 @@ const ChatInput = React.forwardRef<
                               }`}
                           >
                             <PlusIcon className="h-4 w-4" />
-                            {fileList.length > 0 && (
+                            {fileList.length + attachedSkills.length > 0 && (
                               <span className="absolute -top-1 -right-1 bg-accent text-white text-xs rounded-full w-4 h-4 flex items-center justify-center animate-bounce-in">
-                                {fileList.length}
+                                {fileList.length + attachedSkills.length}
                               </span>
                             )}
                           </button>
