@@ -15,8 +15,8 @@ import {
   Check,
   X,
   Send,
-  Zap,
   Settings,
+  Terminal,
 } from "lucide-react";
 import {
   ActionButton,
@@ -404,26 +404,28 @@ const RenderToolCallSummaryCard: React.FC<{
   const trimmed = (content || "").trim();
 
   return (
-    <div className="rounded-md border border-secondary/70 bg-secondary/40">
+    <div className="rounded-lg bg-gradient-to-br from-violet-500/12 via-purple-500/8 to-fuchsia-500/[0.06] pl-2.5 pr-2  backdrop-blur-[2px] dark:from-violet-400/16 dark:via-purple-500/11 dark:to-fuchsia-500/8">
       <button
         type="button"
-        className="w-full flex items-center justify-between gap-2 px-3 py-2"
+        className="group w-full flex items-center gap-2 text-left min-w-0 rounded-md py-0.5 transition-colors "
         onClick={(e) => {
           e.stopPropagation();
           setExpanded((v) => !v);
         }}
         aria-expanded={expanded}
       >
-        <div className="text-xs font-medium text-secondary">Tool result</div>
-        {expanded ? (
-          <ChevronDown size={16} className="text-secondary" />
-        ) : (
-          <ChevronRight size={16} className="text-secondary" />
-        )}
+        <Terminal
+          size={14}
+          className="shrink-0 text-violet-600/75 opacity-90 group-hover:opacity-100 dark:text-violet-300/80 transition-opacity"
+          aria-hidden
+        />
+        <span className="text-xs font-medium text-violet-900/75 truncate flex-1 min-w-0 dark:text-violet-100/80">
+          Tool result
+        </span>
       </button>
 
       {expanded ? (
-        <div className="px-3 pb-3">
+        <div className="mt-2 pt-2 border-t border-violet-400/25 dark:border-violet-500/30 pl-0.5">
           <MarkdownRenderer
             content={trimmed}
             indented={true}
@@ -835,11 +837,10 @@ const RenderUserMessage: React.FC<{
           <textarea
             value={editValue}
             onChange={(e) => setEditValue(e.target.value)}
-            className={`w-full p-2 border border-secondary rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary ${
-              darkMode === "dark"
-                ? "bg-[#0f0f0f] text-gray-200 border-transparent"
-                : "bg-background text-primary"
-            }`}
+            className={`w-full p-2 border border-secondary rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary ${darkMode === "dark"
+              ? "bg-[#0f0f0f] text-gray-200 border-transparent"
+              : "bg-background text-primary"
+              }`}
             rows={Math.min(editValue.split('\n').length + 2, 10)}
             autoFocus
             onKeyDown={(e) => {
@@ -949,7 +950,6 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     const { darkMode } = React.useContext(appContext);
     const [isEditing, setIsEditing] = useState(false);
     const [isCopied, setIsCopied] = useState(false);
-    const [thoughtExpanded, setThoughtExpanded] = useState(false);
     const editTriggerRef = React.useRef<(() => void) | null>(null);
 
     if (!message) return null;
@@ -1142,7 +1142,6 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     // 判断是否是 TextMessage 类型（使用已存在的 messageAny）
     const normalizedMessageAny = normalizedMessage as any;
     const isTextMessage = normalizedMessageAny.type === "TextMessage";
-    const isThoughtEvent = normalizedMessageAny.type === "ThoughtEvent";
     const isToolCallSummaryMessage =
       normalizedMessageAny.type === "ToolCallSummaryMessage";
 
@@ -1404,13 +1403,15 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                         } : undefined}
                         title={onLogMessageClick ? "点击查看详细日志" : undefined}
                       >
-                        <Settings size={18}
-                          className="text-purple-500 flex-shrink-0 mt-0.5"
+                        <Settings
+                          size={14}
+                          className="shrink-0 text-violet-600 dark:text-violet-400 mt-[0.28em] leading-none"
                           onClick={onLogMessageClick ? (e) => {
                             e.preventDefault();
                             e.stopPropagation();
                             onLogMessageClick();
-                          } : undefined} />
+                          } : undefined}
+                        />
 
                         <div className="flex-1">
                           <div style={{ pointerEvents: onLogMessageClick ? "none" : "auto" }}>
@@ -1450,7 +1451,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                           {typeof (normalizedMessage.metadata as any)?.tool_call_summary === "string" &&
                             (normalizedMessage.metadata as any).tool_call_summary.trim().length > 0 && (
                               <div
-                                className="mt-2"
+                                className="mt-1.5"
                                 style={{ pointerEvents: "auto" }}
                                 onClick={(e) => {
                                   // Keep log card click for open-details, but allow expanding tool result.
@@ -1466,13 +1467,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                         </div>
                       </div>
                     ) : (
-                      <div
-                        className={
-                          isThoughtEvent
-                            ? "rounded-lg border border-secondary/60 bg-secondary/40 px-3 py-2 text-sm italic text-secondary"
-                            : ""
-                        }
-                      >
+                      <div>
                         {isToolCallSummaryMessage ? (
                           <RenderToolCallSummaryCard
                             content={(() => {
@@ -1490,46 +1485,6 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                             })()}
                             defaultCollapsed={true}
                           />
-                        ) : isThoughtEvent ? (
-                          <div>
-                            <button
-                              type="button"
-                              onClick={() => setThoughtExpanded((v) => !v)}
-                              className="mb-1 inline-flex items-center gap-1.5 text-xs font-medium text-secondary hover:text-primary transition-colors"
-                              aria-expanded={thoughtExpanded}
-                            >
-                              {thoughtExpanded ? (
-                                <ChevronDown size={14} />
-                              ) : (
-                                <ChevronRight size={14} />
-                              )}
-                              <Zap size={14} />
-                              <span>Thought</span>
-                            </button>
-                            {thoughtExpanded && (
-                              <MarkdownRenderer
-                                content={(() => {
-                                  if (typeof parsedContent.text === "string") {
-                                    return parsedContent.text;
-                                  } else if (Array.isArray(parsedContent.text)) {
-                                    // Filter out non-string items and join
-                                    const textArray = parsedContent.text as any[];
-                                    const stringItems = textArray.filter(
-                                      (item: any): item is string =>
-                                        typeof item === "string"
-                                    );
-                                    return stringItems.join("\n");
-                                  } else {
-                                    return stringifyForDisplay(parsedContent.text);
-                                  }
-                                })()}
-                                indented={
-                                  !orchestratorContent ||
-                                  orchestratorContent.type !== "default"
-                                }
-                              />
-                            )}
-                          </div>
                         ) : (
                           <MarkdownRenderer
                             content={(() => {

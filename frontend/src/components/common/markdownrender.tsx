@@ -325,7 +325,6 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
   const [startTime] = useState(Date.now());
   const [currentTime, setCurrentTime] = useState(Date.now());
   const [userManuallyToggled, setUserManuallyToggled] = useState(false);
-  const [isHovered, setIsHovered] = useState(false);
   const cleanContent = content.trim();
 
   useEffect(() => {
@@ -360,9 +359,12 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
     isDone &&
     cleanContent.length === 0;
   const shouldShowSpinner = !isDone;
-  const statusTextColor = isDone
-    ? "var(--color-text-primary)"
-    : "var(--color-text-secondary)";
+  const statusTextColor =
+    type === "reasoning" && isDone
+      ? "var(--color-text-secondary)"
+      : isDone
+        ? "var(--color-text-primary)"
+        : "var(--color-text-secondary)";
   const accentColor = isDone
     ? "var(--color-magenta-600)"
     : "var(--color-border-secondary)";
@@ -401,8 +403,8 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
   const renderTitle = () => {
     if (showDoneBadge) {
       return (
-        <span className="inline-flex items-center gap-2 rounded-md border border-secondary/70 bg-secondary/40 px-2 py-1 text-xs font-medium text-secondary">
-          <span aria-hidden className="text-secondary">
+        <span className="inline-flex items-center gap-1.5 rounded-md bg-secondary/25 px-2 py-0.5 text-xs font-medium text-secondary">
+          <span aria-hidden className="text-magenta-600/80">
             ✓
           </span>
           <span>Thought</span>
@@ -413,214 +415,154 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
   };
 
   return (
-    <div className="think-bubble-container" style={{ margin: "10px 0", width: "100%" }}>
-      <div
-        className="think-bubble-header"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "10px",
-          padding: "10px 14px",
-          backgroundColor: isHovered
-            ? "var(--color-bg-tertiary)"
-            : "var(--color-bg-secondary)",
-          border: `1px solid ${isDone ? "var(--color-border-secondary)" : "var(--color-magenta-600)"}`,
-          borderRadius: isExpanded ? "10px 10px 0 0" : "10px",
-          cursor: "pointer",
-          userSelect: "none",
-          transition: "all 0.2s ease",
-          boxShadow: isExpanded
-            ? "0 8px 20px rgba(0, 0, 0, 0.08)"
-            : "0 2px 8px rgba(0, 0, 0, 0.05)",
-        }}
-        onClick={handleToggle}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            width: "100%",
-            minWidth: 0,
-          }}
+    <div className="think-bubble-container w-full my-1.5 first:mt-0 last:mb-0">
+      <div className="think-bubble-shell rounded-xl overflow-hidden border-0 bg-secondary/[0.07]">
+        <button
+          type="button"
+          className="think-bubble-header w-full flex items-center justify-between gap-2.5 border-0 py-2.5 cursor-pointer select-none text-left bg-transparent transition-colors duration-200 hover:bg-secondary/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-magenta-500/25 focus-visible:ring-inset"
+          onClick={handleToggle}
         >
-          <span
-            aria-hidden
-            style={{
-              width: "8px",
-              height: "8px",
-              borderRadius: "999px",
-              backgroundColor: accentColor,
-              boxShadow: isDone
-                ? "none"
-                : "0 0 0 3px color-mix(in oklab, var(--color-magenta-600) 22%, transparent)",
-              flexShrink: 0,
-            }}
-          />
-          {shouldShowSpinner && !isStreaming && <Spinner className="size-4" />}
-
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div
-              style={{
-                color: statusTextColor,
-                fontSize: "0.92rem",
-                fontWeight: 600,
-                lineHeight: 1.35,
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {renderTitle()}
-            </div>
-            {getSubtitle() && (
-              <div
-                style={{
-                  marginTop: "2px",
-                  color: "var(--color-text-secondary)",
-                  fontSize: "0.75rem",
-                  lineHeight: 1.25,
-                }}
-              >
-                {getSubtitle()}
+          <div className="flex items-center gap-2 w-full min-w-0">
+            {/* Tight cluster: multiple gap-2.5 segments read as a large empty band before the title */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex shrink-0 text-secondary" aria-hidden>
+                {isExpanded ? (
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m18 15-6-6-6 6" />
+                  </svg>
+                ) : (
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                )}
               </div>
-            )}
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-            {isExpanded ? (
-              <svg
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ color: "var(--color-text-secondary)" }}
-              >
-                <path d="m18 15-6-6-6 6" />
-              </svg>
-            ) : (
-              <svg
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ color: "var(--color-text-secondary)" }}
-              >
-                <path d="m9 18 6-6-6-6" />
-              </svg>
-            )}
-          </div>
-        </div>
-      </div>
-      {isExpanded && (
-        <div
-          className="think-bubble-content"
-          style={{
-            position: "relative",
-            padding: "12px 14px 12px 22px",
-            backgroundColor: "var(--color-bg-primary)",
-            border: "1px solid var(--color-border-secondary)",
-            borderTop: "none",
-            borderBottomLeftRadius: "10px",
-            borderBottomRightRadius: "10px",
-            marginTop: "0",
-            overflow: "hidden",
-            transition: "all 0.2s ease-out",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              left: "10px",
-              top: "10px",
-              bottom: "10px",
-              width: "2px",
-              backgroundColor: accentColor,
-              borderRadius: "999px",
-              opacity: isDone ? 0.65 : 0.45,
-              transition: "all 0.2s ease",
-            }}
-          />
-
-          <div style={{ position: "relative" }}>
-            <MarkdownInlineCodeVariantContext.Provider value="compact">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  pre: MarkdownFencePre,
-                  p: ({ children }) => (
-                    <p
-                      style={{
-                        color: "var(--color-text-primary)",
-                        fontSize: "0.85rem",
-                        lineHeight: "1.62",
-                        // Keep paragraphs compact inside the bubble (especially within list items)
-                        margin: "0 0 6px 0",
-                      }}
-                    >
-                      {renderWithSingleNewlineBreaks(children)}
-                    </p>
-                  ),
-                  code: MarkdownCode,
-                  ul: ({ children }) => (
-                    <ul
-                      style={{
-                        margin: "0 0 10px 0",
-                        paddingLeft: "1.15rem",
-                        color: "var(--color-text-primary)",
-                      }}
-                    >
-                      {children}
-                    </ul>
-                  ),
-                  ol: ({ children }) => (
-                    <ol
-                      style={{
-                        margin: "0 0 10px 0",
-                        paddingLeft: "1.15rem",
-                        color: "var(--color-text-primary)",
-                      }}
-                    >
-                      {children}
-                    </ol>
-                  ),
-                  li: ({ children }) => (
-                    <li
-                      style={{
-                        color: "var(--color-text-primary)",
-                        margin: "2px 0",
-                      }}
-                    >
-                      {children}
-                    </li>
-                  ),
-                  strong: ({ children }) => (
-                    <strong style={{ color: "var(--color-text-primary)", fontWeight: 650 }}>
-                      {children}
-                    </strong>
-                  ),
-                  em: ({ children }) => (
-                    <em style={{ color: "var(--color-text-primary)" }}>{children}</em>
-                  ),
+              <span
+                aria-hidden
+                className="shrink-0 rounded-full w-2 h-2"
+                style={{
+                  backgroundColor: accentColor,
+                  boxShadow: isDone
+                    ? "none"
+                    : "0 0 0 3px color-mix(in oklab, var(--color-magenta-600) 22%, transparent)",
                 }}
+              />
+              {shouldShowSpinner && !isStreaming && <Spinner className="size-4 shrink-0" />}
+            </div>
+
+            <div className="flex-1 min-w-0">
+              <div
+                className="text-[0.92rem] font-semibold leading-snug truncate"
+                style={{ color: statusTextColor }}
               >
-                {content}
-              </ReactMarkdown>
-            </MarkdownInlineCodeVariantContext.Provider>
+                {renderTitle()}
+              </div>
+              {getSubtitle() && (
+                <div className="mt-0.5 text-xs leading-tight text-secondary">
+                  {getSubtitle()}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        </button>
+        {isExpanded && (
+          <div
+            className="think-bubble-content relative border-0 bg-primary px-3 py-2.5 pl-[1.35rem] overflow-hidden transition-[opacity,transform] duration-200 ease-out"
+          >
+            <div
+              className="absolute left-2.5 top-2.5 bottom-2.5 w-0.5 rounded-full transition-opacity duration-200"
+              style={{
+                backgroundColor: accentColor,
+                opacity: isDone ? 0.5 : 0.38,
+              }}
+            />
+
+            <div className="relative">
+              <MarkdownInlineCodeVariantContext.Provider value="compact">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    pre: MarkdownFencePre,
+                    p: ({ children }) => (
+                      <p
+                        style={{
+                          color: "var(--color-text-primary)",
+                          fontSize: "0.85rem",
+                          lineHeight: "1.62",
+                          // Keep paragraphs compact inside the bubble (especially within list items)
+                          margin: "0 0 6px 0",
+                        }}
+                      >
+                        {renderWithSingleNewlineBreaks(children)}
+                      </p>
+                    ),
+                    code: MarkdownCode,
+                    ul: ({ children }) => (
+                      <ul
+                        style={{
+                          margin: "0 0 10px 0",
+                          paddingLeft: "1.15rem",
+                          color: "var(--color-text-primary)",
+                        }}
+                      >
+                        {children}
+                      </ul>
+                    ),
+                    ol: ({ children }) => (
+                      <ol
+                        style={{
+                          margin: "0 0 10px 0",
+                          paddingLeft: "1.15rem",
+                          color: "var(--color-text-primary)",
+                        }}
+                      >
+                        {children}
+                      </ol>
+                    ),
+                    li: ({ children }) => (
+                      <li
+                        style={{
+                          color: "var(--color-text-primary)",
+                          margin: "2px 0",
+                        }}
+                      >
+                        {children}
+                      </li>
+                    ),
+                    strong: ({ children }) => (
+                      <strong style={{ color: "var(--color-text-primary)", fontWeight: 650 }}>
+                        {children}
+                      </strong>
+                    ),
+                    em: ({ children }) => (
+                      <em style={{ color: "var(--color-text-primary)" }}>{children}</em>
+                    ),
+                  }}
+                >
+                  {content}
+                </ReactMarkdown>
+              </MarkdownInlineCodeVariantContext.Provider>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
