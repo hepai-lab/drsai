@@ -1118,11 +1118,7 @@ div#gatsby-focus-wrapper {
 
 /* Smooth transitions for think bubble */
 .think-bubble-header {
-    transition: background-color 0.2s ease, border-color 0.2s ease;
-}
-
-.think-bubble-header:hover {
-    border-color: var(--color-border-primary);
+    transition: background-color 0.2s ease;
 }
 
 /* Shimmer animation for thinking state */
