@@ -396,7 +396,9 @@ def create_word_editor_agent(
    - 执行结构化文本修改与替换
    - 修改样式和字体
    - 删除文档内容
-4. 对图片、超链接、页眉页脚、复杂版式重排等高级 Word 元素，不要假装已经可靠支持；如果用户提出这类需求，可以先说明当前能力更适合文本、标题、段落、表格和字体层面的处理。
+   - 添加批注和回复（使用 add_comment_tool，针对文档中的特定文本添加评论）
+   - 删除批注（使用 remove_comment_tool，根据批注ID删除指定的批注）
+4. 对图片、超链接、页眉页脚、复杂版式重排等高级 Word 元素，不要假装已经可靠支持；如果用户提出这类需求，可以先说明当前能力更适合文本、标题、段落、表格、批注和字体层面的处理。
 
 【核心工作原则】
 1. 先判断任务类型，再选择工具。
@@ -865,6 +867,460 @@ def create_word_editor_agent(
 
             return result
         
+        def add_comment_tool(
+            file_path: str,
+            target_text: str,
+            comment_text: str,
+            comment_id: int = 0,
+            author: str = "DocMaster",
+            initials: str = "DM",
+            parent_comment_id: int | None = None,
+        ):
+            """
+            Add a comment to a DOCX document, attached to a specific text range.
+
+            Uses a direct zipfile + lxml approach for reliable XML manipulation.
+
+            Best for:
+            - "add a comment to ..."
+            - "add a note/comment on [text]"
+            - "comment on the [specific content]"
+            - "annotate [text] with [comment]"
+            - "reply to comment #N"
+
+            Args:
+                file_path: Path to the DOCX file to add comment to.
+                target_text: The exact text string in the document to attach the comment to.
+                            The comment markers will be placed around this text.
+                comment_text: The content of the comment.
+                comment_id: Unique integer ID for this comment (0, 1, 2, ...).
+                           Use a new unique ID for each comment in a document.
+                author: Author name for the comment. Defaults to "DocMaster".
+                initials: Author initials for the comment. Defaults to "DM".
+                parent_comment_id: If set, this comment is a reply to the specified comment ID.
+            """
+            import zipfile
+            from lxml import etree
+
+            print(f"🔧 add_comment_tool called:")
+            print(f"   File: {file_path}")
+            print(f"   Target: {target_text[:50]}..." if len(target_text) > 50 else f"   Target: {target_text}")
+            print(f"   Comment: {comment_text[:50]}..." if len(comment_text) > 50 else f"   Comment: {comment_text}")
+            print(f"   Comment ID: {comment_id}, Author: {author}")
+
+            if not os.path.exists(file_path):
+                return {
+                    'success': False,
+                    'error': 'File not found',
+                    'message': f'File not found: {file_path}'
+                }
+
+            # Namespace definitions
+            NSMAP = {
+                'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+                'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+                'w14': 'http://schemas.microsoft.com/office/word/2010/wordml',
+                'mc': 'http://schemas.openxmlformats.org/markup-compatibility/2006',
+            }
+
+            def qn(tag):
+                """Resolve a qualified name like 'w:body' to '{ns}body'."""
+                prefix, local = tag.split(':')
+                return f'{{{NSMAP[prefix]}}}{local}'
+
+            try:
+                # Step 1: Read the DOCX as a zip file
+                with zipfile.ZipFile(file_path, 'r') as zin:
+                    # Read document.xml
+                    doc_xml = zin.read('word/document.xml')
+                    
+                    # Check if comments.xml already exists
+                    has_comments = 'word/comments.xml' in zin.namelist()
+                    comments_xml = zin.read('word/comments.xml') if has_comments else None
+                    
+                    # Read relationships
+                    rels_xml = zin.read('word/_rels/document.xml.rels')
+                    
+                    # Read [Content_Types].xml
+                    content_types_xml = zin.read('[Content_Types].xml')
+                    
+                    # Store all other files
+                    other_files = {}
+                    for name in zin.namelist():
+                        if name not in ('word/document.xml', 'word/comments.xml', 
+                                       'word/_rels/document.xml.rels', '[Content_Types].xml'):
+                            other_files[name] = zin.read(name)
+
+                # Step 2: Parse document.xml and find the target paragraph
+                doc_tree = etree.fromstring(doc_xml)
+                body = doc_tree.find(qn('w:body'))
+                paragraphs = body.findall(qn('w:p'))
+
+                target_para = None
+                for p in paragraphs:
+                    texts = p.itertext()
+                    full_text = ''.join(texts)
+                    if target_text in full_text:
+                        target_para = p
+                        break
+
+                if target_para is None:
+                    return {
+                        'success': False,
+                        'error': 'Target text not found',
+                        'message': f'Could not find target text "{target_text}" in the document'
+                    }
+
+                print(f"   Found target paragraph containing: '{target_text[:60]}...'")
+
+                # Step 3: Get the first run in the paragraph to attach comment reference
+                runs = target_para.findall(qn('w:r'))
+                if not runs:
+                    return {
+                        'success': False,
+                        'error': 'No runs in target paragraph',
+                        'message': 'Could not find any text runs in the target paragraph'
+                    }
+
+                first_run = runs[0]
+
+                # Create comment reference elements
+                comment_range_start = etree.Element(qn('w:commentRangeStart'))
+                comment_range_start.set(qn('w:id'), str(comment_id))
+
+                comment_range_end = etree.Element(qn('w:commentRangeEnd'))
+                comment_range_end.set(qn('w:id'), str(comment_id))
+
+                comment_ref = etree.Element(qn('w:r'))
+                rPr = etree.SubElement(comment_ref, qn('w:rPr'))
+                rStyle = etree.SubElement(rPr, qn('w:rStyle'))
+                rStyle.set(qn('w:val'), 'CommentReference')
+                comment_ref_elem = etree.SubElement(comment_ref, qn('w:commentReference'))
+                comment_ref_elem.set(qn('w:id'), str(comment_id))
+
+                # Insert commentRangeStart before the first run
+                target_para.insert(list(target_para).index(first_run), comment_range_start)
+
+                # Append commentRangeEnd and commentReference at the end of paragraph
+                target_para.append(comment_range_end)
+                target_para.append(comment_ref)
+
+                # Convert modified document.xml back to bytes
+                new_doc_xml = etree.tostring(doc_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 4: Update comments.xml
+                if has_comments and comments_xml:
+                    comments_tree = etree.fromstring(comments_xml)
+                    comments_root = comments_tree
+                else:
+                    comments_root = etree.Element(qn('w:comments'))
+                    # Register namespace for proper prefix output
+                    for prefix, uri in NSMAP.items():
+                        etree.register_namespace(prefix, uri)
+                    # Also register content types namespace
+                    etree.register_namespace('ct', 'http://schemas.openxmlformats.org/package/2006/content-types')
+
+                # Create new comment element
+                new_comment = etree.SubElement(comments_root, qn('w:comment'))
+                new_comment.set(qn('w:id'), str(comment_id))
+                new_comment.set(qn('w:author'), author)
+                new_comment.set(qn('w:initials'), initials)
+                new_comment.set(qn('w:date'), '2025-01-01T00:00:00Z')
+
+                # Create paragraph inside comment
+                comment_p = etree.SubElement(new_comment, qn('w:p'))
+                comment_r = etree.SubElement(comment_p, qn('w:r'))
+                comment_t = etree.SubElement(comment_r, qn('w:t'))
+                comment_t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+                comment_t.text = comment_text
+
+                new_comments_xml = etree.tostring(comments_root, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 5: Update relationships if needed
+                rels_tree = etree.fromstring(rels_xml)
+
+                if not has_comments:
+                    # Find max relationship id
+                    max_id = 0
+                    for rel in rels_tree:
+                        rid = rel.get('Id', '')
+                        if rid.startswith('rId'):
+                            try:
+                                num = int(rid[3:])
+                                max_id = max(max_id, num)
+                            except ValueError:
+                                pass
+                    
+                    new_rid = f'rId{max_id + 1}'
+                    new_rel = etree.SubElement(rels_tree, 'Relationship')
+                    new_rel.set('Id', new_rid)
+                    new_rel.set('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments')
+                    new_rel.set('Target', 'comments.xml')
+
+                new_rels_xml = etree.tostring(rels_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 6: Update [Content_Types].xml if needed
+                ct_tree = etree.fromstring(content_types_xml)
+                ns_ct = 'http://schemas.openxmlformats.org/package/2006/content-types'
+                has_comments_type = False
+                for child in ct_tree:
+                    if child.get('PartName') == '/word/comments.xml':
+                        has_comments_type = True
+                        break
+                if not has_comments_type:
+                    override = etree.SubElement(ct_tree, f'{{{ns_ct}}}Override')
+                    override.set('PartName', '/word/comments.xml')
+                    override.set('ContentType', 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml')
+                new_content_types_xml = etree.tostring(ct_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 7: Write back to docx
+                tmp_path = file_path + '.tmp'
+                with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zout:
+                    zout.writestr('word/document.xml', new_doc_xml)
+                    zout.writestr('word/comments.xml', new_comments_xml)
+                    zout.writestr('word/_rels/document.xml.rels', new_rels_xml)
+                    zout.writestr('[Content_Types].xml', new_content_types_xml)
+                    for name, data in other_files.items():
+                        zout.writestr(name, data)
+
+                # Replace original
+                os.replace(tmp_path, file_path)
+                print(f"   Comment #{comment_id} added successfully!")
+
+                # Emit file event
+                fe_data = _build_files_event_data(file_path, f"Comment added to: {Path(file_path).name}")
+                if fe_data:
+                    _pending_files_events.append(fe_data)
+
+                return {
+                    'success': True,
+                    'message': f'Successfully added comment to document',
+                    'comment_id': comment_id,
+                    'comment_text': comment_text,
+                    'target_text': target_text,
+                    'author': author,
+                    'file_path': file_path
+                }
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return {
+                    'success': False,
+                    'error': str(e),
+                    'message': f'Failed to add comment: {e}'
+                }
+
+        def remove_comment_tool(
+            file_path: str,
+            comment_id: int,
+        ):
+            """
+            Remove a comment from a DOCX document.
+
+            This tool removes the comment with the specified ID from the document,
+            including:
+            - Comment markers from document.xml (commentRangeStart, commentRangeEnd, commentReference)
+            - The comment entry from comments.xml
+            - Cleanup of relationships and content types if no comments remain
+
+            Best for:
+            - "remove comment #N"
+            - "delete the comment"
+            - "清除批注"
+            - "删除第N条批注"
+
+            Args:
+                file_path: Path to the DOCX file to remove comment from.
+                comment_id: The ID of the comment to remove (0, 1, 2, ...).
+            """
+            import zipfile
+
+            print(f"🔧 remove_comment_tool called:")
+            print(f"   File: {file_path}")
+            print(f"   Comment ID: {comment_id}")
+
+            if not os.path.exists(file_path):
+                return {
+                    'success': False,
+                    'error': 'File not found',
+                    'message': f'File not found: {file_path}'
+                }
+
+            # Namespace definitions
+            NSMAP = {
+                'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+                'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+                'w14': 'http://schemas.microsoft.com/office/word/2010/wordml',
+                'mc': 'http://schemas.openxmlformats.org/markup-compatibility/2006',
+            }
+
+            def qn(tag):
+                """Resolve a qualified name like 'w:body' to '{ns}body'."""
+                prefix, local = tag.split(':')
+                return f'{{{NSMAP[prefix]}}}{local}'
+
+            try:
+                # Step 1: Read the DOCX as a zip file
+                with zipfile.ZipFile(file_path, 'r') as zin:
+                    has_comments = 'word/comments.xml' in zin.namelist()
+                    
+                    if not has_comments:
+                        return {
+                            'success': False,
+                            'error': 'No comments in document',
+                            'message': 'The document has no comments to remove'
+                        }
+                    
+                    doc_xml = zin.read('word/document.xml')
+                    comments_xml = zin.read('word/comments.xml')
+                    rels_xml = zin.read('word/_rels/document.xml.rels')
+                    content_types_xml = zin.read('[Content_Types].xml')
+                    
+                    other_files = {}
+                    for name in zin.namelist():
+                        if name not in ('word/document.xml', 'word/comments.xml', 
+                                       'word/_rels/document.xml.rels', '[Content_Types].xml'):
+                            other_files[name] = zin.read(name)
+
+                # Step 2: Parse and clean document.xml - remove comment markers
+                doc_tree = etree.fromstring(doc_xml)
+                w_ns = NSMAP['w']
+                
+                removed_markers = 0
+                
+                # Remove commentRangeStart elements
+                for elem in doc_tree.findall(f'.//{qn("w:commentRangeStart")}'):
+                    if elem.get(qn('w:id')) == str(comment_id):
+                        parent = doc_tree.find(f'.//{qn("w:p")}[.//{qn("w:commentRangeStart")}[@w:id="{comment_id}"]]')
+                        if parent is not None:
+                            parent.remove(elem)
+                            removed_markers += 1
+                
+                # Remove commentRangeEnd elements
+                for elem in doc_tree.findall(f'.//{qn("w:commentRangeEnd")}'):
+                    if elem.get(qn('w:id')) == str(comment_id):
+                        parent = doc_tree.find(f'.//{qn("w:p")}[.//{qn("w:commentRangeEnd")}[@w:id="{comment_id}"]]')
+                        if parent is not None:
+                            parent.remove(elem)
+                            removed_markers += 1
+                
+                # Remove commentReference runs (entire w:r containing the reference)
+                # We need to find runs that contain commentReference with the target ID
+                for para in doc_tree.findall(f'.//{qn("w:p")}'):
+                    for run in para.findall(qn('w:r')):
+                        comment_ref = run.find(qn('w:commentReference'))
+                        if comment_ref is not None and comment_ref.get(qn('w:id')) == str(comment_id):
+                            para.remove(run)
+                            removed_markers += 1
+                
+                # Also try to remove runs with rStyle=CommentReference that might be orphaned
+                for para in doc_tree.findall(f'.//{qn("w:p")}'):
+                    for run in list(para.findall(qn('w:r'))):
+                        # Check if this run has commentReference (might have been missed above)
+                        has_comment_ref = run.find(qn('w:commentReference')) is not None
+                        # Check if it's a CommentReference style run without actual reference content
+                        rPr = run.find(qn('w:rPr'))
+                        if has_comment_ref:
+                            comment_ref = run.find(qn('w:commentReference'))
+                            if comment_ref is not None and comment_ref.get(qn('w:id')) == str(comment_id):
+                                para.remove(run)
+                                removed_markers += 1
+
+                new_doc_xml = etree.tostring(doc_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+                print(f"   Removed {removed_markers} comment marker(s) from document.xml")
+
+                # Step 3: Parse comments.xml and remove the target comment
+                comments_tree = etree.fromstring(comments_xml)
+                comment_found = False
+                
+                for comment in comments_tree.findall(qn('w:comment')):
+                    if comment.get(qn('w:id')) == str(comment_id):
+                        comments_tree.remove(comment)
+                        comment_found = True
+                        print(f"   Removed comment #{comment_id} from comments.xml")
+                        break
+                
+                if not comment_found:
+                    return {
+                        'success': False,
+                        'error': 'Comment not found',
+                        'message': f'Comment with ID {comment_id} not found in document'
+                    }
+
+                # Check if there are any remaining comments
+                remaining_comments = comments_tree.findall(qn('w:comment'))
+                
+                if remaining_comments:
+                    # There are still comments, keep comments.xml
+                    new_comments_xml = etree.tostring(comments_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+                    keep_comments = True
+                else:
+                    # No more comments, remove comments.xml and clean up
+                    new_comments_xml = None
+                    keep_comments = False
+                    print(f"   No more comments, will clean up comments.xml")
+
+                # Step 4: Update relationships if removing comments.xml entirely
+                rels_tree = etree.fromstring(rels_xml)
+                
+                if not keep_comments:
+                    # Remove the comments relationship
+                    for rel in list(rels_tree):
+                        if 'comments' in rel.get('Type', '').lower():
+                            rels_tree.remove(rel)
+                            print(f"   Removed comments relationship")
+                
+                new_rels_xml = etree.tostring(rels_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 5: Update [Content_Types].xml if removing comments
+                ct_tree = etree.fromstring(content_types_xml)
+                ns_ct = 'http://schemas.openxmlformats.org/package/2006/content-types'
+                
+                if not keep_comments:
+                    # Remove the comments content type
+                    for child in list(ct_tree):
+                        if child.get('PartName') == '/word/comments.xml':
+                            ct_tree.remove(child)
+                            print(f"   Removed comments content type")
+                
+                new_content_types_xml = etree.tostring(ct_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 6: Write back to docx
+                tmp_path = file_path + '.tmp'
+                with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zout:
+                    zout.writestr('word/document.xml', new_doc_xml)
+                    if keep_comments:
+                        zout.writestr('word/comments.xml', new_comments_xml)
+                    zout.writestr('word/_rels/document.xml.rels', new_rels_xml)
+                    zout.writestr('[Content_Types].xml', new_content_types_xml)
+                    for name, data in other_files.items():
+                        zout.writestr(name, data)
+
+                os.replace(tmp_path, file_path)
+                print(f"   Comment #{comment_id} removed successfully!")
+
+                # Emit file event
+                fe_data = _build_files_event_data(file_path, f"Comment removed from: {Path(file_path).name}")
+                if fe_data:
+                    _pending_files_events.append(fe_data)
+
+                return {
+                    'success': True,
+                    'message': f'Successfully removed comment #{comment_id} from document',
+                    'comment_id': comment_id,
+                    'file_path': file_path
+                }
+
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return {
+                    'success': False,
+                    'error': str(e),
+                    'message': f'Failed to remove comment: {e}'
+                }
+
         tools = [
             process_document,
             edit_docx_tool,
@@ -874,7 +1330,9 @@ def create_word_editor_agent(
             modify_docx_fonts_tool,
             create_docx_with_content_tool,
             add_bullet_list_tool,
-            add_numbered_list_tool
+            add_numbered_list_tool,
+            add_comment_tool,
+            remove_comment_tool
         ]
     
     return DocMasterAgent(
@@ -928,7 +1386,7 @@ def main():
             # 智能体注册信息
             agent_name="DocMaster",
             author="haiuser01@ihep.ac.cn",  # 改成你的邮箱
-            description="专业的Word文档处理大师，支持上传、分析、编辑、格式化Word文档",
+            description="专业的Word文档处理大师，支持上传、分析、编辑、格式化Word文档，支持添加和删除批注和评论",
             version="1.0.0",
             logo="https://example.com/word-editor-logo.png",  # 需要提供logo URL
 
