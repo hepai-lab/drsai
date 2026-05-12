@@ -390,15 +390,7 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
     return isDone ? "Done" : "Working...";
   };
 
-  const getSubtitle = () => {
-    if (!isDone || type !== "reasoning") return null;
-    if (durationSeconds < 1) return null;
-    if (durationSeconds < 60) return `${durationSeconds}s elapsed`;
-    const minutes = Math.floor(durationSeconds / 60);
-    const seconds = durationSeconds % 60;
-    if (seconds === 0) return `${minutes}m elapsed`;
-    return `${minutes}m ${seconds}s elapsed`;
-  };
+
 
   const renderTitle = () => {
     if (showDoneBadge) {
@@ -474,11 +466,7 @@ const ThinkBubble: React.FC<ThinkBubbleProps> = ({
               >
                 {renderTitle()}
               </div>
-              {getSubtitle() && (
-                <div className="mt-0.5 text-xs leading-tight text-secondary">
-                  {getSubtitle()}
-                </div>
-              )}
+
             </div>
           </div>
         </button>

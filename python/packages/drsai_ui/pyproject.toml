@@ -21,6 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "drsai>=1.0.5",
+    "drsai_ext",
     "autogen-ext[docker,file-surfer,web-surfer,magentic-one,task-centric-memory]==0.5.7",
     "aioconsole",
     "nest_asyncio",
