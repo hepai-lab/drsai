@@ -103,7 +103,7 @@ class DrSaiSQLiteChatCompletionContext(
         tool_schema: Optional[List[Dict[str, Any]]] = None,
         initial_messages: Optional[List[LLMMessage]] = None,
         tool_clear_whitelist: Optional[List[str]] = None,
-        keep_recent_tool_results: int = 10,
+        keep_recent_tool_results: int = 8,
         min_content_length_to_clear: int = 1000,
         max_compressed_messages: int = 1,
         save_interval_seconds: float = 5.0,  # Delay write interval
@@ -439,6 +439,32 @@ class DrSaiSQLiteChatCompletionContext(
         # Queue for delayed database write
         self._queue_message(message)
 
+    def replace_messages(self, messages: List[LLMMessage]) -> None:
+        """Replace the in-memory message list without triggering DB writes.
+
+        This is used by ``_sanitize_api_messages`` to repair the conversation
+        history (e.g. removing orphaned tool results, fixing consecutive
+        user-role messages for Claude) **without** re-queuing every surviving
+        message to the SessionMessage table — which would create duplicate rows.
+
+        Only the in-memory ``_messages`` and ``_current_messages`` caches are
+        updated; the underlying DB rows are left untouched.  New messages added
+        after this call will still be queued normally via ``add_message``.
+
+        Args:
+            messages: The new message list to replace the current in-memory cache.
+        """
+        self._messages = list(messages)
+        # _current_messages tracks messages from the *current* conversation turn
+        # for summary/state purposes.  After sanitize, keep only those that
+        # still exist in the new message list (by object identity), plus any
+        # newly inserted stub messages ([Continuing] acks, stub tool results)
+        # which should NOT go into _current_messages (they are ephemeral fixes).
+        surviving_ids = set(id(m) for m in messages)
+        self._current_messages = [
+            m for m in self._current_messages if id(m) in surviving_ids
+        ]
+
     async def get_messages(
         self,
         cancellation_token: Optional[CancellationToken] = None,
@@ -617,7 +643,7 @@ class DrSaiSQLiteChatCompletionContext(
 
         # Reassemble
         remaining = [
-            SystemMessage(content=f"[Compressed conversation history]\n\n{compressed_content}", source="compression")
+            UserMessage(content=f"[Compressed conversation history]\n\n{compressed_content}", source="compression")
         ] + to_keep
 
         return remaining

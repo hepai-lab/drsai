@@ -254,6 +254,47 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             extra_create_args,
         )
 
+        # DeepSeek V4 fix: add reasoning_content field to assistant messages
+        # This is required for multi-turn + tool call scenarios
+        model_name = create_params.create_args.get("model", "")
+        if "deepseek-v4" in model_name.lower():
+            # logger.info(f"[DeepSeek V4 Fix] Model: {model_name}, processing {len(messages)} LLM messages -> {len(create_params.messages)} OpenAI messages")
+
+            # Extract reasoning_content from all AssistantMessage in original messages
+            # For DeepSeek V4: thought field contains the reasoning content (with <think> tags)
+            assistant_reasoning_contents = []
+            for idx, llm_msg in enumerate(messages):
+                # Check if this is an AssistantMessage
+                if llm_msg.__class__.__name__ == "AssistantMessage":
+                    reasoning_content = ""
+                    # Extract reasoning_content from thought field (remove <think> tags)
+                    if hasattr(llm_msg, "thought") and llm_msg.thought:
+                        thought = llm_msg.thought
+                        # Remove <think> and </think> tags
+                        reasoning_content = thought.replace("<think>", "").replace("</think>", "").strip()
+                    # if reasoning_content:
+                    #     logger.info(f"[DeepSeek V4 Fix] Extracted reasoning_content from thought in message {idx}, length: {len(reasoning_content)}")
+                    assistant_reasoning_contents.append(reasoning_content)
+
+            # Now add reasoning_content to all assistant messages in OpenAI format
+            # Match by position (nth assistant message in OpenAI messages corresponds to nth AssistantMessage)
+            assistant_idx = 0
+            for oai_idx, oai_msg in enumerate(create_params.messages):
+                if oai_msg.get("role") == "assistant":
+                    if assistant_idx < len(assistant_reasoning_contents):
+                        reasoning_content = assistant_reasoning_contents[assistant_idx]
+                    else:
+                        reasoning_content = ""
+
+                    oai_msg["reasoning_content"] = reasoning_content
+
+                    # if reasoning_content:
+                    #     logger.info(f"[DeepSeek V4 Fix] Added reasoning_content to OpenAI message {oai_idx} (assistant #{assistant_idx}): {reasoning_content[:100]}...")
+                    # else:
+                    #     logger.info(f"[DeepSeek V4 Fix] Added empty reasoning_content to OpenAI message {oai_idx} (assistant #{assistant_idx})")
+
+                    assistant_idx += 1
+
         # # # TODO: we should remove tool_calls?
         # new_oai_messages = []
         # for message in create_params.messages:
@@ -473,6 +514,7 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
                 thought, content = parse_r1_content(content)
 
         # Create the result.
+        # For DeepSeek V4: thought already contains the reasoning_content
         result = CreateResult(
             finish_reason=normalize_stop_reason(stop_reason),
             content=content,

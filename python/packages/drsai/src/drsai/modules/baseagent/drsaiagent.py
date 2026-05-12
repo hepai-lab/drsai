@@ -1332,10 +1332,17 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             i += 1
 
         # ── Always persist if anything changed ────────────────────────────────
+        # Use replace_messages() when available (DrSaiSQLiteChatCompletionContext)
+        # to avoid re-queuing every surviving message to the DB — which would
+        # create duplicate rows in SessionMessage table.  For other context
+        # types that lack replace_messages, fall back to clear+add_message.
         if dirty:
-            await self._model_context.clear()
-            for msg in messages:
-                await self._model_context.add_message(msg)
+            if hasattr(self._model_context, 'replace_messages'):
+                self._model_context.replace_messages(messages)
+            else:
+                await self._model_context.clear()
+                for msg in messages:
+                    await self._model_context.add_message(msg)
 
     async def lazy_init(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Initialize the tools and models needed by the agent."""

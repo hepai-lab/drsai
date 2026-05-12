@@ -160,7 +160,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     "claude-opus-4-7": ModelEntry(
         model="anthropic/claude-opus-4-7",
         token_limit=1000000,     # context window: 1M (input+output shared)
-        max_tokens=128000,      # max output per request
+        max_tokens=64000,      # max output per request
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
     ),
@@ -173,17 +173,24 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     ),
     # ── OpenAI GPT ───────────────────────────────────────────────────
     # Sources: litellm, OpenRouter
-    "gpt-5.2": ModelEntry(
-        model="openai/gpt-5.2",
+    "gpt-5.3-codex": ModelEntry(
+        model="openai/gpt-5.3-codex",
         token_limit=272000,      # max input tokens (output comes from this pool)
-        max_tokens=128000,      # max output per request
+        max_tokens=64000,      # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
     ),
     "gpt-5.4": ModelEntry(
         model="openai/gpt-5.4",
         token_limit=1050000,     # max input tokens (output comes from this pool)
-        max_tokens=128000,      # max output per request
+        max_tokens=64000,      # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+    ),
+    "gpt-5.5": ModelEntry(
+        model="openai/gpt-5.5",
+        token_limit=1050000,     # max input tokens (output comes from this pool)
+        max_tokens=64000,      # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
     ),
@@ -194,8 +201,8 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     "deepseek-v4-pro": ModelEntry(
         model="deepseek-ai/deepseek-v4-pro",
         token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
-        max_tokens=384000,      # max output per request (DeepSeek supports extended output)
-        client_type="anthropic",
+        max_tokens=64000,      # max output per request (DeepSeek supports extended output)
+        client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="is_r1_model"),
     ),
     "deepseek-v3.2": ModelEntry(
@@ -205,44 +212,37 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="openai",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
     ),
+    "hepai/deepseek-v4-flash": ModelEntry(
+        model="hepai/deepseek-v4-flash",
+        token_limit=10000000,      # context window: 163,840 (shared input+output)
+        max_tokens=64000,       # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+    ),
     # ── Zhipu GLM ────────────────────────────────────────────────────
     # Sources: litellm (zai/glm-5), OpenRouter
     "glm-5.1": ModelEntry(
         model="zhipu/glm-5.1",
         token_limit=200000,      # context window: 200K
-        max_tokens=128000,      # max output per request
+        max_tokens=64000,      # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
     ),
     # ── MiniMax ──────────────────────────────────────────────────────
     # MiniMax M2.7: context≈196K, official API default max_output=8192 but supports up to 65K
     # Sources: OpenRouter (context_length=196,608), litellm (MiniMax-M2.5 reference)
-    "minimax-m2.7": ModelEntry(
-        model="minimax/minimax-m2.7",
-        token_limit=196608,      # context window: 196,608
-        max_tokens=65536,       # max output per request
-        client_type="openai",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
-    ),
-    "hepai/minimax-m2.7": ModelEntry(
-        model="hepai/minimax-m2.7",
-        token_limit=196608,
-        max_tokens=65536,
-        client_type="openai",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
-    ),
     "hepai/minimax-m2.7-highspeed": ModelEntry(
         model="hepai/minimax-m2.7-highspeed",
         token_limit=196608,
-        max_tokens=65536,
-        client_type="openai",
+        max_tokens=64000,
+        client_type="anthropic",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
     ),
     "minimax-m2.7-highspeed": ModelEntry(
         model="minimax/minimax-m2.7-highspeed",
         token_limit=196608,
-        max_tokens=65536,
-        client_type="openai",
+        max_tokens=64000,
+        client_type="anthropic",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
     ),
 }
@@ -453,6 +453,11 @@ def create_agent(
             cwd = str(WORKDIR)
     user_storage_dir = str(WORKDIR / effective_user_id)
 
+    # OpenAI new-series models (gpt-5.x, gpt-4.1, o1/o3/o4) reject 'max_tokens',
+    # they require 'max_completion_tokens' instead.  Third-party OpenAI-compatible
+    # APIs (DeepSeek, GLM, etc.) only accept 'max_tokens'.
+    _OPENAI_NEW_MODEL_PREFIXES = ("gpt-5", "gpt-4.1", "o1", "o3", "o4")
+
     def set_model_client(
         name: Optional[str] = resolved_config_name,
     ) -> HepAIAnthropicChatCompletionClient | HepAIChatCompletionClient:
@@ -502,13 +507,34 @@ def create_agent(
             "token_model": "gpt-4o-2024-11-20",
             "reasoning_config": reasoning_config,
         }
-        return HepAIChatCompletionClient(
-            model=llm_model,
-            api_key=openai_api_key,
-            base_url=openai_base_url,
-            model_info=model_info,
-            max_tokens=max_tokens,
-        )
+
+        # Decide which token-limit parameter to use:
+        #   - OpenAI new-series (gpt-5.x, gpt-4.1, o1/o3/o4) → max_completion_tokens
+        #   - All other OpenAI-compatible models (DeepSeek, GLM, etc.) → max_tokens
+        if llm_model.startswith("openai/"):
+            model_suffix = llm_model.split("/", 1)[1]
+            needs_max_completion = any(
+                model_suffix.startswith(p) for p in _OPENAI_NEW_MODEL_PREFIXES
+            )
+        else:
+            needs_max_completion = False
+
+        if needs_max_completion:
+            return HepAIChatCompletionClient(
+                model=llm_model,
+                api_key=openai_api_key,
+                base_url=openai_base_url,
+                model_info=model_info,
+                max_completion_tokens=max_tokens,
+            )
+        else:
+            return HepAIChatCompletionClient(
+                model=llm_model,
+                api_key=openai_api_key,
+                base_url=openai_base_url,
+                model_info=model_info,
+                max_tokens=max_tokens,
+            )
 
     entry = llm_mode_config.get(resolved_config_name)
     if entry is None:
