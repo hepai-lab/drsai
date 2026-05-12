@@ -49,8 +49,8 @@ conda activate drsai
 git clone https://github.com/hepai-lab/drsai.git drsai # From Github
 git clone https://code.ihep.ac.cn/hepai/drsai drsai # or From IHEP
 
-cd your/path/to/drsai/python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
-cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # for DrSai-UI  human-computer interaction frontend
+cd python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
+cd python/packages/drsai_ui && pip install -e . # for DrSai-UI  human-computer interaction frontend
 ```
 
 #### pip 安装(版本可能落后)
