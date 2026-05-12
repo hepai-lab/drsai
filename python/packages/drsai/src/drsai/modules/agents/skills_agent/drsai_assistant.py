@@ -1014,7 +1014,8 @@ Current Session_ID is {self._thread_id}"""
                     yield thought_event
                     inner_messages.append(thought_event)
 
-                # Add the assistant message to the model context (including thought if present)  
+                # Add the assistant message to the model context (including thought if present)
+                # For DeepSeek V4: thought contains the reasoning_content that will be used for API replay
                 await model_context.add_message(
                     AssistantMessage(
                         content=model_result.content,
@@ -1669,15 +1670,17 @@ Complete the task and return a clear, concise summary."""
                 # TodoWrite tool handling
                 try:
                     todo_list = self._todo_manager.update(arguments["items"])
+                    # Inject auto-correction warning prefix if present
+                    warning_prefix = (self._todo_manager._last_warning + "\n\n") if self._todo_manager._last_warning else ""
                     exec_results.append(FunctionExecutionResult(
-                        content=self._todo_manager.get_task_prompt(),
+                        content=warning_prefix + self._todo_manager.get_task_prompt(),
                         name=tool_name,
                         call_id=call_id,
                         is_error=False,
                     ))
                     # Yield text message immediately for user visibility
                     yield TextMessage(
-                        content=todo_list,
+                        content=warning_prefix + todo_list,
                         source=agent_name,
                         metadata={"interal": "no"},
                     )
@@ -2283,29 +2286,20 @@ Complete the task and return a clear, concise summary."""
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
         try:
             todo_list = self._todo_manager.update(argument["items"])
-            # send stream message
-            # yield ModelClientStreamingChunkEvent(
-            #     content=todo_list+"\n\n",
-            #     source=self._user_profile_manager.agent_name,
-            # )
+            # Inject auto-correction warning prefix if present
+            warning_prefix = (self._todo_manager._last_warning + "\n\n") if self._todo_manager._last_warning else ""
             # add message to model_context with user source
             await model_context.add_message(FunctionExecutionResultMessage(
                 content=[FunctionExecutionResult(
-                    content = self._todo_manager.get_task_prompt(),
+                    content = warning_prefix + self._todo_manager.get_task_prompt(),
                     name = tool_name,
                     call_id = call_id,
                     is_error = False,
                 ),]
             ))
-            # await model_context.add_message(
-            #     UserMessage(
-            #         content=self._todo_manager.get_task_prompt(),
-            #         source="user",
-            #     )
-            # )
             # send text message to save to db in drsai ui
             yield TextMessage(
-                content=todo_list,
+                content=warning_prefix + todo_list,
                 source=self._user_profile_manager.agent_name,
                 metadata={"interal": "no"},
             )
