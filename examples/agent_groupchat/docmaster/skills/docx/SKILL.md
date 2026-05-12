@@ -10,23 +10,32 @@ license: Proprietary. LICENSE.txt has complete terms
 
 A .docx file is a ZIP archive containing XML files.
 
-**Skill paths:** This skill is located in `skills/docx/` relative to the DocMaster working directory. All scripts are at `skills/docx/scripts/office/`.
+**Skill location:** `skills/docx/` relative to the DocMaster working directory.
+
+**Available tools:** When this skill is loaded, these tools are available to the agent:
+- `unpack_docx_tool` - Extract DOCX to editable XML directory
+- `pack_docx_tool` - Repack XML directory back to DOCX
+- `validate_docx_tool` - Validate DOCX against OOXML schemas
+- `accept_tracked_changes_tool` - Accept all tracked changes via LibreOffice
+- `add_xml_comment_tool` - Add comments to unpacked DOCX XML
 
 ## Quick Reference
 
 | Task | Approach |
 |------|----------|
-| Read/analyze content | `pandoc` or unpack for raw XML |
+| Read/analyze content | `pandoc` for text extraction, or `unpack_docx_tool` for raw XML |
 | Create new document | Use python-docx — see Creating New Documents below |
-| Edit existing document | Unpack → edit XML → repack - see Editing Existing Documents below |
+| Edit existing document | `edit_docx_tool` first, then unpack/edit/pack if needed — see Editing Existing Documents below |
 | Insert image | Use `edit_docx_tool` with `insert_image` edit type |
+| Unpack for XML editing | `unpack_docx_tool(file_path, output_dir)` |
+| Repack after XML editing | `pack_docx_tool(input_dir, output_file, original_file)` |
+| Accept tracked changes | `accept_tracked_changes_tool(input_file, output_file)` |
 
 ### Converting .doc to .docx
 
-Legacy `.doc` files must be converted before editing:
-
+Legacy `.doc` files must be converted before editing using LibreOffice:
 ```bash
-python skills/docx/scripts/office/soffice.py --headless --convert-to docx document.doc
+soffice --headless --convert-to docx document.doc
 ```
 
 ### Reading Content
@@ -35,23 +44,22 @@ python skills/docx/scripts/office/soffice.py --headless --convert-to docx docume
 # Text extraction
 pandoc document.docx -o output.md
 
-# Raw XML access
-python skills/docx/scripts/office/unpack.py document.docx unpacked/
+# Raw XML access - use the tool directly
+# unpack_docx_tool(file_path="document.docx", output_dir="unpacked/")
 ```
 
 ### Converting to Images
 
 ```bash
-python skills/docx/scripts/office/soffice.py --headless --convert-to pdf document.docx
+soffice --headless --convert-to pdf document.docx
 pdftoppm -jpeg -r 150 document.pdf page
 ```
 
 ### Accepting Tracked Changes
 
-To produce a clean document with all tracked changes accepted (requires LibreOffice):
-
-```bash
-python skills/docx/scripts/accept_changes.py input.docx output.docx
+Use the `accept_tracked_changes_tool` to produce a clean document with all tracked changes accepted (requires LibreOffice):
+```
+accept_tracked_changes_tool(input_file="input.docx", output_file="output.docx")
 ```
 
 ---
@@ -91,8 +99,8 @@ doc.save("output.docx")
 
 ### Validation
 After creating the file, validate it:
-```bash
-python skills/docx/scripts/office/validate.py output.docx
+```
+validate_docx_tool(path="output.docx", auto_repair=True)
 ```
 
 ### Page Size
@@ -209,15 +217,16 @@ f_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 ## Editing Existing Documents
 
-### Use `edit_docx_tool` FIRST for all modifications
+### Use `edit_docx_tool` FIRST for ALL modifications
 
-**IMPORTANT:** Before using direct XML manipulation, check if `edit_docx_tool` can handle your edit. This tool:
-- Saves changes to a **NEW file** (preserves the original)
-- Goes through HepAI's file management pipeline → **file appears in 文件空间 immediately**
-- Handles all edit types including text replacement, formatting, and **image insertion**
+`edit_docx_tool` is the primary tool for editing DOCX files. It handles:
+- Text replacement with `replace_text` type
+- Adding paragraphs, headings, tables, lists at specific positions
+- Page headers and footers
+- Font and style modifications
+- Image insertion
 
-**Image insertion is done with `edit_docx_tool` — do NOT write custom scripts for this.** Structure your edit like this:
-
+**Image insertion** must use `edit_docx_tool`:
 ```json
 {
   "type": "insert_image",
@@ -227,29 +236,36 @@ f_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
 }
 ```
 
-Call `edit_docx_tool` with the `file_path` of the document and the edit JSON above. This will:
-1. Insert the image at the specified position
-2. Save as `原文件名_edited1.docx` (or _edited2, _edited3, etc.)
-3. Register the file with HepAI so it shows up in the user's 文件空间
+### When NOT to use `replace_text`
 
-**Use direct XML manipulation only when `edit_docx_tool` is insufficient**, e.g.:
-- Complex tracked changes (deletions + insertions with author attribution)
-- Comments (the `comment.py` script handles multi-file boilerplate)
-- Advanced formatting not supported by `edit_docx_tool`
+`replace_text` replaces **ALL matching occurrences** in the document. This causes problems when the same text (like "1. xxx") appears in multiple sections.
 
-### Direct XML Editing Workflow (for advanced cases)
+**Prefer using positions for targeted edits:**
+- Use `extract_docx_content_tool` to see document structure with paragraph indices
+- Use `add_paragraph` or `add_heading` with `position` parameter to insert at a specific location
+- Avoid `replace_text` when the target text might appear in multiple places
+
+### Direct XML Editing — ONLY as last resort
+
+Use the unpack/edit/pack workflow only when `edit_docx_tool` genuinely cannot do the job:
+- Adding tracked changes with author attribution (deletions + insertions)
+- Complex multi-file XML manipulation that `edit_docx_tool` doesn't support
+
+Do NOT use XML editing as a "fallback whenever `replace_text` is tricky."
+
+### Direct XML Editing Workflow (advanced cases only)
 
 If `edit_docx_tool` is insufficient, follow all 3 steps in order:
 
 #### Direct XML Step 1: Unpack
-```bash
-python skills/docx/scripts/office/unpack.py document.docx unpacked/
 ```
-Extracts XML, pretty-prints, merges adjacent runs, and converts smart quotes to XML entities (`&#x201C;` etc.) so they survive editing. Use `--merge-runs false` to skip run merging.
+unpack_docx_tool(file_path="document.docx", output_dir="unpacked/")
+```
+Extracts XML, pretty-prints, merges adjacent runs, and converts smart quotes to XML entities (`&#x201C;` etc.) so they survive editing.
 
 #### Direct XML Step 2: Edit XML
 
-Edit files in `unpacked/word/`. See XML Reference below for patterns.
+Use `run_read` to view `unpacked/word/document.xml`, then use `run_edit` to modify. See XML Reference below for patterns.
 
 **Use "Claude" as the author** for tracked changes and comments, unless the user explicitly requests use of a different name.
 
@@ -267,19 +283,18 @@ Edit files in `unpacked/word/`. See XML Reference below for patterns.
 | `&#x201C;` | " (left double) |
 | `&#x201D;` | " (right double) |
 
-**Adding comments:** Use `comment.py` to handle boilerplate across multiple XML files (text must be pre-escaped XML):
-```bash
-python skills/docx/scripts/comment.py unpacked/ 0 "Comment text with &amp; and &#x2019;"
-python skills/docx/scripts/comment.py unpacked/ 1 "Reply text" --parent 0  # reply to comment 0
-python skills/docx/scripts/comment.py unpacked/ 0 "Text" --author "Custom Author"  # custom author name
+**Adding comments:** Use the `add_xml_comment_tool` to handle boilerplate across multiple XML files (text must be pre-escaped XML):
+```
+add_xml_comment_tool(unpacked_dir="unpacked/", comment_id=0, text="Comment text with &amp; and &#x2019;", author="Claude", initials="C")
+add_xml_comment_tool(unpacked_dir="unpacked/", comment_id=1, text="Reply text", author="Claude", initials="C", parent_id=0)  # reply to comment 0
 ```
 Then add markers to document.xml (see Comments in XML Reference).
 
 #### Direct XML Step 3: Pack
-```bash
-python skills/docx/scripts/office/pack.py unpacked/ output.docx --original document.docx
 ```
-Validates with auto-repair, condenses XML, and creates DOCX. Use `--validate false` to skip.
+pack_docx_tool(input_dir="unpacked/", output_file="output.docx", original_file="document.docx", validate=True)
+```
+Validates with auto-repair, condenses XML, and creates DOCX.
 
 **Auto-repair will fix:**
 - `durableId` >= 0x7FFFFFFF (regenerates valid ID)
@@ -287,6 +302,13 @@ Validates with auto-repair, condenses XML, and creates DOCX. Use `--validate fal
 
 **Auto-repair won't fix:**
 - Malformed XML, invalid element nesting, missing relationships, schema violations
+
+#### Accepting Tracked Changes
+
+To produce a clean document with all tracked changes accepted (requires LibreOffice):
+```
+accept_tracked_changes_tool(input_file="document_with_changes.docx", output_file="clean_document.docx")
+```
 
 ### Direct XML Common Pitfalls
 
