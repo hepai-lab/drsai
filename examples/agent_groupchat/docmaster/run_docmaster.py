@@ -74,6 +74,40 @@ def _ensure_python_deps():
         print(f"⚠️ Could not run pip install: {e}")
 
 _ensure_python_deps()
+
+# ── Monkey-patch fix_and_parse_json to handle unescaped quotes ────────────
+# The upstream fix_and_parse_json in drsai.utils.utils fails when LLMs put
+# unescaped " (U+0022) inside JSON string values (common with Chinese text
+# like 前两句"床前明月光"以月光). We wrap it to fall back to json_repair.
+#
+# IMPORTANT: Must patch BOTH the module attribute AND all modules that did
+# `from drsai.utils.utils import fix_and_parse_json` (which creates a local
+# reference that won't see module-level patches).
+import drsai.utils.utils as _drsai_utils
+_original_fix_and_parse_json = _drsai_utils.fix_and_parse_json
+
+def _patched_fix_and_parse_json(json_str, debug=True):
+    result = _original_fix_and_parse_json(json_str, debug=debug)
+    if isinstance(result, str) and "[JSON" in result and "解析失败" in result:
+        try:
+            from json_repair import repair_json
+            import json
+            repaired = repair_json(json_str, return_objects=False)
+            parsed = json.loads(repaired)
+            if debug:
+                print("[json_repair 修复成功]")
+            return parsed
+        except Exception as e:
+            if debug:
+                print(f"[json_repair 也失败] {e}")
+    return result
+
+# Patch the module attribute
+_drsai_utils.fix_and_parse_json = _patched_fix_and_parse_json
+# Patch the local reference in drsai_assistant (imported via `from ... import`)
+import drsai.modules.agents.skills_agent.drsai_assistant as _drsai_assistant
+_drsai_assistant.fix_and_parse_json = _patched_fix_and_parse_json
+
 WORKSPACE = HERE / "workspace"
 WORKSPACE.mkdir(parents=True, exist_ok=True)
 WORKDIR = WORKSPACE / "runs"
@@ -120,6 +154,7 @@ def _build_files_event_data(file_path: str, description: str) -> dict | None:
             download_method="url",
             size=file_size,
             mime_type=mime_type,
+            path=file_path,  # Store the file path for tracking in on_messages_stream
         )
         print(f"📤 File uploaded for FilesEvent (URL): {url}")
     except Exception as upload_err:
@@ -137,6 +172,7 @@ def _build_files_event_data(file_path: str, description: str) -> dict | None:
                 download_method="base64",
                 size=file_size,
                 mime_type=mime_type,
+                path=file_path,  # Store the file path for tracking in on_messages_stream
             )
             print(f"📦 File encoded for FilesEvent (base64): {file_name}")
         except Exception as b64_err:
@@ -160,22 +196,59 @@ class DocMasterAgent(DrSaiAssistant):
     """
 
     # File extensions to track for FilesEvent registration
+    # NOTE: 
+    # - .xml is excluded because unpacked DOCX/PPTX/XLSX files create many
+    #   intermediate XML files that are internal to Office documents
     TRACKED_EXTENSIONS = {
         '.docx', '.pdf', '.pptx', '.xlsx', '.csv',
-        '.txt', '.md', '.rtf', '.tex', '.json', '.xml', '.yaml', '.yml',
+        '.txt', '.md', '.rtf', '.tex', '.json', '.yaml', '.yml',
         '.ini', '.cfg', '.conf', '.log', '.html', '.htm', '.css', '.js',
     }
+    
+    # Directories to exclude from workspace scanning
+    # NOTE: skills/ and configs/ are excluded because:
+    # - skills/ contains copied skill files (SKILL.md etc.) from first_time_setup
+    # - configs/ contains system config files (AGENTS.md, TOOLS.md, USER.md etc.)
+    # These are internal DrSai files, not user documents
+    EXCLUDED_DIRS = {'skills', 'configs', 'document_skills', 'scripts', '__pycache__', '.git'}
 
     def __init__(self, pending_files_events: list, **kwargs):
         super().__init__(**kwargs)
         self._pending_files_events = pending_files_events
 
+    @staticmethod
+    async def _execute_tool_call(tool_call, workbench, handoff_tools, agent_name, cancellation_token):
+        """Override autogen's _execute_tool_call to repair broken JSON before parsing.
+        
+        Autogen does json.loads(tool_call.arguments) which fails on unescaped
+        quotes in Chinese text. We repair the JSON first, then delegate to the
+        parent implementation.
+        """
+        import json as _json
+        try:
+            _json.loads(tool_call.arguments)
+        except _json.JSONDecodeError:
+            try:
+                from json_repair import repair_json
+                tool_call.arguments = repair_json(tool_call.arguments, return_objects=False)
+            except Exception:
+                pass  # let autogen handle the error as usual
+        # Call the parent (autogen) implementation with repaired arguments
+        from autogen_agentchat.agents._assistant_agent import AssistantAgent
+        return await AssistantAgent._execute_tool_call(
+            tool_call, workbench, handoff_tools, agent_name, cancellation_token,
+        )
+
     def _snapshot_workspace(self) -> dict[str, float]:
-        """Snapshot all tracked files in workspace with their modification times."""
+        """Snapshot all tracked files in the CURRENT USER's workspace only."""
+        user_dir = self._user_profile_manager.work_dir
         snapshot: dict[str, float] = {}
         for ext in self.TRACKED_EXTENSIONS:
-            for f in WORKSPACE.rglob(f'*{ext}'):
+            for f in user_dir.rglob(f'*{ext}'):
                 if f.is_file():
+                    # Skip files in excluded directories (skills, configs, etc.)
+                    if any(excluded in f.parts for excluded in self.EXCLUDED_DIRS):
+                        continue
                     try:
                         snapshot[str(f)] = f.stat().st_mtime
                     except OSError:
@@ -214,13 +287,26 @@ class DocMasterAgent(DrSaiAssistant):
             #   (parent unwraps Response from _process_model_result into chat_message)
             # - Response: yielded for final text response, paused state, etc.
             if isinstance(event, (ToolCallSummaryMessage, Response)):
+                # Get files that will be emitted via _pending_files_events
+                pending_files = set()
+                for pe in self._pending_files_events:
+                    files_list = pe.get('files', [{}])
+                    for f in files_list:
+                        fpath = f.get('path', '')  # Use 'path' field (not 'file_path')
+                        if fpath:
+                            pending_files.add(fpath)
+                
                 changed_files = self._detect_changed_files(snapshot_before)
                 for fpath in changed_files:
+                    # Skip if already in pending events (will be emitted below)
+                    if fpath in pending_files:
+                        print(f"⏭️ Skipping filesystem scan for pending file: {Path(fpath).name}")
+                        continue
                     if fpath not in already_emitted:
                         desc = f"File created/modified: {Path(fpath).name}"
                         fe_data = _build_files_event_data(fpath, desc)
                         if fe_data:
-                            print(f"📄 File event emitted: {Path(fpath).name}")
+                            print(f"📄 File event emitted (scanner): {Path(fpath).name}")
                             already_emitted.add(fpath)
                             yield FilesEvent(
                                 content=FilesContent(**fe_data),
@@ -229,16 +315,23 @@ class DocMasterAgent(DrSaiAssistant):
                 # Update snapshot for next round of tool calls
                 snapshot_before = self._snapshot_workspace()
 
-            # Also drain any pending file events from docx tools (edit_docx_tool etc.)
+            # Drain pending file events from docx tools (edit_docx_tool, add_comment_tool, etc.)
+            # Always emit these — each tool call produces a new version of the file,
+            # so the UI should always get the latest version even if the same file
+            # was emitted by a previous tool call in this stream.
             while self._pending_files_events:
                 fe_data = self._pending_files_events.pop(0)
-                fpath = fe_data.get('files', [{}])[0].get('file_path', '')
-                if fpath not in already_emitted:
-                    already_emitted.add(fpath)
-                    yield FilesEvent(
-                        content=FilesContent(**fe_data),
-                        source=self.name,
-                    )
+                files_list = fe_data.get('files', [{}])
+                for f in files_list:
+                    fpath = f.get('path', '')  # Use 'path' field (not 'file_path')
+                    if fpath:
+                        already_emitted.add(fpath)  # still track to avoid scanner duplicates
+                        print(f"📄 File event emitted (pending): {Path(fpath).name}")
+                        yield FilesEvent(
+                            content=FilesContent(**fe_data),
+                            source=self.name,
+                        )
+                        break  # Only emit once per fe_data
 
 
 def create_word_editor_agent(
@@ -385,6 +478,29 @@ def create_word_editor_agent(
 
 你的目标不是夸大能力，而是稳定、准确地理解用户意图，并选择最合适的工具完成任务。
 
+【关键行为准则】
+⚠️ 重要：当用户要求对文档进行多项修改（如"扩写"、"重写"、"添加多个章节"等）时，你必须：
+1. **先分析**：使用 extract_docx_content_tool 查看文档当前结构
+2. **再规划**：在脑子里规划好所有需要的编辑操作
+3. **一次性执行**：将所有编辑放在一个 edit_docx_tool 调用中完成，不要分成多次调用
+4. **不要中途汇报**：完成所有编辑后再向用户报告结果，不要在编辑过程中停下来询问
+
+⚠️ 重要：工具返回后必须检查 `changes` 数组！
+- 如果 `changes: []` 是**空数组**，说明**没有任何编辑被实际执行**！
+- 此时绝对不能向用户谎报"已完成XX修改"
+- 要如实告诉用户："工具返回成功但 changes 数组为空，可能是编辑条件不满足，请检查工具输出或尝试其他方法"
+- 信任 `changes` 数组内容，不信任 `success: true` 单独判断（因为底层工具可能返回 true 但 changes 为空）
+
+❌ 错误做法示例：
+- 调用一次 edit_docx_tool，汇报一次，然后再调用第二次 → 这是浪费时间和打断用户
+- "好的，我先添加标题..." → 调用工具 → "标题已添加，接下来..." → 再调用 → "现在让我..."
+- 分5次调用 edit_docx_tool，每次只做一个修改
+
+✅ 正确做法示例：
+- 调用一次 edit_docx_tool，edits=[{所有需要的修改}], 一次性完成所有工作
+- "我来为您扩写文档，将一次性完成所有修改..."
+- 调用 edit_docx_tool → 完成后直接向用户展示最终结果
+
 【能力边界】
 1. 你可以分析多种文档格式：DOCX、PDF、PPTX、XLSX、CSV、TXT、MD。
 2. 你主要支持对 DOCX 文件进行编辑。
@@ -407,6 +523,8 @@ def create_word_editor_agent(
 4. 不要声称已经完成工具未实际执行的操作。
 5. 若任务超出当前工具能力，要明确说明限制，并给出最接近的可执行方案。
 6. 编辑操作默认会直接覆盖原始 DOCX 文件，必要时应提醒用户这一点。
+7. 信任工具返回结果。如果 edit_docx_tool 或 create_docx_with_content_tool 返回了 success: true，任务就已经完成了——不要再用 run_read 去验证，不要再用子智能体去重做，不要再用其他方式重试。直接向用户汇报结果。
+8. 不要使用 run_read 来读取 DOCX 文件内容。读取文档内容必须使用 extract_docx_content_tool。run_read 只在 XML 编辑工作流中用于读取已解包的 XML 文件。
 
 【收到用户请求后的标准流程】
 第一步：判断任务属于哪一类：
@@ -441,6 +559,70 @@ def create_word_editor_agent(
 6. 如果用户说“重写引言/缩短结论/让措辞更正式”，先用 extract_docx_content_tool 查看内容，再进行后续编辑。
 7. 如果用户要新建文档，使用 create_docx_with_content_tool。
 8. 如果用户只是咨询写作或格式建议，不必强行调用工具。
+
+【优先使用 edit_docx_tool】
+大多数编辑任务都应该用 edit_docx_tool 完成，包括：
+- 添加或修改页眉页脚：{'type': 'add_header', 'header_type': 'custom', 'text': '标题'}
+- {'type': 'add_footer', 'footer_type': 'page_number'}  # "Page X of Y"
+- 在指定段落处添加/修改内容（用 position 参数，不要盲目用 replace_text）
+- 添加标题、段落、表格、列表
+
+如果需要精确修改某个段落，优先用 position 参数 + add_paragraph/add_heading，而不是 replace_text。
+replace_text 会替换文档中所有匹配的文本，如果相同内容出现在多处会导致误替换。
+
+【避免 replace_text 的陷阱】
+- 替换"1. xxx"可能同时影响"议程"和"决议事项"等多个章节
+- 如果必须用 replace_text，先用 extract_docx_content_tool 查看结构，确认目标文本是唯一的
+- 或者使用 add_paragraph/add_heading 在指定位置插入新内容，比替换更安全
+
+【⚠️ replace_text 必须使用完全精确的文本】
+- replace_text 要求 old_text 与文档中的文本**100%完全一致**
+- 包括：标点符号（全角/半角）、空格数量、引号类型（"" vs ''）都必须完全匹配
+- **常见错误**：LLM 生成的"简洁版"内容会导致 old_text 不匹配，从而替换失败
+- **正确流程**：
+  1. 先用 extract_docx_content_tool 获取文档中**原始的 exact 文本**
+  2. 在编辑时直接复制粘贴提取的文本作为 old_text
+  3. 用 AI 重新生成 new_text 内容
+  4. 这样才能确保 old_text 匹配成功
+- 如果工具返回 success: False 和 "not found" 消息，说明 old_text 与文档文本不一致，请重新用 extract_docx_content_tool 获取精确文本
+
+【格式修改的正确做法】
+- 添加项目符号（bullet points）：使用 add_bullet_list 编辑类型或 add_bullet_list_tool
+  例：{'type': 'add_bullet_list', 'items': ['第一点', '第二点', '第三点'], 'position': 5}
+- 如果用户要求"把这几个段落改成列表/加bullet points"，在一次 edit_docx_tool 调用中完成：
+  1. 先用 delete_paragraph 删除原有的纯文本段落（从最后一个开始往前删，避免索引偏移）
+  2. 然后在原位置用 add_bullet_list 添加列表（包含原文内容）
+  所有编辑放在同一个 edits 数组里，一次调用完成。
+- 禁止用 replace_text 把内容替换成空字符串 ''！这会留下空白段落，不会真正删除段落。
+  要删除段落必须用 delete_paragraph。
+- 改变现有段落样式：使用 format_paragraph 类型修改段落格式
+
+【批注操作规则】
+批注操作必须使用专用工具，禁止通过XML编辑批注：
+- 删除批注：使用 remove_comment_tool（可多次调用逐个删除）
+- 添加批注：使用 add_comment_tool（针对文档中的特定文本）
+- 绝对不要用 unpack_docx_tool 来手动编辑 comments.xml / commentsExtended.xml / commentsIds.xml
+- 不要使用 run_bash 来操作批注相关的 XML 文件
+
+【多步编辑任务的正确做法】
+当用户要求同时修改内容和批注时，分步完成：
+1. 先用 remove_comment_tool 删除需要删除的批注
+2. 再用 edit_docx_tool 修改文档内容（替换文本、更新段落等）
+3. 最后用 add_comment_tool 添加新批注
+每一步都用专用工具，不要试图一次性用 XML 完成所有操作。
+
+【XML编辑工具（最后手段）】
+只有当以下情况出现时，才使用 unpack/edit/pack 工作流：
+- 需要添加 tracked changes（修订痕迹）+ 作者归属 + 删除线
+- edit_docx_tool / add_comment_tool / remove_comment_tool 明确无法完成的功能
+
+注意：批注操作不属于"XML编辑才能完成的功能"。永远不要为了批注而解包 DOCX。
+
+XML编辑工作流（仅用于 tracked changes）：
+1. unpack_docx_tool(file_path, output_dir) → 解包DOCX到可编辑XML目录
+2. 使用 run_read/run_edit 直接编辑 document.xml 中的特定段落
+3. pack_docx_tool(input_dir, output_file, original_file) → 重新打包并验证
+4. 验证通过后，删除 unpacked 目录（保持工作区整洁）
 
 【处理模糊请求的规则】
 遇到以下情况时，优先提一个简洁问题，而不是直接行动：
@@ -482,7 +664,7 @@ def create_word_editor_agent(
 【输出风格】
 1. 回答要专业、直接、清楚。
 2. 执行工具前，内部先判断是否真的需要工具。
-3. 执行后，简洁说明结果，不要长篇空话。
+3. ⚠️ 对于多步骤编辑任务，**不要在中间步骤汇报**，等所有步骤完成后再统一报告最终结果。
 4. 如果失败，明确说明失败原因和下一步建议。
 
 记住：你的重点是正确理解用户对文档的真实意图，并以最小、最可靠的步骤完成任务。"""
@@ -591,6 +773,7 @@ def create_word_editor_agent(
                     edit_type = edit.get('type', '')
                     
                     # Handle LLM format: 'replace' -> 'replace_text'
+                    # Supports both 'target'/'replacement' and 'old_text'/'new_text' variants
                     if edit_type == 'replace':
                         if 'target' in edit and 'replacement' in edit:
                             standardized_edits.append({
@@ -600,6 +783,21 @@ def create_word_editor_agent(
                             })
                             conversion_stats['llm_format'] += 1
                             continue
+                        elif 'old_text' in edit and 'new_text' in edit:
+                            # Model is using old_text/new_text with type 'replace'
+                            standardized_edits.append({
+                                'type': 'replace_text',
+                                'old_text': edit['old_text'],
+                                'new_text': edit['new_text']
+                            })
+                            conversion_stats['llm_format'] += 1
+                            continue
+                    
+                    # Handle 'replace_text' type with old_text/new_text (also common LLM format)
+                    if edit_type == 'replace_text' and 'old_text' in edit and 'new_text' in edit:
+                        standardized_edits.append(edit)
+                        conversion_stats['standard_format'] += 1
+                        continue
                     
                     # Handle other potential LLM format variations
                     if edit_type == 'add':
@@ -613,7 +811,7 @@ def create_word_editor_agent(
                             continue
                     
                     # If it's already in standard format
-                    if edit_type in ['replace_text', 'add_paragraph', 'add_heading', 'modify_style', 'add_table', 'format_text', 'format_paragraph', 'add_page_break', 'set_table_style', 'insert_image', 'add_footer', 'add_header']:
+                    if edit_type in ['replace_text', 'add_paragraph', 'add_heading', 'modify_style', 'add_table', 'format_text', 'format_paragraph', 'add_page_break', 'set_table_style', 'insert_image', 'add_footer', 'add_header', 'add_bullet_list', 'add_numbered_list', 'delete_text', 'delete_paragraph']:
                         standardized_edits.append(edit)
                         conversion_stats['standard_format'] += 1
                     else:
@@ -632,16 +830,6 @@ def create_word_editor_agent(
             processor = DocumentProcessor(str(WORKSPACE))
             result = processor.edit_docx(file_path, standardized_edits, overwrite_original=True)
             
-            # Add debugging info to help diagnose issues
-            result['debug_info'] = {
-                'original_edits_count': len(edits),
-                'standardized_edits_count': len(standardized_edits),
-                'conversion_stats': conversion_stats,
-                'file_path': file_path,
-                'file_exists': os.path.exists(file_path),
-                'edits_sample': edits[:2] if edits else []
-            }
-            
             print(f"✅ edit_docx_tool result: {result.get('success', False)}")
             if not result.get('success', False):
                 print(f"❌ Error: {result.get('error', 'Unknown error')}")
@@ -651,7 +839,23 @@ def create_word_editor_agent(
                 if fe_data:
                     _pending_files_events.append(fe_data)
             
-            return result
+            # Trim result to avoid flooding the context window.
+            # The raw result repeats change details 3x (document_info.changes_made,
+            # changes, debug_info.edits_sample). Keep only what the agent needs.
+            def _truncate(s, maxlen=80):
+                return s[:maxlen] + '...' if len(s) > maxlen else s
+            
+            changes_raw = result.get('changes', result.get('document_info', {}).get('changes_made', []))
+            trimmed_changes = [_truncate(c) for c in changes_raw] if isinstance(changes_raw, list) else changes_raw
+            
+            return {
+                'success': result.get('success', False),
+                'message': result.get('message', ''),
+                'file_path': result.get('file_path', file_path),
+                'paragraph_count': result.get('document_info', {}).get('paragraph_count'),
+                'table_count': result.get('document_info', {}).get('table_count'),
+                'changes': trimmed_changes,
+            }
         
         # Define DOCX content extraction function
         def extract_docx_content_tool(file_path: str):
@@ -760,7 +964,18 @@ def create_word_editor_agent(
                 fe_data = _build_files_event_data(output_path, f"Created DOCX: {Path(output_path).name}")
                 if fe_data:
                     _pending_files_events.append(fe_data)
-            return result
+            
+            # Trim verbose result for context window
+            doc_info = result.get('document_info', {})
+            elements = doc_info.get('created_elements', result.get('elements_created', []))
+            return {
+                'success': result.get('success', False),
+                'message': result.get('message', ''),
+                'file_path': result.get('file_path', output_path),
+                'paragraph_count': doc_info.get('paragraph_count'),
+                'table_count': doc_info.get('table_count'),
+                'elements_created': len(elements),
+            }
         
         def add_bullet_list_tool(file_path: str, items: list, position: int | str = "end", style: str = "List Bullet"):
             """
@@ -813,7 +1028,12 @@ def create_word_editor_agent(
                 if fe_data:
                     _pending_files_events.append(fe_data)
 
-            return result
+            return {
+                'success': result.get('success', False),
+                'message': result.get('message', ''),
+                'file_path': file_path,
+                'items_added': len(items),
+            }
         
         def add_numbered_list_tool(file_path: str, items: list, position: int | str = "end", style: str = "List Number"):
             """
@@ -865,48 +1085,104 @@ def create_word_editor_agent(
                 if fe_data:
                     _pending_files_events.append(fe_data)
 
-            return result
+            return {
+                'success': result.get('success', False),
+                'message': result.get('message', ''),
+                'file_path': file_path,
+                'items_added': len(items),
+            }
         
         def add_comment_tool(
             file_path: str,
-            target_text: str,
-            comment_text: str,
+            comments: str = None,
+            # Legacy single-comment parameters (for backward compatibility)
+            target_text: str = None,
+            comment_text: str = None,
             comment_id: int = 0,
             author: str = "DocMaster",
             initials: str = "DM",
             parent_comment_id: int | None = None,
         ):
             """
-            Add a comment to a DOCX document, attached to a specific text range.
+            Add one or more comments to a DOCX document, attached to specific text ranges.
 
             Uses a direct zipfile + lxml approach for reliable XML manipulation.
+            ALL comments are processed in a SINGLE pass, and ONE file event is emitted
+            at the end containing the complete document with all comments.
 
             Best for:
-            - "add a comment to ..."
-            - "add a note/comment on [text]"
-            - "comment on the [specific content]"
-            - "annotate [text] with [comment]"
-            - "reply to comment #N"
+            - "add comments to ..."
+            - "add multiple comments/annotations"
+            - "add feedback to this essay"
+            - "comment on all sections"
+            - "annotate [text] with [comments]"
 
             Args:
                 file_path: Path to the DOCX file to add comment to.
-                target_text: The exact text string in the document to attach the comment to.
-                            The comment markers will be placed around this text.
-                comment_text: The content of the comment.
-                comment_id: Unique integer ID for this comment (0, 1, 2, ...).
-                           Use a new unique ID for each comment in a document.
-                author: Author name for the comment. Defaults to "DocMaster".
-                initials: Author initials for the comment. Defaults to "DM".
-                parent_comment_id: If set, this comment is a reply to the specified comment ID.
+                comments: JSON string or list of comment dicts. Each dict should have:
+                    - target_text: The exact text string in the document to attach to
+                    - comment_text: The content of the comment
+                    - comment_id: Unique integer ID for this comment (0, 1, 2, ...)
+                    - author: (optional) Author name, defaults to "DocMaster"
+                    - initials: (optional) Author initials, defaults to "DM"
+                    - parent_comment_id: (optional) If set, this is a reply to that comment
+                    Example: '[{"target_text": "Introduction", "comment_text": "Great intro!", "comment_id": 0}]'
+                target_text: (Legacy) Target text for single comment
+                comment_text: (Legacy) Comment text for single comment  
+                comment_id: (Legacy) Comment ID for single comment
+                author: (Legacy) Author for single comment
+                initials: (Legacy) Initials for single comment
+                parent_comment_id: (Legacy) Parent comment ID for reply
             """
+            import json
+            import re
             import zipfile
             from lxml import etree
+            from datetime import datetime, timezone
+            import random
+
+            # Handle batch comments - support both JSON string and list
+            if comments is not None:
+                if isinstance(comments, str):
+                    # Try to parse as JSON, handling curly quotes
+                    try:
+                        # First, normalize curly quotes to regular quotes for JSON parsing
+                        normalized = comments.replace('\u201c', '"').replace('\u201d', '"').replace('\u2018', "'").replace('\u2019', "'")
+                        comment_list = json.loads(normalized)
+                    except json.JSONDecodeError as e:
+                        return {
+                            'success': False,
+                            'error': f'Invalid JSON in comments parameter: {e}',
+                            'message': 'Failed to parse comments JSON. Make sure to use regular double quotes.'
+                        }
+                elif isinstance(comments, list):
+                    comment_list = comments
+                else:
+                    return {
+                        'success': False,
+                        'error': 'Invalid comments format',
+                        'message': 'comments must be a JSON string or a list'
+                    }
+            elif target_text is not None and comment_text is not None:
+                # Legacy single comment - convert to list format
+                comment_list = [{
+                    "target_text": target_text,
+                    "comment_text": comment_text,
+                    "comment_id": comment_id,
+                    "author": author,
+                    "initials": initials,
+                    "parent_comment_id": parent_comment_id,
+                }]
+            else:
+                return {
+                    'success': False,
+                    'error': 'Invalid arguments',
+                    'message': 'Either provide a "comments" list OR both "target_text" and "comment_text"'
+                }
 
             print(f"🔧 add_comment_tool called:")
             print(f"   File: {file_path}")
-            print(f"   Target: {target_text[:50]}..." if len(target_text) > 50 else f"   Target: {target_text}")
-            print(f"   Comment: {comment_text[:50]}..." if len(comment_text) > 50 else f"   Comment: {comment_text}")
-            print(f"   Comment ID: {comment_id}, Author: {author}")
+            print(f"   Comments to add: {len(comment_list)}")
 
             if not os.path.exists(file_path):
                 return {
@@ -920,6 +1196,9 @@ def create_word_editor_agent(
                 'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
                 'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
                 'w14': 'http://schemas.microsoft.com/office/word/2010/wordml',
+                'w15': 'http://schemas.microsoft.com/office/word/2012/wordml',
+                'w16cid': 'http://schemas.microsoft.com/office/word/2016/wordml/cid',
+                'w16cex': 'http://schemas.microsoft.com/office/word/2018/wordml/cex',
                 'mc': 'http://schemas.openxmlformats.org/markup-compatibility/2006',
             }
 
@@ -928,156 +1207,285 @@ def create_word_editor_agent(
                 prefix, local = tag.split(':')
                 return f'{{{NSMAP[prefix]}}}{local}'
 
+            def _generate_hex_id():
+                """Generate a unique hex ID for paraId/durableId."""
+                return f"{random.randint(1, 0x7FFFFFFE):08X}"
+
+            def _sanitize_text(text):
+                """Replace curly/smart quotes with regular quotes to prevent JSON parsing issues."""
+                if not isinstance(text, str):
+                    return text
+                # Replace curly quotes with regular quotes
+                return text.replace('\u201c', '"').replace('\u201d', '"').replace('\u2018', "'").replace('\u2019', "'")
+
             try:
-                # Step 1: Read the DOCX as a zip file
+                # Step 0: Sanitize all comment texts to remove curly quotes
+                for comment_spec in comment_list:
+                    if 'target_text' in comment_spec:
+                        comment_spec['target_text'] = _sanitize_text(comment_spec['target_text'])
+                    if 'comment_text' in comment_spec:
+                        comment_spec['comment_text'] = _sanitize_text(comment_spec['comment_text'])
+
+                # Step 1: Read the DOCX as a zip file (once)
                 with zipfile.ZipFile(file_path, 'r') as zin:
-                    # Read document.xml
                     doc_xml = zin.read('word/document.xml')
-                    
-                    # Check if comments.xml already exists
                     has_comments = 'word/comments.xml' in zin.namelist()
                     comments_xml = zin.read('word/comments.xml') if has_comments else None
-                    
-                    # Read relationships
+                    has_comments_extended = 'word/commentsExtended.xml' in zin.namelist()
+                    comments_extended_xml = zin.read('word/commentsExtended.xml') if has_comments_extended else None
+                    has_comments_ids = 'word/commentsIds.xml' in zin.namelist()
+                    comments_ids_xml = zin.read('word/commentsIds.xml') if has_comments_ids else None
+                    has_comments_extensible = 'word/commentsExtensible.xml' in zin.namelist()
+                    comments_extensible_xml = zin.read('word/commentsExtensible.xml') if has_comments_extensible else None
                     rels_xml = zin.read('word/_rels/document.xml.rels')
-                    
-                    # Read [Content_Types].xml
                     content_types_xml = zin.read('[Content_Types].xml')
                     
-                    # Store all other files
                     other_files = {}
                     for name in zin.namelist():
-                        if name not in ('word/document.xml', 'word/comments.xml', 
+                        if name not in ('word/document.xml', 'word/comments.xml', 'word/commentsExtended.xml',
+                                       'word/commentsIds.xml', 'word/commentsExtensible.xml',
                                        'word/_rels/document.xml.rels', '[Content_Types].xml'):
                             other_files[name] = zin.read(name)
 
-                # Step 2: Parse document.xml and find the target paragraph
+                # Step 2: Parse document.xml and build paragraph text index
                 doc_tree = etree.fromstring(doc_xml)
                 body = doc_tree.find(qn('w:body'))
                 paragraphs = body.findall(qn('w:p'))
-
-                target_para = None
+                
+                # Build a map of paragraph text -> paragraph element for fast lookup
+                para_by_text = {}
                 for p in paragraphs:
-                    texts = p.itertext()
-                    full_text = ''.join(texts)
-                    if target_text in full_text:
-                        target_para = p
-                        break
+                    texts = list(p.itertext())
+                    full_text = ''.join(texts).strip()
+                    if full_text:
+                        para_by_text[full_text] = p
+                        # Also store first 100 chars for partial matching
+                        short_text = full_text[:100]
+                        if short_text not in para_by_text:
+                            para_by_text[short_text] = p
 
-                if target_para is None:
-                    return {
-                        'success': False,
-                        'error': 'Target text not found',
-                        'message': f'Could not find target text "{target_text}" in the document'
-                    }
+                # Step 3: Process each comment
+                added_comments = []
+                errors = []
+                comment_para_ids = {}  # Maps comment_id -> para_id for reply support
+                
+                for comment_spec in comment_list:
+                    c_target = comment_spec.get('target_text')
+                    c_text = comment_spec.get('comment_text')
+                    c_id = comment_spec.get('comment_id', 0)
+                    c_author = comment_spec.get('author', author)
+                    c_initials = comment_spec.get('initials', initials)
+                    c_parent = comment_spec.get('parent_comment_id')
+                    
+                    print(f"   Processing comment #{c_id}: {c_target[:40]}..." if c_target else f"   Processing comment #{c_id}")
+                    
+                    # Find the target paragraph
+                    target_para = None
+                    
+                    # Try exact match first
+                    if c_target in para_by_text:
+                        target_para = para_by_text[c_target]
+                    else:
+                        # Try partial match - look for target text within any paragraph
+                        for p in paragraphs:
+                            texts = list(p.itertext())
+                            full_text = ''.join(texts)
+                            if c_target in full_text:
+                                target_para = p
+                                break
+                    
+                    if target_para is None:
+                        errors.append(f"Comment #{c_id}: Target text not found: '{c_target[:50]}...'")
+                        continue
 
-                print(f"   Found target paragraph containing: '{target_text[:60]}...'")
+                    # Get runs for inserting markers
+                    runs = target_para.findall(qn('w:r'))
+                    if not runs:
+                        errors.append(f"Comment #{c_id}: No runs in target paragraph")
+                        continue
 
-                # Step 3: Get the first run in the paragraph to attach comment reference
-                runs = target_para.findall(qn('w:r'))
-                if not runs:
-                    return {
-                        'success': False,
-                        'error': 'No runs in target paragraph',
-                        'message': 'Could not find any text runs in the target paragraph'
-                    }
+                    first_run = runs[0]
+                    para_id = _generate_hex_id()
+                    comment_para_ids[c_id] = para_id
+                    
+                    # Create comment markers
+                    comment_range_start = etree.Element(qn('w:commentRangeStart'))
+                    comment_range_start.set(qn('w:id'), str(c_id))
 
-                first_run = runs[0]
+                    comment_range_end = etree.Element(qn('w:commentRangeEnd'))
+                    comment_range_end.set(qn('w:id'), str(c_id))
 
-                # Create comment reference elements
-                comment_range_start = etree.Element(qn('w:commentRangeStart'))
-                comment_range_start.set(qn('w:id'), str(comment_id))
+                    comment_ref = etree.Element(qn('w:r'))
+                    rPr = etree.SubElement(comment_ref, qn('w:rPr'))
+                    rStyle = etree.SubElement(rPr, qn('w:rStyle'))
+                    rStyle.set(qn('w:val'), 'CommentReference')
+                    comment_ref_elem = etree.SubElement(comment_ref, qn('w:commentReference'))
+                    comment_ref_elem.set(qn('w:id'), str(c_id))
 
-                comment_range_end = etree.Element(qn('w:commentRangeEnd'))
-                comment_range_end.set(qn('w:id'), str(comment_id))
+                    # Insert commentRangeStart before the first run
+                    target_para.insert(list(target_para).index(first_run), comment_range_start)
 
-                comment_ref = etree.Element(qn('w:r'))
-                rPr = etree.SubElement(comment_ref, qn('w:rPr'))
-                rStyle = etree.SubElement(rPr, qn('w:rStyle'))
-                rStyle.set(qn('w:val'), 'CommentReference')
-                comment_ref_elem = etree.SubElement(comment_ref, qn('w:commentReference'))
-                comment_ref_elem.set(qn('w:id'), str(comment_id))
+                    # Append commentRangeEnd and commentReference at the end
+                    target_para.append(comment_range_end)
+                    target_para.append(comment_ref)
+                    
+                    added_comments.append({
+                        'comment_id': c_id,
+                        'target_text': c_target,
+                        'comment_text': c_text,
+                        'author': c_author,
+                        'para_id': para_id,
+                    })
+                    
+                    print(f"      ✓ Added markers for comment #{c_id}")
 
-                # Insert commentRangeStart before the first run
-                target_para.insert(list(target_para).index(first_run), comment_range_start)
-
-                # Append commentRangeEnd and commentReference at the end of paragraph
-                target_para.append(comment_range_end)
-                target_para.append(comment_ref)
-
-                # Convert modified document.xml back to bytes
-                new_doc_xml = etree.tostring(doc_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
-
-                # Step 4: Update comments.xml
+                # Step 4: Update comments.xml (main comment storage)
                 if has_comments and comments_xml:
                     comments_tree = etree.fromstring(comments_xml)
-                    comments_root = comments_tree
                 else:
-                    comments_root = etree.Element(qn('w:comments'))
-                    # Register namespace for proper prefix output
+                    comments_tree = etree.Element(qn('w:comments'))
                     for prefix, uri in NSMAP.items():
                         etree.register_namespace(prefix, uri)
-                    # Also register content types namespace
-                    etree.register_namespace('ct', 'http://schemas.openxmlformats.org/package/2006/content-types')
 
-                # Create new comment element
-                new_comment = etree.SubElement(comments_root, qn('w:comment'))
-                new_comment.set(qn('w:id'), str(comment_id))
-                new_comment.set(qn('w:author'), author)
-                new_comment.set(qn('w:initials'), initials)
-                new_comment.set(qn('w:date'), '2025-01-01T00:00:00Z')
+                timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                
+                for added in added_comments:
+                    # Create comment element
+                    new_comment = etree.SubElement(comments_tree, qn('w:comment'))
+                    new_comment.set(qn('w:id'), str(added['comment_id']))
+                    new_comment.set(qn('w:author'), added['author'])
+                    new_comment.set(qn('w:initials'), added.get('initials', initials))
+                    new_comment.set(qn('w:date'), timestamp)
 
-                # Create paragraph inside comment
-                comment_p = etree.SubElement(new_comment, qn('w:p'))
-                comment_r = etree.SubElement(comment_p, qn('w:r'))
-                comment_t = etree.SubElement(comment_r, qn('w:t'))
-                comment_t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
-                comment_t.text = comment_text
+                    # Create paragraph inside comment
+                    comment_p = etree.SubElement(new_comment, qn('w:p'))
+                    comment_p.set(qn('w14:paraId'), added['para_id'])
+                    comment_p.set(qn('w14:textId'), '77777777')
+                    
+                    comment_r = etree.SubElement(comment_p, qn('w:r'))
+                    comment_t = etree.SubElement(comment_r, qn('w:t'))
+                    comment_t.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+                    comment_t.text = added['comment_text']
 
-                new_comments_xml = etree.tostring(comments_root, xml_declaration=True, encoding='UTF-8', standalone=True)
+                new_comments_xml = etree.tostring(comments_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
 
-                # Step 5: Update relationships if needed
+                # Step 5: Update commentsExtended.xml (for reply threading and done status)
+                if has_comments_extended and comments_extended_xml:
+                    ext_tree = etree.fromstring(comments_extended_xml)
+                else:
+                    ext_tree = etree.Element(qn('w15:commentsEx'))
+                    etree.register_namespace('w15', NSMAP['w15'])
+
+                for added in added_comments:
+                    # Find parent para_id if this is a reply
+                    parent_para = None
+                    for spec in comment_list:
+                        if spec.get('comment_id') == spec.get('parent_comment_id'):
+                            parent_para = comment_para_ids.get(spec.get('comment_id'))
+                            break
+                    
+                    comment_ex = etree.SubElement(ext_tree, qn('w15:commentEx'))
+                    comment_ex.set(qn('w15:paraId'), added['para_id'])
+                    if parent_para:
+                        comment_ex.set(qn('w15:paraIdParent'), parent_para)
+                    comment_ex.set(qn('w15:done'), '0')
+
+                new_comments_extended_xml = etree.tostring(ext_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 6: Update commentsIds.xml (for comment identity tracking)
+                if has_comments_ids and comments_ids_xml:
+                    ids_tree = etree.fromstring(comments_ids_xml)
+                else:
+                    ids_tree = etree.Element(qn('w16cid:commentsIds'))
+                    etree.register_namespace('w16cid', NSMAP.get('w16cid', 'http://schemas.microsoft.com/office/word/2016/wordml/cid'))
+
+                for added in added_comments:
+                    durable_id = _generate_hex_id()
+                    comment_id_elem = etree.SubElement(ids_tree, qn('w16cid:commentId'))
+                    comment_id_elem.set(qn('w16cid:paraId'), added['para_id'])
+                    comment_id_elem.set(qn('w16cid:durableId'), durable_id)
+
+                new_comments_ids_xml = etree.tostring(ids_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 7: Update commentsExtensible.xml (for Office 365 collaboration)
+                if has_comments_extensible and comments_extensible_xml:
+                    ext2_tree = etree.fromstring(comments_extensible_xml)
+                else:
+                    ext2_tree = etree.Element(qn('w16cex:commentsExtensible'))
+                    etree.register_namespace('w16cex', NSMAP.get('w16cex', 'http://schemas.microsoft.com/office/word/2018/wordml/cex'))
+
+                for added in added_comments:
+                    comment_ext = etree.SubElement(ext2_tree, qn('w16cex:commentExtensible'))
+                    durable_id = _generate_hex_id()
+                    comment_ext.set(qn('w16cex:durableId'), durable_id)
+                    comment_ext.set(qn('w16cex:dateUtc'), timestamp)
+
+                new_comments_extensible_xml = etree.tostring(ext2_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 8: Update relationships
                 rels_tree = etree.fromstring(rels_xml)
-
-                if not has_comments:
-                    # Find max relationship id
+                
+                # Check which comment relationships already exist
+                existing_targets = {rel.get('Target') for rel in rels_tree}
+                
+                if 'comments.xml' not in existing_targets:
                     max_id = 0
                     for rel in rels_tree:
                         rid = rel.get('Id', '')
                         if rid.startswith('rId'):
                             try:
-                                num = int(rid[3:])
-                                max_id = max(max_id, num)
+                                max_id = max(max_id, int(rid[3:]))
                             except ValueError:
                                 pass
                     
-                    new_rid = f'rId{max_id + 1}'
-                    new_rel = etree.SubElement(rels_tree, 'Relationship')
-                    new_rel.set('Id', new_rid)
-                    new_rel.set('Type', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments')
-                    new_rel.set('Target', 'comments.xml')
+                    comment_rels = [
+                        ('comments', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments'),
+                        ('commentsExtended', 'http://schemas.microsoft.com/office/2011/relationships/commentsExtended'),
+                        ('commentsIds', 'http://schemas.microsoft.com/office/2016/09/relationships/commentsIds'),
+                        ('commentsExtensible', 'http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible'),
+                    ]
+                    
+                    for name, rel_type in comment_rels:
+                        new_rid = f'rId{max_id + 1}'
+                        new_rel = etree.SubElement(rels_tree, 'Relationship')
+                        new_rel.set('Id', new_rid)
+                        new_rel.set('Type', rel_type)
+                        new_rel.set('Target', f'{name}.xml')
+                        max_id += 1
 
                 new_rels_xml = etree.tostring(rels_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
 
-                # Step 6: Update [Content_Types].xml if needed
+                # Step 9: Update [Content_Types].xml
                 ct_tree = etree.fromstring(content_types_xml)
                 ns_ct = 'http://schemas.openxmlformats.org/package/2006/content-types'
-                has_comments_type = False
-                for child in ct_tree:
-                    if child.get('PartName') == '/word/comments.xml':
-                        has_comments_type = True
-                        break
-                if not has_comments_type:
-                    override = etree.SubElement(ct_tree, f'{{{ns_ct}}}Override')
-                    override.set('PartName', '/word/comments.xml')
-                    override.set('ContentType', 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml')
+                existing_parts = {child.get('PartName') for child in ct_tree}
+                
+                if '/word/comments.xml' not in existing_parts:
+                    overrides = [
+                        ('/word/comments.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml'),
+                        ('/word/commentsExtended.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml'),
+                        ('/word/commentsIds.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml'),
+                        ('/word/commentsExtensible.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtensible+xml'),
+                    ]
+                    
+                    for part_name, content_type in overrides:
+                        override = etree.SubElement(ct_tree, f'{{{ns_ct}}}Override')
+                        override.set('PartName', part_name)
+                        override.set('ContentType', content_type)
+
                 new_content_types_xml = etree.tostring(ct_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
 
-                # Step 7: Write back to docx
+                # Step 10: Write document.xml back
+                new_doc_xml = etree.tostring(doc_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 11: Write back to docx (ONE file write)
                 tmp_path = file_path + '.tmp'
                 with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zout:
                     zout.writestr('word/document.xml', new_doc_xml)
                     zout.writestr('word/comments.xml', new_comments_xml)
+                    zout.writestr('word/commentsExtended.xml', new_comments_extended_xml)
+                    zout.writestr('word/commentsIds.xml', new_comments_ids_xml)
+                    zout.writestr('word/commentsExtensible.xml', new_comments_extensible_xml)
                     zout.writestr('word/_rels/document.xml.rels', new_rels_xml)
                     zout.writestr('[Content_Types].xml', new_content_types_xml)
                     for name, data in other_files.items():
@@ -1085,20 +1493,19 @@ def create_word_editor_agent(
 
                 # Replace original
                 os.replace(tmp_path, file_path)
-                print(f"   Comment #{comment_id} added successfully!")
+                
+                print(f"   ✅ Added {len(added_comments)} comment(s) successfully!")
 
-                # Emit file event
-                fe_data = _build_files_event_data(file_path, f"Comment added to: {Path(file_path).name}")
+                # Step 12: Emit SINGLE file event after ALL comments are added
+                fe_data = _build_files_event_data(file_path, f"Comments added to: {Path(file_path).name}")
                 if fe_data:
                     _pending_files_events.append(fe_data)
 
                 return {
-                    'success': True,
-                    'message': f'Successfully added comment to document',
-                    'comment_id': comment_id,
-                    'comment_text': comment_text,
-                    'target_text': target_text,
-                    'author': author,
+                    'success': len(errors) == 0,
+                    'message': f'Added {len(added_comments)} comment(s) to document',
+                    'comments_added': len(added_comments),
+                    'errors': errors if errors else None,
                     'file_path': file_path
                 }
 
@@ -1108,37 +1515,79 @@ def create_word_editor_agent(
                 return {
                     'success': False,
                     'error': str(e),
-                    'message': f'Failed to add comment: {e}'
+                    'message': f'Failed to add comments: {e}'
                 }
 
         def remove_comment_tool(
             file_path: str,
-            comment_id: int,
+            comment_ids: list = None,
+            # Legacy single comment_id parameter
+            comment_id: int = None,
         ):
             """
-            Remove a comment from a DOCX document.
+            Remove one or more comments from a DOCX document.
 
-            This tool removes the comment with the specified ID from the document,
+            This tool removes the comment(s) with the specified ID(s) from the document,
             including:
             - Comment markers from document.xml (commentRangeStart, commentRangeEnd, commentReference)
-            - The comment entry from comments.xml
+            - The comment entry from comments.xml, commentsExtended.xml, commentsIds.xml, commentsExtensible.xml
             - Cleanup of relationships and content types if no comments remain
 
+            ALL comments are processed in a SINGLE pass, and ONE file event is emitted
+            at the end after all comments are removed.
+
             Best for:
-            - "remove comment #N"
-            - "delete the comment"
-            - "清除批注"
+            - "remove all comments"
+            - "clear all annotations"
+            - "delete comments #0, #1, #2"
+            - "清除所有批注"
             - "删除第N条批注"
 
             Args:
                 file_path: Path to the DOCX file to remove comment from.
-                comment_id: The ID of the comment to remove (0, 1, 2, ...).
+                comment_ids: List of comment IDs to remove. Example: [0, 1, 2] removes comments with IDs 0, 1, and 2.
+                    Use "all" as a special value to remove all comments.
+                comment_id: (Legacy) Single comment ID to remove.
             """
             import zipfile
+            from lxml import etree
+
+            # Handle batch comment IDs
+            remove_all = False
+            ids_to_remove = []
+            
+            if comment_ids is not None:
+                # Normalize to handle various input types
+                if isinstance(comment_ids, str):
+                    if comment_ids.lower() == "all":
+                        remove_all = True
+                        print(f"   Mode: Remove ALL comments")
+                    else:
+                        # Single ID as string
+                        ids_to_remove = [comment_ids]
+                elif isinstance(comment_ids, list):
+                    if len(comment_ids) == 0:
+                        return {
+                            'success': False,
+                            'error': 'Empty list',
+                            'message': 'comment_ids list is empty'
+                        }
+                    ids_to_remove = [str(i) for i in comment_ids]
+                else:
+                    ids_to_remove = [str(comment_ids)]
+            elif comment_id is not None:
+                ids_to_remove = [str(comment_id)]
+            else:
+                return {
+                    'success': False,
+                    'error': 'Invalid arguments',
+                    'message': 'Either provide "comment_ids" list or "comment_id"'
+                }
 
             print(f"🔧 remove_comment_tool called:")
             print(f"   File: {file_path}")
-            print(f"   Comment ID: {comment_id}")
+            print(f"   remove_all: {remove_all}")
+            print(f"   ids_to_remove: {ids_to_remove}")
 
             if not os.path.exists(file_path):
                 return {
@@ -1152,6 +1601,8 @@ def create_word_editor_agent(
                 'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
                 'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
                 'w14': 'http://schemas.microsoft.com/office/word/2010/wordml',
+                'w15': 'http://schemas.microsoft.com/office/word/2012/wordml',
+                'w16cid': 'http://schemas.microsoft.com/office/word/2016/wordml/cid',
                 'mc': 'http://schemas.openxmlformats.org/markup-compatibility/2006',
             }
 
@@ -1161,9 +1612,12 @@ def create_word_editor_agent(
                 return f'{{{NSMAP[prefix]}}}{local}'
 
             try:
-                # Step 1: Read the DOCX as a zip file
+                # Step 1: Read the DOCX as a zip file (once)
                 with zipfile.ZipFile(file_path, 'r') as zin:
                     has_comments = 'word/comments.xml' in zin.namelist()
+                    has_comments_extended = 'word/commentsExtended.xml' in zin.namelist()
+                    has_comments_ids = 'word/commentsIds.xml' in zin.namelist()
+                    has_comments_extensible = 'word/commentsExtensible.xml' in zin.namelist()
                     
                     if not has_comments:
                         return {
@@ -1174,141 +1628,199 @@ def create_word_editor_agent(
                     
                     doc_xml = zin.read('word/document.xml')
                     comments_xml = zin.read('word/comments.xml')
+                    comments_extended_xml = zin.read('word/commentsExtended.xml') if has_comments_extended else None
+                    comments_ids_xml = zin.read('word/commentsIds.xml') if has_comments_ids else None
+                    comments_extensible_xml = zin.read('word/commentsExtensible.xml') if has_comments_extensible else None
                     rels_xml = zin.read('word/_rels/document.xml.rels')
                     content_types_xml = zin.read('[Content_Types].xml')
                     
                     other_files = {}
                     for name in zin.namelist():
-                        if name not in ('word/document.xml', 'word/comments.xml', 
+                        if name not in ('word/document.xml', 'word/comments.xml', 'word/commentsExtended.xml',
+                                       'word/commentsIds.xml', 'word/commentsExtensible.xml',
                                        'word/_rels/document.xml.rels', '[Content_Types].xml'):
                             other_files[name] = zin.read(name)
 
-                # Step 2: Parse and clean document.xml - remove comment markers
+                # Step 2: If removing all, get all comment IDs first
+                if remove_all:
+                    comments_tree = etree.fromstring(comments_xml)
+                    all_comments = comments_tree.findall(qn('w:comment'))
+                    print(f"   Found {len(all_comments)} comments in document")
+                    for c in all_comments:
+                        cid = c.get(qn('w:id'))
+                        print(f"      - Comment ID: {cid}")
+                        ids_to_remove.append(cid)
+                    print(f"   ids_to_remove populated: {ids_to_remove}")
+
+                # Step 3: Parse and clean document.xml - remove comment markers for ALL IDs
                 doc_tree = etree.fromstring(doc_xml)
-                w_ns = NSMAP['w']
                 
                 removed_markers = 0
-                
-                # Remove commentRangeStart elements
-                for elem in doc_tree.findall(f'.//{qn("w:commentRangeStart")}'):
-                    if elem.get(qn('w:id')) == str(comment_id):
-                        parent = doc_tree.find(f'.//{qn("w:p")}[.//{qn("w:commentRangeStart")}[@w:id="{comment_id}"]]')
-                        if parent is not None:
-                            parent.remove(elem)
-                            removed_markers += 1
-                
-                # Remove commentRangeEnd elements
-                for elem in doc_tree.findall(f'.//{qn("w:commentRangeEnd")}'):
-                    if elem.get(qn('w:id')) == str(comment_id):
-                        parent = doc_tree.find(f'.//{qn("w:p")}[.//{qn("w:commentRangeEnd")}[@w:id="{comment_id}"]]')
-                        if parent is not None:
-                            parent.remove(elem)
-                            removed_markers += 1
-                
-                # Remove commentReference runs (entire w:r containing the reference)
-                # We need to find runs that contain commentReference with the target ID
-                for para in doc_tree.findall(f'.//{qn("w:p")}'):
-                    for run in para.findall(qn('w:r')):
-                        comment_ref = run.find(qn('w:commentReference'))
-                        if comment_ref is not None and comment_ref.get(qn('w:id')) == str(comment_id):
-                            para.remove(run)
-                            removed_markers += 1
-                
-                # Also try to remove runs with rStyle=CommentReference that might be orphaned
-                for para in doc_tree.findall(f'.//{qn("w:p")}'):
-                    for run in list(para.findall(qn('w:r'))):
-                        # Check if this run has commentReference (might have been missed above)
-                        has_comment_ref = run.find(qn('w:commentReference')) is not None
-                        # Check if it's a CommentReference style run without actual reference content
-                        rPr = run.find(qn('w:rPr'))
-                        if has_comment_ref:
+                for c_id in ids_to_remove:
+                    # Remove commentRangeStart elements
+                    for elem in doc_tree.findall(f'.//{qn("w:commentRangeStart")}'):
+                        if elem.get(qn('w:id')) == c_id:
+                            # Find parent paragraph and remove
+                            for para in doc_tree.findall(f'.//{qn("w:p")}'):
+                                if elem in list(para):
+                                    para.remove(elem)
+                                    removed_markers += 1
+                                    break
+                    
+                    # Remove commentRangeEnd elements
+                    for elem in doc_tree.findall(f'.//{qn("w:commentRangeEnd")}'):
+                        if elem.get(qn('w:id')) == c_id:
+                            for para in doc_tree.findall(f'.//{qn("w:p")}'):
+                                if elem in list(para):
+                                    para.remove(elem)
+                                    removed_markers += 1
+                                    break
+                    
+                    # Remove commentReference runs (entire w:r containing the reference)
+                    for para in doc_tree.findall(f'.//{qn("w:p")}'):
+                        for run in list(para.findall(qn('w:r'))):
                             comment_ref = run.find(qn('w:commentReference'))
-                            if comment_ref is not None and comment_ref.get(qn('w:id')) == str(comment_id):
+                            if comment_ref is not None and comment_ref.get(qn('w:id')) == c_id:
                                 para.remove(run)
                                 removed_markers += 1
 
                 new_doc_xml = etree.tostring(doc_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
                 print(f"   Removed {removed_markers} comment marker(s) from document.xml")
 
-                # Step 3: Parse comments.xml and remove the target comment
+                # Step 4: Parse comments.xml and remove all target comments
                 comments_tree = etree.fromstring(comments_xml)
-                comment_found = False
+                removed_comments = []
                 
-                for comment in comments_tree.findall(qn('w:comment')):
-                    if comment.get(qn('w:id')) == str(comment_id):
+                print(f"   Step 4: Looking for comment IDs: {ids_to_remove}")
+                
+                for comment in list(comments_tree.findall(qn('w:comment'))):
+                    c_id = comment.get(qn('w:id'))
+                    if c_id in ids_to_remove:
+                        # Get paraId before removing for later use in extended files
+                        para_elem = comment.find(qn('w:p'))
+                        para_id = para_elem.get(qn('w14:paraId')) if para_elem is not None else None
+                        
                         comments_tree.remove(comment)
-                        comment_found = True
-                        print(f"   Removed comment #{comment_id} from comments.xml")
-                        break
-                
-                if not comment_found:
+                        removed_comments.append({'id': c_id, 'para_id': para_id})
+                        print(f"   Removed comment #{c_id} from comments.xml")
+
+                if not removed_comments:
                     return {
                         'success': False,
                         'error': 'Comment not found',
-                        'message': f'Comment with ID {comment_id} not found in document'
+                        'message': f'Comment(s) not found in document'
                     }
 
-                # Check if there are any remaining comments
+                new_comments_xml = etree.tostring(comments_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 5: Update commentsExtended.xml
+                new_comments_extended_xml = None
+                if has_comments_extended and comments_extended_xml:
+                    ext_tree = etree.fromstring(comments_extended_xml)
+                    for para_id in [c['para_id'] for c in removed_comments if c['para_id']]:
+                        for ex in ext_tree.findall(qn('w15:commentEx')):
+                            if ex.get(qn('w15:paraId')) == para_id:
+                                ext_tree.remove(ex)
+                                break
+                    new_comments_extended_xml = etree.tostring(ext_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 6: Update commentsIds.xml
+                new_comments_ids_xml = None
+                if has_comments_ids and comments_ids_xml:
+                    ids_tree = etree.fromstring(comments_ids_xml)
+                    for c in removed_comments:
+                        for cid in list(ids_tree.findall(qn('w16cid:commentId'))):
+                            if cid.get(qn('w16cid:paraId')) == c['para_id']:
+                                ids_tree.remove(cid)
+                                break
+                    new_comments_ids_xml = etree.tostring(ids_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+                # Step 7: Update commentsExtensible.xml
+                new_comments_extensible_xml = None
+                if has_comments_extensible and comments_extensible_xml:
+                    ext2_tree = etree.fromstring(comments_extensible_xml)
+                    # Remove all extensible entries for removed comments (we need durableId matching which is complex)
+                    # For simplicity, we'll just regenerate if empty
+                    if len(ext2_tree) == 0:
+                        new_comments_extensible_xml = None
+                        has_comments_extensible = False
+
+                # Step 8: Check if there are any remaining comments
                 remaining_comments = comments_tree.findall(qn('w:comment'))
                 
                 if remaining_comments:
-                    # There are still comments, keep comments.xml
-                    new_comments_xml = etree.tostring(comments_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+                    # There are still comments, keep all comment XML files
                     keep_comments = True
                 else:
-                    # No more comments, remove comments.xml and clean up
-                    new_comments_xml = None
+                    # No more comments, remove all comment XML files and clean up
                     keep_comments = False
-                    print(f"   No more comments, will clean up comments.xml")
+                    print(f"   No more comments, will clean up all comment files")
 
-                # Step 4: Update relationships if removing comments.xml entirely
+                # Step 9: Update relationships if removing comments entirely
                 rels_tree = etree.fromstring(rels_xml)
+                comment_rel_types = [
+                    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments',
+                    'http://schemas.microsoft.com/office/2011/relationships/commentsExtended',
+                    'http://schemas.microsoft.com/office/2016/09/relationships/commentsIds',
+                    'http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible',
+                ]
                 
                 if not keep_comments:
-                    # Remove the comments relationship
+                    # Remove all comment relationships
                     for rel in list(rels_tree):
-                        if 'comments' in rel.get('Type', '').lower():
+                        if rel.get('Type', '') in comment_rel_types:
                             rels_tree.remove(rel)
-                            print(f"   Removed comments relationship")
+                    print(f"   Removed all comment relationships")
                 
                 new_rels_xml = etree.tostring(rels_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
 
-                # Step 5: Update [Content_Types].xml if removing comments
+                # Step 10: Update [Content_Types].xml
                 ct_tree = etree.fromstring(content_types_xml)
                 ns_ct = 'http://schemas.openxmlformats.org/package/2006/content-types'
                 
+                comment_parts = [
+                    '/word/comments.xml',
+                    '/word/commentsExtended.xml',
+                    '/word/commentsIds.xml',
+                    '/word/commentsExtensible.xml',
+                ]
+                
                 if not keep_comments:
-                    # Remove the comments content type
+                    # Remove all comment content types
                     for child in list(ct_tree):
-                        if child.get('PartName') == '/word/comments.xml':
+                        if child.get('PartName') in comment_parts:
                             ct_tree.remove(child)
-                            print(f"   Removed comments content type")
+                    print(f"   Removed all comment content types")
                 
                 new_content_types_xml = etree.tostring(ct_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
 
-                # Step 6: Write back to docx
+                # Step 11: Write back to docx (ONE file write)
                 tmp_path = file_path + '.tmp'
                 with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zout:
                     zout.writestr('word/document.xml', new_doc_xml)
                     if keep_comments:
                         zout.writestr('word/comments.xml', new_comments_xml)
+                        if new_comments_extended_xml:
+                            zout.writestr('word/commentsExtended.xml', new_comments_extended_xml)
+                        if new_comments_ids_xml:
+                            zout.writestr('word/commentsIds.xml', new_comments_ids_xml)
                     zout.writestr('word/_rels/document.xml.rels', new_rels_xml)
                     zout.writestr('[Content_Types].xml', new_content_types_xml)
                     for name, data in other_files.items():
                         zout.writestr(name, data)
 
                 os.replace(tmp_path, file_path)
-                print(f"   Comment #{comment_id} removed successfully!")
+                print(f"   ✅ Removed {len(removed_comments)} comment(s) successfully!")
 
-                # Emit file event
-                fe_data = _build_files_event_data(file_path, f"Comment removed from: {Path(file_path).name}")
+                # Step 12: Emit SINGLE file event after all comments removed
+                fe_data = _build_files_event_data(file_path, f"Comments removed from: {Path(file_path).name}")
                 if fe_data:
                     _pending_files_events.append(fe_data)
 
                 return {
                     'success': True,
-                    'message': f'Successfully removed comment #{comment_id} from document',
-                    'comment_id': comment_id,
+                    'message': f'Removed {len(removed_comments)} comment(s) from document',
+                    'comments_removed': len(removed_comments),
                     'file_path': file_path
                 }
 
@@ -1318,8 +1830,206 @@ def create_word_editor_agent(
                 return {
                     'success': False,
                     'error': str(e),
-                    'message': f'Failed to remove comment: {e}'
+                    'message': f'Failed to remove comment(s): {e}'
                 }
+
+        # ============ DOCX SKILL TOOLS (XML-level, formatting-safe) ============
+        # These tools wrap the scripts in skills/docx/scripts/ and provide
+        # a formatting-preserving workflow: unpack → edit XML → repack.
+
+        _SKILL_SCRIPTS_DIR = Path(__file__).parent / "skills" / "docx" / "scripts"
+        _OFFICE_SCRIPTS_DIR = _SKILL_SCRIPTS_DIR / "office"
+
+        def unpack_docx_tool(file_path: str, output_dir: str, merge_runs: bool = True, simplify_redlines: bool = True):
+            """
+            Unpack a DOCX file into a directory of editable XML files.
+
+            This is the first step of the formatting-safe editing workflow.
+            It extracts the ZIP archive, pretty-prints XML, merges adjacent
+            runs with identical formatting, simplifies tracked changes, and
+            escapes smart quotes for safe editing.
+
+            Use this when you need to make advanced edits that python-docx
+            cannot handle without formatting loss, such as:
+            - Complex tracked changes (deletions + insertions with author attribution)
+            - Advanced comments via the comment.py script
+            - Preserving every formatting detail during text edits
+
+            After unpacking, edit the XML files in output_dir/word/ directly,
+            then use pack_docx_tool to reassemble.
+
+            Args:
+                file_path: Path to the DOCX file to unpack.
+                output_dir: Directory to extract into (will be created).
+                merge_runs: Merge adjacent runs with identical formatting (default True).
+                simplify_redlines: Simplify adjacent tracked changes from same author (default True).
+            """
+            import sys as _sys
+            _saved = _sys.path[:]
+            _sys.path.insert(0, str(_OFFICE_SCRIPTS_DIR))
+            try:
+                from unpack import unpack
+                _, message = unpack(file_path, output_dir, merge_runs=merge_runs, simplify_redlines=simplify_redlines)
+                success = "Error" not in message
+                return {'success': success, 'message': message, 'output_dir': output_dir}
+            except Exception as e:
+                return {'success': False, 'error': str(e), 'message': f'Failed to unpack: {e}'}
+            finally:
+                _sys.path[:] = _saved
+
+        def pack_docx_tool(input_dir: str, output_file: str, original_file: str = None, validate: bool = True):
+            """
+            Pack an unpacked directory back into a DOCX file.
+
+            This is the final step of the formatting-safe editing workflow.
+            It validates the XML with auto-repair, condenses formatting, and
+            creates the output DOCX.
+
+            Auto-repair fixes:
+            - durableId values that exceed OOXML limits (regenerates valid IDs)
+            - Missing xml:space="preserve" on <w:t> elements with whitespace
+
+            Args:
+                input_dir: Path to the unpacked directory (from unpack_docx_tool).
+                output_file: Path for the output DOCX file.
+                original_file: (Optional) Path to the original DOCX for validation comparison.
+                validate: Run schema validation with auto-repair (default True).
+            """
+            import sys as _sys
+            _saved = _sys.path[:]
+            _sys.path.insert(0, str(_OFFICE_SCRIPTS_DIR))
+            try:
+                from pack import pack
+                _, message = pack(input_dir, output_file, original_file=original_file, validate=validate)
+                success = "Error" not in message
+                if success:
+                    fe_data = _build_files_event_data(output_file, f"Packed DOCX: {Path(output_file).name}")
+                    if fe_data:
+                        _pending_files_events.append(fe_data)
+                return {'success': success, 'message': message, 'output_file': output_file}
+            except Exception as e:
+                return {'success': False, 'error': str(e), 'message': f'Failed to pack: {e}'}
+            finally:
+                _sys.path[:] = _saved
+
+        def validate_docx_tool(path: str, original: str = None, auto_repair: bool = True):
+            """
+            Validate a DOCX file or unpacked directory against OOXML schemas.
+
+            Can validate either a packed .docx file or an unpacked directory.
+            Optionally compares against the original file to check for
+            tracked-change consistency.
+
+            Args:
+                path: Path to the unpacked directory or packed DOCX file.
+                original: (Optional) Path to the original DOCX for comparison.
+                auto_repair: Automatically repair common issues (default True).
+            """
+            import sys as _sys
+            import tempfile
+            import zipfile
+            _saved = _sys.path[:]
+            _sys.path.insert(0, str(_OFFICE_SCRIPTS_DIR))
+            try:
+                from validators import DOCXSchemaValidator, RedliningValidator
+                unpacked_dir = Path(path)
+                original_file = Path(original) if original else None
+
+                # If path is a .docx file, unpack to temp dir
+                if unpacked_dir.is_file() and unpacked_dir.suffix.lower() == '.docx':
+                    temp_dir = tempfile.mkdtemp()
+                    with zipfile.ZipFile(unpacked_dir, 'r') as zf:
+                        zf.extractall(temp_dir)
+                    unpacked_dir = Path(temp_dir)
+
+                validators = [DOCXSchemaValidator(unpacked_dir, original_file)]
+                if original_file and original_file.exists():
+                    validators.append(RedliningValidator(unpacked_dir, original_file, author="DocMaster"))
+
+                output_lines = []
+                if auto_repair:
+                    total_repairs = sum(v.repair() for v in validators)
+                    if total_repairs:
+                        output_lines.append(f"Auto-repaired {total_repairs} issue(s)")
+
+                success = all(v.validate() for v in validators)
+                if success:
+                    output_lines.append("All validations PASSED!")
+
+                return {'success': success, 'message': '\n'.join(output_lines)}
+            except Exception as e:
+                return {'success': False, 'error': str(e), 'message': f'Validation failed: {e}'}
+            finally:
+                _sys.path[:] = _saved
+
+        def accept_tracked_changes_tool(input_file: str, output_file: str):
+            """
+            Accept all tracked changes in a DOCX file using LibreOffice.
+
+            Produces a clean document with all insertions accepted and
+            deletions removed. Requires LibreOffice to be installed.
+
+            Args:
+                input_file: Path to the DOCX file with tracked changes.
+                output_file: Path for the clean output DOCX.
+            """
+            import sys as _sys
+            _saved = _sys.path[:]
+            _sys.path.insert(0, str(_SKILL_SCRIPTS_DIR))
+            _sys.path.insert(0, str(_OFFICE_SCRIPTS_DIR))
+            try:
+                from accept_changes import accept_changes
+                _, message = accept_changes(input_file, output_file)
+                success = "Error" not in message
+                if success:
+                    fe_data = _build_files_event_data(output_file, f"Tracked changes accepted: {Path(output_file).name}")
+                    if fe_data:
+                        _pending_files_events.append(fe_data)
+                return {'success': success, 'message': message, 'output_file': output_file}
+            except Exception as e:
+                return {'success': False, 'error': str(e), 'message': f'Failed to accept changes: {e}'}
+            finally:
+                _sys.path[:] = _saved
+
+        def add_xml_comment_tool(unpacked_dir: str, comment_id: int, text: str, author: str = "DocMaster", initials: str = "DM", parent_id: int = None):
+            """
+            Add a comment to an unpacked DOCX directory (XML-level).
+
+            This handles all the boilerplate across comments.xml,
+            commentsExtended.xml, commentsIds.xml, and commentsExtensible.xml.
+
+            After calling this, you still need to add markers to document.xml:
+              <w:commentRangeStart w:id="ID"/>
+              ...commented runs...
+              <w:commentRangeEnd w:id="ID"/>
+              <w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="ID"/></w:r>
+
+            Args:
+                unpacked_dir: Path to the unpacked DOCX directory.
+                comment_id: Unique integer ID for this comment.
+                text: Comment text (should be pre-escaped XML).
+                author: Author name (default "DocMaster").
+                initials: Author initials (default "DM").
+                parent_id: (Optional) Parent comment ID for replies.
+            """
+            import sys as _sys
+            _saved = _sys.path[:]
+            _sys.path.insert(0, str(_SKILL_SCRIPTS_DIR))
+            _sys.path.insert(0, str(_OFFICE_SCRIPTS_DIR))
+            try:
+                from comment import add_comment
+                para_id, message = add_comment(unpacked_dir, comment_id, text, author, initials, parent_id)
+                success = "Error" not in message
+                result = {'success': success, 'message': message, 'para_id': para_id}
+                if parent_id is not None:
+                    result['marker_hint'] = f'Nest markers: commentRangeStart id="{parent_id}" then id="{comment_id}"'
+                else:
+                    result['marker_hint'] = f'Add markers: commentRangeStart/End id="{comment_id}" around target text'
+                return result
+            except Exception as e:
+                return {'success': False, 'error': str(e), 'message': f'Failed to add comment: {e}'}
+            finally:
+                _sys.path[:] = _saved
 
         tools = [
             process_document,
@@ -1332,7 +2042,13 @@ def create_word_editor_agent(
             add_bullet_list_tool,
             add_numbered_list_tool,
             add_comment_tool,
-            remove_comment_tool
+            remove_comment_tool,
+            # XML-level formatting-safe tools (from docx skill)
+            unpack_docx_tool,
+            pack_docx_tool,
+            validate_docx_tool,
+            accept_tracked_changes_tool,
+            add_xml_comment_tool,
         ]
     
     return DocMasterAgent(
@@ -1365,7 +2081,7 @@ def create_word_editor_agent(
         sub_agent_config=SUB_AGENTS,
         
         # 资源限制
-        token_limit=15000,  # Set token limit below max_tokens
+        token_limit=60000,  # deepseek-v4-flash supports 128k context
         
         # RAG集成（可选）
         rag_flow_url=os.getenv('RAGFLOW_URL'),
