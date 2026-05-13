@@ -1,5 +1,5 @@
 import React from "react";
-import { FileText, Download, PencilLine, Eye, X } from "lucide-react";
+import { ArrowLeft, FileText, Download, PencilLine, Eye, X } from "lucide-react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
@@ -10,6 +10,9 @@ import type { MessageFileItem, FilesEvent } from "../components/types/datamodel"
 import MarkdownRenderer from "../components/common/markdownrender";
 import { fileAPI } from "../components/views/api";
 import { appContext } from "../hooks/provider";
+import { useLocation, useNavigate } from "../hooks/useRouter";
+import { createSearchWithView } from "../components/views/menuRoutes";
+import { useRightPanelStore } from "../store/rightPanel";
 
 interface FilePreviewPageProps {
   file?: MessageFileItem | null;
@@ -59,20 +62,20 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
   const { user, darkMode } = React.useContext(appContext);
   const userId = user?.email || "";
   const isDark = darkMode === "dark";
-  
+
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [htmlContent, setHtmlContent] = React.useState<string>("");
   const [originalParagraphs, setOriginalParagraphs] = React.useState<string[]>([]);
   const [contentLoaded, setContentLoaded] = React.useState(false);
-  
+
   // Load mammoth.js and convert docx to HTML
   React.useEffect(() => {
     const initMammoth = async () => {
       try {
         const { convertToHtml } = await import("mammoth");
-        
+
         let arrayBuffer: ArrayBuffer;
         if (file.download_method === "base64" && file.base64_content) {
           const binary = atob(file.base64_content);
@@ -88,7 +91,7 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
         } else {
           throw new Error("当前文件没有可用内容");
         }
-        
+
         // Always use HTML conversion — TipTap natively understands HTML
         // (markdown would be treated as a single text blob)
         const { value: rawHtml } = await convertToHtml({ arrayBuffer });
@@ -97,10 +100,10 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
           .replace(/<table[^>]*>[\s\S]*?<\/table>/gi, "<p>[表格内容]</p>");
         console.log("[WordEditor] HTML length:", content.length);
         console.log("[WordEditor] First 300 chars:", content.slice(0, 300));
-        
+
         // Extract paragraphs from HTML using DOM parsing for accurate structure
         const originalParas = extractTextFromHTML(content);
-        
+
         setOriginalParagraphs(originalParas);
         setHtmlContent(content);
         setLoading(false);
@@ -110,10 +113,10 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
         setLoading(false);
       }
     };
-    
+
     void initMammoth();
   }, [file]);
-  
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -129,7 +132,7 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
       },
     },
   });
-  
+
   // Update editor content when mammoth finishes loading
   React.useEffect(() => {
     if (editor && htmlContent) {
@@ -142,7 +145,7 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
       setContentLoaded(true);
     }
   }, [editor, htmlContent]);
-  
+
   // Simple similarity calculation for change detection
   const calculateSimilarity = (s1: string, s2: string): number => {
     if (s1 === s2) return 1;
@@ -155,12 +158,12 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
     const union = new Set([...words1, ...words2]).size;
     return union > 0 ? (2 * intersection) / union : 0;
   };
-  
+
   const generateEdits = React.useCallback((): EditOperation[] => {
     if (!editor) return [];
     const doc = editor.getJSON();
     const edits: EditOperation[] = [];
-    
+
     const currentParagraphs: string[] = [];
     const traverse = (content: any[]) => {
       content.forEach((node) => {
@@ -178,12 +181,12 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
       });
     };
     if (doc.content) traverse(doc.content);
-    
+
     for (let i = 0; i < currentParagraphs.length; i++) {
       const currentText = currentParagraphs[i];
       let bestMatchIdx = -1;
       let bestSimilarity = 0;
-      
+
       for (let j = 0; j < originalParagraphs.length; j++) {
         if (i === j || originalParagraphs[j] === currentText) {
           bestMatchIdx = j;
@@ -196,17 +199,17 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
           bestMatchIdx = j;
         }
       }
-      
+
       if (bestMatchIdx === -1) {
         edits.push({ type: "add_paragraph", content: currentText, paragraph_index: i });
       } else if (originalParagraphs[bestMatchIdx] !== currentText) {
         edits.push({ type: "replace_text", old_text: originalParagraphs[bestMatchIdx], new_text: currentText, paragraph_index: bestMatchIdx });
       }
     }
-    
+
     return edits;
   }, [editor, originalParagraphs]);
-  
+
   const handleSave = React.useCallback(async () => {
     if (originalParagraphs.length === 0) {
       alert("无法获取原始内容");
@@ -216,7 +219,7 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
       alert("文件内容不可用（无 URL 或 base64）");
       return;
     }
-    
+
     setSaving(true);
     try {
       const edits = generateEdits();
@@ -225,7 +228,7 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
         setSaving(false);
         return;
       }
-      
+
       const result = await fileAPI.editDocx(
         userId,
         file.name || "",
@@ -234,7 +237,7 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
         file.url || null,
         file.base64_content || null,
       );
-      
+
       if (result.success) {
         // Emit a FilesEvent so the file shows up in 文件空间 immediately
         if (onFileEvent) {
@@ -269,18 +272,18 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
       setSaving(false);
     }
   }, [userId, file, originalParagraphs, generateEdits, onClose, onFileEvent]);
-  
+
   const bg = isDark ? "bg-[#11151c]" : "bg-white";
   const textColor = isDark ? "text-white" : "text-gray-900";
   const borderColor = isDark ? "border-white/10" : "border-gray-200";
   const hoverBg = isDark ? "hover:bg-white/5" : "hover:bg-gray-100";
-  
+
   const toolbarButton = (label: string, onClick: () => void, active = false) => (
     <button type="button" onClick={onClick} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${active ? "bg-blue-600 text-white" : `${hoverBg} ${textColor}`}`}>
       {label}
     </button>
   );
-  
+
   if (loading) {
     return (
       <div className={`fixed inset-0 flex items-center justify-center z-50 ${isDark ? "bg-gray-900" : "bg-white"}`}>
@@ -291,7 +294,7 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
       </div>
     );
   }
-  
+
   if (error) {
     return (
       <div className={`fixed inset-0 flex items-center justify-center z-50 ${isDark ? "bg-gray-900" : "bg-white"}`}>
@@ -303,7 +306,7 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
       </div>
     );
   }
-  
+
   return (
     <div className={`fixed inset-0 flex flex-col z-50 ${bg}`}>
       <div className={`flex items-center justify-between px-4 py-3 border-b ${borderColor}`}>
@@ -333,7 +336,7 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
           </button>
         </div>
       </div>
-      
+
       <div className="flex-1 overflow-auto p-6">
         <div className={`max-w-4xl mx-auto rounded-lg shadow-lg overflow-hidden ${isDark ? "bg-gray-800" : "bg-white"}`}>
           <style>{`
@@ -473,7 +476,17 @@ const normalizeMarkdownForPreview = (raw: string): string => {
 const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionId, onFileEvent }) => {
   const { darkMode } = React.useContext(appContext);
   const isDark = darkMode === "dark";
-  
+  const location = useLocation();
+  const navigate = useNavigate();
+  const setLayoutTab = useRightPanelStore((s) => s.setLayoutTab);
+  const setRightPanelOpen = useRightPanelStore((s) => s.setIsOpen);
+
+  const returnToSessionLikeOverviewTab = React.useCallback(() => {
+    setLayoutTab("overview");
+    setRightPanelOpen(true);
+    navigate(createSearchWithView(location.search, "chat"));
+  }, [location.search, navigate, setLayoutTab, setRightPanelOpen]);
+
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [originalText, setOriginalText] = React.useState("");
@@ -610,99 +623,109 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionI
       {showWordEditor && file && (
         <WordEditor key={Date.now()} file={file} onClose={() => setShowWordEditor(false)} onFileEvent={onFileEvent} />
       )}
-    
-    <div className="h-full min-h-0 flex flex-col">
-      <div className="flex-shrink-0 px-4 py-3 border-b border-border-primary/30 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-base font-semibold text-primary truncate">{file.name}</h2>
-          <p className="text-xs text-secondary mt-1 truncate">{file.description || "无描述"}</p>
-        </div>
-        {textMode && (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIsEditing((v) => !v)}
-              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-tertiary/20 text-primary hover:bg-tertiary/30"
-            >
-              {isEditing ? <Eye className="w-3.5 h-3.5" /> : <PencilLine className="w-3.5 h-3.5" />}
-              {isEditing ? "预览模式" : "编辑模式"}
-            </button>
-            <button
-              type="button"
-              onClick={downloadEdited}
-              disabled={!hasChanges}
-              className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium ${hasChanges
+
+      <div className="h-full min-h-0 flex flex-col">
+        <div className="flex-shrink-0 px-4 py-3 border-b border-border-primary/30 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-primary truncate">{file.name}</h2>
+            <p className="text-xs text-secondary mt-1 truncate">{file.description || "无描述"}</p>
+          </div>
+          {textMode && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsEditing((v) => !v)}
+                className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-tertiary/20 text-primary hover:bg-tertiary/30"
+              >
+                {isEditing ? <Eye className="w-3.5 h-3.5" /> : <PencilLine className="w-3.5 h-3.5" />}
+                {isEditing ? "预览模式" : "编辑模式"}
+              </button>
+              <button
+                type="button"
+                onClick={downloadEdited}
+                disabled={!hasChanges}
+                className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium ${hasChanges
                   ? "bg-accent/15 text-accent hover:bg-accent/25"
                   : "bg-tertiary/20 text-secondary cursor-not-allowed"
-                }`}
-            >
-              <Download className="w-3.5 h-3.5" />
-              保存为副本
-            </button>
-          </div>
-        )}
-        {wordMode && (
-          <button
-            type="button"
-            onClick={() => setShowWordEditor(true)}
-            className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-accent/15 text-accent hover:bg-accent/25"
-          >
-            <PencilLine className="w-3.5 h-3.5" />
-            在线编辑
-          </button>
-        )}
-      </div>
-
-      <div className="flex-1 min-h-0 overflow-auto p-4">
-        {loading && <div className="text-sm text-secondary">正在加载文件内容...</div>}
-        {error && <div className="text-sm text-red-500">{error}</div>}
-
-        {!loading && !error && textMode && (
-          isEditing ? (
-            <textarea
-              value={editedText}
-              onChange={(e) => setEditedText(e.target.value)}
-              className="w-full h-full min-h-[300px] resize-none rounded-lg border border-border-primary/40 bg-primary px-3 py-2 text-sm text-primary outline-none focus:border-accent/50"
-            />
-          ) : markdownMode ? (
-            <div className="text-primary bg-tertiary/10 border border-border-primary/25 rounded-lg p-3">
-              <MarkdownRenderer content={normalizeMarkdownForPreview(editedText)} />
+                  }`}
+              >
+                <Download className="w-3.5 h-3.5" />
+                保存为副本
+              </button>
             </div>
-          ) : (
-            <pre className="whitespace-pre-wrap break-words text-sm text-primary bg-tertiary/10 border border-border-primary/25 rounded-lg p-3">
-              {editedText}
-            </pre>
-          )
-        )}
+          )}
+          {wordMode && (
+            <div className="flex flex-shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowWordEditor(true)}
+                className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-accent/15 text-accent hover:bg-accent/25"
+              >
+                <PencilLine className="w-3.5 h-3.5" />
+                在线编辑
+              </button>
+              <button
+                type="button"
+                onClick={returnToSessionLikeOverviewTab}
+                className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium bg-tertiary/20 text-secondary hover:bg-tertiary/30"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                返回会话
+              </button>
+            </div>
+          )}
+        </div>
 
-        {!loading && !error && imageMode && dataUrl && (
-          <div className="h-full flex items-start justify-center">
-            <img src={dataUrl} alt={file.name} className="max-h-full max-w-full object-contain rounded-md" />
-          </div>
-        )}
+        <div className="flex-1 min-h-0 overflow-auto p-4">
+          {loading && <div className="text-sm text-secondary">正在加载文件内容...</div>}
+          {error && <div className="text-sm text-red-500">{error}</div>}
 
-        {!loading && !error && pdfMode && dataUrl && (
-          <iframe src={dataUrl} title={file.name} className="w-full h-full min-h-[500px] rounded-md border border-border-primary/30" />
-        )}
+          {!loading && !error && textMode && (
+            isEditing ? (
+              <textarea
+                value={editedText}
+                onChange={(e) => setEditedText(e.target.value)}
+                className="w-full h-full min-h-[300px] resize-none rounded-lg border border-border-primary/40 bg-primary px-3 py-2 text-sm text-primary outline-none focus:border-accent/50"
+              />
+            ) : markdownMode ? (
+              <div className="text-primary bg-tertiary/10 border border-border-primary/25 rounded-lg p-3">
+                <MarkdownRenderer content={normalizeMarkdownForPreview(editedText)} />
+              </div>
+            ) : (
+              <pre className="whitespace-pre-wrap break-words text-sm text-primary bg-tertiary/10 border border-border-primary/25 rounded-lg p-3">
+                {editedText}
+              </pre>
+            )
+          )}
 
-        {!loading && !error && wordMode && (
-          <div className="h-full">
-            {wordLoading && <div className="text-sm text-secondary">正在加载文件内容...</div>}
-            {wordError && <div className="text-sm text-red-500">{wordError}</div>}
-            <div
-              ref={wordContainerRef}
-              className={`h-full overflow-auto bg-white rounded-md border border-border-primary/30 p-4${wordLoading || wordError ? " hidden" : ""}`}
-            />
-          </div>
-        )}
+          {!loading && !error && imageMode && dataUrl && (
+            <div className="h-full flex items-start justify-center">
+              <img src={dataUrl} alt={file.name} className="max-h-full max-w-full object-contain rounded-md" />
+            </div>
+          )}
 
-        {!loading && !error && !textMode && !imageMode && !pdfMode && !wordMode && (
-          <div className="text-sm text-secondary">
-            当前文件类型暂不支持在线编辑，可使用下载按钮查看。
-          </div>
-        )}
+          {!loading && !error && pdfMode && dataUrl && (
+            <iframe src={dataUrl} title={file.name} className="w-full h-full min-h-[500px] rounded-md border border-border-primary/30" />
+          )}
+
+          {!loading && !error && wordMode && (
+            <div className="h-full">
+              {wordLoading && <div className="text-sm text-secondary">正在加载文件内容...</div>}
+              {wordError && <div className="text-sm text-red-500">{wordError}</div>}
+              <div
+                ref={wordContainerRef}
+                className={`h-full overflow-auto bg-white rounded-md border border-border-primary/30 p-4${wordLoading || wordError ? " hidden" : ""}`}
+              />
+            </div>
+          )}
+
+          {!loading && !error && !textMode && !imageMode && !pdfMode && !wordMode && (
+            <div className="text-sm text-secondary">
+              当前文件类型暂不支持在线编辑，可使用下载按钮查看。
+            </div>
+          )}
+        </div>
       </div>
-    </div>
     </>
   );
 };

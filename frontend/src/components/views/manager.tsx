@@ -40,7 +40,11 @@ import {
   getCanvasViewFromSearch,
   getMenuIdFromSearch,
 } from "./menuRoutes";
-import { apiDatetimeToUtcMs, formatApiDateTimeZhCN } from "../../utils/apiDatetime";
+import {
+  apiDatetimeToUtcMs,
+  formatApiDateTimeZhCN,
+  formatUnixForDisplayZhCN,
+} from "../../utils/apiDatetime";
 import { SessionEditor } from "./session_editor";
 import { AppLayout } from "../../layout";
 import { useRightPanelStore } from "../../store/rightPanel";
@@ -477,12 +481,34 @@ export const SessionManager: React.FC = () => {
     const currentSessionId = session?.id;
     if (!currentSessionId) return null;
     const events = sessionFileEvents[currentSessionId] || [];
-    const files = events.flatMap((event) => event.content?.files || []);
-    if (files.length === 0) return null;
+    /** 与 apiDatetime 一致：数值很大视为毫秒，否则视为秒 */
+    const filesEventTimeMs = (event: FilesEvent): number => {
+      const raw = event.send_time_stamp ?? event.content?.send_time_stamp;
+      if (raw == null) return 0;
+      const n = typeof raw === "number" ? raw : Number(raw);
+      if (!Number.isFinite(n)) return 0;
+      return n > 1e12 ? n : n * 1000;
+    };
+    const isJsonFile = (file: MessageFileItem) => {
+      const name = (file.name || "").trim().toLowerCase();
+      if (name.endsWith(".json")) return true;
+      const mime = (file.mime_type || "").trim().toLowerCase();
+      return mime === "application/json" || mime === "text/json";
+    };
+    const fileRows = events
+      .flatMap((event) => {
+        const timeMs = filesEventTimeMs(event);
+        const list = event.content?.files || [];
+        return list
+          .filter((file) => !isJsonFile(file))
+          .map((file) => ({ file, timeMs }));
+      })
+      .sort((a, b) => b.timeMs - a.timeMs);
+    if (fileRows.length === 0) return null;
 
     return (
       <div className="h-full overflow-y-auto p-3 space-y-2">
-        {files.map((file, index) => {
+        {fileRows.map(({ file, timeMs }, index) => {
           const href = buildDownloadHref(file);
           return (
             <div
@@ -501,7 +527,7 @@ export const SessionManager: React.FC = () => {
                 {file.name || `file-${index + 1}`}
               </button>
               <div className="mt-1 text-xs text-secondary">
-                {file.description || "无描述"} · {formatFileSize(file.size)}
+                {timeMs > 0 ? formatUnixForDisplayZhCN(timeMs) : "—"}  · {formatFileSize(file.size)}
               </div>
               <div className="mt-2 flex items-center gap-2">
                 <button
@@ -654,8 +680,8 @@ export const SessionManager: React.FC = () => {
                           onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => e.stopPropagation()}
                           className={`flex items-center justify-center w-7 h-7 rounded-lg outline-none border-0 bg-transparent shadow-none ring-0 transition-colors ${isSessionLoading
-                              ? "opacity-40 cursor-not-allowed"
-                              : "text-secondary hover:text-primary hover:bg-tertiary/30"
+                            ? "opacity-40 cursor-not-allowed"
+                            : "text-secondary hover:text-primary hover:bg-tertiary/30"
                             }`}
                         >
                           <MoreVertical className="w-3.5 h-3.5" strokeWidth={2} />
