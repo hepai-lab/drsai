@@ -116,11 +116,10 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
             {agentInfo?.examples?.map((task: string, idx: number) => (
               <button
                 key={idx}
-                className={`w-[94%] px-4 py-3 text-left transition-smooth text-primary hover:text-accent border-b last:border-b-0 group ${
-                  darkMode === "dark"
-                    ? "hover:bg-[#1a1a1a] hover:rounded-lg"
-                    : "hover:bg-gray-50 hover:rounded-lg"
-                }`}
+                className={`w-[94%] px-4 py-3 text-left transition-smooth text-primary hover:text-accent border-b last:border-b-0 group ${darkMode === "dark"
+                  ? "hover:bg-[#1a1a1a]"
+                  : "hover:bg-gray-50"
+                  }`}
                 style={{ borderBottomColor: "#434141" }}
                 onClick={() => handleTaskSelect(task)}
                 disabled={isLoading}
@@ -142,11 +141,10 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
           {agentInfo?.examples?.map((task: string, idx: number) => (
             <button
               key={idx}
-              className={`flex-1 min-w-[260px] max-w-[380px] rounded-2xl px-5 py-4 text-left transition-all duration-200 animate-fade-in group border ${
-                darkMode === "dark"
-                  ? "bg-white/[0.03] border-border-primary/50 hover:border-accent/40 hover:bg-white/[0.06]"
-                  : "bg-white/80 border-gray-200/70 hover:border-violet-300/70 hover:bg-violet-50/60"
-              } shadow-sm hover:shadow-modern`}
+              className={`flex-1 min-w-[260px] max-w-[380px] rounded-2xl px-5 py-4 text-left transition-all duration-200 animate-fade-in group border ${darkMode === "dark"
+                ? "bg-white/[0.03] border-border-primary/50 hover:border-accent/40 hover:bg-white/[0.06]"
+                : "bg-white/80 border-gray-200/70 hover:border-violet-300/70 hover:bg-violet-50/60"
+                } shadow-sm hover:shadow-modern`}
               style={{ animationDelay: `${idx * 0.08}s` }}
               onClick={() => handleTaskSelect(task)}
               disabled={isLoading}

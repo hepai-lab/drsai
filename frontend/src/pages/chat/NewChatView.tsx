@@ -88,7 +88,7 @@ export default function NewChatView({ agent, onSubmit, serverFilesPrefill }: New
             <div className="flex flex-col h-full overflow-hidden">
                 <div className="flex-1 flex items-start justify-center overflow-y-auto hide-scrollbar pt-[15vh]">
                     <div className="w-full max-w-4xl py-8 px-4">
-                        <div className="text-center space-y-8">
+                        <div className="text-center space-y-4">
                             {/* Agent Logo and Name */}
                             <div className="animate-fade-in">
                                 <div className="flex flex-col items-center gap-4">
@@ -152,18 +152,16 @@ export default function NewChatView({ agent, onSubmit, serverFilesPrefill }: New
                             </div>
 
                             {/* Sample Tasks */}
-                            <div className="w-full px-4">
-                                <SampleTasks
-                                    hasInputValue={hasInputValue}
-                                    onSelect={(task: string) => {
-                                        setTimeout(() => {
-                                            if (chatInputRef.current) {
-                                                chatInputRef.current.setValue(task);
-                                            }
-                                        }, 200);
-                                    }}
-                                />
-                            </div>
+                            <SampleTasks
+                                hasInputValue={hasInputValue}
+                                onSelect={(task: string) => {
+                                    setTimeout(() => {
+                                        if (chatInputRef.current) {
+                                            chatInputRef.current.setValue(task);
+                                        }
+                                    }, 200);
+                                }}
+                            />
                         </div>
                     </div>
                 </div>
