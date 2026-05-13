@@ -241,12 +241,18 @@ const ChatInput = React.forwardRef<
     };
     // Handle textarea auto-resize
     React.useEffect(() => {
-      if (textAreaRef.current) {
-        textAreaRef.current.style.height = getTextAreaDefaultHeight();
-        const scrollHeight = textAreaRef.current.scrollHeight;
-        textAreaRef.current.style.height = `${scrollHeight}px`;
+      const ta = textAreaRef.current;
+      if (!ta) return;
+
+      // 清空后 scrollHeight 有时会沿用撑开前的值，不能直接用来设高度
+      if (!text.trim()) {
+        ta.style.height = getTextAreaDefaultHeight();
+        return;
       }
 
+      ta.style.height = getTextAreaDefaultHeight();
+      const scrollHeight = ta.scrollHeight;
+      ta.style.height = `${Math.min(scrollHeight, 120)}px`;
     }, [text, inputRequest]);
 
     React.useEffect(() => {
@@ -573,9 +579,13 @@ const ChatInput = React.forwardRef<
         setText(value);
         if (textAreaRef.current) {
           textAreaRef.current.value = value;
-          const scrollHeight = textAreaRef.current.scrollHeight;
-          const newHeight = Math.min(scrollHeight, 120);
-          textAreaRef.current.style.height = `${newHeight}px`;
+          if (!value.trim()) {
+            textAreaRef.current.style.height = getTextAreaDefaultHeight();
+          } else {
+            const scrollHeight = textAreaRef.current.scrollHeight;
+            const newHeight = Math.min(scrollHeight, 120);
+            textAreaRef.current.style.height = `${newHeight}px`;
+          }
           textAreaRef.current.focus();
           textAreaRef.current.setSelectionRange(value.length, value.length);
         }

@@ -113,7 +113,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
             "bg-[#f3f1fb] text-[#665d94] shadow-[inset_0_1px_0_rgba(255,255,255,0.88)] dark:bg-[#32284a] dark:text-[#ece4ff] dark:shadow-[0_0_0_1px_rgba(167,139,250,0.18)]",
         }
         : {
-          text: "官方",
+          text: "本地",
           className:
             "bg-[#f5f5f8] text-[#39404e] shadow-[inset_0_1px_0_rgba(255,255,255,0.86)] dark:bg-[#2b2837] dark:text-[#eff1f7] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.06)]",
         };
