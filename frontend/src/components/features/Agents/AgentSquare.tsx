@@ -643,7 +643,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
                 [
                   ["all", "全部"],
                   ["mine", "我的"],
-                  ["official", "官方"],
+                  ["official", "本地"],
                 ] as const
               ).map(([key, label]) => (
                 <button
@@ -790,9 +790,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
                           <h3 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-[#0f172a] dark:text-[#e4e8ff]">
                             {featuredAgent.name}
                           </h3>
-                          <span className="inline-flex shrink-0 items-center rounded-full bg-black/5 px-2 py-0.5 text-[11px] font-medium text-[#334155] dark:bg-white/10 dark:text-[#cfd6e9]">
-                            官方
-                          </span>
+
                         </div>
                         <div className="mt-0.5 truncate text-[12px] text-[#64748b] dark:text-[#aab3c8]">
                           {featuredAgent.owner}
