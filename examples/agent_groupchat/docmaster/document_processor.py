@@ -1309,7 +1309,195 @@ class DocumentProcessor:
                     combined = ''.join(run_texts)
                 
                 return len(matches)
-            
+
+            def _set_cell_text(cell, value: str) -> None:
+                """Overwrite a cell's text, preserving the first run's formatting.
+
+                Splits `value` on '\\n' into N paragraph strings:
+                  - Cell's existing first paragraph is reused (preserves pPr).
+                  - That paragraph's first run is reused (preserves rPr — font,
+                    size, bold/italic/color). Its text is set to parts[0].
+                  - All other runs in that paragraph are blanked.
+                  - All other paragraphs in the cell are removed.
+                  - Extra parts become new paragraphs appended via cell.add_paragraph
+                    (those inherit cell default styling).
+                """
+                from docx.oxml.ns import qn
+                value = "" if value is None else str(value)
+                parts = value.split("\n")
+
+                paragraphs = list(cell.paragraphs)
+                if not paragraphs:
+                    cell.add_paragraph(parts[0])
+                else:
+                    first = paragraphs[0]
+                    runs = first.runs
+                    if runs:
+                        runs[0].text = parts[0]
+                        for extra in runs[1:]:
+                            extra.text = ""
+                        # Drop XML elements of blanked runs to keep doc tidy
+                        for r in list(first._element.findall(qn('w:r'))):
+                            t_elem = r.find(qn('w:t'))
+                            if t_elem is not None and not (t_elem.text or "") and r is not first.runs[0]._element:
+                                first._element.remove(r)
+                    else:
+                        first.add_run(parts[0])
+                    # Remove any other paragraphs in the cell
+                    for extra_p in paragraphs[1:]:
+                        p_elem = extra_p._element
+                        parent = p_elem.getparent()
+                        if parent is not None:
+                            parent.remove(p_elem)
+                # Append additional paragraphs for multi-line values
+                for part in parts[1:]:
+                    cell.add_paragraph(part)
+
+            def _replace_in_cell(cell, old_text: str, new_text: str):
+                """Run-aware replace scoped to one table cell.
+
+                Tries each paragraph in isolation via apply_text_replacement_to_paragraph
+                (handles the common single-paragraph, multi-run case with full
+                formatting preservation). If no paragraph matches, falls back to
+                a cross-paragraph join over the cell's paragraphs.
+
+                Returns (replaced_count, joined_cell_text_for_hint).
+                """
+                if not old_text:
+                    return 0, ""
+                if old_text == new_text:
+                    return 0, ""
+
+                paragraphs = list(cell.paragraphs)
+                # Per-paragraph pass (case-sensitive — table cells often hold
+                # exact strings the agent copied from extract_docx_content_tool)
+                total = 0
+                for p in paragraphs:
+                    total += apply_text_replacement_to_paragraph(
+                        p, old_text, new_text, case_sensitive=True
+                    )
+                if total > 0:
+                    return total, ""
+
+                # Cross-paragraph fallback — match spans more than one paragraph
+                # inside this cell (e.g. "（大写）...（小写）..." split across two
+                # paragraphs in a "total amount" cell).
+                if len(paragraphs) < 2:
+                    return 0, "\n".join(p.text for p in paragraphs)
+
+                para_texts = [p.text for p in paragraphs]
+                joined = "\n".join(para_texts)
+                if old_text not in joined:
+                    return 0, joined
+
+                match_start = joined.index(old_text)
+                match_end = match_start + len(old_text)
+
+                offsets = [0]
+                for t in para_texts:
+                    offsets.append(offsets[-1] + len(t) + 1)  # +1 for the join '\n'
+
+                def pos_to_para(pos):
+                    for i in range(len(paragraphs)):
+                        if offsets[i] <= pos < offsets[i + 1]:
+                            return i, pos - offsets[i]
+                    return len(paragraphs) - 1, len(para_texts[-1])
+
+                p_start_idx, start_off = pos_to_para(match_start)
+                # match_end is exclusive; treat it as the position of the next char
+                p_end_idx, end_off = pos_to_para(max(match_end - 1, match_start))
+                # convert end_off back to "exclusive" coord
+                end_off = end_off + 1 if match_end > match_start else end_off
+
+                if p_start_idx == p_end_idx:
+                    # Single paragraph after all — re-run on just that paragraph
+                    count = apply_text_replacement_to_paragraph(
+                        paragraphs[p_start_idx], old_text, new_text, case_sensitive=True
+                    )
+                    return count, joined
+
+                # True cross-paragraph match.
+                # Split new_text on '\n' to map it across paragraphs. parts[0]
+                # goes into the start paragraph's tail, parts[-1] into the end
+                # paragraph's head, and parts[1:-1] become new paragraphs
+                # inserted between them.
+                new_parts = new_text.split("\n")
+                start_p = paragraphs[p_start_idx]
+                end_p = paragraphs[p_end_idx]
+                start_tail = para_texts[p_start_idx][start_off:]
+                end_head = para_texts[p_end_idx][:end_off]
+
+                # Step 1: rewrite the start paragraph's tail.
+                # If only one new part, the whole new_text replaces the tail
+                # AND the end paragraph's matched head; nothing remains for the
+                # end paragraph to inherit.
+                if start_tail:
+                    apply_text_replacement_to_paragraph(
+                        start_p, start_tail, new_parts[0], case_sensitive=True
+                    )
+                elif new_parts[0]:
+                    start_p.add_run(new_parts[0])
+
+                # Step 2: drop fully-consumed intermediate paragraphs
+                for i in range(p_start_idx + 1, p_end_idx):
+                    p_elem = paragraphs[i]._element
+                    parent = p_elem.getparent()
+                    if parent is not None:
+                        parent.remove(p_elem)
+
+                # Step 3: handle the end paragraph.
+                if len(new_parts) == 1:
+                    # No paragraph break in the replacement. The unmatched
+                    # suffix of the end paragraph (chars after end_off) needs
+                    # to be merged into the start paragraph's run-stream so
+                    # the end paragraph can be dropped entirely.
+                    suffix = para_texts[p_end_idx][end_off:]
+                    if suffix:
+                        # Append a fresh run carrying the suffix text to the
+                        # start paragraph — formatting of that suffix is lost
+                        # by necessity (it lived in a separate paragraph), but
+                        # the user's intent for a single-line replacement is
+                        # that the cell ends up with one paragraph.
+                        start_p.add_run(suffix)
+                    end_elem = end_p._element
+                    parent = end_elem.getparent()
+                    if parent is not None:
+                        parent.remove(end_elem)
+                else:
+                    # parts[-1] replaces the end paragraph's head; suffix stays.
+                    if end_head:
+                        apply_text_replacement_to_paragraph(
+                            end_p, end_head, new_parts[-1], case_sensitive=True
+                        )
+                    elif new_parts[-1]:
+                        # Match ends at the very start of end_p; prepend a run.
+                        # python-docx doesn't expose "insert run at index 0", so
+                        # we just add a run — it lands at the end, which is fine
+                        # because end_head is empty (no leading text to push).
+                        end_p.add_run(new_parts[-1])
+                    # Step 3b: insert parts[1:-1] as fresh paragraphs between
+                    # start_p and end_p (XML insertBefore).
+                    middle_parts = new_parts[1:-1]
+                    if middle_parts:
+                        end_elem = end_p._element
+                        parent = end_elem.getparent()
+                        if parent is not None:
+                            from copy import deepcopy
+                            for part_text in middle_parts:
+                                # Clone start_p's element shape so list/style
+                                # context is inherited from a same-cell sibling.
+                                new_p = deepcopy(start_p._element)
+                                # Strip runs from the clone
+                                for r in list(new_p.findall(qn('w:r'))):
+                                    new_p.remove(r)
+                                # Insert before end_p; then add a run with text
+                                parent.insert(list(parent).index(end_elem), new_p)
+                                # Wrap the inserted XML in a Paragraph object so
+                                # we can use .add_run, then write the text.
+                                from docx.text.paragraph import Paragraph
+                                Paragraph(new_p, start_p._parent).add_run(part_text)
+                return 1, joined
+
             def fill_table(table, data, rows, cols):
                 for row_idx in range(rows):
                     row_data = data[row_idx] if row_idx < len(data) else []
@@ -1427,7 +1615,56 @@ class DocumentProcessor:
                             changes_made.append(f"Text '{old_text}' not found for replacement")
                             if not_found_info:
                                 changes_made.append(f"HINT: Found similar text: '{not_found_info['actual_text'][:100]}...'")
-                    
+
+                    elif edit_type == 'set_cell_text':
+                        table_index = edit.get('table_index', 0)
+                        row = edit.get('row')
+                        col = edit.get('col')
+                        value = edit.get('value', '')
+                        if not isinstance(table_index, int) or not (0 <= table_index < len(doc.tables)):
+                            raise IndexError(f"table_index {table_index} out of range (have {len(doc.tables)} table(s))")
+                        table = doc.tables[table_index]
+                        if not isinstance(row, int) or not (0 <= row < len(table.rows)):
+                            raise IndexError(f"row {row} out of range for table {table_index} (have {len(table.rows)} row(s))")
+                        row_cells = table.rows[row].cells
+                        if not isinstance(col, int) or not (0 <= col < len(row_cells)):
+                            raise IndexError(f"col {col} out of range for row {row} (have {len(row_cells)} cell(s))")
+                        cell = row_cells[col]
+                        _set_cell_text(cell, value)
+                        preview = (str(value)[:40] + '…') if len(str(value)) > 40 else str(value)
+                        changes_made.append(f"Set cell ({table_index},{row},{col}) to '{preview}'")
+
+                    elif edit_type == 'replace_in_cell':
+                        table_index = edit.get('table_index', 0)
+                        row = edit.get('row')
+                        col = edit.get('col')
+                        old_text = edit.get('old_text', '')
+                        new_text = edit.get('new_text', '')
+                        if not isinstance(table_index, int) or not (0 <= table_index < len(doc.tables)):
+                            raise IndexError(f"table_index {table_index} out of range (have {len(doc.tables)} table(s))")
+                        table = doc.tables[table_index]
+                        if not isinstance(row, int) or not (0 <= row < len(table.rows)):
+                            raise IndexError(f"row {row} out of range for table {table_index} (have {len(table.rows)} row(s))")
+                        row_cells = table.rows[row].cells
+                        if not isinstance(col, int) or not (0 <= col < len(row_cells)):
+                            raise IndexError(f"col {col} out of range for row {row} (have {len(row_cells)} cell(s))")
+                        cell = row_cells[col]
+                        count, joined_hint = _replace_in_cell(cell, old_text, new_text)
+                        if count > 0:
+                            old_preview = (old_text[:30] + '…') if len(old_text) > 30 else old_text
+                            new_preview = (new_text[:30] + '…') if len(new_text) > 30 else new_text
+                            changes_made.append(
+                                f"Replaced '{old_preview}' with '{new_preview}' in cell ({table_index},{row},{col})"
+                            )
+                        else:
+                            changes_made.append(
+                                f"Text '{old_text[:30]}...' not found in cell ({table_index},{row},{col})"
+                            )
+                            if joined_hint:
+                                changes_made.append(
+                                    f"HINT: actual cell text is '{joined_hint[:120]}{'…' if len(joined_hint) > 120 else ''}'"
+                                )
+
                     elif edit_type == 'delete_text':
                         # Properly delete text instead of replacing with empty string
                         target_text = edit.get('old_text', '')

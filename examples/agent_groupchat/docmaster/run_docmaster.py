@@ -42,11 +42,20 @@ sys.path.append(str(Path(__file__).parent))
 try:
     from document_processor import DocumentProcessor, print_document_summary
     from document_skills.process_document_skill import DocumentProcessingSkill
+    from document_skills.docx_template_skill import DocxTemplateSkill
+    from document_skills.doc_to_docx_skill import DocToDocxSkill
     DOCUMENT_PROCESSING_AVAILABLE = True
 except ImportError as e:
     DOCUMENT_PROCESSING_AVAILABLE = False
     print(f"⚠️ Document processing components not available: {e}")
     print("Install with: pip install python-docx PyPDF2 python-pptx pandas openpyxl")
+
+try:
+    import docxtpl  # noqa: F401
+    DOCX_TEMPLATE_JINJA_AVAILABLE = True
+except ImportError:
+    DOCX_TEMPLATE_JINJA_AVAILABLE = False
+    print("⚠️ docxtpl not installed — jinja-mode template filling will return an error; bracket mode still works")
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -515,6 +524,7 @@ def create_word_editor_agent(
    - 添加批注和回复（使用 add_comment_tool，针对文档中的特定文本添加评论）
    - 删除批注（使用 remove_comment_tool，根据批注ID删除指定的批注）
 4. 对图片、超链接、页眉页脚、复杂版式重排等高级 Word 元素，不要假装已经可靠支持；如果用户提出这类需求，可以先说明当前能力更适合文本、标题、段落、表格、批注和字体层面的处理。
+5. 你支持以 DOCX 模板填充方式批量生成文档：用户上传一个带占位符的 .docx，你可以读取占位符并按其提供的值生成填充后的新文档。占位符支持两种风格：Jinja 风格（{{ name }}、{% for x in xs %}…{% endfor %}、{%tr for %} 表格行循环）以及方括号风格（[NAME]、[DATE]）。
 
 【核心工作原则】
 1. 先判断任务类型，再选择工具。
@@ -559,6 +569,35 @@ def create_word_editor_agent(
 6. 如果用户说“重写引言/缩短结论/让措辞更正式”，先用 extract_docx_content_tool 查看内容，再进行后续编辑。
 7. 如果用户要新建文档，使用 create_docx_with_content_tool。
 8. 如果用户只是咨询写作或格式建议，不必强行调用工具。
+9. 如果用户上传了一份 DOCX 模板并希望"填空"或"按模板生成"新文档：
+   - 第一步：必须先用 inspect_docx_template_tool 检查模板，了解 mode_detected、jinja_variables、bracket_tokens、slots 以及 removals。
+   - 第二步（slots / 占位符）：
+     · 如果有 jinja_variables 或 bracket_tokens：向用户询问尚未提供的值（用户已给出的字段不要重复问）。
+     · 如果只有 slots（模板没有显式占位符）：**逐个**用 slots 里的 label + context 向用户确认每个槽位应填什么。slot 的 kind 可能是 highlighted / underscores / label_blank / empty_cell / angle_bracketed / placeholder_phrase / hint_text / section_body_empty——其中 **highlighted（带黄/绿/青等 Word 高亮的文字）是最强的"请修改我"信号**，用户上传带高亮的模板就是希望把高亮处替换并清除高亮；填充时工具会**自动清除高亮**，同时保留字体/字号/加粗/斜体/颜色等其他格式。即使如此也要**逐条向用户确认替换内容**——不要仅凭高亮就自动决定写什么进去。
+     · 对 highlighted 槽位，确认内容时**必须把整段高亮文字原样念给用户**（用 slot 的 `span_text` 字段，里面是高亮区域的完整原文）。例如高亮文字是「15个工作日」，要问"高亮的『15个工作日』要改成什么？"而不是只问"工作日改几天"。
+     · 如果 highlighted slot 带有 `scaffold` 字段（说明工具识别出了"变量 + 单位"形式，比如 15+个工作日、¥+850、50+%、2025年5月14日 等），**意味着填充时只换变量部分、保留前后的单位/币符/百分号**：用户回"20"，最终会写成"20个工作日"。即使如此，**你给 slot_values 时也最好直接传完整字符串**（"20个工作日"），不要只传"20"——只把数字作为兜底逻辑，避免歧义。绝对不要把"15个工作日"原样替换成"20"丢掉单位。
+     · **当章节标题（如"一、甲方委托乙方提供以下维修服务："）带有"以下/如下/下表/following/below"等字样、且后面紧跟一张表格时，要把每条维修服务/物品作为表格的一行来填，而不是把描述文字塞在标题和表格之间的空段落里。**inspect 已经默认不会在这种情况下emit section_body_empty 槽位；如果用户需要新增多条服务，请用 edit_docx_tool 的 set_cell_text 一行一行写进表格，或者用 add_table_row 之类增行；千万别把列表内容写成段落。
+     · 如果多个 slots 共享相同或近似的 label（比如表格里多个"总价"、"大写"、"小写"单元格），**逐个**问用户该填什么，**不要**把同一个数字往所有看似相同的格子里灌。"总价" = 单价×数量的合计；"大写" / "小写" 是同一个金额的中文大写 / 阿拉伯数字两种写法——三者**值不同**，要按语义分别计算/转换后再填。
+   - 第三步（removals 删除候选）：
+     · 如果 inspect 返回的 removals 非空，**逐条**把 removal.text 朗读给用户，问"这一段需要从最终文档中删除吗？"
+     · 把用户确认要删除的 id 收集进列表。**永远不要自动删除**——红色斜体的备注也可能是用户故意保留的注解。
+   - 第四步：用 fill_docx_template_tool 生成新文档：
+     · 显式占位符的值放入 context。
+     · 用户确认的 slot 值放入 slot_values={"slot_0": "...", "slot_1": "...", ...}。
+     · 用户确认要删除的项放入 removal_ids=["rm_0", "rm_2", ...]。
+     · output_path 放在用户的工作目录下，文件名建议在模板原名后加 "_filled" 后缀（例如 contract.docx → contract_filled.docx），不要覆盖原模板。
+10. fill_docx_template_tool 默认 mode="auto"，会自动检测占位符风格——除非用户明确要求，否则不要强行指定 mode。若模板同时含 {{ }} 与 [TOKEN]，auto 模式会先按 Jinja 渲染再做一次方括号替换；slot_values 总是在最后一步应用，removal_ids 在保存输出文件后执行。
+11. 不要把 inspect_docx_template_tool 用在普通文档上——那应该使用 extract_docx_content_tool 来查看内容。但模板里**没有任何**占位符也属于合法用法：inspect 会返回 slots / removals 让你识别可填空和可删除的位置。
+12. fill_docx_template_tool 会保留整个文档的字体、颜色、加粗、斜体、对齐、段距等格式——只修改占位符所在的 run，周围的 run 和段落的样式都不动。对于 highlighted 类型的槽位，工具会**只清除该处的高亮**，但保留同一 run 的字体/字号/加粗/斜体/颜色等。因此**不要**在填模板之后再去"统一字体/格式"或调用 modify_docx_fonts_tool，那会覆盖用户模板的样式。
+13. 如果用户上传的是 **.doc**（旧版二进制 Word）文件，必须先调用 convert_doc_to_docx_tool 把它转换成 .docx，然后再继续后续流程（模板检测、内容编辑、批注等）。转换后的文件路径在工具返回的 output_path 字段里——之后所有 DOCX 工具都用这个新路径。如果工具返回 success=False 且 error="soffice not found"，把 message 中的安装提示告诉用户并停止——LibreOffice 没装好之前下游工具都用不了 .doc 文件。convert_doc_to_docx_tool 也可以对 .docx 文件无害地调用（会返回 note="already .docx" 并不做任何修改），所以遇到 Word 文件统一先调一次很安全。
+14. **表格编辑必须按单元格定位**——表格内容中相同的数字/词常常分布在多个单元格（单价 vs 总价、各行重复值等），用 replace_text 做全文档替换会误改。正确流程：
+    - 第一步：用 extract_docx_content_tool 读出 tables，记下要改的 table_index / row / col，并把目标单元格的当前文本完整记下来（用于 replace_in_cell 的 old_text）。
+    - 第二步：选其一：
+      · 整格重写：{'type': 'set_cell_text', 'table_index': 0, 'row': 3, 'col': 5, 'value': '2550'}。如果单元格里要分多段（例如同一格里 "（大写）..." 和 "（小写）..." 各占一段），用 '\n' 分隔。
+      · 在该单元格内精准替换：{'type': 'replace_in_cell', 'table_index': 0, 'row': 3, 'col': 5, 'old_text': '850', 'new_text': '2550'}。replace_in_cell 同时支持单段落 run-aware 替换以及跨段落匹配（针对一格内分两段的"大写/小写"情形）。
+    - 一次改多格：把多个 set_cell_text / replace_in_cell 放进同一个 edit_docx_tool 调用的 edits 数组里，一次性提交。
+    - 这两种工具都保留单元格原有 run 的字体/字号/加粗/斜体/颜色等格式（set_cell_text 保留第一个 run 的 rPr；replace_in_cell 是 run-aware 替换）。
+    - 表格内容**禁止**用 replace_text。仅当用户明确要"全文统一替换"时才用 replace_text。
 
 【优先使用 edit_docx_tool】
 大多数编辑任务都应该用 edit_docx_tool 完成，包括：
@@ -574,6 +613,7 @@ replace_text 会替换文档中所有匹配的文本，如果相同内容出现�
 - 替换"1. xxx"可能同时影响"议程"和"决议事项"等多个章节
 - 如果必须用 replace_text，先用 extract_docx_content_tool 查看结构，确认目标文本是唯一的
 - 或者使用 add_paragraph/add_heading 在指定位置插入新内容，比替换更安全
+- **表格内容禁止用 replace_text**——表格里的同一数字/同一文字通常会在多个单元格出现（单价列 vs 总价列、各行重复值等），用全文替换会误改其他单元格。表格请走 set_cell_text / replace_in_cell（见规则 14）。
 
 【⚠️ replace_text 必须使用完全精确的文本】
 - replace_text 要求 old_text 与文档中的文本**100%完全一致**
@@ -731,6 +771,8 @@ XML编辑工作流（仅用于 tracked changes）：
                     - {'type': 'add_page_break', 'position': 'end'}
                     - {'type': 'add_table', 'data': [['A', 'B'], ['1', '2']], 'table_style': 'Table Grid'}
                     - {'type': 'set_table_style', 'table_index': 0, 'table_style': 'Light Grid Accent 1'}
+                    - {'type': 'set_cell_text', 'table_index': 0, 'row': 3, 'col': 5, 'value': '2550'}   # overwrite one cell; '\\n' splits paragraphs
+                    - {'type': 'replace_in_cell', 'table_index': 0, 'row': 3, 'col': 5, 'old_text': '850', 'new_text': '2550'}   # scoped find/replace inside one cell (cross-paragraph aware)
                     - {'type': 'add_bullet_list', 'items': ['要点一', '要点二'], 'position': 'end'}
                     - {'type': 'add_numbered_list', 'items': ['第一步', '第二步'], 'position': 'end'}
                     - {'type': 'insert_image', 'image_path': '/abs/path/to/image.png', 'position': 0, 'width_inches': 5.0}
@@ -976,7 +1018,196 @@ XML编辑工作流（仅用于 tracked changes）：
                 'table_count': doc_info.get('table_count'),
                 'elements_created': len(elements),
             }
-        
+
+        def convert_doc_to_docx_tool(file_path: str):
+            """
+            Convert a legacy Word .doc file to modern .docx via LibreOffice headless.
+
+            Call this FIRST whenever the user uploads a .doc file — python-docx
+            and every other DOCX tool here cannot read the legacy binary format.
+            The result includes `output_path`; use that path for any follow-up
+            tool calls (inspect_docx_template_tool, edit_docx_tool, etc.).
+
+            If the input is already .docx, returns success with note="already .docx"
+            and the same path — safe to call on any uploaded Word file.
+
+            Requires `soffice` (LibreOffice) on PATH. If missing, returns a clear
+            error with install instructions; stop and tell the user.
+
+            Args:
+                file_path: Path to the uploaded .doc (or .docx) file.
+
+            Returns dict with: success, input_path, output_path, soffice_used,
+                message. On failure: success=False, error=<reason>, message=<hint>.
+            """
+            skill = DocToDocxSkill(str(WORKSPACE))
+            result = skill.convert(file_path)
+            if (
+                result.get('success')
+                and result.get('soffice_used')
+                and result.get('output_path') != file_path
+            ):
+                fe_data = _build_files_event_data(
+                    result['output_path'],
+                    f"Converted to DOCX: {Path(result['output_path']).name}",
+                )
+                if fe_data:
+                    _pending_files_events.append(fe_data)
+            return result
+
+        def inspect_docx_template_tool(template_path: str):
+            """
+            Inspect a DOCX template and discover its placeholders and fillable slots.
+
+            Use this BEFORE asking the user to provide values for a template.
+            Returns the detected placeholder style and the list of variables /
+            tokens found, plus heuristic "slots" for templates that do not use
+            any explicit placeholder syntax (e.g. underscore lines `_____`,
+            "Label:" with empty tail, empty table cells under a header).
+
+            Best for:
+            - "I uploaded a template, what fields does it have?"
+            - planning a conversational fill flow before generating a document
+            - filling user-uploaded templates that don't use {{ }} or [TOKEN]
+
+            Args:
+                template_path: Path to the .docx template file.
+
+            Returns a dict with:
+                mode_detected: 'jinja' (uses {{ name }}), 'bracket' (uses [NAME]),
+                    'both', or 'none'
+                jinja_variables: list of top-level Jinja variable names
+                bracket_tokens: list of bracket tokens (without the brackets)
+                has_loops, has_conditionals: True if {% for %} / {% if %} present
+                slots: list of {id, kind, label, context, ...} dicts where kind
+                    is one of:
+                      - 'highlighted'         — run(s) with a Word highlight
+                                                (yellow/green/cyan/…); the
+                                                strongest fill signal. On fill
+                                                the text is replaced AND the
+                                                highlight is cleared. Extra
+                                                fields on this kind:
+                                                  • span_text: full original
+                                                    highlighted text — show it
+                                                    to the user verbatim when
+                                                    asking what to fill.
+                                                  • scaffold (optional): when
+                                                    the span looks like
+                                                    "<variable><unit>"
+                                                    (15个工作日, ¥850, 50%,
+                                                    2025年5月14日, 10kg, …),
+                                                    a {kind, prefix, variable,
+                                                    suffix} dict. If the
+                                                    slot_values reply is a
+                                                    bare number, prefix+suffix
+                                                    are auto-reattached on
+                                                    fill so "20" becomes
+                                                    "20个工作日". The agent
+                                                    SHOULD still pass the full
+                                                    intended string when it
+                                                    can — auto-reattach is a
+                                                    safety net.
+                      - 'underscores'         — run of 3+ underscores
+                      - 'label_blank'         — paragraph ending in "Label:"
+                      - 'empty_cell'          — empty table cell under a header
+                      - 'angle_bracketed'     — <token> or 《占位符》
+                      - 'placeholder_phrase'  — "your text here", "请填写", "TBD"…
+                      - 'hint_text'           — italic/grey instructional run
+                      - 'section_body_empty'  — empty body under a Heading
+                  label = best-guess field name (may be None for stray cases).
+                  context = surrounding snippet for disambiguation.
+                  Pass the slot ids back via fill_docx_template_tool's
+                  slot_values argument once the user confirms each.
+                removals: list of {id, kind, text, reason} dicts of paragraphs/
+                    runs that look like template instructions to be deleted
+                    before publishing (e.g. "Delete this before submitting",
+                    "Note to author: ...", "请删除本段"). kind is
+                    'instruction_paragraph' (whole paragraph removed) or
+                    'instruction_run' (just one run blanked). NEVER auto-
+                    delete: read each entry to the user, get confirmation,
+                    then pass approved ids via fill_docx_template_tool's
+                    removal_ids argument.
+                warnings: notes (e.g. mixed-mode template, ambiguous slots,
+                    removal candidates present)
+            """
+            skill = DocxTemplateSkill(str(WORKSPACE))
+            return skill.inspect_template(template_path)
+
+        def fill_docx_template_tool(
+            template_path: str,
+            output_path: str,
+            context: dict = None,
+            mode: str = "auto",
+            slot_values: dict = None,
+            removal_ids: list = None,
+        ):
+            """
+            Fill a DOCX template with values and save to a new DOCX file.
+
+            Supports three input styles, freely combinable:
+            - Jinja (docxtpl): {{ name }}, {% for x in xs %}…{% endfor %},
+              {%tr for row in rows %}…{%tr endtr %} for table rows.
+              `context` is a regular nested dict matching the variables.
+            - Bracket: [NAME], [DATE] — literal substitution across paragraphs,
+              tables, and headers/footers. `context` keys are the token names
+              without brackets, e.g. {"NAME": "Alice"} fills [NAME]. Bracket
+              tokens must be uppercase-leading (alnum, underscore, dash).
+            - Heuristic slots: for templates without placeholder syntax. Call
+              inspect_docx_template_tool first to discover slot ids, confirm
+              what each holds with the user, then pass
+              slot_values={"slot_0": "Alice", "slot_1": "2026-05-13", ...}.
+
+            Run-level formatting (bold/italic/color/font) in the template is
+            preserved — only the runs that span the matched placeholder text
+            are edited; other runs in the same paragraph are left untouched.
+
+            Use mode='auto' (default) to let the tool detect from the template.
+            Force 'jinja' or 'bracket' only when the user explicitly asks.
+            For mixed templates ({{ }} AND [TOKEN]) in auto mode, Jinja renders
+            first, then a bracket pass runs over the rendered output. Slot
+            fills always run last, on the rendered document.
+
+            Best for:
+            - "Fill this template with these values"
+            - generating one or more documents from an uploaded template
+            - filling templates whose authors didn't add placeholders
+
+            Args:
+                template_path: Path to the .docx template.
+                output_path: Where to write the filled .docx. Use a different
+                    path from template_path to preserve the original (a
+                    `_filled.docx` suffix is conventional).
+                context: Mapping of placeholder values (Jinja vars or bracket
+                    tokens). May be omitted/None if you're only filling slots.
+                mode: 'auto' (default), 'jinja', or 'bracket'.
+                slot_values: Optional {slot_id: value} from
+                    inspect_docx_template_tool's `slots` list.
+                removal_ids: Optional list of `id`s from inspect's `removals`
+                    list. Each id corresponds to a paragraph or run that the
+                    user confirmed should be DELETED from the final document
+                    (template instructions, "Delete this before submitting"
+                    notes, etc.). Removals run last, after all fill passes,
+                    on the saved output file. Pass None or [] to keep all
+                    template prose intact.
+            """
+            skill = DocxTemplateSkill(str(WORKSPACE))
+            result = skill.fill_template(
+                template_path,
+                output_path,
+                context=context or {},
+                mode=mode,
+                slot_values=slot_values or {},
+                removal_ids=removal_ids or [],
+            )
+            if result.get('success', False):
+                fe_data = _build_files_event_data(
+                    output_path,
+                    f"Template-filled DOCX: {Path(output_path).name}",
+                )
+                if fe_data:
+                    _pending_files_events.append(fe_data)
+            return result
+
         def add_bullet_list_tool(file_path: str, items: list, position: int | str = "end", style: str = "List Bullet"):
             """
             Add a bullet list to an existing DOCX file.
@@ -2039,6 +2270,11 @@ XML编辑工作流（仅用于 tracked changes）：
             delete_docx_content_tool,
             modify_docx_fonts_tool,
             create_docx_with_content_tool,
+            # Legacy .doc → .docx conversion (call first for any uploaded .doc)
+            convert_doc_to_docx_tool,
+            # Template-fill tools (uploaded .docx as template)
+            inspect_docx_template_tool,
+            fill_docx_template_tool,
             add_bullet_list_tool,
             add_numbered_list_tool,
             add_comment_tool,
@@ -2116,6 +2352,8 @@ def main():
                 "在这份 DOCX 末尾新增一个总结段落",
                 "新建一份 DOCX，包含标题、正文和一个简单表格",
                 "把这份 DOCX 的中文设为宋体、英文设为 Times New Roman",
+                "这是一份合同模板，请按以下信息填充并生成新文档：甲方=张三，乙方=李四，日期=2026-05-13",
+                "我上传了一份带 {{ name }}、{{ date }} 占位符的模板，请帮我填充",
             ],
             
             # 模型配置
