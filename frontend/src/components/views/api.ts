@@ -1012,9 +1012,27 @@ export class FileAPI {
         return data.data;
     }
 
-    async uploadToHepAI(userId: string, file: File): Promise<{ id: string; url: string }> {
+    async uploadToHepAI(
+        userId: string,
+        file: File,
+        meta?: {
+            slug?: string;
+            display_name?: string;
+            icon?: string;
+            description?: string;
+            version?: string;
+            changelog?: string;
+        }
+    ): Promise<{ id: string; url: string }> {
         const form = new FormData();
         form.append("file", file);
+        const m = meta ?? {};
+        if (m.slug?.trim()) form.append("slug", m.slug.trim());
+        if (m.display_name?.trim()) form.append("display_name", m.display_name.trim());
+        if (m.icon?.trim()) form.append("icon", m.icon.trim());
+        if (m.description?.trim()) form.append("description", m.description.trim());
+        if (m.version?.trim()) form.append("version", m.version.trim());
+        if (m.changelog?.trim()) form.append("changelog", m.changelog.trim());
         const url = `${this.getBaseUrl()}/files/hepai/upload?user_id=${encodeURIComponent(userId)}`;
         const response = await fetch(url, { method: "POST", body: form });
         const data = await response.json();
