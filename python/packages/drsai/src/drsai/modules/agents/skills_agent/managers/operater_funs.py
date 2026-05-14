@@ -276,7 +276,7 @@ def get_operator_funcs(
                     lines = text.splitlines()
                     if minilimit:
                         lines = lines[minilimit:maxlimit]
-                    return "\n".join(lines)[:50000]
+                    return "\n".join(lines)[:5000]
         except asyncio.TimeoutError:
             return f"Error: Read operation timed out after {timeout}s"
         except Exception as e:
@@ -547,7 +547,7 @@ def get_operator_funcs(
                 limited = "\n".join(lines[:max_results])
                 return f"{limited}\n\n[Showing first {max_results} of {len(lines)} results]"
 
-            return output.strip()[:50000]
+            return output.strip()[:5000]
 
         except asyncio.TimeoutError:
             return "Error: Search timeout"

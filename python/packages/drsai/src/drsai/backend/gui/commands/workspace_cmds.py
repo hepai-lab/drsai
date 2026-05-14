@@ -48,9 +48,9 @@ class WorkspaceCommands:
         elif arg in ("status", ""):
             ws_fn = getattr(self.ctx.agent, '_only_in_workspace', None) if self.ctx.agent else None
             if ws_fn is True:
-                mode = "restricted (ws:on)"
+                mode = "restricted (workdir-only)"
             elif ws_fn is False:
-                mode = "open (ws:off)"
+                mode = "open (any-path)"
             else:
                 mode = "restricted" if self.ctx.cfg.get("only_in_workspace", False) else "open"
             self.ctx.ui.info(f"当前工作空间模式: {mode}\n")
