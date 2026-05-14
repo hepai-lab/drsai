@@ -623,7 +623,7 @@ class DrSaiDesktopApp:
     def _bottom_toolbar(self) -> str:
         """Persistent status bar — mirrors CLI's _bottom_toolbar().
 
-        Shows: user_id @ model · turns · reasoning · plan_mode · ws:on/off · dg:on/off
+        Shows: user_id @ model · turns · reasoning · plan_mode · workdir-only/any-path · safe-cmd/all-cmd
         """
         user_id = self.ctx.user_id
         model_name = getattr(self.ctx.agent, '_defult_config_name', None) or self.ctx.defult_config_name or "auto"
@@ -646,18 +646,18 @@ class DrSaiDesktopApp:
         # Read workspace restriction from agent
         ws_enabled = getattr(agent, '_only_in_workspace', None)
         if ws_enabled is True:
-            parts.append("ws:on")
+            parts.append("🔒 workdir-only")
         elif ws_enabled is False:
-            parts.append("ws:off")
+            parts.append("⚠️ any-path")
 
         # Read dangerous command permission from agent
         dangerous_allowed_fn = getattr(agent, '_get_dangerous_allowed', None)
         if dangerous_allowed_fn is not None:
             da = dangerous_allowed_fn()
             if da:
-                parts.append("dg:on")
+                parts.append("⚠️ all-cmd")
             else:
-                parts.append("dg:off")
+                parts.append("🛡 safe-cmd")
 
         return "  ·  ".join(parts)
 

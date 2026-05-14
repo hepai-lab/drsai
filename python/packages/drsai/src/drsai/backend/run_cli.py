@@ -814,21 +814,21 @@ If a question can be answered by exploring the codebase, explore the codebase in
         # Read plan_mode from agent (injected_prefix = PLAN_MODE_PROMPT)
         injected_prefix = getattr(agent, '_injected_prefix', "") or ""
         if injected_prefix:
-            parts.append("plan_mode: on")
+            parts.append("plan-mode: on")
         # Read workspace restriction from agent
         ws_enabled = getattr(agent, '_only_in_workspace', None)
         if ws_enabled is True:
-            parts.append("🔒 ws:on")
+            parts.append("🔒 workdir-only")
         elif ws_enabled is False:
-            parts.append("🔓 ws:off")
+            parts.append("⚠️ any-path")
         # Read dangerous command permission from agent
         dangerous_allowed = getattr(agent, '_get_dangerous_allowed', None)
         if dangerous_allowed is not None:
             da = dangerous_allowed()
             if da:
-                parts.append("⚠️  dg:on")
+                parts.append("⚠️ all-cmd")
             else:
-                parts.append("🛡 dg:off")
+                parts.append("🛡 safe-cmd")
         return "  ·  ".join(parts)
 
     prompt_reader = DrSaiPrompt(

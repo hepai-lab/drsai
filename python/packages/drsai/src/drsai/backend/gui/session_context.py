@@ -116,15 +116,15 @@ class SessionContext:
         # Workspace restriction
         ws_enabled = getattr(agent, '_only_in_workspace', None)
         if ws_enabled is True:
-            parts.append("ws:on")
+            parts.append("🔒 workdir-only")
         elif ws_enabled is False:
-            parts.append("ws:off")
+            parts.append("⚠️ any-path")
 
         # Dangerous mode
         dangerous_allowed_fn = getattr(agent, '_get_dangerous_allowed', None)
         if dangerous_allowed_fn is not None:
             da = dangerous_allowed_fn()
-            parts.append("dg:on" if da else "dg:off")
+            parts.append("⚠️ all-cmd" if da else "🛡 safe-cmd")
 
         return "  ·  ".join(parts)
 
