@@ -585,7 +585,8 @@ def create_word_editor_agent(
      · 显式占位符的值放入 context。
      · 用户确认的 slot 值放入 slot_values={"slot_0": "...", "slot_1": "...", ...}。
      · 用户确认要删除的项放入 removal_ids=["rm_0", "rm_2", ...]。
-     · output_path 放在用户的工作目录下，文件名建议在模板原名后加 "_filled" 后缀（例如 contract.docx → contract_filled.docx），不要覆盖原模板。
+     · **必须**输出一个**新文件**，文件名在模板原名后加 "_filled" 后缀（例如 contract.docx → contract_filled.docx），放在用户工作目录下。**绝对不要覆盖**用户上传的原模板——用户保留原始模板用于多次填写。fill_docx_template_tool 会以原模板为底直接复制并仅替换占位符所在 run，**保留原模板的全部其他内容、样式、页眉页脚、表格、图片、批注等不变**。
+   - 第五步（强制约束）：模板填写流程**只能**用 inspect_docx_template_tool / fill_docx_template_tool / convert_doc_to_docx_tool。**禁止**用 run_bash、run_glob、run_read、run_write、run_edit 去定位、读取、检查或填充模板文件——即便 inspect 返回看起来为空、超时或慢，也要**重试同一个工具**或把情况告诉用户，**不要**回退到 bash/文件系统操作来"找文件"或"读 XML"。文件路径用户已经告诉你或来自上传事件，不需要再 glob 或 find；DOCX 内部结构由 inspect/fill 工具内部处理，外部 bash 操作只会破坏格式或读不到正确字段。
 10. fill_docx_template_tool 默认 mode="auto"，会自动检测占位符风格——除非用户明确要求，否则不要强行指定 mode。若模板同时含 {{ }} 与 [TOKEN]，auto 模式会先按 Jinja 渲染再做一次方括号替换；slot_values 总是在最后一步应用，removal_ids 在保存输出文件后执行。
 11. 不要把 inspect_docx_template_tool 用在普通文档上——那应该使用 extract_docx_content_tool 来查看内容。但模板里**没有任何**占位符也属于合法用法：inspect 会返回 slots / removals 让你识别可填空和可删除的位置。
 12. fill_docx_template_tool 会保留整个文档的字体、颜色、加粗、斜体、对齐、段距等格式——只修改占位符所在的 run，周围的 run 和段落的样式都不动。对于 highlighted 类型的槽位，工具会**只清除该处的高亮**，但保留同一 run 的字体/字号/加粗/斜体/颜色等。因此**不要**在填模板之后再去"统一字体/格式"或调用 modify_docx_fonts_tool，那会覆盖用户模板的样式。
