@@ -40,12 +40,24 @@ _JINJA_VAR_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)")
 _JINJA_LOOP_TOKENS = ("{% for", "{%- for", "{%p for", "{%tr for")
 _JINJA_IF_TOKENS = ("{% if", "{%- if", "{%p if", "{%tr if")
 
-_UNDERSCORE_RUN_RE = re.compile(r"_{3,}")
+# Underscores eligible as fill markers. Includes ASCII '_' and full-width '＿',
+# in runs of 3+. A second pattern catches spaced sequences like "_ _ _ _" or
+# "＿ ＿ ＿" (2+ separated underscores) which are common in Chinese forms.
+_UNDERSCORE_RUN_RE = re.compile(r"[_＿]{3,}|(?:[_＿](?:[ 　]+[_＿]){1,}){1}")
 # Label preceding an underscore run, e.g. "Patient Name: ______".
 # Captures the label text (without the trailing colon).
 _LABEL_BEFORE_RE = re.compile(r"([^\s:：][^:：\n]{0,79})\s*[:：]\s*$")
 # Whole paragraph ending in "Label:" with nothing after.
 _LABEL_ONLY_RE = re.compile(r"^\s*(.{1,80}?)\s*[:：]\s*$")
+
+# Signature / seal indicators — these slots must be LEFT BLANK rather than
+# filled. Looked up against the label found before the underscore and against
+# any short trailing text after it (e.g. "________  (signature)").
+_SIGNATURE_RE = re.compile(
+    r"(?:签\s*字|签\s*名|签\s*章|盖\s*章|落\s*款|手\s*印|"
+    r"signature|signed\s*by|sign\s*here|signatory|autograph|initials?|seal)",
+    re.IGNORECASE,
+)
 
 # <placeholder> or 《占位符》 — angle-bracketed slot tokens
 _ANGLE_BRACKET_RE = re.compile(r"<([^<>\n]{1,80})>|《([^《》\n]{1,80})》")
@@ -790,7 +802,8 @@ def _slot_public_view(slot: Dict[str, Any]) -> Dict[str, Any]:
     """Strip internal _meta references before returning to the caller.
 
     Surfaces a couple of meta fields that are useful to the agent: the full
-    original highlighted text and a scaffold-split summary when applicable.
+    original highlighted text, a scaffold-split summary when applicable, and
+    an `is_signature` flag for slots that should be left blank.
     """
     public = {k: v for k, v in slot.items() if not k.startswith("_")}
     meta = slot.get("_meta", {})
@@ -804,6 +817,9 @@ def _slot_public_view(slot: Dict[str, Any]) -> Dict[str, Any]:
             "variable": scaffold.get("var", ""),
             "suffix": scaffold.get("suf", ""),
         }
+    if meta.get("is_signature"):
+        public["is_signature"] = True
+        public["fill_policy"] = "leave_blank"
     return public
 
 
@@ -865,6 +881,65 @@ def _scan_slots(doc) -> List[Dict[str, Any]]:
             "end": 0,
         })
         seen_para_ids.add(id(nxt))
+    # Border-line slots: a paragraph with a horizontal border (bottom border)
+    # renders as a fillable "underline" line even though it has no underscore
+    # characters. Two layouts to support:
+    #   (a) Label paragraph immediately followed by an empty bordered paragraph
+    #       ("Patient Name:" / [empty + bottom-border]). The label paragraph
+    #       was already emitted as label_blank; we redirect its fill into the
+    #       bordered paragraph below so the value sits over the line instead
+    #       of being appended after the colon.
+    #   (b) A standalone empty bordered paragraph with no leading label — emit
+    #       a stray slot so the agent can confirm intent.
+    # Border on the label paragraph itself ("Patient Name:    " all in one
+    # bordered paragraph) is handled in (c): mark the label_blank slot so its
+    # fill is centered into the same paragraph rather than appended after.
+    slots_by_paragraph_id: Dict[int, Dict[str, Any]] = {}
+    for s in slots:
+        meta = s.get("_meta", {})
+        para = meta.get("paragraph")
+        if para is not None and s["kind"] == "label_blank":
+            slots_by_paragraph_id[id(para)] = s
+    for i, p in enumerate(body_paras):
+        if not _paragraph_has_horizontal_border(p):
+            continue
+        if _paragraph_is_empty(p):
+            # (a) link to a preceding label_blank slot if its paragraph is the
+            # previous one in body order
+            linked = False
+            if i > 0:
+                prev = body_paras[i - 1]
+                prev_slot = slots_by_paragraph_id.get(id(prev))
+                if prev_slot is not None:
+                    prev_slot["_meta"]["border_target"] = p
+                    seen_para_ids.add(id(p))
+                    linked = True
+            if linked or id(p) in seen_para_ids:
+                continue
+            # (b) standalone empty bordered paragraph — emit a stray slot.
+            # Use the previous non-empty paragraph (if any) as a label hint.
+            label_hint: Optional[str] = None
+            for j in range(i - 1, -1, -1):
+                t = "".join((r.text or "") for r in body_paras[j].runs).strip()
+                if t:
+                    label_hint = t[:60]
+                    break
+            add("underscores", label_hint, "(bordered empty line)", {
+                "paragraph": p,
+                "start": 0,
+                "end": 0,
+                "is_signature": _looks_like_signature(label_hint, label_hint or "", 0, 0),
+                "border_only": True,
+            })
+            seen_para_ids.add(id(p))
+        else:
+            # (c) bordered paragraph that already has its own content. If we
+            # emitted a label_blank slot for it, mark the slot so the fill is
+            # centered in the same paragraph instead of bumping right after
+            # the label.
+            existing = slots_by_paragraph_id.get(id(p))
+            if existing is not None:
+                existing["_meta"]["bordered_paragraph"] = True
     # Body tables
     for tbl in doc.tables:
         _scan_table_for_slots(tbl, add)
@@ -912,9 +987,33 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
                 "span_text": span_text,      # full original highlighted text
             })
         return
+    # 0.5) Underlined whitespace spans — Word's "fill-in line" trick where the
+    #      author selects a run of spaces and applies underline. There are no
+    #      underscore characters in the document, but it looks like one to a
+    #      human. Treat as an underscores-kind slot; centering pads with spaces
+    #      (the inherited underline carries through so the line stays visible).
+    uw_spans = _find_underlined_whitespace_spans(paragraph)
+    if uw_spans:
+        for start, end, runs, span_text in uw_spans:
+            label = _guess_label_before(text, start)
+            ctx = _snippet(text, start, end, radius=40)
+            is_sig = _looks_like_signature(label, text, start, end)
+            add("underscores", label, ctx, {
+                "paragraph": paragraph,
+                "start": start,
+                "end": end,
+                "is_signature": is_sig,
+                "pad_char": " ",
+                "source": "underlined_whitespace",
+            })
+        return
     # 1) underscore runs (may have multiple per paragraph)
     underscore_matches = list(_UNDERSCORE_RUN_RE.finditer(text))
     if underscore_matches:
+        # Skip a paragraph that's *only* a long decorative underscore line
+        # (e.g. a page divider) with no surrounding label or signature context.
+        if _is_decorative_underscore_paragraph(text, underscore_matches):
+            return
         # Composite check: when several underscore runs are separated only by
         # whitespace / decorators (the digit-cell pattern, e.g. "¥ ____ ____
         # ____" used for one logical amount field), merge them into a single
@@ -926,21 +1025,25 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
             span_end = positions[-1][1]
             label = _guess_label_before(text, span_start)
             ctx = _snippet(text, span_start, span_end, radius=60)
+            is_sig = _looks_like_signature(label, text, span_start, span_end)
             add("underscores", label, ctx, {
                 "paragraph": paragraph,
                 "start": span_start,
                 "end": span_end,
                 "positions": positions,   # multi-position composite
                 "composite": True,
+                "is_signature": is_sig,
             })
         else:
             for m in underscore_matches:
                 label = _guess_label_before(text, m.start())
                 context = _snippet(text, m.start(), m.end())
+                is_sig = _looks_like_signature(label, text, m.start(), m.end())
                 add("underscores", label, context, {
                     "paragraph": paragraph,
                     "start": m.start(),
                     "end": m.end(),
+                    "is_signature": is_sig,
                 })
         return  # don't double-count this paragraph as label_blank
     # 2) angle-bracketed tokens like <your name> or 《姓名》
@@ -966,7 +1069,8 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
         if _LIST_INTRO_RE.search(text):
             return
         label = m.group(1).strip()
-        add("label_blank", label, text, {"paragraph": paragraph})
+        is_sig = _looks_like_signature(label, text, 0, len(text))
+        add("label_blank", label, text, {"paragraph": paragraph, "is_signature": is_sig})
         return
     # 4) hint-text run (italic / grey) matching a placeholder-like phrase
     hint = _find_hint_run(paragraph)
@@ -1077,6 +1181,7 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
     by_id = {s["id"]: s for s in slots}
     filled_ids: List[str] = []
     unknown_ids: List[str] = []
+    skipped_signature_ids: List[str] = []
 
     # Group span-based fills per paragraph (underscores, angle_bracketed,
     # placeholder_phrase, hint_text, highlighted). Per-batch tuple carries the
@@ -1092,6 +1197,12 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
             continue
         meta = slot.get("_meta", {})
         kind = slot["kind"]
+        # Signature / seal fields are left blank regardless of the value the
+        # caller supplied — guard against accidental fills of 签字 / signature
+        # lines (the human signs on paper after printing).
+        if meta.get("is_signature"):
+            skipped_signature_ids.append(sid)
+            continue
         val_str = "" if value is None else str(value)
         if kind in ("underscores", "angle_bracketed", "placeholder_phrase",
                     "hint_text", "highlighted"):
@@ -1118,8 +1229,30 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
                          kind, meta)
                     )
             else:
+                # Border-only slot: paragraph has a horizontal border but no
+                # underscore characters. Write the value into the paragraph
+                # itself, centered, so it sits above the border line.
+                if kind == "underscores" and meta.get("border_only"):
+                    deferred.append(("border_line", meta, effective_val, sid))
+                    continue
+                # For single-span underscore fills, center the value within
+                # the original underscore width so the line stays balanced
+                # (e.g. "____ Alice ____") instead of leaving the value
+                # bumped against one side of the line. Numbered-list bodies
+                # like '(1) ____________' get left-aligned fill instead, so
+                # the value follows the marker rather than floating in the
+                # middle of the line.
+                fill_val = effective_val
+                if kind == "underscores":
+                    paragraph_text = "".join((r.text or "") for r in paragraph.runs)
+                    span_text = paragraph_text[meta["start"]:meta["end"]]
+                    prefix = paragraph_text[:meta["start"]]
+                    align = "left" if _prefix_is_only_list_marker(prefix) else "center"
+                    fill_val = _center_in_underscore_span(
+                        effective_val, span_text, meta.get("pad_char"), align=align
+                    )
                 span_by_paragraph[id(paragraph)].append(
-                    (paragraph, meta["start"], meta["end"], effective_val, sid, kind, meta)
+                    (paragraph, meta["start"], meta["end"], fill_val, sid, kind, meta)
                 )
         elif kind == "label_blank":
             deferred.append(("label_blank", meta, val_str, sid))
@@ -1145,6 +1278,23 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
 
     for kind, meta, val_str, sid in deferred:
         if kind == "label_blank":
+            # Linked-border case: the next paragraph is an empty bordered line.
+            # Write the value into THAT paragraph (centered) so it sits over
+            # the visible line instead of appearing after the label's colon.
+            target = meta.get("border_target")
+            if target is not None:
+                if _write_to_empty_paragraph(target, val_str):
+                    _set_paragraph_centered(target)
+                    filled_ids.append(sid)
+                continue
+            # Inline-border case: the label paragraph itself has a bottom
+            # border. Center the whole paragraph so the value sits in the
+            # middle of the line below the label.
+            if meta.get("bordered_paragraph"):
+                if _append_after_label(meta["paragraph"], val_str):
+                    _set_paragraph_centered(meta["paragraph"])
+                    filled_ids.append(sid)
+                continue
             if _append_after_label(meta["paragraph"], val_str):
                 filled_ids.append(sid)
         elif kind == "empty_cell":
@@ -1153,12 +1303,21 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
         elif kind == "section_body_empty":
             if _write_to_empty_paragraph(meta["paragraph"], val_str):
                 filled_ids.append(sid)
+        elif kind == "border_line":
+            if _write_to_empty_paragraph(meta["paragraph"], val_str):
+                _set_paragraph_centered(meta["paragraph"])
+                filled_ids.append(sid)
 
     requested = set(slot_values.keys())
+    signatures = set(skipped_signature_ids)
+    skipped = sorted(
+        (requested - set(filled_ids) - set(unknown_ids) - signatures) | signatures
+    )
     return {
         "filled_slot_ids": sorted(filled_ids),
         "unknown_slot_ids": sorted(unknown_ids),
-        "skipped_slot_ids": sorted(requested - set(filled_ids) - set(unknown_ids)),
+        "skipped_slot_ids": skipped,
+        "skipped_signature_slot_ids": sorted(signatures),
     }
 
 
@@ -1314,6 +1473,257 @@ def _gaps_are_decorative(text: str, matches) -> bool:
         if len(gap) > 12:
             return False
     return True
+
+
+# A paragraph made up of only underscores plus pure decoration is a divider,
+# not a fillable field. Removing underscore + decoration chars from such a
+# paragraph leaves nothing behind.
+_NON_UNDERSCORE_NON_DECOR_RE = re.compile(
+    r"[_＿\s　.\-—–·•・|/\\,;:：（）()\[\]]+"
+)
+
+
+def _looks_like_signature(label: Optional[str], text: str, start: int, end: int) -> bool:
+    """True if the slot's label or its near-context names a signature/seal field.
+
+    Looks at the label, plus a small window of text on either side of the
+    matched span (so '________ (signature)' is caught even though label
+    detection only looks at text before the underscores).
+    """
+    if label and _SIGNATURE_RE.search(label):
+        return True
+    pre_window = text[max(0, start - 40):start]
+    if _SIGNATURE_RE.search(pre_window):
+        return True
+    post_window = text[end:end + 40]
+    if _SIGNATURE_RE.search(post_window):
+        return True
+    return False
+
+
+def _is_decorative_underscore_paragraph(text: str, matches) -> bool:
+    """True if the paragraph is a standalone underscore divider with no real
+    label or signature context — i.e. content outside the underscores is only
+    whitespace / punctuation. Avoids flagging dividers as fillable slots.
+    """
+    if not matches:
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return False
+    residue = _NON_UNDERSCORE_NON_DECOR_RE.sub("", stripped)
+    if residue:
+        return False
+    total_underscores = sum(m.end() - m.start() for m in matches)
+    return total_underscores >= 20
+
+
+def _visual_width(s: str) -> int:
+    """Approximate visual width of `s` in half-widths.
+
+    Word renders proportional fonts: an ASCII space is ~1 half-width while a
+    CJK ideograph / full-width punctuation glyph is ~2. Counting code points
+    (len()) produces "centered" output that drifts off-center in the rendered
+    document, especially in mixed Chinese / English contracts where a long
+    Chinese value gets padded with too few ASCII spaces on each side.
+    """
+    w = 0
+    for c in s:
+        cp = ord(c)
+        # CJK Unified Ideographs (incl. Ext A/B common ranges)
+        if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
+            w += 2
+        # CJK symbols & punctuation, hiragana, katakana
+        elif 0x3000 <= cp <= 0x33FF:
+            w += 2
+        # Full-width Latin / half-width katakana etc.
+        elif 0xFF00 <= cp <= 0xFFEF:
+            w += 2
+        else:
+            w += 1
+    return w
+
+
+# Enumeration / list markers at the very start of a paragraph. When a slot's
+# paragraph begins with one of these, the underscore span is "the body of a
+# numbered list item" and the value should sit *right after* the marker rather
+# than be centered in the line.
+#   (1), (a), （1）, （一）, 【1】, 1., 1)、, ①, 一、, 第一条, 1：
+_LIST_MARKER_RE = re.compile(
+    r"^\s*(?:"
+    r"[（(【]\s*[0-9０-９一二三四五六七八九十百千零〇iIvVxXa-zA-Z]{1,6}\s*[)）】]"
+    r"|[0-9０-９]{1,3}\s*[.、．:：)）]"
+    r"|[一二三四五六七八九十百千零〇]{1,4}\s*[、.．:：)）]"
+    r"|[①-⑳㈠-㈩❶-❿]"
+    r"|第\s*[0-9０-９一二三四五六七八九十百千零〇]{1,4}\s*[条款项节章]"
+    r")\s*"
+)
+
+
+def _prefix_is_only_list_marker(prefix: str) -> bool:
+    """True if `prefix` consists solely of a list / enumeration marker plus
+    optional whitespace — e.g. '（1）', '（1） ', '1. '. Used to switch
+    underscore fills from centered to left-aligned only when the slot is
+    the *body* of a numbered line (the marker is followed directly by the
+    underscore span). Paragraphs like '2．研究开发经费由甲方 ___ ...' have
+    real content between the marker and the slot, so they stay centered.
+    """
+    if not prefix:
+        return False
+    m = _LIST_MARKER_RE.match(prefix)
+    if not m:
+        return False
+    return not prefix[m.end():].strip()
+
+
+def _has_cjk(s: str) -> bool:
+    for c in s:
+        cp = ord(c)
+        if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF or 0xF900 <= cp <= 0xFAFF:
+            return True
+    return False
+
+
+def _build_space_padding(visual_half_widths: int, prefer_full_width: bool) -> str:
+    """Produce a whitespace padding string that fills exactly `visual_half_widths`
+    in Word. Uses ideographic spaces (each = 2 half-widths in Chinese fonts)
+    when the value is CJK-heavy, with at most one trailing ASCII space to
+    correct an odd parity. Falls back to plain ASCII spaces otherwise.
+    """
+    if visual_half_widths <= 0:
+        return ""
+    if prefer_full_width:
+        fw = visual_half_widths // 2
+        extra = visual_half_widths - fw * 2  # 0 or 1
+        return ("　" * fw) + (" " * extra)
+    return " " * visual_half_widths
+
+
+def _center_in_underscore_span(
+    value: str,
+    span_text: str,
+    pad_char: Optional[str] = None,
+    align: str = "center",
+) -> str:
+    """Place `value` inside the span and pad to preserve the original line width.
+
+    `align="center"` (default) splits padding on both sides; `align="left"`
+    puts all padding on the right so the value sits at the start of the line
+    — used for numbered-list bodies like '(1) ____________' where the value
+    should appear right after the marker rather than floating in the middle.
+
+    Padding is computed in **visual half-widths** (CJK / full-width glyphs = 2,
+    ASCII = 1). For underline-character spans (`_`, `＿`) the same glyph is
+    re-used as the pad. For underlined-whitespace spans the pad is regular
+    spaces — but ideographic spaces when the value is CJK-heavy, because an
+    ASCII space in a Chinese font renders narrower than half a CJK width and
+    char-count centering drifts off in the rendered document. Falls back to
+    the bare value when there is no room.
+    """
+    target_w = _visual_width(span_text)
+    if target_w <= 0 or not value:
+        return value
+    value_w = _visual_width(value)
+    # Reserve a single ASCII space on each side of the value for legibility.
+    if value_w + 2 >= target_w:
+        return value
+    if pad_char is None:
+        pad_char = "＿" if span_text.count("＿") > span_text.count("_") else "_"
+    pad_visual = target_w - value_w - 2
+    if align == "left":
+        left_visual = 0
+        right_visual = pad_visual
+    else:
+        left_visual = pad_visual // 2
+        right_visual = pad_visual - left_visual
+    is_space_pad = pad_char in (" ", "　", " ")
+    if is_space_pad:
+        use_fw = _has_cjk(value) or _has_cjk(span_text)
+        left_pad = _build_space_padding(left_visual, use_fw)
+        right_pad = _build_space_padding(right_visual, use_fw)
+    else:
+        pad_unit = _visual_width(pad_char) or 1
+        left_pad = pad_char * (left_visual // pad_unit)
+        right_pad = pad_char * (right_visual // pad_unit)
+    return left_pad + " " + value + " " + right_pad
+
+
+def _paragraph_has_horizontal_border(paragraph) -> bool:
+    """True if the paragraph carries a visible bottom or between border
+    (Word renders these as a horizontal rule, the most common author trick
+    for 'fillable line' templates that contain no underscore characters).
+    """
+    try:
+        from docx.oxml.ns import qn
+    except Exception:
+        return False
+    try:
+        pPr = paragraph._element.find(qn("w:pPr"))
+        if pPr is None:
+            return False
+        pBdr = pPr.find(qn("w:pBdr"))
+        if pBdr is None:
+            return False
+        for edge in ("w:bottom", "w:between", "w:top"):
+            b = pBdr.find(qn(edge))
+            if b is None:
+                continue
+            val = b.get(qn("w:val"))
+            if val and val not in ("none", "nil"):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _find_underlined_whitespace_spans(
+    paragraph,
+) -> List[Tuple[int, int, List[Any], str]]:
+    """Find consecutive runs whose visible text is only whitespace AND that
+    carry an underline format. Word authors create fillable lines this way:
+    select a long stretch of spaces / non-breaking spaces and apply underline.
+
+    Returns (start_offset, end_offset, runs, text) tuples in paragraph-text
+    coordinates. Requires total length ≥ 3 to filter incidental single-space
+    underlines.
+    """
+    spans: List[Tuple[int, int, List[Any], str]] = []
+    offset = 0
+    cur_start: Optional[int] = None
+    cur_runs: List[Any] = []
+    cur_text: List[str] = []
+    for run in paragraph.runs:
+        rt = run.text or ""
+        try:
+            ul = bool(run.underline)
+        except Exception:
+            ul = False
+        if ul and rt and not rt.strip():
+            if cur_start is None:
+                cur_start = offset
+            cur_runs.append(run)
+            cur_text.append(rt)
+        else:
+            if cur_start is not None:
+                spans.append((cur_start, offset, cur_runs, "".join(cur_text)))
+                cur_start = None
+                cur_runs = []
+                cur_text = []
+        offset += len(rt)
+    if cur_start is not None:
+        spans.append((cur_start, offset, cur_runs, "".join(cur_text)))
+    return [s for s in spans if len(s[3]) >= 3]
+
+
+def _set_paragraph_centered(paragraph) -> None:
+    """Best-effort: set paragraph horizontal alignment to CENTER. Used when
+    filling a border-line slot so the value sits over the middle of the line.
+    """
+    try:
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    except Exception:
+        pass
 
 
 def _table_follows_paragraph(heading_p, empty_p) -> bool:

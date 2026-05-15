@@ -45,7 +45,8 @@ For templates that users authored without thinking about placeholders. The inspe
 | Kind | Trigger | Where the value goes |
 |---|---|---|
 | `highlighted` | One or more **consecutive runs with a Word highlight** (yellow, green, cyan, magenta, etc.). The strongest authoring signal — users often highlight exactly the spans they want changed. | The highlighted text is replaced AND the highlight is cleared on fill (final document looks clean). All other run formatting (font, size, bold/italic, color) is preserved. The slot also surfaces `span_text` (full original highlighted text) and, when applicable, a `scaffold` split — when the highlighted span matches `<number><unit>` (e.g. `15个工作日`, `¥850`, `50%`) and the user-provided `slot_values` reply is a bare number, the prefix/suffix scaffolding is auto-reattached so "20" becomes "20个工作日". |
-| `underscores` | A run of 3+ underscores (`___+`) anywhere in a paragraph | The underscore characters are replaced in place |
+| `underscores` | A run of 3+ underscores (`___+`), full-width `＿＿＿`, a spaced sequence like `_ _ _ _`, a run of **underlined whitespace** (Word's "select spaces + apply underline" trick), OR an empty paragraph that carries a **paragraph bottom border** (the line is a Word border, not underscore characters). Standalone paragraphs that are *only* a long underscore line with no label / signature context are treated as decorative dividers and skipped. | The fill value is **centered** within the original line width with the same glyph re-padded on each side (ASCII / full-width / spaces depending on the source), so the line stays balanced (e.g. `Patient: ____________________` → `Patient: ______ Alice _______`). For paragraph-border lines the value is written into the bordered paragraph with center alignment so it sits over the line. |
+| `label_blank` (border-linked) | A `Label:` paragraph whose *next* paragraph is an empty bordered line. | Value is written into the bordered paragraph below (centered), not appended after the label's colon. |
 | `label_blank` | A paragraph whose entire text is `Label:` (Chinese full-width `：` also OK) with nothing after | The value is appended after the label, inheriting the label's run formatting |
 | `empty_cell` | A table cell with no text, where either the column header (row 0) or the row label (col 0) contains text | The value is written into the empty cell |
 | `angle_bracketed` | `<your name>`, `<insert title>`, or full-width `《姓名》` | The bracketed token is replaced in place |
@@ -58,6 +59,7 @@ Each slot comes back with:
 - `kind` — one of the seven above.
 - `label` — best-guess field name (e.g. "Patient Name"), or `None` for a stray underscore line with no surrounding label.
 - `context` — surrounding text snippet for disambiguation.
+- `is_signature` (when true) / `fill_policy: "leave_blank"` — set on slots whose label or near-context indicates a signature/seal field (`签字`, `签名`, `签章`, `盖章`, `落款`, `手印`, `signature`, `signed by`, `sign here`, `signatory`, `autograph`, `initials`, `seal`). DocMaster should **not** ask the user for a value or fill these — the human signs on paper after printing. Any value passed for such a slot is refused by `fill_docx_template_tool` and reported under `slot_fill.skipped_signature_slot_ids`.
 
 **Slots are *candidates*, not commitments.** A long underscore line could be a decorative separator; "Notes:" with nothing after could be intentionally blank; an italic note could be intentional prose. DocMaster should confirm each slot with the user before passing it in `slot_values`.
 
@@ -137,6 +139,7 @@ Renders the template into `output_path`. If `removal_ids` is provided, the liste
     "filled_slot_ids":  ["slot_0", "slot_1", "slot_2"],
     "unknown_slot_ids": [],
     "skipped_slot_ids": [],
+    "skipped_signature_slot_ids": [],
   },
   "removals_applied": ["rm_0", "rm_1"],
   "removals_skipped": [],
