@@ -27,6 +27,10 @@ DEFAULT_CONFIG: dict = {
     "defult_config_name": None,
     # Plan mode: 启用后 AI 会先访谈用户确认计划再执行
     "plan_mode": False,
+    # Workspace restriction: 启用后文件/Shell 操作限制在工作目录内
+    "workspace_enabled": True,
+    # Dangerous command: 启用后允许 sudo/rm -rf/python/bash/sh 等危险命令
+    "dangerous_allowed": False,
     # ── API Keys (persisted for packaged app convenience) ─────────────────
     # In development mode, users typically set env vars:
     #   HEPAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY

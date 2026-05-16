@@ -726,7 +726,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             isinstance(item, FunctionCall) for item in model_result.content
         )
 
-        # STEP 4A: Yield ToolCallRequestEvent
+        # STEP 4A: Yield "I am using tools" first, then ToolCallRequestEvent
         tool_call_msg = ToolCallRequestEvent(
             content=model_result.content,
             source=agent_name,
@@ -734,13 +734,13 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         )
         inner_messages.append(tool_call_msg)
         logger.debug(tool_call_msg)
-        yield tool_call_msg
         tools_name = [tool.name for tool in model_result.content] 
         yield AgentLogEvent(
             title="I am using tools: " + " ".join(tools_name),
             source=agent_name, 
             content=str(tool_call_msg.content), 
             content_type="tools")
+        yield tool_call_msg
 
         # STEP 4B: Execute tool calls
         executed_calls_and_results = await asyncio.gather(

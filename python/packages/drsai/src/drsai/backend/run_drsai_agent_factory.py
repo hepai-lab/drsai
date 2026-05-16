@@ -560,10 +560,10 @@ def create_agent(
         # ── Plan-C workspace strategy ──
         work_dir=cwd,                    # Primary tool workspace = user's cwd
         storage_dir=user_storage_dir,     # Internal configs/memories stored separately
-        only_in_workspace=True,           # Restrict tools to cwd + storage_dir
+        only_in_workspace=cli_cfg.get("workspace_enabled", True),  # 从全局配置读取（/ws_global）
         extra_work_dirs=[user_storage_dir],  # Allow access to internal storage
         only_system_message=False,
-        allolow_dangrous_cmd=False,       # CLI default: block dangerous commands; use /dangerous on to authorize
+        allolow_dangrous_cmd=cli_cfg.get("dangerous_allowed", False),  # 从全局配置读取（/dg_global）
         allolow_basic_tools=None,
         token_limit=int(token_limit * 0.7),
         rag_flow_url=rag_flow_url,
