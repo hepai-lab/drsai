@@ -25,7 +25,7 @@ import sys
 import time
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Callable
 
 from loguru import logger
 

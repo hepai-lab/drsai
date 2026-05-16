@@ -116,6 +116,20 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="[n]",
         handler="async",
     ),
+    CommandDef(
+        "queue_show",
+        "Show currently queued commands",
+        "Session",
+        aliases=("qs",),
+        handler="sync",
+    ),
+    CommandDef(
+        "queue_clear",
+        "Clear the command queue",
+        "Session",
+        aliases=("qq",),
+        handler="sync",
+    ),
 
     # ── Display / runtime ────────────────────────────────────────────────────
     CommandDef(
@@ -249,10 +263,26 @@ COMMAND_REGISTRY: list[CommandDef] = [
         handler="async",
     ),
     CommandDef(
+        "ws_global",
+        "Toggle workspace restriction (session + global default)",
+        "Workspace",
+        aliases=("wsg",),
+        args_hint="on|off|status",
+        handler="async",
+    ),
+    CommandDef(
         "dangerous",
         "Toggle dangerous command execution permission on/off or show status",
         "Workspace",
         aliases=("dg",),
+        args_hint="on|off|status",
+        handler="async",
+    ),
+    CommandDef(
+        "dg_global",
+        "Toggle dangerous command permission (session + global default)",
+        "Workspace",
+        aliases=("dgg",),
         args_hint="on|off|status",
         handler="async",
     ),
@@ -263,6 +293,23 @@ COMMAND_REGISTRY: list[CommandDef] = [
         aliases=("workdir",),
         args_hint="<path>",
         handler="sync",
+    ),
+
+    # ── Subagent ────────────────────────────────────────────────────────
+    CommandDef(
+        "agent",
+        "Set/clear default subagent or list available subagents",
+        "Subagent",
+        args_hint="<name>|list|clear",
+        handler="async",
+    ),
+    CommandDef(
+        "delegate",
+        "Manually delegate a task to a subagent",
+        "Subagent",
+        aliases=("sub",),
+        args_hint="<agent_type> <prompt>",
+        handler="async",
     ),
 
     # ── Desktop ────────────────────────────────────────────────────────────
@@ -350,7 +397,7 @@ def resolve_command(name: str) -> Optional[CommandDef]:
 
 def commands_by_category() -> dict[str, list[CommandDef]]:
     """Return commands grouped by category, in fixed category order."""
-    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Window", "Desktop", "Info"]
+    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Subagent", "Window", "Desktop", "Info"]
     groups: dict[str, list[CommandDef]] = {cat: [] for cat in order}
     for cmd in COMMAND_REGISTRY:
         if cmd.category in groups:

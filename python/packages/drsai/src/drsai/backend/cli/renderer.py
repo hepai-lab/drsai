@@ -46,6 +46,7 @@ from autogen_agentchat.messages import (
     ToolCallRequestEvent,
     ToolCallSummaryMessage,
 )
+from drsai.modules.managers.messages.agent_messages import AgentLogEvent
 
 from .reasoning import ReasoningStreamState, split_reasoning
 from .stats import SessionStats, extract_usage, format_footer, play_bell
@@ -119,6 +120,13 @@ class DrSaiCLIRenderer:
         # Track whether the last byte written to stdout was a newline, so we
         # never emit consecutive blank lines (hermes-style tight spacing).
         self._last_ended_with_newline: bool = False
+        # ── Subagent context tracking ───────────────────────────────────────
+        # When True, streaming chunks / text messages are rendered with a
+        # distinct visual style (dim pipe prefix, cyan border) so the user
+        # can easily tell which output came from a subagent.
+        self._subagent_active: bool = False
+        self._subagent_name: str = ""
+        self._subagent_header_printed: bool = False
         # Configure tool preview length
         if TUI_MODULE_AVAILABLE:
             set_tool_preview_max_len(tool_preview_max_len)
@@ -241,12 +249,18 @@ class DrSaiCLIRenderer:
         self._current_tool_snapshot = None
         self._tool_start_time = None
         self._last_ended_with_newline = False
+        self._subagent_active = False
+        self._subagent_name = ""
+        self._subagent_header_printed = False
 
         async for message in stream:
             if isinstance(message, ModelClientStreamingChunkEvent):
                 src = getattr(message, "source", "") or ""
                 if src:
                     self._streaming_sources.add(src)
+                    # Detect subagent streaming chunks by source prefix
+                    if src.startswith("sub:"):
+                        self._ensure_subagent_header(src)
                 self._handle_chunk(message.content or "", state)
             elif isinstance(message, ToolCallRequestEvent):
                 self._close_stream()
@@ -256,21 +270,24 @@ class DrSaiCLIRenderer:
             elif isinstance(message, ToolCallExecutionEvent):
                 self._close_stream()
                 self._close_reasoning()
+                self._close_subagent()
                 self._render_tool_result(message)
                 self._just_after_tool_event = True
             elif isinstance(message, ToolCallSummaryMessage):
                 # DrSaiAgent sends ToolCallSummaryMessage instead of ToolCallExecutionEvent
                 self._close_stream()
                 self._close_reasoning()
+                self._close_subagent()
                 self._render_tool_summary(message)
                 self._just_after_tool_event = True
             elif isinstance(message, TextMessage):
                 # Capture usage metadata before any early return.
                 self._capture_usage(message)
+                # Detect subagent text messages by source prefix
+                src = getattr(message, "source", "") or ""
+                if src.startswith("sub:"):
+                    self._ensure_subagent_header(src)
                 if self._should_skip_text(message):
-                    # Do NOT close the stream — an interim TextMessage with the
-                    # same content we're already streaming would otherwise
-                    # inject a newline mid-sentence ("Hi th\nere!" bug).
                     continue
                 self._close_stream()
                 for chunk in state.flush():
@@ -282,6 +299,10 @@ class DrSaiCLIRenderer:
                 chat = getattr(message, "chat_message", None)
                 if isinstance(chat, TextMessage) and chat.source.lower() != "user":
                     self._capture_usage(chat)
+                    # Detect subagent responses by source prefix
+                    chat_src = getattr(chat, "source", "") or ""
+                    if chat_src.startswith("sub:"):
+                        self._ensure_subagent_header(chat_src)
                     if self._should_skip_text(chat):
                         continue
                     self._close_stream()
@@ -293,6 +314,14 @@ class DrSaiCLIRenderer:
                 # Sweep final messages for usage (the chunk events often lack it).
                 for m in getattr(message, "messages", []) or []:
                     self._capture_usage(m)
+            elif isinstance(message, AgentLogEvent):
+                self._close_stream()
+                self._close_reasoning()
+                # Detect subagent log events by source prefix
+                src = getattr(message, "source", "") or ""
+                if src.startswith("sub:"):
+                    self._ensure_subagent_header(src)
+                self._render_agent_log(message)
             elif isinstance(message, BaseAgentEvent):
                 # Unknown event kind — leave stream intact, don't print junk.
                 pass
@@ -367,11 +396,30 @@ class DrSaiCLIRenderer:
         else:  # visible
             if self._reason_open:
                 self._close_reasoning()
-            # ReasoningStreamState already quarantines partial reasoning tags;
-            # streaming chunks here are raw answer text. Do NOT call
-            # strip_reasoning — its ``.strip()`` eats legitimate whitespace.
-            sys.stdout.write(text)
-            sys.stdout.flush()
+            if self._subagent_active:
+                self._maybe_print_subagent_header()
+                # Prefix each NEW line with dim pipe to visually separate subagent
+                # output. Continuation chunks (mid-line) get no prefix — only the
+                # start of a logical line receives the │ marker.
+                lines = text.split('\n')
+                for i, line in enumerate(lines):
+                    if i > 0:
+                        sys.stdout.write('\n')
+                    at_line_start = (i > 0) or (not self._stream_open)
+                    if at_line_start:
+                        if line:
+                            sys.stdout.write(f"{ansi('dim')}│ {ansi_reset()}{line}")
+                        else:
+                            sys.stdout.write(f"{ansi('dim')}│{ansi_reset()}")
+                    else:
+                        sys.stdout.write(line)
+                sys.stdout.flush()
+            else:
+                # ReasoningStreamState already quarantines partial reasoning tags;
+                # streaming chunks here are raw answer text. Do NOT call
+                # strip_reasoning — its ``.strip()`` eats legitimate whitespace.
+                sys.stdout.write(text)
+                sys.stdout.flush()
             self._stream_open = not text.endswith("\n")
             self._streamed_visible_this_turn = True
             self._last_ended_with_newline = text.endswith("\n")
@@ -534,6 +582,56 @@ class DrSaiCLIRenderer:
                 text = text[:200] + "…"
             self._println(f"[dim]╎ {text}[/dim]")
 
+    # ── Subagent progress event ────────────────────────────────────────────
+    def _render_agent_log(self, message: AgentLogEvent) -> None:
+        """Render subagent progress event as a single dim line.
+
+        Subagent messages are tagged with source="sub:{name}" in the
+        SubagentRunner, making each line visually traceable to its origin.
+        """
+        title = message.title or ""
+        if not title:
+            return
+        source = message.source or ""
+        is_sub = source.startswith("sub:")
+        if source:
+            if is_sub:
+                self._println(f"  [cyan]{source}[/cyan] {title}")
+            else:
+                self._println(f"  [dim]{source}[/dim] {title}")
+        else:
+            self._println(f"  [dim]{title}[/dim]")
+
+    # ── Subagent visual framing ────────────────────────────────────────────
+    def _ensure_subagent_header(self, source: str) -> None:
+        """Print subagent header and activate subagent mode if not already.
+
+        Called when the renderer encounters a message whose ``source``
+        starts with ``"sub:"`` (e.g. ``"sub:explore"``).
+        """
+        if self._subagent_active:
+            return
+        self._subagent_active = True
+        self._subagent_name = source
+        self._subagent_header_printed = False
+        # Print header line
+        self._println(f"  {ansi('system_info')}┌─ {source} ─{ansi_reset()}")
+
+    def _maybe_print_subagent_header(self) -> None:
+        """Print the subagent prefix marker once per subagent section."""
+        if not self._subagent_active or self._subagent_header_printed:
+            return
+        self._subagent_header_printed = True
+
+    def _close_subagent(self) -> None:
+        """Close the subagent visual section if active."""
+        if not self._subagent_active:
+            return
+        self._subagent_active = False
+        self._subagent_name = ""
+        self._subagent_header_printed = False
+        self._println(f"  {ansi('system_info')}└─{ansi_reset()}")
+
     # ── Complete text messages ──────────────────────────────────────────────
     def _render_text_message(self, message: TextMessage) -> None:
         # ``_should_skip_text`` has already filtered dup / internal / user
@@ -549,7 +647,36 @@ class DrSaiCLIRenderer:
             self._close_reasoning()
         if not visible:
             return
-        if _looks_markdown(visible):
+
+        # Determine if this is a subagent message
+        is_sub = source.startswith("sub:")
+        meta = getattr(message, "metadata", None) or {}
+        is_subagent_result = bool(meta.get("subagent_result"))
+
+        if is_subagent_result:
+            # Final subagent result — use a distinct teal/cyan panel with
+            # bold border and clear label so it stands out from streamed output.
+            theme = get_theme()
+            panel = Panel(
+                visible,
+                title=f"[cyan bold]◆ {source}[/cyan bold]",
+                border_style="cyan",
+                box=ROUNDED,
+                expand=False,
+            )
+            self.console.print(panel)
+        elif is_sub:
+            # Subagent text — use cyan border to distinguish from main agent (gold)
+            theme = get_theme()
+            panel = Panel(
+                visible,
+                title=f"[cyan]{source}[/cyan]",
+                border_style="cyan",
+                box=ROUNDED,
+                expand=False,
+            )
+            self.console.print(panel)
+        elif _looks_markdown(visible):
             self.console.print(Markdown(visible))
         else:
             theme = get_theme()

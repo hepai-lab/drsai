@@ -33,6 +33,9 @@ from drsai.backend.cli.prompt import DrSaiPrompt
 from drsai.backend.cli.renderer import DrSaiCLIRenderer
 from drsai.backend.cli.theme import ansi, ansi_reset
 from drsai.backend.cli.stats import SessionStats
+from drsai.modules.managers.messages.agent_messages import AgentLogEvent
+from autogen_agentchat.base import Response
+from autogen_core import CancellationToken
 
 # ── Hermes-style TUI Integration ────────────────────────────────────────────
 # Import optional TUI modules for enhanced CLI experience
@@ -681,9 +684,11 @@ async def _run_repl(cfg: dict):
     print("  Initializing agent…")
     try:
         agent = await _init_agent(current_session_id)
+        print(f"  {ansi('notify_ok')}✓ Agent initialized successfully{ansi_reset()}")
     except Exception as e:
         print(f"  {ansi('notify_error')}Failed to initialize agent:{ansi_reset()} {e}")
         print("  Check your environment / config.")
+        logger.error(f"Agent initialization failed: {e}", exc_info=True)
         return
 
     # ── Load project-level instructions (DRSAI.md / CLAUDE.md) ────────────
@@ -787,6 +792,31 @@ If a question can be answered by exploring the codebase, explore the codebase in
                 print(f"  {ansi('notify_ok')}⚡ Plan mode auto-enabled (from config){ansi_reset()}")
             else:
                 print(f"  {ansi('notify_ok')}⚡ Plan mode restored (from session state){ansi_reset()}")
+
+    # ── Auto-apply workspace restriction from global config ───────────────
+    # create_agent 已从全局配置读取 workspace_enabled；load_state 可能已用
+    # session 级状态覆盖。这里同步闭包状态并显示当前值（不再覆盖 agent 属性）。
+    ws_enabled = getattr(agent, '_only_in_workspace', True)
+    toggle_funcs = getattr(agent, '_workspace_toggle_funcs', [])
+    set_fn = next((f for f in toggle_funcs if f.__name__ == "set_workspace_restriction"), None)
+    if set_fn:
+        set_fn(ws_enabled)
+    state_str = "enabled" if ws_enabled else "disabled"
+    if ws_enabled:
+        print(f"  {ansi('notify_ok')}🔒 Workspace restriction: {state_str}{ansi_reset()}")
+    else:
+        print(f"  {ansi('notify_warn')}🔓 Workspace restriction: {state_str}{ansi_reset()}")
+
+    # ── Auto-apply dangerous command permission from global config ─────────
+    dg_global = cfg.get("dangerous_allowed", False)
+    toggle_funcs = getattr(agent, '_dangerous_toggle_funcs', [])
+    set_fn = next((f for f in toggle_funcs if f.__name__ == "set_dangerous_allowed"), None)
+    if set_fn:
+        # Always apply global dangerous setting (security: global overrides session)
+        set_fn(dg_global)
+        if dg_global:
+            print(f"  {ansi('notify_warn')}⚠️ Dangerous commands allowed (from config){ansi_reset()}")
+        # Silent when disabled (default safe)
 
     # ── Runtime state (renderer, stats, prompt) ─────────────────────────────
     stats = SessionStats(show_footer=True, ring_bell=False)
@@ -1610,6 +1640,69 @@ If a question can be answered by exploring the codebase, explore the codebase in
         if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
             prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
 
+    async def _cmd_ws_global(args: str):
+        """Toggle workspace restriction (session + global default).
+
+        Usage:
+            /ws_global on|off  - Enable/disable (session + global default)
+            /ws_global         - Show global default status
+        """
+        arg = args.strip().lower()
+
+        if arg in {"on", "1", "true", "enable"}:
+            # Apply to current session
+            if agent:
+                toggle_funcs = getattr(agent, '_workspace_toggle_funcs', [])
+                set_fn = next((f for f in toggle_funcs if f.__name__ == "set_workspace_restriction"), None)
+                if set_fn:
+                    set_fn(True)
+                    agent._only_in_workspace = True
+                    state_dict = await agent.save_state()
+                    await _save_thread_state(current_session_id, state_dict)
+            # Save as global default
+            cfg["workspace_enabled"] = True
+            cli_config.save_config(cfg)
+            print(f"{ansi('notify_ok')}🔒 Workspace restriction enabled (session + global default){ansi_reset()}")
+            print("  Setting saved to global config (new sessions will use this).")
+            print()
+
+        elif arg in {"off", "0", "false", "disable"}:
+            # Apply to current session
+            if agent:
+                toggle_funcs = getattr(agent, '_workspace_toggle_funcs', [])
+                set_fn = next((f for f in toggle_funcs if f.__name__ == "set_workspace_restriction"), None)
+                if set_fn:
+                    set_fn(False)
+                    agent._only_in_workspace = False
+                    state_dict = await agent.save_state()
+                    await _save_thread_state(current_session_id, state_dict)
+            # Save as global default
+            cfg["workspace_enabled"] = False
+            cli_config.save_config(cfg)
+            print(f"{ansi('notify_warn')}⚠ Workspace restriction disabled (session + global default){ansi_reset()}")
+            print("  Setting saved to global config (new sessions will use this).")
+            print()
+
+        elif arg == "status" or arg == "":
+            global_ws = cfg.get("workspace_enabled", True)
+            icon = "🔒" if global_ws else "🔓"
+            style = ansi('notify_ok') if global_ws else ansi('notify_warn')
+            reset = ansi_reset()
+            print(f"{icon} Global workspace restriction: {style}{'enabled' if global_ws else 'disabled'}{reset}")
+            print()
+            print("Usage: /ws_global [on|off|status]")
+            print("  on/off   - Enable/disable (session + global default)")
+            print("  status   - Show global default (default)")
+
+        else:
+            print("Usage: /ws_global [on|off|status]")
+            print("  on/off   - Enable/disable (session + global default)")
+            print("  status   - Show global default (default)")
+
+        # Refresh toolbar to show workspace state
+        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
+            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+
     async def _cmd_dangerous(args: str):
         """Toggle dangerous command execution permission on/off or show status.
 
@@ -1675,6 +1768,184 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print("  off   - Block dangerous and script execution commands (default)")
 
         # Refresh toolbar to show dangerous state
+        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
+            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+
+    async def _cmd_dg_global(args: str):
+        """Toggle dangerous command permission (session + global default).
+
+        Usage:
+            /dg_global on|off  - Allow/block dangerous commands (session + global)
+            /dg_global         - Show global default status
+        """
+        arg = args.strip().lower()
+
+        if arg in {"on", "1", "true", "enable"}:
+            # Apply to current session
+            if agent:
+                toggle_funcs = getattr(agent, '_dangerous_toggle_funcs', [])
+                set_fn = next((f for f in toggle_funcs if f.__name__ == "set_dangerous_allowed"), None)
+                if set_fn:
+                    set_fn(True)
+                    state_dict = await agent.save_state()
+                    await _save_thread_state(current_session_id, state_dict)
+            # Save as global default
+            cfg["dangerous_allowed"] = True
+            cli_config.save_config(cfg)
+            print(f"{ansi('notify_warn')}⚠️ Dangerous commands allowed (session + global default){ansi_reset()}")
+            print("  Setting saved to global config (new sessions will use this).")
+            print()
+
+        elif arg in {"off", "0", "false", "disable"}:
+            # Apply to current session
+            if agent:
+                toggle_funcs = getattr(agent, '_dangerous_toggle_funcs', [])
+                set_fn = next((f for f in toggle_funcs if f.__name__ == "set_dangerous_allowed"), None)
+                if set_fn:
+                    set_fn(False)
+                    state_dict = await agent.save_state()
+                    await _save_thread_state(current_session_id, state_dict)
+            # Save as global default
+            cfg["dangerous_allowed"] = False
+            cli_config.save_config(cfg)
+            print(f"{ansi('notify_ok')}🛡 Dangerous commands blocked (session + global default){ansi_reset()}")
+            print("  Setting saved to global config (new sessions will use this).")
+            print()
+
+        elif arg == "status" or arg == "":
+            global_dg = cfg.get("dangerous_allowed", False)
+            icon = "⚠️" if global_dg else "🛡"
+            style = ansi('notify_warn') if global_dg else ansi('notify_ok')
+            reset = ansi_reset()
+            state_str = 'ALLOWED' if global_dg else 'BLOCKED'
+            print(f"{icon} Global dangerous commands: {style}{state_str}{reset}")
+            print()
+            print("Usage: /dg_global [on|off|status]")
+            print("  on/off   - Allow/block (session + global default)")
+            print("  status   - Show global default (default)")
+
+        else:
+            print("Usage: /dg_global [on|off|status]")
+            print("  on/off   - Allow/block (session + global default)")
+            print("  status   - Show global default (default)")
+
+        # Refresh toolbar to show dangerous state
+        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
+            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+
+    async def _cmd_agent(args: str):
+        """Set, clear, or list default subagent for current session.
+
+        Usage:
+          /agent explore        — route all future messages to explore subagent
+          /agent list           — list available subagents
+          /agent clear          — return to normal (no default subagent)
+          /agent status         — show current default subagent
+        """
+        arg = args.strip().lower()
+        if not agent:
+            print("Agent not initialized.")
+            return
+
+        sub_agents = getattr(agent, '_user_sub_agents', {})
+        profile_mgr = getattr(agent, '_user_profile_manager', None)
+
+        if arg == "list" or arg == "ls":
+            if not sub_agents:
+                print("No subagents available.")
+                return
+            print("Available subagents:")
+            for name, cfg in sub_agents.items():
+                agent_type = cfg.get("type", "DrSaiAgent")
+                desc = cfg.get("description", "")[:80]
+                print(f"  {name:<16}  {agent_type:<18}  {desc}")
+            print()
+
+        elif arg == "clear" or arg == "off" or arg == "none":
+            if profile_mgr:
+                profile_mgr.set_default_subagent(current_session_id, None)
+            print(f"{ansi('notify_ok')}✅ Default subagent cleared.{ansi_reset()}")
+            print("  Messages will be handled by the main agent again.")
+            print()
+
+        elif arg == "status" or arg == "":
+            default_name = profile_mgr.get_default_subagent(current_session_id) if profile_mgr else None
+            if default_name:
+                cfg = sub_agents.get(default_name, {})
+                print(f"Current default subagent: {default_name}")
+                print(f"  Type: {cfg.get('type', 'DrSaiAgent')}")
+                print(f"  {cfg.get('description', '')}")
+            else:
+                print("No default subagent set. Messages go to the main agent.")
+                print("Use /agent <name> to set one, or /agent list to see options.")
+            print()
+
+        elif arg in sub_agents:
+            if profile_mgr:
+                profile_mgr.set_default_subagent(current_session_id, arg)
+            print(f"{ansi('notify_ok')}✅ Default subagent set to '{arg}'.{ansi_reset()}")
+            print(f"  All future messages will be routed to the {arg} subagent.")
+            print(f"  Use /agent clear to return to normal mode.")
+            print()
+
+        else:
+            print(f"Unknown subagent: '{arg}'")
+            print("Usage: /agent [name|list|clear|status]")
+            if sub_agents:
+                print("Available: " + ", ".join(sub_agents.keys()))
+            print()
+
+    async def _cmd_delegate(args: str):
+        """Manually delegate a task to a subagent.
+
+        Usage:
+          /delegate explore "find all TODO comments in src/"
+          /delegate general "fix type errors in utils.py"
+        """
+        if not agent:
+            print("Agent not initialized.")
+            return
+
+        parts = args.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            print("Usage: /delegate <agent_type> <prompt>")
+            print("  /delegate explore \"search for deprecated APIs\"")
+            print("  /delegate general \"fix type errors\"")
+            sub_agents = getattr(agent, '_user_sub_agents', {})
+            if sub_agents:
+                print(f"  Available types: {', '.join(sub_agents.keys())}")
+            return
+
+        agent_type = parts[0].strip()
+        prompt = parts[1].strip()
+
+        sub_agents = getattr(agent, '_user_sub_agents', {})
+        if agent_type not in sub_agents:
+            print(f"Unknown subagent: '{agent_type}'")
+            if sub_agents:
+                print(f"Available: {', '.join(sub_agents.keys())}")
+            return
+
+        print(f"{ansi('system_info')}Delegating to {agent_type}...{ansi_reset()}")
+        print()
+
+        # Execute via _execute_subagent
+        try:
+            async for message in agent._execute_subagent(
+                sub_agent_name=agent_type,
+                prompt=prompt,
+                cancellation_token=CancellationToken(),
+            ):
+                if isinstance(message, Response):
+                    renderer._render_text_message(message.chat_message)
+                    break
+                # Let the renderer handle intermediate messages
+                if hasattr(renderer, '_render_agent_log'):
+                    renderer._render_agent_log(message) if isinstance(message, AgentLogEvent) else None
+        except Exception as e:
+            print(f"{ansi('notify_warn')}Error: {e}{ansi_reset()}")
+
+        print()
         if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
             prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
 
@@ -1881,6 +2152,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
         print("    /init           - Create DRSAI.md for this project")
         print()
 
+
     # ── Dispatch table ──────────────────────────────────────────────────────
     # arity: 0 = no args, -1 = rest of line
     _handlers: dict = {
@@ -1927,8 +2199,15 @@ If a question can be answered by exploring the codebase, explore the codebase in
         "memory":    (_cmd_memory,   -1),
         "workspace": (_cmd_workspace, -1),
         "ws":        (_cmd_workspace, -1),  # alias
+        "ws_global": (_cmd_ws_global, -1),
+        "wsg":       (_cmd_ws_global, -1),  # alias
         "dangerous": (_cmd_dangerous, -1),
         "dg":        (_cmd_dangerous, -1),  # alias
+        "dg_global": (_cmd_dg_global, -1),
+        "dgg":       (_cmd_dg_global, -1),  # alias
+        "agent":     (_cmd_agent,    -1),
+        "delegate":  (_cmd_delegate, -1),
+        "sub":       (_cmd_delegate, -1),  # alias
     }
 
     async def _dispatch(raw: str) -> bool:
@@ -2010,6 +2289,41 @@ If a question can be answered by exploring the codebase, explore the codebase in
             renderer.print_turn_separator()
             await renderer.render(agent.run_stream(task=user_input), stats)
 
+        except asyncio.CancelledError:
+            raise
+        except KeyboardInterrupt:
+            # ── 中断处理 ────────────────────────────────────────
+            print(f"\n  {ansi('notify_warn')}⚠ 正在中断当前任务...{ansi_reset()}")
+
+            # 设置中断标志（如果支持 TUI）
+            if HAS_TUI:
+                set_interrupt(True)
+
+            try:
+                # 尝试优雅地暂停 agent（有超时保护）
+                try:
+                    await asyncio.wait_for(agent.pause(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Agent pause timed out after 2s")
+                    print(f"  {ansi('notify_warn')}⚠ 暂停超时，强制中断{ansi_reset()}")
+
+                # 短暂等待让 agent 清理状态
+                await asyncio.sleep(0.1)
+
+                # 恢复 agent 到可用状态
+                await agent.resume()
+
+                print(f"  {ansi('notify_ok')}✓ 已中断，状态已重置{ansi_reset()}\n")
+            except Exception as e:
+                logger.warning(f"Failed to pause/resume agent on interrupt: {e}")
+                print(f"  {ansi('notify_warn')}⚠ 中断时出现错误: {e}{ansi_reset()}\n")
+            finally:
+                # 清除中断标志
+                if HAS_TUI:
+                    clear_interrupt()
+
+            raise  # 重新抛出，让主循环处理
+
         except Exception as e:
             print(f"Error: {e}")
             logger.debug("Chat error", exc_info=e)
@@ -2034,6 +2348,25 @@ If a question can be answered by exploring the codebase, explore the codebase in
             except Exception as e:
                 logger.warning(f"Failed to save conversation state: {e}", exc_info=True)
 
+    # ── Environment validation ────────────────────────────────────────────
+    # Validate that we're running in an interactive terminal
+    logger.info("=== Starting REPL ===")
+    logger.info(f"stdin.isatty(): {sys.stdin.isatty()}")
+    logger.info(f"stdout.isatty(): {sys.stdout.isatty()}")
+    logger.info(f"Current workdir: {Path.cwd()}")
+
+    # TTY check - warn but don't exit (temporary for debugging)
+    if not sys.stdin.isatty():
+        logger.warning("stdin is not a TTY - some features may not work")
+        print(f"  {ansi('notify_warn')}⚠️  Warning: stdin is not a TTY{ansi_reset()}")
+        print(f"  {ansi('system_info')}Some features may not work properly{ansi_reset()}")
+        # Commented out for debugging - uncomment when issue is resolved
+        # print("  DrSai CLI requires an interactive terminal.")
+        # print("  Do not run in background or with piped input.")
+        # _hard_exit(1)
+    else:
+        print(f"  {ansi('notify_ok')}✓ Environment check passed (TTY detected){ansi_reset()}")
+
     # ── Activate patch_stdout for the entire REPL session ──────────────────
     # When active, sys.stdout is replaced with a prompt_toolkit proxy that:
     #  1. During prompt_async(): positions output ABOVE the input line,
@@ -2056,58 +2389,77 @@ If a question can be answered by exploring the codebase, explore the codebase in
                            "output isolation may be limited")
             _patch_stdout_cm = None
 
-    # ── Main input loop ─────────────────────────────────────────────────────
-    while True:
+    # ── Main input loop (synchronous mode) ─────────────────────────────────
+    # 打印欢迎提示
+    print()
+    print(f"  {ansi('notify_ok')}✓ Ready! Type your message or /help for commands{ansi_reset()}")
+    print()
+
+    logger.info("Entering main input loop (synchronous mode)")
+
+    try:
         global _pending_retry
-        
-        if _pending_retry is not None:
-            user_input = _pending_retry
-            _pending_retry = None
+
+        while True:
+            # If there's a pending retry, process it immediately
+            if _pending_retry is not None:
+                user_input = _pending_retry
+                _pending_retry = None
+            else:
+                # ── 同步等待用户输入（在智能体完成后才显示输入框）──────────
+                try:
+                    user_input = await prompt_reader.prompt()
+                    user_input = (user_input or "").strip()
+                    if not user_input:
+                        continue
+                except EOFError:
+                    # Ctrl+D = 退出
+                    logger.info("EOF detected (Ctrl+D)")
+                    break
+                except KeyboardInterrupt:
+                    # Ctrl+C 在输入时 = 退出确认
+                    print(f"\n  {ansi('system_info')}按 Ctrl+C 再次退出，或按 Enter 继续{ansi_reset()}")
+                    try:
+                        await prompt_reader.prompt()
+                        continue
+                    except (EOFError, KeyboardInterrupt):
+                        logger.info("User confirmed exit")
+                        break
+
+            # ── 处理退出命令 ────────────────────────────────────────────
+            if user_input.lower() in ("/quit", "/exit", "/q"):
+                await _cmd_quit()
+                break
+
+            # ── Slash command dispatch ──────────────────────────────────
+            if user_input.startswith("/"):
+                first_word = user_input.lstrip("/").split(maxsplit=1)[0].lower()
+                if resolve_command(first_word):
+                    try:
+                        await _dispatch(user_input)
+                    except SystemExit:
+                        raise
+                    except Exception as e:
+                        print(f"  {ansi('notify_error')}✗ Command error: {e}{ansi_reset()}")
+                        logger.debug(f"Command error: {e}", exc_info=True)
+                    continue
+                # Not a known command — fall through to chat
+
+            # ── Chat ────────────────────────────────────────────────────
             try:
                 await _do_chat(user_input)
             except KeyboardInterrupt:
-                if await _handle_interrupt(agent, set_exit_flag=True):
-                    continue
-                break
-            continue
-
-        try:
-            raw = await prompt_reader.prompt()
-        except (EOFError, asyncio.CancelledError):
-            print()
-            break
-        except KeyboardInterrupt:
-            # Ctrl+C handling: gracefully interrupt agent or exit
-            print()  # newline after ^C
-
-            # Check for Hermes-style external interrupt signal first
-            if HAS_TUI and is_interrupted():
-                clear_interrupt()
-
-            # 处理中断
-            if await _handle_interrupt(agent, set_exit_flag=True):
-                continue  # 继续循环
-            break  # 无 agent，退出
-
-        user_input = (raw or "").strip()
-        if not user_input:
-            continue
-
-        if user_input.startswith("/"):
-            try:
-                await _dispatch(user_input)
-            except SystemExit:
-                raise
-            except Exception as e:
-                print(f"Command error: {e}")
-            continue
-
-        try:
-            await _do_chat(user_input)
-        except KeyboardInterrupt:
-            if await _handle_interrupt(agent, set_exit_flag=True):
+                # Ctrl+C 在执行时 = 中断当前任务，然后继续
+                # (中断处理已经在 _do_chat 中完成，这里只需要继续循环)
                 continue
-            break
+            except Exception as e:
+                # 捕获其他未预期的异常，避免整个 REPL 崩溃
+                logger.error(f"Unexpected error in main loop: {e}", exc_info=True)
+                print(f"\n  {ansi('notify_error')}✗ Unexpected error: {e}{ansi_reset()}")
+                print(f"  {ansi('system_info')}Continuing... Type /quit to exit{ansi_reset()}\n")
+
+    finally:
+        logger.info("Exiting main loop, cleaning up...")
 
     print("Bye!")
     try:

@@ -12,7 +12,7 @@ from typing import (
     Self,
     Mapping,
     )
-import os, json, sys, uuid, shutil
+import os, json, sys, uuid, shutil, copy
 import asyncio, traceback
 from pydantic import BaseModel
 from pathlib import Path
@@ -40,6 +40,7 @@ from drsai.modules.components import (
 )
 from drsai.modules.components.model_client import ChatCompletionClient, HepAIChatCompletionClient
 from drsai.modules.components.model_context import (
+    BufferedChatCompletionContext,
     ChatCompletionContext,
     DrSaiChatCompletionContext,
     DrSaiSQLiteChatCompletionContext
@@ -99,6 +100,77 @@ from .managers.scheduled_task_manager import (
 )
 from .utils.utils import HELP_TEXT
 from .managers import ScheduledTask, ScheduleType, TaskStatus
+
+# ── Built-in subagent definitions ──────────────────────────────────────────
+BUILTIN_SUBAGENTS: Dict[str, Dict[str, Any]] = {
+    "explore": {
+        "name": "explore",
+        "type": "DrSaiAgent",
+        "description": "Read-only code explorer. Search, read, and analyze code without modifying anything.",
+        "prompt": (
+            "You are a read-only code explorer. "
+            "Use Glob, Grep, and Read tools to find and analyze code. "
+            "NEVER use Write, Edit, Bash, or any tool that modifies files or executes commands. "
+            "Return a clear, structured summary of your findings."
+        ),
+        "tools": ["run_read", "run_glob", "run_grep"],
+        "disallowed_tools": ["Delegate", "ScheduledTaskManager", "UpdateUserConfig"],
+        "max_turns": 200,
+        "timeout": 300,
+        "role": "leaf",
+    },
+    # "plan": {
+    #     "name": "plan",
+    #     "type": "DrSaiAgent",
+    #     "description": "Planning agent for software architecture and design. Read-only, no file modifications.",
+    #     "prompt": (
+    #         "You are a software architect and planning specialist. "
+    #         "Analyze requirements, codebases, and produce detailed, actionable plans. "
+    #         "You can READ files but NEVER modify them. "
+    #         "Structure your output with clear, numbered steps."
+    #     ),
+    #     "tools": ["run_read", "run_glob", "run_grep"],
+    #     "disallowed_tools": ["Delegate", "ScheduledTaskManager", "UpdateUserConfig"],
+    #     "mode": "multi",
+    #     "max_turns": 10,
+    #     "timeout": 600,
+    #     "role": "leaf",
+    # },
+    "general": {
+        "name": "general",
+        "type": "DrSaiAgent",
+        "description": "General-purpose subagent for complex tasks requiring full tool access.",
+        "prompt": (
+            "You are a capable subagent. Complete the assigned task thoroughly. "
+            "Use available tools as needed. Return a clear, concise summary when done."
+        ),
+        "tools": "*",
+        "disallowed_tools": ["Delegate", "ScheduledTaskManager", "UpdateUserConfig"],
+        "max_turns": 200,
+        "timeout": 1200,
+        "role": "leaf",
+    },
+}
+
+# ── Default tool blocklist for all subagents ───────────────────────────────
+_DEFAULT_DISALLOWED_FOR_SUBAGENTS: set = {
+    "Delegate",
+    "ScheduledTaskManager",
+    "UpdateUserConfig",
+}
+
+_READONLY_DISALLOWED_TOOLS: set = _DEFAULT_DISALLOWED_FOR_SUBAGENTS | {
+    "run_write",
+    "run_edit",
+    "run_bash",
+    "run_bash_background",
+}
+
+
+class DelegateDepthExceededError(Exception):
+    """Raised when subagent delegation depth exceeds the maximum."""
+    pass
+
 
 class DrSaiAssistantConfig(DrSaiAgentConfig):
     skills_dir: Optional[str | List[str]]
@@ -294,7 +366,7 @@ Current Session_ID is {self._thread_id}"""
         # memory manager
         model_config = model_client.dump_component()
         independent_model_client = ChatCompletionClient.load_component(model_config)
-        independent_model_client._model_info = model_client._model_info
+        independent_model_client._model_info = copy.deepcopy(model_client._model_info)
         self._model_context = self._create_context(
             model_context=model_context,
             context_type=context_type,
@@ -328,8 +400,16 @@ Current Session_ID is {self._thread_id}"""
         # === sub_agent_config ===
         self._sub_agent_config = sub_agent_config
         self._user_sub_agents = {}
+        # Merge builtins first, then user config (user overrides builtins)
+        self._user_sub_agents.update(BUILTIN_SUBAGENTS)
         self._user_sub_agents.update(sub_agent_config)
         self._subagent_tools = []
+
+        # === delegation control ===
+        self._delegate_depth: int = 0
+        self._max_delegate_depth: int = 1
+        self._subagent_timeout: int = 600
+        self._cleanup_subagent_messages: bool = True
 
         # === todo manager ===
         self._todo_manager = TodoManager()
@@ -354,6 +434,7 @@ Current Session_ID is {self._thread_id}"""
         self._config_mtimes: Dict[str, float] = {}
         self._cached_tools_prompt: str = ""
         self._cached_skills_loader = None
+        self._skip_startup_checks: bool = False
 
     def _create_context(
         self,
@@ -385,6 +466,10 @@ Current Session_ID is {self._thread_id}"""
                 user_id=self._user_id,
                 token_limit=self._token_limit,
             )
+        elif context_type == "buffered":
+            # Pure in-memory context (e.g., for single-round subagents)
+            self._context_type = "buffered"
+            return BufferedChatCompletionContext(buffer_size=50)
         else:
             # 默认使用 RAGFlow 上下文
             self._context_type = "ragflow"
@@ -411,8 +496,14 @@ Current Session_ID is {self._thread_id}"""
         return ctx
 
     def _register_context_tools(self) -> None:
-        """根据 context 类型注册相应的工具"""
-        # 通用工具：记忆读取（所有 context 都支持）
+        """根据 context 类型注册相应的工具
+
+        对子智能体场景安全：如果工具名已存在于 ``self._tools`` 中则跳过，
+        避免从父智能体继承工具后又重复添加（DrSaiAgent.__init__ 的唯一性
+        检查只能覆盖传入 tools 参数，检测不到此处的追加）。
+        """
+        existing_names = {t.name for t in self._tools}
+
         funcs = [
             self._user_profile_manager.read_session_memory_by_index,  # TODO: 后面进行测试修正
         ]
@@ -424,7 +515,10 @@ Current Session_ID is {self._thread_id}"""
         
         for func in funcs:
             if func and callable(func):
-                self._tools.append(FunctionTool(func, description=func.__doc__ or str(func)))
+                tool_name = getattr(func, '__name__', '')
+                if tool_name not in existing_names:
+                    self._tools.append(FunctionTool(func, description=func.__doc__ or str(func)))
+                    existing_names.add(tool_name)
 
     def set_task_manager(self, task_manager):
         """设置定时任务管理器实例
@@ -798,8 +892,14 @@ Current Session_ID is {self._thread_id}"""
         )
     
     def update_user_subagents(self):
-        """Update user subagents."""
+        """Update user subagents (merge builtins with user config).
+
+        User config overrides builtin definitions with the same name.
+        """
         subagents_config = self._user_profile_manager.load_subagents_config()
+        # Reset to builtins, then apply user overrides
+        self._user_sub_agents.clear()
+        self._user_sub_agents.update(BUILTIN_SUBAGENTS)
         self._user_sub_agents.update(subagents_config)
 
         if self._user_sub_agents:
@@ -913,8 +1013,9 @@ Current Session_ID is {self._thread_id}"""
             await self._init_memory_documents()
 
             # config reload checks — warnings injected into context and yielded to user
-            for warning in await self._run_startup_checks():
-                yield await self._emit_notification(warning)
+            if not getattr(self, '_skip_startup_checks', False):
+                for warning in await self._run_startup_checks():
+                    yield await self._emit_notification(warning)
             skills_loader = self._cached_skills_loader
 
             # manager ToolSchema
@@ -1312,74 +1413,30 @@ Current Session_ID is {self._thread_id}"""
         cancellation_token: CancellationToken,
         output_content_type: type[BaseModel] | None,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
+        """Handle default subagent mode — route all messages to the configured subagent.
+
+        Now uses the unified _execute_subagent for consistent isolation,
+        timeout, depth check, and context management.
         """
-        Handle default subagent mode for the current thread.
-        Routes all messages to the configured default subagent.
-        """
-        subagent = None
-        try:
-            # Get sub agent system prompt
-            sub_system = f"""You are a {default_subagent_name} subagent at {self._work_dir}.
+        # Extract user prompt from messages
+        prompt = messages[-1].content if messages else ""
 
-{self._user_sub_agents[default_subagent_name].get("prompt", "")}
-
-Complete the task and return a clear, concise summary."""
-
-            # Get subagent instance
-            subagent = await self.get_sub_agent_instance(
-                sub_agent_name=default_subagent_name,
-                model_client=model_client,
-                model_client_stream=model_client_stream,
-                sub_system=sub_system,
-                output_content_type=output_content_type,
-            )
-
-            # # Construct task messages with background context
-            # task_messages: List[BaseChatMessage] = []
-            # llm_messages = await model_context.get_messages()
-
-            # # Add background context (limited to recent messages to avoid too much context)
-            # background_message = "Below are the recent chat records for context:\n\n"
-            # for llm_message in llm_messages[-10:]:  # Only last 10 messages
-            #     if isinstance(llm_message, (UserMessage, AssistantMessage)):
-            #         background_message += f"{llm_message.source}: {llm_message.content}\n\n"
-
-            # task_messages.append(TextMessage(content=background_message, source="user"))
-
-            # Process with subagent
-            async for message in subagent.on_messages_stream(
-                messages=messages,
-                cancellation_token=cancellation_token
-            ):
-                if isinstance(message, Response):
-                    # Add subagent response to model context
-                    await model_context.add_message(
-                        AssistantMessage(
-                            content=str(message.chat_message.content),
-                            source=default_subagent_name,
-                        )
+        async for message in self._execute_subagent(
+            sub_agent_name=default_subagent_name,
+            prompt=prompt,
+            cancellation_token=cancellation_token,
+        ):
+            if isinstance(message, Response):
+                # Add subagent response to model context
+                await model_context.add_message(
+                    AssistantMessage(
+                        content=str(message.chat_message.content),
+                        source=default_subagent_name,
                     )
-                    yield message
-                yield message
-
-        except Exception as e:
-            logger.error(f"Error routing to default subagent {default_subagent_name}: {e}")
-            logger.error(traceback.format_exc())
-            yield Response(
-                chat_message=TextMessage(
-                    content=f"⚠️ 使用默认子智能体 **{default_subagent_name}** 时出错:\n\n```\n{str(e)}\n```\n\n💡 使用 `/agent clear` 清除默认子智能体设置。\n\n---\n\n⚠️ Error using default subagent **{default_subagent_name}**:\n\n```\n{str(e)}\n```\n\n💡 Use `/agent clear` to clear default subagent setting.",
-                    source=agent_name,
-                    metadata={"internal": "no"},
                 )
-            )
-        finally:
-            # 确保无论如何都要关闭 subagent，防止资源泄漏
-            if subagent:
-                try:
-                    await subagent.close()
-                    logger.debug(f"Successfully closed subagent: {default_subagent_name}")
-                except Exception as close_error:
-                    logger.warning(f"Error closing subagent {default_subagent_name}: {close_error}")
+                yield message
+                return
+            yield message
 
     def is_commands_mode(self, text: str) -> bool:
         """Check if the message is a command."""
@@ -1596,7 +1653,71 @@ Complete the task and return a clear, concise summary."""
         # STEP 4B: Execute tool calls with special tool handling
         exec_results: List[FunctionExecutionResult] = []
 
+        # ── Pre-scan: collect Delegate calls for potential parallel execution ──
+        delegate_indices: Dict[int, Dict[str, Any]] = {}
         for idx, tool_call in enumerate(model_result.content):
+            if tool_call.name == "Delegate":
+                try:
+                    args = fix_and_parse_json(tool_call.arguments)
+                    if not isinstance(args, str):
+                        delegate_indices[idx] = args
+                except Exception:
+                    pass  # parse error → handled in normal loop below
+
+        # ── Parallel path: >=2 Delegates in same turn → run concurrently ──
+        if len(delegate_indices) >= 2:
+            yield AgentLogEvent(
+                title=f"Running {len(delegate_indices)} subagents in parallel...",
+                source=agent_name,
+                content="",
+                content_type="tools",
+            )
+
+            # Build parallel task list
+            parallel_tasks = []
+            for idx, args in delegate_indices.items():
+                tool_call = model_result.content[idx]
+                parallel_tasks.append((
+                    tool_call.id,
+                    args["agent_type"],
+                    args["prompt"],
+                    args.get("context"),
+                    None,  # mode removed; placeholder for backward compat
+                ))
+
+            # Execute in parallel; capture subagent_result messages for exec_results
+            parallel_results: Dict[str, str] = {}
+            async for message in self._execute_subagents_parallel(
+                delegate_calls=parallel_tasks,
+                cancellation_token=cancellation_token,
+                max_concurrent=3,
+            ):
+                # Collect final results from metadata-tagged messages
+                if isinstance(message, TextMessage):
+                    meta = getattr(message, "metadata", None) or {}
+                    if meta.get("subagent_result"):
+                        parallel_results[meta["subagent_result"]] = message.content or ""
+                yield message
+
+            # Build exec_results with actual subagent outputs
+            for idx, args in delegate_indices.items():
+                tool_call = model_result.content[idx]
+                result_content = parallel_results.get(
+                    args["agent_type"],
+                    f"Subagent '{args['agent_type']}' completed (no output captured).",
+                )
+                exec_results.append(FunctionExecutionResult(
+                    content=result_content,
+                    name="Delegate",
+                    call_id=tool_call.id,
+                    is_error=False,
+                ))
+
+        # ── Main loop: process remaining tools (incl. single Delegate) ──
+        for idx, tool_call in enumerate(model_result.content):
+            # Skip Delegates already handled by parallel batch
+            if len(delegate_indices) >= 2 and idx in delegate_indices:
+                continue
             tool_name = tool_call.name
             call_id = tool_call.id
 
@@ -1705,46 +1826,25 @@ Complete the task and return a clear, concise summary."""
                     return
 
             elif tool_name == "Delegate":
-                # Subagent delegation tool handling
+                # Subagent delegation — unified via _execute_subagent
                 try:
-                    description, prompt, sub_agent_name = arguments["description"], arguments["prompt"], arguments["agent_type"]
-
-                    # Get sub agent system prompt
-                    sub_system = f"""You are a {sub_agent_name} subagent at {self._work_dir}.
-
-    {self._user_sub_agents[sub_agent_name].get("prompt", "")}
-
-    Complete the task and return a clear, concise summary."""
-
-                    # Construct task messages
-                    task_messages: Sequence[BaseChatMessage] = []
-                    llm_messages = await model_context.get_messages()
-                    backgroud_message = "Below are the historical chat records between the user and various intelligent assistants, which can be referenced when executing the current task.\n\n"
-                    for llm_message in llm_messages:
-                        if isinstance(llm_message, UserMessage) or isinstance(llm_message, AssistantMessage):
-                            backgroud_message += f"{llm_message.source}: {llm_message.content}\n\n"
-                    task_messages.append(TextMessage(content=backgroud_message, source="user"))
-                    task_messages.append(TextMessage(content=f"Current task: \n\n{prompt}", source="user"))
-
-                    # Execute subagent
-                    subagent = await self.get_sub_agent_instance(
-                        sub_agent_name=sub_agent_name,
-                        model_client=model_client,
-                        model_client_stream=model_client_stream,
-                        sub_system=sub_system,
-                        output_content_type=output_content_type,
-                    )
+                    sub_agent_name = arguments["agent_type"]
+                    prompt = arguments["prompt"]
+                    context = arguments.get("context")
 
                     task_result_content = ""
-                    # Stream subagent messages immediately for real-time feedback
-                    async for message in subagent.on_messages_stream(messages=task_messages, cancellation_token=cancellation_token):
+                    async for message in self._execute_subagent(
+                        sub_agent_name=sub_agent_name,
+                        prompt=prompt,
+                        context=context,
+                        cancellation_token=cancellation_token,
+                    ):
                         if isinstance(message, Response):
                             task_result_content = str(message.chat_message.content)
                             yield message.chat_message
                             break
-                        yield message  # Yield immediately for streaming experience
+                        yield message
 
-                    # Add result
                     exec_results.append(FunctionExecutionResult(
                         content=task_result_content,
                         name=tool_name,
@@ -1752,14 +1852,8 @@ Complete the task and return a clear, concise summary."""
                         is_error=False,
                     ))
 
-                    # Close subagent
-                    try:
-                        await subagent.close()
-                    except Exception as close_error:
-                        logger.warning(f"Error closing subagent {sub_agent_name}: {close_error}")
-
                 except Exception as e:
-                    logger.exception(f"Error executing Task tool: {e}")
+                    logger.exception(f"Error executing Delegate tool: {e}")
                     exec_results.append(FunctionExecutionResult(
                         content=f"Error: {str(e)}",
                         name=tool_name,
@@ -1775,7 +1869,7 @@ Complete the task and return a clear, concise summary."""
                         content=str(e),
                         source=agent_name,
                     )
-                    # Early return on critical error
+                    return
                     return
 
             elif tool_name == "UpdateUserConfig":
@@ -2079,6 +2173,446 @@ Complete the task and return a clear, concise summary."""
                 inner_messages=inner_messages,
             )
     
+    # ── Subagent Infrastructure ─────────────────────────────────────────────
+
+    def _make_subagent_thread_id(self, sub_agent_name: str) -> str:
+        """Generate a unique thread_id for a subagent.
+
+        Format: {parent_thread_id}/sub/{agent_name}/{6-char uuid}
+        Example: a1b2c3d4/sub/explore/x7k9p2
+        """
+        short_id = uuid.uuid4().hex[:6]
+        return f"{self._thread_id}/sub/{sub_agent_name}/{short_id}"
+
+    def _check_delegate_depth(self) -> None:
+        """Raise DelegateDepthExceededError if max depth exceeded."""
+        if self._delegate_depth >= self._max_delegate_depth:
+            raise DelegateDepthExceededError(
+                f"⚠️ Cannot delegate further: max depth ({self._max_delegate_depth}) "
+                f"exceeded (current: {self._delegate_depth}). "
+                f"This subagent is at the deepest allowed level."
+            )
+
+    def _get_tools_for_subagent(self, sub_agent_name: str) -> list:
+        """Filter tools for subagent using allowlist + blocklist.
+
+        Default blocklist prevents recursive delegation, config mutation,
+        and scheduled task side effects. explore/plan types additionally
+        block all write/edit/exec tools.
+        """
+        cfg = self._user_sub_agents.get(sub_agent_name, {})
+        agent_type = cfg.get("type", "DrSaiAgent")
+
+        # Determine blocklist by agent type
+        if agent_type in ("explore", "plan"):
+            disallowed = _READONLY_DISALLOWED_TOOLS
+        else:
+            disallowed = _DEFAULT_DISALLOWED_FOR_SUBAGENTS.copy()
+
+        # Merge user-defined disallowed tools
+        disallowed |= set(cfg.get("disallowed_tools", []))
+
+        # Leaf role always blocks Delegate
+        if cfg.get("role", "leaf") == "leaf":
+            disallowed.add("Delegate")
+
+        # Apply allowlist
+        allowed = cfg.get("tools", "*")
+        if allowed == "*":
+            tools = list(self._tools) if hasattr(self, '_tools') else []
+        else:
+            tools = [
+                t for t in (getattr(self, '_workbench', None) and self._workbench._tools or [])
+                if t.name in allowed
+            ]
+
+        return [t for t in tools if t.name not in disallowed]
+
+    async def _create_independent_model_client(self) -> ChatCompletionClient:
+        """Create an independent model_client copy for subagent use.
+
+        Creates a new instance with its own underlying httpx.AsyncClient so that
+        subagent.close() does not affect the parent's HTTP connections.
+
+        Uses raw config for HepAIChatCompletionClient to avoid
+        ``dump_component``/``load_component`` losing the HepAI type
+        (HepAIChatCompletionClient inherits ``component_provider_override`` from
+        OpenAIChatCompletionClient, so ``load_component`` would instantiate an
+        OpenAIChatCompletionClient instead).
+        """
+        if self._model_client is None:
+            raise ValueError("Parent model_client is not initialized")
+
+        # HepAI client: preserve the subclass type via raw config
+        try:
+            from hepai.agents.modules.components.LLMClient import (
+                HepAIChatCompletionClient,
+            )
+            if isinstance(self._model_client, HepAIChatCompletionClient):
+                raw = getattr(self._model_client, '_raw_config', {}).copy()
+                independent = HepAIChatCompletionClient(**raw)
+                independent._model_info = copy.deepcopy(self._model_client._model_info)
+                return independent
+        except ImportError:
+            pass
+
+        # Default path (works for all Component-based clients)
+        model_config = self._model_client.dump_component()
+        independent = ChatCompletionClient.load_component(model_config)
+        independent._model_info = copy.deepcopy(self._model_client._model_info)
+        return independent
+
+    async def _create_local_subagent(
+        self,
+        sub_agent_name: str,
+    ) -> "DrSaiAssistant":
+        """Create a local DrSaiAssistant subagent instance.
+
+        Key isolation guarantees:
+        - thread_id = {parent}/sub/{name}/{uuid}  (independent)
+        - SQLite context with isolated thread_id
+        - only_system_message=True skips UserProfileManager
+        - Reuses db_manager connection but writes to different thread_id
+        """
+        cfg = self._user_sub_agents.get(sub_agent_name, {})
+        max_turns = cfg.get("max_turns", 10)
+
+        # Build isolated thread_id
+        sub_thread_id = self._make_subagent_thread_id(sub_agent_name)
+
+        # Build temporary system prompt
+        sub_prompt = cfg.get("prompt", "")
+        sub_system = (
+            f"You are a {sub_agent_name} subagent at {self._work_dir}.\n\n"
+            f"{sub_prompt}\n\n"
+            f"Complete the task and return a clear, concise summary."
+        )
+
+        # Get filtered tools for subagent
+        tools = self._get_tools_for_subagent(sub_agent_name)
+
+        # Independent model_client
+        independent_model_client = await self._create_independent_model_client()
+
+        # Always use SQLite context (isolated thread_id in shared DB)
+        model_context_arg = None
+        context_type_arg = "sqlite"
+
+        subagent = DrSaiAssistant(
+            name=sub_agent_name,
+            model_client=independent_model_client,
+            model_client_stream=True,
+            tools=tools,
+            system_message=sub_system,
+            only_system_message=True,            # skip UserProfileManager
+            max_turn_count=max_turns,
+            model_context=model_context_arg,
+            # Identity
+            thread_id=sub_thread_id,
+            user_id=self._user_id,
+            # Workspace
+            work_dir=str(self._work_dir),
+            storage_dir=str(self._work_dir),
+            only_in_workspace=False,
+            # Database (shared connection, isolated thread_id)
+            db_manager=self._db_manager,
+            context_type=context_type_arg,
+            # Safety
+            allolow_dangrous_cmd=True,
+            allolow_basic_tools=[],              # ← prevent get_operator_funcs tools
+            sub_agent_config={},                 # no nested subagents
+            skills_dir=[],
+        )
+
+        # Inject depth
+        subagent._delegate_depth = self._delegate_depth + 1
+
+        # Subagent isolation: prevent _run_startup_checks from reloading
+        # configs and injecting unwanted tools (MCP, Delegate, skills).
+        subagent._skip_startup_checks = True
+        # Clear manager tools to prevent TodoWrite, UpdateUserConfig,
+        # Delegate etc. from leaking into API calls.
+        subagent._todo_tools = []
+        subagent._update_user_config_tools = []
+        subagent._scheduled_task_tools = []
+        subagent._subagent_tools = []
+        subagent._agent_skills_tools = []
+        subagent._user_sub_agents = {}
+
+        await subagent.lazy_init()
+        return subagent
+
+    async def _create_remote_subagent(
+        self,
+        sub_agent_name: str,
+    ) -> "HepAIWorkerAgent":
+        """Create a remote HepAIWorkerAgent subagent instance.
+
+        Remote subagents manage their own thread/session on the server side.
+        We pass chat_id (parent thread_id) for correlation.
+        """
+        cfg = self._user_sub_agents.get(sub_agent_name, {})
+        remote_configs = cfg.get("model_remote_configs", {})
+
+        subagent = HepAIWorkerAgent(
+            name=sub_agent_name,
+            description=cfg.get("description", ""),
+            model_remote_configs={
+                "url": remote_configs.get("url", "https://aiapi.ihep.ac.cn/apiv2"),
+                "api_key": self._model_client._client.api_key if self._model_client else None,
+                "name": remote_configs.get("name", sub_agent_name),
+            },
+            chat_id=self._thread_id,
+            run_info={
+                "name": getattr(self._user_profile_manager, 'user_id', ''),
+                "email": self._user_id,
+            },
+        )
+
+        await subagent.lazy_init()
+        return subagent
+
+    @staticmethod
+    def _build_subagent_messages(
+        prompt: str,
+        work_dir: str,
+        context: str | None = None,
+    ) -> List[TextMessage]:
+        """Build minimal task messages for subagent (Hermes-style).
+
+        Only passes task + optional context + work directory.
+        Does NOT pass parent conversation history.
+
+        Args:
+            prompt: The task description.
+            work_dir: Work directory path.
+            context: Optional background information.
+        """
+        content = f"Your task:\n\n{prompt}"
+        if context:
+            content = f"Background context:\n{context}\n\n{content}"
+        content += f"\n\nWork directory: {work_dir}"
+
+        return [TextMessage(content=content, source="user")]
+
+    @staticmethod
+    def _tag_message(
+        message: "BaseAgentEvent | BaseChatMessage",
+        sub_agent_name: str,
+    ) -> "BaseAgentEvent | BaseChatMessage":
+        """Tag a message with subagent source for display differentiation."""
+        if hasattr(message, 'source'):
+            src = message.source or ""
+            if not src:
+                message.source = f"sub:{sub_agent_name}"
+            elif not src.startswith("sub:"):
+                message.source = f"sub:{sub_agent_name}/{src}"
+        return message
+
+    async def _safe_close_subagent(self, subagent, sub_agent_name: str) -> None:
+        """Safely close a subagent and optionally clean up its DB messages."""
+        try:
+            await subagent.close()
+        except Exception as e:
+            logger.warning(f"Error closing subagent {sub_agent_name}: {e}")
+
+        # Optionally clean up SQLite messages for multi-mode subagents
+        if self._cleanup_subagent_messages and hasattr(subagent, '_context_type'):
+            if getattr(subagent, '_context_type', None) == "sqlite":
+                try:
+                    await self._delete_subagent_messages(subagent._thread_id)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to clean up subagent messages "
+                        f"{subagent._thread_id}: {e}"
+                    )
+
+    async def _delete_subagent_messages(self, thread_id: str) -> None:
+        """Delete all SessionMessage rows for a subagent thread_id."""
+        from drsai.modules.managers.datamodel.db import SessionMessage
+        if not self._db_manager:
+            return
+        try:
+            self._db_manager.delete(
+                model_class=SessionMessage,
+                filters={"thread_id": thread_id},
+            )
+        except Exception as e:
+            logger.warning(f"Failed to clean up messages for {thread_id}: {e}")
+
+    async def _execute_subagent(
+        self,
+        sub_agent_name: str,
+        prompt: str,
+        context: str | None = None,
+        cancellation_token: CancellationToken | None = None,
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
+        """Unified subagent execution entry point.
+
+        Called by both _process_model_result (Delegate tool)
+        and _handle_default_subagent_mode.
+
+        Args:
+            sub_agent_name: Subagent type name (explore, plan, general, ...).
+            prompt: Task description.
+            context: Optional background information.
+            cancellation_token: Cancellation token for early termination.
+        """
+        # 1. Depth check
+        self._check_delegate_depth()
+
+        # 2. Create subagent (remote if config type indicates it)
+        cfg = self._user_sub_agents.get(sub_agent_name, {})
+        agent_type = cfg.get("type", "DrSaiAgent")
+        if agent_type in ("HepAIWorkerAgent", "RemoteAgent"):
+            subagent = await self._create_remote_subagent(sub_agent_name)
+        else:
+            subagent = await self._create_local_subagent(sub_agent_name)
+
+        # 3. Build task messages (Hermes-style: no parent history)
+        task_messages = self._build_subagent_messages(
+            prompt=prompt,
+            work_dir=str(self._work_dir),
+            context=context,
+        )
+
+        # 4. Execute with timeout — IMPORTANT: give each subagent its OWN
+        #    CancellationToken to prevent close() from cancelling the parent's
+        #    shared token (which would kill sibling parallel subagents).
+        timeout = cfg.get("timeout", self._subagent_timeout)
+        parent_ct = cancellation_token or CancellationToken()
+        ct = CancellationToken()  # subagent-own token
+
+        try:
+            # Propagate cancellation from parent to subagent via a watcher.
+            async def _watch_parent_cancel(parent: CancellationToken, child: CancellationToken):
+                try:
+                    while not parent.is_cancelled():
+                        await asyncio.sleep(0.1)
+                finally:
+                    child.cancel()
+
+            watcher = asyncio.create_task(_watch_parent_cancel(parent_ct, ct))
+
+            try:
+                async with asyncio.timeout(timeout):
+                    async for message in subagent.on_messages_stream(
+                        messages=task_messages,
+                        cancellation_token=ct,
+                    ):
+                        # Tag for display
+                        yield self._tag_message(message, sub_agent_name)
+
+                        if isinstance(message, Response):
+                            break  # subagent done
+
+                        # Check pause/cancel
+                        if getattr(self, 'is_paused', False) or ct.is_cancelled():
+                            break
+            finally:
+                watcher.cancel()
+                try:
+                    await watcher
+                except asyncio.CancelledError:
+                    pass
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Subagent '{sub_agent_name}' timed out after {timeout}s")
+            yield TextMessage(
+                content=(
+                    f"⚠️ Subagent '{sub_agent_name}' timed out after {timeout}s.\n"
+                    f"Try breaking the task into smaller steps or using multi mode."
+                ),
+                source="system",
+            )
+        except DelegateDepthExceededError as e:
+            yield TextMessage(content=str(e), source="system")
+        finally:
+            await self._safe_close_subagent(subagent, sub_agent_name)
+
+    async def _execute_subagents_parallel(
+        self,
+        delegate_calls: List[tuple],
+        cancellation_token: CancellationToken,
+        max_concurrent: int = 3,
+        **common_kwargs,
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
+        """Execute multiple Delegate calls in parallel via asyncio.Queue merge.
+
+        Each subagent runs in its own Task; outputs are merged through a shared
+        Queue and yielded in arrival order.  A Semaphore caps concurrency.
+
+        After all subagents complete, their final results are yielded as
+        SubagentResult messages keyed by agent name, so the caller can
+        populate exec_results with real content.
+        """
+        queue: asyncio.Queue = asyncio.Queue()
+        semaphore = asyncio.Semaphore(max_concurrent)
+        total = len(delegate_calls)
+        done_count = 0
+        _DONE = object()
+
+        # Collect per-subagent final results
+        subagent_results: Dict[str, str] = {}
+
+        async def run_one(call_id, sub_agent_name, prompt, context):
+            async with semaphore:
+                last_content = ""
+                try:
+                    async for msg in self._execute_subagent(
+                        sub_agent_name=sub_agent_name,
+                        prompt=prompt,
+                        context=context,
+                        cancellation_token=cancellation_token,
+                        **common_kwargs,
+                    ):
+                        # Track last text content for result collection
+                        if isinstance(msg, TextMessage):
+                            last_content = msg.content or ""
+                        elif isinstance(msg, Response):
+                            last_content = str(getattr(msg, 'chat_message', msg).content) if hasattr(msg, 'chat_message') else ""
+                        await queue.put((sub_agent_name, msg))
+                except Exception as e:
+                    last_content = f"Error: {e}"
+                    await queue.put((sub_agent_name, TextMessage(
+                        content=f"⚠️ [{sub_agent_name}] {e}",
+                        source="system",
+                    )))
+                finally:
+                    # Store final result before signaling done
+                    subagent_results[sub_agent_name] = last_content
+                    await queue.put((None, _DONE))
+
+        # Launch all tasks
+        tasks = []
+        for call_id, sub_agent_name, prompt, context, mode in delegate_calls:
+            tasks.append(
+                asyncio.create_task(
+                    run_one(call_id, sub_agent_name, prompt, context)
+                )
+            )
+
+        # Consume merged stream
+        while done_count < total:
+            name, message = await queue.get()
+            if message is _DONE:
+                done_count += 1
+                continue
+            yield self._tag_message(message, name) if name else message
+
+        # Ensure all tasks complete
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Yield collected results for the caller
+        for sub_agent_name, content in subagent_results.items():
+            yield TextMessage(
+                content=f"[{sub_agent_name}] {content}",
+                source=f"sub:{sub_agent_name}",
+                metadata={"subagent_result": sub_agent_name},
+            )
+
+    # ── End Subagent Infrastructure ─────────────────────────────────────────
+
     def get_tools_for_agent(self, agent_type: str) -> list:
         """Filter tools based on agent type."""
         allowed = self._user_sub_agents.get(agent_type, {}).get("tools", "*")
@@ -2104,14 +2638,9 @@ Complete the task and return a clear, concise summary."""
         # 使用 dump_component 和 load_component 来创建深拷贝
         independent_model_client = None
         if model_client is not None:
-            try:
-                model_config = model_client.dump_component()
-                independent_model_client = ChatCompletionClient.load_component(model_config)
-                independent_model_client._model_info = model_client._model_info
-            except Exception as e:
-                logger.warning(f"Failed to create independent model_client for subagent {sub_agent_name}: {e}")
-                logger.warning("Falling back to shared model_client (may cause issues when subagent is closed)")
-                independent_model_client = model_client
+            model_config = model_client.dump_component()
+            independent_model_client = ChatCompletionClient.load_component(model_config)
+            independent_model_client._model_info = copy.deepcopy(model_client._model_info)
 
         # Get agent
         if sub_agent_name in self._user_sub_agents:
@@ -2181,100 +2710,32 @@ Complete the task and return a clear, concise summary."""
         cancellation_token: CancellationToken,
         output_content_type: type[BaseModel] | None,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
+        """Handle subagent execution — now delegates to unified _execute_subagent.
+
+        Maintained for backward compatibility with assistant_skill.py.
         """
-        Sub agent can actuate the sub task.
+        prompt = argument["prompt"]
+        sub_agent_name = argument["agent_type"]
+        context = argument.get("context")
 
-        The types of sub agent:
-        1. code_executor
-        2. normal drsai agent
-        3. worker agent
-        """
-        subagent = None
-        try:
-            description, prompt, sub_agent_name = argument["description"], argument["prompt"], argument["agent_type"]
-
-            # get sub agent system prompt
-            sub_system = f"""You are a {sub_agent_name} subagent at {self._work_dir}.
-
-    {self._user_sub_agents[sub_agent_name].get("prompt", "")}
-
-    Complete the task and return a clear, concise summary."""
-
-            # construct task messages
-            task_messages: Sequence[BaseChatMessage] = []
-            llm_messages = await model_context.get_messages()
-            # TODO: compress the background messages using  LLM
-            backgroud_message = "Below are the historical chat records between the user and various intelligent assistants, which can be referenced when executing the current task.\n\n"
-            for llm_message in llm_messages:
-                if isinstance(llm_message, UserMessage) or isinstance(llm_message, AssistantMessage):
-                    backgroud_message += f"{llm_message.source}: {llm_message.content}\n\n"
-            task_messages.append(TextMessage(content=backgroud_message, source="user"))
-            task_messages.append(TextMessage(content=f"Current task: \n\n{prompt}", source="user"))
-
-            # Process task
-            #  TODO: handle turn count fro multi-turn task.
-            # turn_count = 0
-            # while turn_count < self._max_turn_count:
-            #     turn_count += 1
-            subagent = await self.get_sub_agent_instance(
-                sub_agent_name = sub_agent_name,
-                model_client = model_client,
-                model_client_stream = model_client_stream,
-                sub_system = sub_system,
-                output_content_type = output_content_type,
-            )
-            async for message in subagent.on_messages_stream(messages=task_messages, cancellation_token=cancellation_token):
-                if isinstance(message, Response):
-                    yield message.chat_message
-                    # await model_context.add_message(
-                    #     UserMessage(
-                    #         content=str(message.chat_message.content),
-                    #         source="user",
-                    #     )
-                    # )
-                    await model_context.add_message(FunctionExecutionResultMessage(
-                        content=[FunctionExecutionResult(
-                            content = str(message.chat_message.content),
-                            name = tool_name,
-                            call_id = call_id,
-                            is_error = False,
-                        ),]
-                    ))
-                    return
-                yield message
-
-        except Exception as e:
-            logger.exception(f"Error in {self.name}")
-            yield ModelClientStreamingChunkEvent(
-                content=str(e)+"\n\n",
-                source=self.name,
-            )
-            # await model_context.add_message(
-            #     UserMessage(
-            #         content=str(e),
-            #         source="user",
-            #     )
-            # )
-            await model_context.add_message(FunctionExecutionResultMessage(
-                content=[FunctionExecutionResult(
-                    content = str(e),
-                    name = tool_name,
-                    call_id = call_id,
-                    is_error = True,
-                ),]
-            ))
-            yield StopMessage(
-                content=str(e),
-                source=agent_name,
-            )
-        finally:
-            # 确保无论如何都要关闭 subagent，防止资源泄漏
-            if subagent:
-                try:
-                    await subagent.close()
-                    logger.debug(f"Successfully closed subagent: {sub_agent_name}")
-                except Exception as close_error:
-                    logger.warning(f"Error closing subagent {sub_agent_name}: {close_error}")
+        async for message in self._execute_subagent(
+            sub_agent_name=sub_agent_name,
+            prompt=prompt,
+            context=context,
+            cancellation_token=cancellation_token,
+        ):
+            if isinstance(message, Response):
+                yield message.chat_message
+                await model_context.add_message(FunctionExecutionResultMessage(
+                    content=[FunctionExecutionResult(
+                        content=str(message.chat_message.content),
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    )]
+                ))
+                return
+            yield message
 
     async def handle_todo_write(
         self,
