@@ -116,20 +116,6 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="[n]",
         handler="async",
     ),
-    CommandDef(
-        "queue_show",
-        "Show currently queued commands",
-        "Session",
-        aliases=("qs",),
-        handler="sync",
-    ),
-    CommandDef(
-        "queue_clear",
-        "Clear the command queue",
-        "Session",
-        aliases=("qq",),
-        handler="sync",
-    ),
 
     # ── Display / runtime ────────────────────────────────────────────────────
     CommandDef(

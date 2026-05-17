@@ -585,6 +585,7 @@ async def _run_repl(cfg: dict):
             session_name = "default"
         current_session_id = store.create(name=session_name, workdir=current_workdir)
         cli_config.set_workdir_session(current_workdir, current_session_id)
+        _invalidate_label()  # cache now reflects new session
         print(f"  New session: {ansi('notify_info')}{session_name}{ansi_reset()} [{current_session_id[:8]}] (workdir: {current_workdir})")
 
     # ── Agent lifecycle ─────────────────────────────────────────────────────
@@ -823,12 +824,34 @@ If a question can be answered by exploring the codebase, explore the codebase in
     renderer = DrSaiCLIRenderer(show_reasoning=False)
     last_user_msg: str = ""
 
+    # ── Prompt-label cache: avoid DB query (store.resolve) on every keystroke
+    _label_cache: dict = {"text": None, "dirty": True}
+
+    def _invalidate_label() -> None:
+        """Mark prompt label as dirty; next render will resolve session name."""
+        _label_cache["dirty"] = True
+
     def _current_label() -> str:
+        if not _label_cache["dirty"]:
+            return _label_cache["text"]
         info = store.resolve(current_session_id)
         name = info.name if info else current_session_id[:8]
-        return f"{name} [{current_session_id[:8]}]"
+        result = f"{name} [{current_session_id[:8]}]"
+        _label_cache["text"] = result
+        _label_cache["dirty"] = False
+        return result
+
+    # ── Toolbar cache: avoids recomputing on every keystroke ────────────
+    _toolbar_cache: dict = {"text": None, "dirty": True}
+
+    def _invalidate_toolbar() -> None:
+        """Mark toolbar as dirty so next render recomputes live state."""
+        _toolbar_cache["dirty"] = True
 
     def _bottom_toolbar() -> str:
+        if not _toolbar_cache["dirty"]:
+            return _toolbar_cache["text"]
+
         user_id = cfg.get("user_id", "anonymous")
         # Read model from agent (session-local), fallback to global default
         model_name = getattr(agent, '_defult_config_name', None) or cfg.get("defult_config_name") or "auto"
@@ -859,7 +882,10 @@ If a question can be answered by exploring the codebase, explore the codebase in
                 parts.append("⚠️ all-cmd")
             else:
                 parts.append("🛡 safe-cmd")
-        return "  ·  ".join(parts)
+        result = "  ·  ".join(parts)
+        _toolbar_cache["text"] = result
+        _toolbar_cache["dirty"] = False
+        return result
 
     prompt_reader = DrSaiPrompt(
         session_label_fn=_current_label,
@@ -987,9 +1013,11 @@ If a question can be answered by exploring the codebase, explore the codebase in
         new_id = store.create(name=name, workdir=current_workdir)
         current_session_id = new_id
         cli_config.set_workdir_session(current_workdir, new_id)
+        _invalidate_label()  # cache now reflects new session
         current_thread = None  # 重置，_init_agent 会创建新的
         try:
             agent = await _init_agent(current_session_id)
+            _invalidate_toolbar()  # new agent → refresh toolbar state
             print(f"New session: {_current_label()}")
         except Exception as e:
             print(f"Failed to initialize new session: {e}")
@@ -998,6 +1026,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
         nonlocal current_session_id, agent, current_thread
         await _close_agent()  # 保存当前 agent 状态
         current_session_id = thread_id
+        _invalidate_label()  # cache now reflects switched session
         # Update workdir mapping if session has a workdir
         current_workdir = str(Path.cwd().resolve())
         info = store.resolve(thread_id)
@@ -1005,6 +1034,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
             cli_config.set_workdir_session(info.workdir, thread_id)
         try:
             agent = await _init_agent(current_session_id)
+            _invalidate_toolbar()  # new agent → refresh toolbar state
             return True
         except Exception as e:
             print(f"Failed to switch: {e}")
@@ -1148,8 +1178,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print(f"Model alias set to {args}")
 
         # Refresh bottom toolbar to show new model
-        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
-            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+        _invalidate_toolbar()
 
     async def _cmd_model_global(args: str):
         """Switch model for current session AND save as global default.
@@ -1197,8 +1226,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
         else:
             print(f"Global default set to {args}")
 
-        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
-            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+        _invalidate_toolbar()
 
     def _cmd_models(args: str):
         """List all available models with reasoning support info."""
@@ -1470,8 +1498,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
         else:
             print(f"Fast mode on — alias set to {fast_alias}")
 
-        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
-            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+        _invalidate_toolbar()
 
     async def _cmd_plan_mode(args: str):
         """动态切换 plan mode (session-local)：启用后 AI 会先访谈用户确认计划再执行"""
@@ -1518,8 +1545,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print("  /pm_global [on|off] - Set global default")
 
         # Refresh toolbar to show plan_mode state
-        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
-            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+        _invalidate_toolbar()
     
     async def _cmd_pm_global(args: str):
         """切换 plan mode (session + global default)"""
@@ -1558,8 +1584,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print("  on/off   - Enable/disable (session + global default)")
             print("  status   - Show global default (default)")
 
-        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
-            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+        _invalidate_toolbar()
 
     async def _cmd_workspace(args: str):
         """Toggle workspace restriction (only_in_workspace) on/off or show status.
@@ -1637,8 +1662,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print("  status   - Show current status")
 
         # Refresh toolbar to show workspace state
-        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
-            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+        _invalidate_toolbar()
 
     async def _cmd_ws_global(args: str):
         """Toggle workspace restriction (session + global default).
@@ -1700,8 +1724,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print("  status   - Show global default (default)")
 
         # Refresh toolbar to show workspace state
-        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
-            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+        _invalidate_toolbar()
 
     async def _cmd_dangerous(args: str):
         """Toggle dangerous command execution permission on/off or show status.
@@ -1768,8 +1791,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print("  off   - Block dangerous and script execution commands (default)")
 
         # Refresh toolbar to show dangerous state
-        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
-            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+        _invalidate_toolbar()
 
     async def _cmd_dg_global(args: str):
         """Toggle dangerous command permission (session + global default).
@@ -1830,8 +1852,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print("  status   - Show global default (default)")
 
         # Refresh toolbar to show dangerous state
-        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
-            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+        _invalidate_toolbar()
 
     async def _cmd_agent(args: str):
         """Set, clear, or list default subagent for current session.
@@ -1946,8 +1967,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print(f"{ansi('notify_warn')}Error: {e}{ansi_reset()}")
 
         print()
-        if hasattr(prompt_reader, 'update_bottom_toolbar_fn'):
-            prompt_reader.update_bottom_toolbar_fn(_bottom_toolbar)
+        _invalidate_toolbar()
 
     async def _cmd_inject(args: str):
         """注入自定义提示词到 system message。
@@ -2347,6 +2367,9 @@ If a question can be answered by exploring the codebase, explore the codebase in
 
             except Exception as e:
                 logger.warning(f"Failed to save conversation state: {e}", exc_info=True)
+
+            # Invalidate toolbar cache so next render reflects updated stats.turns
+            _invalidate_toolbar()
 
     # ── Environment validation ────────────────────────────────────────────
     # Validate that we're running in an interactive terminal

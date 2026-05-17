@@ -1,0 +1,60 @@
+appId: com.nousresearch.hermes
+productName: Hermes Agent
+directories:
+  buildResources: build
+files:
+  - "!**/.vscode/*"
+  - "!src/*"
+  - "!electron.vite.config.{js,ts,mjs,cjs}"
+  - "!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}"
+  - "!{.env,.env.*,.npmrc,pnpm-lock.yaml}"
+  - "!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}"
+asarUnpack:
+  - resources/**
+win:
+  executableName: hermes-agent
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+  oneClick: true
+  perMachine: false
+mac:
+  artifactName: ${name}-${version}-${arch}-${os}.${ext}
+  icon: build/icon.icns
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  extendInfo:
+    - NSCameraUsageDescription: Application requests access to the device's camera.
+    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: true
+dmg:
+  artifactName: ${name}-${version}-${arch}.${ext}
+linux:
+  target:
+    - AppImage
+    - snap
+    - deb
+    - rpm
+  maintainer: electronjs.org
+  vendor: Nous Research
+  category: Utility
+  synopsis: Self-improving AI assistant desktop app
+  description: >-
+    Hermes Desktop is a native desktop app for installing, configuring, and chatting
+    with Hermes Agent — a self-improving AI assistant with tool use, multi-platform
+    messaging, and a closed learning loop.
+appImage:
+  artifactName: ${name}-${version}.${ext}
+rpm:
+  artifactName: ${name}-${version}.${ext}
+npmRebuild: false
+publish:
+  provider: github
+  owner: fathah
+  repo: hermes-desktop

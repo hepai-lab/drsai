@@ -226,8 +226,7 @@ class DrSaiCLIAssistant(DrSaiAssistant):
         if not response.status or not response.data:
             return []
         row = response.data[0]
-        msgs = getattr(row, "messages", None) or []
-        return list(msgs)
+        return _extract_messages_from_thread(row)
 
     def list_sessions(self, limit: int = 50) -> list[SessionInfo]:
         """List recent Threads for the current user, newest first."""
@@ -271,7 +270,8 @@ class DrSaiCLIAssistant(DrSaiAssistant):
                         if row.thread_id in seen:
                             continue
                         try:
-                            blob = json.dumps(row.messages or [], ensure_ascii=False).lower()
+                            msgs = _extract_messages_from_thread(row)
+                            blob = json.dumps(msgs, ensure_ascii=False).lower()
                         except Exception:
                             continue
                         if needle in blob:
@@ -300,8 +300,32 @@ class DrSaiCLIAssistant(DrSaiAssistant):
         return True
 
 
+def _extract_messages_from_thread(row: Thread) -> list[dict[str, Any]]:
+    """Extract messages from Thread, falling back to Thread.state if needed.
+
+    Messages may live in ``Thread.messages`` (legacy) or be embedded inside
+    ``Thread.state`` under ``llm_context.current_messages`` (current storage).
+    """
+    msgs = list(row.messages) if row.messages else []
+    if msgs:
+        return msgs
+    # Fall back to decompressing Thread.state
+    state = getattr(row, "state", None)
+    if state:
+        try:
+            from drsai.utils.utils import decompress_state
+            state_dict = decompress_state(state) if isinstance(state, str) else state
+            llm_context = state_dict.get("llm_context", state_dict)
+            current_msgs = llm_context.get("current_messages", [])
+            if current_msgs:
+                return list(current_msgs)
+        except Exception:
+            pass
+    return []
+
+
 def _thread_to_info(row: Thread) -> SessionInfo:
-    msgs = row.messages or []
+    msgs = _extract_messages_from_thread(row)
     preview = ""
     for m in reversed(msgs):
         if isinstance(m, dict):

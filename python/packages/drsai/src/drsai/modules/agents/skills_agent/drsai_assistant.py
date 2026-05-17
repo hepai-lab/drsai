@@ -116,7 +116,7 @@ BUILTIN_SUBAGENTS: Dict[str, Dict[str, Any]] = {
         "tools": ["run_read", "run_glob", "run_grep"],
         "disallowed_tools": ["Delegate", "ScheduledTaskManager", "UpdateUserConfig"],
         "max_turns": 200,
-        "timeout": 300,
+        "timeout": 3600,
         "role": "leaf",
     },
     # "plan": {
@@ -147,7 +147,7 @@ BUILTIN_SUBAGENTS: Dict[str, Dict[str, Any]] = {
         "tools": "*",
         "disallowed_tools": ["Delegate", "ScheduledTaskManager", "UpdateUserConfig"],
         "max_turns": 200,
-        "timeout": 1200,
+        "timeout": 3600,
         "role": "leaf",
     },
 }
