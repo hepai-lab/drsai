@@ -1,0 +1,23 @@
+export default {
+  title: "Profil",
+  subtitle:
+    "Setiap profil adalah workspace Hermes terisolasi dengan konfigurasi, memori, dan skill sendiri",
+  newAgent: "Agent Baru",
+  namePlaceholder: "Nama agent (mis. coder)",
+  cloneConfig: "Klon konfigurasi & API key dari default",
+  createFailed: "Gagal membuat profil",
+  creating: "Membuat...",
+  create: "Buat",
+  active: "Aktif",
+  noModel: "Model belum diatur",
+  skillsCount: "{{count}} skill",
+  gatewayRunning: "Gateway berjalan",
+  gatewayOff: "Gateway mati",
+  chat: "Chat",
+  deleteConfirm: "Hapus?",
+  yes: "Ya",
+  no: "Tidak",
+  deleteTitle: "Hapus agent",
+  auto: "Otomatis",
+  local: "Lokal",
+} as const;
