@@ -373,6 +373,280 @@ class DocumentProcessor:
                 'message': f'Failed to create Word document: {e}'
             }
     
+    def _add_footer_with_page_numbers(self, doc, footer_type: str, text: str, font_name: str, font_size: float, alignment: str):
+        """
+        Add a footer with optional page numbers to a document section.
+
+        footer_type options:
+            - 'page_number'        → "Page X of Y" centered
+            - 'page_x'             → "Page X" centered
+            - 'custom'             → just the 'text' string, no fields
+        """
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+
+        section = doc.sections[-1]
+        footer = section.footer
+
+        # Clear existing footer paragraphs
+        for para in footer.paragraphs:
+            for run in para.runs:
+                run.text = ''
+        # Ensure at least one paragraph
+        if not footer.paragraphs:
+            footer.add_paragraph()
+
+        para = footer.paragraphs[0]
+        para.clear()
+
+        # Map alignment string → WD_ALIGN_PARAGRAPH constant
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        alignment_map = {
+            'left': WD_ALIGN_PARAGRAPH.LEFT,
+            'right': WD_ALIGN_PARAGRAPH.RIGHT,
+            'center': WD_ALIGN_PARAGRAPH.CENTER,
+            'centre': WD_ALIGN_PARAGRAPH.CENTER,
+            'justify': WD_ALIGN_PARAGRAPH.JUSTIFY,
+            'distribute': WD_ALIGN_PARAGRAPH.DISTRIBUTE,
+        }
+        para.alignment = alignment_map.get(alignment, WD_ALIGN_PARAGRAPH.CENTER)
+
+        # Helper: apply font name + size to a Run (not a Paragraph)
+        def apply_run_font(run, name, size):
+            from docx.shared import Pt
+            if name:
+                run.font.name = name
+                if _is_cjk_font(name):
+                    _set_east_asia_font(run._r, name)
+            if size:
+                run.font.size = Pt(size)  # Pt() creates a Length object in points
+
+        # Helper: build run properties element for field runs
+        def make_rPr():
+            rPr = OxmlElement('w:rPr')
+            if font_name:
+                rFonts = OxmlElement('w:rFonts')
+                rFonts.set(qn('w:ascii'), font_name)
+                rFonts.set(qn('w:hAnsi'), font_name)
+                if _is_cjk_font(font_name):
+                    rFonts.set(qn('w:eastAsia'), font_name)
+                rPr.append(rFonts)
+            if font_size:
+                sz = OxmlElement('w:sz')
+                sz.set(qn('w:val'), str(int(font_size * 2)))
+                rPr.append(sz)
+                szCs = OxmlElement('w:szCs')
+                szCs.set(qn('w:val'), str(int(font_size * 2)))
+                rPr.append(szCs)
+            return rPr
+
+        # Helper: append a complex field (fldChar/instrText) to the paragraph.
+        # Complex fields are rendered reliably across Word, LibreOffice, and web viewers.
+        def append_field_run(field_code: str):
+            # BEGIN run
+            r_begin = OxmlElement('w:r')
+            r_begin.append(make_rPr())
+            fldChar_begin = OxmlElement('w:fldChar')
+            fldChar_begin.set(qn('w:fldCharType'), 'begin')
+            r_begin.append(fldChar_begin)
+            para._p.append(r_begin)
+
+            # INSTRUCTION run
+            r_instr = OxmlElement('w:r')
+            r_instr.append(make_rPr())
+            instrText = OxmlElement('w:instrText')
+            instrText.set(qn('xml:space'), 'preserve')
+            instrText.text = f' {field_code} '
+            r_instr.append(instrText)
+            para._p.append(r_instr)
+
+            # SEPARATE run
+            r_sep = OxmlElement('w:r')
+            r_sep.append(make_rPr())
+            fldChar_sep = OxmlElement('w:fldChar')
+            fldChar_sep.set(qn('w:fldCharType'), 'separate')
+            r_sep.append(fldChar_sep)
+            para._p.append(r_sep)
+
+            # DISPLAY VALUE run (placeholder — recalculated when document opens)
+            r_val = OxmlElement('w:r')
+            r_val.append(make_rPr())
+            t = OxmlElement('w:t')
+            t.set(qn('xml:space'), 'preserve')
+            t.text = '1'
+            r_val.append(t)
+            para._p.append(r_val)
+
+            # END run
+            r_end = OxmlElement('w:r')
+            r_end.append(make_rPr())
+            fldChar_end = OxmlElement('w:fldChar')
+            fldChar_end.set(qn('w:fldCharType'), 'end')
+            r_end.append(fldChar_end)
+            para._p.append(r_end)
+
+        if footer_type == 'custom':
+            run = para.add_run(text)
+            apply_run_font(run, font_name, font_size)
+            return
+
+        if footer_type == 'page_number':
+            # "Page X of Y"  →  run("Page ") + field(PAGE) + run(" of ") + field(NUMPAGES)
+            run0 = para.add_run('Page ')
+            apply_run_font(run0, font_name, font_size)
+            append_field_run('PAGE')
+            run2 = para.add_run(' of ')
+            apply_run_font(run2, font_name, font_size)
+            append_field_run('NUMPAGES')
+
+        elif footer_type == 'page_x':
+            run0 = para.add_run('Page ')
+            apply_run_font(run0, font_name, font_size)
+            append_field_run('PAGE')
+
+    def _add_header_with_page_numbers(self, doc, header_type: str, text: str, font_name: str, font_size: float, alignment: str):
+        """
+        Add a header with optional content to a document section.
+
+        header_type options:
+            - 'page_number'   → "Page X of Y" centered
+            - 'page_x'        → "Page X" centered
+            - 'custom'        → just the 'text' string, no fields
+            - 'title'         → document title (docx title property or 'text' arg)
+            - 'filename'      → use 'text' as filename content
+        """
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+
+        section = doc.sections[-1]
+        header = section.header
+
+        # Clear existing header paragraphs
+        for para in header.paragraphs:
+            for run in para.runs:
+                run.text = ''
+        if not header.paragraphs:
+            header.add_paragraph()
+
+        para = header.paragraphs[0]
+        para.clear()
+
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        alignment_map = {
+            'left': WD_ALIGN_PARAGRAPH.LEFT,
+            'right': WD_ALIGN_PARAGRAPH.RIGHT,
+            'center': WD_ALIGN_PARAGRAPH.CENTER,
+            'centre': WD_ALIGN_PARAGRAPH.CENTER,
+            'justify': WD_ALIGN_PARAGRAPH.JUSTIFY,
+            'distribute': WD_ALIGN_PARAGRAPH.DISTRIBUTE,
+        }
+        para.alignment = alignment_map.get(alignment, WD_ALIGN_PARAGRAPH.CENTER)
+
+        # Helper: apply font name + size to a Run
+        def apply_run_font(run, name, size):
+            from docx.shared import Pt
+            if name:
+                run.font.name = name
+                if _is_cjk_font(name):
+                    _set_east_asia_font(run._r, name)
+            if size:
+                run.font.size = Pt(size)  # Pt() creates a Length object in points
+
+        # Helper: build run properties element for field runs
+        def make_rPr():
+            rPr = OxmlElement('w:rPr')
+            if font_name:
+                rFonts = OxmlElement('w:rFonts')
+                rFonts.set(qn('w:ascii'), font_name)
+                rFonts.set(qn('w:hAnsi'), font_name)
+                if _is_cjk_font(font_name):
+                    rFonts.set(qn('w:eastAsia'), font_name)
+                rPr.append(rFonts)
+            if font_size:
+                sz = OxmlElement('w:sz')
+                sz.set(qn('w:val'), str(int(font_size * 2)))
+                rPr.append(sz)
+                szCs = OxmlElement('w:szCs')
+                szCs.set(qn('w:val'), str(int(font_size * 2)))
+                rPr.append(szCs)
+            return rPr
+
+        # Helper: append a complex field (fldChar/instrText) to the paragraph.
+        # Complex fields are rendered reliably across Word, LibreOffice, and web viewers.
+        def append_field_run(field_code: str):
+            # BEGIN run
+            r_begin = OxmlElement('w:r')
+            r_begin.append(make_rPr())
+            fldChar_begin = OxmlElement('w:fldChar')
+            fldChar_begin.set(qn('w:fldCharType'), 'begin')
+            r_begin.append(fldChar_begin)
+            para._p.append(r_begin)
+
+            # INSTRUCTION run
+            r_instr = OxmlElement('w:r')
+            r_instr.append(make_rPr())
+            instrText = OxmlElement('w:instrText')
+            instrText.set(qn('xml:space'), 'preserve')
+            instrText.text = f' {field_code} '
+            r_instr.append(instrText)
+            para._p.append(r_instr)
+
+            # SEPARATE run
+            r_sep = OxmlElement('w:r')
+            r_sep.append(make_rPr())
+            fldChar_sep = OxmlElement('w:fldChar')
+            fldChar_sep.set(qn('w:fldCharType'), 'separate')
+            r_sep.append(fldChar_sep)
+            para._p.append(r_sep)
+
+            # DISPLAY VALUE run (placeholder — recalculated when document opens)
+            r_val = OxmlElement('w:r')
+            r_val.append(make_rPr())
+            t = OxmlElement('w:t')
+            t.set(qn('xml:space'), 'preserve')
+            t.text = '1'
+            r_val.append(t)
+            para._p.append(r_val)
+
+            # END run
+            r_end = OxmlElement('w:r')
+            r_end.append(make_rPr())
+            fldChar_end = OxmlElement('w:fldChar')
+            fldChar_end.set(qn('w:fldCharType'), 'end')
+            r_end.append(fldChar_end)
+            para._p.append(r_end)
+
+        if header_type == 'custom':
+            run = para.add_run(text)
+            apply_run_font(run, font_name, font_size)
+            return
+
+        if header_type == 'page_number':
+            run0 = para.add_run('Page ')
+            apply_run_font(run0, font_name, font_size)
+            append_field_run('PAGE')
+            run2 = para.add_run(' of ')
+            apply_run_font(run2, font_name, font_size)
+            append_field_run('NUMPAGES')
+
+        elif header_type == 'page_x':
+            run0 = para.add_run('Page ')
+            apply_run_font(run0, font_name, font_size)
+            append_field_run('PAGE')
+
+        elif header_type == 'title':
+            title_text = ''
+            if hasattr(doc, 'core_properties') and doc.core_properties.title:
+                title_text = doc.core_properties.title
+            if not title_text:
+                title_text = text or 'Document'
+            run = para.add_run(title_text)
+            apply_run_font(run, font_name, font_size)
+
+        elif header_type == 'filename':
+            run = para.add_run(text or 'Document')
+            apply_run_font(run, font_name, font_size)
+
     def edit_docx(self, file_path: str, edits: List[Dict[str, Any]], overwrite_original: bool = True) -> Dict[str, Any]:
         """
         Edit an existing Word document.
@@ -380,12 +654,14 @@ class DocumentProcessor:
         Args:
             file_path: Path to the DOCX file
             edits: List of edit operations. Each operation should be a dict with:
-                  - 'type': 'add_paragraph', 'add_heading', 'add_table', 'replace_text', 'modify_style'
+                  - 'type': 'add_paragraph', 'add_heading', 'add_table', 'replace_text', 'modify_style', 'insert_image'
                   - 'content': Content to add or text to replace
                   - 'position': Position index (for paragraphs)
                   - 'style': Style information
                   - 'old_text': Text to replace (for replace_text type)
                   - 'new_text': New text (for replace_text type)
+                  - 'image_path': Path to image file (for insert_image type)
+                  - 'width_inches': Width in inches (for insert_image type, optional)
             overwrite_original: If True, overwrite the original file. If False, create a new file.
         
         Returns:
@@ -465,6 +741,153 @@ class DocumentProcessor:
                 if color:
                     run.font.color.rgb = RGBColor.from_string(color)
             
+            def apply_run_formatting_obj(run_elem, formatting):
+                """Apply formatting to an XML run element (w:r).
+                
+                Args:
+                    run_elem: The XML element representing a run
+                    formatting: Dict with font_name, font_size, bold, italic, underline, 
+                               color, strikethrough, subscript, superscript, highlight
+                """
+                if not formatting:
+                    return
+                
+                from docx.oxml import OxmlElement
+                from docx.oxml.ns import qn
+                from docx.shared import Pt, RGBColor
+                
+                # Get or create rPr element
+                rPr = run_elem.find(qn('w:rPr'))
+                if rPr is None:
+                    rPr = OxmlElement('w:rPr')
+                    run_elem.insert(0, rPr)
+                
+                font_name = formatting.get('font_name') or formatting.get('font')
+                font_size = formatting.get('font_size')
+                bold = formatting.get('bold')
+                italic = formatting.get('italic')
+                underline = formatting.get('underline')
+                strikethrough = formatting.get('strikethrough')
+                subscript = formatting.get('subscript')
+                superscript = formatting.get('superscript')
+                color = normalize_color(formatting.get('color'))
+                highlight = formatting.get('highlight')
+                style_name = formatting.get('style_name')
+                
+                # Set font name (w:rFonts)
+                if font_name:
+                    rFonts = rPr.find(qn('w:rFonts'))
+                    if rFonts is None:
+                        rFonts = OxmlElement('w:rFonts')
+                        rPr.insert(0, rFonts)
+                    rFonts.set(qn('w:ascii'), font_name)
+                    rFonts.set(qn('w:hAnsi'), font_name)
+                    rFonts.set(qn('w:eastAsia'), font_name)
+                    rFonts.set(qn('w:hint'), 'eastAsia')
+                
+                # Set font size (w:sz)
+                if font_size is not None:
+                    sz = rPr.find(qn('w:sz'))
+                    if sz is None:
+                        sz = OxmlElement('w:sz')
+                        rPr.append(sz)
+                    # Font size in OOXML is in half-points
+                    sz.set(qn('w:val'), str(int(font_size * 2)))
+                    szCs = rPr.find(qn('w:szCs'))
+                    if szCs is None:
+                        szCs = OxmlElement('w:szCs')
+                        rPr.append(szCs)
+                    szCs.set(qn('w:val'), str(int(font_size * 2)))
+                
+                # Set bold (w:b)
+                if bold is not None:
+                    b = rPr.find(qn('w:b'))
+                    if bold:
+                        if b is None:
+                            b = OxmlElement('w:b')
+                            rPr.append(b)
+                    else:
+                        if b is not None:
+                            rPr.remove(b)
+                
+                # Set italic (w:i)
+                if italic is not None:
+                    i = rPr.find(qn('w:i'))
+                    if italic:
+                        if i is None:
+                            i = OxmlElement('w:i')
+                            rPr.append(i)
+                    else:
+                        if i is not None:
+                            rPr.remove(i)
+                
+                # Set underline (w:u)
+                if underline is not None:
+                    u = rPr.find(qn('w:u'))
+                    if underline:
+                        if u is None:
+                            u = OxmlElement('w:u')
+                            rPr.append(u)
+                        u.set(qn('w:val'), 'single')
+                    else:
+                        if u is not None:
+                            rPr.remove(u)
+                
+                # Set strikethrough (w:strike)
+                if strikethrough is not None:
+                    strike = rPr.find(qn('w:strike'))
+                    if strikethrough:
+                        if strike is None:
+                            strike = OxmlElement('w:strike')
+                            rPr.append(strike)
+                    else:
+                        if strike is not None:
+                            rPr.remove(strike)
+                
+                # Set subscript (w:vertAlign with val="subscript")
+                if subscript is not None:
+                    vertAlign = rPr.find(qn('w:vertAlign'))
+                    if subscript:
+                        if vertAlign is None:
+                            vertAlign = OxmlElement('w:vertAlign')
+                            rPr.append(vertAlign)
+                        vertAlign.set(qn('w:val'), 'subscript')
+                    else:
+                        if vertAlign is not None and vertAlign.get(qn('w:val')) == 'subscript':
+                            rPr.remove(vertAlign)
+                
+                # Set superscript (w:vertAlign with val="superscript")
+                if superscript is not None:
+                    vertAlign = rPr.find(qn('w:vertAlign'))
+                    if superscript:
+                        if vertAlign is None:
+                            vertAlign = OxmlElement('w:vertAlign')
+                            rPr.append(vertAlign)
+                        vertAlign.set(qn('w:val'), 'superscript')
+                    else:
+                        if vertAlign is not None and vertAlign.get(qn('w:val')) == 'superscript':
+                            rPr.remove(vertAlign)
+                
+                # Set color (w:color)
+                if color:
+                    c = rPr.find(qn('w:color'))
+                    if c is None:
+                        c = OxmlElement('w:color')
+                        rPr.append(c)
+                    c.set(qn('w:val'), color)
+                
+                # Set highlight (w:highlight)
+                if highlight is not None:
+                    hl = rPr.find(qn('w:highlight'))
+                    if highlight:
+                        if hl is None:
+                            hl = OxmlElement('w:highlight')
+                            rPr.append(hl)
+                        hl.set(qn('w:val'), str(highlight))
+                    else:
+                        if hl is not None:
+                            rPr.remove(hl)
+            
             def apply_paragraph_formatting(paragraph, formatting):
                 if not formatting:
                     return
@@ -494,8 +917,30 @@ class DocumentProcessor:
                 return paragraph.add_run()
             
             def insert_paragraph_at_position(content, position, style=None):
-                if isinstance(position, int) and 0 <= position < len(doc.paragraphs):
-                    paragraph = doc.paragraphs[position].insert_paragraph_before(content)
+                # Support multiple field names and formats for position
+                if position is None:
+                    pos_int = None
+                elif isinstance(position, int):
+                    pos_int = position
+                elif isinstance(position, str):
+                    import re
+                    numbers = re.findall(r'\d+', str(position))
+                    if numbers:
+                        try:
+                            pos_int = int(numbers[0])
+                        except (ValueError, TypeError):
+                            pos_int = None
+                    elif position.lower() == 'end':
+                        pos_int = len(doc.paragraphs) - 1 if doc.paragraphs else 0
+                    elif position.lower() == 'start':
+                        pos_int = 0
+                    else:
+                        pos_int = None
+                else:
+                    pos_int = None
+                
+                if pos_int is not None and 0 <= pos_int < len(doc.paragraphs):
+                    paragraph = doc.paragraphs[pos_int].insert_paragraph_before(content)
                 else:
                     paragraph = doc.add_paragraph(content)
                 if style:
@@ -515,7 +960,11 @@ class DocumentProcessor:
                                 yield paragraph
             
             def _delete_text_from_paragraph(paragraph, target_text):
-                """Delete target_text from a paragraph, removing empty runs afterward.
+                """Delete target_text from a paragraph, handling cross-run spans.
+                
+                Uses the same run-aware char-map approach as
+                apply_text_replacement_to_paragraph to correctly handle text
+                that is split across multiple runs.
                 
                 Args:
                     paragraph: The paragraph to modify
@@ -527,82 +976,16 @@ class DocumentProcessor:
                 if not target_text or target_text not in paragraph.text:
                     return 0
                 
-                from docx.oxml.ns import qn
+                # Delegate to the replacement function with empty replacement.
+                # This preserves formatting on untouched runs correctly.
+                count = apply_text_replacement_to_paragraph(
+                    paragraph, target_text, '', case_sensitive=True
+                )
                 
-                # Handle paragraphs without runs (simple case)
-                if not paragraph.runs:
-                    paragraph.text = paragraph.text.replace(target_text, '')
-                    # Check if paragraph is now empty and mark for removal
-                    return 1
-                
-                # Find runs containing the target text
-                runs_to_process = []
-                for run in paragraph.runs:
-                    if target_text in run.text:
-                        runs_to_process.append(run)
-                
-                if not runs_to_process:
-                    return 0
-                
-                # Process each run that contains the target text
-                for run in runs_to_process:
-                    run_text = run.text
-                    if target_text in run_text:
-                        run_elem = run._element
-                        p_elem = run_elem.getparent()
-                        
-                        # Get all text nodes in the paragraph
-                        text_elements = run_elem.findall('.//' + qn('w:t'))
-                        
-                        # Case 1: Target text spans the entire run text
-                        if run_text == target_text:
-                            # Remove the entire run
-                            p_elem.remove(run_elem)
-                            continue
-                        
-                        # Case 2: Target text is at the beginning of the run
-                        if run_text.startswith(target_text):
-                            # Update run text to remove prefix
-                            run.text = run_text[len(target_text):]
-                            continue
-                        
-                        # Case 3: Target text is at the end of the run
-                        if run_text.endswith(target_text):
-                            # Update run text to remove suffix
-                            run.text = run_text[:-len(target_text)]
-                            continue
-                        
-                        # Case 4: Target text is in the middle of the run
-                        # Need to split the run into: [before][after]
-                        idx = run_text.find(target_text)
-                        before_text = run_text[:idx]
-                        after_text = run_text[idx + len(target_text):]
-                        
-                        # Update source run to contain only 'before' text
-                        run.text = before_text
-                        
-                        # Create new run for 'after' text (clone formatting)
-                        from docx.oxml import OxmlElement
-                        new_run_after = OxmlElement('w:r')
-                        
-                        # Copy rPr (run properties) from source if it exists
-                        rPr_source = run_elem.find(qn('w:rPr'))
-                        if rPr_source is not None:
-                            new_run_after.append(rPr_source.copy())
-                        
-                        # Add text for 'after' portion
-                        t_after = OxmlElement('w:t')
-                        t_after.set(qn('xml:space'), 'preserve')
-                        t_after.text = after_text
-                        new_run_after.append(t_after)
-                        
-                        # Insert the 'after' run after the source run
-                        p_elem.insert(list(p_elem).index(run_elem) + 1, new_run_after)
-                
-                # Clean up empty runs after deletion
+                # Clean up runs that became empty
                 _cleanup_empty_runs(paragraph)
                 
-                return 1
+                return 1 if count > 0 else 0
             
             def _cleanup_empty_runs(paragraph):
                 """Remove runs that have empty text content."""
@@ -620,38 +1003,88 @@ class DocumentProcessor:
                         p_elem.remove(run_elem)
             
             def get_run_font_info(run):
-                """Extract font formatting from a run."""
+                """Extract font formatting from a run.
+                
+                Captures: font_name, font_size, bold, italic, underline, color,
+                highlight, strikethrough, subscript, superscript, style_name
+                """
                 font_info = {}
+                
+                # Basic font properties
                 try:
                     if run.font.name:
                         font_info['font_name'] = run.font.name
                 except:
                     pass
+                
                 try:
                     if run.font.size:
                         font_info['font_size'] = run.font.size.pt
                 except:
                     pass
+                
+                # Style properties
                 try:
                     if run.font.bold is not None:
                         font_info['bold'] = run.font.bold
                 except:
                     pass
+                
                 try:
                     if run.font.italic is not None:
                         font_info['italic'] = run.font.italic
                 except:
                     pass
+                
                 try:
                     if run.font.underline is not None:
                         font_info['underline'] = run.font.underline
                 except:
                     pass
+                
                 try:
-                    if run.font.color.rgb is not None:
-                        font_info['color'] = run.font.color.rgb
+                    if run.font.strike is not None:
+                        font_info['strikethrough'] = run.font.strike
                 except:
                     pass
+                
+                try:
+                    if run.font.subscript:
+                        font_info['subscript'] = True
+                except:
+                    pass
+                
+                try:
+                    if run.font.superscript:
+                        font_info['superscript'] = True
+                except:
+                    pass
+                
+                # Color - handle both RGB and theme colors
+                try:
+                    if run.font.color.rgb is not None:
+                        font_info['color'] = str(run.font.color.rgb)
+                    elif run.font.color.theme_color is not None:
+                        # Store theme color info if available
+                        font_info['color_theme'] = run.font.color.theme_color
+                        font_info['color_theme_tint'] = run.font.color.theme_color_tint
+                except:
+                    pass
+                
+                # Highlight
+                try:
+                    if run.font.highlight_color is not None:
+                        font_info['highlight'] = run.font.highlight_color
+                except:
+                    pass
+                
+                # Character style
+                try:
+                    if run.style and run.style.name:
+                        font_info['style_name'] = run.style.name
+                except:
+                    pass
+                
                 return font_info
 
             def detect_context_formatting(position, doc):
@@ -762,82 +1195,309 @@ class DocumentProcessor:
                 
                 return context_format
 
-            def apply_text_replacement_to_paragraph(paragraph, old_text, new_text):
-                """Replace text in a paragraph while preserving the original formatting of the run."""
-                if not old_text or old_text not in paragraph.text:
+            def apply_text_replacement_to_paragraph(paragraph, old_text, new_text, case_sensitive: bool = False):
+                """Replace text in a paragraph while preserving the original formatting.
+                
+                Uses a run-aware algorithm that only modifies the runs that contain
+                the match, preserving every other run's formatting untouched.
+                
+                Returns the number of replacements made.
+                """
+                if not old_text:
                     return 0
                 
-                # If no runs, just do simple replacement
-                if not paragraph.runs:
-                    paragraph.text = paragraph.text.replace(old_text, new_text)
-                    return 1
+                # Skip no-op replacements
+                if old_text == new_text:
+                    return 0
                 
-                # Find the first run containing the target text
-                source_run = None
-                for run in paragraph.runs:
-                    if old_text in run.text:
-                        source_run = run
-                        break
-                
-                if source_run is None:
-                    # Text is split across multiple runs, need complex handling
-                    paragraph.text = paragraph.text.replace(old_text, new_text)
-                    return 1
-                
-                # Extract source formatting
-                source_font_info = get_run_font_info(source_run)
-                
-                # Check if old_text spans multiple runs or is within a single run
-                run_text = source_run.text
-                old_text_idx = run_text.find(old_text)
-                
-                # Handle case where old_text is the entire run text
-                if run_text == old_text:
-                    source_run.text = new_text
-                    # Re-apply the original formatting to ensure it sticks
-                    apply_run_formatting(source_run, source_font_info)
-                    return 1
-                
-                # Handle case where old_text is partial within a run
-                # We need to split the run into: [before][new_text][after]
+                import re
+                import copy
                 from docx.oxml import OxmlElement
                 from docx.oxml.ns import qn
                 
-                before_text = run_text[:old_text_idx]
-                after_text = run_text[old_text_idx + len(old_text):]
+                p_elem = paragraph._element
                 
-                # Get the run's parent p element
-                run_elem = source_run._element
-                p_elem = run_elem.getparent()
+                # Collect only w:r elements (runs) — skip pPr, bookmarks, comment markers, etc.
+                run_elems = list(p_elem.findall(qn('w:r')))
+                if not run_elems:
+                    return 0
                 
-                # Create new run for 'after' text (preserve source formatting)
-                new_run_after = OxmlElement('w:r')
+                # Build a character-map: for each char in the concatenated run text,
+                # record which run element it belongs to and the offset inside that run's <w:t>.
+                char_map = []  # list of (run_elem, char_index_within_run)
+                run_texts = []
+                for r_elem in run_elems:
+                    t_elem = r_elem.find(qn('w:t'))
+                    txt = t_elem.text if (t_elem is not None and t_elem.text) else ''
+                    run_texts.append(txt)
+                    for ci in range(len(txt)):
+                        char_map.append((r_elem, ci))
                 
-                # Copy rPr (run properties) from source if it exists
-                rPr_source = run_elem.find(qn('w:rPr'))
-                if rPr_source is not None:
-                    new_run_after.append(rPr_source.copy())
+                combined = ''.join(run_texts)
                 
-                # Add text for 'after' portion
-                t_after = OxmlElement('w:t')
-                t_after.set(qn('xml:space'), 'preserve')
-                t_after.text = after_text
-                new_run_after.append(t_after)
+                # Find all match spans
+                flags = 0 if case_sensitive else re.IGNORECASE
+                pattern = re.compile(re.escape(old_text), flags)
+                matches = list(pattern.finditer(combined))
+                if not matches:
+                    return 0
                 
-                # Modify source run to contain: [before][new_text]
-                # First, update the existing text content
-                t_source = run_elem.find(qn('w:t'))
-                if t_source is None:
-                    t_source = OxmlElement('w:t')
-                    t_source.set(qn('xml:space'), 'preserve')
-                    run_elem.append(t_source)
-                t_source.text = before_text + new_text
+                # Process matches in reverse order so earlier indices stay valid
+                for m in reversed(matches):
+                    start, end = m.start(), m.end()
+                    
+                    # Identify which runs are touched by this match
+                    first_run = char_map[start][0]
+                    last_run = char_map[end - 1][0]
+                    first_offset = char_map[start][1]
+                    last_offset = char_map[end - 1][1]
+                    
+                    if first_run is last_run:
+                        # Simple case: match is entirely within one run — just patch its <w:t>
+                        t_elem = first_run.find(qn('w:t'))
+                        txt = t_elem.text or ''
+                        t_elem.text = txt[:first_offset] + new_text + txt[last_offset + 1:]
+                        t_elem.set(qn('xml:space'), 'preserve')
+                    else:
+                        # Complex case: match spans multiple runs.
+                        # Strategy:
+                        #   - Put replacement text into the first run (preserving its rPr)
+                        #   - Trim the last run's consumed prefix
+                        #   - Remove any fully-consumed runs in between
+                        
+                        # 1) Patch first run: keep text before the match, append replacement
+                        t_first = first_run.find(qn('w:t'))
+                        txt_first = t_first.text or ''
+                        t_first.text = txt_first[:first_offset] + new_text
+                        t_first.set(qn('xml:space'), 'preserve')
+                        
+                        # 2) Patch last run: keep text after the match
+                        t_last = last_run.find(qn('w:t'))
+                        txt_last = t_last.text or ''
+                        t_last.text = txt_last[last_offset + 1:]
+                        t_last.set(qn('xml:space'), 'preserve')
+                        # If last run is now empty, mark for removal
+                        remove_last = (not t_last.text)
+                        
+                        # 3) Remove fully-consumed intermediate runs
+                        in_span = False
+                        to_remove = []
+                        for r_elem in run_elems:
+                            if r_elem is first_run:
+                                in_span = True
+                                continue
+                            if r_elem is last_run:
+                                if remove_last:
+                                    to_remove.append(r_elem)
+                                break
+                            if in_span:
+                                to_remove.append(r_elem)
+                        
+                        for r_elem in to_remove:
+                            p_elem.remove(r_elem)
+                    
+                    # Rebuild char_map and run_elems for the next (earlier) match
+                    run_elems = list(p_elem.findall(qn('w:r')))
+                    char_map = []
+                    run_texts = []
+                    for r_elem in run_elems:
+                        t_elem = r_elem.find(qn('w:t'))
+                        txt = t_elem.text if (t_elem is not None and t_elem.text) else ''
+                        run_texts.append(txt)
+                        for ci in range(len(txt)):
+                            char_map.append((r_elem, ci))
+                    combined = ''.join(run_texts)
                 
-                # Insert the 'after' run after the source run
-                p_elem.insert(list(p_elem).index(run_elem) + 1, new_run_after)
-                
-                return 1
-            
+                return len(matches)
+
+            def _set_cell_text(cell, value: str) -> None:
+                """Overwrite a cell's text, preserving the first run's formatting.
+
+                Splits `value` on '\\n' into N paragraph strings:
+                  - Cell's existing first paragraph is reused (preserves pPr).
+                  - That paragraph's first run is reused (preserves rPr — font,
+                    size, bold/italic/color). Its text is set to parts[0].
+                  - All other runs in that paragraph are blanked.
+                  - All other paragraphs in the cell are removed.
+                  - Extra parts become new paragraphs appended via cell.add_paragraph
+                    (those inherit cell default styling).
+                """
+                from docx.oxml.ns import qn
+                value = "" if value is None else str(value)
+                parts = value.split("\n")
+
+                paragraphs = list(cell.paragraphs)
+                if not paragraphs:
+                    cell.add_paragraph(parts[0])
+                else:
+                    first = paragraphs[0]
+                    runs = first.runs
+                    if runs:
+                        runs[0].text = parts[0]
+                        for extra in runs[1:]:
+                            extra.text = ""
+                        # Drop XML elements of blanked runs to keep doc tidy
+                        for r in list(first._element.findall(qn('w:r'))):
+                            t_elem = r.find(qn('w:t'))
+                            if t_elem is not None and not (t_elem.text or "") and r is not first.runs[0]._element:
+                                first._element.remove(r)
+                    else:
+                        first.add_run(parts[0])
+                    # Remove any other paragraphs in the cell
+                    for extra_p in paragraphs[1:]:
+                        p_elem = extra_p._element
+                        parent = p_elem.getparent()
+                        if parent is not None:
+                            parent.remove(p_elem)
+                # Append additional paragraphs for multi-line values
+                for part in parts[1:]:
+                    cell.add_paragraph(part)
+
+            def _replace_in_cell(cell, old_text: str, new_text: str):
+                """Run-aware replace scoped to one table cell.
+
+                Tries each paragraph in isolation via apply_text_replacement_to_paragraph
+                (handles the common single-paragraph, multi-run case with full
+                formatting preservation). If no paragraph matches, falls back to
+                a cross-paragraph join over the cell's paragraphs.
+
+                Returns (replaced_count, joined_cell_text_for_hint).
+                """
+                if not old_text:
+                    return 0, ""
+                if old_text == new_text:
+                    return 0, ""
+
+                paragraphs = list(cell.paragraphs)
+                # Per-paragraph pass (case-sensitive — table cells often hold
+                # exact strings the agent copied from extract_docx_content_tool)
+                total = 0
+                for p in paragraphs:
+                    total += apply_text_replacement_to_paragraph(
+                        p, old_text, new_text, case_sensitive=True
+                    )
+                if total > 0:
+                    return total, ""
+
+                # Cross-paragraph fallback — match spans more than one paragraph
+                # inside this cell (e.g. "（大写）...（小写）..." split across two
+                # paragraphs in a "total amount" cell).
+                if len(paragraphs) < 2:
+                    return 0, "\n".join(p.text for p in paragraphs)
+
+                para_texts = [p.text for p in paragraphs]
+                joined = "\n".join(para_texts)
+                if old_text not in joined:
+                    return 0, joined
+
+                match_start = joined.index(old_text)
+                match_end = match_start + len(old_text)
+
+                offsets = [0]
+                for t in para_texts:
+                    offsets.append(offsets[-1] + len(t) + 1)  # +1 for the join '\n'
+
+                def pos_to_para(pos):
+                    for i in range(len(paragraphs)):
+                        if offsets[i] <= pos < offsets[i + 1]:
+                            return i, pos - offsets[i]
+                    return len(paragraphs) - 1, len(para_texts[-1])
+
+                p_start_idx, start_off = pos_to_para(match_start)
+                # match_end is exclusive; treat it as the position of the next char
+                p_end_idx, end_off = pos_to_para(max(match_end - 1, match_start))
+                # convert end_off back to "exclusive" coord
+                end_off = end_off + 1 if match_end > match_start else end_off
+
+                if p_start_idx == p_end_idx:
+                    # Single paragraph after all — re-run on just that paragraph
+                    count = apply_text_replacement_to_paragraph(
+                        paragraphs[p_start_idx], old_text, new_text, case_sensitive=True
+                    )
+                    return count, joined
+
+                # True cross-paragraph match.
+                # Split new_text on '\n' to map it across paragraphs. parts[0]
+                # goes into the start paragraph's tail, parts[-1] into the end
+                # paragraph's head, and parts[1:-1] become new paragraphs
+                # inserted between them.
+                new_parts = new_text.split("\n")
+                start_p = paragraphs[p_start_idx]
+                end_p = paragraphs[p_end_idx]
+                start_tail = para_texts[p_start_idx][start_off:]
+                end_head = para_texts[p_end_idx][:end_off]
+
+                # Step 1: rewrite the start paragraph's tail.
+                # If only one new part, the whole new_text replaces the tail
+                # AND the end paragraph's matched head; nothing remains for the
+                # end paragraph to inherit.
+                if start_tail:
+                    apply_text_replacement_to_paragraph(
+                        start_p, start_tail, new_parts[0], case_sensitive=True
+                    )
+                elif new_parts[0]:
+                    start_p.add_run(new_parts[0])
+
+                # Step 2: drop fully-consumed intermediate paragraphs
+                for i in range(p_start_idx + 1, p_end_idx):
+                    p_elem = paragraphs[i]._element
+                    parent = p_elem.getparent()
+                    if parent is not None:
+                        parent.remove(p_elem)
+
+                # Step 3: handle the end paragraph.
+                if len(new_parts) == 1:
+                    # No paragraph break in the replacement. The unmatched
+                    # suffix of the end paragraph (chars after end_off) needs
+                    # to be merged into the start paragraph's run-stream so
+                    # the end paragraph can be dropped entirely.
+                    suffix = para_texts[p_end_idx][end_off:]
+                    if suffix:
+                        # Append a fresh run carrying the suffix text to the
+                        # start paragraph — formatting of that suffix is lost
+                        # by necessity (it lived in a separate paragraph), but
+                        # the user's intent for a single-line replacement is
+                        # that the cell ends up with one paragraph.
+                        start_p.add_run(suffix)
+                    end_elem = end_p._element
+                    parent = end_elem.getparent()
+                    if parent is not None:
+                        parent.remove(end_elem)
+                else:
+                    # parts[-1] replaces the end paragraph's head; suffix stays.
+                    if end_head:
+                        apply_text_replacement_to_paragraph(
+                            end_p, end_head, new_parts[-1], case_sensitive=True
+                        )
+                    elif new_parts[-1]:
+                        # Match ends at the very start of end_p; prepend a run.
+                        # python-docx doesn't expose "insert run at index 0", so
+                        # we just add a run — it lands at the end, which is fine
+                        # because end_head is empty (no leading text to push).
+                        end_p.add_run(new_parts[-1])
+                    # Step 3b: insert parts[1:-1] as fresh paragraphs between
+                    # start_p and end_p (XML insertBefore).
+                    middle_parts = new_parts[1:-1]
+                    if middle_parts:
+                        end_elem = end_p._element
+                        parent = end_elem.getparent()
+                        if parent is not None:
+                            from copy import deepcopy
+                            for part_text in middle_parts:
+                                # Clone start_p's element shape so list/style
+                                # context is inherited from a same-cell sibling.
+                                new_p = deepcopy(start_p._element)
+                                # Strip runs from the clone
+                                for r in list(new_p.findall(qn('w:r'))):
+                                    new_p.remove(r)
+                                # Insert before end_p; then add a run with text
+                                parent.insert(list(parent).index(end_elem), new_p)
+                                # Wrap the inserted XML in a Paragraph object so
+                                # we can use .add_run, then write the text.
+                                from docx.text.paragraph import Paragraph
+                                Paragraph(new_p, start_p._parent).add_run(part_text)
+                return 1, joined
+
             def fill_table(table, data, rows, cols):
                 for row_idx in range(rows):
                     row_data = data[row_idx] if row_idx < len(data) else []
@@ -847,13 +1507,25 @@ class DocumentProcessor:
                         cell_value = row_data[col_idx] if col_idx < len(row_data) else ''
                         table.cell(row_idx, col_idx).text = str(cell_value)
             
+            # Debug: log all edits being processed
+            print(f"🔍 Processing {len(edits)} edits:")
+            for i, edit in enumerate(edits):
+                edit_type = edit.get('type', 'add_paragraph')
+                position = edit.get('position') or edit.get('after_paragraph') or edit.get('insert_after')
+                if edit_type == 'add_table':
+                    print(f"   Edit {i}: type={edit_type}, position={position}, data_rows={len(edit.get('data', []))}")
+                else:
+                    content_preview = str(edit.get('content', ''))[:30] if edit.get('content') else str(edit.get('old_text', ''))[:30]
+                    print(f"   Edit {i}: type={edit_type}, position={position}, content='{content_preview}...'")
+            
             for i, edit in enumerate(edits):
                 edit_type = edit.get('type', 'add_paragraph')
                 
                 try:
                     if edit_type == 'add_paragraph':
                         content = edit.get('content', '')
-                        position = edit.get('position')
+                        # Support multiple field names for position
+                        position = edit.get('position') or edit.get('after_paragraph') or edit.get('insert_after') or edit.get('after')
                         paragraph = insert_paragraph_at_position(content, position)
                         
                         # Detect and apply context formatting if no explicit formatting provided
@@ -875,7 +1547,8 @@ class DocumentProcessor:
                     elif edit_type == 'add_heading':
                         content = edit.get('content', '')
                         level = edit.get('level', 1)
-                        position = edit.get('position')
+                        # Support multiple field names for position
+                        position = edit.get('position') or edit.get('after_paragraph') or edit.get('insert_after') or edit.get('after')
                         if not isinstance(level, int):
                             level = 1
                         if level <= 0:
@@ -901,10 +1574,11 @@ class DocumentProcessor:
                         
                         apply_paragraph_and_run_formatting(heading, merged_formatting)
                         changes_made.append(f"Added heading (level {level_label}): {content}")
-                        
-                    elif edit_type == 'replace_text':
-                        old_text = edit.get('old_text', '')
-                        new_text = edit.get('new_text', '')
+                    
+                    elif edit_type == 'replace':
+                        # 'replace' is an alternative format for text replacement (used by some LLMs)
+                        old_text = edit.get('old_text', '') or edit.get('target', '')
+                        new_text = edit.get('new_text', '') or edit.get('replacement', '')
                         replaced_count = 0
                         for paragraph in doc.paragraphs:
                             replaced_count += apply_text_replacement_to_paragraph(paragraph, old_text, new_text)
@@ -915,6 +1589,82 @@ class DocumentProcessor:
                         else:
                             changes_made.append(f"Text '{old_text}' not found for replacement")
                     
+                    elif edit_type == 'replace_text':
+                        old_text = edit.get('old_text', '')
+                        new_text = edit.get('new_text', '')
+                        replaced_count = 0
+                        not_found_info = None  # Track what we actually found
+                        for paragraph in doc.paragraphs:
+                            count = apply_text_replacement_to_paragraph(paragraph, old_text, new_text)
+                            if count > 0:
+                                replaced_count += count
+                            elif not_found_info is None and old_text and paragraph.text.strip():
+                                # Check if this paragraph contains similar text
+                                if len(old_text) > 10 and (old_text[:20] in paragraph.text or paragraph.text[:20] in old_text):
+                                    not_found_info = {
+                                        'actual_text': paragraph.text,
+                                        'reason': 'similar_text_found_but_not_exact_match'
+                                    }
+                        for paragraph in iter_table_paragraphs():
+                            count = apply_text_replacement_to_paragraph(paragraph, old_text, new_text)
+                            if count > 0:
+                                replaced_count += count
+                        if replaced_count > 0:
+                            changes_made.append(f"Replaced '{old_text}' with '{new_text}' in {replaced_count} places")
+                        else:
+                            changes_made.append(f"Text '{old_text}' not found for replacement")
+                            if not_found_info:
+                                changes_made.append(f"HINT: Found similar text: '{not_found_info['actual_text'][:100]}...'")
+
+                    elif edit_type == 'set_cell_text':
+                        table_index = edit.get('table_index', 0)
+                        row = edit.get('row')
+                        col = edit.get('col')
+                        value = edit.get('value', '')
+                        if not isinstance(table_index, int) or not (0 <= table_index < len(doc.tables)):
+                            raise IndexError(f"table_index {table_index} out of range (have {len(doc.tables)} table(s))")
+                        table = doc.tables[table_index]
+                        if not isinstance(row, int) or not (0 <= row < len(table.rows)):
+                            raise IndexError(f"row {row} out of range for table {table_index} (have {len(table.rows)} row(s))")
+                        row_cells = table.rows[row].cells
+                        if not isinstance(col, int) or not (0 <= col < len(row_cells)):
+                            raise IndexError(f"col {col} out of range for row {row} (have {len(row_cells)} cell(s))")
+                        cell = row_cells[col]
+                        _set_cell_text(cell, value)
+                        preview = (str(value)[:40] + '…') if len(str(value)) > 40 else str(value)
+                        changes_made.append(f"Set cell ({table_index},{row},{col}) to '{preview}'")
+
+                    elif edit_type == 'replace_in_cell':
+                        table_index = edit.get('table_index', 0)
+                        row = edit.get('row')
+                        col = edit.get('col')
+                        old_text = edit.get('old_text', '')
+                        new_text = edit.get('new_text', '')
+                        if not isinstance(table_index, int) or not (0 <= table_index < len(doc.tables)):
+                            raise IndexError(f"table_index {table_index} out of range (have {len(doc.tables)} table(s))")
+                        table = doc.tables[table_index]
+                        if not isinstance(row, int) or not (0 <= row < len(table.rows)):
+                            raise IndexError(f"row {row} out of range for table {table_index} (have {len(table.rows)} row(s))")
+                        row_cells = table.rows[row].cells
+                        if not isinstance(col, int) or not (0 <= col < len(row_cells)):
+                            raise IndexError(f"col {col} out of range for row {row} (have {len(row_cells)} cell(s))")
+                        cell = row_cells[col]
+                        count, joined_hint = _replace_in_cell(cell, old_text, new_text)
+                        if count > 0:
+                            old_preview = (old_text[:30] + '…') if len(old_text) > 30 else old_text
+                            new_preview = (new_text[:30] + '…') if len(new_text) > 30 else new_text
+                            changes_made.append(
+                                f"Replaced '{old_preview}' with '{new_preview}' in cell ({table_index},{row},{col})"
+                            )
+                        else:
+                            changes_made.append(
+                                f"Text '{old_text[:30]}...' not found in cell ({table_index},{row},{col})"
+                            )
+                            if joined_hint:
+                                changes_made.append(
+                                    f"HINT: actual cell text is '{joined_hint[:120]}{'…' if len(joined_hint) > 120 else ''}'"
+                                )
+
                     elif edit_type == 'delete_text':
                         # Properly delete text instead of replacing with empty string
                         target_text = edit.get('old_text', '')
@@ -1033,7 +1783,24 @@ class DocumentProcessor:
                         
                     elif edit_type == 'add_table':
                         data = edit.get('data', [])
-                        position = edit.get('position')
+                        # Support multiple field names for position
+                        position = edit.get('position') or edit.get('after_paragraph') or edit.get('insert_after') or edit.get('after')
+                        # Also support string positions like "after_paragraph_16" or just "16"
+                        if isinstance(position, str):
+                            # Try to extract number from string like "after_paragraph_16" or "16"
+                            import re
+                            numbers = re.findall(r'\d+', str(position))
+                            if numbers:
+                                try:
+                                    position = int(numbers[0])
+                                except (ValueError, TypeError):
+                                    position = None
+                            elif position.lower() == 'end':
+                                position = len(doc.paragraphs) - 1 if doc.paragraphs else 0
+                            elif position.lower() == 'start':
+                                position = 0
+                            else:
+                                position = None
                         table_style = edit.get('table_style') or edit.get('style')
                         if data:
                             rows = len(data)
@@ -1044,12 +1811,18 @@ class DocumentProcessor:
                         table = doc.add_table(rows=rows, cols=cols)
                         fill_table(table, data, rows, cols)
                         if table_style:
-                            table.style = table_style
+                            try:
+                                table.style = table_style
+                            except Exception:
+                                changes_made.append(f"Warning: Could not apply table style '{table_style}', using default")
                         if isinstance(position, int) and 0 <= position < len(doc.paragraphs):
                             move_table_after(table, doc.paragraphs[position])
                             changes_made.append(f"Added table with {rows}x{cols} dimensions after paragraph {position}")
                         else:
-                            changes_made.append(f"Added table with {rows}x{cols} dimensions")
+                            # Default: add at end of document
+                            changes_made.append(f"Added table with {rows}x{cols} dimensions (position {position} invalid, appended to end)")
+                            if doc.paragraphs:
+                                move_table_after(table, doc.paragraphs[-1])
                     
                     elif edit_type == 'format_text':
                         target_text = edit.get('target_text')
@@ -1058,7 +1831,7 @@ class DocumentProcessor:
                             if target_text and target_text in paragraph.text:
                                 run_targets = paragraph.runs or [ensure_paragraph_has_run(paragraph)]
                                 for run in run_targets:
-                                    if target_text in run.text or len(paragraph.runs) == 1:
+                                    if target_text in run.text:
                                         apply_run_formatting(run, edit)
                                 formatted_count += 1
                         changes_made.append(f"Formatted text in {formatted_count} paragraphs")
@@ -1095,6 +1868,41 @@ class DocumentProcessor:
                             raise IndexError('table_index out of range')
                         doc.tables[table_index].style = table_style
                         changes_made.append(f"Applied table style '{table_style}' to table {table_index}")
+
+                    elif edit_type == 'insert_image':
+                        image_path = edit.get('image_path')
+                        if not image_path:
+                            changes_made.append("Error in insert_image: image_path is required")
+                        elif not Path(image_path).is_file():
+                            changes_made.append(f"Error in insert_image: file not found: {image_path}")
+                        else:
+                            try:
+                                from docx.shared import Inches
+                                # Support both 'position' (agent convention) and 'insert_after_paragraph' (explicit)
+                                raw_pos = edit.get('position', edit.get('insert_after_paragraph', -1))
+                                try:
+                                    insert_after = int(raw_pos)
+                                except (TypeError, ValueError):
+                                    insert_after = -1
+                                width_inches = edit.get('width_inches')
+                                total_paras = len(doc.paragraphs)
+
+                                if insert_after == -1 or insert_after >= total_paras:
+                                    target_para = doc.add_paragraph()
+                                    log_pos = f"end (of {total_paras} paragraphs)"
+                                else:
+                                    target_para = doc.paragraphs[insert_after].insert_paragraph_before("")
+                                    log_pos = f"after paragraph {insert_after} (of {total_paras})"
+
+                                run = target_para.add_run()
+                                if width_inches:
+                                    run.add_picture(image_path, width=Inches(width_inches))
+                                else:
+                                    run.add_picture(image_path)
+
+                                changes_made.append(f"Inserted image at {log_pos}: {Path(image_path).name}")
+                            except Exception as img_err:
+                                changes_made.append(f"Error in insert_image: {img_err}")
 
                     elif edit_type == 'add_bullet_list':
                         items = edit.get('items', [])
@@ -1178,6 +1986,30 @@ class DocumentProcessor:
 
                         changes_made.append(f"Added numbered list with {len(added_items)} items")
 
+                    elif edit_type == 'add_footer':
+                        footer_type = edit.get('footer_type', 'page_number')  # 'page_number' | 'page_x' | 'custom'
+                        text = edit.get('text', '')
+                        font_name = edit.get('font_name', 'Calibri')
+                        font_size = edit.get('font_size', 9)
+                        alignment = edit.get('alignment', 'center')
+
+                        self._add_footer_with_page_numbers(
+                            doc, footer_type, text, font_name, font_size, alignment
+                        )
+                        changes_made.append(f"Added footer (type={footer_type})")
+
+                    elif edit_type == 'add_header':
+                        header_type = edit.get('header_type', 'custom')  # 'page_number' | 'page_x' | 'custom' | 'title' | 'filename'
+                        text = edit.get('text', '')
+                        font_name = edit.get('font_name', 'Calibri')
+                        font_size = edit.get('font_size', 9)
+                        alignment = edit.get('alignment', 'center')
+
+                        self._add_header_with_page_numbers(
+                            doc, header_type, text, font_name, font_size, alignment
+                        )
+                        changes_made.append(f"Added header (type={header_type})")
+
                 except Exception as e:
                     changes_made.append(f"Error applying edit {i+1} ({edit_type}): {str(e)}")
             
@@ -1203,10 +2035,27 @@ class DocumentProcessor:
                 'edited_file': str(edited_file)
             })
             
+            # Check if any actual changes were made (vs just "not found" messages)
+            actual_changes = [c for c in changes_made if 'not found' not in c.lower() and 'error' not in c.lower() and 'hint' not in c.lower()]
+            
+            # If no actual changes were made, return failure with clear reason
+            if len(actual_changes) == 0:
+                # Extract hints for retry
+                hints = [c for c in changes_made if 'hint' in c.lower()]
+                hint_message = '\n'.join(hints) if hints else ''
+                return {
+                    'success': False,
+                    'document_info': file_info,
+                    'message': 'No changes were applied. Target text not found - likely due to whitespace/punctuation differences. ' + ('Try using the EXACT text from extract_docx_content tool.' if not hints else ''),
+                    'file_path': str(edited_file),
+                    'changes': [],
+                    'retry_hints': hints if hints else None
+                }
+            
             return {
                 'success': True,
                 'document_info': file_info,
-                'message': f'Successfully edited document. Changes: {len(changes_made)}',
+                'message': f'Successfully edited document. Changes: {len(actual_changes)}',
                 'file_path': str(edited_file),
                 'changes': changes_made
             }
@@ -1222,7 +2071,9 @@ class DocumentProcessor:
     
     def delete_docx_content(self, file_path: str) -> Dict[str, Any]:
         """
-        Delete all content from a Word document.
+        Delete all content from a Word document while preserving its
+        styles, themes, numbering definitions, settings, and other
+        document-level metadata.
         
         Args:
             file_path: Path to the DOCX file
@@ -1239,6 +2090,7 @@ class DocumentProcessor:
         
         try:
             import docx
+            from docx.oxml.ns import qn
             
             file_path_obj = Path(file_path)
             if not file_path_obj.exists():
@@ -1248,19 +2100,39 @@ class DocumentProcessor:
                     'message': f'File not found: {file_path}'
                 }
             
-            # Create a completely empty document
-            doc = docx.Document()
+            # Open the EXISTING document so we keep its styles, themes,
+            # numbering definitions, settings, headers/footers, etc.
+            doc = docx.Document(file_path)
             
-            # Save it, overwriting the original file
+            body = doc.element.body
+            
+            # Remove all content children (paragraphs, tables, sdt blocks)
+            # but preserve <w:sectPr> which defines page layout.
+            for child in list(body):
+                tag = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+                if tag != 'sectPr':
+                    body.remove(child)
+            
+            # Ensure at least one empty paragraph exists (Word requires it)
+            from docx.oxml import OxmlElement
+            new_p = OxmlElement('w:p')
+            # Insert before sectPr if it exists, otherwise just append
+            sect_pr = body.find(qn('w:sectPr'))
+            if sect_pr is not None:
+                sect_pr.addprevious(new_p)
+            else:
+                body.append(new_p)
+            
+            # Save back to the same file
             doc.save(file_path)
             
-            # Verify the document is empty
+            # Verify
             doc_check = docx.Document(file_path)
             paragraph_count = len([p for p in doc_check.paragraphs if p.text.strip()])
             
             return {
                 'success': True,
-                'message': 'All content successfully deleted from document',
+                'message': 'All content successfully deleted from document (styles and settings preserved)',
                 'file_path': file_path,
                 'is_empty': paragraph_count == 0,
                 'remaining_paragraphs': paragraph_count

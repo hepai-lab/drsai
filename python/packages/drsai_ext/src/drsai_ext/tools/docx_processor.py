@@ -169,6 +169,8 @@ class DocumentProcessor:
           - modify_style, format_text, format_paragraph
           - add_page_break, set_table_style
           - add_bullet_list, add_numbered_list
+          - insert_image: Insert an image file
+              Required: image_path (str). Optional: position (int, default = end), width_inches (float)
 
         Args:
             file_path: Path to the .docx file.
@@ -451,6 +453,34 @@ class DocumentProcessor:
                             set_paragraph(doc.paragraphs[pos], edit)
                             changes_made.append(f"Formatted paragraph {pos}")
 
+                    elif edit_type == "insert_image":
+                        image_path = edit.get("image_path")
+                        if not image_path:
+                            changes_made.append("Error in insert_image: image_path is required")
+                        elif not os.path.isfile(image_path):
+                            changes_made.append(f"Error in insert_image: file not found: {image_path}")
+                        else:
+                            try:
+                                from docx.shared import Inches
+                                insert_pos = edit.get("position")
+                                width_inches = edit.get("width_inches")
+                                
+                                # Determine insertion point
+                                if isinstance(insert_pos, int) and 0 <= insert_pos < len(doc.paragraphs):
+                                    p = doc.paragraphs[insert_pos].insert_paragraph_before("")
+                                else:
+                                    p = doc.add_paragraph()
+                                
+                                run = p.add_run()
+                                if width_inches:
+                                    run.add_picture(image_path, width=Inches(width_inches))
+                                else:
+                                    run.add_picture(image_path)
+                                
+                                changes_made.append(f"Inserted image: {os.path.basename(image_path)}")
+                            except Exception as img_err:
+                                changes_made.append(f"Error in insert_image: {img_err}")
+
                 except Exception as e:
                     changes_made.append(f"Error in {edit_type}: {e}")
 
@@ -558,6 +588,25 @@ def _add_paragraph_from_dict(doc, para_dict: Dict[str, Any]):
                 run.font.italic = True
 
 
+def _safe_get_font_prop(font, attr_name: str):
+    """Safely get a font property, swallowing python-docx CT_RPr/internal errors."""
+    try:
+        return getattr(font, attr_name)
+    except AttributeError:
+        # CT_RPr or other internal python-docx errors on malformed XML
+        return None
+
+
+def _safe_set_font_prop(run, attr_name: str, value):
+    """Safely set a font property, swallowing python-docx CT_RPr/internal errors."""
+    if value is None:
+        return
+    try:
+        setattr(run.font, attr_name, value)
+    except (AttributeError, TypeError):
+        pass
+
+
 def _replace_paragraph_text(paragraph, new_text: str, doc, formatting=None):
     """Replace a paragraph's text while preserving the original paragraph style and font.
     
@@ -571,7 +620,7 @@ def _replace_paragraph_text(paragraph, new_text: str, doc, formatting=None):
     
     p_elem = paragraph._element
     
-    # Store the original run formatting if it exists
+    # Store the original run formatting if it exists (safely, CT_RPr-safe)
     original_font_name = None
     original_font_size = None
     original_font_bold = None
@@ -579,13 +628,10 @@ def _replace_paragraph_text(paragraph, new_text: str, doc, formatting=None):
     
     if paragraph.runs:
         orig_run = paragraph.runs[0]
-        try:
-            original_font_name = orig_run.font.name
-            original_font_size = orig_run.font.size
-            original_font_bold = orig_run.font.bold
-            original_font_italic = orig_run.font.italic
-        except Exception:
-            pass
+        original_font_name = _safe_get_font_prop(orig_run.font, "name")
+        original_font_size = _safe_get_font_prop(orig_run.font, "size")
+        original_font_bold = _safe_get_font_prop(orig_run.font, "bold")
+        original_font_italic = _safe_get_font_prop(orig_run.font, "italic")
 
     # Remove all existing <w:r> children
     for r in p_elem.findall(qn("w:r")):
@@ -600,31 +646,27 @@ def _replace_paragraph_text(paragraph, new_text: str, doc, formatting=None):
     
     # Apply formatting to the new run
     if paragraph.runs:
-        try:
-            new_run = paragraph.runs[0]
-            
-            # Priority: TipTap formatting > Original formatting > Default
-            
-            # Bold: TipTap takes priority
-            if formatting and formatting.get("bold") is not None:
-                new_run.font.bold = formatting["bold"]
-            elif original_font_bold is not None:
-                new_run.font.bold = original_font_bold
-            
-            # Italic: TipTap takes priority
-            if formatting and formatting.get("italic") is not None:
-                new_run.font.italic = formatting["italic"]
-            elif original_font_italic is not None:
-                new_run.font.italic = original_font_italic
-            
-            # Font name and size: always preserve from original
-            if original_font_name:
-                new_run.font.name = original_font_name
-            if original_font_size:
-                new_run.font.size = original_font_size
-                
-        except Exception:
-            pass
+        new_run = paragraph.runs[0]
+        
+        # Priority: TipTap formatting > Original formatting > Default
+        
+        # Bold: TipTap takes priority
+        if formatting and formatting.get("bold") is not None:
+            _safe_set_font_prop(new_run, "bold", formatting["bold"])
+        elif original_font_bold is not None:
+            _safe_set_font_prop(new_run, "bold", original_font_bold)
+        
+        # Italic: TipTap takes priority
+        if formatting and formatting.get("italic") is not None:
+            _safe_set_font_prop(new_run, "italic", formatting["italic"])
+        elif original_font_italic is not None:
+            _safe_set_font_prop(new_run, "italic", original_font_italic)
+        
+        # Font name and size: always preserve from original
+        if original_font_name:
+            _safe_set_font_prop(new_run, "name", original_font_name)
+        if original_font_size:
+            _safe_set_font_prop(new_run, "size", original_font_size)
 
 
 def _copy_run_formatting(source_para, target_para, doc):
@@ -640,9 +682,13 @@ def _copy_run_formatting(source_para, target_para, doc):
         logger.info("[FontDebug] No runs in source paragraph")
         return
     
-    # Get formatting from first run
+    # Get formatting from first run (safely, CT_RPr-safe)
     sample_run = source_para.runs[0]
-    logger.info(f"[FontDebug] Sample run font: name={sample_run.font.name}, size={sample_run.font.size}, bold={sample_run.font.bold}")
+    sample_name = _safe_get_font_prop(sample_run.font, "name")
+    sample_size = _safe_get_font_prop(sample_run.font, "size")
+    sample_bold = _safe_get_font_prop(sample_run.font, "bold")
+    sample_italic = _safe_get_font_prop(sample_run.font, "italic")
+    logger.info(f"[FontDebug] Sample run font: name={sample_name}, size={sample_size}, bold={sample_bold}")
     
     # Copy paragraph formatting
     pf_source = source_para.paragraph_format
@@ -659,19 +705,14 @@ def _copy_run_formatting(source_para, target_para, doc):
     # Copy run formatting to the new paragraph's runs
     if target_para.runs:
         target_run = target_para.runs[0]
-        logger.info(f"[FontDebug] Target run before: name={target_run.font.name}, size={target_run.font.size}")
-        try:
-            if sample_run.font.name:
-                target_run.font.name = sample_run.font.name
-            if sample_run.font.size:
-                target_run.font.size = sample_run.font.size
-            if sample_run.font.bold is not None:
-                target_run.font.bold = sample_run.font.bold
-            if sample_run.font.italic is not None:
-                target_run.font.italic = sample_run.font.italic
-            logger.info(f"[FontDebug] Target run after: name={target_run.font.name}, size={target_run.font.size}")
-        except Exception as e:
-            logger.warning(f"[FontDebug] Error copying run format: {e}")
+        logger.info(f"[FontDebug] Target run before: name={_safe_get_font_prop(target_run.font, 'name')}, size={_safe_get_font_prop(target_run.font, 'size')}")
+        _safe_set_font_prop(target_run, "name", sample_name)
+        _safe_set_font_prop(target_run, "size", sample_size)
+        if sample_bold is not None:
+            _safe_set_font_prop(target_run, "bold", sample_bold)
+        if sample_italic is not None:
+            _safe_set_font_prop(target_run, "italic", sample_italic)
+        logger.info(f"[FontDebug] Target run after: name={_safe_get_font_prop(target_run.font, 'name')}, size={_safe_get_font_prop(target_run.font, 'size')}")
     else:
         logger.info("[FontDebug] No runs in target paragraph")
 
@@ -770,6 +811,9 @@ def edit_docx_by_content_match(
       - delete_paragraph: Delete paragraph matched by content
       - format_text: Format text (bold/italic/etc) by content match
       - format_paragraph: Format paragraph by content match
+      - insert_image: Insert an image file at a specified position
+          Required fields: image_path (str, path to image file)
+          Optional fields: insert_after_paragraph (int, default -1 = end), width_inches (float)
     
     Args:
         file_path: Path to the .docx file.
@@ -933,7 +977,7 @@ def edit_docx_by_content_match(
                         logger.info(f"[FontDebug] After replace: text='{p.text[:30]}...', runs={len(p.runs)}")
                         if p.runs:
                             run = p.runs[0]
-                            logger.info(f"[FontDebug] New run font: name={run.font.name}, bold={run.font.bold}, italic={run.font.italic}")
+                            logger.info(f"[FontDebug] New run font: name={_safe_get_font_prop(run.font, 'name')}, bold={_safe_get_font_prop(run.font, 'bold')}, italic={_safe_get_font_prop(run.font, 'italic')}")
                         
                         changes_made.append(f"Replaced text at paragraph {target_curr_idx}")
                     else:
@@ -969,11 +1013,11 @@ def edit_docx_by_content_match(
                         formatting = edit.get("formatting", edit)  # Support both nested and flat format
                         for run in p.runs:
                             if formatting.get("bold") is not None:
-                                run.font.bold = formatting["bold"]
+                                _safe_set_font_prop(run, "bold", formatting["bold"])
                             if formatting.get("italic") is not None:
-                                run.font.italic = formatting["italic"]
+                                _safe_set_font_prop(run, "italic", formatting["italic"])
                             if formatting.get("underline") is not None:
-                                run.font.underline = formatting["underline"]
+                                _safe_set_font_prop(run, "underline", formatting["underline"])
                         changes_made.append(f"Formatted text at paragraph {target_curr_idx}")
                 
                 elif edit_type == "format_paragraph":
@@ -989,6 +1033,50 @@ def edit_docx_by_content_match(
                             if alignment:
                                 p.alignment = alignment
                         changes_made.append(f"Formatted paragraph {target_curr_idx}")
+                
+                elif edit_type == "insert_image":
+                    image_path = edit.get("image_path")
+                    if not image_path:
+                        changes_made.append("Error in insert_image: image_path is required")
+                    elif not os.path.isfile(image_path):
+                        changes_made.append(f"Error in insert_image: file not found: {image_path}")
+                    else:
+                        try:
+                            from docx.shared import Inches
+                            # Support both 'position' (agent convention) and 'insert_after_paragraph' (explicit)
+                            raw_pos = edit.get("position", edit.get("insert_after_paragraph", -1))
+                            try:
+                                insert_after = int(raw_pos)
+                            except (TypeError, ValueError):
+                                insert_after = -1
+                            width_inches = edit.get("width_inches")  # optional, for proportional scaling
+                            total_paras = len(doc.paragraphs)
+                            
+                            if insert_after == -1 or insert_after >= total_paras:
+                                # Insert at end of document
+                                target_para = doc.add_paragraph()
+                                log_pos = f"end (of {total_paras} paragraphs)"
+                            else:
+                                # Insert after the specified paragraph index
+                                target_para = doc.paragraphs[insert_after]
+                                # Insert a new empty paragraph after this one via XML
+                                from docx.oxml import OxmlElement
+                                new_p = OxmlElement("w:p")
+                                target_para._element.addnext(new_p)
+                                # Re-fetch (paragraphs order may shift after XML insert)
+                                target_para = doc.paragraphs[insert_after + 1]
+                                log_pos = f"after paragraph {insert_after} (of {total_paras})"
+                            
+                            # Add image to the target paragraph
+                            run = target_para.add_run()
+                            if width_inches:
+                                run.add_picture(image_path, width=Inches(width_inches))
+                            else:
+                                run.add_picture(image_path)
+                            
+                            changes_made.append(f"Inserted image at {log_pos}: {os.path.basename(image_path)}")
+                        except Exception as img_err:
+                            changes_made.append(f"Error in insert_image: {str(img_err)}")
                 
             except Exception as e:
                 changes_made.append(f"Error in {edit_type}: {str(e)}")
