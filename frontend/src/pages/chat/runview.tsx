@@ -126,6 +126,8 @@ interface RunViewProps {
   onExecutePlan?: (plan: IPlan) => void;
   enable_upload?: boolean;
   serverFilesPrefill?: ServerUploadedFileInfo[] | null;
+  /** Read-only viewer (e.g. shared session link); hides input and actions */
+  viewOnly?: boolean;
 }
 
 const RunView: React.FC<RunViewProps> = ({
@@ -150,6 +152,7 @@ const RunView: React.FC<RunViewProps> = ({
   onExecutePlan,
   enable_upload = false,
   serverFilesPrefill,
+  viewOnly = false,
 }) => {
   const setIsRightPanelOpen = useRightPanelStore((s) => s.setIsOpen);
   const overviewSlot = useRightPanelStore((s) => s.overviewSlot);
@@ -1278,7 +1281,7 @@ const RunView: React.FC<RunViewProps> = ({
             </div>
           </div>
 
-          {/* Approval Buttons after status */}
+          {!viewOnly && (
           <div className="flex-shrink-0">
             <ApprovalButtons
               status={run.status}
@@ -1290,10 +1293,11 @@ const RunView: React.FC<RunViewProps> = ({
               onRegeneratePlan={onRegeneratePlan}
             />
           </div>
+          )}
           </div>{/* end messagesContentRef wrapper */}
         </div>
 
-        {/* ChatInput - floating fixed at bottom */}
+        {!viewOnly && (
         <div
           ref={buttonsContainerRef}
           className="flex-shrink-0 w-full relative"
@@ -1350,6 +1354,7 @@ const RunView: React.FC<RunViewProps> = ({
             />
           </div>
         </div>
+        )}
       </div>
 
       {/* Portal AgentPanel into the right panel's overview slot */}

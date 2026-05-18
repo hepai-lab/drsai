@@ -138,6 +138,49 @@ export class SessionAPI {
             throw new Error(data.message || "Failed to delete session");
     }
 
+    async setSessionShare(
+        sessionId: number,
+        userId: string,
+        enabled: boolean
+    ): Promise<{ share_token: string; share_enabled: boolean }> {
+        const params = new URLSearchParams({
+            user_id: userId,
+            enabled: String(enabled),
+        });
+        const response = await fetch(
+            `${this.getBaseUrl()}/sessions/${sessionId}/share?${params.toString()}`,
+            {
+                method: "POST",
+                headers: this.getHeaders(),
+            }
+        );
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.detail || data.message || "Failed to update share");
+        return data.data;
+    }
+
+    async getSharedSession(shareToken: string): Promise<{
+        session: Session;
+        runs: SessionRuns["runs"];
+    }> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/sessions/shared/${encodeURIComponent(shareToken)}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.detail || data.message || "Failed to load shared session");
+        return data.data;
+    }
+
+    buildShareUrl(shareToken: string): string {
+        const prefix = process.env.GATSBY_PREFIX_PATH_VALUE || "";
+        const origin =
+            typeof window !== "undefined" ? window.location.origin : "";
+        return `${origin}${prefix}/share?token=${encodeURIComponent(shareToken)}`;
+    }
+
     // Adding messages endpoint
     async listSessionMessages(
         sessionId: number,

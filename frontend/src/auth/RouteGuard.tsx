@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import { useLocation, useNavigate } from "../hooks/useRouter";
 
-const PUBLIC_ROUTES = ["/login", "/auth"];
+const PUBLIC_ROUTES = ["/login", "/auth", "/share"];
 
 const normalizePath = (path: string) => path.replace(/\/$/, "") || "/";
 
