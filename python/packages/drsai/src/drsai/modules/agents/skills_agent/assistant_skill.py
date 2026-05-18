@@ -75,6 +75,7 @@ from drsai.modules.components.skills import SkillLoader
 from .managers.operater_funs import get_operator_funcs
 from .managers.todo_manager import TodoManager
 from drsai.configs.constant import RUNS_DIR
+from drsai.utils.tool_display import format_tools_usage_log_title
 
 class SkillAgentConfig(DrSaiAgentConfig):
     skills_dir: str
@@ -399,9 +400,9 @@ Agent types:
                     models_usage=model_result.usage,
                 )
                 logger.debug(tool_call_msg)
-                tools_name = [tool.name for tool in model_result.content] 
+                tools_name = [tool.name for tool in model_result.content]
                 yield AgentLogEvent(
-                    title="I am using tools: " + " ".join(tools_name),
+                    title=format_tools_usage_log_title(tools_name),
                     source=agent_name, 
                     content=str(tool_call_msg.content), 
                     content_type="tools")

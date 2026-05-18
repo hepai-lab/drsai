@@ -6,7 +6,7 @@ import officeExcelIcon from "@/assets/file-icons/office-els.svg";
 import officePdfIcon from "@/assets/file-icons/office-pdf.svg";
 import officePptIcon from "@/assets/file-icons/office-ppt.svg";
 import officeTxtIcon from "@/assets/file-icons/office-txt.svg";
-import { Modal, message } from "antd";
+import { Button, Modal, message } from "antd";
 import {
   Check,
   Download,
@@ -141,12 +141,11 @@ interface LibraryPageProps {
 interface ChatModalProps {
   open: boolean;
   files: ServerUploadedFileInfo[];
-  isDark: boolean;
   onClose: () => void;
   onSubmit: (query: string) => void;
 }
 
-const ChatModal: React.FC<ChatModalProps> = ({ open, files, isDark, onClose, onSubmit }) => {
+const ChatModal: React.FC<ChatModalProps> = ({ open, files, onClose, onSubmit }) => {
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -179,65 +178,44 @@ const ChatModal: React.FC<ChatModalProps> = ({ open, files, isDark, onClose, onS
 
   if (!open) return null;
 
-  const bg = isDark
-    ? "bg-[#11151c] border-transparent text-white shadow-[0_1px_0_rgba(255,255,255,0.06)_inset,0_26px_70px_rgba(0,0,0,0.75)] ring-1 ring-white/10"
-    : "bg-white border-gray-200 text-gray-900";
-  const overlay = isDark ? "bg-black/60" : "bg-black/40";
-  const fileBg = isDark
-    ? "bg-white/[0.035] border-transparent ring-1 ring-inset ring-white/10 shadow-[0_1px_0_rgba(255,255,255,0.05)_inset]"
-    : "bg-gray-50 border-gray-200";
-  const inputBg = isDark
-    ? "bg-white/[0.04] border-transparent ring-1 ring-inset ring-white/10 focus-within:ring-white/20 placeholder:text-secondary/60 text-white"
-    : "bg-white border-gray-200 placeholder:text-gray-400 text-gray-900";
-  const sendBtn =
-    text.trim()
-      ? isDark
-        ? "bg-white text-gray-900 hover:bg-gray-100"
-        : "bg-gray-900 text-white hover:bg-gray-800"
-      : isDark
-        ? "bg-white/10 text-secondary cursor-not-allowed"
-        : "bg-gray-100 text-gray-400 cursor-not-allowed";
+  const panel =
+    "relative w-full max-w-2xl rounded-xl border border-primary bg-primary text-primary shadow-modern flex flex-col max-h-[85vh]";
+  const fileWrap =
+    "mx-4 mb-3 rounded-lg border border-primary/40 bg-tertiary/15 dark:bg-white/[0.04] overflow-hidden flex-shrink-0";
+  const inputCls =
+    "flex-1 resize-none rounded-lg border border-primary/40 bg-tertiary/10 dark:bg-white/[0.04] px-3 py-2.5 text-sm text-primary outline-none transition-colors placeholder:text-secondary/60 focus:border-accent/50 focus:ring-1 focus:ring-accent/30";
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center px-4 ${overlay}`}
+      className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/50"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div
-        className={`relative w-full max-w-2xl rounded-2xl border shadow-2xl flex flex-col max-h-[85vh] ${bg}`}
-        role="dialog"
-        aria-modal="true"
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-5 pb-4 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <MessageSquare className="w-5 h-5 opacity-70" aria-hidden />
-            <span className="font-semibold text-base">
+      <div className={panel} role="dialog" aria-modal="true">
+        <div className="flex items-center justify-between px-4 pt-4 pb-3 flex-shrink-0 border-b border-primary/30">
+          <div className="flex items-center gap-2 min-w-0">
+            <MessageSquare className="w-4 h-4 text-accent shrink-0" aria-hidden />
+            <span className="font-medium text-sm sm:text-base text-primary truncate">
               开始聊天 · {files.length} 个文件
             </span>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className={`p-1.5 rounded-lg transition-colors ${isDark ? "hover:bg-white/10 text-secondary" : "hover:bg-gray-100 text-gray-500"}`}
+            className="p-1.5 rounded-lg text-secondary hover:text-primary hover:bg-tertiary/40 transition-colors"
             aria-label="关闭"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* File list */}
-        <div className={`mx-6 mb-4 rounded-xl border overflow-hidden flex-shrink-0 ${fileBg}`}>
-          <div className="max-h-[240px] overflow-y-auto divide-y divide-inherit">
+        <div className={fileWrap}>
+          <div className="max-h-[240px] overflow-y-auto divide-y divide-primary/20">
             {files.map((f) => (
-              <div key={f.uuid} className="flex items-center gap-3 px-4 py-3">
-                <FileText
-                  className={`w-5 h-5 flex-shrink-0 ${isDark ? "text-secondary/70" : "text-gray-400"}`}
-                  aria-hidden
-                />
+              <div key={f.uuid} className="flex items-center gap-3 px-3 py-2.5">
+                <FileText className="w-4 h-4 flex-shrink-0 text-secondary" aria-hidden />
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">{f.name}</div>
-                  <div className={`text-xs mt-0.5 ${isDark ? "text-secondary/60" : "text-gray-400"}`}>
+                  <div className="text-sm font-medium text-primary truncate">{f.name}</div>
+                  <div className="text-xs mt-0.5 text-secondary">
                     {extLabel(f.suffix, f.name)} · {formatSize(f.size)}
                   </div>
                 </div>
@@ -246,35 +224,30 @@ const ChatModal: React.FC<ChatModalProps> = ({ open, files, isDark, onClose, onS
           </div>
         </div>
 
-        {/* Hint */}
-        <p className={`px-6 mb-3 text-xs flex-shrink-0 ${isDark ? "text-secondary/60" : "text-gray-400"}`}>
-          文件已就绪，无需重新上传。输入你的问题，按 Enter 发送（Shift+Enter 换行）。
+        <p className="px-4 mb-2 text-xs flex-shrink-0 text-secondary">
+          文件已就绪，无需重新上传。Enter 发送，Shift+Enter 换行。
         </p>
 
-        {/* Input row */}
-        <div className="px-6 pb-6 flex gap-3 items-end flex-shrink-0">
+        <div className="px-4 pb-4 flex gap-2 items-end flex-shrink-0">
           <textarea
             ref={textareaRef}
             rows={3}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="请输入你想了解的问题…"
-            className={`flex-1 resize-none rounded-xl border px-4 py-3 text-sm outline-none transition-shadow focus:ring-2 focus:ring-offset-0 ${isDark ? "focus:ring-white/20" : "focus:ring-gray-900/10"} ${inputBg}`}
+            placeholder="输入问题…"
+            className={inputCls}
           />
-          <button
-            type="button"
+          <Button
+            type="primary"
+            htmlType="button"
+            loading={submitting}
             disabled={!text.trim() || submitting}
             onClick={() => void handleSubmit()}
-            className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-colors ${sendBtn}`}
+            className="shrink-0"
             aria-label="发送"
-          >
-            {submitting ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
-          </button>
+            icon={<Send className="w-4 h-4" />}
+          />
         </div>
       </div>
     </div>
@@ -381,7 +354,7 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
     Modal.confirm({
       title: "移除所选文件？",
       content: "将从库中删除，且无法恢复。",
-      okText: "移除",
+      okText: "删除",
       okType: "danger",
       cancelText: "取消",
       onOk: async () => {
@@ -405,55 +378,38 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
     onStartChat(selectedFiles, chatQuery);
   };
 
-  const cardBase = isDark
-    ? "border border-transparent bg-white/[0.03] shadow-[0_1px_0_rgba(255,255,255,0.06)_inset,0_14px_34px_rgba(0,0,0,0.55)] ring-1 ring-white/10"
-    : "border border-gray-200 bg-white";
+  const cardBase =
+    "border border-primary/50 rounded-lg bg-tertiary/10 dark:bg-white/[0.03] shadow-sm";
+  const cardHover = "hover:bg-tertiary/25 dark:hover:bg-white/[0.06] hover:border-accent/30";
 
-  const cardHover = isDark
-    ? "hover:bg-white/[0.05] hover:shadow-[0_1px_0_rgba(255,255,255,0.08)_inset,0_22px_52px_rgba(0,0,0,0.65)] hover:ring-white/15"
-    : "hover:bg-gray-50 hover:shadow-sm";
-
-  const toolbarBtn =
-    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors";
+  const iconToggle = "p-2 text-secondary transition-colors hover:text-primary hover:bg-tertiary/30 rounded-md";
+  const iconToggleActive = "bg-accent/15 text-accent";
 
   return (
     <>
-      <div
-        className={`h-full min-h-0 flex flex-col ${isDark ? "bg-primary text-primary" : "bg-white text-gray-900"}`}
-      >
-        {/* Header */}
-        <div className="flex-shrink-0 px-6 pt-6 pb-4 flex flex-wrap items-center gap-4">
-          <h1 className="text-2xl font-bold tracking-tight mr-auto">库</h1>
-          <div className="flex flex-1 min-w-[200px] max-w-md items-center gap-2">
-            <div className="relative flex-1">
+      <div className="h-full min-h-0 flex flex-col p-4 bg-primary text-primary">
+        <div className="flex-shrink-0 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
+          <div className="min-w-0">
+            <div className="text-base font-medium text-primary">库</div>
+            <div className="text-sm text-secondary mt-0.5">管理上传文件；选中后可发起对话或下载。</div>
+          </div>
+          <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-end min-w-0">
+            <div className="relative flex-1 sm:max-w-xs min-w-[180px]">
               <Search
-                className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary pointer-events-none"
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-secondary pointer-events-none"
                 aria-hidden
               />
               <input
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="搜索"
-                className={`w-full rounded-full pl-9 pr-3 py-2 text-sm border outline-none transition-shadow ${isDark
-                    ? "border-transparent bg-white/[0.04] ring-1 ring-inset ring-white/10 focus:ring-white/20 placeholder:text-secondary/60"
-                    : "border-gray-200 bg-gray-50/80 placeholder:text-gray-400"
-                  }`}
+                placeholder="搜索文件名"
+                className="w-full rounded-md border border-primary/40 bg-tertiary/10 dark:bg-white/[0.04] pl-9 pr-3 py-1.5 text-sm text-primary outline-none placeholder:text-secondary/60 focus:border-accent/50 focus:ring-1 focus:ring-accent/30"
               />
             </div>
-          </div>
-          <div className="flex flex-shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={handleUploadPick}
-              className={`rounded-full px-5 py-2 text-sm font-semibold text-white ${isDark ? "bg-white text-gray-900 hover:bg-gray-100" : "bg-gray-900 hover:bg-gray-800"
-                }`}
-            >
-              <span className="inline-flex items-center gap-2">
-                <Upload className="w-4 h-4" />
-                上传
-              </span>
-            </button>
+            <Button type="primary" htmlType="button" onClick={handleUploadPick} icon={<Upload className="w-4 h-4" />}>
+              上传
+            </Button>
           </div>
           <input
             ref={uploadRef}
@@ -464,44 +420,31 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
           />
         </div>
 
-        {/* Toolbar */}
-        <div
-          className={`flex-shrink-0 px-6 pb-4 flex flex-wrap items-center gap-3 border-b ${isDark
-            ? "border-transparent shadow-[0_-1px_0_rgba(255,255,255,0.06)_inset,0_10px_34px_rgba(0,0,0,0.35)]"
-            : "border-gray-100"
-            }`}
-        >
+        <div className="flex-shrink-0 mt-3 pb-3 flex flex-wrap items-center gap-2 border-b border-primary/30">
           {selected.size > 0 ? (
             <>
-              <button
-                type="button"
+              <Button
+                type="primary"
+                htmlType="button"
                 onClick={() => setChatModalOpen(true)}
-                className={`${toolbarBtn} ${isDark ? "bg-white text-gray-900 hover:bg-gray-100" : "bg-gray-900 text-white hover:bg-gray-800"
-                  }`}
+                icon={<MessageSquare className="w-4 h-4" />}
               >
-                <MessageSquare className="w-4 h-4" />
                 开始聊天
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleDownload()}
-                className={`${toolbarBtn} ${isDark ? "text-primary hover:bg-white/5" : "text-gray-700 hover:bg-gray-100"
-                  }`}
-              >
-                <Download className="w-4 h-4" />
+              </Button>
+              <Button htmlType="button" onClick={() => void handleDownload()} icon={<Download className="w-4 h-4" />}>
                 下载
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                color="danger"
+                variant="outlined"
+                htmlType="button"
                 onClick={handleRemove}
-                className={`${toolbarBtn} text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10`}
+                icon={<Trash2 className="w-4 h-4" />}
+                className="!border-[var(--color-error-primary)] !text-[var(--color-error-primary)] hover:!text-[var(--color-error-primary)] hover:!border-[var(--color-error-primary)]"
               >
-                <Trash2 className="w-4 h-4" />
-                移除
-              </button>
-              <span className={`ml-auto text-sm ${isDark ? "text-secondary" : "text-gray-500"}`}>
-                已选 {selected.size} 个
-              </span>
+                删除
+              </Button>
+              <span className="ml-auto text-sm text-secondary">已选 {selected.size} 个</span>
             </>
           ) : (
             <div className="flex-1 min-w-[1px]" aria-hidden />
@@ -509,22 +452,17 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
           <button
             type="button"
             title="排序（按名称）"
-            className={`p-2 rounded-lg ${isDark ? "hover:bg-white/5 text-secondary" : "hover:bg-gray-100 text-gray-500"}`}
+            className={iconToggle}
             onClick={() => message.info("当前按名称排序")}
           >
             <SlidersHorizontal className="w-4 h-4" />
           </button>
-          <div
-            className={`flex rounded-lg border overflow-hidden ${isDark
-              ? "border-transparent ring-1 ring-inset ring-white/10 bg-white/[0.02]"
-              : "border-gray-200"
-              }`}
-          >
+          <div className="flex rounded-lg border border-primary/40 bg-tertiary/10 dark:bg-white/[0.03] overflow-hidden p-0.5 gap-0.5">
             <button
               type="button"
               title="网格"
               onClick={() => setViewMode("grid")}
-              className={`p-2 ${viewMode === "grid" ? (isDark ? "bg-white/10" : "bg-gray-100") : ""}`}
+              className={`${iconToggle} rounded-md ${viewMode === "grid" ? iconToggleActive : ""}`}
             >
               <LayoutGrid className="w-4 h-4" />
             </button>
@@ -532,15 +470,14 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
               type="button"
               title="列表"
               onClick={() => setViewMode("list")}
-              className={`p-2 ${viewMode === "list" ? (isDark ? "bg-white/10" : "bg-gray-100") : ""}`}
+              className={`${iconToggle} rounded-md ${viewMode === "list" ? iconToggleActive : ""}`}
             >
               <List className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 min-h-0 overflow-auto px-6 py-6">
+        <div className="flex-1 min-h-0 overflow-auto py-4">
           {loading ? (
             <div className="flex items-center justify-center py-24 text-secondary gap-2">
               <Loader2 className="w-6 h-6 animate-spin" />
@@ -551,7 +488,7 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
               {items.length === 0 ? "对话中上传的文件会出现在这里" : "没有匹配的文件"}
             </div>
           ) : viewMode === "grid" ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {sorted.map((f) => {
                 const isSel = selected.has(f.uuid);
                 const { Icon, iconSrc, tone } = getFileVisual(f.suffix, f.name);
@@ -562,17 +499,14 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
                     key={f.uuid}
                     type="button"
                     onClick={() => toggleSelect(f.uuid)}
-                    className={`relative text-left rounded-xl p-4 min-h-[132px] flex flex-col transition-all ${cardBase} ${cardHover}`}
+                    className={`relative text-left rounded-lg p-3 min-h-[120px] flex flex-col transition-colors ${cardBase} ${cardHover}`}
                   >
                     {isSel && (
-                      <span
-                        className={`absolute top-3 right-3 w-6 h-6 rounded-full flex items-center justify-center ${isDark ? "bg-white text-gray-900" : "bg-gray-900 text-white"
-                          }`}
-                      >
+                      <span className="absolute top-2.5 right-2.5 w-6 h-6 rounded-full flex items-center justify-center bg-accent text-white shadow-sm">
                         <Check className="w-3.5 h-3.5" strokeWidth={3} />
                       </span>
                     )}
-                    <div className="text-[15px] font-semibold leading-6 pr-8 break-all">{f.name}</div>
+                    <div className="text-sm font-medium leading-snug pr-8 break-all text-primary">{f.name}</div>
                     <div className="mt-4 flex items-center gap-3">
                       <span className={`inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border ${toneCls.wrap}`}>
                         {iconSrc ? (
@@ -581,7 +515,7 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
                           <IconComponent className={`w-5 h-5 ${toneCls.icon}`} />
                         )}
                       </span>
-                      <div className={`text-xs ${isDark ? "text-secondary/70" : "text-gray-400"}`}>
+                      <div className="text-xs text-secondary">
                         {extLabel(f.suffix, f.name)} · {formatSize(f.size)}
                       </div>
                     </div>
@@ -601,13 +535,10 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
                     key={f.uuid}
                     type="button"
                     onClick={() => toggleSelect(f.uuid)}
-                    className={`w-full flex items-center gap-4 rounded-xl px-4 py-3 text-left transition-all ${cardBase} ${cardHover}`}
+                    className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${cardBase} ${cardHover}`}
                   >
                     {isSel ? (
-                      <span
-                        className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center ${isDark ? "bg-white text-gray-900" : "bg-gray-900 text-white"
-                          }`}
-                      >
+                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center bg-accent text-white shadow-sm">
                         <Check className="w-3.5 h-3.5" strokeWidth={3} />
                       </span>
                     ) : (
@@ -621,7 +552,7 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
                       )}
                     </span>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[15px] font-semibold truncate">{f.name}</div>
+                      <div className="text-sm font-medium truncate text-primary">{f.name}</div>
                       <div className="text-xs text-secondary mt-0.5 flex items-center gap-1.5">
                         {extLabel(f.suffix, f.name)} · {formatSize(f.size)}
                       </div>
@@ -638,7 +569,6 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
       <ChatModal
         open={chatModalOpen}
         files={selectedFiles}
-        isDark={isDark}
         onClose={() => setChatModalOpen(false)}
         onSubmit={handleChatSubmit}
       />

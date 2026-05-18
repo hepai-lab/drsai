@@ -251,12 +251,12 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
                 label="配置"
                 onClick={() => onSubMenuChange("profile")}
               />
-              <NavItem
+              {/* <NavItem
                 id="channels"
                 icon={<Radio className="w-3.5 h-3.5" />}
                 label="频道"
                 onClick={() => onSubMenuChange("channels")}
-              />
+              /> */}
               {/* <NavItem
                 id="logs"
                 icon={<FileText className="w-3.5 h-3.5" />}

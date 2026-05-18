@@ -1087,6 +1087,27 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       cfg.type === "AgentLogEvent" ||
       meta.type === "AgentLogEvent";
 
+    /** Hide footer "Copy" when the bubble is only reasoning (e.g. collapsed "Thought Completed") with no real reply text. */
+    const rawAssistantMarkdownSource = ((): string => {
+      const t = parsedContent.text;
+      if (typeof t === "string") return t;
+      if (Array.isArray(t)) {
+        return (t as unknown[]).filter((item): item is string => typeof item === "string").join("\n");
+      }
+      return stringifyForDisplay(t);
+    })();
+    const stripThinkBlocksForCopyHeuristic = (raw: string) =>
+      raw
+        // Strip blocks closed with `</think>` (parser) or `</think>` (disableThinkTags path).
+        .replace(/<think>[\s\S]*?<\/think>/gi, "")
+        .replace(/<think>[\s\S]*?<\/redacted_thinking>/gi, "");
+    const hasAssistantThinkTags = rawAssistantMarkdownSource.includes("<think>");
+    const assistantBodyOutsideThink = hasAssistantThinkTags
+      ? stripThinkBlocksForCopyHeuristic(rawAssistantMarkdownSource).trim()
+      : rawAssistantMarkdownSource.trim();
+    const showAssistantMessageCopyButton =
+      !hasAssistantThinkTags ||
+      assistantBodyOutsideThink.replace(/\s+/g, "").length >= 12;
     // Use new plan message check
     const isPlanMsg = messageUtils.isPlanMessage(normalizedMessage.metadata);
     const orchestratorContent =
@@ -1533,7 +1554,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                 ) : null;
               })()}
               {/* Copy button for non-user messages (excluding plan messages and tool log lines) */}
-              {!isPlanMsg && !suppressNonUserCopyButton && (
+              {!isPlanMsg && !suppressNonUserCopyButton && showAssistantMessageCopyButton && (
                 <div className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={handleNonUserCopy}

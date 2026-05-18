@@ -1,30 +1,129 @@
+import json
 import os
-from typing import Dict, Any
+import urllib.error
+import urllib.request
+from typing import Any, Dict, Optional, cast
+
 from dotenv import load_dotenv
+
 load_dotenv()
 from loguru import logger
+
 from hepai import HepAI
 from hepai.types import APIKeyInfo
 
+
+def _extract_api_key_from_json(obj: object) -> Optional[str]:
+    """Best-effort parse HepAI fetch_api_key JSON when SDK model lags behind API (e.g. ext_data)."""
+    if isinstance(obj, dict):
+        raw_key = obj.get("api_key")
+        if isinstance(raw_key, str) and raw_key.strip():
+            return raw_key.strip()
+        for k in ("data", "result", "payload"):
+            if k in obj:
+                nested = _extract_api_key_from_json(obj[k])
+                if nested:
+                    return nested
+    return None
+
+
 class PersonalKeyConfigFetcher:
     """获取个人密钥配置"""
-    def __init__(self):
+    def __init__(self) -> None:
         self.service_mode = os.getenv("SERVICE_MODE")
+        self._hepai_base_url = os.getenv(
+            "HEPAI_BASE_URL", "https://aiapi.ihep.ac.cn/apiv2"
+        ).rstrip("/")
         if self.service_mode == "PROD":
-            
-            admin_api_key = os.getenv("HEPAI_APP_ADMIN_API_KEY")  # 从环境变量中读取API-KEY
-            base_url = "https://aiapi.ihep.ac.cn/apiv2"
-            assert admin_api_key, "HEPAI_APP_ADMIN_API_KEY is not set, please set it in .env file"
-            self.client = HepAI(api_key=admin_api_key, base_url=base_url)
+            admin_api_key = os.getenv("HEPAI_APP_ADMIN_API_KEY")
+            assert admin_api_key, (
+                "HEPAI_APP_ADMIN_API_KEY is not set, please set it in .env file"
+            )
+            self.client = HepAI(
+                api_key=admin_api_key, base_url=self._hepai_base_url
+            )
+
+    def _fetch_personal_key_raw(self, username: str) -> str:
+        """
+        Same endpoint as hepai Key.fetch_api_key, without cast_to=APIKeyInfo
+        (avoids unexpected keyword 'ext_data' when API adds fields).
+        """
+        key = self.client.key
+        path = f"{key.prefix}/fetch_api_key"
+        post = getattr(key, "_post", None)
+        if callable(post):
+            try:
+                raw = post(
+                    path,
+                    body={"username": username},
+                    cast_to=dict,
+                )
+                token = _extract_api_key_from_json(raw)
+                if token:
+                    return token
+            except (TypeError, ValueError) as exc:
+                logger.warning(
+                    "HepAI _post(..., cast_to=dict) fallback failed: {}", exc
+                )
+
+        admin_api_key = os.environ["HEPAI_APP_ADMIN_API_KEY"]
+        prefix = str(getattr(key, "prefix", "") or "").strip("/")
+        rel = f"{prefix}/fetch_api_key" if prefix else "fetch_api_key"
+        url = f"{self._hepai_base_url}/{rel}"
+        body = json.dumps({"username": username}).encode("utf-8")
+        auth_header = os.getenv("HEPAI_ADMIN_AUTHORIZATION_HEADER")
+        if auth_header:
+            authorization = auth_header
+        elif admin_api_key.lower().startswith("bearer "):
+            authorization = admin_api_key
+        else:
+            authorization = f"Bearer {admin_api_key}"
+
+        req = urllib.request.Request(
+            url,
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": authorization,
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                raw_bytes = resp.read()
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"HepAI fetch_api_key HTTP {exc.code}: {detail}"
+            ) from exc
+
+        payload = json.loads(raw_bytes.decode("utf-8"))
+        token = _extract_api_key_from_json(payload)
+        if not token:
+            raise ValueError(
+                f"API key for user {username} not found (raw HTTP, unexpected JSON shape)."
+            )
+        return token
 
     def get_personal_key(self, username: str) -> str:
         """获取个人密钥"""
         
         if self.service_mode == "PROD":
-            api_key: APIKeyInfo = self.client.fetch_api_key(username=username)
-            if not api_key or not api_key.api_key:
+            try:
+                api_key = self.client.fetch_api_key(username=username)
+            except TypeError as exc:
+                err = str(exc).lower()
+                if "ext_data" not in err and "unexpected keyword" not in err:
+                    raise
+                logger.warning(
+                    "HepAI fetch_api_key model mismatch ({}); using raw JSON fallback",
+                    exc,
+                )
+                return self._fetch_personal_key_raw(username)
+
+            if not api_key or not getattr(api_key, "api_key", None):
                 raise ValueError(f"API key for user {username} not found.")
-            return api_key.api_key
+            return cast(APIKeyInfo, api_key).api_key
         else:
             api_key = os.getenv("HEPAI_API_KEY", "hepai_api_key_not_found")
             # assert api_key, "HEPAI_API_KEY not found, please add it in .env or environment variables in development mode"

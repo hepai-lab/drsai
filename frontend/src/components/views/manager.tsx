@@ -683,7 +683,7 @@ export const SessionManager: React.FC = () => {
                               label: (
                                 <>
                                   <Share2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5 align-middle" />
-                                  复制分享链接
+                                  分享
                                 </>
                               ),
                               onClick: (e) => {

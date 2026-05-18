@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import ReactDOM from "react-dom";
 import { Run, Message, RunLogEntry } from "../../components/types/datamodel";
 import { RenderMessage, messageUtils } from "./rendermessage";
@@ -625,15 +625,6 @@ const RunView: React.FC<RunViewProps> = ({
     }
   }, [run.logs, agentConfig.panel.type]);
 
-  // Control right panel open state based on panel visibility
-  useEffect(() => {
-    const shouldShow = showPanel && !isPanelMinimized && agentConfig.panel.type !== 'none';
-    setIsRightPanelOpen(shouldShow);
-    return () => {
-      setIsRightPanelOpen(false);
-    };
-  }, [showPanel, isPanelMinimized, agentConfig.panel.type, setIsRightPanelOpen]);
-
   const isEditable =
     run.status === "awaiting_input" &&
     messageUtils.isPlanMessage(
@@ -703,6 +694,15 @@ const RunView: React.FC<RunViewProps> = ({
   useEffect(() => {
     collectImagesFromMessages(run.messages);
   }, [run.messages]);
+
+  // Control right panel open state based on panel visibility
+  useEffect(() => {
+    const shouldShow = showPanel && !isPanelMinimized && agentConfig.panel.type !== 'none';
+    setIsRightPanelOpen(shouldShow);
+    return () => {
+      setIsRightPanelOpen(false);
+    };
+  }, [showPanel, isPanelMinimized, agentConfig.panel.type, setIsRightPanelOpen]);
 
   const handleMaximize = () => {
     setIsPanelMinimized(false);

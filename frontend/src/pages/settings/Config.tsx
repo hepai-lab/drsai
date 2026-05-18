@@ -37,11 +37,10 @@ const ProfileSection: React.FC<{ user: UserLike }> = ({ user }) => {
   return (
     <div className="flex justify-center pt-6">
       <div
-        className={`w-full max-w-sm rounded-2xl border shadow-modern overflow-hidden ${
-          darkMode === "dark"
+        className={`w-full max-w-sm rounded-2xl border shadow-modern overflow-hidden ${darkMode === "dark"
             ? "bg-[#0f0f0f]/60 border-border-primary/40"
             : "bg-white/90 border-gray-200/70"
-        }`}
+          }`}
       >
         <div className="h-20 bg-gradient-to-br from-violet-500/30 via-purple-500/20 to-blue-500/10" />
         <div className="flex justify-center -mt-10 mb-3">
@@ -62,18 +61,16 @@ const ProfileSection: React.FC<{ user: UserLike }> = ({ user }) => {
             {user.name || "—"}
           </h2>
           <p
-            className={`mt-1 text-sm ${
-              darkMode === "dark" ? "text-secondary" : "text-gray-500"
-            }`}
+            className={`mt-1 text-sm ${darkMode === "dark" ? "text-secondary" : "text-gray-500"
+              }`}
           >
             {user.email}
           </p>
           <div
-            className={`mt-5 rounded-xl border p-4 text-left space-y-3 ${
-              darkMode === "dark"
+            className={`mt-5 rounded-xl border p-4 text-left space-y-3 ${darkMode === "dark"
                 ? "border-border-primary/30 bg-white/[0.03]"
                 : "border-gray-100 bg-gray-50/80"
-            }`}
+              }`}
           >
             <ConfigRow label="用户名" value={user.name || "—"} />
             <ConfigRow label="邮箱" value={user.email || "—"} />
@@ -123,7 +120,7 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
         setCachedWebsites(settings.allowed_websites || []);
         setAllowedlistEnabled(Boolean(settings.allowed_websites?.length));
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [userEmail]);
 
   const handleUpdateConfig = async (changes: Partial<typeof config>) => {
@@ -187,7 +184,7 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
     if (userEmail) {
       settingsAPI
         .updateSettings(userEmail, useSettingsStore.getState().config)
-        .catch(() => {});
+        .catch(() => { });
     }
     message.success("已恢复默认设置");
   };
@@ -429,11 +426,11 @@ const Config: React.FC = () => {
       label: "个人信息",
       children: <ProfileSection user={user} />,
     },
-    {
-      key: "agent",
-      label: "智能体设置",
-      children: <AgentSettingsSection userEmail={user.email} />,
-    },
+    // {
+    //   key: "agent",
+    //   label: "智能体设置",
+    //   children: <AgentSettingsSection userEmail={user.email} />,
+    // },
   ];
 
   return (
