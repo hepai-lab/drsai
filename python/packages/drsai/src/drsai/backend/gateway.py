@@ -1621,6 +1621,31 @@ async def put_agents_md(
     return {"status": "ok"}
 
 
+@app.get("/v1/config/user-md")
+async def get_user_md(
+    user_id: str | None = Query(default=None),
+):
+    """Read USER.md for the given user."""
+    cfg_dir = _get_config_dir(user_id)
+    user_md = cfg_dir / "USER.md"
+    if user_md.exists():
+        content = user_md.read_text(encoding="utf-8", errors="replace")
+        return {"content": content, "exists": True}
+    return {"content": "", "exists": False}
+
+
+@app.put("/v1/config/user-md")
+async def put_user_md(
+    req: ContentRequest,
+    user_id: str | None = Query(default=None),
+):
+    """Write USER.md for the given user."""
+    cfg_dir = _get_config_dir(user_id)
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "USER.md").write_text(req.content, encoding="utf-8")
+    return {"status": "ok"}
+
+
 
 
 
