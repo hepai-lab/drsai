@@ -397,15 +397,43 @@ sections: [{
 
 ## Editing Existing Documents
 
-**Follow all 3 steps in order.**
+### Use `edit_docx_tool` FIRST for all modifications
 
-### Step 1: Unpack
+**IMPORTANT:** Before using direct XML manipulation, check if `edit_docx_tool` can handle your edit. This tool:
+- Saves changes to a **NEW file** (preserves the original)
+- Goes through HepAI's file management pipeline → **file appears in 文件空间 immediately**
+- Handles all edit types including text replacement, formatting, and **image insertion**
+
+**Image insertion is done with `edit_docx_tool` — do NOT write custom scripts for this.** Structure your edit like this:
+
+```json
+{
+  "type": "insert_image",
+  "image_path": "/absolute/path/to/image.png",
+  "insert_after_paragraph": 0,
+  "width_inches": 5.0
+}
+```
+
+Call `edit_docx_tool` with the `file_path` of the document and the edit JSON above. This will:
+1. Insert the image at the specified position
+2. Save as `原文件名_edited1.docx` (or _edited2, _edited3, etc.)
+3. Register the file with HepAI so it shows up in the user's 文件空间
+
+**Use direct XML manipulation only when `edit_docx_tool` is insufficient**, e.g.:
+- Complex tracked changes (deletions + insertions with author attribution)
+- Comments (the `comment.py` script handles multi-file boilerplate)
+- Advanced formatting not supported by `edit_docx_tool`
+
+**Follow all 3 steps in order for direct XML editing:**
+
+### Direct XML Step 1: Unpack
 ```bash
 python scripts/office/unpack.py document.docx unpacked/
 ```
 Extracts XML, pretty-prints, merges adjacent runs, and converts smart quotes to XML entities (`&#x201C;` etc.) so they survive editing. Use `--merge-runs false` to skip run merging.
 
-### Step 2: Edit XML
+### Direct XML Step 2: Edit XML
 
 Edit files in `unpacked/word/`. See XML Reference below for patterns.
 
@@ -433,7 +461,7 @@ python scripts/comment.py unpacked/ 0 "Text" --author "Custom Author"  # custom 
 ```
 Then add markers to document.xml (see Comments in XML Reference).
 
-### Step 3: Pack
+### Direct XML Step 3: Pack
 ```bash
 python scripts/office/pack.py unpacked/ output.docx --original document.docx
 ```
@@ -446,7 +474,7 @@ Validates with auto-repair, condenses XML, and creates DOCX. Use `--validate fal
 **Auto-repair won't fix:**
 - Malformed XML, invalid element nesting, missing relationships, schema violations
 
-### Common Pitfalls
+### Direct XML Common Pitfalls
 
 - **Replace entire `<w:r>` elements**: When adding tracked changes, replace the whole `<w:r>...</w:r>` block with `<w:del>...<w:ins>...` as siblings. Don't inject tracked change tags inside a run.
 - **Preserve `<w:rPr>` formatting**: Copy the original run's `<w:rPr>` block into your tracked change runs to maintain bold, font size, etc.
