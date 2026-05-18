@@ -28,7 +28,7 @@ describe("I18nProvider", () => {
   const setLocale = vi.fn().mockResolvedValue(DEFAULT_ACTIVE_LOCALE);
 
   beforeEach(() => {
-    (window as any).hermesAPI = {
+    (window as any).drsaiAPI = {
       getLocale,
       setLocale,
     };
@@ -41,7 +41,7 @@ describe("I18nProvider", () => {
   afterEach(() => {
     setSharedLocale(DEFAULT_ACTIVE_LOCALE);
     try {
-      localStorage.removeItem("hermes-locale");
+      localStorage.removeItem("drsai-locale");
     } catch {
       /* ignore */
     }
@@ -56,7 +56,7 @@ describe("I18nProvider", () => {
       );
     });
 
-    expect(await screen.findByText("Welcome to Hermes")).toBeInTheDocument();
+    expect(await screen.findByText("Welcome to DrSai")).toBeInTheDocument();
   });
 
   it("renders Spanish translations after switching locale", async () => {
@@ -71,6 +71,6 @@ describe("I18nProvider", () => {
     });
 
     expect(setLocale).toHaveBeenLastCalledWith("es");
-    expect(await screen.findByText("Bienvenido a Hermes")).toBeInTheDocument();
+    expect(await screen.findByText("Bienvenido a DrSai")).toBeInTheDocument();
   });
 });

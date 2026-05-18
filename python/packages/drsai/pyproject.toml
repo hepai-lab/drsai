@@ -27,7 +27,7 @@ dependencies = [
     "autogen-ext[openai, anthropic, mcp, docker]==0.5.7",
 
     # ── HepAI platform (pulls in: openai, damei, fastapi, uvicorn, etc.) ─
-    "hepai>=1.3.9",
+    "hepai>=1.4.1",
     "fastapi[standard]",
 
     # ── data model & validation ──────────────────────────────────────────
@@ -60,13 +60,13 @@ dependencies = [
     "qrcode[pil]",
 
     # 
-    "pystray>=0.19",
-    "Pillow>=9.0"
+    # "pystray>=0.19",
+    # "Pillow>=9.0"
 ]
 
 [project.scripts]
 drsai = "drsai.backend.run_cli:run"
-drsai-tray = "drsai.backend.gui.run_tray:main"
+# drsai-tray = "drsai.backend.gui.run_tray:main"
 
 # ── Optional dependency groups ───────────────────────────────────────────────
 # Install with: pip install drsai[tray]  /  pip install drsai[tray,pipeline]  etc.

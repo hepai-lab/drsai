@@ -1,9 +1,8 @@
 /**
- * DrSai backend connector — replaces hermes.ts.
+ * DrSai backend connector.
  *
  * Manages the DrSai API server lifecycle and provides a streaming chat
- * interface via HTTP SSE. Keeps the same public API surface as hermes.ts
- * so that index.ts (IPC handler registration) needs minimal changes.
+ * interface via HTTP SSE.
  *
  * Architecture:
  *   Electron main  ──HTTP SSE──▶  DrSai API Server (FastAPI, port 8642)
@@ -22,11 +21,11 @@
  */
 
 import { ChildProcess, spawn } from "child_process";
-import { join } from "path";
-import { homedir } from "os";
+import { existsSync } from "fs";
 import http from "http";
-import { stripAnsi } from "./utils";
 import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
+import { getUserName } from "./config";
+import { DRSAI_PYTHON } from "./installer";
 
 // ────────────────────────────────────────────────────
 //  Constants
@@ -35,16 +34,20 @@ import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
 const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "8642", 10);
 const DRSAI_API_URL = `http://127.0.0.1:${DRSAI_API_PORT}`;
 
-/** Path to the DrSai API server script, relative to the project root. */
-const DRSAI_API_SCRIPT = join(
-  homedir(),
-  "drsai_dev",
-  "desktop",
-  "drsai_api_server.py",
-);
+/**
+ * Resolve the Python executable to use for the gateway.
+ *
+ * Priority:
+ * 1. DRSAI_PYTHON (venv python) — if the file exists (installed scenario)
+ * 2. "python" on PATH — dev scenario
+ */
+function resolvePython(): string {
+  if (existsSync(DRSAI_PYTHON)) return DRSAI_PYTHON;
+  return "python";
+}
 
 // ────────────────────────────────────────────────────
-//  Public API (same signatures as hermes.ts)
+//  Public API (same signatures as drsai.ts)
 // ────────────────────────────────────────────────────
 
 export function getApiUrl(): string {
@@ -149,6 +152,7 @@ function sendMessageViaApi(
     messages,
     stream: true,
     ...(resumeSessionId ? { thread_id: resumeSessionId } : {}),
+    user_id: getUserName(),  // Desktop user identity for multi-user isolation
   });
 
   const headers: Record<string, string> = {
@@ -339,7 +343,7 @@ function sendMessageViaCli(
     PYTHONUNBUFFERED: "1",
   };
 
-  const proc = spawn("python", args, {
+  const proc = spawn(resolvePython(), args, {
     env,
     stdio: ["ignore", "pipe", "pipe"],
     ...HIDDEN_SUBPROCESS_OPTIONS,
@@ -475,9 +479,9 @@ export function startGateway(_profile?: string): boolean {
   ensureInitialized();
   if (isGatewayRunning()) return false;
 
-  console.log("[drsai] Starting DrSai API server...");
+  console.log("[drsai] Starting DrSai API gateway...");
 
-  apiProcess = spawn("python", [DRSAI_API_SCRIPT], {
+  apiProcess = spawn(resolvePython(), ["-m", "drsai.backend.gateway"], {
     env: {
       ...(process.env as Record<string, string>),
       DRSAI_API_PORT: String(DRSAI_API_PORT),

@@ -1,7 +1,7 @@
-export default {
+﻿export default {
   title: "Profil",
   subtitle:
-    "Setiap profil adalah workspace Hermes terisolasi dengan konfigurasi, memori, dan skill sendiri",
+    "Setiap profil adalah workspace DrSai terisolasi dengan konfigurasi, memori, dan skill sendiri",
   newAgent: "Agent Baru",
   namePlaceholder: "Nama agent (mis. coder)",
   cloneConfig: "Klon konfigurasi & API key dari default",

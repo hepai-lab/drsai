@@ -1,9 +1,53 @@
-import Database from "better-sqlite3";
-import { join } from "path";
-import { existsSync } from "fs";
-import { HERMES_HOME } from "./installer";
+/**
+ * Session listing via DrSai API Gateway.
+ *
+ * Instead of reading SQLite directly (which doesn't match DrSai's Thread
+ * schema), we call the API server's /v1/threads endpoints.
+ */
 
-const DB_PATH = join(HERMES_HOME, "state.db");
+import { join } from "path";
+import http from "http";
+import { DRSAI_HOME } from "./installer";
+import { getUserName } from "./config";
+
+// ── API helpers ─────────────────────────────────────
+
+const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "8642", 10);
+const DRSAI_API_URL = `http://127.0.0.1:${DRSAI_API_PORT}`;
+
+function apiGet<T>(path: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const url = `${DRSAI_API_URL}${path}`;
+    http
+      .request(url, { method: "GET", timeout: 10000 }, (res) => {
+        let body = "";
+        res.on("data", (d) => (body += d.toString()));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(body));
+          } catch {
+            reject(new Error(`Invalid JSON from API: ${body.slice(0, 200)}`));
+          }
+        });
+      })
+      .on("error", reject)
+      .on("timeout", function (this: http.ClientRequest) {
+        this.destroy();
+        reject(new Error("API request timed out"));
+      })
+      .end();
+  });
+}
+
+function buildPath(base: string, params: Record<string, string | number | undefined>): string {
+  const qs = Object.entries(params)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v!)}`)
+    .join("&");
+  return qs ? `${base}?${qs}` : base;
+}
+
+// ── Types ───────────────────────────────────────────
 
 export interface SessionSummary {
   id: string;
@@ -33,149 +77,122 @@ export interface SearchResult {
   snippet: string;
 }
 
-function getDb(): Database.Database | null {
-  if (!existsSync(DB_PATH)) return null;
-  return new Database(DB_PATH, { readonly: true });
-}
+// ── List ────────────────────────────────────────────
 
 export function listSessions(limit = 30, offset = 0): SessionSummary[] {
-  const db = getDb();
-  if (!db) return [];
-
-  try {
-    // Simple query without correlated subquery — titles come from session cache
-    const rows = db
-      .prepare(
-        `SELECT
-          s.id,
-          s.source,
-          s.started_at,
-          s.ended_at,
-          s.message_count,
-          s.model,
-          s.title
-        FROM sessions s
-        ORDER BY s.started_at DESC
-        LIMIT ? OFFSET ?`,
-      )
-      .all(limit, offset) as Array<{
-      id: string;
-      source: string;
-      started_at: number;
-      ended_at: number | null;
-      message_count: number;
-      model: string;
-      title: string | null;
-    }>;
-
-    return rows.map((r) => ({
-      id: r.id,
-      source: r.source,
-      startedAt: r.started_at,
-      endedAt: r.ended_at,
-      messageCount: r.message_count,
-      model: r.model || "",
-      title: r.title,
-      preview: "",
-    }));
-  } finally {
-    db.close();
-  }
+  // Synchronous fallback — the IPC handler calls this synchronously
+  // so we return empty and let the async path populate
+  return [];
 }
 
-export function searchSessions(query: string, limit = 20): SearchResult[] {
-  const db = getDb();
-  if (!db) return [];
-
+export async function listSessionsAsync(
+  limit = 30,
+  offset = 0,
+): Promise<SessionSummary[]> {
   try {
-    // Check if FTS table exists
-    const tableCheck = db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='messages_fts'",
-      )
-      .get() as { name: string } | undefined;
-
-    if (!tableCheck) return [];
-
-    // Sanitize query for FTS5: wrap each word with quotes for safety, add * for prefix
-    const sanitized = query
-      .trim()
-      .split(/\s+/)
-      .filter((w) => w.length > 0)
-      .map((w) => `"${w.replace(/"/g, "")}"*`)
-      .join(" ");
-
-    if (!sanitized) return [];
-
-    const rows = db
-      .prepare(
-        `SELECT DISTINCT
-          m.session_id,
-          s.title,
-          s.started_at,
-          s.source,
-          s.message_count,
-          s.model,
-          snippet(messages_fts, 0, '<<', '>>', '...', 40) as snippet
-        FROM messages_fts
-        JOIN messages m ON m.id = messages_fts.rowid
-        JOIN sessions s ON s.id = m.session_id
-        WHERE messages_fts MATCH ?
-        ORDER BY rank
-        LIMIT ?`,
-      )
-      .all(sanitized, limit) as Array<{
-      session_id: string;
-      title: string | null;
-      started_at: number;
-      source: string;
-      message_count: number;
-      model: string;
-      snippet: string;
-    }>;
-
-    return rows.map((r) => ({
-      sessionId: r.session_id,
-      title: r.title,
-      startedAt: r.started_at,
-      source: r.source,
-      messageCount: r.message_count,
-      model: r.model || "",
-      snippet: r.snippet || "",
-    }));
-  } catch {
+    const user = getUserName();
+    const path = buildPath("/v1/threads", { user_id: user, limit, offset });
+    const resp = (await apiGet<{ data: Array<Record<string, unknown>> }>(path)) as {
+      data: Array<Record<string, unknown>>;
+    };
+    if (!resp.data) return [];
+    return resp.data.map(
+      (r: Record<string, unknown>) =>
+        ({
+          id: r.thread_id as string,
+          source: "desktop",
+          startedAt:
+            typeof r.updated_at === "number"
+              ? r.updated_at
+              : Date.now(),
+          endedAt: null,
+          messageCount: (r.message_count as number) || 0,
+          model: "",
+          title: (r.name as string) || null,
+          preview: (r.preview as string) || "",
+        }) as SessionSummary,
+    );
+  } catch (err) {
+    console.error("[sessions] listSessionsAsync failed:", err);
     return [];
-  } finally {
-    db.close();
   }
 }
+
+// ── Messages ────────────────────────────────────────
 
 export function getSessionMessages(sessionId: string): SessionMessage[] {
-  const db = getDb();
-  if (!db) return [];
+  return []; // Sync fallback
+}
 
+export async function getSessionMessagesAsync(
+  sessionId: string,
+): Promise<SessionMessage[]> {
   try {
-    const rows = db
-      .prepare(
-        `SELECT id, role, content, timestamp
-         FROM messages
-         WHERE session_id = ? AND role IN ('user', 'assistant') AND content IS NOT NULL
-         ORDER BY timestamp, id`,
-      )
-      .all(sessionId) as Array<{
-      id: number;
-      role: string;
-      content: string;
-      timestamp: number;
-    }>;
+    const user = getUserName();
+    const path = buildPath(`/v1/threads/${encodeURIComponent(sessionId)}`, {
+      user_id: user,
+    });
+    const resp = (await apiGet<{ messages: Array<Record<string, unknown>> }>(path)) as {
+      messages: Array<Record<string, unknown>>;
+    };
+    if (!resp.messages) return [];
+    return resp.messages.map(
+      (m: Record<string, unknown>, idx: number) =>
+        ({
+          id: idx,
+          role: (m.role as "user" | "assistant") || "user",
+          content: (m.content as string) || "",
+          timestamp:
+            typeof m.timestamp === "number" ? m.timestamp : Date.now(),
+        }) as SessionMessage,
+    );
+  } catch (err) {
+    console.error("[sessions] getSessionMessagesAsync failed:", err);
+    return [];
+  }
+}
 
-    return rows.map((r) => ({
-      id: r.id,
-      role: r.role as "user" | "assistant",
-      content: r.content,
-      timestamp: r.timestamp,
-    }));
-  } finally {
-    db.close();
+// ── Search ──────────────────────────────────────────
+
+export function searchSessions(
+  query: string,
+  limit = 20,
+): SearchResult[] {
+  return []; // Sync fallback
+}
+
+export async function searchSessionsAsync(
+  query: string,
+  limit = 20,
+): Promise<SearchResult[]> {
+  try {
+    const user = getUserName();
+    const path = buildPath("/v1/threads/search", {
+      query,
+      user_id: user,
+      limit,
+    });
+    const resp = (await apiGet<{ data: Array<Record<string, unknown>> }>(path)) as {
+      data: Array<Record<string, unknown>>;
+    };
+    if (!resp.data) return [];
+    return resp.data.map(
+      (r: Record<string, unknown>) =>
+        ({
+          sessionId: r.thread_id as string,
+          title: (r.name as string) || null,
+          startedAt:
+            typeof r.updated_at === "number"
+              ? r.updated_at
+              : Date.now(),
+          source: "desktop",
+          messageCount: (r.message_count as number) || 0,
+          model: "",
+          snippet: (r.preview as string) || "",
+        }) as SearchResult,
+    );
+  } catch (err) {
+    console.error("[sessions] searchSessionsAsync failed:", err);
+    return [];
   }
 }

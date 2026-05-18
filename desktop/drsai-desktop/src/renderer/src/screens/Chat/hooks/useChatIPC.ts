@@ -3,7 +3,7 @@ import type { ChatMessage, UsageState } from "../types";
 
 interface UseChatIPCArgs {
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
-  setHermesSessionId: (id: string) => void;
+  setDrsaiSessionId: (id: string) => void;
   setToolProgress: (tool: string | null) => void;
   setIsLoading: (loading: boolean) => void;
   setUsage: React.Dispatch<React.SetStateAction<UsageState | null>>;
@@ -17,13 +17,13 @@ interface UseChatIPCArgs {
  */
 export function useChatIPC({
   setMessages,
-  setHermesSessionId,
+  setDrsaiSessionId,
   setToolProgress,
   setIsLoading,
   setUsage,
 }: UseChatIPCArgs): void {
   useEffect(() => {
-    const cleanupChunk = window.hermesAPI.onChatChunk((chunk) => {
+    const cleanupChunk = window.drsaiAPI.onChatChunk((chunk) => {
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last && last.role === "agent") {
@@ -41,13 +41,13 @@ export function useChatIPC({
       });
     });
 
-    const cleanupDone = window.hermesAPI.onChatDone((sessionId) => {
-      if (sessionId) setHermesSessionId(sessionId);
+    const cleanupDone = window.drsaiAPI.onChatDone((sessionId) => {
+      if (sessionId) setDrsaiSessionId(sessionId);
       setToolProgress(null);
       setIsLoading(false);
     });
 
-    const cleanupError = window.hermesAPI.onChatError((error) => {
+    const cleanupError = window.drsaiAPI.onChatError((error) => {
       setMessages((prev) => [
         ...prev,
         {
@@ -60,11 +60,11 @@ export function useChatIPC({
       setIsLoading(false);
     });
 
-    const cleanupToolProgress = window.hermesAPI.onChatToolProgress((tool) => {
+    const cleanupToolProgress = window.drsaiAPI.onChatToolProgress((tool) => {
       setToolProgress(tool);
     });
 
-    const cleanupUsage = window.hermesAPI.onChatUsage((u) => {
+    const cleanupUsage = window.drsaiAPI.onChatUsage((u) => {
       setUsage((prev) => ({
         promptTokens: (prev?.promptTokens || 0) + u.promptTokens,
         completionTokens: (prev?.completionTokens || 0) + u.completionTokens,
@@ -82,7 +82,7 @@ export function useChatIPC({
     };
   }, [
     setMessages,
-    setHermesSessionId,
+    setDrsaiSessionId,
     setToolProgress,
     setIsLoading,
     setUsage,

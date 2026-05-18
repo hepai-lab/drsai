@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   title: "工具",
   subtitle: "启用或禁用代理在对话期间可使用的工具集",
   web: { label: "网络搜索", description: "搜索网页并提取 URL 内容" },
@@ -21,7 +21,7 @@ export default {
   moa: { label: "多代理协作", description: "协调多个 AI 模型协同工作" },
   todo: { label: "任务规划", description: "为复杂任务创建和管理待办列表" },
   mcpServers: "MCP 服务器",
-  mcpDescription: "在 config.yaml 中配置的模型上下文协议服务器。在终端中使用 <code>hermes mcp add/remove</code> 管理。",
+  mcpDescription: "在 config.yaml 中配置的模型上下文协议服务器。在终端中使用 <code>DrSai mcp add/remove</code> 管理。",
   http: "HTTP",
   stdio: "标准IO",
   disabled: "已禁用",

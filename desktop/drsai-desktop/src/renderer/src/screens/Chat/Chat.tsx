@@ -32,7 +32,7 @@ function Chat({
   onNewChat,
 }: ChatProps): React.JSX.Element {
   const [isLoading, setIsLoading] = useState(false);
-  const [hermesSessionId, setHermesSessionId] = useState<string | null>(null);
+  const [drsaiSessionId, setDrsaiSessionId] = useState<string | null>(null);
   const [toolProgress, setToolProgress] = useState<string | null>(null);
   const [usage, setUsage] = useState<UsageState | null>(null);
   const chatInputRef = useRef<ChatInputHandle>(null);
@@ -47,23 +47,23 @@ function Chat({
 
   useChatIPC({
     setMessages,
-    setHermesSessionId,
+    setDrsaiSessionId,
     setToolProgress,
     setIsLoading,
     setUsage,
   });
 
-  // Reset hermes session when the parent clears messages (new chat).
+  // Reset DrSai session when the parent clears messages (new chat).
   // Effect-driven sync because `messages` is owned by the parent; a key-based
   // remount would discard unrelated local state (model picker, etc.).
   useEffect(() => {
     if (messages.length === 0) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      setHermesSessionId(null);
+      setDrsaiSessionId(null);
     }
   }, [messages]);
 
-  // Cmd/Ctrl+N → new chat
+  // Cmd/Ctrl+N —new chat
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if ((e.metaKey || e.ctrlKey) && e.key === "n") {
@@ -87,11 +87,11 @@ function Chat({
 
   const handleClear = useCallback(() => {
     if (isLoading) {
-      window.hermesAPI.abortChat();
+      window.drsaiAPI.abortChat();
       setIsLoading(false);
     }
     setMessages([]);
-    setHermesSessionId(null);
+    setDrsaiSessionId(null);
     setUsage(null);
     setToolProgress(null);
   }, [isLoading, setMessages]);
@@ -107,7 +107,7 @@ function Chat({
 
   const actions = useChatActions({
     profile,
-    hermesSessionId,
+    drsaiSessionId,
     messages,
     isLoading,
     setIsLoading,
@@ -152,7 +152,7 @@ function Chat({
         <ChatInput
           ref={chatInputRef}
           isLoading={isLoading}
-          hasSession={!!hermesSessionId}
+          hasSession={!!drsaiSessionId}
           onSubmit={actions.handleSend}
           onQuickAsk={actions.handleQuickAsk}
           onAbort={actions.handleAbort}

@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   title: "工作区",
   checkingStatus: "正在检查 Claw3D 状态...",
   setupTitle: "设置 Claw3D",
@@ -21,6 +21,6 @@ export default {
   cannotLoadClaw3d: "无法加载 Claw3D",
   startingClaw3dService: "正在启动 Claw3D 服务...",
   clickToStart: "点击\"启动\"来运行 Claw3D",
-  setupDesc1: "Claw3D 是你的 Hermes 代理的 3D 可视化环境。它让你可以看到代理在交互式办公空间中工作。",
+  setupDesc1: "Claw3D 是你的 DrSai 代理的 3D 可视化环境。它让你可以看到代理在交互式办公空间中工作。",
   setupDesc2: "点击下方自动下载并设置 Claw3D。这将克隆仓库并安装所有依赖。",
 } as const;

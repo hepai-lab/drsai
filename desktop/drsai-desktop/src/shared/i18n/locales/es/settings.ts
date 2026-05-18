@@ -1,7 +1,7 @@
-export default {
+﻿export default {
   title: "Configuración",
   sections: {
-    hermesAgent: "Hermes Agent",
+    drsaiAgent: "DrSai Agent",
     appearance: "Apariencia",
     credentialPool: "Grupo de credenciales",
   },
@@ -22,7 +22,7 @@ export default {
   },
   notDetected: "No detectado",
   updatedSuccessfully: "¡Actualizado correctamente!",
-  updateSuccess: "Hermes se actualizó correctamente.",
+  updateSuccess: "DrSai se actualizó correctamente.",
   updateFailed: "La actualización falló.",
   version: "v{{version}}",
   proxyPlaceholder: "p. ej. socks5://127.0.0.1:1080 o http://proxy:8080",
@@ -44,14 +44,14 @@ export default {
     "Nombre del modelo predeterminado (déjalo en blanco para usar el valor predeterminado del proveedor)",
   customBaseUrlHint: "Endpoint de API compatible con OpenAI",
   poolHint:
-    "Agrega varias API keys para el mismo proveedor para la rotación automática y el equilibrio de carga. Hermes alternará entre ellas.",
+    "Agrega varias API keys para el mismo proveedor para la rotación automática y el equilibrio de carga. DrSai alternará entre ellas.",
   add: "Agregar",
   remove: "Quitar",
   keyLabel: "Clave",
   empty: "(vacío)",
   dataSection: "Datos",
   dataHint:
-    "Exporta o importa tu configuración de Hermes, sesiones, habilidades y memoria.",
+    "Exporta o importa tu configuración de DrSai, sesiones, habilidades y memoria.",
   backingUp: "Creando copia de seguridad...",
   exportBackup: "Exportar copia de seguridad",
   importing: "Importando...",
@@ -68,10 +68,10 @@ export default {
   debugDump: "Volcado de depuración",
   migrationDetected: "Se detectó una instalación de OpenClaw",
   migrationDesc:
-    "Se encontró OpenClaw en <code>{{path}}</code>. Puedes migrar tu configuración, API keys, sesiones y habilidades a Hermes.",
+    "Se encontró OpenClaw en <code>{{path}}</code>. Puedes migrar tu configuración, API keys, sesiones y habilidades a DrSai.",
   migrationDismiss: "No volver a mostrar",
   migrating: "Migrando...",
-  migrateToHermes: "Migrar a Hermes",
+  migrateToDrsai: "Migrar a DrSai",
   skip: "Omitir",
   appearanceHint: "Elige la apariencia de interfaz que prefieras",
   apiKeyPlaceholder: "API key",
@@ -79,12 +79,12 @@ export default {
   connectionSection: "Conexión",
   modeLocal: "Local",
   modeRemote: "Remoto",
-  modeLocalHint: "Usando Hermes instalado en este dispositivo",
+  modeLocalHint: "Usando DrSai instalado en este dispositivo",
   modeRemoteHint:
-    "Conectarse a un servidor de API de Hermes en tu red o en la nube",
+    "Conectarse a un servidor de API de DrSai en tu red o en la nube",
   remoteUrl: "URL remota",
   remoteUrlHint:
-    "La URL del servidor de API de Hermes (debe exponer /health y /v1/chat/completions)",
+    "La URL del servidor de API de DrSai (debe exponer /health y /v1/chat/completions)",
   remoteApiKey: "API key",
   remoteApiKeyHint:
     "Coincide con API_SERVER_KEY en el host remoto. Déjalo vacío si el servidor acepta solicitudes no autenticadas.",
@@ -93,7 +93,7 @@ export default {
   save: "Guardar",
   serverConfigTitle: "Configuración del servidor",
   serverConfigHint:
-    "Estás conectado a un servidor remoto de Hermes. La selección de modelos, las API keys de proveedores y las credenciales se administran en <code>~/.hermes/.env</code> y <code>config.yaml</code> del servidor. Edítalos en el host (por ejemplo, <code>docker exec -it hermes vi /opt/data/.env</code>) y reinicia el contenedor.",
+    "Estás conectado a un servidor remoto de DrSai. La selección de modelos, las API keys de proveedores y las credenciales se administran en <code>~/.DrSai/.env</code> y <code>config.yaml</code> del servidor. Edítalos en el host (por ejemplo, <code>docker exec -it DrSai vi /opt/data/.env</code>) y reinicia el contenedor.",
   connectionMode: "Modo",
   switchedToLocal: "Se cambió al modo local",
 } as const;

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { ArrowRight, Copy, Send } from "../../assets/icons";
 
-const TELEGRAM_COMMUNITY_URL = "https://t.me/hermes_agent_desktop";
+const TELEGRAM_COMMUNITY_URL = "https://t.me/drsai_agent_desktop";
 import { useI18n } from "../../components/useI18n";
 
 interface InstallProgress {
@@ -33,11 +33,11 @@ function Install({ onComplete, onFailed }: InstallProps): React.JSX.Element {
 
   useEffect(() => {
     let isMounted = true;
-    const cleanup = window.hermesAPI.onInstallProgress((p) => {
+    const cleanup = window.drsaiAPI.onInstallProgress((p) => {
       if (isMounted) setProgress(p);
     });
 
-    window.hermesAPI
+    window.drsaiAPI
       .startInstall()
       .then((result) => {
         if (!isMounted) return;
@@ -83,7 +83,7 @@ function Install({ onComplete, onFailed }: InstallProps): React.JSX.Element {
           ? t("install.installationComplete")
           : failed
             ? t("install.installationFailed")
-            : t("install.installingHermes")}
+            : t("install.installingDrsai")}
       </h1>
 
       <div className="install-progress-container">
@@ -127,7 +127,7 @@ function Install({ onComplete, onFailed }: InstallProps): React.JSX.Element {
             <button
               className="btn btn-secondary btn-sm"
               onClick={() =>
-                window.hermesAPI.openExternal(TELEGRAM_COMMUNITY_URL)
+                window.drsaiAPI.openExternal(TELEGRAM_COMMUNITY_URL)
               }
               title={TELEGRAM_COMMUNITY_URL}
             >

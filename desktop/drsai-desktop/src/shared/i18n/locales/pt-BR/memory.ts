@@ -1,7 +1,7 @@
-export default {
+﻿export default {
   title: "Memória",
   subtitle:
-    "O que o Hermes lembra sobre você e seu ambiente entre as sessões.",
+    "O que o DrSai lembra sobre você e seu ambiente entre as sessões.",
   sessions: "Sessões",
   messages: "Mensagens",
   memories: "Memórias",
@@ -19,12 +19,12 @@ export default {
     "ex: Nome: Alex. Desenvolvedor sênior. Prefere respostas concisas. Usa macOS com zsh. Fuso horário: PST.",
   noProvidersFound: "Nenhum provedor de memória encontrado nesta instalação.",
   openProviderWebsite: "Abrir site do provedor",
-  noMemoriesYet: "Nenhuma memória ainda. O Hermes salvará fatos importantes conforme vocês conversam.",
+  noMemoriesYet: "Nenhuma memória ainda. O DrSai salvará fatos importantes conforme vocês conversam.",
   noMemoryEntries: "Nenhuma entrada de memória ainda.",
   noToolsetsFound: "Nenhum conjunto de ferramentas encontrado.",
   addManuallyHint: "Você também pode adicionar memórias manualmente usando o botão acima.",
-  userProfileHint: "Conte ao Hermes sobre você — nome, cargo, preferências, estilo de comunicação.",
-  providersHint: "Provedores de memória plugáveis dão ao Hermes uma memória de longo prazo avançada. A memória integrada (acima) está sempre ativa ao lado do provedor selecionado.",
+  userProfileHint: "Conte ao DrSai sobre você — nome, cargo, preferências, estilo de comunicação.",
+  providersHint: "Provedores de memória plugáveis dão ao DrSai uma memória de longo prazo avançada. A memória integrada (acima) está sempre ativa ao lado do provedor selecionado.",
   providersHintActive: "Ativo: <strong>{{provider}}</strong>",
   providersHintInactive: "Nenhum provedor externo ativo — usando apenas a integrada.",
   enterEnvKey: "Digite {{key}}",

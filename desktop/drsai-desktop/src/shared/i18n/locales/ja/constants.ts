@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   // Provider labels
   autoDetect: "自動検出",
   // Provider setup cards
@@ -127,7 +127,7 @@ export default {
   matrixHomeserver: "Matrix ホームサーバ",
   matrixHomeHint: "例：https://matrix.org",
   matrixUserId: "Matrix ユーザー ID",
-  matrixUserHint: "例：@hermes:matrix.org",
+  matrixUserHint: "例：@DrSai:matrix.org",
   matrixAccessToken: "Matrix アクセストークン",
   matrixTokenHint: "Matrix ログイン用アクセストークン",
   mattermostUrl: "Mattermost URL",

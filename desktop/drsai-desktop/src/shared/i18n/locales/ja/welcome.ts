@@ -1,5 +1,5 @@
-export default {
-  title: "Hermes へようこそ",
+﻿export default {
+  title: "DrSai へようこそ",
   subtitle:
     "あなたのマシンでローカル実行する自己進化型 AI アシスタント。プライベートで、強力で、常に学習します。",
   installIssueTitle: "インストールの問題",
@@ -10,9 +10,9 @@ export default {
   installSizeHint: "必要なコンポーネント（約 2 GB）をインストールします",
   copyInstallCommand: "インストールコマンドをコピー",
   dividerOr: "または",
-  connectRemote: "リモート Hermes に接続",
-  connectRemoteTitle: "リモート Hermes に接続",
-  connectRemoteSubtitle: "稼働中の Hermes API サーバの URL を入力してください。",
+  connectRemote: "リモート DrSai に接続",
+  connectRemoteTitle: "リモート DrSai に接続",
+  connectRemoteSubtitle: "稼働中の DrSai API サーバの URL を入力してください。",
   remoteServerUrl: "サーバ URL",
   remoteApiKey: "API キー（任意）",
   remoteApiKeyPlaceholder: "Bearer トークン（API_SERVER_KEY）",

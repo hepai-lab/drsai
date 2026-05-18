@@ -1,4 +1,4 @@
-// Stub: default models — DrSai Desktop doesn't use Hermes default models
+// Stub: default models — DrSai Desktop doesn't use DrSai default models
 const DEFAULT_MODELS: Array<{
   name: string;
   provider: string;

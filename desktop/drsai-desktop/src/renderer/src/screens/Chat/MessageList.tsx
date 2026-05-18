@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { HermesAvatar, MessageRow } from "./MessageRow";
+import { DrsaiAvatar, MessageRow } from "./MessageRow";
 import type { ChatMessage } from "./types";
 
 interface MessageListProps {
@@ -17,7 +17,7 @@ function TypingIndicator({
 }): React.JSX.Element {
   return (
     <div className="chat-message chat-message-agent">
-      <HermesAvatar />
+      <DrsaiAvatar />
       <div className="chat-bubble chat-bubble-agent">
         {toolProgress ? (
           <div className="chat-tool-progress">{toolProgress}</div>

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import splashBg from "../../assets/hermesbg.webp";
+import splashBg from "../../assets/drsaibg.webp";
 import splashLogo from "../../assets/splashtext-w.webp";
 
 interface SplashScreenProps {
@@ -14,7 +14,7 @@ function SplashScreen({ onFinished }: SplashScreenProps): React.JSX.Element {
   return (
     <div className="splash-screen">
       <img className="splash-bg" src={splashBg} alt="" />
-      <img className="splash-logo" src={splashLogo} alt="Hermes Agent" />
+      <img className="splash-logo" src={splashLogo} alt="DrSai Agent" />
     </div>
   );
 }

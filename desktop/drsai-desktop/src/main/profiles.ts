@@ -4,9 +4,9 @@ import { homedir } from "os";
 import { promises as fs } from "fs";
 import { existsSync } from "fs";
 import {
-  HERMES_HOME,
-  HERMES_PYTHON,
-  hermesCliArgs,
+  DRSAI_HOME,
+  DRSAI_PYTHON,
+  drsaiCliArgs,
   getEnhancedPath,
 } from "./installer";
 import {
@@ -16,7 +16,7 @@ import {
 } from "./utils";
 import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
 
-const PROFILES_DIR = join(HERMES_HOME, "profiles");
+const PROFILES_DIR = join(DRSAI_HOME, "profiles");
 
 export interface ProfileInfo {
   name: string;
@@ -91,7 +91,7 @@ async function isGatewayRunning(profilePath: string): Promise<boolean> {
 }
 
 async function getActiveProfileName(): Promise<string> {
-  const activeFile = join(HERMES_HOME, "active_profile");
+  const activeFile = join(DRSAI_HOME, "active_profile");
   try {
     const name = await fs.readFile(activeFile, "utf-8");
     return name.trim() || "default";
@@ -113,7 +113,7 @@ export async function listProfiles(): Promise<ProfileInfo[]> {
   const activeName = await getActiveProfileName();
   const profiles: ProfileInfo[] = [];
 
-  // Default profile is HERMES_HOME itself
+  // Default profile is DRSAI_HOME itself
   const [
     defaultConfig,
     defaultHasEnv,
@@ -121,16 +121,16 @@ export async function listProfiles(): Promise<ProfileInfo[]> {
     defaultSkills,
     defaultGw,
   ] = await Promise.all([
-    readProfileConfig(HERMES_HOME),
-    fileExists(join(HERMES_HOME, ".env")),
-    fileExists(join(HERMES_HOME, "SOUL.md")),
-    countSkills(HERMES_HOME),
-    isGatewayRunning(HERMES_HOME),
+    readProfileConfig(DRSAI_HOME),
+    fileExists(join(DRSAI_HOME, ".env")),
+    fileExists(join(DRSAI_HOME, "SOUL.md")),
+    countSkills(DRSAI_HOME),
+    isGatewayRunning(DRSAI_HOME),
   ]);
 
   profiles.push({
     name: "default",
-    path: HERMES_HOME,
+    path: DRSAI_HOME,
     isDefault: true,
     isActive: activeName === "default",
     model: defaultConfig.model,
@@ -141,7 +141,7 @@ export async function listProfiles(): Promise<ProfileInfo[]> {
     gatewayRunning: defaultGw,
   });
 
-  // Named profiles under ~/.hermes/profiles/
+  // Named profiles under ~/.drsai/profiles/
   if (existsSync(PROFILES_DIR)) {
     try {
       const dirs = await fs.readdir(PROFILES_DIR);
@@ -154,7 +154,7 @@ export async function listProfiles(): Promise<ProfileInfo[]> {
         const stat = await fs.stat(profilePath);
         if (!stat.isDirectory()) return null;
 
-        // Any subdirectory of ~/.hermes/profiles/ is treated as a profile.
+        // Any subdirectory of ~/.drsai/profiles/ is treated as a profile.
         // We deliberately do NOT require config.yaml or .env to exist —
         // a freshly created profile may have neither yet, and filtering on
         // them silently hides it from the UI (issue #19).
@@ -208,13 +208,13 @@ export function createProfile(
     const args = clone
       ? ["profile", "create", name, "--clone"]
       : ["profile", "create", name];
-    execFileSync(HERMES_PYTHON, hermesCliArgs(args), {
-      cwd: join(HERMES_HOME, "hermes-agent"),
+    execFileSync(DRSAI_PYTHON, drsaiCliArgs(args), {
+      cwd: join(DRSAI_HOME, "drsai-agent"),
       env: {
         ...process.env,
         PATH: getEnhancedPath(),
         HOME: homedir(),
-        HERMES_HOME,
+        DRSAI_HOME,
       },
       stdio: "pipe",
       timeout: 15000,
@@ -240,15 +240,15 @@ export function deleteProfile(name: string): {
 
   try {
     execFileSync(
-      HERMES_PYTHON,
-      hermesCliArgs(["profile", "delete", name, "--yes"]),
+      DRSAI_PYTHON,
+      drsaiCliArgs(["profile", "delete", name, "--yes"]),
       {
-        cwd: join(HERMES_HOME, "hermes-agent"),
+        cwd: join(DRSAI_HOME, "drsai-agent"),
         env: {
           ...process.env,
           PATH: getEnhancedPath(),
           HOME: homedir(),
-          HERMES_HOME,
+          DRSAI_HOME,
         },
         stdio: "pipe",
         timeout: 15000,
@@ -269,13 +269,13 @@ export function setActiveProfile(name: string): void {
   }
 
   try {
-    execFileSync(HERMES_PYTHON, hermesCliArgs(["profile", "use", name]), {
-      cwd: join(HERMES_HOME, "hermes-agent"),
+    execFileSync(DRSAI_PYTHON, drsaiCliArgs(["profile", "use", name]), {
+      cwd: join(DRSAI_HOME, "drsai-agent"),
       env: {
         ...process.env,
         PATH: getEnhancedPath(),
         HOME: homedir(),
-        HERMES_HOME,
+        DRSAI_HOME,
       },
       stdio: "pipe",
       timeout: 10000,

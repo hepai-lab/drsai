@@ -213,7 +213,7 @@ export const THEME_OPTIONS = [
   { value: "dark" as const, label: "constants.themeDark" },
 ];
 
-export const THEME_STORAGE_KEY = "hermes-theme";
+export const THEME_STORAGE_KEY = "DrSai-theme";
 
 // ── Settings API Key Sections ───────────────────────────
 
@@ -770,10 +770,10 @@ export const GATEWAY_PLATFORMS: PlatformDef[] = [
 // ── Install ─────────────────────────────────────────────
 
 export const UNIX_INSTALL_CMD =
-  "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash";
+  "curl -fsSL https://raw.githubusercontent.com/drsai/drsai-agent/main/scripts/install.sh | bash";
 export const INSTALL_CMD_UNIX = UNIX_INSTALL_CMD;
 export const WINDOWS_INSTALL_CMD =
-  "powershell -NoProfile -ExecutionPolicy Bypass -c \"$hermesHome = Join-Path $env:USERPROFILE '.hermes'; $installDir = Join-Path $hermesHome 'hermes-agent'; $installer = [ScriptBlock]::Create((irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 -UseBasicParsing)); & $installer -SkipSetup -HermesHome $hermesHome -InstallDir $installDir\"";
+  "powershell -NoProfile -ExecutionPolicy Bypass -c \"$drsaiHome = Join-Path $env:USERPROFILE '.DrSai'; $installDir = Join-Path $drsaiHome 'drsai-agent'; $installer = [ScriptBlock]::Create((irm https://raw.githubusercontent.com/drsai/drsai-agent/main/scripts/install.ps1 -UseBasicParsing)); & $installer -SkipSetup -DrSaiHome $drsaiHome -InstallDir $installDir\"";
 export const INSTALL_CMD =
   typeof window !== "undefined" &&
   window.electron?.process?.platform === "win32"

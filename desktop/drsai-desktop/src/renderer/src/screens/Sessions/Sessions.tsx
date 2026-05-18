@@ -100,7 +100,7 @@ function highlightSnippet(snippet: string): React.JSX.Element {
 
 function formatModel(model: string): string {
   const name = model.split("/").pop() || model;
-  // Shorten common patterns: "gpt-oss-20b:free" â†’ "gpt-oss-20b"
+  // Shorten common patterns: "gpt-oss-20b:free" â†?"gpt-oss-20b"
   return name.split(":")[0];
 }
 
@@ -165,12 +165,12 @@ function Sessions({
 
   const loadSessions = useCallback(async (): Promise<void> => {
     setLoading(true);
-    const cached = await window.hermesAPI.listCachedSessions(50);
+    const cached = await window.drsaiAPI.listCachedSessions(50);
     if (cached.length > 0) {
       setSessions(cached);
       setLoading(false);
     }
-    const synced = await window.hermesAPI.syncSessionCache();
+    const synced = await window.drsaiAPI.syncSessionCache();
     setSessions(synced.slice(0, 50));
     setLoading(false);
   }, []);
@@ -198,7 +198,7 @@ function Sessions({
     }
     setIsSearching(true);
     searchTimer.current = setTimeout(async () => {
-      const results = await window.hermesAPI.searchSessions(searchQuery);
+      const results = await window.drsaiAPI.searchSessions(searchQuery);
       setSearchResults(results);
       setIsSearching(false);
     }, 300);

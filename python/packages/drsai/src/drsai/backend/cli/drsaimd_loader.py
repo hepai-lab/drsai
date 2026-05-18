@@ -13,16 +13,21 @@ DrSai Project Instructions Loader (DRSAI.md / CLAUDE.md)
 6. /memory 命令：查看和重新加载项目指令
 
 文件发现优先级（每个目录层级内）:
-1. .drsai/DRSAI.md          — DrSai 原生格式（推荐）
-2. .claude/CLAUDE.md        — Claude Code 兼容格式
-3. DRSAI.md                  — 项目根目录直放
-4. CLAUDE.md                 — Claude Code 兼容直放
-5. AGENTS.md                 — 通用 Agent 格式（兼容其他 Agent 工具）
+1. .drsai/DRSAI.md          — DrSai 原生格式（推荐，优先读取）
+2. .drsai/CLAUDE.md         — .drsai/ 内的 Claude 兼容格式（后备）
+3. .claude/CLAUDE.md        — .claude/ 内的 Claude Code 兼容格式
+4. .claude/DRSAI.md         — .claude/ 内的 DrSai 格式
+5. DRSAI.md                  — 项目根目录直放
+6. CLAUDE.md                 — Claude Code 兼容直放
+
+.drsai/ 优先级高于 .claude/：
+- 如果 .drsai/ 存在任何项目指令文件，则只从 .drsai/ 加载，完全跳过 .claude/
+- 仅当 .drsai/ 不存在或无项目指令文件时，才回退到 .claude/
 
 本地个人偏好文件（不提交到版本控制）:
 - DRSAI.local.md
 - CLAUDE.local.md
-- AGENTS.local.md
+- 同样遵循 .drsai/ > .claude/ 的优先级
 
 层级优先级（跨目录）:
 - 路径越靠近 cwd 的文件，在 system prompt 中越靠后 → LLM 越重视
@@ -48,20 +53,18 @@ from loguru import logger
 
 # ── 文件名定义 ──────────────────────────────────────────────────────────────
 
-# 项目级指令文件名（优先级从高到低，每个目录内只取第一个存在的）
+# 项目级指令文件名（优先级从高到低：同一目录内只取第一个匹配的）
+# 注意：.drsai/ 整体优先级高于 .claude/，见 discover_project_md_files()
 PROJECT_MD_NAMES = [
-    "DRSAI.md",       # DrSai 原生格式
-    "CLAUDE.md",      # Claude Code 兼容格式
+    "DRSAI.md",       # DrSai 原生格式（优先）
+    "CLAUDE.md",      # Claude Code 兼容格式（后备）
 ]
 
-# 本地个人偏好文件名（加入 .gitignore）
+# 本地个人偏好文件名（同一目录内只取第一个匹配的）
 LOCAL_MD_NAMES = [
     "DRSAI.local.md",
     "CLAUDE.local.md",
 ]
-
-# 子目录名（存放指令文件的隐藏目录）
-PROJECT_DIR_NAMES = [".drsai", ".claude"]
 
 # HTML 注释正则（在非代码块区域剥离）
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
@@ -117,10 +120,18 @@ def _resolve_imports(text: str, base_path: Path, depth: int = 0) -> str:
     - 用户目录: @~/.drsai/configs/USER.md
 
     递归深度限制: MAX_IMPORT_DEPTH (5 层)
+
+    注意：先剥离 HTML 注释，再解析 @import，避免将 HTML 注释中的
+    示例 @引用（如 <!-- @README -->）误解析为文件导入。
     """
     if depth >= MAX_IMPORT_DEPTH:
         logger.warning(f"Import depth exceeds {MAX_IMPORT_DEPTH}, stopping recursion")
         return text
+
+    # 先剥离 HTML 注释，避免将注释中的 @引用误解析为导入
+    if depth > 0:
+        # depth==0 时由外层 load_project_instructions 剥离
+        text = _strip_html_comments(text)
 
     def _replace_import(match: re.Match) -> str:
         import_path = match.group(1)
@@ -169,11 +180,11 @@ def discover_project_md_files(workdir: str) -> List[Tuple[Path, str]]:
     - 父目录在前 → 在 system prompt 中先出现 → 优先级较低
     - 子目录在后 → 在 system prompt 中后出现 → 优先级较高（LLM 更重视）
 
-    每个目录层级内，文件发现顺序:
-    1. .drsai/DRSAI.md / .drsai/CLAUDE.md
-    2. .claude/DRSAI.md / .claude/CLAUDE.md
-    3. DRSAI.md / CLAUDE.md（根目录直放）
-    4. DRSAI.local.md / CLAUDE.local.md（个人偏好）
+    每个目录层级内，遵循 .drsai/ > .claude/ 的优先级：
+    1. 优先检查 .drsai/ → DRSAI.md > CLAUDE.md（只取第一个匹配）
+    2. 仅当 .drsai/ 无项目指令时 → 回退到 .claude/ → CLAUDE.md > DRSAI.md
+    3. 根目录直放文件 → DRSAI.md > CLAUDE.md（只取第一个匹配）
+    4. 本地偏好文件 → 跟随所在目录的优先级
 
     Returns:
         List of (filepath, scope_description) tuples
@@ -181,39 +192,74 @@ def discover_project_md_files(workdir: str) -> List[Tuple[Path, str]]:
     cwd = Path(workdir).resolve()
     discovered: List[Tuple[Path, str]] = []
 
+    def _try_find_file(base_dir: Path, names: List[str], scope_fmt: str) -> Optional[Tuple[Path, str]]:
+        """在 base_dir 中按 names 顺序查找第一个存在的文件。"""
+        for name in names:
+            f = base_dir / name
+            if f.is_file():
+                return (f, scope_fmt)
+        return None
+
     # 向上遍历
     current = cwd
     while True:
-        # 1. 检查 .drsai/ 和 .claude/ 子目录
-        for dirname in PROJECT_DIR_NAMES:
-            subdir = current / dirname
-            if not subdir.is_dir():
-                continue
-            for name in PROJECT_MD_NAMES:
-                f = subdir / name
-                if f.is_file():
-                    scope = f"project ({current.name}/{dirname})"
-                    discovered.append((f, scope))
-            # local 文件也检查
-            for name in LOCAL_MD_NAMES:
-                f = subdir / name
-                if f.is_file():
-                    scope = f"local ({current.name}/{dirname})"
-                    discovered.append((f, scope))
+        # ── 1. 检查隐藏子目录：.drsai/ 优先，.claude/ 作为后备 ──
+        drsai_dir = current / ".drsai"
+        drsai_has_project = False
 
-        # 2. 检查根目录直放的文件
-        for name in PROJECT_MD_NAMES:
-            f = current / name
-            if f.is_file():
-                scope = f"project ({current.name})"
-                discovered.append((f, scope))
+        if drsai_dir.is_dir():
+            # 项目指令文件：DRSAI.md > CLAUDE.md（只取第一个匹配）
+            result = _try_find_file(
+                drsai_dir, PROJECT_MD_NAMES,
+                f"project ({current.name}/.drsai)",
+            )
+            if result:
+                discovered.append(result)
+                drsai_has_project = True
 
-        # 3. 检查 local 文件
-        for name in LOCAL_MD_NAMES:
-            f = current / name
-            if f.is_file():
-                scope = f"local ({current.name})"
-                discovered.append((f, scope))
+            # 本地偏好文件：DRSAI.local.md > CLAUDE.local.md（只取第一个匹配）
+            result = _try_find_file(
+                drsai_dir, LOCAL_MD_NAMES,
+                f"local ({current.name}/.drsai)",
+            )
+            if result:
+                discovered.append(result)
+
+        # 仅当 .drsai/ 无项目指令时才回退到 .claude/
+        if not drsai_has_project:
+            claude_dir = current / ".claude"
+            if claude_dir.is_dir():
+                # 项目指令文件：DRSAI.md > CLAUDE.md（只取第一个匹配）
+                result = _try_find_file(
+                    claude_dir, PROJECT_MD_NAMES,
+                    f"project ({current.name}/.claude)",
+                )
+                if result:
+                    discovered.append(result)
+
+                # 本地偏好文件
+                result = _try_find_file(
+                    claude_dir, LOCAL_MD_NAMES,
+                    f"local ({current.name}/.claude)",
+                )
+                if result:
+                    discovered.append(result)
+
+        # ── 2. 根目录直放文件：DRSAI.md > CLAUDE.md（只取第一个匹配） ──
+        result = _try_find_file(
+            current, PROJECT_MD_NAMES,
+            f"project ({current.name})",
+        )
+        if result:
+            discovered.append(result)
+
+        # ── 3. 根目录直放 local 文件：DRSAI.local.md > CLAUDE.local.md ──
+        result = _try_find_file(
+            current, LOCAL_MD_NAMES,
+            f"local ({current.name})",
+        )
+        if result:
+            discovered.append(result)
 
         # 向上一级
         parent = current.parent
@@ -254,8 +300,8 @@ def load_project_instructions(workdir: str) -> Tuple[str, List[str], List[str]]:
     模仿 Claude Code 的加载逻辑:
     1. 从工作目录向上遍历发现文件
     2. 按从根到工作目录的顺序合并内容
-    3. 处理 @import 语法
-    4. 剥离 HTML 注释
+    3. 先剥离 HTML 注释（避免注释中的示例 @引用被误解析）
+    4. 再处理 @import 语法
     5. 行数和大小限制预警
 
     Args:
@@ -276,10 +322,10 @@ def load_project_instructions(workdir: str) -> Tuple[str, List[str], List[str]]:
     if org_file:
         try:
             raw = org_file.read_text(encoding="utf-8")
-            expanded = _resolve_imports(raw, org_file.parent)
-            cleaned = _strip_html_comments(expanded)
-            if cleaned.strip():
-                sections.append(f"# ── Organization Instructions ──\n{cleaned}")
+            cleaned = _strip_html_comments(raw)
+            expanded = _resolve_imports(cleaned, org_file.parent)
+            if expanded.strip():
+                sections.append(f"# ── Organization Instructions ──\n{expanded}")
                 loaded_paths.append(str(org_file))
                 logger.info(f"Loaded org instructions from {org_file}")
         except Exception as e:
@@ -290,10 +336,10 @@ def load_project_instructions(workdir: str) -> Tuple[str, List[str], List[str]]:
     for filepath, scope in discovered:
         try:
             raw = filepath.read_text(encoding="utf-8")
-            expanded = _resolve_imports(raw, filepath.parent)
-            cleaned = _strip_html_comments(expanded)
-            if cleaned.strip():
-                sections.append(f"# ── Instructions ({scope}) ──\n{cleaned}")
+            cleaned = _strip_html_comments(raw)
+            expanded = _resolve_imports(cleaned, filepath.parent)
+            if expanded.strip():
+                sections.append(f"# ── Instructions ({scope}) ──\n{expanded}")
                 loaded_paths.append(str(filepath))
                 logger.info(f"Loaded project instructions from {filepath} ({scope})")
         except Exception as e:

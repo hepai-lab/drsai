@@ -522,6 +522,19 @@ def version_cmd():
     typer.echo(f"{APPNAME} version: {VERSION}")
 
 
+@app.command()
+def gateway(
+    port: int = typer.Option(8642, help="API server port"),
+    host: str = typer.Option("127.0.0.1", help="API server host"),
+):
+    """Start DrSai API gateway for the desktop app."""
+    import os
+    os.environ.setdefault("DRSAI_API_PORT", str(port))
+    os.environ.setdefault("DRSAI_API_HOST", host)
+    from drsai.backend.gateway import main
+    main()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # REPL implementation
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1079,6 +1092,7 @@ If a question can be answered by exploring the codebase, explore the codebase in
             print("Usage: /rename <new name>")
             return
         if store.rename(current_session_id, args.strip()):
+            _invalidate_label()  # refresh prompt label immediately
             print(f"Renamed to: {args.strip()}")
         else:
             print("Rename failed — session not persisted yet.")

@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   title: "Chat Baru",
   sessionTitle: "Sesi {{id}}",
   noModel: "Model belum diatur",
@@ -58,6 +58,6 @@ export default {
     model: "Tampilkan atau ganti model saat ini",
     memory: "Tampilkan memori agent",
     persona: "Tampilkan persona saat ini",
-    version: "Tampilkan versi Hermes",
+    version: "Tampilkan versi DrSai",
   },
 } as const;

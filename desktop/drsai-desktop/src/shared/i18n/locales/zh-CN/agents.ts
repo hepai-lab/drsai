@@ -1,6 +1,6 @@
-export default {
+﻿export default {
   title: "档案",
-  subtitle: "每个档案都是独立的 Hermes 工作区，拥有自己的配置、记忆和技能",
+  subtitle: "每个档案都是独立的 DrSai 工作区，拥有自己的配置、记忆和技能",
   newAgent: "新建代理",
   namePlaceholder: "代理名称（例如 coder）",
   cloneConfig: "复制默认档案的配置与 API Key",

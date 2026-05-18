@@ -1,5 +1,5 @@
-export default {
-  title: "Bienvenido a Hermes",
+﻿export default {
+  title: "Bienvenido a DrSai",
   subtitle:
     "Tu asistente de IA autoevolutivo que se ejecuta localmente en tu equipo. Privado, potente y siempre aprendiendo.",
   installIssueTitle: "Problema de instalación",
@@ -11,9 +11,9 @@ export default {
   installSizeHint: "Esto instalará los componentes necesarios (~2 GB)",
   copyInstallCommand: "Copiar comando de instalación",
   dividerOr: "o",
-  connectRemote: "Conectarse a Hermes remoto",
-  connectRemoteTitle: "Conectarse a Hermes remoto",
-  connectRemoteSubtitle: "Introduce la URL de un servidor de API de Hermes en ejecución.",
+  connectRemote: "Conectarse a DrSai remoto",
+  connectRemoteTitle: "Conectarse a DrSai remoto",
+  connectRemoteSubtitle: "Introduce la URL de un servidor de API de DrSai en ejecución.",
   remoteServerUrl: "URL del servidor",
   remoteApiKey: "API key (opcional)",
   remoteApiKeyPlaceholder: "Token Bearer (API_SERVER_KEY)",

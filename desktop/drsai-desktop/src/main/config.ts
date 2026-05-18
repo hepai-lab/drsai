@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import { HERMES_HOME } from "./installer";
+import { DRSAI_HOME } from "./installer";
 import { profilePaths, escapeRegex, safeWriteFile } from "./utils";
 
 // ── Connection Config (local / remote / ssh) ─────────────
@@ -22,9 +22,9 @@ export interface ConnectionConfig {
 }
 
 // Lazy getter — avoids circular dependency with installer.ts
-// (HERMES_HOME may not be assigned yet when this module first loads)
+// (DRSAI_HOME may not be assigned yet when this module first loads)
 function desktopConfigFile(): string {
-  return join(HERMES_HOME, "desktop.json");
+  return join(DRSAI_HOME, "drsai.json");
 }
 
 function readDesktopConfig(): Record<string, unknown> {
@@ -38,8 +38,8 @@ function readDesktopConfig(): Record<string, unknown> {
 }
 
 function writeDesktopConfig(data: Record<string, unknown>): void {
-  if (!existsSync(HERMES_HOME)) {
-    mkdirSync(HERMES_HOME, { recursive: true });
+  if (!existsSync(DRSAI_HOME)) {
+    mkdirSync(DRSAI_HOME, { recursive: true });
   }
   writeFileSync(desktopConfigFile(), JSON.stringify(data, null, 2), "utf-8");
 }
@@ -71,6 +71,66 @@ export function setConnectionConfig(config: ConnectionConfig): void {
     data.sshConfig = config.ssh;
   }
   writeDesktopConfig(data);
+}
+
+// ── User Name (desktop identity) ──────────────────────
+
+/**
+ * Get the configured desktop user name.
+ * Falls back to system username if not configured.
+ */
+export function getUserName(): string {
+  const data = readDesktopConfig();
+  if (data.userName && typeof data.userName === "string" && data.userName.trim()) {
+    return data.userName as string;
+  }
+  // Fallback: system username (aligned with Python's os.getlogin())
+  try {
+    const os = require("os") as typeof import("os");
+    return os.userInfo().username || "desktop";
+  } catch {
+    return "desktop";
+  }
+}
+
+/**
+ * Set a custom desktop user name. Persisted to drsai.json.
+ */
+export function setUserName(name: string): void {
+  const data = readDesktopConfig();
+  data.userName = name.trim();
+  writeDesktopConfig(data);
+  // Also sync to the API server if running
+  _syncUserNameToApi(name.trim()).catch(() => {
+    /* best-effort */
+  });
+}
+
+async function _syncUserNameToApi(name: string): Promise<void> {
+  try {
+    const http = require("http") as typeof import("http");
+    const body = JSON.stringify({ user_name: name });
+    await new Promise<void>((resolve, reject) => {
+      const req = http.request(
+        "http://127.0.0.1:8642/v1/config/user-name",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          timeout: 3000,
+        },
+        (res) => {
+          res.resume();
+          resolve();
+        },
+      );
+      req.on("error", () => resolve()); // best-effort
+      req.on("timeout", () => { req.destroy(); resolve(); });
+      req.write(body);
+      req.end();
+    });
+  } catch {
+    /* best-effort */
+  }
 }
 
 // ── In-memory cache with TTL ─────────────────────────────
@@ -300,7 +360,7 @@ export function setModelConfig(
   safeWriteFile(configFile, content);
 }
 
-export function getHermesHome(profile?: string): string {
+export function getDrsaiHome(profile?: string): string {
   return profilePaths(profile).home;
 }
 
@@ -396,7 +456,7 @@ export function setPlatformEnabled(
 // ── Credential Pool (auth.json) ──────────────────────────
 
 function authFilePath(): string {
-  return join(HERMES_HOME, "auth.json");
+  return join(DRSAI_HOME, "auth.json");
 }
 
 interface CredentialEntry {

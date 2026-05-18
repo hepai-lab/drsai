@@ -52,7 +52,7 @@ function Models(): React.JSX.Element {
   }
 
   const loadModels = useCallback(async () => {
-    const list = await window.hermesAPI.listModels();
+    const list = await window.drsaiAPI.listModels();
     setModels(list);
     setLoading(false);
   }, []);
@@ -101,14 +101,14 @@ function Models(): React.JSX.Element {
     setFormError("");
 
     if (editingModel) {
-      await window.hermesAPI.updateModel(editingModel.id, {
+      await window.drsaiAPI.updateModel(editingModel.id, {
         name,
         provider: formProvider,
         model,
         baseUrl: formBaseUrl.trim(),
       });
     } else {
-      await window.hermesAPI.addModel(
+      await window.drsaiAPI.addModel(
         name,
         formProvider,
         model,
@@ -118,7 +118,7 @@ function Models(): React.JSX.Element {
 
     if (formApiKey.trim() && formProvider === "custom") {
       const envKey = resolveCustomEnvKey(formBaseUrl.trim());
-      await window.hermesAPI.setEnv(envKey, formApiKey.trim());
+      await window.drsaiAPI.setEnv(envKey, formApiKey.trim());
     }
 
     closeModal();
@@ -126,7 +126,7 @@ function Models(): React.JSX.Element {
   }
 
   async function handleDelete(id: string): Promise<void> {
-    await window.hermesAPI.removeModel(id);
+    await window.drsaiAPI.removeModel(id);
     setConfirmDelete(null);
     await loadModels();
   }

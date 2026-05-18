@@ -1,9 +1,9 @@
-export default {
+﻿export default {
   preparing: "准备中...",
   startingInstall: "开始安装",
   installationComplete: "安装完成",
   installationFailed: "安装失败",
-  installingHermes: "正在安装 Hermes Agent",
+  installingDrsai: "正在安装 DrSai Agent",
   installationFailedHint: "安装失败，请重试或改用终端安装。",
   retryInstallation: "重新安装",
   copied: "已复制！",

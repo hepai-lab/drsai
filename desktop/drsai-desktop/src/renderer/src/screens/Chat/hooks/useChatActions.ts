@@ -9,7 +9,7 @@ interface LocalCommands {
 
 interface UseChatActionsArgs {
   profile?: string;
-  hermesSessionId: string | null;
+  drsaiSessionId: string | null;
   messages: ChatMessage[];
   isLoading: boolean;
   setIsLoading: (loading: boolean) => void;
@@ -30,12 +30,12 @@ interface UseChatActionsResult {
 /**
  * Encapsulates the chat's user-facing actions (send, quick-ask, abort,
  * approve, deny). All returned callbacks have stable identities so that
- * memoized children don't re-render on every streaming chunk — `messages`
+ * memoized children don't re-render on every streaming chunk —`messages`
  * and `isLoading` are read via live refs that update via `useEffect`.
  */
 export function useChatActions({
   profile,
-  hermesSessionId,
+  drsaiSessionId,
   messages,
   isLoading,
   setIsLoading,
@@ -64,10 +64,10 @@ export function useChatActions({
   const sendToAgent = useCallback(
     async (text: string): Promise<void> => {
       try {
-        await window.hermesAPI.sendMessage(
+        await window.drsaiAPI.sendMessage(
           text,
           profile,
-          hermesSessionId || undefined,
+          drsaiSessionId || undefined,
           messagesRef.current.map((m) => ({
             role: m.role,
             content: m.content,
@@ -77,7 +77,7 @@ export function useChatActions({
         // onChatError IPC already surfaces this to the user
       }
     },
-    [profile, hermesSessionId],
+    [profile, drsaiSessionId],
   );
 
   const handleSend = useCallback(
@@ -110,7 +110,7 @@ export function useChatActions({
   );
 
   const handleAbort = useCallback(() => {
-    window.hermesAPI.abortChat();
+    window.drsaiAPI.abortChat();
     setIsLoading(false);
     setTimeout(() => chatInputRef.current?.focus(), 50);
   }, [chatInputRef, setIsLoading]);

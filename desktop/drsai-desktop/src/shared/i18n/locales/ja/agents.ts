@@ -1,7 +1,7 @@
-export default {
+﻿export default {
   title: "プロファイル",
   subtitle:
-    "各プロファイルは独立した Hermes ワークスペースで、固有の設定・メモリ・スキルを持ちます",
+    "各プロファイルは独立した DrSai ワークスペースで、固有の設定・メモリ・スキルを持ちます",
   newAgent: "新規エージェント",
   namePlaceholder: "エージェント名（例：coder）",
   cloneConfig: "デフォルトから設定と API キーを複製",

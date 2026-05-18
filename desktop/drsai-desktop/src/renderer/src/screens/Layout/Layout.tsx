@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+﻿import { useState, useCallback, useEffect } from "react";
 import Chat, { ChatMessage } from "../Chat/Chat";
 import Sessions from "../Sessions/Sessions";
 import Agents from "../Agents/Agents";
@@ -15,7 +15,7 @@ import Schedules from "../Schedules/Schedules";
 import Kanban from "../Kanban/Kanban";
 import RemoteNotice from "../../components/RemoteNotice";
 import VerifyWarningBanner from "../../components/VerifyWarningBanner";
-import hermeslogo from "../../assets/hermes.png";
+import DrSaiLogo from "../../assets/DrSai.png";
 import {
   ChatBubble,
   Clock,
@@ -90,7 +90,7 @@ function Layout({
   const [visitedViews, setVisitedViews] = useState<Set<View>>(
     () => new Set<View>(["chat"]),
   );
-  // Remote-only mode — SSH tunnel has full access; only pure HTTP remote mode restricts screens
+  // Remote-only mode —SSH tunnel has full access; only pure HTTP remote mode restricts screens
   const [remoteMode, setRemoteMode] = useState(false);
 
   const paneStyle = (target: View): React.CSSProperties => ({
@@ -107,7 +107,7 @@ function Layout({
 
   // Re-check remote mode on tab switch (picks up Settings changes)
   useEffect(() => {
-    window.hermesAPI.isRemoteOnlyMode().then(setRemoteMode);
+    window.drsaiAPI.isRemoteOnlyMode().then(setRemoteMode);
   }, [view]);
 
   // Auto-update state
@@ -119,22 +119,22 @@ function Layout({
   const [updateError, setUpdateError] = useState<string | null>(null);
 
   useEffect(() => {
-    const cleanupAvailable = window.hermesAPI.onUpdateAvailable((info) => {
+    const cleanupAvailable = window.drsaiAPI.onUpdateAvailable((info) => {
       setUpdateVersion(info.version);
       setUpdateState("available");
       setUpdateError(null);
       setDownloadPercent(0);
     });
-    const cleanupProgress = window.hermesAPI.onUpdateDownloadProgress(
+    const cleanupProgress = window.drsaiAPI.onUpdateDownloadProgress(
       (info) => {
         setDownloadPercent(info.percent);
       },
     );
-    const cleanupDownloaded = window.hermesAPI.onUpdateDownloaded(() => {
+    const cleanupDownloaded = window.drsaiAPI.onUpdateDownloaded(() => {
       setUpdateState("ready");
       setUpdateError(null);
     });
-    const cleanupError = window.hermesAPI.onUpdateError((message) => {
+    const cleanupError = window.drsaiAPI.onUpdateError((message) => {
       setUpdateState("error");
       setUpdateError(message);
       setDownloadPercent(0);
@@ -153,20 +153,20 @@ function Layout({
       setDownloadPercent(0);
       setUpdateState("downloading");
       try {
-        const ok = await window.hermesAPI.downloadUpdate();
+        const ok = await window.drsaiAPI.downloadUpdate();
         if (!ok) setUpdateState("error");
       } catch (err) {
         setUpdateError(err instanceof Error ? err.message : String(err));
         setUpdateState("error");
       }
     } else if (updateState === "ready") {
-      await window.hermesAPI.installUpdate();
+      await window.drsaiAPI.installUpdate();
     }
   }
 
   const handleNewChat = useCallback(() => {
     // Abort any in-flight chat before clearing
-    window.hermesAPI.abortChat();
+    window.drsaiAPI.abortChat();
     setMessages([]);
     setCurrentSessionId(null);
     goTo("chat");
@@ -174,10 +174,10 @@ function Layout({
 
   // Listen for menu IPC events (Cmd+N, Cmd+K from app menu)
   useEffect(() => {
-    const cleanupNewChat = window.hermesAPI.onMenuNewChat(() => {
+    const cleanupNewChat = window.drsaiAPI.onMenuNewChat(() => {
       handleNewChat();
     });
-    const cleanupSearch = window.hermesAPI.onMenuSearchSessions(() => {
+    const cleanupSearch = window.drsaiAPI.onMenuSearchSessions(() => {
       goTo("sessions");
     });
     return () => {
@@ -194,7 +194,7 @@ function Layout({
 
   const handleResumeSession = useCallback(
     async (sessionId: string) => {
-      const dbMessages = await window.hermesAPI.getSessionMessages(sessionId);
+      const dbMessages = await window.drsaiAPI.getSessionMessages(sessionId);
       const chatMessages: ChatMessage[] = dbMessages.map((m) => ({
         id: `db-${m.id}`,
         role: m.role === "user" ? "user" : "agent",
@@ -211,7 +211,7 @@ function Layout({
     <div className="layout">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <img src={hermeslogo} height={30} alt="" />
+          <img src={DrSaiLogo} height={30} alt="" />
         </div>
 
         <nav className="sidebar-nav">

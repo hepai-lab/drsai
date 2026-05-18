@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   title: "新規チャット",
   sessionTitle: "セッション {{id}}",
   noModel: "モデル未設定",
@@ -55,6 +55,6 @@ export default {
     model: "現在のモデルを表示・切替",
     memory: "エージェントメモリを表示",
     persona: "現在のペルソナを表示",
-    version: "Hermes バージョンを表示",
+    version: "DrSai バージョンを表示",
   },
 } as const;

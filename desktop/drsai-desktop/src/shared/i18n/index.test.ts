@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
+﻿import { describe, expect, it } from "vitest";
 import { t } from "./index";
 
 describe("shared i18n", () => {
   it("returns English text by default", () => {
-    expect(t("welcome.title")).toBe("Welcome to Hermes");
+    expect(t("welcome.title")).toBe("Welcome to DrSai");
   });
 
   it("falls back to the key when an English key is missing", () => {
@@ -11,15 +11,15 @@ describe("shared i18n", () => {
   });
 
   it("returns zh-CN text when available", () => {
-    expect(t("welcome.title", "zh-CN")).toBe("欢迎使用 Hermes");
+    expect(t("welcome.title", "zh-CN")).toBe("欢迎使用 DrSai");
   });
 
   it("returns es text when available", () => {
-    expect(t("welcome.title", "es")).toBe("Bienvenido a Hermes");
+    expect(t("welcome.title", "es")).toBe("Bienvenido a DrSai");
   });
 
   it("returns id text when available", () => {
-    expect(t("welcome.title", "id")).toBe("Selamat datang di Hermes");
+    expect(t("welcome.title", "id")).toBe("Selamat datang di DrSai");
   });
 
   it("falls back to en when zh-CN key is missing", () => {

@@ -35,9 +35,9 @@ function Providers({
 
   const loadConfig = useCallback(async (): Promise<void> => {
     const [envData, mc, pool] = await Promise.all([
-      window.hermesAPI.getEnv(profile),
-      window.hermesAPI.getModelConfig(profile),
-      window.hermesAPI.getCredentialPool(),
+      window.drsaiAPI.getEnv(profile),
+      window.drsaiAPI.getModelConfig(profile),
+      window.drsaiAPI.getCredentialPool(),
     ]);
     setEnv(envData);
     setModelProvider(mc.provider);
@@ -59,7 +59,7 @@ function Providers({
   useEffect(() => {
     if (!visible) return;
     (async (): Promise<void> => {
-      const mc = await window.hermesAPI.getModelConfig(profile);
+      const mc = await window.drsaiAPI.getModelConfig(profile);
       modelLoaded.current = false;
       setModelProvider(mc.provider);
       setModelName(mc.model);
@@ -73,7 +73,7 @@ function Providers({
   // Auto-save model config when values change (debounced)
   const saveModelConfig = useCallback(async () => {
     if (!modelLoaded.current) return;
-    await window.hermesAPI.setModelConfig(
+    await window.drsaiAPI.setModelConfig(
       modelProvider,
       modelName,
       modelBaseUrl,
@@ -81,7 +81,7 @@ function Providers({
     );
     if (modelName.trim()) {
       const displayName = modelName.split("/").pop() || modelName;
-      await window.hermesAPI.addModel(
+      await window.drsaiAPI.addModel(
         displayName,
         modelProvider,
         modelName,
@@ -105,7 +105,7 @@ function Providers({
 
   async function handleBlur(key: string): Promise<void> {
     const value = env[key] || "";
-    await window.hermesAPI.setEnv(key, value, profile);
+    await window.drsaiAPI.setEnv(key, value, profile);
     setSavedKey(key);
     setTimeout(() => setSavedKey(null), 2000);
   }
@@ -124,7 +124,7 @@ function Providers({
         label: poolNewLabel.trim() || `Key ${existing.length + 1}`,
       },
     ];
-    await window.hermesAPI.setCredentialPool(poolProvider, entries);
+    await window.drsaiAPI.setCredentialPool(poolProvider, entries);
     setCredPool((prev) => ({ ...prev, [poolProvider]: entries }));
     setPoolNewKey("");
     setPoolNewLabel("");
@@ -136,7 +136,7 @@ function Providers({
   ): Promise<void> {
     const entries = [...(credPool[provider] || [])];
     entries.splice(index, 1);
-    await window.hermesAPI.setCredentialPool(provider, entries);
+    await window.drsaiAPI.setCredentialPool(provider, entries);
     setCredPool((prev) => ({ ...prev, [provider]: entries }));
   }
 

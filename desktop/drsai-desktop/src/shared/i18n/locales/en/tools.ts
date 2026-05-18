@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   title: "Tools",
   subtitle: "Enable or disable the toolsets your agent can use during conversations",
   web: {
@@ -60,7 +60,7 @@ export default {
     description: "Create and manage to-do lists for complex tasks",
   },
   mcpServers: "MCP Servers",
-  mcpDescription: "Model Context Protocol servers configured in config.yaml. Manage via <code>hermes mcp add/remove</code> in the terminal.",
+  mcpDescription: "Model Context Protocol servers configured in config.yaml. Manage via <code>DrSai mcp add/remove</code> in the terminal.",
   http: "HTTP",
   stdio: "stdio",
   disabled: "disabled",
