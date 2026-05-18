@@ -313,7 +313,9 @@ class ContentRequest(BaseModel):
     content: str = Field(..., description="File content to write")
 
 
-
+class SkillInstallRequest(BaseModel):
+    name: str = Field(..., description="Skill name (directory name)")
+    content: str = Field(..., description="SKILL.md content")
 
 
 
@@ -1530,7 +1532,32 @@ async def get_skill_content(skill_path: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/v1/skills/install")
+async def install_skill(
+    req: SkillInstallRequest,
+    user_id: str | None = Query(default=None),
+):
+    """Install a skill by writing SKILL.md to the user's skills directory."""
+    skills_dir = _get_skills_dir(user_id)
+    skill_dir = skills_dir / req.name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(req.content, encoding="utf-8")
+    return {"status": "ok", "name": req.name, "path": str(skill_dir)}
 
+
+@app.delete("/v1/skills/{skill_name}")
+async def uninstall_skill(
+    skill_name: str,
+    user_id: str | None = Query(default=None),
+):
+    """Uninstall a skill by removing its directory."""
+    import shutil
+    skills_dir = _get_skills_dir(user_id)
+    skill_dir = skills_dir / skill_name
+    if not skill_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+    shutil.rmtree(skill_dir)
+    return {"status": "ok", "name": skill_name}
 
 
 def _parse_skill_frontmatter(content: str) -> tuple[str, str]:
