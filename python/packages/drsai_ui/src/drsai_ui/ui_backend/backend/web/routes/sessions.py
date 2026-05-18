@@ -1,5 +1,5 @@
 # api/routes/sessions.py
-from typing import Dict
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
@@ -9,12 +9,111 @@ from ..deps import get_db
 
 router = APIRouter()
 
+_SHARE_FLAG = "_share_enabled"
+
+
+def _is_session_shared(session: Session) -> bool:
+    cfg = session.agent_mode_config or {}
+    return bool(cfg.get(_SHARE_FLAG))
+
+
+def _set_session_shared(session: Session, enabled: bool) -> Session:
+    cfg = dict(session.agent_mode_config or {})
+    if enabled:
+        cfg[_SHARE_FLAG] = True
+    else:
+        cfg.pop(_SHARE_FLAG, None)
+    session.agent_mode_config = cfg
+    return session
+
+
+def _build_runs_payload(db, session_id: int) -> List[Dict[str, Any]]:
+    runs = db.get(Run, filters={"session_id": session_id}, order="asc", return_json=False)
+    if not runs.status:
+        raise HTTPException(status_code=500, detail="Database error while fetching runs")
+
+    run_data: List[Dict[str, Any]] = []
+    if not runs.data:
+        return run_data
+
+    for run in runs.data:
+        try:
+            messages = db.get(
+                Message,
+                filters={"run_id": run.id},
+                order="asc",
+                return_json=False,
+            )
+            if not messages.status:
+                logger.error(f"Failed to fetch messages for run {run.id}")
+                messages.data = []
+
+            run_data.append(
+                {
+                    "id": str(run.id),
+                    "created_at": run.created_at,
+                    "status": run.status,
+                    "task": run.task,
+                    "team_result": run.team_result,
+                    "messages": messages.data or [],
+                    "input_request": getattr(run, "input_request", None),
+                }
+            )
+        except Exception as e:
+            logger.error(f"Error processing run {run.id}: {str(e)}")
+            run_data.append(
+                {
+                    "id": str(run.id),
+                    "created_at": run.created_at,
+                    "status": "ERROR",
+                    "task": run.task,
+                    "team_result": None,
+                    "messages": [],
+                    "error": f"Failed to process run: {str(e)}",
+                    "input_request": getattr(run, "input_request", None),
+                }
+            )
+    return run_data
+
+
+def _get_owned_session(db, session_id: int, user_id: str) -> Session:
+    response = db.get(Session, filters={"id": session_id, "user_id": user_id}, return_json=False)
+    if not response.status:
+        raise HTTPException(status_code=500, detail="Database error while fetching session")
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return response.data[0]
+
 
 @router.get("/")
 async def list_sessions(user_id: str, db=Depends(get_db)) -> Dict:
     """List all sessions for a user"""
     response = db.get(Session, filters={"user_id": user_id})
     return {"status": True, "data": response.data}
+
+
+@router.get("/shared/{share_token}")
+async def get_shared_session(share_token: str, db=Depends(get_db)) -> Dict:
+    """Public read-only access to a shared session (no login required)."""
+    response = db.get(Session, filters={"uuid": share_token}, return_json=False)
+    if not response.status:
+        raise HTTPException(status_code=500, detail="Database error while fetching session")
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Session not found or sharing disabled")
+
+    session: Session = response.data[0]
+    if not _is_session_shared(session):
+        raise HTTPException(status_code=404, detail="Session not found or sharing disabled")
+
+    run_data = _build_runs_payload(db, session.id)
+    session_payload = session.model_dump() if hasattr(session, "model_dump") else dict(session)
+    return {
+        "status": True,
+        "data": {
+            "session": session_payload,
+            "runs": run_data,
+        },
+    }
 
 
 @router.get("/{session_id}")
@@ -24,6 +123,29 @@ async def get_session(session_id: int, user_id: str, db=Depends(get_db)) -> Dict
     if not response.status or not response.data:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"status": True, "data": response.data[0]}
+
+
+@router.post("/{session_id}/share")
+async def set_session_share(
+    session_id: int,
+    user_id: str,
+    enabled: bool = True,
+    db=Depends(get_db),
+) -> Dict:
+    """Enable or disable public read-only sharing for a session."""
+    session = _get_owned_session(db, session_id, user_id)
+    session = _set_session_shared(session, enabled)
+    response = db.upsert(session)
+    if not response.status:
+        raise HTTPException(status_code=400, detail=response.message)
+
+    return {
+        "status": True,
+        "data": {
+            "share_token": session.uuid,
+            "share_enabled": enabled,
+        },
+    }
 
 
 @router.post("/")
@@ -94,78 +216,12 @@ async def delete_session(session_id: int, user_id: str, db=Depends(get_db)) -> D
 @router.get("/{session_id}/runs")
 async def list_session_runs(session_id: int, user_id: str, db=Depends(get_db)) -> Dict:
     """Get complete session history organized by runs"""
-
     try:
-        # 1. Verify session exists and belongs to user
-        session = db.get(
-            Session, filters={"id": session_id, "user_id": user_id}, return_json=False
-        )
-        if not session.status:
-            raise HTTPException(
-                status_code=500, detail="Database error while fetching session"
-            )
-        if not session.data:
-            raise HTTPException(
-                status_code=404, detail="Session not found or access denied"
-            )
-
-        # 2. Get ordered runs for session
-        runs = db.get(
-            Run, filters={"session_id": session_id}, order="asc", return_json=False
-        )
-        if not runs.status:
-            raise HTTPException(
-                status_code=500, detail="Database error while fetching runs"
-            )
-
-        # 3. Build response with messages per run
-        run_data = []
-        if runs.data:  # It's ok to have no runs
-            for run in runs.data:
-                try:
-                    # Get messages for this specific run
-                    messages = db.get(
-                        Message,
-                        filters={"run_id": run.id},
-                        order="asc",
-                        return_json=False,
-                    )
-                    if not messages.status:
-                        logger.error(f"Failed to fetch messages for run {run.id}")
-                        # Continue processing other runs even if one fails
-                        messages.data = []
-
-                    run_data.append(
-                        {
-                            "id": str(run.id),
-                            "created_at": run.created_at,
-                            "status": run.status,
-                            "task": run.task,
-                            "team_result": run.team_result,
-                            "messages": messages.data or [],
-                            "input_request": getattr(run, "input_request", None),
-                        }
-                    )
-                except Exception as e:
-                    logger.error(f"Error processing run {run.id}: {str(e)}")
-                    # Include run with error state instead of failing entirely
-                    run_data.append(
-                        {
-                            "id": str(run.id),
-                            "created_at": run.created_at,
-                            "status": "ERROR",
-                            "task": run.task,
-                            "team_result": None,
-                            "messages": [],
-                            "error": f"Failed to process run: {str(e)}",
-                            "input_request": getattr(run, "input_request", None),
-                        }
-                    )
-
+        _get_owned_session(db, session_id, user_id)
+        run_data = _build_runs_payload(db, session_id)
         return {"status": True, "data": {"runs": run_data}}
-
     except HTTPException:
-        raise  # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         logger.error(f"Unexpected error in list_messages: {str(e)}")
         raise HTTPException(
