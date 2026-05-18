@@ -87,6 +87,7 @@ import {
   syncSessionCache,
   listCachedSessions,
   updateSessionTitle,
+  updateSessionTitleAsync,
 } from "./session-cache";
 import { listModels, addModel, removeModel, updateModel } from "./models";
 import {
@@ -111,8 +112,8 @@ import {
   listBundledSkills,
   getSkillContent,
   getSkillContentAsync,
-  installSkill,
-  uninstallSkill,
+  installSkillAsync,
+  uninstallSkillAsync,
 } from "./skills";
 import {
   listCronJobs,
@@ -841,16 +842,18 @@ function setupIPC(): void {
   });
   ipcMain.handle(
     "install-skill",
-    (_event, identifier: string, _profile?: string) => {
+    async (_event, identifier: string, _profile?: string) => {
       const conn = getConnectionConfig();
       if (conn.mode === "ssh" && conn.ssh) return sshInstallSkill(conn.ssh, identifier);
-      return installSkill(identifier, _profile);
+      const ok = await installSkillAsync(identifier, "");
+      return { success: ok, error: ok ? undefined : "Install failed" };
     },
   );
-  ipcMain.handle("uninstall-skill", (_event, name: string, _profile?: string) => {
+  ipcMain.handle("uninstall-skill", async (_event, name: string, _profile?: string) => {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh) return sshUninstallSkill(conn.ssh, name);
-    return uninstallSkill(name, _profile);
+    const ok = await uninstallSkillAsync(name);
+    return { success: ok, error: ok ? undefined : "Uninstall failed" };
   });
 
   // Session cache (fast local cache with generated titles)
@@ -871,6 +874,9 @@ function setupIPC(): void {
     "update-session-title",
     (_event, sessionId: string, title: string) =>
       updateSessionTitle(sessionId, title),
+  );
+  ipcMain.handle("update-session-title-async", (_event, sessionId: string, title: string) =>
+    updateSessionTitleAsync(sessionId, title),
   );
 
   // Session search

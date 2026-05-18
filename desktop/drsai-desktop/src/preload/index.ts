@@ -412,6 +412,9 @@ const drsaiAPI = {
   updateSessionTitle: (sessionId: string, title: string): Promise<void> =>
     ipcRenderer.invoke("update-session-title", sessionId, title),
 
+  updateSessionTitleAsync: (sessionId: string, title: string): Promise<boolean> =>
+    ipcRenderer.invoke("update-session-title-async", sessionId, title),
+
   // Session search
   searchSessions: (
     query: string,

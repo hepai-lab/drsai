@@ -363,6 +363,7 @@ interface DrSaiAPI {
     }>
   >;
   updateSessionTitle: (sessionId: string, title: string) => Promise<void>;
+  updateSessionTitleAsync: (sessionId: string, title: string) => Promise<boolean>;
 
   // Session search
   searchSessions: (
