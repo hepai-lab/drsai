@@ -2,7 +2,7 @@ import { appContext } from "@/hooks/provider";
 import { Dropdown, message, Spin } from "antd";
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { MoreVertical, Search, Trash2 } from "lucide-react";
+import { MoreVertical, Search, Share2, Trash2 } from "lucide-react";
 import { parse } from "yaml";
 import { useConfigStore } from "../../hooks/store";
 import { useModeConfigStore } from "../../store/modeConfig";
@@ -12,7 +12,7 @@ import { useAgentInfo } from "../features/Agents/useAgentInfo";
 import PlanList from "../features/Plans/PlanList";
 import { GeneralConfig, useSettingsStore } from "../store";
 import type { Session, FilesEvent, MessageFileItem } from "../types/datamodel";
-import { settingsAPI } from "./api";
+import { sessionAPI, settingsAPI } from "./api";
 import ChatView from "../../pages/chat/chat";
 import NewChatView from "../../pages/chat/NewChatView";
 import { useAgentManager } from "./hooks/useAgentManager";
@@ -293,6 +293,30 @@ export const SessionManager: React.FC = () => {
       navigateToMenu(MENU_IDS.currentSession);
     }
   }, [deleteSession, closeSocket, session?.id]);
+
+  const handleCopyShareLink = useCallback(
+    async (sessionId: number) => {
+      if (!user?.email) {
+        messageApi.error("请先登录");
+        return;
+      }
+      try {
+        const { share_token } = await sessionAPI.setSessionShare(
+          sessionId,
+          user.email,
+          true
+        );
+        const url = sessionAPI.buildShareUrl(share_token);
+        await navigator.clipboard.writeText(url);
+        messageApi.success("分享链接已复制，访客可只读查看");
+      } catch (e) {
+        messageApi.error(
+          e instanceof Error ? e.message : "生成分享链接失败"
+        );
+      }
+    },
+    [user?.email, messageApi]
+  );
 
   // Handle delete agent
   const handleDeleteAgent = useCallback(async (id: string) => {
@@ -654,6 +678,20 @@ export const SessionManager: React.FC = () => {
                         menu={{
                           items: [
                             {
+                              key: "share",
+                              disabled: isSessionLoading,
+                              label: (
+                                <>
+                                  <Share2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5 align-middle" />
+                                  复制分享链接
+                                </>
+                              ),
+                              onClick: (e) => {
+                                e.domEvent.stopPropagation();
+                                void handleCopyShareLink(sid);
+                              },
+                            },
+                            {
                               key: "delete",
                               danger: true,
                               disabled: isSessionLoading,
@@ -704,6 +742,7 @@ export const SessionManager: React.FC = () => {
     darkMode,
     isSessionLoading,
     handleDeleteSession,
+    handleCopyShareLink,
   ]);
 
   return (
