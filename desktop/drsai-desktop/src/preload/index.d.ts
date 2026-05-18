@@ -362,7 +362,7 @@ interface DrSaiAPI {
       model: string;
     }>
   >;
-  updateSessionTitle: (sessionId: string, title: string) => Promise<void>;
+  updateSessionTitle: (sessionId: string, title: string) => Promise<boolean>;
   updateSessionTitleAsync: (sessionId: string, title: string) => Promise<boolean>;
 
   // Session search

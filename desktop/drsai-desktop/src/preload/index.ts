@@ -409,7 +409,7 @@ const drsaiAPI = {
     }>
   > => ipcRenderer.invoke("sync-session-cache"),
 
-  updateSessionTitle: (sessionId: string, title: string): Promise<void> =>
+  updateSessionTitle: (sessionId: string, title: string): Promise<boolean> =>
     ipcRenderer.invoke("update-session-title", sessionId, title),
 
   updateSessionTitleAsync: (sessionId: string, title: string): Promise<boolean> =>
