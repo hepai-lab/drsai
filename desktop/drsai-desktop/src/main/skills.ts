@@ -99,20 +99,68 @@ export function listBundledSkills(): SkillSearchResult[] {
   return [];
 }
 
-// ── Install / uninstall (not supported via API yet) ─
+// ── Install / Uninstall ────────────────────────────
 
-export function installSkill(
-  _identifier: string,
-  _profile?: string,
-): { success: boolean; error?: string } {
-  return { success: false, error: "Skill install via API not yet implemented" };
+function apiPost(path: string, body: unknown): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = http.request(
+      `${DRSAI_API_URL}${path}`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, timeout: 10000 },
+      (res) => { res.resume(); resolve(); },
+    );
+    req.on("error", reject);
+    req.on("timeout", function (this: http.ClientRequest) {
+      this.destroy();
+      reject(new Error("Request timed out"));
+    });
+    req.write(data);
+    req.end();
+  });
 }
 
-export function uninstallSkill(
-  _name: string,
-  _profile?: string,
-): { success: boolean; error?: string } {
-  return { success: false, error: "Skill uninstall via API not yet implemented" };
+function apiDelete(path: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      `${DRSAI_API_URL}${path}`,
+      { method: "DELETE", timeout: 10000 },
+      (res) => { res.resume(); resolve(); },
+    );
+    req.on("error", reject);
+    req.on("timeout", function (this: http.ClientRequest) {
+      this.destroy();
+      reject(new Error("Request timed out"));
+    });
+    req.end();
+  });
+}
+
+export async function installSkillAsync(
+  name: string,
+  content: string,
+): Promise<boolean> {
+  try {
+    await apiPost(`/v1/skills/install?user_id=${encodeURIComponent(getUserName())}`, {
+      name,
+      content,
+    });
+    return true;
+  } catch (err) {
+    console.error("[skills] installSkillAsync failed:", err);
+    return false;
+  }
+}
+
+export async function uninstallSkillAsync(name: string): Promise<boolean> {
+  try {
+    await apiDelete(
+      `/v1/skills/${encodeURIComponent(name)}?user_id=${encodeURIComponent(getUserName())}`,
+    );
+    return true;
+  } catch (err) {
+    console.error("[skills] uninstallSkillAsync failed:", err);
+    return false;
+  }
 }
 
 // ── Search skills (not supported via API yet) ───────
