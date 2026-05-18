@@ -12,7 +12,7 @@ const electronAPI = {
   },
 };
 
-const hermesAPI = {
+const drsaiAPI = {
   // Installation
   checkInstall: (): Promise<{
     installed: boolean;
@@ -51,15 +51,15 @@ const hermesAPI = {
     return () => ipcRenderer.removeListener("install-progress", handler);
   },
 
-  // Hermes engine info
-  getHermesVersion: (): Promise<string | null> =>
-    ipcRenderer.invoke("get-hermes-version"),
-  refreshHermesVersion: (): Promise<string | null> =>
-    ipcRenderer.invoke("refresh-hermes-version"),
-  runHermesDoctor: (): Promise<string> =>
-    ipcRenderer.invoke("run-hermes-doctor"),
-  runHermesUpdate: (): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke("run-hermes-update"),
+  // DrSai engine info
+  getDrSaiVersion: (): Promise<string | null> =>
+    ipcRenderer.invoke("get-drsai-version"),
+  refreshDrSaiVersion: (): Promise<string | null> =>
+    ipcRenderer.invoke("refresh-drsai-version"),
+  runDrSaiDoctor: (): Promise<string> =>
+    ipcRenderer.invoke("run-drsai-doctor"),
+  runDrSaiUpdate: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke("run-drsai-update"),
 
   // OpenClaw migration
   checkOpenClaw: (): Promise<{ found: boolean; path: string | null }> =>
@@ -84,8 +84,8 @@ const hermesAPI = {
   setConfig: (key: string, value: string, profile?: string): Promise<boolean> =>
     ipcRenderer.invoke("set-config", key, value, profile),
 
-  getHermesHome: (profile?: string): Promise<string> =>
-    ipcRenderer.invoke("get-hermes-home", profile),
+  getDrSaiHome: (profile?: string): Promise<string> =>
+    ipcRenderer.invoke("get-drsai-home", profile),
 
   getModelConfig: (
     profile?: string,
@@ -154,6 +154,12 @@ const hermesAPI = {
 
   stopSshTunnel: (): Promise<boolean> =>
     ipcRenderer.invoke("stop-ssh-tunnel"),
+
+  // ── User identity ──────────────────────────────────────
+  getUserName: (): Promise<string> => ipcRenderer.invoke("get-user-name"),
+
+  setUserName: (name: string): Promise<string> =>
+    ipcRenderer.invoke("set-user-name", name),
 
   // Chat
   sendMessage: (
@@ -723,19 +729,19 @@ const hermesAPI = {
     ipcRenderer.invoke("open-external", url),
 
   // Backup / Import
-  runHermesBackup: (
+  runDrSaiBackup: (
     profile?: string,
   ): Promise<{ success: boolean; path?: string; error?: string }> =>
-    ipcRenderer.invoke("run-hermes-backup", profile),
+    ipcRenderer.invoke("run-drsai-backup", profile),
 
-  runHermesImport: (
+  runDrSaiImport: (
     archivePath: string,
     profile?: string,
   ): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke("run-hermes-import", archivePath, profile),
+    ipcRenderer.invoke("run-drsai-import", archivePath, profile),
 
   // Debug dump
-  runHermesDump: (): Promise<string> => ipcRenderer.invoke("run-hermes-dump"),
+  runDrSaiDump: (): Promise<string> => ipcRenderer.invoke("run-drsai-dump"),
 
   // Memory providers
   discoverMemoryProviders: (
@@ -768,7 +774,7 @@ const hermesAPI = {
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld("electron", electronAPI);
-    contextBridge.exposeInMainWorld("hermesAPI", hermesAPI);
+    contextBridge.exposeInMainWorld("drsaiAPI", drsaiAPI);
   } catch (error) {
     console.error(error);
   }
@@ -776,5 +782,5 @@ if (process.contextIsolated) {
   // @ts-ignore (define in dts)
   window.electron = electronAPI;
   // @ts-ignore (define in dts)
-  window.hermesAPI = hermesAPI;
+  window.drsaiAPI = drsaiAPI;
 }

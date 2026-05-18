@@ -15,15 +15,15 @@ import {
   checkInstallStatus,
   verifyInstall,
   runInstall,
-  getHermesVersion,
+  getDrsaiVersion,
   clearVersionCache,
-  runHermesDoctor,
-  runHermesUpdate,
+  runDrsaiDoctor,
+  runDrsaiUpdate,
   checkOpenClawExists,
   runClawMigrate,
-  runHermesBackup,
-  runHermesImport,
-  runHermesDump,
+  runDrsaiBackup,
+  runDrsaiImport,
+  runDrsaiDump,
   listMcpServers,
   discoverMemoryProviders,
   readLogs,
@@ -70,7 +70,7 @@ import {
   setEnvValue,
   getConfigValue,
   setConfigValue,
-  getHermesHome,
+  getDrsaiHome,
   getModelConfig,
   setModelConfig,
   getCredentialPool,
@@ -79,8 +79,10 @@ import {
   setConnectionConfig,
   getPlatformEnabled,
   setPlatformEnabled,
+  getUserName,
+  setUserName,
 } from "./config";
-import { listSessions, getSessionMessages, searchSessions } from "./sessions";
+import { listSessions, listSessionsAsync, getSessionMessages, getSessionMessagesAsync, searchSessions, searchSessionsAsync } from "./sessions";
 import {
   syncSessionCache,
   listCachedSessions,
@@ -95,6 +97,7 @@ import {
 } from "./profiles";
 import {
   readMemory,
+  readMemoryAsync,
   addMemoryEntry,
   updateMemoryEntry,
   removeMemoryEntry,
@@ -104,8 +107,10 @@ import { readSoul, writeSoul, resetSoul } from "./soul";
 import { getToolsets, setToolsetEnabled } from "./tools";
 import {
   listInstalledSkills,
+  listInstalledSkillsAsync,
   listBundledSkills,
   getSkillContent,
+  getSkillContentAsync,
   installSkill,
   uninstallSkill,
 } from "./skills";
@@ -166,7 +171,7 @@ import {
   sshSetEnvValue,
   sshGetConfigValue,
   sshSetConfigValue,
-  sshGetHermesHome,
+  sshGetDrSaiHome,
   sshGetModelConfig,
   sshSetModelConfig,
   sshListSessions,
@@ -179,7 +184,7 @@ import {
   sshStartGateway,
   sshStopGateway,
   sshReadRemoteApiKey,
-  sshGetHermesVersion,
+  sshGetDrSaiVersion,
   sshReadLogs,
   sshGetPlatformEnabled,
   sshSetPlatformEnabled,
@@ -326,33 +331,33 @@ function setupIPC(): void {
     }
   });
 
-  // Hermes engine info
-  ipcMain.handle("get-hermes-version", async () => {
+  // DrSai engine info
+  ipcMain.handle("get-drsai-version", async () => {
     const conn = getConnectionConfig();
-    if (conn.mode === "ssh" && conn.ssh) return sshGetHermesVersion(conn.ssh);
-    return getHermesVersion();
+    if (conn.mode === "ssh" && conn.ssh) return sshGetDrSaiVersion(conn.ssh);
+    return getDrsaiVersion();
   });
-  ipcMain.handle("refresh-hermes-version", async () => {
+  ipcMain.handle("refresh-drsai-version", async () => {
     const conn = getConnectionConfig();
-    if (conn.mode === "ssh" && conn.ssh) return sshGetHermesVersion(conn.ssh);
+    if (conn.mode === "ssh" && conn.ssh) return sshGetDrSaiVersion(conn.ssh);
     clearVersionCache();
-    return getHermesVersion();
+    return getDrsaiVersion();
   });
-  ipcMain.handle("run-hermes-doctor", () => {
+  ipcMain.handle("run-drsai-doctor", () => {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh) return sshRunDoctor(conn.ssh);
-    return runHermesDoctor();
+    return runDrsaiDoctor();
   });
-  ipcMain.handle("run-hermes-update", async (event) => {
+  ipcMain.handle("run-drsai-update", async (event) => {
     try {
       const conn = getConnectionConfig();
       if (conn.mode === "ssh" && conn.ssh) {
         event.sender.send("install-progress", {
           step: 1,
           totalSteps: 1,
-          title: "Updating remote Hermes Agent",
-          detail: "Running hermes update over SSH...",
-          log: "Running hermes update over SSH...\n",
+          title: "Updating remote DrSai",
+          detail: "Running drsai update over SSH...",
+          log: "Running drsai update over SSH...\n",
         });
         await sshRunUpdate(conn.ssh);
         await sshStartGateway(conn.ssh);
@@ -361,7 +366,7 @@ function setupIPC(): void {
         setSshRemoteApiKey(key);
         return { success: true };
       }
-      await runHermesUpdate((progress: InstallProgress) => {
+      await runDrsaiUpdate((progress: InstallProgress) => {
         event.sender.send("install-progress", progress);
       });
       return { success: true };
@@ -435,10 +440,10 @@ function setupIPC(): void {
     },
   );
 
-  ipcMain.handle("get-hermes-home", (_event, profile?: string) => {
+  ipcMain.handle("get-drsai-home", (_event, profile?: string) => {
     const conn = getConnectionConfig();
-    if (conn.mode === "ssh" && conn.ssh) return sshGetHermesHome(conn.ssh, profile);
-    return getHermesHome(profile);
+    if (conn.mode === "ssh" && conn.ssh) return sshGetDrSaiHome(conn.ssh, profile);
+    return getDrsaiHome(profile);
   });
 
   ipcMain.handle("get-model-config", (_event, profile?: string) => {
@@ -559,6 +564,14 @@ function setupIPC(): void {
     return true;
   });
 
+  // ── User identity ──────────────────────────────────────
+  ipcMain.handle("get-user-name", () => getUserName());
+
+  ipcMain.handle("set-user-name", (_event, name: string) => {
+    setUserName(name);
+    return getUserName();
+  });
+
   // Chat — lazy-start gateway on first message
   ipcMain.handle(
     "send-message",
@@ -623,7 +636,7 @@ function setupIPC(): void {
                 .trim()
                 .slice(0, 80);
               new Notification({
-                title: "Hermes Agent",
+                title: "DrSai",
                 body: preview || "Response ready",
               }).show();
             }
@@ -635,7 +648,7 @@ function setupIPC(): void {
             // Notify on error too if window not focused
             if (mainWindow && !mainWindow.isFocused()) {
               new Notification({
-                title: "Hermes Agent — Error",
+                title: "DrSai — Error",
                 body: error.slice(0, 100),
               }).show();
             }
@@ -706,16 +719,16 @@ function setupIPC(): void {
   );
 
   // Sessions
-  ipcMain.handle("list-sessions", (_event, limit?: number, offset?: number) => {
+  ipcMain.handle("list-sessions", async (_event, limit?: number, offset?: number) => {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh) return sshListSessions(conn.ssh, limit, offset);
-    return listSessions(limit, offset);
+    return listSessionsAsync(limit, offset);
   });
 
-  ipcMain.handle("get-session-messages", (_event, sessionId: string) => {
+  ipcMain.handle("get-session-messages", async (_event, sessionId: string) => {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh) return sshGetSessionMessages(conn.ssh, sessionId);
-    return getSessionMessages(sessionId);
+    return getSessionMessagesAsync(sessionId);
   });
 
   // Profiles
@@ -740,10 +753,10 @@ function setupIPC(): void {
   });
 
   // Memory
-  ipcMain.handle("read-memory", (_event, profile?: string) => {
+  ipcMain.handle("read-memory", async (_event, profile?: string) => {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh) return sshReadMemory(conn.ssh, profile);
-    return readMemory(profile);
+    return readMemoryAsync(profile);
   });
   ipcMain.handle(
     "add-memory-entry",
@@ -811,20 +824,20 @@ function setupIPC(): void {
   );
 
   // Skills
-  ipcMain.handle("list-installed-skills", (_event, profile?: string) => {
+  ipcMain.handle("list-installed-skills", async (_event, profile?: string) => {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh) return sshListInstalledSkills(conn.ssh, profile);
-    return listInstalledSkills(profile);
+    return listInstalledSkillsAsync(profile);
   });
   ipcMain.handle("list-bundled-skills", () => {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh) return sshListBundledSkills(conn.ssh);
     return listBundledSkills();
   });
-  ipcMain.handle("get-skill-content", (_event, skillPath: string) => {
+  ipcMain.handle("get-skill-content", async (_event, skillPath: string) => {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh) return sshGetSkillContent(conn.ssh, skillPath);
-    return getSkillContent(skillPath);
+    return getSkillContentAsync(skillPath);
   });
   ipcMain.handle(
     "install-skill",
@@ -861,10 +874,10 @@ function setupIPC(): void {
   );
 
   // Session search
-  ipcMain.handle("search-sessions", (_event, query: string, limit?: number) => {
+  ipcMain.handle("search-sessions", async (_event, query: string, limit?: number) => {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh) return sshSearchSessions(conn.ssh, query, limit);
-    return searchSessions(query, limit);
+    return searchSessionsAsync(query, limit);
   });
 
   // Credential Pool
@@ -1085,20 +1098,20 @@ function setupIPC(): void {
   });
 
   // Backup / Import
-  ipcMain.handle("run-hermes-backup", (_event, profile?: string) =>
-    runHermesBackup(profile),
+  ipcMain.handle("run-drsai-backup", (_event, profile?: string) =>
+    runDrsaiBackup(profile),
   );
   ipcMain.handle(
-    "run-hermes-import",
+    "run-drsai-import",
     (_event, archivePath: string, profile?: string) =>
-      runHermesImport(archivePath, profile),
+      runDrsaiImport(archivePath, profile),
   );
 
   // Debug dump
-  ipcMain.handle("run-hermes-dump", () => {
+  ipcMain.handle("run-drsai-dump", () => {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh) return sshRunDump(conn.ssh);
-    return runHermesDump();
+    return runDrsaiDump();
   });
 
   // MCP servers
@@ -1206,15 +1219,15 @@ function buildMenu(): void {
       label: "Help",
       submenu: [
         {
-          label: "Hermes Agent on GitHub",
+          label: "DrSai on GitHub",
           click: (): void => {
-            openExternalUrl("https://github.com/NousResearch/hermes-agent/");
+            openExternalUrl("https://github.com/drsai/drsai-agent/");
           },
         },
         {
           label: "Report an Issue",
           click: (): void => {
-            openExternalUrl("https://github.com/fathah/hermes-desktop/issues");
+            openExternalUrl("https://github.com/drsai/drsai-desktop/issues");
           },
         },
       ],
@@ -1297,8 +1310,8 @@ function setupUpdater(): void {
 }
 
 app.whenReady().then(() => {
-  app.name = "Hermes";
-  electronApp.setAppUserModelId("com.nousresearch.hermes");
+  app.name = "DrSai";
+  electronApp.setAppUserModelId("com.drsai.drsai-desktop");
 
   app.on("browser-window-created", (_, window) => {
     optimizer.watchWindowShortcuts(window);

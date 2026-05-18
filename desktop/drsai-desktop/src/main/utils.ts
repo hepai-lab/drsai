@@ -1,6 +1,6 @@
 import { join, dirname } from "path";
 import { existsSync, mkdirSync, writeFileSync } from "fs";
-import { HERMES_HOME } from "./installer";
+import { DRSAI_HOME } from "./installer";
 
 const PROFILE_NAME_RE = /^[a-z0-9_][a-z0-9_-]{0,63}$/;
 export const PROFILE_NAME_ERROR =
@@ -8,7 +8,7 @@ export const PROFILE_NAME_ERROR =
 
 /**
  * Strip ANSI escape codes from terminal output.
- * Used by hermes.ts, claw3d.ts, and installer.ts when processing
+ * Used by drsai.ts, claw3d.ts, and installer.ts when processing
  * child process output for display in the renderer.
  */
 // eslint-disable-next-line no-control-regex
@@ -40,12 +40,12 @@ export function normalizeProfileName(profile?: unknown): string | undefined {
 
 /**
  * Resolve the home directory for a given profile.
- * 'default' or undefined maps to ~/.hermes; named profiles
- * live under ~/.hermes/profiles/<name>.
+ * 'default' or undefined maps to ~/.drsai; named profiles
+ * live under ~/.drsai/profiles/<name>.
  */
 export function profileHome(profile?: unknown): string {
   const normalized = normalizeProfileName(profile);
-  return normalized ? join(HERMES_HOME, "profiles", normalized) : HERMES_HOME;
+  return normalized ? join(DRSAI_HOME, "profiles", normalized) : DRSAI_HOME;
 }
 
 /**
@@ -75,7 +75,7 @@ export function escapeRegex(str: string): string {
 
 /**
  * Write a file, creating parent directories if they don't exist.
- * Prevents ENOENT crashes when ~/.hermes has been deleted or doesn't exist yet.
+ * Prevents ENOENT crashes when ~/.drsai has been deleted or doesn't exist yet.
  */
 export function safeWriteFile(filePath: string, content: string): void {
   const dir = dirname(filePath);

@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   title: "Gateway",
   messagingGateway: "Gateway de Mensagens",
   platforms: "Plataformas",
@@ -6,5 +6,5 @@ export default {
   running: "Em execução",
   stopped: "Parado",
   gatewayHint:
-    "Conecta o Hermes ao Telegram, Discord, Slack e outras plataformas",
+    "Conecta o DrSai ao Telegram, Discord, Slack e outras plataformas",
 } as const;

@@ -5,7 +5,7 @@ import { useI18n } from "../../components/useI18n";
 import { APP_LOCALES, type AppLocale } from "../../../../shared/i18n";
 import { Check, ChevronDown, Download, Upload, FileText, Send } from "lucide-react";
 
-const TELEGRAM_COMMUNITY_URL = "https://t.me/hermes_agent_desktop";
+const TELEGRAM_COMMUNITY_URL = "https://t.me/drsai_agent_desktop";
 
 const LANGUAGE_NATIVE_NAMES: Record<AppLocale, string> = {
   en: "English",
@@ -19,7 +19,7 @@ const LANGUAGE_NATIVE_NAMES: Record<AppLocale, string> = {
 // Read cached values from localStorage for instant display
 function getCachedVersion(): string | null {
   try {
-    return localStorage.getItem("hermes-version-cache");
+    return localStorage.getItem("DrSai-version-cache");
   } catch {
     return null;
   }
@@ -27,7 +27,7 @@ function getCachedVersion(): string | null {
 
 function getCachedOpenClaw(): { found: boolean; path: string | null } | null {
   try {
-    const raw = localStorage.getItem("hermes-openclaw-cache");
+    const raw = localStorage.getItem("DrSai-openclaw-cache");
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
@@ -36,11 +36,11 @@ function getCachedOpenClaw(): { found: boolean; path: string | null } | null {
 
 function Settings({ profile }: { profile?: string }): React.JSX.Element {
   const { t, locale, setLocale } = useI18n();
-  const [hermesHome, setHermesHome] = useState("");
+  const [drsaiHome, setDrsaiHome] = useState("");
   const { theme, setTheme } = useTheme();
 
-  // Hermes engine info — initialize from localStorage cache for instant display
-  const [hermesVersion, setHermesVersion] = useState<string | null>(
+  // DrSai engine info — initialize from localStorage cache for instant display
+  const [drsaiVersion, setDrsaiVersion] = useState<string | null>(
     getCachedVersion,
   );
   const [appVersion, setAppVersion] = useState("");
@@ -61,7 +61,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
     cachedClaw?.path ?? null,
   );
   const [migrationDismissed, setMigrationDismissed] = useState(
-    () => localStorage.getItem("hermes-openclaw-dismissed") === "true",
+    () => localStorage.getItem("DrSai-openclaw-dismissed") === "true",
   );
   const [migrating, setMigrating] = useState(false);
   const [migrationLog, setMigrationLog] = useState("");
@@ -110,11 +110,11 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
   const loadConfig = useCallback(async (): Promise<void> => {
     // Load fast config first (cached in main process)
     const [home, aVersion, conn] = await Promise.all([
-      window.hermesAPI.getHermesHome(profile),
-      window.hermesAPI.getAppVersion(),
-      window.hermesAPI.getConnectionConfig(),
+      window.drsaiAPI.getDrsaiHome(profile),
+      window.drsaiAPI.getAppVersion(),
+      window.drsaiAPI.getConnectionConfig(),
     ]);
-    setHermesHome(home);
+    setDrsaiHome(home);
     setAppVersion(aVersion);
     setConnMode(conn.mode);
     setConnRemoteUrl(conn.remoteUrl);
@@ -127,31 +127,31 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
     connLoaded.current = true;
 
     // Load network settings from config.yaml
-    window.hermesAPI.getConfig("network.force_ipv4", profile).then((v) => {
+    window.drsaiAPI.getConfig("network.force_ipv4", profile).then((v) => {
       setForceIpv4(v === "true" || v === "True");
     });
-    window.hermesAPI.getConfig("network.proxy", profile).then((v) => {
+    window.drsaiAPI.getConfig("network.proxy", profile).then((v) => {
       setHttpProxy(v || "");
     });
 
     // Defer slow calls — background refresh, cached values show instantly
-    window.hermesAPI.getHermesVersion().then((v) => {
-      setHermesVersion(v);
+    window.drsaiAPI.getDrsaiVersion().then((v) => {
+      setDrsaiVersion(v);
       if (v) {
         try {
-          localStorage.setItem("hermes-version-cache", v);
+          localStorage.setItem("DrSai-version-cache", v);
         } catch {
           /* ignore */
         }
       }
     });
 
-    if (localStorage.getItem("hermes-openclaw-dismissed") !== "true") {
-      window.hermesAPI.checkOpenClaw().then((claw) => {
+    if (localStorage.getItem("DrSai-openclaw-dismissed") !== "true") {
+      window.drsaiAPI.checkOpenClaw().then((claw) => {
         setOpenclawFound(claw.found);
         setOpenclawPath(claw.path);
         try {
-          localStorage.setItem("hermes-openclaw-cache", JSON.stringify(claw));
+          localStorage.setItem("DrSai-openclaw-cache", JSON.stringify(claw));
         } catch {
           /* ignore */
         }
@@ -168,12 +168,12 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
     setMigrationLog("");
     setMigrationResult(null);
 
-    const cleanup = window.hermesAPI.onInstallProgress((p) => {
+    const cleanup = window.drsaiAPI.onInstallProgress((p) => {
       setMigrationLog(p.log);
     });
 
     try {
-      const result = await window.hermesAPI.runClawMigrate();
+      const result = await window.drsaiAPI.runClawMigrate();
       cleanup();
       if (result.success) {
         setMigrationResult(t("settings.migrationComplete"));
@@ -194,13 +194,13 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
   }
 
   function handleDismissMigration(): void {
-    localStorage.setItem("hermes-openclaw-dismissed", "true");
+    localStorage.setItem("DrSai-openclaw-dismissed", "true");
     setMigrationDismissed(true);
   }
 
   async function handleSaveConnection(): Promise<void> {
     if (connMode === "ssh") {
-      await window.hermesAPI.setSshConfig(
+      await window.drsaiAPI.setSshConfig(
         sshHost.trim(),
         parseInt(sshPort, 10) || 22,
         sshUser.trim(),
@@ -209,7 +209,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
         18642,
       );
     } else {
-      await window.hermesAPI.setConnectionConfig(connMode, connRemoteUrl, connApiKey);
+      await window.drsaiAPI.setConnectionConfig(connMode, connRemoteUrl, connApiKey);
     }
     setConnStatus("Saved");
     setTimeout(() => setConnStatus(null), 2000);
@@ -223,7 +223,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
       }
       setConnTesting(true);
       setConnStatus(null);
-      const ok = await window.hermesAPI.testSshConnection(
+      const ok = await window.drsaiAPI.testSshConnection(
         sshHost.trim(),
         parseInt(sshPort, 10) || 22,
         sshUser.trim(),
@@ -237,7 +237,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
       if (!url) { setConnStatus("Please enter a URL"); return; }
       setConnTesting(true);
       setConnStatus(null);
-      const ok = await window.hermesAPI.testRemoteConnection(url, connApiKey.trim());
+      const ok = await window.drsaiAPI.testRemoteConnection(url, connApiKey.trim());
       setConnTesting(false);
       setConnStatus(ok ? "Connected successfully!" : "Could not reach server");
     }
@@ -247,7 +247,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
     setConnMode("local");
     setConnRemoteUrl("");
     setConnApiKey("");
-    await window.hermesAPI.setConnectionConfig("local", "", "");
+    await window.drsaiAPI.setConnectionConfig("local", "", "");
     setConnStatus(t("settings.switchedToLocal"));
     setTimeout(() => setConnStatus(null), 2000);
   }
@@ -255,7 +255,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
   async function handleBackup(): Promise<void> {
     setBackingUp(true);
     setBackupResult(null);
-    const result = await window.hermesAPI.runHermesBackup(profile);
+    const result = await window.drsaiAPI.runDrsaiBackup(profile);
     setBackingUp(false);
     if (result.success) {
       setBackupResult(`Backup created: ${result.path || "success"}`);
@@ -274,7 +274,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
       setImporting(true);
       setImportResult(null);
       const filePath = (file as File & { path: string }).path;
-      const result = await window.hermesAPI.runHermesImport(filePath, profile);
+      const result = await window.drsaiAPI.runDrsaiImport(filePath, profile);
       setImporting(false);
       if (result.success) {
         setImportResult(t("settings.migrationComplete"));
@@ -286,7 +286,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
   }
 
   async function loadLogs(): Promise<void> {
-    const result = await window.hermesAPI.readLogs(logFile, 300);
+    const result = await window.drsaiAPI.readLogs(logFile, 300);
     setLogContent(result.content);
     setLogPath(result.path);
   }
@@ -294,18 +294,18 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
   async function handleDoctor(): Promise<void> {
     setDoctorRunning(true);
     setDoctorOutput(null);
-    const output = await window.hermesAPI.runHermesDoctor();
+    const output = await window.drsaiAPI.runDrsaiDoctor();
     setDoctorOutput(output);
     setDoctorRunning(false);
   }
 
   // Helper to fetch fresh version, clear backend cache, and update localStorage
   function refreshVersion(): void {
-    window.hermesAPI.refreshHermesVersion().then((v) => {
-      setHermesVersion(v);
+    window.drsaiAPI.refreshDrsaiVersion().then((v) => {
+      setDrsaiVersion(v);
       if (v) {
         try {
-          localStorage.setItem("hermes-version-cache", v);
+          localStorage.setItem("DrSai-version-cache", v);
         } catch {
           /* ignore */
         }
@@ -313,10 +313,10 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
     });
   }
 
-  async function handleUpdateHermes(): Promise<void> {
+  async function handleUpdateDrsai(): Promise<void> {
     setUpdating(true);
     setUpdateResult(null);
-    const result = await window.hermesAPI.runHermesUpdate();
+    const result = await window.drsaiAPI.runDrsaiUpdate();
     setUpdating(false);
     if (result.success) {
       setUpdateResult(t("settings.updateSuccess"));
@@ -328,10 +328,10 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
     }
   }
 
-  // Parse "Hermes Agent v0.7.0 (2026.4.3) Project: ... Python: 3.11.15 OpenAI SDK: 2.30.0 Update available: ..."
+  // Parse "DrSai Agent v0.7.0 (2026.4.3) Project: ... Python: 3.11.15 OpenAI SDK: 2.30.0 Update available: ..."
   const parsedVersion = (() => {
-    if (!hermesVersion) return null;
-    const v = hermesVersion;
+    if (!drsaiVersion) return null;
+    const v = drsaiVersion;
     const version = v.match(/v([\d.]+)/)?.[1] || "";
     const date = v.match(/\(([\d.]+)\)/)?.[1] || "";
     const python = v.match(/Python:\s*([\d.]+)/)?.[1] || "";
@@ -347,89 +347,89 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
 
       <div className="settings-section">
         <div className="settings-section-title">
-          {t("settings.sections.hermesAgent")}
+          {t("settings.sections.drsaiAgent")}
         </div>
-        <div className="settings-hermes-info">
-          <div className="settings-hermes-row">
-            <div className="settings-hermes-detail">
-              <span className="settings-hermes-label">
+        <div className="settings-DrSai-info">
+          <div className="settings-DrSai-row">
+            <div className="settings-DrSai-detail">
+              <span className="settings-DrSai-label">
                 {t("common.engine")}
               </span>
-              {hermesVersion === null ? (
+              {drsaiVersion === null ? (
                 <span className="skeleton skeleton-sm" />
               ) : (
-                <span className="settings-hermes-value">
+                <span className="settings-DrSai-value">
                   {parsedVersion
                     ? `v${parsedVersion.version}`
                     : t("settings.notDetected")}
                 </span>
               )}
             </div>
-            <div className="settings-hermes-detail">
-              <span className="settings-hermes-label">
+            <div className="settings-DrSai-detail">
+              <span className="settings-DrSai-label">
                 {t("common.released")}
               </span>
-              {hermesVersion === null ? (
+              {drsaiVersion === null ? (
                 <span className="skeleton skeleton-sm" />
               ) : (
-                <span className="settings-hermes-value">
+                <span className="settings-DrSai-value">
                   {parsedVersion?.date || "—"}
                 </span>
               )}
             </div>
-            <div className="settings-hermes-detail">
-              <span className="settings-hermes-label">
+            <div className="settings-DrSai-detail">
+              <span className="settings-DrSai-label">
                 {t("common.desktop")}
               </span>
               {!appVersion ? (
                 <span className="skeleton skeleton-sm" />
               ) : (
-                <span className="settings-hermes-value">
+                <span className="settings-DrSai-value">
                   {t("settings.version", { version: appVersion })}
                 </span>
               )}
             </div>
-            <div className="settings-hermes-detail">
-              <span className="settings-hermes-label">Python</span>
-              {hermesVersion === null ? (
+            <div className="settings-DrSai-detail">
+              <span className="settings-DrSai-label">Python</span>
+              {drsaiVersion === null ? (
                 <span className="skeleton skeleton-sm" />
               ) : (
-                <span className="settings-hermes-value">
+                <span className="settings-DrSai-value">
                   {parsedVersion?.python || "—"}
                 </span>
               )}
             </div>
-            <div className="settings-hermes-detail">
-              <span className="settings-hermes-label">OpenAI SDK</span>
-              {hermesVersion === null ? (
+            <div className="settings-DrSai-detail">
+              <span className="settings-DrSai-label">OpenAI SDK</span>
+              {drsaiVersion === null ? (
                 <span className="skeleton skeleton-sm" />
               ) : (
-                <span className="settings-hermes-value">
+                <span className="settings-DrSai-value">
                   {parsedVersion?.sdk || "—"}
                 </span>
               )}
             </div>
-            <div className="settings-hermes-detail">
-              <span className="settings-hermes-label">{t("common.home")}</span>
-              {!hermesHome ? (
+            <div className="settings-DrSai-detail">
+              <span className="settings-DrSai-label">{t("common.home")}</span>
+              {!drsaiHome ? (
                 <span className="skeleton skeleton-md" />
               ) : (
-                <span className="settings-hermes-value settings-hermes-path">
-                  {hermesHome}
+                <span className="settings-DrSai-value settings-DrSai-path">
+                  {drsaiHome}
                 </span>
               )}
             </div>
           </div>
           {parsedVersion?.updateInfo && (
-            <div className="settings-hermes-update-badge">
+            <div className="settings-DrSai-update-badge">
               {parsedVersion.updateInfo}
             </div>
           )}
-          <div className="settings-hermes-actions">
+          <div className="settings-DrSai-actions">
             {parsedVersion?.updateInfo ? (
               <button
                 className="btn btn-primary "
-                onClick={handleUpdateHermes}
+                onClick={handleUpdateDrsai}
                 disabled={updating}
               >
                 {updating ? t("settings.updating") : t("settings.updateEngine")}
@@ -453,7 +453,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
               onClick={async () => {
                 setDumpRunning(true);
                 setDumpOutput(null);
-                const output = await window.hermesAPI.runHermesDump();
+                const output = await window.drsaiAPI.runDrsaiDump();
                 setDumpOutput(output);
                 setDumpRunning(false);
               }}
@@ -464,16 +464,16 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
           </div>
           {updateResult && (
             <div
-              className={`settings-hermes-result ${updateResultType || "error"}`}
+              className={`settings-DrSai-result ${updateResultType || "error"}`}
             >
               {updateResult}
             </div>
           )}
           {doctorOutput && (
-            <pre className="settings-hermes-doctor">{doctorOutput}</pre>
+            <pre className="settings-DrSai-doctor">{doctorOutput}</pre>
           )}
           {dumpOutput && (
-            <pre className="settings-hermes-doctor">{dumpOutput}</pre>
+            <pre className="settings-DrSai-doctor">{dumpOutput}</pre>
           )}
         </div>
       </div>
@@ -483,13 +483,13 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
         <div className="settings-field">
           <div className="settings-field-hint" style={{ marginBottom: 10 }}>
             Join our Telegram group to ask questions, report issues, and chat
-            with other Hermes users.
+            with other DrSai users.
           </div>
-          <div className="settings-hermes-actions">
+          <div className="settings-DrSai-actions">
             <button
               className="btn btn-secondary"
               onClick={() =>
-                window.hermesAPI.openExternal(TELEGRAM_COMMUNITY_URL)
+                window.drsaiAPI.openExternal(TELEGRAM_COMMUNITY_URL)
               }
               title={TELEGRAM_COMMUNITY_URL}
             >
@@ -541,7 +541,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
             {connMode === "local"
               ? t("settings.modeLocalHint")
               : connMode === "ssh"
-              ? "Tunnel to a remote Hermes over SSH — no exposed ports or API keys needed."
+              ? "Tunnel to a remote DrSai over SSH — no exposed ports or API keys needed."
               : t("settings.modeRemoteHint")}
           </div>
         </div>
@@ -580,7 +580,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
                 {t("settings.remoteApiKeyHint")}
               </div>
             </div>
-            <div className="settings-hermes-actions">
+            <div className="settings-DrSai-actions">
               <button
                 className="btn btn-secondary"
                 onClick={handleTestConnection}
@@ -624,7 +624,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
                 type="text"
                 value={sshUser}
                 onChange={(e) => setSshUser(e.target.value)}
-                placeholder="hermes"
+                placeholder="DrSai"
               />
             </div>
             <div className="settings-field">
@@ -642,7 +642,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
             </div>
             <div className="settings-field">
               <label className="settings-field-label">
-                Remote Hermes Port{" "}
+                Remote DrSai Port{" "}
                 <span style={{ fontWeight: 400, opacity: 0.6 }}>(default 8642)</span>
               </label>
               <input
@@ -657,13 +657,13 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
                 The first connection trusts the host key and stores it in <code style={{ fontFamily: "monospace" }}>~/.ssh/known_hosts</code>; SSH will fail closed if that key changes later.
               </div>
             </div>
-            <div className="settings-hermes-actions">
+            <div className="settings-DrSai-actions">
               <button
                 className="btn btn-secondary"
                 onClick={handleTestConnection}
                 disabled={connTesting}
               >
-                {connTesting ? "Testing SSH…" : "Test SSH Connection"}
+                {connTesting ? "Testing SSH — " : "Test SSH Connection"}
               </button>
               <button className="btn btn-primary" onClick={handleSaveConnection}>
                 {t("settings.save")}
@@ -698,13 +698,13 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
             </button>
           </div>
           {migrationLog && (
-            <pre className="settings-hermes-doctor" ref={migrationLogRef}>
+            <pre className="settings-DrSai-doctor" ref={migrationLogRef}>
               {migrationLog}
             </pre>
           )}
           {migrationResult && (
             <div
-              className={`settings-hermes-result ${migrationResultType || "error"}`}
+              className={`settings-DrSai-result ${migrationResultType || "error"}`}
             >
               {migrationResult}
             </div>
@@ -717,7 +717,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
             >
               {migrating
                 ? t("settings.migrating")
-                : t("settings.migrateToHermes")}
+                : t("settings.migrateToDrsai")}
             </button>
             <button
               className="btn btn-secondary "
@@ -789,7 +789,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
                 onChange={async (e) => {
                   const val = e.target.checked;
                   setForceIpv4(val);
-                  await window.hermesAPI.setConfig(
+                  await window.drsaiAPI.setConfig(
                     "network.force_ipv4",
                     val ? "true" : "false",
                     profile,
@@ -815,7 +815,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
             value={httpProxy}
             onChange={(e) => setHttpProxy(e.target.value)}
             onBlur={async () => {
-              await window.hermesAPI.setConfig(
+              await window.drsaiAPI.setConfig(
                 "network.proxy",
                 httpProxy.trim(),
                 profile,
@@ -851,7 +851,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
           <div className="settings-field-hint" style={{ marginBottom: 10 }}>
             {t("settings.dataHint")}
           </div>
-          <div className="settings-hermes-actions">
+          <div className="settings-DrSai-actions">
             <button
               className="btn btn-secondary"
               onClick={handleBackup}
@@ -871,7 +871,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
           </div>
           {backupResult && (
             <div
-              className={`settings-hermes-result ${backupResult.includes("created") || backupResult.includes("success") ? "success" : "error"}`}
+              className={`settings-DrSai-result ${backupResult.includes("created") || backupResult.includes("success") ? "success" : "error"}`}
               style={{ marginTop: 8 }}
             >
               {backupResult}
@@ -879,7 +879,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
           )}
           {importResult && (
             <div
-              className={`settings-hermes-result ${importResult.includes("complete") ? "success" : "error"}`}
+              className={`settings-DrSai-result ${importResult.includes("complete") ? "success" : "error"}`}
               style={{ marginTop: 8 }}
             >
               {importResult}
@@ -902,7 +902,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
               size={14}
               style={{ marginRight: 6, verticalAlign: "middle" }}
             />
-            {t("settings.logsSection")} {logsExpanded ? "▾" : "▸"}
+            {t("settings.logsSection")} {logsExpanded ? "—" : "—"}
           </span>
         </div>
         {logsExpanded && (
@@ -914,7 +914,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
                   className={`btn btn-sm ${logFile === f ? "btn-primary" : "btn-secondary"}`}
                   onClick={() => {
                     setLogFile(f);
-                    window.hermesAPI.readLogs(f, 300).then((r) => {
+                    window.drsaiAPI.readLogs(f, 300).then((r) => {
                       setLogContent(r.content);
                       setLogPath(r.path);
                     });
@@ -933,7 +933,7 @@ function Settings({ profile }: { profile?: string }): React.JSX.Element {
               </div>
             )}
             <pre
-              className="settings-hermes-doctor"
+              className="settings-DrSai-doctor"
               style={{
                 maxHeight: 300,
                 overflow: "auto",

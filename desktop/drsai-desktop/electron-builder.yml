@@ -1,5 +1,5 @@
-appId: com.nousresearch.hermes
-productName: Hermes Agent
+appId: com.hepai.drsai
+productName: DrSai
 directories:
   buildResources: build
 files:
@@ -12,7 +12,7 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: hermes-agent
+  executableName: drsai
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -41,14 +41,14 @@ linux:
     - snap
     - deb
     - rpm
-  maintainer: electronjs.org
-  vendor: Nous Research
+  maintainer: HepAI, IHEP <ai@ihep.ac.cn>
+  vendor: HepAI Team
   category: Utility
-  synopsis: Self-improving AI assistant desktop app
+  synopsis: Scientific AI agent assistant desktop app
   description: >-
-    Hermes Desktop is a native desktop app for installing, configuring, and chatting
-    with Hermes Agent — a self-improving AI assistant with tool use, multi-platform
-    messaging, and a closed learning loop.
+    DrSai Desktop is a native desktop app for installing, configuring, and chatting
+    with DrSai Agent — an AI-powered scientific agent assistant framework
+    with tool use, multi-platform capabilities, and a closed learning loop.
 appImage:
   artifactName: ${name}-${version}.${ext}
 rpm:
@@ -56,5 +56,5 @@ rpm:
 npmRebuild: false
 publish:
   provider: github
-  owner: fathah
-  repo: hermes-desktop
+  owner: hepai-lab
+  repo: drsai

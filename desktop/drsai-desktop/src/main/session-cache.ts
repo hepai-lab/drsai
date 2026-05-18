@@ -1,14 +1,14 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { HERMES_HOME } from "./installer";
+import { DRSAI_HOME } from "./installer";
 import { safeWriteFile } from "./utils";
 import Database from "better-sqlite3";
 import { t } from "../shared/i18n";
 import { getAppLocale } from "./locale";
 
-const CACHE_DIR = join(HERMES_HOME, "desktop");
+const CACHE_DIR = join(DRSAI_HOME, "desktop");
 const CACHE_FILE = join(CACHE_DIR, "sessions.json");
-const DB_PATH = join(HERMES_HOME, "state.db");
+const DB_PATH = join(DRSAI_HOME, "state.db");
 
 export interface CachedSession {
   id: string;
@@ -77,7 +77,7 @@ function getDb(): Database.Database | null {
   return new Database(DB_PATH, { readonly: true });
 }
 
-// Sync from hermes DB to local cache — only fetches new/updated sessions
+// Sync from drsai DB to local cache — only fetches new/updated sessions
 export function syncSessionCache(): CachedSession[] {
   const cache = readCache();
   const db = getDb();

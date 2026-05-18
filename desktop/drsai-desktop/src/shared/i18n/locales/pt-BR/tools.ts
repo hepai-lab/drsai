@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   title: "Ferramentas",
   subtitle: "Ative ou desative os conjuntos de ferramentas que seu agente pode usar durante as conversas",
   web: {
@@ -60,7 +60,7 @@ export default {
     description: "Cria e gerencia listas de afazeres para tarefas complexas",
   },
   mcpServers: "Servidores MCP",
-  mcpDescription: "Servidores Model Context Protocol configurados no config.yaml. Gerencie via <code>hermes mcp add/remove</code> no terminal.",
+  mcpDescription: "Servidores Model Context Protocol configurados no config.yaml. Gerencie via <code>DrSai mcp add/remove</code> no terminal.",
   http: "HTTP",
   stdio: "stdio",
   disabled: "desativado",

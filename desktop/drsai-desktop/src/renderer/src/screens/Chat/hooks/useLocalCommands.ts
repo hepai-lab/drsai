@@ -60,7 +60,7 @@ export function useLocalCommands({
           return true;
 
         case "/model": {
-          const mc = await window.hermesAPI.getModelConfig(profile);
+          const mc = await window.drsaiAPI.getModelConfig(profile);
           const display = mc.model || "Not set";
           const prov = mc.provider || "auto";
           addAgentMessage(
@@ -71,7 +71,7 @@ export function useLocalCommands({
         }
 
         case "/memory": {
-          const mem = await window.hermesAPI.readMemory(profile);
+          const mem = await window.drsaiAPI.readMemory(profile);
           const lines: string[] = ["**Agent Memory**\n"];
           if (mem.memory.exists && mem.memory.content.trim()) {
             lines.push(mem.memory.content.trim());
@@ -86,14 +86,14 @@ export function useLocalCommands({
         }
 
         case "/tools": {
-          const tools = await window.hermesAPI.getToolsets(profile);
+          const tools = await window.drsaiAPI.getToolsets(profile);
           if (!tools.length) {
             addAgentMessage(t("memory.noToolsetsFound"));
           } else {
             const rows = tools
               .map(
                 (tool) =>
-                  `- **${tool.label}** — ${tool.description} ${tool.enabled ? "*(enabled)*" : "*(disabled)*"}`,
+                  `- **${tool.label}** —${tool.description} ${tool.enabled ? "*(enabled)*" : "*(disabled)*"}`,
               )
               .join("\n");
             addAgentMessage(`**Available Toolsets**\n\n${rows}`);
@@ -102,12 +102,12 @@ export function useLocalCommands({
         }
 
         case "/skills": {
-          const skills = await window.hermesAPI.listInstalledSkills(profile);
+          const skills = await window.drsaiAPI.listInstalledSkills(profile);
           if (!skills.length) {
             addAgentMessage("No skills installed.");
           } else {
             const rows = skills
-              .map((s) => `- **${s.name}** (${s.category}) — ${s.description}`)
+              .map((s) => `- **${s.name}** (${s.category}) —${s.description}`)
               .join("\n");
             addAgentMessage(`**Installed Skills**\n\n${rows}`);
           }
@@ -115,7 +115,7 @@ export function useLocalCommands({
         }
 
         case "/persona": {
-          const soul = await window.hermesAPI.readSoul(profile);
+          const soul = await window.drsaiAPI.readSoul(profile);
           addAgentMessage(
             soul.trim()
               ? `**Current Persona**\n\n${soul.trim()}`
@@ -125,18 +125,18 @@ export function useLocalCommands({
         }
 
         case "/version": {
-          const [hermesVer, appVer] = await Promise.all([
-            window.hermesAPI.getHermesVersion(),
-            window.hermesAPI.getAppVersion(),
+          const [drsaiVer, appVer] = await Promise.all([
+            window.drsaiAPI.getDrsaiVersion(),
+            window.drsaiAPI.getAppVersion(),
           ]);
           addAgentMessage(
-            `**Hermes Agent:** ${hermesVer || "unknown"}\n**Desktop App:** v${appVer}`,
+            `**DrSai Agent:** ${drsaiVer || "unknown"}\n**Desktop App:** v${appVer}`,
           );
           return true;
         }
 
         case "/fast": {
-          const current = await window.hermesAPI.getConfig(
+          const current = await window.drsaiAPI.getConfig(
             "agent.service_tier",
             profile,
           );
@@ -145,8 +145,8 @@ export function useLocalCommands({
           await setFastMode(next);
           addAgentMessage(
             next
-              ? "**Fast Mode: ON** — Priority processing enabled for lower latency."
-              : "**Fast Mode: OFF** — Standard processing restored.",
+              ? "**Fast Mode: ON** —Priority processing enabled for lower latency."
+              : "**Fast Mode: OFF** —Standard processing restored.",
           );
           return true;
         }
@@ -186,7 +186,7 @@ export function useLocalCommands({
             const cmds = grouped.get(cat);
             if (!cmds) continue;
             md += `\n**${categoryLabels[cat]}**\n`;
-            for (const c of cmds) md += `\`${c.name}\` — ${c.description}\n`;
+            for (const c of cmds) md += `\`${c.name}\` —${c.description}\n`;
           }
           addAgentMessage(md);
           return true;

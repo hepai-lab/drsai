@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   title: "Alat",
   subtitle:
     "Aktifkan atau nonaktifkan toolset yang dapat digunakan agent selama percakapan",
@@ -65,7 +65,7 @@ export default {
   },
   mcpServers: "Server MCP",
   mcpDescription:
-    "Server Model Context Protocol yang dikonfigurasi di config.yaml. Kelola melalui <code>hermes mcp add/remove</code> di terminal.",
+    "Server Model Context Protocol yang dikonfigurasi di config.yaml. Kelola melalui <code>DrSai mcp add/remove</code> di terminal.",
   http: "HTTP",
   stdio: "stdio",
   disabled: "nonaktif",

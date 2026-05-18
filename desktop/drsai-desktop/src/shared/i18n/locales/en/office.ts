@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   title: "Office",
   checkingStatus: "Checking Claw3D status...",
   setupTitle: "Set Up Claw3D",
@@ -21,6 +21,6 @@ export default {
   cannotLoadClaw3d: "Cannot load Claw3D",
   startingClaw3dService: "Starting Claw3D service...",
   clickToStart: "Click \"Start\" to run Claw3D",
-  setupDesc1: "Claw3D is a 3D visualization environment for your Hermes agents. It lets you see your agents working in an interactive office space.",
+  setupDesc1: "Claw3D is a 3D visualization environment for your DrSai agents. It lets you see your agents working in an interactive office space.",
   setupDesc2: "Click below to automatically download and set up Claw3D. This will clone the repository and install all dependencies.",
 } as const;

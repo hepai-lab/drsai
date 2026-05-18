@@ -1,7 +1,7 @@
-export default {
+﻿export default {
   title: "Profiles",
   subtitle:
-    "Each profile is an isolated Hermes workspace with its own config, memory, and skills",
+    "Each profile is an isolated DrSai workspace with its own config, memory, and skills",
   newAgent: "New Agent",
   namePlaceholder: "Agent name (e.g. coder)",
   cloneConfig: "Clone config & API keys from default",

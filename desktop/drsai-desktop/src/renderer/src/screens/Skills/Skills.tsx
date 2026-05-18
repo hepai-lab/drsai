@@ -39,12 +39,12 @@ function Skills({ profile }: SkillsProps): React.JSX.Element {
   const searchRef = useRef<HTMLInputElement>(null);
 
   const loadInstalled = useCallback(async (): Promise<void> => {
-    const list = await window.hermesAPI.listInstalledSkills(profile);
+    const list = await window.drsaiAPI.listInstalledSkills(profile);
     setInstalledSkills(list);
   }, [profile]);
 
   const loadBundled = useCallback(async (): Promise<void> => {
-    const list = await window.hermesAPI.listBundledSkills();
+    const list = await window.drsaiAPI.listBundledSkills();
     setBundledSkills(list);
   }, []);
 
@@ -60,14 +60,14 @@ function Skills({ profile }: SkillsProps): React.JSX.Element {
 
   async function handleViewDetail(skill: InstalledSkill): Promise<void> {
     setDetailSkill(skill);
-    const content = await window.hermesAPI.getSkillContent(skill.path);
+    const content = await window.drsaiAPI.getSkillContent(skill.path);
     setDetailContent(content);
   }
 
   async function handleInstall(name: string): Promise<void> {
     setActionInProgress(name);
     setError("");
-    const result = await window.hermesAPI.installSkill(name, profile);
+    const result = await window.drsaiAPI.installSkill(name, profile);
     setActionInProgress(null);
     if (result.success) {
       await loadInstalled();
@@ -79,7 +79,7 @@ function Skills({ profile }: SkillsProps): React.JSX.Element {
   async function handleUninstall(name: string): Promise<void> {
     setActionInProgress(name);
     setError("");
-    const result = await window.hermesAPI.uninstallSkill(name, profile);
+    const result = await window.drsaiAPI.uninstallSkill(name, profile);
     setActionInProgress(null);
     if (result.success) {
       setDetailSkill(null);

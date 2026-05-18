@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   title: "Office",
   checkingStatus: "Comprobando el estado de Claw3D...",
   setupTitle: "Configurar Claw3D",
@@ -21,6 +21,6 @@ export default {
   cannotLoadClaw3d: "No se puede cargar Claw3D",
   startingClaw3dService: "Iniciando el servicio de Claw3D...",
   clickToStart: 'Haz clic en "Iniciar" para ejecutar Claw3D',
-  setupDesc1: "Claw3D es un entorno de visualización 3D para tus agentes de Hermes. Te permite ver a tus agentes trabajando en un espacio de oficina interactivo.",
+  setupDesc1: "Claw3D es un entorno de visualización 3D para tus agentes de DrSai. Te permite ver a tus agentes trabajando en un espacio de oficina interactivo.",
   setupDesc2: "Haz clic abajo para descargar y configurar Claw3D automáticamente. Esto clonará el repositorio e instalará todas las dependencias.",
 } as const;

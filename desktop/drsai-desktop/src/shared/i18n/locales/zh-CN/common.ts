@@ -1,5 +1,5 @@
-export default {
-  appName: "Hermes Agent",
+﻿export default {
+  appName: "DrSai Agent",
   continue: "继续",
   cancel: "取消",
   retry: "重试",

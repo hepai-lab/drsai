@@ -1,7 +1,7 @@
-export default {
+﻿export default {
   title: "Memori",
   subtitle:
-    "Hal yang diingat Hermes tentang Anda dan lingkungan Anda di berbagai sesi.",
+    "Hal yang diingat DrSai tentang Anda dan lingkungan Anda di berbagai sesi.",
   sessions: "Sesi",
   messages: "Pesan",
   memories: "Memori",
@@ -21,15 +21,15 @@ export default {
     "Tidak ada provider memori yang ditemukan di instalasi ini.",
   openProviderWebsite: "Buka situs provider",
   noMemoriesYet:
-    "Belum ada memori. Hermes akan menyimpan fakta penting saat Anda chat.",
+    "Belum ada memori. DrSai akan menyimpan fakta penting saat Anda chat.",
   noMemoryEntries: "Belum ada entri memori.",
   noToolsetsFound: "Tidak ada toolset ditemukan.",
   addManuallyHint:
     "Anda juga dapat menambahkan memori secara manual dengan tombol di atas.",
   userProfileHint:
-    "Beri tahu Hermes tentang diri Anda - nama, peran, preferensi, dan gaya komunikasi.",
+    "Beri tahu DrSai tentang diri Anda - nama, peran, preferensi, dan gaya komunikasi.",
   providersHint:
-    "Provider memori pluggable memberi Hermes memori jangka panjang yang lebih canggih. Memori bawaan (di atas) selalu aktif bersama provider yang dipilih.",
+    "Provider memori pluggable memberi DrSai memori jangka panjang yang lebih canggih. Memori bawaan (di atas) selalu aktif bersama provider yang dipilih.",
   providersHintActive: "Aktif: <strong>{{provider}}</strong>",
   providersHintInactive:
     "Tidak ada provider eksternal aktif - hanya memakai memori bawaan.",

@@ -1,4 +1,4 @@
-import { spawn, execFile, execFileSync } from "child_process";
+﻿import { spawn, execFile, execFileSync } from "child_process";
 import {
   existsSync,
   readFileSync,
@@ -18,25 +18,25 @@ import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
 
 const IS_WINDOWS = process.platform === "win32";
 
-export const HERMES_HOME =
-  process.env.HERMES_HOME?.trim() || join(homedir(), ".hermes");
-export const HERMES_REPO = join(HERMES_HOME, "hermes-agent");
-export const HERMES_VENV = join(HERMES_REPO, "venv");
-export const HERMES_PYTHON = IS_WINDOWS
-  ? join(HERMES_VENV, "Scripts", "python.exe")
-  : join(HERMES_VENV, "bin", "python");
-export const HERMES_SCRIPT = IS_WINDOWS
-  ? join(HERMES_VENV, "Scripts", "hermes.exe")
-  : join(HERMES_REPO, "hermes");
-export const HERMES_ENV_FILE = join(HERMES_HOME, ".env");
-export const HERMES_CONFIG_FILE = join(HERMES_HOME, "config.yaml");
-export const HERMES_AUTH_FILE = join(HERMES_HOME, "auth.json");
+export const DRSAI_HOME =
+  process.env.DRSAI_HOME?.trim() || join(homedir(), ".drsai");
+export const DRSAI_REPO = join(DRSAI_HOME, "drsai-agent");
+export const DRSAI_VENV = join(DRSAI_REPO, "venv");
+export const DRSAI_PYTHON = IS_WINDOWS
+  ? join(DRSAI_VENV, "Scripts", "python.exe")
+  : join(DRSAI_VENV, "bin", "python");
+export const DRSAI_SCRIPT = IS_WINDOWS
+  ? join(DRSAI_VENV, "Scripts", "drsai.exe")
+  : join(DRSAI_REPO, "drsai");
+export const DRSAI_ENV_FILE = join(DRSAI_HOME, ".env");
+export const DRSAI_CONFIG_FILE = join(DRSAI_HOME, "config.yaml");
+export const DRSAI_AUTH_FILE = join(DRSAI_HOME, "auth.json");
 
-export function hermesCliArgs(args: string[] = []): string[] {
+export function drsaiCliArgs(args: string[] = []): string[] {
   if (process.platform === "win32") {
-    return ["-m", "hermes_cli.main", ...args];
+    return ["-m", "drsai.backend.run_cli", ...args];
   }
-  return [HERMES_SCRIPT, ...args];
+  return [DRSAI_SCRIPT, ...args];
 }
 
 export interface InstallStatus {
@@ -59,13 +59,13 @@ export function getEnhancedPath(): string {
   const extra = (
     IS_WINDOWS
       ? [
-          // Bundled by install.ps1 inside HERMES_HOME — these matter when the
+          // Bundled by install.ps1 inside DRSAI_HOME — these matter when the
           // user's system PATH doesn't include git or node yet.
-          join(HERMES_HOME, "git", "bin"),
-          join(HERMES_HOME, "git", "cmd"),
-          join(HERMES_HOME, "git", "usr", "bin"),
-          join(HERMES_HOME, "node"),
-          join(HERMES_VENV, "Scripts"),
+          join(DRSAI_HOME, "git", "bin"),
+          join(DRSAI_HOME, "git", "cmd"),
+          join(DRSAI_HOME, "git", "usr", "bin"),
+          join(DRSAI_HOME, "node"),
+          join(DRSAI_VENV, "Scripts"),
           // Common user/system installs used when Claw3D setup runs before or
           // outside the bundled installer.
           process.env.NVM_SYMLINK,
@@ -89,7 +89,7 @@ export function getEnhancedPath(): string {
       : [
           join(home, ".local", "bin"),
           join(home, ".cargo", "bin"),
-          join(HERMES_VENV, "bin"),
+          join(DRSAI_VENV, "bin"),
           // Node version manager shim directories
           join(home, ".volta", "bin"),
           join(home, ".asdf", "shims"),
@@ -134,10 +134,10 @@ function resolveNvmBin(home: string): string[] {
   return [];
 }
 
-export function hasHermesAuthCredential(provider: string): boolean {
-  if (!provider || !existsSync(HERMES_AUTH_FILE)) return false;
+export function hasDrsaiAuthCredential(provider: string): boolean {
+  if (!provider || !existsSync(DRSAI_AUTH_FILE)) return false;
   try {
-    const auth = JSON.parse(readFileSync(HERMES_AUTH_FILE, "utf-8")) as {
+    const auth = JSON.parse(readFileSync(DRSAI_AUTH_FILE, "utf-8")) as {
       active_provider?: string;
       credential_pool?: Record<string, unknown[]>;
       providers?: Record<string, unknown>;
@@ -152,6 +152,16 @@ export function hasHermesAuthCredential(provider: string): boolean {
 }
 
 export function checkInstallStatus(): InstallStatus {
+  // ── Dev mode: skip all checks via env var ──────────────────────────
+  if (process.env.DRSAI_DEV_SKIP_INSTALL === "1") {
+    return {
+      installed: true,
+      configured: true,
+      hasApiKey: true,
+      verified: true,
+    };
+  }
+
   // Remote mode: skip local checks entirely
   const conn = getConnectionConfig();
   if (conn.mode === "remote" && conn.remoteUrl) {
@@ -167,19 +177,19 @@ export function checkInstallStatus(): InstallStatus {
   // `python --version` check used to run here adds 1–10s of cold-start
   // latency, so it now lives in `verifyInstall()` and is invoked lazily
   // by the renderer after the main UI is mounted.
-  const installed = existsSync(HERMES_PYTHON) && existsSync(HERMES_SCRIPT);
-  const configured = existsSync(HERMES_ENV_FILE);
+  const installed = existsSync(DRSAI_PYTHON) && existsSync(DRSAI_SCRIPT);
+  const configured = existsSync(DRSAI_ENV_FILE);
   let hasApiKey = false;
   const verified = installed;
 
   // Local/custom providers don't need an API key. OAuth-backed providers
-  // can be configured through Hermes auth.json instead of .env.
+  // can be configured through DrSai auth.json instead of .env.
   try {
     const mc = getModelConfig();
     const localProviders = ["custom", "lmstudio", "ollama", "vllm", "llamacpp"];
     if (
       localProviders.includes(mc.provider) ||
-      hasHermesAuthCredential(mc.provider)
+      hasDrsaiAuthCredential(mc.provider)
     ) {
       hasApiKey = true;
     }
@@ -189,7 +199,7 @@ export function checkInstallStatus(): InstallStatus {
 
   if (!hasApiKey && configured) {
     try {
-      const content = readFileSync(HERMES_ENV_FILE, "utf-8");
+      const content = readFileSync(DRSAI_ENV_FILE, "utf-8");
       for (const line of content.split("\n")) {
         const trimmed = line.trim();
         if (trimmed.startsWith("#")) continue;
@@ -219,21 +229,21 @@ let _verifyCache: { ok: boolean; ts: number } | null = null;
 const VERIFY_TTL_MS = 5 * 60 * 1000;
 
 export async function verifyInstall(): Promise<boolean> {
-  if (!existsSync(HERMES_PYTHON) || !existsSync(HERMES_SCRIPT)) return false;
+  if (!existsSync(DRSAI_PYTHON) || !existsSync(DRSAI_SCRIPT)) return false;
   if (_verifyCache && Date.now() - _verifyCache.ts < VERIFY_TTL_MS) {
     return _verifyCache.ok;
   }
   return new Promise((resolve) => {
     execFile(
-      HERMES_PYTHON,
-      hermesCliArgs(["--version"]),
+      DRSAI_PYTHON,
+      drsaiCliArgs(["--version"]),
       {
-        cwd: HERMES_REPO,
+        cwd: DRSAI_REPO,
         env: {
           ...process.env,
           PATH: getEnhancedPath(),
           HOME: homedir(),
-          HERMES_HOME,
+          DRSAI_HOME,
         },
         timeout: 15000,
         ...HIDDEN_SUBPROCESS_OPTIONS,
@@ -251,9 +261,9 @@ export async function verifyInstall(): Promise<boolean> {
 let _cachedVersion: string | null = null;
 let _versionFetching = false;
 
-export async function getHermesVersion(): Promise<string | null> {
+export async function getDrsaiVersion(): Promise<string | null> {
   if (_cachedVersion !== null) return _cachedVersion;
-  if (!existsSync(HERMES_PYTHON) || !existsSync(HERMES_SCRIPT)) return null;
+  if (!existsSync(DRSAI_PYTHON) || !existsSync(DRSAI_SCRIPT)) return null;
   if (_versionFetching) {
     // Wait for in-flight fetch
     return new Promise((resolve) => {
@@ -268,15 +278,15 @@ export async function getHermesVersion(): Promise<string | null> {
   _versionFetching = true;
   return new Promise((resolve) => {
     execFile(
-      HERMES_PYTHON,
-      hermesCliArgs(["--version"]),
+      DRSAI_PYTHON,
+      drsaiCliArgs(["--version"]),
       {
-        cwd: HERMES_REPO,
+        cwd: DRSAI_REPO,
         env: {
           ...process.env,
           PATH: getEnhancedPath(),
           HOME: homedir(),
-          HERMES_HOME,
+          DRSAI_HOME,
         },
         timeout: 15000,
         ...HIDDEN_SUBPROCESS_OPTIONS,
@@ -298,18 +308,18 @@ export function clearVersionCache(): void {
   _cachedVersion = null;
 }
 
-export function runHermesDoctor(): string {
-  if (!existsSync(HERMES_PYTHON) || !existsSync(HERMES_SCRIPT)) {
-    return "Hermes is not installed.";
+export function runDrsaiDoctor(): string {
+  if (!existsSync(DRSAI_PYTHON) || !existsSync(DRSAI_SCRIPT)) {
+    return "DrSai is not installed.";
   }
   try {
-    const output = execFileSync(HERMES_PYTHON, hermesCliArgs(["doctor"]), {
-      cwd: HERMES_REPO,
+    const output = execFileSync(DRSAI_PYTHON, drsaiCliArgs(["doctor"]), {
+      cwd: DRSAI_REPO,
       env: {
         ...process.env,
         PATH: getEnhancedPath(),
         HOME: homedir(),
-        HERMES_HOME,
+        DRSAI_HOME,
       },
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 30000,
@@ -337,8 +347,8 @@ export function checkOpenClawExists(): { found: boolean; path: string | null } {
 export async function runClawMigrate(
   onProgress: (progress: InstallProgress) => void,
 ): Promise<void> {
-  if (!existsSync(HERMES_PYTHON) || !existsSync(HERMES_SCRIPT)) {
-    throw new Error("Hermes is not installed.");
+  if (!existsSync(DRSAI_PYTHON) || !existsSync(DRSAI_SCRIPT)) {
+    throw new Error("DrSai is not installed.");
   }
 
   const openclaw = checkOpenClawExists();
@@ -361,15 +371,15 @@ export async function runClawMigrate(
   emit(`Migrating from ${openclaw.path}...\n`);
 
   return new Promise((resolve, reject) => {
-    const args = hermesCliArgs(["claw", "migrate", "--preset", "full"]);
+    const args = drsaiCliArgs(["claw", "migrate", "--preset", "full"]);
 
-    const proc = spawn(HERMES_PYTHON, args, {
-      cwd: HERMES_REPO,
+    const proc = spawn(DRSAI_PYTHON, args, {
+      cwd: DRSAI_REPO,
       env: {
         ...process.env,
         PATH: getEnhancedPath(),
         HOME: homedir(),
-        HERMES_HOME,
+        DRSAI_HOME,
         TERM: "dumb",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -399,11 +409,11 @@ export async function runClawMigrate(
   });
 }
 
-export async function runHermesUpdate(
+export async function runDrsaiUpdate(
   onProgress: (progress: InstallProgress) => void,
 ): Promise<void> {
-  if (!existsSync(HERMES_PYTHON) || !existsSync(HERMES_SCRIPT)) {
-    throw new Error("Hermes is not installed. Please install it first.");
+  if (!existsSync(DRSAI_PYTHON) || !existsSync(DRSAI_SCRIPT)) {
+    throw new Error("DrSai is not installed. Please install it first.");
   }
 
   let log = "";
@@ -412,22 +422,22 @@ export async function runHermesUpdate(
     onProgress({
       step: 1,
       totalSteps: 1,
-      title: "Updating Hermes Agent",
+      title: "Updating DrSai Agent",
       detail: text.trim().slice(0, 120),
       log,
     });
   }
 
-  emit("Running hermes update...\n");
+  emit("Running drsai update...\n");
 
   return new Promise((resolve, reject) => {
-    const proc = spawn(HERMES_PYTHON, hermesCliArgs(["update"]), {
-      cwd: HERMES_REPO,
+    const proc = spawn(DRSAI_PYTHON, drsaiCliArgs(["update"]), {
+      cwd: DRSAI_REPO,
       env: {
         ...process.env,
         PATH: getEnhancedPath(),
         HOME: homedir(),
-        HERMES_HOME,
+        DRSAI_HOME,
         TERM: "dumb",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -491,9 +501,9 @@ const STAGE_MARKERS: { pattern: RegExp; step: number; title: string }[] = [
   },
   {
     pattern:
-      /Cloning|cloning|Updating.*repository|Repository|Installing to .*hermes-agent|Downloading PortableGit/i,
+      /Cloning|cloning|Updating.*repository|Repository|Installing to .*drsai-agent|Downloading PortableGit/i,
     step: 4,
-    title: "Downloading Hermes Agent",
+    title: "Downloading DrSai Agent",
   },
   {
     pattern: /Creating virtual|virtual environment|uv venv|\bvenv\b/i,
@@ -512,7 +522,7 @@ const STAGE_MARKERS: { pattern: RegExp; step: number; title: string }[] = [
     // used to match here and pinned the progress bar at 100% while Playwright
     // and TUI deps were still running — see issue #104.
     pattern:
-      /Installation complete|hermes command ready|Configuration directory ready|Hermes (installation )?(finished|is ready)/i,
+      /Installation complete|drsai command ready|Configuration directory ready|DrSai (installation )?(finished|is ready)/i,
     step: 7,
     title: "Finishing setup",
   },
@@ -548,7 +558,7 @@ export async function runInstall(
     });
   }
 
-  emit("Running official Hermes install script...\n");
+  emit("Running DrSai install script...\n");
 
   if (IS_WINDOWS) {
     return runInstallWindows(emit);
@@ -595,7 +605,7 @@ export async function runInstall(
       const shellProfile = getShellProfile(home);
       const installCmd = [
         shellProfile ? `source "${shellProfile}" 2>/dev/null;` : "",
-        "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup",
+        "curl -fsSL https://raw.githubusercontent.com/NousResearch/drsai-agent/main/scripts/install.sh | bash -s -- --skip-setup",
       ].join(" ");
 
       const basePath = getEnhancedPath();
@@ -627,10 +637,10 @@ export async function runInstall(
         } else {
           // The install script can exit non-zero due to benign issues
           // (e.g. git stash pop failure on already-clean repo).
-          // If Hermes is actually installed and working, treat as success.
-          if (existsSync(HERMES_PYTHON) && existsSync(HERMES_SCRIPT)) {
+          // If DrSai is actually installed and working, treat as success.
+          if (existsSync(DRSAI_PYTHON) && existsSync(DRSAI_SCRIPT)) {
             emit(
-              "\nInstall script exited with warnings, but Hermes is installed successfully.\n",
+              "\nInstall script exited with warnings, but DrSai is installed successfully.\n",
             );
             resolve();
           } else {
@@ -679,16 +689,16 @@ function resolvePowerShellExe(): string {
 
 async function runInstallWindows(emit: (t: string) => void): Promise<void> {
   // We can't `irm | iex` and pass parameters, and we want to override the
-  // upstream defaults (which install to %LOCALAPPDATA%\hermes) so the
-  // desktop app's HERMES_HOME == ~\.hermes convention keeps working.
+  // upstream defaults (which install to %LOCALAPPDATA%\drsai) so the
+  // desktop app's DRSAI_HOME == ~\.drsai convention keeps working.
   // Strategy: write a small wrapper .ps1 to %TEMP%, run it with -File.
   const home = homedir();
-  const hermesHome = HERMES_HOME;
-  const installDir = HERMES_REPO;
+  const drsaiHome = DRSAI_HOME;
+  const installDir = DRSAI_REPO;
 
   const wrapperPath = join(
     tmpdir(),
-    `hermes-install-${randomBytes(6).toString("hex")}.ps1`,
+    `drsai-install-${randomBytes(6).toString("hex")}.ps1`,
   );
 
   // The wrapper downloads install.ps1 to a sibling temp file and invokes it
@@ -698,8 +708,8 @@ async function runInstallWindows(emit: (t: string) => void): Promise<void> {
     // Force TLS 1.2 for older Windows PowerShell 5.1 hosts that still default
     // to TLS 1.0 — github raw refuses TLS < 1.2.
     "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}",
-    "$url = 'https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1'",
-    `$installer = Join-Path $env:TEMP ("hermes-install-script-" + [guid]::NewGuid().ToString() + ".ps1")`,
+    "$url = 'https://raw.githubusercontent.com/NousResearch/drsai-agent/main/scripts/install.ps1'",
+    `$installer = Join-Path $env:TEMP ("drsai-install-script-" + [guid]::NewGuid().ToString() + ".ps1")`,
     // Windows PowerShell 5.1 parses BOM-less files as the legacy ANSI codepage,
     // which mangles the non-ASCII glyphs in install.ps1 and produces parse
     // errors (see issue #149). Re-save with a UTF-8 BOM so PS 5.1 reads it as
@@ -708,7 +718,7 @@ async function runInstallWindows(emit: (t: string) => void): Promise<void> {
     "$text = if ($resp.Content -is [byte[]]) { [System.Text.Encoding]::UTF8.GetString($resp.Content) } else { [string]$resp.Content }",
     "if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }",
     "[System.IO.File]::WriteAllText($installer, $text, (New-Object System.Text.UTF8Encoding $true))",
-    `& $installer -SkipSetup -HermesHome ${psQuote(hermesHome)} -InstallDir ${psQuote(installDir)}`,
+    `& $installer -SkipSetup -DrsaiHome ${psQuote(drsaiHome)} -InstallDir ${psQuote(installDir)}`,
     "$exit = $LASTEXITCODE",
     "Remove-Item -Force -ErrorAction SilentlyContinue $installer",
     "exit $exit",
@@ -742,7 +752,7 @@ async function runInstallWindows(emit: (t: string) => void): Promise<void> {
         env: {
           ...process.env,
           PATH: basePath,
-          HERMES_HOME: hermesHome,
+          DRSAI_HOME: drsaiHome,
           // Hint that we're not interactive so install.ps1 doesn't `pause`
           // (the .cmd wrapper does on failure, but -File on .ps1 won't).
           NO_COLOR: "1",
@@ -772,15 +782,15 @@ async function runInstallWindows(emit: (t: string) => void): Promise<void> {
         return;
       }
       // Same tolerance as the bash path: if the binary tree exists, count it.
-      if (existsSync(HERMES_PYTHON) && existsSync(HERMES_SCRIPT)) {
+      if (existsSync(DRSAI_PYTHON) && existsSync(DRSAI_SCRIPT)) {
         emit(
-          "\nInstall script exited with warnings, but Hermes is installed successfully.\n",
+          "\nInstall script exited with warnings, but DrSai is installed successfully.\n",
         );
         resolve();
       } else {
         reject(
           new Error(
-            `Installation failed (exit code ${code}). Open PowerShell and try: irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex`,
+            `Installation failed (exit code ${code}). Open PowerShell and try: irm https://raw.githubusercontent.com/NousResearch/drsai-agent/main/scripts/install.ps1 | iex`,
           ),
         );
       }
@@ -806,27 +816,27 @@ async function runInstallWindows(emit: (t: string) => void): Promise<void> {
 //  Backup & Import
 // ────────────────────────────────────────────────────
 
-export async function runHermesBackup(
+export async function runDrsaiBackup(
   profile?: string,
 ): Promise<{ success: boolean; path?: string; error?: string }> {
-  if (!existsSync(HERMES_PYTHON) || !existsSync(HERMES_SCRIPT)) {
-    return { success: false, error: "Hermes is not installed." };
+  if (!existsSync(DRSAI_PYTHON) || !existsSync(DRSAI_SCRIPT)) {
+    return { success: false, error: "DrSai is not installed." };
   }
-  const args = hermesCliArgs();
+  const args = drsaiCliArgs();
   if (profile && profile !== "default") args.push("-p", profile);
   args.push("backup");
 
   return new Promise((resolve) => {
     execFile(
-      HERMES_PYTHON,
+      DRSAI_PYTHON,
       args,
       {
-        cwd: HERMES_REPO,
+        cwd: DRSAI_REPO,
         env: {
           ...process.env,
           PATH: getEnhancedPath(),
           HOME: homedir(),
-          HERMES_HOME,
+          DRSAI_HOME,
           TERM: "dumb",
         },
         timeout: 120000,
@@ -854,28 +864,28 @@ export async function runHermesBackup(
   });
 }
 
-export async function runHermesImport(
+export async function runDrsaiImport(
   archivePath: string,
   profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
-  if (!existsSync(HERMES_PYTHON) || !existsSync(HERMES_SCRIPT)) {
-    return { success: false, error: "Hermes is not installed." };
+  if (!existsSync(DRSAI_PYTHON) || !existsSync(DRSAI_SCRIPT)) {
+    return { success: false, error: "DrSai is not installed." };
   }
-  const args = hermesCliArgs();
+  const args = drsaiCliArgs();
   if (profile && profile !== "default") args.push("-p", profile);
   args.push("import", archivePath);
 
   return new Promise((resolve) => {
     execFile(
-      HERMES_PYTHON,
+      DRSAI_PYTHON,
       args,
       {
-        cwd: HERMES_REPO,
+        cwd: DRSAI_REPO,
         env: {
           ...process.env,
           PATH: getEnhancedPath(),
           HOME: homedir(),
-          HERMES_HOME,
+          DRSAI_HOME,
           TERM: "dumb",
         },
         timeout: 120000,
@@ -899,21 +909,21 @@ export async function runHermesImport(
 //  Debug dump
 // ────────────────────────────────────────────────────
 
-export function runHermesDump(): Promise<string> {
-  if (!existsSync(HERMES_PYTHON) || !existsSync(HERMES_SCRIPT)) {
-    return Promise.resolve("Hermes is not installed.");
+export function runDrsaiDump(): Promise<string> {
+  if (!existsSync(DRSAI_PYTHON) || !existsSync(DRSAI_SCRIPT)) {
+    return Promise.resolve("DrSai is not installed.");
   }
   return new Promise((resolve) => {
     execFile(
-      HERMES_PYTHON,
-      hermesCliArgs(["dump"]),
+      DRSAI_PYTHON,
+      drsaiCliArgs(["dump"]),
       {
-        cwd: HERMES_REPO,
+        cwd: DRSAI_REPO,
         env: {
           ...process.env,
           PATH: getEnhancedPath(),
           HOME: homedir(),
-          HERMES_HOME,
+          DRSAI_HOME,
           TERM: "dumb",
         },
         timeout: 30000,
@@ -949,7 +959,7 @@ export interface MemoryProviderInfo {
 export function discoverMemoryProviders(
   profile?: string,
 ): MemoryProviderInfo[] {
-  const pluginsDir = join(HERMES_REPO, "plugins", "memory");
+  const pluginsDir = join(DRSAI_REPO, "plugins", "memory");
   if (!existsSync(pluginsDir)) return [];
 
   const activeProvider = getActiveMemoryProvider(profile);
@@ -1115,7 +1125,7 @@ export function readLogs(
   logFile = "agent.log",
   lines = 200,
 ): { content: string; path: string } {
-  const logsDir = join(HERMES_HOME, "logs");
+  const logsDir = join(DRSAI_HOME, "logs");
   // Sanitize: only allow known log file names
   const allowed = ["agent.log", "errors.log", "gateway.log"];
   const file = allowed.includes(logFile) ? logFile : "agent.log";

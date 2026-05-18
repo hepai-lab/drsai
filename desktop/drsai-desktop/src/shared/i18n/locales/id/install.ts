@@ -1,9 +1,9 @@
-export default {
+﻿export default {
   preparing: "Menyiapkan...",
   startingInstall: "Memulai instalasi",
   installationComplete: "Instalasi Selesai",
   installationFailed: "Instalasi Gagal",
-  installingHermes: "Menginstal Hermes Agent",
+  installingDrsai: "Menginstal DrSai Agent",
   installationFailedHint:
     "Instalasi gagal. Coba lagi atau instal melalui terminal.",
   retryInstallation: "Ulangi Instalasi",

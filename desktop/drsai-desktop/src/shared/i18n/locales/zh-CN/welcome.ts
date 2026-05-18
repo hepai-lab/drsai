@@ -1,5 +1,5 @@
-export default {
-  title: "欢迎使用 Hermes",
+﻿export default {
+  title: "欢迎使用 DrSai",
   subtitle: "你的自进化 AI 助手，运行在本机，兼顾隐私、能力与持续学习。",
   installIssueTitle: "安装问题",
   getStarted: "开始使用",
@@ -10,9 +10,9 @@ export default {
   installSizeHint: "这将安装所需组件（约 2 GB）",
   copyInstallCommand: "复制安装命令",
   dividerOr: "或",
-  connectRemote: "连接远程 Hermes",
-  connectRemoteTitle: "连接远程 Hermes",
-  connectRemoteSubtitle: "输入运行中的 Hermes API 服务器的 URL。",
+  connectRemote: "连接远程 DrSai",
+  connectRemoteTitle: "连接远程 DrSai",
+  connectRemoteSubtitle: "输入运行中的 DrSai API 服务器的 URL。",
   remoteServerUrl: "服务器 URL",
   remoteApiKey: "API 密钥（可选）",
   remoteApiKeyPlaceholder: "Bearer token (API_SERVER_KEY)",

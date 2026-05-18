@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import { Copy } from "lucide-react";
 import { useI18n } from "./useI18n";
 
-// Lazy-load the heavy syntax highlighter â€” only imported when a code block renders
+// Lazy-load the heavy syntax highlighter â€?only imported when a code block renders
 let _highlighterMod: typeof import("react-syntax-highlighter") | null = null;
 let _oneDark: Record<string, React.CSSProperties> | null = null;
 let _loadingPromise: Promise<void> | null = null;
@@ -143,7 +143,7 @@ const AgentMarkdown = memo(function AgentMarkdown({ children }: { children: stri
               } catch {
                 return;
               }
-              window.hermesAPI.openExternal(href);
+              window.drsaiAPI.openExternal(href);
             }}
           >
             {children}

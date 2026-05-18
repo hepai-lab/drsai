@@ -1,9 +1,9 @@
-export default {
+﻿export default {
   preparing: "Preparando...",
   startingInstall: "Iniciando instalação",
   installationComplete: "Instalação Concluída",
   installationFailed: "Falha na Instalação",
-  installingHermes: "Instalando Hermes Agent",
+  installingDrsai: "Instalando DrSai Agent",
   installationFailedHint:
     "A instalação falhou. Por favor, tente novamente ou instale via terminal.",
   retryInstallation: "Tentar Instalação Novamente",

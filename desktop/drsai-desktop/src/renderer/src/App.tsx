@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+﻿import { useState, useEffect, useCallback } from "react";
 import { ThemeProvider } from "./components/ThemeProvider";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Welcome from "./screens/Welcome/Welcome";
@@ -34,32 +34,32 @@ function App(): React.JSX.Element {
     let isRemote = false;
 
     try {
-      const conn = await window.hermesAPI.getConnectionConfig();
+      const conn = await window.drsaiAPI.getConnectionConfig();
       isRemote = conn.mode === "remote" || conn.mode === "ssh";
       setConnectionMode(conn.mode);
 
       if (conn.mode === "ssh" && conn.ssh) {
         // Start (or ensure) the SSH tunnel, then go straight to main
         try {
-          await window.hermesAPI.startSshTunnel();
+          await window.drsaiAPI.startSshTunnel();
           next = "main";
         } catch (tunnelErr) {
           error = `SSH tunnel failed to start: ${(tunnelErr as Error).message}`;
           next = "welcome";
         }
       } else if (conn.mode === "remote" && conn.remoteUrl) {
-        const ok = await window.hermesAPI.testRemoteConnection(
+        const ok = await window.drsaiAPI.testRemoteConnection(
           conn.remoteUrl,
           conn.apiKey,
         );
         if (ok) {
           next = "main";
         } else {
-          error = `Cannot reach remote Hermes at ${conn.remoteUrl}. Check the URL or switch to local mode.`;
+          error = `Cannot reach remote DrSai at ${conn.remoteUrl}. Check the URL or switch to local mode.`;
           next = "welcome";
         }
       } else {
-        const status = await window.hermesAPI.checkInstall();
+        const status = await window.drsaiAPI.checkInstall();
         if (!status.installed) {
           next = "welcome";
         } else if (!status.hasApiKey) {
@@ -82,17 +82,17 @@ function App(): React.JSX.Element {
     setScreen(next);
 
     // Lazy deep-verify in the background after the UI is up. If the
-    // install is broken, surface the warning then — don't block startup.
+    // install is broken, surface the warning then —don't block startup.
     //
     // Skip for remote-mode connections: verifyInstall() probes the LOCAL
-    // Python + script paths (HERMES_PYTHON / HERMES_SCRIPT in installer.ts),
+    // Python + script paths (DRSAI_PYTHON / DRSAI_SCRIPT in installer.ts),
     // which don't exist on machines that only use a remote backend. Without
     // this guard the user is bounced back to Welcome with an "installBroken"
     // error immediately after a successful remote connect. (#47, #41, #30)
     if ((next === "main" || next === "setup") && !isRemote) {
-      window.hermesAPI.verifyInstall().then((ok) => {
+      window.drsaiAPI.verifyInstall().then((ok) => {
         // Files exist (checkInstall passed) but the probe failed. Surface
-        // a soft warning instead of bouncing to Welcome — see #130.
+        // a soft warning instead of bouncing to Welcome —see #130.
         if (!ok) setVerifyWarning(true);
       });
     }
@@ -128,7 +128,7 @@ function App(): React.JSX.Element {
   }
 
   async function handleSwitchToLocal(): Promise<void> {
-    await window.hermesAPI.setConnectionConfig("local", "", "");
+    await window.drsaiAPI.setConnectionConfig("local", "", "");
     setConnectionMode("local");
     handleRecheck();
   }

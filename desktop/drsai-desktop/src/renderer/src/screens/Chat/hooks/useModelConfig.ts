@@ -48,8 +48,8 @@ export function useModelConfig(profile?: string): UseModelConfigResult {
 
   const reload = useCallback(async (): Promise<void> => {
     const [mc, savedModels] = await Promise.all([
-      window.hermesAPI.getModelConfig(profile),
-      window.hermesAPI.listModels(),
+      window.drsaiAPI.getModelConfig(profile),
+      window.drsaiAPI.listModels(),
     ]);
     setCurrentModel(mc.model);
     setCurrentProvider(mc.provider);
@@ -66,7 +66,7 @@ export function useModelConfig(profile?: string): UseModelConfigResult {
 
   const selectModel = useCallback(
     async (provider: string, model: string, baseUrl: string): Promise<void> => {
-      await window.hermesAPI.setModelConfig(provider, model, baseUrl, profile);
+      await window.drsaiAPI.setModelConfig(provider, model, baseUrl, profile);
       setCurrentModel(model);
       setCurrentProvider(provider);
       setCurrentBaseUrl(baseUrl);

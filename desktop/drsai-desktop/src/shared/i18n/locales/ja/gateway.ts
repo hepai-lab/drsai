@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   title: "ゲートウェイ",
   messagingGateway: "メッセージングゲートウェイ",
   platforms: "プラットフォーム",
@@ -6,5 +6,5 @@ export default {
   running: "稼働中",
   stopped: "停止中",
   gatewayHint:
-    "Hermes を Telegram・Discord・Slack などのプラットフォームに接続します",
+    "DrSai を Telegram・Discord・Slack などのプラットフォームに接続します",
 } as const;
