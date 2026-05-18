@@ -8,7 +8,8 @@ import { getAppLocale } from "./locale";
 
 const CACHE_DIR = join(DRSAI_HOME, "desktop");
 const CACHE_FILE = join(CACHE_DIR, "sessions.json");
-const DB_PATH = join(DRSAI_HOME, "state.db");
+// Changed: state.db → drsai.db under workspace
+const DB_PATH = join(DRSAI_HOME, "workspace", "drsai", "drsai.db");
 
 export interface CachedSession {
   id: string;
@@ -24,35 +25,43 @@ interface CacheData {
   lastSync: number;
 }
 
-// Generate a short, readable title from the first user message (like ChatGPT/Claude)
+// Generate a short, readable title from the first user message
 function generateTitle(message: string): string {
   if (!message || !message.trim())
     return t("sessions.newConversation", getAppLocale());
 
-  // Clean up the message
   let text = message.trim();
-
-  // Remove markdown formatting
   text = text.replace(/[#*_`~\[\]()]/g, "");
-  // Remove URLs
   text = text.replace(/https?:\/\/\S+/g, "");
-  // Remove extra whitespace
   text = text.replace(/\s+/g, " ").trim();
 
   if (!text) return t("sessions.newConversation", getAppLocale());
-
-  // If short enough, use as-is
   if (text.length <= 50) return text;
 
-  // Take first meaningful chunk — aim for ~40-50 chars at word boundary
   const words = text.split(" ");
   let title = "";
   for (const word of words) {
     if ((title + " " + word).trim().length > 45) break;
     title = (title + " " + word).trim();
   }
-
   return title || text.slice(0, 45) + "...";
+}
+
+// Extract first user message preview from Thread.messages JSON
+function extractPreview(messagesJson: string | null): string {
+  if (!messagesJson) return "";
+  try {
+    const msgs = JSON.parse(messagesJson);
+    if (!Array.isArray(msgs)) return "";
+    for (const m of msgs) {
+      if (m.role === "user" && m.content?.trim()) {
+        return m.content.trim().split("\n")[0].slice(0, 120);
+      }
+    }
+  } catch {
+    /* ignore malformed JSON */
+  }
+  return "";
 }
 
 function readCache(): CacheData {
@@ -84,27 +93,27 @@ export function syncSessionCache(): CachedSession[] {
   if (!db) return cache.sessions;
 
   try {
-    // Fetch sessions newer than last sync, or all if first sync
     const rows = db
-      .prepare(
-        `SELECT s.id, s.started_at, s.source, s.message_count, s.model, s.title
-         FROM sessions s
-         WHERE s.started_at > ?
-         ORDER BY s.started_at DESC`,
-      )
+      .prepare(`
+        SELECT
+          thread_id                AS id,
+          updated_at               AS started_at,
+          json_array_length(messages) AS message_count,
+          json_extract(meta, '$.name') AS title,
+          messages
+        FROM thread
+        WHERE user_id IS NOT NULL
+          AND updated_at > ?
+        ORDER BY updated_at DESC
+      `)
       .all(cache.lastSync > 0 ? cache.lastSync - 300 : 0) as Array<{
       id: string;
-      started_at: number;
-      source: string;
+      started_at: string;
       message_count: number;
-      model: string;
       title: string | null;
+      messages: string | null;
     }>;
 
-    // Index existing sessions by id once so the per-row update below is
-    // O(1) instead of O(N). Without this, syncing N existing sessions
-    // against N new rows is O(N²) and visibly slows app startup once a
-    // user has accumulated thousands of sessions (issue #16).
     const existingById = new Map<string, CachedSession>();
     for (const s of cache.sessions) existingById.set(s.id, s);
     const newSessions: CachedSession[] = [];
@@ -112,43 +121,33 @@ export function syncSessionCache(): CachedSession[] {
     for (const row of rows) {
       const existing = existingById.get(row.id);
       if (existing) {
-        // Update existing entry (message count may have changed)
         existing.messageCount = row.message_count;
         continue;
       }
 
-      // Generate title from first user message
       let title = row.title || "";
       if (!title) {
-        try {
-          const msg = db
-            .prepare(
-              `SELECT content FROM messages
-               WHERE session_id = ? AND role = 'user' AND content IS NOT NULL
-               ORDER BY timestamp, id LIMIT 1`,
-            )
-            .get(row.id) as { content: string } | undefined;
-          title = msg
-            ? generateTitle(msg.content)
-            : t("sessions.newConversation", getAppLocale());
-        } catch {
-          title = t("sessions.newConversation", getAppLocale());
-        }
+        const preview = extractPreview(row.messages);
+        title = preview
+          ? generateTitle(preview)
+          : t("sessions.newConversation", getAppLocale());
       }
+
+      const startedAt = row.started_at
+        ? new Date(row.started_at).getTime()
+        : Date.now();
 
       newSessions.push({
         id: row.id,
         title,
-        startedAt: row.started_at,
-        source: row.source,
-        messageCount: row.message_count,
-        model: row.model || "",
+        startedAt,
+        source: "desktop",
+        messageCount: row.message_count || 0,
+        model: "",
       });
     }
 
-    // Merge: new sessions first (most recent), then existing
     const allSessions = [...newSessions, ...cache.sessions];
-    // Sort by startedAt descending
     allSessions.sort((a, b) => b.startedAt - a.startedAt);
 
     const updated: CacheData = {
@@ -173,15 +172,40 @@ export function listCachedSessions(
   return cache.sessions.slice(offset, offset + limit);
 }
 
-// Update title for a specific session
+// Update title in local cache only (sync)
 export function updateSessionTitle(
   sessionId: string,
   title: string,
-): void {
+): boolean {
   const cache = readCache();
-  const idx = cache.sessions.findIndex((s) => s.id === sessionId);
-  if (idx >= 0) {
-    cache.sessions[idx].title = title;
-    writeCache(cache);
+  const session = cache.sessions.find(s => s.id === sessionId);
+  if (!session) return false;
+  session.title = title;
+  writeCache(cache);
+  return true;
+}
+
+// Async variant that also calls gateway API
+export async function updateSessionTitleAsync(
+  sessionId: string,
+  title: string,
+): Promise<boolean> {
+  updateSessionTitle(sessionId, title);
+  try {
+    const http = require("http") as typeof import("http");
+    const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "8642", 10);
+    await new Promise<void>((resolve) => {
+      const req = http.request(
+        `http://127.0.0.1:${DRSAI_API_PORT}/v1/threads/${encodeURIComponent(sessionId)}/rename?name=${encodeURIComponent(title)}`,
+        { method: "POST", timeout: 5000 },
+        (res: any) => { res.resume(); resolve(); },
+      );
+      req.on("error", () => resolve());
+      req.on("timeout", () => { req.destroy(); resolve(); });
+      req.end();
+    });
+    return true;
+  } catch {
+    return true;
   }
 }
