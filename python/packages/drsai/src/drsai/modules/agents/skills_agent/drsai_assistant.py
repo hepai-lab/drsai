@@ -87,6 +87,11 @@ from .managers import (
 )
 from drsai.modules.components.skills import SkillLoader
 from drsai.utils.utils import download_file_from_url_or_base64, fix_and_parse_json
+from drsai.utils.tool_display import (
+    format_tools_usage_log_title,
+    sanitize_single_tool_result,
+    sanitize_tool_summary_packet,
+)
 from .managers.get_managers_tools import (
     get_agent_skills_tool,
     get_subagent_tools,
@@ -1588,7 +1593,7 @@ Complete the task and return a clear, concise summary."""
         yield tool_call_msg
         tools_name = [tool.name for tool in model_result.content]
         yield AgentLogEvent(
-            title="I am using tools: " + " ".join(tools_name),
+            title=format_tools_usage_log_title(tools_name),
             source=agent_name,
             content=str(tool_call_msg.content),
             content_type="tools")
@@ -1654,7 +1659,9 @@ Complete the task and return a clear, concise summary."""
                         content_type="tools"
                     )
                     yield ToolCallSummaryMessage(
-                        content=f"Skill for {arguments['skill']}:\n\n {skill_content}\n",
+                        content=sanitize_tool_summary_packet(
+                            f"Skill for {arguments['skill']}:\n\n {skill_content}\n"
+                        ),
                         source=agent_name,
                     )
                 except Exception as e:
@@ -2035,13 +2042,15 @@ Complete the task and return a clear, concise summary."""
                 tool_call_summary_format.format(
                     tool_name=tool_call.name,
                     arguments=tool_call.arguments,
-                    result=tool_call_result.content,
+                    result=sanitize_single_tool_result(tool_call_result.content),
                 )
             )
         tool_call_summary = "\n".join(tool_call_summaries)
         yield Response(
                 chat_message=ToolCallSummaryMessage(
-                    content="The results of execution:\n "+tool_call_summary+"\n",
+                    content=sanitize_tool_summary_packet(
+                        "The results of execution:\n " + tool_call_summary + "\n"
+                    ),
                     source=agent_name,
                 ),
                 inner_messages=inner_messages,

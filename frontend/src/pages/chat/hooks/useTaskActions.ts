@@ -432,18 +432,24 @@ export const useTaskActions = ({
         const outboundAgentId = resolveOutboundAgentId(effectiveAgentInfo as any);
         const { agent_id: _ignoredAgentId, ...settingsWithoutAgentId } =
           ((currentSettings as unknown) as Record<string, unknown>) || {};
+        const baseSettingsConfig: Record<string, unknown> = {
+          ...settingsWithoutAgentId,
+          ...(outboundAgentId ? { agent_id: outboundAgentId } : {}),
+          agent_mode_config: effectiveAgentInfo,
+          ...buildLlmPayload(llm, effectiveAgentInfo as Record<string, any>),
+        };
+        // Mirror CLI `--autonomous`: autonomous runs should not use cooperative planning.
+        const settings_config =
+          baseSettingsConfig.autonomous_execution === true
+            ? { ...baseSettingsConfig, cooperative_planning: false }
+            : baseSettingsConfig;
         const messageToSend = {
           type: "start",
           task: JSON.stringify(taskJson),
           metadata: {
             files: processedFiles,
             team_config: teamConfig,
-            settings_config: {
-              ...settingsWithoutAgentId,
-              ...(outboundAgentId ? { agent_id: outboundAgentId } : {}),
-              agent_mode_config: effectiveAgentInfo,
-              ...buildLlmPayload(llm, effectiveAgentInfo as Record<string, any>),
-            },
+            settings_config,
           },
         };
 

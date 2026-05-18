@@ -26,6 +26,9 @@ load_dotenv()
 # ENV
 ##########
 
+# 高能所内部助手：附加说明可从环境变量追加（多行文本）
+IHEP_AGENT_EXTRA_GUIDANCE = (os.getenv("IHEP_AGENT_EXTRA_GUIDANCE") or "").strip()
+
 RAGFLOW_URL=os.getenv('RAGFLOW_URL') or "https://ragflow.ihep.ac.cn"
 RAGFLOW_TOKEN=os.getenv('RAGFLOW_TOKEN')
 MEMORY_DATASET_ID=os.getenv('MEMORY_DATASET_ID')
@@ -122,8 +125,25 @@ def create_agent(
 
     SUB_AGENTS = {}
 
-    # SYSTEM = f"""You are a personal assistant."""
-    SYSTEM = None
+    _ihep_internal_core = """你是中国科学院高能物理研究所（高能所/IHEP）的内部办公助手，服务对象主要是所内职工与学生。
+
+**所内事务（务必引导查阅权威渠道，勿编造规章流程）**
+当用户询问人事、考勤薪酬、课题经费与报销、采购资产、安全保密、网络账号与信息化、会议室访客班车、研究生培养、图书馆文献、行政办事流程等所内专项问题时：
+1. 先简要说明你无法代替官方口径，具体以职能部门与现行文件为准。
+2. 给出清晰的可行动指引：应登录哪个系统或访问哪个栏目、联系哪个职能处室（办公室）、工单或咨询电话类型（若你不知道具体分机或网址，不要捏造；说明「请在所内门户搜索关键词或询问本部门综合办」）。
+3. 常用查阅方向（按主题举例，实际入口以所内门户/OA 为准）：
+   - 规章制度与通知公告：高能所官网公开栏目 + **所内信息门户/协同办公（OA）**
+   - ARP、科研项目与经费相关：**ARP / 科研管理系统**（名称以所内为准）
+   - 报销与财务制度：**财务处**通知及 OA 指引
+   - 人事人才与考勤：**人事处 / 人才办公室**相关栏目
+   - IT、邮箱、VPN、软件：**信息化或用户服务**渠道（工单/帮助文档）
+   - 文献与文献传递：**图书馆**
+   - 本助手挂载的知识检索（若已配置）：**RAGFlow / 知识库** `https://ragflow.ihep.ac.cn` — 适合检索所内文档类材料；仍应与 OA 发布的最新版核对。
+
+回答风格：简洁、条理分明；优先列出「去哪里看 / 找谁办 / 用什么系统」，再用一两句话补充注意事项即可。"""
+    SYSTEM = _ihep_internal_core
+    if IHEP_AGENT_EXTRA_GUIDANCE:
+        SYSTEM = f"{_ihep_internal_core}\n\n**本实例补充说明（运维配置）**\n{IHEP_AGENT_EXTRA_GUIDANCE}"
 
     defult_config_name = defult_config_name or "hepai/minimax-m2.7-highspeed"
     _, token_limit = llm_mode_config.get(defult_config_name)
@@ -168,22 +188,22 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册信息
-            agent_name="My Dr.Sai",
-            author = "xiongdb@ihep.ac.cn",
+            agent_name="IHEP_Internal_Assistant",
+            author = "ihep@ihep.ac.cn",
             # permission='groups: "drsai, payg"; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             # permission={
             #     "groups": "drsai, payg", 
             #     "users": [], 
             #     "owner": "admin"
             #     },
-            description = "专属于您的AI智能体❤",
+            description = "高能所内部办公助手：所内规章与办事流程等问题会提示你到 OA、职能处室或知识库查阅，不代替官方口径。",
             version = "0.1.0",
             logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
             examples=[
                 "/help",
-                "你有哪些技能？",
-                "我应该如何将openclaw作为我的子智能体？",
-                "如何设置定时任务？"
+                "差旅报销要去哪里看最新规定？",
+                "ARP 课题经费相关问题应该找谁？",
+                "所里 VPN 或邮箱用不了，一般怎么报修？",
             ],
             agent_config = llm_mode_config,
             defult_config_name="hepai/minimax-m2.7-highspeed",
@@ -191,7 +211,7 @@ if __name__ == "__main__":
             agent_factory=create_agent, 
             # 后端服务配置
             # controller_address = "http://127.0.0.1:42501",
-            port = 42858, 
+            port = 42810, 
             no_register=False,
             drsai_dir = DATASET,
             enable_openwebui_pipeline=False, 

@@ -580,8 +580,9 @@ const parseThinkTags = (
   }> = [];
   let currentIndex = 0;
 
-  // Regular expression to match complete <think>...</think> tags
-  const completeThinkRegex = /<think>(.*?)<\/think>/gs;
+  // Match `</think>` (streaming) or `</think>` (some persisted payloads).
+  const completeThinkRegex =
+    /<think>(.*?)<\/(?:think|redacted_thinking)>/gs;
   // Regular expression to match incomplete <think> tags (without closing tag)
   const incompleteThinkRegex = /<think>(.*)$/s;
 

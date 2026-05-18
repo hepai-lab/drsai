@@ -89,6 +89,11 @@ from drsai.modules.managers.messages.agent_messages import(
 )
 from drsai.modules.components.task_manager.base_task_system import TaskStatus
 from drsai.utils.utils import download_file_from_url_or_base64
+from drsai.utils.tool_display import (
+    format_tools_usage_log_title,
+    sanitize_single_tool_result,
+    sanitize_tool_summary_packet,
+)
 from drsai.configs.constant import FILE_DIR, DEFAULT_USERNAME
 from pathlib import Path
 
@@ -735,9 +740,9 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         inner_messages.append(tool_call_msg)
         logger.debug(tool_call_msg)
         yield tool_call_msg
-        tools_name = [tool.name for tool in model_result.content] 
+        tools_name = [tool.name for tool in model_result.content]
         yield AgentLogEvent(
-            title="I am using tools: " + " ".join(tools_name),
+            title=format_tools_usage_log_title(tools_name),
             source=agent_name, 
             content=str(tool_call_msg.content), 
             content_type="tools")
@@ -992,10 +997,10 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 tool_call_summary_format.format(
                     tool_name=tool_call.name,
                     arguments=tool_call.arguments,
-                    result=tool_call_result.content,
+                    result=sanitize_single_tool_result(tool_call_result.content),
                 )
             )
-        tool_call_summary = "\n".join(tool_call_summaries)
+        tool_call_summary = sanitize_tool_summary_packet("\n".join(tool_call_summaries))
 
         if tool_call_summary_prompt:
             # yield ModelClientStreamingChunkEvent(content="<think>\n", source=agent_name)
