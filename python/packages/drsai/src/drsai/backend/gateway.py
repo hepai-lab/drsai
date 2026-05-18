@@ -309,6 +309,11 @@ class UserNameRequest(BaseModel):
     user_name: str = Field(..., description="Custom user name for the desktop session.")
 
 
+class ContentRequest(BaseModel):
+    content: str = Field(..., description="File content to write")
+
+
+
 
 
 
@@ -1408,6 +1413,13 @@ def _get_skills_dir(user_id: str | None = None) -> Path:
     return Path(WORKDIR) / uid / "skills"
 
 
+def _get_config_dir(user_id: str | None = None) -> Path:
+    """Resolve the user config directory."""
+    from drsai.backend.run_drsai_agent_factory import WORKDIR
+    uid = user_id or _get_user_id()
+    return Path(WORKDIR) / uid / "configs"
+
+
 
 
 
@@ -1576,6 +1588,39 @@ def _parse_skill_frontmatter(content: str) -> tuple[str, str]:
 
 
     return name, description
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Config (AGENTS.md / user.md)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/v1/config/agents-md")
+async def get_agents_md(
+    user_id: str | None = Query(default=None),
+):
+    """Read AGENTS.md (SOUL) for the given user."""
+    cfg_dir = _get_config_dir(user_id)
+    agents_md = cfg_dir / "AGENTS.md"
+    if agents_md.exists():
+        content = agents_md.read_text(encoding="utf-8", errors="replace")
+        return {"content": content, "exists": True}
+    return {"content": "", "exists": False}
+
+
+@app.put("/v1/config/agents-md")
+async def put_agents_md(
+    req: ContentRequest,
+    user_id: str | None = Query(default=None),
+):
+    """Write AGENTS.md (SOUL) for the given user."""
+    cfg_dir = _get_config_dir(user_id)
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "AGENTS.md").write_text(req.content, encoding="utf-8")
+    return {"status": "ok"}
+
+
 
 
 
