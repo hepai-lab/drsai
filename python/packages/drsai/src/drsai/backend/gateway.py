@@ -1368,6 +1368,21 @@ async def stop_thread(
 
     return {"status": "stopped", "thread_id": thread_id}
 
+@app.post("/v1/threads/{thread_id}/rename")
+async def rename_thread(
+    thread_id: str,
+    user_id: str | None = Query(default=None),
+    name: str = Query(..., min_length=1, description="New session name"),
+):
+    """Rename a session thread."""
+    store = _get_store(user_id)
+    success = store.rename(thread_id, name)
+    if not success:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"status": "ok", "thread_id": thread_id, "name": name}
+
+
+
 
 
 
