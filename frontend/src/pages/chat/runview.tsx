@@ -1157,7 +1157,7 @@ const RunView: React.FC<RunViewProps> = ({
         {/* Thread Section */}
         <div
           ref={threadContainerRef}
-          className="w-full max-w-4xl mx-auto flex-1 min-h-0 overflow-y-auto scroll px-8 pt-4 pb-4"
+          className="w-full max-w-4xl mx-auto flex-1 min-h-0 overflow-y-auto scroll px-3 sm:px-6 lg:px-8 pt-4 pb-4"
         >
           {/* Inner wrapper observed by ResizeObserver — grows with streaming content */}
           <div ref={messagesContentRef}>
@@ -1304,7 +1304,7 @@ const RunView: React.FC<RunViewProps> = ({
         >
           {/* Fade gradient so content scrolls under smoothly */}
           <div className="absolute -top-8 left-0 right-0 h-8 pointer-events-none bg-gradient-to-t from-primary to-transparent" />
-          <div className="px-4 pb-3 pt-1 max-w-4xl mx-auto w-full">
+          <div className="px-3 sm:px-4 pb-3 pt-1 max-w-4xl mx-auto w-full">
             <ChatInput
               ref={chatInputRef}
               onSubmit={(

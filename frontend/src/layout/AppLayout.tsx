@@ -2,6 +2,7 @@ import { ConfigProvider, theme } from "antd";
 import "antd/dist/reset.css";
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { appContext } from "../hooks/provider";
+import { useIsCompactLayout } from "../hooks/useMediaQuery";
 import TopNav from "./TopNav";
 import LeftMenu from "./LeftMenu";
 import Canvas from "./Canvas";
@@ -36,23 +37,16 @@ interface AppLayoutProps {
 }
 
 const AppLayout: React.FC<AppLayoutProps> = ({
-  // TopNav
   isSidebarOpen,
   onToggleSidebar,
-
-  // LeftMenu
   activeSubMenuItem,
   activeMenuLabel,
   onSubMenuChange,
   showUsageAnalyticsNav = false,
-
-  // RightPanel
   rightPanelWidth = 380,
   rightPanelHistory,
   rightPanelFiles,
   onRightPanelTabChange,
-
-  // Canvas
   children,
   canvasActiveView,
   onCanvasViewChange,
@@ -61,7 +55,9 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   showNewSessionButton = false,
 }) => {
   const { darkMode } = useContext(appContext);
+  const isCompact = useIsCompactLayout();
   const rightPanelIsOpen = useRightPanelStore((s) => s.isOpen);
+  const setRightPanelOpen = useRightPanelStore((s) => s.setIsOpen);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -165,6 +161,36 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       darkMode === "dark" ? "dark bg-primary" : "light bg-primary";
   }, [darkMode]);
 
+  const panelShellClass =
+    darkMode === "dark"
+      ? "bg-[#0d1117]/72 backdrop-blur-md shadow-modern-lg"
+      : "bg-white/90 border border-gray-200/70 backdrop-blur-md";
+
+  const leftMenu = (
+    <LeftMenu
+      isSidebarOpen={isCompact ? true : isSidebarOpen}
+      activeSubMenuItem={activeSubMenuItem}
+      onSubMenuChange={onSubMenuChange}
+      onClose={onToggleSidebar}
+      showUsageAnalyticsNav={showUsageAnalyticsNav}
+    />
+  );
+
+  const rightPanel = (
+    <RightPanel
+      isCompact={isCompact}
+      width={isCompact ? undefined : rightWidth}
+      historyContent={rightPanelHistory}
+      filesContent={rightPanelFiles}
+      onTabChange={onRightPanelTabChange}
+    />
+  );
+
+  const openRightPanel = () => {
+    if (isCompact && isSidebarOpen) onToggleSidebar();
+    setRightPanelOpen(true);
+  };
+
   return (
     <ConfigProvider
       theme={{
@@ -172,66 +198,67 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           borderRadius: 12,
           colorBgBase: darkMode === "dark" ? "#0d1117" : "#ffffff",
         },
-        algorithm:
-          darkMode === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
+        algorithm: darkMode === "dark" ? theme.darkAlgorithm : theme.defaultAlgorithm,
       }}
     >
       <div className="h-screen flex flex-col bg-primary overflow-hidden relative">
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <div
-            className={`absolute -top-24 -left-20 h-72 w-72 rounded-full blur-3xl ${darkMode === "dark" ? "bg-violet-500/10" : "bg-violet-400/20"
-              }`}
+            className={`absolute -top-24 -left-20 h-72 w-72 rounded-full blur-3xl ${
+              darkMode === "dark" ? "bg-violet-500/10" : "bg-violet-400/20"
+            }`}
           />
           <div
-            className={`absolute -bottom-28 right-6 h-80 w-80 rounded-full blur-3xl ${darkMode === "dark" ? "bg-blue-500/10" : "bg-cyan-300/25"
-              }`}
+            className={`absolute -bottom-28 right-6 h-80 w-80 rounded-full blur-3xl ${
+              darkMode === "dark" ? "bg-blue-500/10" : "bg-cyan-300/25"
+            }`}
           />
         </div>
-        {/* Top: Navigation */}
-        <TopNav
-          isSidebarOpen={isSidebarOpen}
-          onToggleSidebar={onToggleSidebar}
-        />
 
-        {/* Bottom: three columns */}
-        <div ref={containerRef} className="flex-1 flex overflow-hidden p-2 gap-2 relative z-10">
-          {/* Left: menu */}
-          <div
-            className={`flex-shrink-0 h-full transition-all duration-300 overflow-hidden shadow-modern ${isSidebarOpen ? "rounded-2xl" : "rounded-lg"
-              } ${darkMode === "dark"
-                ? "bg-[#0d1117]/72 backdrop-blur-md shadow-modern-lg"
-                : "bg-white/90 border border-gray-200/70 backdrop-blur-md"
-              }`}
-            style={{ width: isSidebarOpen ? leftWidth : sizes.left.collapsed }}
-          >
-            <LeftMenu
-              isSidebarOpen={isSidebarOpen}
-              activeSubMenuItem={activeSubMenuItem}
-              onSubMenuChange={onSubMenuChange}
-              onClose={onToggleSidebar}
-              showUsageAnalyticsNav={showUsageAnalyticsNav}
-            />
-          </div>
+        <TopNav isSidebarOpen={isSidebarOpen} onToggleSidebar={onToggleSidebar} />
 
-          {/* Drag handle: left */}
-          {isSidebarOpen && (
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="调整左侧栏宽度"
-              onPointerDown={(e) => beginDrag(e, "left")}
-              className={`w-1 rounded-full transition-colors ${darkMode === "dark" ? "bg-white/5 hover:bg-white/12" : "bg-gray-200/60 hover:bg-gray-300/80"
-                }`}
-              style={{ cursor: "col-resize", touchAction: "none" }}
-            />
+        <div
+          ref={containerRef}
+          className={`flex-1 flex overflow-hidden relative z-10 ${
+            isCompact ? "p-1 gap-0" : "p-2 gap-2"
+          }`}
+        >
+          {/* Left: desktop inline */}
+          {!isCompact && (
+            <>
+              <div
+                className={`flex-shrink-0 h-full transition-all duration-300 overflow-hidden shadow-modern ${
+                  isSidebarOpen ? "rounded-2xl" : "rounded-lg"
+                } ${panelShellClass}`}
+                style={{ width: isSidebarOpen ? leftWidth : sizes.left.collapsed }}
+              >
+                {leftMenu}
+              </div>
+
+              {isSidebarOpen && (
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="调整左侧栏宽度"
+                  onPointerDown={(e) => beginDrag(e, "left")}
+                  className={`w-1 rounded-full transition-colors ${
+                    darkMode === "dark"
+                      ? "bg-white/5 hover:bg-white/12"
+                      : "bg-gray-200/60 hover:bg-gray-300/80"
+                  }`}
+                  style={{ cursor: "col-resize", touchAction: "none" }}
+                />
+              )}
+            </>
           )}
 
           {/* Center: canvas */}
           <div
-            className={`flex-1 min-w-0 rounded-2xl shadow-modern overflow-hidden ${darkMode === "dark"
+            className={`flex-1 min-w-0 rounded-2xl shadow-modern overflow-hidden ${
+              darkMode === "dark"
                 ? "bg-[#0d1117]/70 backdrop-blur-md shadow-modern-lg"
                 : "bg-white/85 border border-gray-200/70 backdrop-blur-md"
-              }`}
+            }`}
           >
             <Canvas
               activeView={canvasActiveView}
@@ -240,32 +267,69 @@ const AppLayout: React.FC<AppLayoutProps> = ({
               filePreviewContent={canvasFilePreviewContent}
               onNewSession={onNewSession}
               showNewSessionButton={showNewSessionButton}
+              showRightPanelToggle={isCompact && !rightPanelIsOpen}
+              onOpenRightPanel={openRightPanel}
             >
               {children}
             </Canvas>
           </div>
 
-          {/* Drag handle: right */}
-          {rightPanelIsOpen && (
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="调整右侧栏宽度"
-              onPointerDown={(e) => beginDrag(e, "right")}
-              className={`w-1 rounded-full transition-colors ${darkMode === "dark" ? "bg-white/5 hover:bg-white/12" : "bg-gray-200/60 hover:bg-gray-300/80"
-                }`}
-              style={{ cursor: "col-resize", touchAction: "none" }}
-            />
+          {/* Right: desktop inline */}
+          {!isCompact && (
+            <>
+              {rightPanelIsOpen && (
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label="调整右侧栏宽度"
+                  onPointerDown={(e) => beginDrag(e, "right")}
+                  className={`w-1 rounded-full transition-colors ${
+                    darkMode === "dark"
+                      ? "bg-white/5 hover:bg-white/12"
+                      : "bg-gray-200/60 hover:bg-gray-300/80"
+                  }`}
+                  style={{ cursor: "col-resize", touchAction: "none" }}
+                />
+              )}
+              {rightPanel}
+            </>
           )}
-
-          {/* Right: panel — isOpen controlled by useRightPanelStore */}
-          <RightPanel
-            width={rightWidth}
-            historyContent={rightPanelHistory}
-            filesContent={rightPanelFiles}
-            onTabChange={onRightPanelTabChange}
-          />
         </div>
+
+        {/* Left: compact drawer */}
+        {isCompact && isSidebarOpen && (
+          <>
+            <button
+              type="button"
+              aria-label="关闭导航菜单"
+              className="fixed inset-0 top-12 lg:top-14 z-40 bg-black/50"
+              onClick={onToggleSidebar}
+            />
+            <div
+              className={`fixed top-12 lg:top-14 left-0 bottom-0 z-50 w-[min(280px,85vw)] overflow-hidden shadow-modern rounded-r-2xl ${panelShellClass}`}
+            >
+              {leftMenu}
+            </div>
+          </>
+        )}
+
+        {/* Right: compact drawer */}
+        {isCompact && rightPanelIsOpen && (
+          <>
+            <button
+              type="button"
+              aria-label="关闭侧面板"
+              className="fixed inset-0 top-12 lg:top-14 z-40 bg-black/50"
+              onClick={() => setRightPanelOpen(false)}
+            />
+            <div
+              className={`fixed top-12 lg:top-14 right-0 bottom-0 z-50 w-[min(100%,420px)] overflow-hidden shadow-modern rounded-l-2xl ${panelShellClass}`}
+            >
+              {rightPanel}
+            </div>
+          </>
+        )}
+
       </div>
     </ConfigProvider>
   );

@@ -165,3 +165,24 @@
     width: 10px;
     background-color: var(--color-border-secondary);
 }
+
+@media (max-width: 1023px) {
+    .orchestrator-message {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .orchestrator-left-column,
+    .orchestrator-right-column {
+        width: 100%;
+        flex-shrink: 1;
+        border-right: none;
+        padding-right: 0;
+        padding-left: 0;
+    }
+
+    .orchestrator-right-column {
+        padding-top: 0.75rem;
+        border-top: 1px solid var(--color-border-secondary);
+    }
+}
