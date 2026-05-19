@@ -101,65 +101,18 @@ def _mark_featured_and_default_agents(agents: List[Dict[str, Any]]) -> None:
 def get_agent_mode_config(
         user_id: str,
 ) -> list[dict[str, str]]:
-    return [
-      {
-            "name": "Dr.Sai General",
-            "description": "A general assistant for PDF QA, writing code, implementing features, and fixing bugs.",
-            "version": "0.1.0",
-            "author": "xiongdb@ihep.ac.cn",
-            "logo": "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
-            "examples": [
-                  "你有什么技能，如何下载新技能?",
-                  "如何配置自己的子智能体，如何使用子智能体。",
-                  "如何构建自己的RAGFlow知识库，并不断更新自己的知识库？",
-            ],
-            "agent_config": {
-                  "claude-sonnet-4-6(High)": "anthropic/claude-sonnet-4-6",
-                  "claude-haiku-4-5(Fast)": "anthropic/claude-haiku-4-5",
-                  "minimax-m2.5": "minimax/minimax-m2.5",
-                  "minimax-m2.5-highspeed": "minimax/minimax-m2.5-highspeed",
-                  "minimax-m2.7": "minimax/minimax-m2.7",
-                  "minimax-m2.7-highspeed": "minimax/minimax-m2.7-highspeed",
-                  "gpt-4o": "openai/gpt-4o",
-                  "gpt-4.1": "openai/gpt-4.1",
-                  "gpt-5.2": "openai/gpt-5.2",
-                  "deepseek-r1(No image)": "deepseek-ai/deepseek-r1",
-                  "deepseek-v3.2(No image)": "deepseek-ai/deepseek-v3.2",
-            },
-            "default_config_name": "deepseek-v3.2(No image)",
-            "mode": "ddf",
-            "owner": "xiongdb@ihep.ac.cn",
-            "id": "eab8c9e8-e5be-4bb2-9dd8-0fdc6938e357",
-            "config": {
-                  "name": "Dr.Sai General",
-                  "url": "https://aiapi.ihep.ac.cn/apiv2",
-            },
-            "featured": True,
-            "is_default": True,
-      },
-      { 
-            "id": "010022126sdfnjsdnqw",
-            "mode": "magentic-one", 
-            "name": "Dr.Sai WebSurfer",
-            "description": "Dr.Sai网页浏览智能体，适用于自动操控网页、文件等任务。", 
-            "config":{}, 
-            "type": "default", 
-            "examples": ["Search arXiv for the latest papers on computer use agents","检索arXiv上关于计算机使用智能体的最新进展",]
-      },
-      {
-            "id": "121532415mlnmjhg",
-            "mode": "besiii", 
-            "name": "Dr.Sai BESIII", 
-            "description": "BESIII实验专用智能体，专为高能物理实验优化", 
-            "config":{}, 
-            "type": "default", 
-            "examples": [
-                  "帮我测量psi(4260) -> pi+ pi- [J/psi -> mu+ mu-]过程在4.26 GeV能量点上的截面，并且绘制Jpsi（mumu）的不变质量。先规划后执行。",
-                  "帮我测量Psip -> pi+ pi- [J/psi -> Lambda Lambdabar]过程在3.686GeV能量点上的截面,并且绘制Lambda的能量分布。先规划后执行。",
-                  "帮我测量Jpsi to eta [phi -> K+ K-]过程在3.097 GeV能量点上的截面,并且绘制eta的动量分布。先规划后执行。",]
-           
-      },
-    ]
+    """
+    Legacy built-in agent pack (General / WebSurfer / BESIII) is disabled.
+
+    The catalog for /user_agents/list is built from:
+    - DEFAULT_REMOTE_AGENTS JSON (if set), else nothing here;
+    - platform DDF agents (get_ddf_agents);
+    - user remote/custom agents.
+
+    To ship a fixed starter list, use the DEFAULT_REMOTE_AGENTS file or register
+    workers on the HepAI platform instead of hard-coding builtins.
+    """
+    return []
 
 
 def get_default_agent_mode_config(user_id: str) -> List[Dict[str, Any]]:

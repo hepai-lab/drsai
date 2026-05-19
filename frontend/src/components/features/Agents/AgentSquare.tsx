@@ -433,7 +433,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     return () => window.removeEventListener("drsai:recentAgentsUpdated", handler as EventListener);
   }, [readRecentAgentIds, syncRecentFromServer, user?.email]);
 
-  // 新用户默认：后端个人显式默认(stored_default_agent_id) > 组织默认 > 列表偏好
+  // 仅当用户/组织显式默认存在时自动写入 agentId；否则留空，由用户在智能体广场选择
   useEffect(() => {
     if (agentId) return;
     if (!agentList.length) return;

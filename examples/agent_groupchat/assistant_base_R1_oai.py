@@ -154,7 +154,7 @@ if __name__ == "__main__":
             # 智能体给前端展示的描述信息
             version = "0.1.0",
             # 智能体logo图像的url，使用git源码安装的目前支持png/jpg的logo_path
-            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-a510f20c6c9d4443a582ad5b1dcc8f51/preview",
             # 智能体实体
             agent_factory=create_agent, 
             # 智能体数据库地址
@@ -163,7 +163,7 @@ if __name__ == "__main__":
             # base_dir = "/home/xiongdb/drsai_dev/examples/cli/tmp/drsai", 
             # drsai_dir = "/home/xiongdb/drsai_dev/examples/cli/tmp/drsai", 
             # 后端服务端口
-            port = 42815, 
+            port = 42810, 
             # 是否注册到HepAI智能体平台
             no_register=False,
             # 为了节约资源，是否在前端关闭智能体/页面后后端的智能体实例清除

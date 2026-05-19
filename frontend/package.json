@@ -1,6 +1,6 @@
 {
   "name": "open-drsai",
-  "version": "1.2.40",
+  "version": "1.2.41",
   "private": true,
   "description": "Dr.Sai",
   "author": "HepAI",
@@ -40,6 +40,7 @@
     "antd": "^5.22.1",
     "autoprefixer": "^10.4.20",
     "docx-preview": "0.3.7",
+    "echarts": "5.6.0",
     "gatsby": "^5.14.0",
     "gatsby-plugin-image": "^3.14.0",
     "gatsby-plugin-manifest": "^5.14.0",

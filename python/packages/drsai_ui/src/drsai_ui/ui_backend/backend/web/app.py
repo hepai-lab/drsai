@@ -17,6 +17,7 @@ from .config import settings
 from .deps import cleanup_managers, init_managers
 from .initialization import AppInitializer
 from .routes import (
+    admin_analytics,
     plans,
     runs,
     sessions,
@@ -225,6 +226,13 @@ api.include_router(
     prefix="/orgs",
     tags=["organizations"],
     responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    admin_analytics.router,
+    prefix="/admin/analytics",
+    tags=["admin-analytics"],
+    responses={403: {"description": "Forbidden"}},
 )
 
 api.include_router(

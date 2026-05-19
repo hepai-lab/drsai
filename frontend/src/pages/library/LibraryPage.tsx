@@ -8,7 +8,10 @@ import officePptIcon from "@/assets/file-icons/office-ppt.svg";
 import officeTxtIcon from "@/assets/file-icons/office-txt.svg";
 import { Button, Modal, message } from "antd";
 import {
+  ArrowDownAZ,
+  ArrowUpAZ,
   Check,
+  Copy,
   Download,
   FileArchive,
   FileAudio2,
@@ -17,13 +20,13 @@ import {
   FileSpreadsheet,
   FileText,
   FileVideo2,
+  FolderOpen,
   LayoutGrid,
   List,
   Loader2,
   MessageSquare,
   Search,
   Send,
-  SlidersHorizontal,
   Trash2,
   Upload,
   X,
@@ -31,8 +34,288 @@ import {
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 type ViewMode = "grid" | "list";
+type SortOrder = "asc" | "desc";
 
-function formatSize(bytes: number): string {
+function FileTypeIcon({
+  Icon,
+  iconSrc,
+  toneCls,
+  className = "w-7 h-7",
+}: {
+  Icon?: React.ComponentType<{ className?: string }>;
+  iconSrc?: string;
+  toneCls: { wrap: string; icon: string };
+  className?: string;
+}) {
+  const IconComponent = Icon ?? FileText;
+  return iconSrc ? (
+    <img src={iconSrc} alt="" className={`${className} object-contain`} />
+  ) : (
+    <IconComponent className={`${className} ${toneCls.icon}`} />
+  );
+}
+
+function LibraryImagePreview({
+  src,
+  onOpen,
+  isDark,
+}: {
+  src: string;
+  onOpen: () => void;
+  isDark: boolean;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+      title="点击查看完整预览"
+      className={`group/preview relative block w-full overflow-hidden rounded-xl border outline-none transition-all focus-visible:ring-2 focus-visible:ring-accent/40 ${
+        isDark
+          ? "border-white/10 bg-black/25 hover:border-accent/30"
+          : "border-[#e8eaf0] bg-[#f4f6fa] hover:border-[#cfc0e8]"
+      }`}
+    >
+      <div className="aspect-[4/3] w-full">
+        {!failed ? (
+          <img
+            src={src}
+            alt=""
+            loading="lazy"
+            onError={() => setFailed(true)}
+            className="h-full w-full object-cover transition-transform duration-300 group-hover/preview:scale-[1.03]"
+          />
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-secondary">
+            <FileImage className="h-8 w-8 opacity-40" aria-hidden />
+            <span className="text-[11px] opacity-70">预览不可用</span>
+          </div>
+        )}
+      </div>
+      <span
+        className={`pointer-events-none absolute inset-x-0 bottom-0 px-2 py-1.5 text-[10px] font-medium tracking-wide opacity-0 transition-opacity group-hover/preview:opacity-100 ${
+          isDark ? "bg-gradient-to-t from-black/70 to-transparent text-white/90" : "bg-gradient-to-t from-black/55 to-transparent text-white"
+        }`}
+      >
+        查看大图
+      </span>
+    </button>
+  );
+}
+
+interface LibraryFileCardProps {
+  file: ServerUploadedFileInfo;
+  userId: string;
+  isDark: boolean;
+  isSelected: boolean;
+  onToggleSelect: () => void;
+  onCopyLink: () => void;
+  onOpenImage: (src: string, name: string) => void;
+}
+
+function LibraryFileGridCard({
+  file,
+  userId,
+  isDark,
+  isSelected,
+  onToggleSelect,
+  onCopyLink,
+  onOpenImage,
+}: LibraryFileCardProps) {
+  const { Icon, iconSrc, tone } = getFileVisual(file.suffix, file.name);
+  const toneCls = getFileToneClasses(tone, isDark);
+  const imagePreviewSrc = libraryImagePreviewSrc(file, userId);
+
+  return (
+    <div
+      tabIndex={0}
+      onClick={onToggleSelect}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggleSelect();
+        }
+      }}
+      aria-label={`选择文件 ${file.name}`}
+      aria-pressed={isSelected}
+      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-[18px] border text-left outline-none transition-all duration-200 focus-visible:ring-2 focus-visible:ring-accent/35 hover:-translate-y-px ${
+        isSelected
+          ? isDark
+            ? "border-accent/50 bg-accent/10 shadow-[0_0_0_1px_rgba(167,139,250,0.18)_inset,0_12px_28px_rgba(0,0,0,0.28)]"
+            : "border-accent/45 bg-accent/[0.06] shadow-[0_0_0_1px_rgba(167,139,250,0.16)_inset,0_12px_24px_rgba(52,61,88,0.08)]"
+          : isDark
+            ? "border-[#433a5e] bg-[rgba(167,139,250,0.08)] shadow-[0_8px_20px_rgba(0,0,0,0.22)] hover:border-[#5a4f7a] hover:shadow-[0_14px_28px_rgba(0,0,0,0.3)]"
+            : "border-[#ddd3ef] bg-[#fafafe] shadow-[0_6px_16px_rgba(43,51,72,0.035)] hover:border-[#cfc0e8] hover:shadow-[0_12px_24px_rgba(52,61,88,0.065)]"
+      }`}
+    >
+      <span
+        className={`absolute right-2.5 top-2.5 z-10 flex h-6 w-6 items-center justify-center rounded-full transition-all ${
+          isSelected
+            ? "scale-100 bg-accent text-white opacity-100 shadow-sm"
+            : "scale-90 border border-white/70 bg-white/85 text-transparent opacity-0 group-hover:scale-100 group-hover:opacity-100 dark:border-white/20 dark:bg-black/50"
+        }`}
+        aria-hidden
+      >
+        <Check className="h-3.5 w-3.5" strokeWidth={3} />
+      </span>
+
+      <div className="p-3 pb-2">
+        {imagePreviewSrc ? (
+          <LibraryImagePreview
+            src={imagePreviewSrc}
+            isDark={isDark}
+            onOpen={() => onOpenImage(imagePreviewSrc, file.name)}
+          />
+        ) : (
+          <div
+            className={`flex aspect-[4/3] w-full items-center justify-center rounded-xl border ${toneCls.wrap}`}
+          >
+            <FileTypeIcon Icon={Icon} iconSrc={iconSrc} toneCls={toneCls} className="h-10 w-10" />
+          </div>
+        )}
+      </div>
+
+      <div
+        className={`mt-auto border-t px-3 py-2.5 ${
+          isDark ? "border-white/8" : "border-[#ebe7f1]"
+        }`}
+      >
+        <div className="truncate text-sm font-medium text-primary" title={file.name}>
+          {file.name}
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          <span
+            className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
+              isDark ? "bg-white/8 text-secondary" : "bg-[#f1eef7] text-[#6b6680]"
+            }`}
+          >
+            {extLabel(file.suffix, file.name)}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-xs text-secondary">
+            {formatSize(file.size)}
+          </span>
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-secondary opacity-0 outline-none transition-all hover:bg-tertiary/35 hover:text-primary focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent/35 group-hover:opacity-100"
+            title="复制文件链接"
+            aria-label="复制文件链接"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCopyLink();
+            }}
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LibraryFileListRow({
+  file,
+  userId,
+  isDark,
+  isSelected,
+  onToggleSelect,
+  onCopyLink,
+  onOpenImage,
+}: LibraryFileCardProps) {
+  const { Icon, iconSrc, tone } = getFileVisual(file.suffix, file.name);
+  const toneCls = getFileToneClasses(tone, isDark);
+  const imagePreviewSrc = libraryImagePreviewSrc(file, userId);
+
+  return (
+    <div
+      tabIndex={0}
+      onClick={onToggleSelect}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggleSelect();
+        }
+      }}
+      aria-label={`选择文件 ${file.name}`}
+      aria-pressed={isSelected}
+      className={`group flex w-full cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-left outline-none transition-all duration-200 focus-visible:ring-2 focus-visible:ring-accent/35 ${
+        isSelected
+          ? isDark
+            ? "border-accent/50 bg-accent/10"
+            : "border-accent/45 bg-accent/[0.06]"
+          : isDark
+            ? "border-[#433a5e] bg-[rgba(167,139,250,0.06)] hover:border-[#5a4f7a] hover:bg-[rgba(167,139,250,0.1)]"
+            : "border-[#e7e7ef] bg-white hover:border-[#ddd3ef] hover:bg-[#fafafe]"
+      }`}
+    >
+      <span
+        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${
+          isSelected ? "bg-accent text-white shadow-sm" : "border border-primary/25 bg-tertiary/15 text-transparent"
+        }`}
+        aria-hidden
+      >
+        <Check className="h-3.5 w-3.5" strokeWidth={3} />
+      </span>
+
+      {imagePreviewSrc ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenImage(imagePreviewSrc, file.name);
+          }}
+          title="点击查看完整预览"
+          className={`inline-flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/40 ${toneCls.wrap}`}
+        >
+          <img
+            src={imagePreviewSrc}
+            alt=""
+            loading="lazy"
+            className="h-full w-full object-cover"
+          />
+        </button>
+      ) : (
+        <span
+          className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border ${toneCls.wrap}`}
+        >
+          <FileTypeIcon Icon={Icon} iconSrc={iconSrc} toneCls={toneCls} className="h-5 w-5" />
+        </span>
+      )}
+
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-medium text-primary" title={file.name}>
+          {file.name}
+        </div>
+        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-secondary">
+          <span>{extLabel(file.suffix, file.name)}</span>
+          <span aria-hidden>·</span>
+          <span>{formatSize(file.size)}</span>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-secondary opacity-0 outline-none transition-all hover:bg-tertiary/35 hover:text-primary focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent/35 group-hover:opacity-100"
+        title="复制文件链接"
+        aria-label="复制文件链接"
+        onClick={(e) => {
+          e.stopPropagation();
+          onCopyLink();
+        }}
+      >
+        <Copy className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function formatSize(bytes: number | undefined | null): string {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -50,6 +333,30 @@ function normalizeExt(suffix: string | undefined, name: string): string {
   if (suffix && suffix.length > 0) return suffix.replace(/^\./, "").toLowerCase();
   const m = /\.([^.]+)$/.exec(name);
   return m ? m[1].toLowerCase() : "";
+}
+
+/** 文件可访问地址：与「下载」一致，优先已有 url，否则拼接后端下载地址。 */
+function libraryFileAddress(
+  f: ServerUploadedFileInfo,
+  userId: string
+): string | null {
+  const u = f.url?.trim();
+  if (u) return u;
+  if (userId && f.uuid) return fileAPI.getDownloadUrl(userId, f.uuid);
+  return null;
+}
+
+/** 网格/列表内联缩略图 URL（图片类型）。 */
+function libraryImagePreviewSrc(
+  f: { suffix: string; name: string; uuid: string; url?: string },
+  userId: string
+): string | null {
+  const ext = normalizeExt(f.suffix, f.name);
+  if (!["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"].includes(ext)) return null;
+  const u = f.url?.trim();
+  if (u) return u;
+  if (userId && f.uuid) return fileAPI.getDownloadUrl(userId, f.uuid);
+  return null;
 }
 
 function getFileVisual(suffix: string | undefined, name: string): {
@@ -267,7 +574,11 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const [chatModalOpen, setChatModalOpen] = useState(false);
+  const [imageLightbox, setImageLightbox] = useState<{ src: string; name: string } | null>(
+    null
+  );
   const uploadRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -300,10 +611,11 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
   }, [items, query]);
 
   const sorted = useMemo(() => {
-    return [...filtered].sort((a, b) =>
-      (a.name || "").localeCompare(b.name || "", "zh-CN")
-    );
-  }, [filtered]);
+    return [...filtered].sort((a, b) => {
+      const cmp = (a.name || "").localeCompare(b.name || "", "zh-CN");
+      return sortOrder === "asc" ? cmp : -cmp;
+    });
+  }, [filtered, sortOrder]);
 
   const toggleSelect = (uuid: string) => {
     setSelected((prev) => {
@@ -373,25 +685,68 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
     });
   };
 
+  const copyLibraryFileAddress = useCallback(async (f: ServerUploadedFileInfo) => {
+    const addr = libraryFileAddress(f, userId);
+    if (!addr) {
+      message.warning("无法获取文件链接");
+      return;
+    }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(addr);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = addr;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      message.success("已复制文件链接");
+    } catch {
+      message.error("复制失败");
+    }
+  }, [userId]);
+
   const handleChatSubmit = (chatQuery: string) => {
     setChatModalOpen(false);
     onStartChat(selectedFiles, chatQuery);
   };
 
-  const cardBase =
-    "border border-primary/50 rounded-lg bg-tertiary/10 dark:bg-white/[0.03] shadow-sm";
-  const cardHover = "hover:bg-tertiary/25 dark:hover:bg-white/[0.06] hover:border-accent/30";
-
-  const iconToggle = "p-2 text-secondary transition-colors hover:text-primary hover:bg-tertiary/30 rounded-md";
+  const iconToggle =
+    "p-2 text-secondary transition-colors hover:text-primary hover:bg-tertiary/30 rounded-md";
   const iconToggleActive = "bg-accent/15 text-accent";
+
+  const fileCardProps = (f: ServerUploadedFileInfo) => ({
+    file: f,
+    userId,
+    isDark,
+    isSelected: selected.has(f.uuid),
+    onToggleSelect: () => toggleSelect(f.uuid),
+    onCopyLink: () => void copyLibraryFileAddress(f),
+    onOpenImage: (src: string, name: string) => setImageLightbox({ src, name }),
+  });
 
   return (
     <>
-      <div className="h-full min-h-0 flex flex-col p-4 bg-primary text-primary">
+      <div className="h-full min-h-0 flex flex-col bg-primary p-4 text-primary sm:p-5">
         <div className="flex-shrink-0 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
           <div className="min-w-0">
-            <div className="text-base font-medium text-primary">库</div>
-            <div className="text-sm text-secondary mt-0.5">管理上传文件；选中后可发起对话或下载。</div>
+            <div className="text-base font-semibold tracking-[-0.01em] text-primary">库</div>
+            <div className="mt-0.5 text-sm text-secondary">
+              管理上传文件；选中后可发起对话或下载。
+            </div>
+            {!loading && (
+              <div className="mt-1 text-xs text-secondary/80">
+                {items.length === 0
+                  ? "暂无文件"
+                  : query.trim()
+                    ? `共 ${items.length} 个文件 · 匹配 ${sorted.length} 个`
+                    : `共 ${items.length} 个文件`}
+              </div>
+            )}
           </div>
           <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-end min-w-0">
             <div className="relative flex-1 sm:max-w-xs min-w-[180px]">
@@ -420,146 +775,119 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
           />
         </div>
 
-        <div className="flex-shrink-0 mt-3 pb-3 flex flex-wrap items-center gap-2 border-b border-primary/30">
-          {selected.size > 0 ? (
-            <>
-              <Button
-                type="primary"
-                htmlType="button"
-                onClick={() => setChatModalOpen(true)}
-                icon={<MessageSquare className="w-4 h-4" />}
-              >
-                开始聊天
-              </Button>
-              <Button htmlType="button" onClick={() => void handleDownload()} icon={<Download className="w-4 h-4" />}>
-                下载
-              </Button>
-              <Button
-                color="danger"
-                variant="outlined"
-                htmlType="button"
-                onClick={handleRemove}
-                icon={<Trash2 className="w-4 h-4" />}
-                className="!border-[var(--color-error-primary)] !text-[var(--color-error-primary)] hover:!text-[var(--color-error-primary)] hover:!border-[var(--color-error-primary)]"
-              >
-                删除
-              </Button>
-              <span className="ml-auto text-sm text-secondary">已选 {selected.size} 个</span>
-            </>
-          ) : (
-            <div className="flex-1 min-w-[1px]" aria-hidden />
-          )}
-          <button
-            type="button"
-            title="排序（按名称）"
-            className={iconToggle}
-            onClick={() => message.info("当前按名称排序")}
+        {selected.size > 0 ? (
+          <div
+            className={`mt-3 flex flex-shrink-0 flex-wrap items-center gap-2 rounded-xl border px-3 py-2.5 ${
+              isDark
+                ? "border-accent/25 bg-accent/10"
+                : "border-accent/20 bg-accent/[0.05]"
+            }`}
           >
-            <SlidersHorizontal className="w-4 h-4" />
-          </button>
-          <div className="flex rounded-lg border border-primary/40 bg-tertiary/10 dark:bg-white/[0.03] overflow-hidden p-0.5 gap-0.5">
+            <span className="mr-1 text-sm font-medium text-primary">已选 {selected.size} 个</span>
+            <Button
+              type="primary"
+              htmlType="button"
+              size="small"
+              onClick={() => setChatModalOpen(true)}
+              icon={<MessageSquare className="w-4 h-4" />}
+            >
+              开始聊天
+            </Button>
+            <Button
+              htmlType="button"
+              size="small"
+              onClick={() => void handleDownload()}
+              icon={<Download className="w-4 h-4" />}
+            >
+              下载
+            </Button>
+            <Button
+              color="danger"
+              variant="outlined"
+              htmlType="button"
+              size="small"
+              onClick={handleRemove}
+              icon={<Trash2 className="w-4 h-4" />}
+              className="!border-[var(--color-error-primary)] !text-[var(--color-error-primary)] hover:!text-[var(--color-error-primary)] hover:!border-[var(--color-error-primary)]"
+            >
+              删除
+            </Button>
+            <Button
+              htmlType="button"
+              size="small"
+              onClick={() => setSelected(new Set())}
+              icon={<X className="w-4 h-4" />}
+            >
+              取消
+            </Button>
+          </div>
+        ) : null}
+
+        <div className="mt-3 flex flex-shrink-0 flex-wrap items-center gap-2 border-b border-primary/30 pb-3">
+          <div className="text-xs font-semibold tracking-wide text-secondary">
+            {query.trim() ? "搜索结果" : "全部文件"}
+          </div>
+          <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
-              title="网格"
-              onClick={() => setViewMode("grid")}
-              className={`${iconToggle} rounded-md ${viewMode === "grid" ? iconToggleActive : ""}`}
+              title={sortOrder === "asc" ? "按名称升序" : "按名称降序"}
+              className={`${iconToggle} inline-flex items-center gap-1.5 px-2.5`}
+              onClick={() => setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
             >
-              <LayoutGrid className="w-4 h-4" />
+              {sortOrder === "asc" ? (
+                <ArrowDownAZ className="h-4 w-4" />
+              ) : (
+                <ArrowUpAZ className="h-4 w-4" />
+              )}
+              <span className="hidden text-xs sm:inline">
+                {sortOrder === "asc" ? "名称 A→Z" : "名称 Z→A"}
+              </span>
             </button>
-            <button
-              type="button"
-              title="列表"
-              onClick={() => setViewMode("list")}
-              className={`${iconToggle} rounded-md ${viewMode === "list" ? iconToggleActive : ""}`}
-            >
-              <List className="w-4 h-4" />
-            </button>
+            <div className="flex overflow-hidden rounded-lg border border-primary/40 bg-tertiary/10 p-0.5 gap-0.5 dark:bg-white/[0.03]">
+              <button
+                type="button"
+                title="网格"
+                onClick={() => setViewMode("grid")}
+                className={`${iconToggle} rounded-md ${viewMode === "grid" ? iconToggleActive : ""}`}
+              >
+                <LayoutGrid className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                title="列表"
+                onClick={() => setViewMode("list")}
+                className={`${iconToggle} rounded-md ${viewMode === "list" ? iconToggleActive : ""}`}
+              >
+                <List className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-auto py-4">
           {loading ? (
-            <div className="flex items-center justify-center py-24 text-secondary gap-2">
-              <Loader2 className="w-6 h-6 animate-spin" />
+            <div className="flex items-center justify-center gap-2 py-24 text-secondary">
+              <Loader2 className="h-6 w-6 animate-spin" />
               <span>加载中…</span>
             </div>
           ) : sorted.length === 0 ? (
-            <div className="text-center py-24 text-secondary text-sm">
-              {items.length === 0 ? "对话中上传的文件会出现在这里" : "没有匹配的文件"}
+            <div className="flex flex-col items-center justify-center py-24 text-secondary">
+              <FolderOpen className="mb-3 h-10 w-10 opacity-25" aria-hidden />
+              <p className="text-sm">
+                {items.length === 0 ? "对话中上传的文件会出现在这里" : "没有匹配的文件"}
+              </p>
             </div>
           ) : viewMode === "grid" ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {sorted.map((f) => {
-                const isSel = selected.has(f.uuid);
-                const { Icon, iconSrc, tone } = getFileVisual(f.suffix, f.name);
-                const IconComponent = Icon ?? FileText;
-                const toneCls = getFileToneClasses(tone, isDark);
-                return (
-                  <button
-                    key={f.uuid}
-                    type="button"
-                    onClick={() => toggleSelect(f.uuid)}
-                    className={`relative text-left rounded-lg p-3 min-h-[120px] flex flex-col transition-colors ${cardBase} ${cardHover}`}
-                  >
-                    {isSel && (
-                      <span className="absolute top-2.5 right-2.5 w-6 h-6 rounded-full flex items-center justify-center bg-accent text-white shadow-sm">
-                        <Check className="w-3.5 h-3.5" strokeWidth={3} />
-                      </span>
-                    )}
-                    <div className="text-sm font-medium leading-snug pr-8 break-all text-primary">{f.name}</div>
-                    <div className="mt-4 flex items-center gap-3">
-                      <span className={`inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg border ${toneCls.wrap}`}>
-                        {iconSrc ? (
-                          <img src={iconSrc} alt="" className="w-5 h-5 object-contain" />
-                        ) : (
-                          <IconComponent className={`w-5 h-5 ${toneCls.icon}`} />
-                        )}
-                      </span>
-                      <div className="text-xs text-secondary">
-                        {extLabel(f.suffix, f.name)} · {formatSize(f.size)}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
+              {sorted.map((f) => (
+                <LibraryFileGridCard key={f.uuid} {...fileCardProps(f)} />
+              ))}
             </div>
           ) : (
             <div className="space-y-2">
-              {sorted.map((f) => {
-                const isSel = selected.has(f.uuid);
-                const { Icon, iconSrc, tone } = getFileVisual(f.suffix, f.name);
-                const IconComponent = Icon ?? FileText;
-                const toneCls = getFileToneClasses(tone, isDark);
-                return (
-                  <button
-                    key={f.uuid}
-                    type="button"
-                    onClick={() => toggleSelect(f.uuid)}
-                    className={`w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${cardBase} ${cardHover}`}
-                  >
-                    {isSel ? (
-                      <span className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center bg-accent text-white shadow-sm">
-                        <Check className="w-3.5 h-3.5" strokeWidth={3} />
-                      </span>
-                    ) : (
-                      <span className="w-6 h-6 flex-shrink-0" />
-                    )}
-                    <span className={`inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg border ${toneCls.wrap}`}>
-                      {iconSrc ? (
-                        <img src={iconSrc} alt="" className="w-5 h-5 object-contain" />
-                      ) : (
-                        <IconComponent className={`w-5 h-5 ${toneCls.icon}`} />
-                      )}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate text-primary">{f.name}</div>
-                      <div className="text-xs text-secondary mt-0.5 flex items-center gap-1.5">
-                        {extLabel(f.suffix, f.name)} · {formatSize(f.size)}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
+              {sorted.map((f) => (
+                <LibraryFileListRow key={f.uuid} {...fileCardProps(f)} />
+              ))}
             </div>
           )}
         </div>
@@ -572,6 +900,25 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
         onClose={() => setChatModalOpen(false)}
         onSubmit={handleChatSubmit}
       />
+
+      <Modal
+        open={Boolean(imageLightbox)}
+        title={imageLightbox?.name}
+        footer={null}
+        centered
+        width="fit-content"
+        onCancel={() => setImageLightbox(null)}
+        styles={{ body: { paddingBottom: "1rem", maxHeight: "90vh", overflow: "auto" } }}
+        destroyOnClose
+      >
+        {imageLightbox ? (
+          <img
+            src={imageLightbox.src}
+            alt={imageLightbox.name}
+            className="block max-h-[85vh] max-w-[90vw] w-auto mx-auto object-contain"
+          />
+        ) : null}
+      </Modal>
     </>
   );
 };

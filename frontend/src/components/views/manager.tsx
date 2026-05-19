@@ -1,5 +1,5 @@
 import { appContext } from "@/hooks/provider";
-import { Dropdown, message, Spin } from "antd";
+import { Dropdown, message, Spin, Button } from "antd";
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { MoreVertical, Search, Share2, Trash2 } from "lucide-react";
@@ -12,7 +12,7 @@ import { useAgentInfo } from "../features/Agents/useAgentInfo";
 import PlanList from "../features/Plans/PlanList";
 import { GeneralConfig, useSettingsStore } from "../store";
 import type { Session, FilesEvent, MessageFileItem } from "../types/datamodel";
-import { sessionAPI, settingsAPI } from "./api";
+import { sessionAPI, settingsAPI, organizationsAPI } from "./api";
 import ChatView from "../../pages/chat/chat";
 import NewChatView from "../../pages/chat/NewChatView";
 import { useAgentManager } from "./hooks/useAgentManager";
@@ -25,6 +25,7 @@ import ChannelsPage from "../../pages/settings/ChannelsPage";
 import FilePreviewPage from "../../pages/FilePreviewPage";
 import LogsPage from "../../pages/settings/LogsPage";
 import Config from "../../pages/settings/Config";
+import UsageAnalyticsPage from "../../pages/settings/UsageAnalyticsPage";
 import SkillsSquarePage from "../../pages/SkillsSquarePage";
 import UserManagementPage from "../../pages/UserManagementPage";
 import CooperationManagementPage from "../../pages/CooperationManagementPage";
@@ -48,6 +49,28 @@ import {
 import { SessionEditor } from "./session_editor";
 import { AppLayout } from "../../layout";
 import { useRightPanelStore } from "../../store/rightPanel";
+
+/** Extensions treated as inline-previewable images in the right-panel file list */
+const RIGHT_PANEL_IMAGE_EXT = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "bmp",
+]);
+
+const extensionFromFilename = (name: string): string => {
+  const i = name.lastIndexOf(".");
+  return i < 0 ? "" : name.slice(i + 1).toLowerCase();
+};
+
+const isImageMessageFile = (file: MessageFileItem): boolean => {
+  const mime = file.mime_type?.trim().toLowerCase() ?? "";
+  if (mime.startsWith("image/")) return true;
+  return RIGHT_PANEL_IMAGE_EXT.has(extensionFromFilename((file.name || "").trim()));
+};
 
 export const SessionManager: React.FC = () => {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -96,6 +119,29 @@ export const SessionManager: React.FC = () => {
 
   const { user, darkMode } = useContext(appContext);
   const rightPanelTab = useRightPanelStore((s) => s.layoutTab);
+  const [showUsageAnalyticsNav, setShowUsageAnalyticsNav] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const uid = user?.email;
+    if (!uid) {
+      setShowUsageAnalyticsNav(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    organizationsAPI
+      .getAccess(uid)
+      .then((a) => {
+        if (!cancelled) setShowUsageAnalyticsNav(Boolean(a?.is_platform_admin));
+      })
+      .catch(() => {
+        if (!cancelled) setShowUsageAnalyticsNav(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.email]);
   const formatFileSize = useCallback((size: number | null | undefined) => {
     if (typeof size !== "number" || !Number.isFinite(size) || size <= 0) return "-";
     if (size < 1024) return `${size} B`;
@@ -124,7 +170,14 @@ export const SessionManager: React.FC = () => {
   }, []);
 
   const { session, setSession, setSessions } = useConfigStore();
-  const { selectedAgent, setSelectedAgent, setConfig } = useModeConfigStore();
+  const {
+    selectedAgent,
+    setSelectedAgent,
+    setConfig,
+    setAgentId,
+    setMode,
+    agentId,
+  } = useModeConfigStore();
   const { saveSessionId } = useSessionStorage();
   const { config: settingsConfig, updateConfig: updateSettingsConfig } = useSettingsStore();
 
@@ -153,7 +206,7 @@ export const SessionManager: React.FC = () => {
   const { getSessionSocket, closeSocket, stopSession } = useWebSocketManager();
 
   // Agent management
-  const { agents, fetchAgentList, deleteAgent } = useAgentManager(user?.email);
+  const { agents, fetchAgentList, deleteAgent, agentCatalogLoaded } = useAgentManager(user?.email);
 
   const { agentInfo } = useAgentInfo(user?.email);
 
@@ -236,7 +289,6 @@ export const SessionManager: React.FC = () => {
     setLibraryAttachPrefill(null);
   }, [activeSubMenuItem, libraryAttachPrefill]);
 
-  const { setAgentId, setMode } = useModeConfigStore();
   // Handle agent click
   const handleAgentClick = useCallback(async (agent: Agent) => {
     if (!user?.email) return;
@@ -553,6 +605,24 @@ export const SessionManager: React.FC = () => {
               <div className="mt-1 text-xs text-secondary">
                 {timeMs > 0 ? formatUnixForDisplayZhCN(timeMs) : "—"}  · {formatFileSize(file.size)}
               </div>
+              {href && isImageMessageFile(file) ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedPreviewFile(file);
+                    navigateToView("file_preview");
+                  }}
+                  className="mt-3 w-full h-20 flex items-center justify-center rounded-md overflow-hidden border border-border-primary/25 bg-tertiary/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                  title="点击查看完整预览"
+                >
+                  <img
+                    src={href}
+                    alt={file.name || "图片预览"}
+                    className="max-h-full max-w-full object-contain"
+                    loading="lazy"
+                  />
+                </button>
+              ) : null}
               <div className="mt-2 flex items-center gap-2">
                 <button
                   type="button"
@@ -583,7 +653,13 @@ export const SessionManager: React.FC = () => {
         })}
       </div>
     );
-  }, [session?.id, sessionFileEvents, buildDownloadHref, formatFileSize]);
+  }, [
+    session?.id,
+    sessionFileEvents,
+    buildDownloadHref,
+    formatFileSize,
+    navigateToView,
+  ]);
 
   const rightPanelHistory = useMemo(() => {
     const sortedSessions = Array.isArray(sessions)
@@ -758,6 +834,7 @@ export const SessionManager: React.FC = () => {
         activeSubMenuItem={activeSubMenuItem}
         activeMenuLabel={activeMenuLabel}
         onSubMenuChange={(tabId) => navigateToMenu(tabId as MenuId)}
+        showUsageAnalyticsNav={showUsageAnalyticsNav}
         canvasActiveView={activeCanvasView}
         onCanvasViewChange={navigateToView}
         canvasFilePreviewContent={<FilePreviewPage file={selectedPreviewFile} sessionId={session?.id ?? null} onFileEvent={(evt) => {
@@ -801,16 +878,47 @@ export const SessionManager: React.FC = () => {
                   }}
                 />
               );
-            } else {
+            } else if (!user?.email) {
               return (
                 <div className="flex items-center justify-center h-full text-secondary">
                   <div className="text-center">
                     <Spin size="large" />
-                    <p className="mt-4 text-sm">Loading...</p>
+                    <p className="mt-4 text-sm">加载中…</p>
+                  </div>
+                </div>
+              );
+            } else if (!agentCatalogLoaded || (agentId && !agentInfo && !selectedAgent)) {
+              return (
+                <div className="flex items-center justify-center h-full text-secondary">
+                  <div className="text-center">
+                    <Spin size="large" />
+                    <p className="mt-4 text-sm">加载中…</p>
+                  </div>
+                </div>
+              );
+            } else if (agents.length === 0) {
+              return (
+                <div className="flex items-center justify-center h-full text-secondary px-6">
+                  <div className="text-center max-w-md">
+                    <p className="text-base text-primary font-medium">暂无可用智能体</p>
+                    <p className="mt-2 text-sm">请稍后再试或联系管理员为你开通权限。</p>
                   </div>
                 </div>
               );
             }
+            return (
+              <div className="flex items-center justify-center h-full text-secondary px-6">
+                <div className="text-center max-w-md space-y-4">
+                  <p className="text-base text-primary font-medium">先选一个智能体再开始对话</p>
+                  <p className="text-sm">
+                    你还没有选择聊天要用的智能体。请到智能体广场挑选，或设置你的默认智能体。
+                  </p>
+                  <Button type="primary" size="large" onClick={() => navigateToMenu(MENU_IDS.agentSquare)}>
+                    前往智能体广场
+                  </Button>
+                </div>
+              </div>
+            );
           })()
         ) : activeSubMenuItem === MENU_IDS.agentSquare || activeSubMenuItem === MENU_IDS.myAgents ? (
           <div className="h-full overflow-hidden">
@@ -828,11 +936,10 @@ export const SessionManager: React.FC = () => {
           <AgentManagementPage />
         ) : activeSubMenuItem === MENU_IDS.userManagement ? (
           <UserManagementPage />
+        ) : activeSubMenuItem === MENU_IDS.usageAnalytics ? (
+          <UsageAnalyticsPage />
         ) : activeSubMenuItem === MENU_IDS.profile ? (
-          <Config
-            user={user || { name: "", email: "" }}
-            onClose={() => navigateToMenu(MENU_IDS.currentSession)}
-          />
+          <Config />
         ) : activeSubMenuItem === MENU_IDS.savedPlan ? (
           <div className="h-full overflow-hidden">
             <PlanList

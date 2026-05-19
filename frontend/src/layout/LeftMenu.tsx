@@ -1,21 +1,15 @@
 import { Tooltip } from "antd";
 import {
   Bot,
-  BotMessageSquare,
-  Building2,
+  ChartColumn,
   ChevronLeft,
   ChevronRight,
-  FileText,
   Grid2X2,
   Library,
   MessageSquare,
-  Radio,
   Settings,
   Shield,
-  User,
   UserCog,
-  Users,
-  Zap,
   ChevronDown,
   Wrench,
 } from "lucide-react";
@@ -27,6 +21,8 @@ interface LeftMenuProps {
   activeSubMenuItem: string;
   onSubMenuChange: (tabId: string) => void;
   onClose: () => void;
+  /** Platform admin only: 「设置 → 使用分析」 */
+  showUsageAnalyticsNav?: boolean;
 }
 
 type SectionId = "chat" | "agents" | "settings" | "admin";
@@ -43,6 +39,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
   activeSubMenuItem,
   onSubMenuChange,
   onClose,
+  showUsageAnalyticsNav = false,
 }) => {
   const { darkMode } = useContext(appContext);
   const isDark = darkMode === "dark";
@@ -59,7 +56,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
       setExpanded((e) => ({ ...e, chat: true }));
     } else if (["my_agents", "agent_square", "skills_square", "library"].includes(activeSubMenuItem)) {
       setExpanded((e) => ({ ...e, agents: true }));
-    } else if (["profile", "channels", "logs"].includes(activeSubMenuItem)) {
+    } else if (["profile", "channels", "logs", "usage_analytics"].includes(activeSubMenuItem)) {
       setExpanded((e) => ({ ...e, settings: true }));
     } else if (
       ["agent_management", "user_management", "cooperation_management"].includes(activeSubMenuItem)
@@ -122,7 +119,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
   const SECTION_ITEMS: Record<SectionId, string[]> = {
     chat: ["current_session"],
     agents: ["my_agents", "agent_square", "skills_square", "library"],
-    settings: ["profile", "channels", "logs"],
+    settings: ["profile", "channels", "logs", ...(showUsageAnalyticsNav ? ["usage_analytics"] : [])],
     admin: ["cooperation_management", "agent_management", "user_management"],
   };
 
@@ -251,6 +248,14 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
                 label="配置"
                 onClick={() => onSubMenuChange("profile")}
               />
+              {showUsageAnalyticsNav ? (
+                <NavItem
+                  id="usage_analytics"
+                  icon={<ChartColumn className="w-3.5 h-3.5" />}
+                  label="使用分析"
+                  onClick={() => onSubMenuChange("usage_analytics")}
+                />
+              ) : null}
               {/* <NavItem
                 id="channels"
                 icon={<Radio className="w-3.5 h-3.5" />}
