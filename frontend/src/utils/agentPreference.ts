@@ -21,11 +21,11 @@ export function pickPreferredAgentFromList<
 }
 
 /**
- * 登录后默认智能体选择优先级（完全来自 DB，无硬编码内置）：
- * 1. 用户在后端设置的 default_agent_id（如果传入且在列表中存在）
+ * 登录后自动选中的智能体：**仅**在显式配置时返回，不做列表兜底。
+ * 1. 用户在 AgentModeSettings 中保存的个人默认（stored_default_agent_id）
  * 2. 组织级别的 default_agent_id
- * 3. 列表中标记 is_default 的
- * 4. pickPreferredAgentFromList 兜底（featured / 首项）
+ *
+ * 新用户未设置个人默认且组织未指定时返回 undefined，由前端引导至智能体广场自行选择。
  */
 export function pickLoginDefaultAgent<
   T extends {
@@ -54,8 +54,5 @@ export function pickLoginDefaultAgent<
     if (orgHit) return orgHit;
   }
 
-  const byDefault = agents.find((a) => a.is_default);
-  if (byDefault?.id) return byDefault;
-
-  return pickPreferredAgentFromList(agents);
+  return undefined;
 }

@@ -18,6 +18,7 @@ interface AppLayoutProps {
   activeSubMenuItem: string;
   activeMenuLabel: string;
   onSubMenuChange: (tabId: string) => void;
+  showUsageAnalyticsNav?: boolean;
 
   // RightPanel
   rightPanelWidth?: number;
@@ -43,6 +44,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   activeSubMenuItem,
   activeMenuLabel,
   onSubMenuChange,
+  showUsageAnalyticsNav = false,
 
   // RightPanel
   rightPanelWidth = 380,
@@ -207,6 +209,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
               activeSubMenuItem={activeSubMenuItem}
               onSubMenuChange={onSubMenuChange}
               onClose={onToggleSidebar}
+              showUsageAnalyticsNav={showUsageAnalyticsNav}
             />
           </div>
 

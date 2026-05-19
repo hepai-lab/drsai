@@ -1451,6 +1451,71 @@ export class OrganizationsAPI {
 
 export const organizationsAPI = new OrganizationsAPI();
 
+export type AdminUsageOverviewData = {
+    usage_events: Array<{
+        user_id?: string;
+        agent_id?: string;
+        agent_name?: string | null;
+        last_used_at?: string | null;
+        updated_at?: string | null;
+        use_count?: number;
+        [key: string]: unknown;
+    }>;
+    top_agents_by_usage_records: Array<{
+        agent_id: string;
+        agent_name?: string | null;
+        total_use_count_records: number;
+    }>;
+    sessions_per_user: Array<{ user_id: string; session_count: number }>;
+    runs_per_user: Array<{ user_id: string; run_count: number }>;
+    session_agent_summary_sample: Array<{
+        user_id: string;
+        sessions_by_agent_sample: Array<{ agent_id: string; count: number }>;
+    }>;
+    recent_sessions_preview: Array<{
+        session_id?: number | null;
+        user_id?: string | null;
+        name?: string | null;
+        agent_id?: string | null;
+        agent_name?: string | null;
+        updated_at?: string | null;
+        created_at?: string | null;
+    }>;
+    limits: { usage_events?: number; session_sample_rows?: number };
+};
+
+/** Platform-admin cross-user usage aggregates (requires `UserRole.is_admin`). */
+export class AdminAnalyticsAPI {
+    private getBaseUrl(): string {
+        return getServerUrl();
+    }
+
+    private getHeaders(): HeadersInit {
+        return { "Content-Type": "application/json" };
+    }
+
+    async usageOverview(operatorUserId: string): Promise<AdminUsageOverviewData> {
+        const url = `${this.getBaseUrl()}/admin/analytics/usage-overview?operator_user_id=${encodeURIComponent(
+            operatorUserId
+        )}`;
+        const response = await fetch(url, { headers: this.getHeaders() });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const msg =
+                typeof data.detail === "string"
+                    ? data.detail
+                    : data.message || `HTTP ${response.status}`;
+            throw new Error(msg);
+        }
+        if (!data.status) {
+            throw new Error(data.detail || data.message || "usage overview failed");
+        }
+        return data.data as AdminUsageOverviewData;
+    }
+}
+
+export const adminAnalyticsAPI = new AdminAnalyticsAPI();
+
 export class UserAPI {
     private getBaseUrl(): string {
         return getServerUrl();

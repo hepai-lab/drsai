@@ -3,7 +3,7 @@ import { Modal, message } from 'antd';
 import { useModeConfigStore } from '@/store/modeConfig';
 import { agentAPI, agentWorkerAPI, organizationsAPI } from '@/components/views/api';
 import { getLocalStorage } from '@/components/utils';
-import { pickLoginDefaultAgent, pickPreferredAgentFromList } from '@/utils/agentPreference';
+import { pickLoginDefaultAgent } from '@/utils/agentPreference';
 import type { Agent } from '@/types/common';
 
 const pendingAgentInfoRequests = new Map<string, Promise<Partial<Agent>>>();
@@ -75,8 +75,7 @@ export const useAgentInfo = (userIdProp?: string) => {
                   a.name === sa.name ||
                   (Boolean(sa.mode) && a.mode === sa.mode),
               )) ||
-            pickLoginDefaultAgent(agents || [], orgDefault, userDefaultId) ||
-            pickPreferredAgentFromList(agents || []);
+            pickLoginDefaultAgent(agents || [], orgDefault, userDefaultId);
           if (match?.id) {
             setAgentId(match.id);
             return;
@@ -177,9 +176,7 @@ export const useAgentInfo = (userIdProp?: string) => {
           }
           const orgDefault = (myOrg?.default_agent_id as string) || null;
           const userDefaultId = userDefault?.stored_default_agent_id ?? null;
-          const preferred =
-            pickLoginDefaultAgent(agents || [], orgDefault, userDefaultId) ||
-            pickPreferredAgentFromList(agents || []);
+          const preferred = pickLoginDefaultAgent(agents || [], orgDefault, userDefaultId);
           if (
             preferred?.id &&
             typeof preferred.id === 'string' &&

@@ -24,6 +24,38 @@ from .....drsai_adapter.singleton import personal_key_config_fetcher as fetcher
 
 router = APIRouter()
 
+# Nested buckets inside `UserFiles.files` — not individual library rows for GET /files/{session_id}
+_USER_FILES_META_KEYS = frozenset({"hepai_files"})
+
+
+def _flat_user_library_files(files: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Return only top-level user library file records for the UI.
+
+    `UserFiles.files` may also store buckets like `hepai_files` (dict of HepAI uploads).
+    Those must not be returned as a pseudo file row (would show as FILE / NaN MB in UI).
+    """
+    if not files:
+        return []
+    out: List[Dict[str, Any]] = []
+    for _key, entry in files.items():
+        if _key in _USER_FILES_META_KEYS:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        # Expected local rows from POST /files/: name, path, suffix, size, uuid
+        if entry.get("uuid") is not None and not isinstance(entry.get("uuid"), str):
+            continue
+        sz = entry.get("size")
+        if sz is not None and not isinstance(sz, (int, float)):
+            continue
+        out.append(entry)
+    return out
+
+
 def get_initializer():
     """Get the initializer instance from app module"""
     from .. import app
@@ -359,7 +391,7 @@ async def get_user_session_files(session_id: str, user_id: str, db=Depends(get_d
     else:
         userfiles: UserFiles = response.data[0]
         if userfiles.files:
-            files_list = [userfiles.files[file] for file in userfiles.files]
+            files_list = _flat_user_library_files(userfiles.files)
             return {"status": True, "data": files_list}
 
         return {"status": True, "data": []}

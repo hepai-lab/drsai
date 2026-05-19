@@ -1,6 +1,6 @@
 from typing import Dict, List, Any  
 import asyncio, os, json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 # from openai import OpenAI
@@ -16,7 +16,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .....agent_factory.agent_mode_cofigs import (
-    get_agent_mode_config,
     get_default_agent_mode_config,
     get_user_agents,
 )
@@ -298,7 +297,7 @@ async def record_user_agent_usage(
     记录用户使用某个智能体（用于“最近使用/使用频次”）
     """
     try:
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         with DBSession(db.engine) as session:
             existing = session.exec(
                 select(UserAgentUsage).where(

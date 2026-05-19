@@ -1,13 +1,15 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Agent } from '../../../types/common';
 import { useModeConfigStore } from '../../../store/modeConfig';
 import { getFirstRecentAgentId } from '../../../utils/recentAgentsStorage';
-import { pickLoginDefaultAgent, pickPreferredAgentFromList } from '../../../utils/agentPreference';
+import { pickLoginDefaultAgent } from '../../../utils/agentPreference';
 import { agentAPI, agentWorkerAPI, organizationsAPI } from '../api';
 
 export const useAgentManager = (userEmail: string | undefined) => {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  /** false until the first successful fetch attempt for the current user finishes (incl. “no agents”) */
+  const [agentCatalogLoaded, setAgentCatalogLoaded] = useState(false);
   const { setSelectedAgent, setMode, setConfig, setAgentId, setAgentInfo } =
     useModeConfigStore();
 
@@ -44,7 +46,9 @@ export const useAgentManager = (userEmail: string | undefined) => {
       const res = newAgents || await fetchUserAgentsFromDb();
       setAgents(res);
 
-      if (res.length === 0) return;
+      if (res.length === 0) {
+        return;
+      }
 
       let orgDefaultAgentId: string | null | undefined;
       let userDefaultAgentId: string | null | undefined;
@@ -65,11 +69,8 @@ export const useAgentManager = (userEmail: string | undefined) => {
 
       const { selectedAgent, agentId, mode } = useModeConfigStore.getState();
       const policyDefault = pickLoginDefaultAgent(res, orgDefaultAgentId, userDefaultAgentId);
-      const fallbackAgent =
-        policyDefault ||
-        pickPreferredAgentFromList(res) ||
-        res.find((agent) => agent.mode === "magentic-one") ||
-        res[0];
+      /** 无个人/组织显式默认时不自动选中列表首项，由用户在智能体广场选择 */
+      const fallbackAgent = policyDefault;
 
       // 与 drsai-mode-config 对齐：优先 drsai.recentAgents[0]，再 persisted agentId，再 mode
       const resolveLastUsedFromPersist = (): Agent | undefined => {
@@ -118,8 +119,10 @@ export const useAgentManager = (userEmail: string | undefined) => {
       }
     } catch (error) {
       console.error("Error fetching agent list:", error);
+    } finally {
+      setAgentCatalogLoaded(true);
     }
-  }, [userEmail, setSelectedAgent, setMode, setConfig, setAgentId, setAgentInfo]);
+  }, [userEmail, setSelectedAgent, setMode, setConfig, setAgentId, setAgentInfo, fetchUserAgentsFromDb]);
 
   const deleteAgent = useCallback(async (id: string, onSuccess?: () => void, onError?: (error: any) => void) => {
     if (!userEmail) return;
@@ -138,9 +141,19 @@ export const useAgentManager = (userEmail: string | undefined) => {
     }
   }, [userEmail]);
 
+  useEffect(() => {
+    if (!userEmail) {
+      setAgentCatalogLoaded(true);
+      setAgents([]);
+      return;
+    }
+    setAgentCatalogLoaded(false);
+  }, [userEmail]);
+
   return {
     agents,
     isLoading,
+    agentCatalogLoaded,
     fetchAgentList,
     deleteAgent,
   };

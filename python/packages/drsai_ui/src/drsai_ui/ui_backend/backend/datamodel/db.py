@@ -467,9 +467,15 @@ class UserAgentUsage(SQLModel, table=True):
     use_count: int = Field(default=0)
 
     @field_serializer("created_at", "updated_at", "last_used_at")
-    def serialize_datetime(cls, value: datetime) -> str:
+    def serialize_datetime(self, value: Any) -> Optional[str]:
+        if value is None:
+            return None
         if isinstance(value, datetime):
             return value.isoformat()
+        # SQLite / some drivers may return ISO strings; pass through for JSON consumers.
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
 
 
 class Organization(SQLModel, table=True):
