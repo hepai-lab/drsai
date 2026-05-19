@@ -40,7 +40,7 @@ Simple literal substitution. Tokens must be **uppercase-leading** and contain on
 ```
 
 ### 3. Heuristic slots (no placeholder syntax required)
-For templates that users authored without thinking about placeholders. The inspector scans the document and returns slot candidates of eight kinds:
+For templates that users authored without thinking about placeholders. The inspector scans the document and returns slot candidates of nine kinds:
 
 | Kind | Trigger | Where the value goes |
 |---|---|---|
@@ -53,6 +53,7 @@ For templates that users authored without thinking about placeholders. The inspe
 | `placeholder_phrase` | Bilingual phrase bank: "your text here", "lorem ipsum", "TBD", "TODO", "Replace this with…", "(insert …)", "请填写…", "待填写", etc. | Either the matched span (if short) or the whole paragraph (if the phrase covers ≥60% of the paragraph) is replaced |
 | `hint_text` | A run that is italic **or** rendered in light grey / red AND looks instructional ("(your bio here)", "Example: …", "（请填写）") | Just the hint run is replaced; surrounding text and formatting stay intact |
 | `section_body_empty` | A `Heading N` / `Title` / `标题 N` paragraph immediately followed by an empty body paragraph | Text is written into that empty body paragraph |
+| `option_choice` | The Chinese contract "二选一 / 三选一" pattern: an instruction paragraph like `（以下两种选择适合的一种，不选的一种请删除）` followed (within 40 paragraphs) by ≥2 option headers of the form `第N种` (optionally wrapped in `（●…）`). Each option's body is the paragraphs after its header until the next option header or a top-level section break. | One composite slot, with an `options` list `[{index, header, preview}, ...]`. The agent passes the chosen index (`1`, `2`, … — or labels like `"第一种"`/`"第二种"`/`"first"`) in `slot_values`. On fill: the instruction prompt is removed, the chosen option's header line is removed (its body is kept), and every non-chosen option's header **and full body** are removed. Paragraphs that fall inside an option group are **not** also emitted as separate slots or removal candidates — the composite slot owns their deletion. |
 
 Each slot comes back with:
 - `id` — opaque string like `"slot_3"`. Use this as the key in `slot_values`.
@@ -208,6 +209,17 @@ Bracket and slot fills are run-aware: only the runs that overlap the matched spa
 - A paragraph with bold `Name:`, a plain `__________`, and italic ` (please print)` keeps the bold label and the italic hint after the underscore is replaced.
 
 This replaces the previous behavior, which collapsed the entire paragraph into the first run whenever any token was touched.
+
+## Paired 大写 / 小写 amount reconciliation
+
+When two slots in the same paragraph or table cell are detected as a 大写 / 小写 money-amount pair (one label matches `大写` / "in words", the other matches `小写` / "in figures" / contains `¥`), `fill_docx_template_tool` deterministically reconciles their values before writing the document, using the `chinese_amount` helper module:
+
+- Both filled and agree → no change.
+- Both filled and disagree → trust whichever side parses cleanly. If both parse, 大写 wins (capital-numeral grammar is self-checking — much harder to author an internally-consistent 大写 string for the wrong number than to drop or add a `0` on the Arabic side). The other side is overwritten and a note is added to `warnings`.
+- Only one filled → the other is computed and injected into `slot_values`. A note is added to `warnings`.
+- Neither parses → both are left untouched; a warning is recorded.
+
+This keeps the LLM out of the digit-conversion loop, where it tends to mis-handle 仟/佰/拾 unit markers (e.g. produce `¥280000000000` from `贰仟捌佰元整`). Conversion supports integer amounts and 角/分 (two-decimal) precision; range 0 ≤ amount < 1e16.
 
 ## Limitations
 1. **Replacements span ≥1 run** — when a placeholder is split across multiple runs by Word (often after edits/spellcheck), the replacement text adopts the *first* spanned run's formatting. Adjacent unrelated runs are untouched.

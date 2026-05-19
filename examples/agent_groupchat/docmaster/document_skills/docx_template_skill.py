@@ -32,6 +32,21 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
+try:
+    from .chinese_amount import (
+        chinese_to_decimal,
+        decimal_to_chinese,
+        format_arabic_amount,
+        parse_arabic_amount,
+    )
+except ImportError:  # support running this file directly
+    from chinese_amount import (  # type: ignore[no-redef]
+        chinese_to_decimal,
+        decimal_to_chinese,
+        format_arabic_amount,
+        parse_arabic_amount,
+    )
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,6 +76,48 @@ _SIGNATURE_RE = re.compile(
 
 # <placeholder> or 《占位符》 — angle-bracketed slot tokens
 _ANGLE_BRACKET_RE = re.compile(r"<([^<>\n]{1,80})>|《([^《》\n]{1,80})》")
+
+# Seal / stamp / date-placeholder cell — Chinese contract signature blocks
+# often contain a vertically-merged cell with template text like
+# "合 同 章 \n\n 年  月  日". This is a fillable region (the user signs/stamps
+# and writes the date here), not real body content. Detected and emitted as
+# a `placeholder_cell` slot pointing at the vMerge anchor.
+_SEAL_PLACEHOLDER_RE = re.compile(
+    r"合\s*同\s*章|公\s*章|印\s*章|盖\s*章|签\s*字\s*盖\s*章|seal\s+here|stamp\s+here",
+    re.IGNORECASE,
+)
+_DATE_PLACEHOLDER_RE = re.compile(r"年\s{1,}月\s{1,}日|yyyy[/-]mm[/-]dd", re.IGNORECASE)
+
+# Date scaffold inside a paragraph: a sequence of whitespace gaps with bare
+# CJK date markers (`年 / 月 / 日`) acting as in-place scaffolding. Common
+# in CN forms — the author writes `签订日期：    年    月    日` and expects
+# the user to fill in `YYYY 年 MM 月 DD 日` by replacing the gaps. Without
+# detecting the whole scaffold we end up filling only the first gap and
+# producing `2026年5月14日年    月    日` — the year/month/day markers from
+# the template stay behind.
+#
+# We require a leading whitespace gap (≥2) before `年` so prose like
+# `2024年5月` (no gap) doesn't match.
+_DATE_SCAFFOLD_RE = re.compile(
+    r"[ \t　]{2,}年"
+    r"(?:[ \t　]+月)?"
+    r"(?:[ \t　]+日)?"
+)
+
+# Inline whitespace blank: a whitespace run (3+ chars) bounded by a label
+# colon or currency symbol on the left, and sentence punctuation or a unit
+# marker on the right. Used to detect fields like:
+#   "交货地点：         ；乙方负责..."   → blank between '：' and '；'
+#   "本项目总经费：    元（元）"          → blank between '：' and '元'
+#   "即￥        元（小写）"              → blank between '￥' and '元'
+# The gap may carry underline formatting (caught earlier by
+# _find_underlined_whitespace_spans); this regex is the no-underline fallback.
+_INLINE_BLANK_RE = re.compile(
+    r"(?P<lm>[:：¥$￥€£])"
+    r"(?P<gap>[ \t　]{3,})"
+    r"(?=[;；,，.。、元年月日天周个种号％%]"
+    r"|工作日|（小写）|\(小写\)|（大写）|\(大写\)|$)"
+)
 
 # Phrase bank for placeholder-like prose (bilingual). Matched as whole paragraph
 # OR as a parenthesised tail. Case-insensitive.
@@ -107,9 +164,30 @@ _REMOVAL_PHRASES = [
     r"以下\s*(?:内容|部分)?\s*为?\s*示例",
     r"使用\s*前\s*请\s*删除",
     r"作者\s*备注\s*[:：]",
+    # "应删除" / "应当删除" — directive form (vs. polite 请删除).
+    r"应\s*(?:当\s*)?(?:删除|删去|去除|去掉)",
+    # "此句话非正文" / "本段非正文" — explicit "this is not body text" markers.
+    r"(?:此|这|该|本)\s*(?:句话|句|段|节|部分|条)\s*(?:非|不是|不属于)\s*正文",
+    # "非正文，应删除" — combined marker (covered by the two above, but the
+    # joined form is the most common phrasing in CN ministry templates).
+    r"非\s*正文[^。\n]{0,20}应\s*(?:删除|删去)",
 ]
 _RE_REMOVAL_BANK = re.compile(
     "|".join(f"(?:{p})" for p in _REMOVAL_PHRASES),
+    re.IGNORECASE,
+)
+
+# "Keep the following table on one page" instructions. When a removed
+# instruction paragraph matches this regex, the next sibling <w:tbl> after
+# the paragraph is hardened: cantSplit on every row + keepNext on every
+# paragraph (except the last) so Word renders the whole table on one page.
+_KEEP_TABLE_TOGETHER_RE = re.compile(
+    r"下\s*表\s*(?:不\s*跨\s*页|不\s*分\s*页|保持\s*在?\s*同\s*一\s*页|不\s*要\s*跨\s*页)"
+    r"|表\s*格\s*(?:不\s*跨\s*页|不\s*分\s*页|保持\s*在?\s*同\s*一\s*页)"
+    r"|本\s*表\s*(?:不\s*跨\s*页|不\s*分\s*页)"
+    r"|确\s*保\s*下\s*表\s*不\s*跨\s*页"
+    r"|keep\s+(?:the\s+)?(?:following\s+|next\s+)?table\s+(?:together|on\s+one\s+page)"
+    r"|table\s+(?:must\s+)?(?:stay|fit)\s+on\s+(?:one|a\s+single)\s+page",
     re.IGNORECASE,
 )
 
@@ -153,6 +231,103 @@ _SCAFFOLD_PATTERNS = [
 # decimals, or a single currency-style sign). If user-provided value matches
 # this AND the original had non-empty scaffolding, we auto-attach the scaffold.
 _BARE_NUMERIC_RE = re.compile(r"^[+-]?[\d,]+(?:\.\d+)?$")
+
+# Labels marking the two halves of a paired money slot. Detected in
+# slot.label / slot.context to find 大写/小写 pairs for deterministic
+# reconciliation (see _reconcile_amount_pairs).
+_DAXIE_LABEL_RE = re.compile(r"大\s*[写寫]|in\s*words|capital\s*amount|capitalized", re.IGNORECASE)
+_XIAOXIE_LABEL_RE = re.compile(r"小\s*[写寫]|in\s*figures|in\s*numerals|金\s*额|[¥￥]")
+
+# Two-options-pattern detection. Chinese contract templates often have:
+#
+#   （以下两种选择适合的一种，可以根据需要再进行改写，不选的一种请删除）
+#   （●第一种：方案A …）
+#     option 1 body paragraphs …
+#   （●第二种：方案B …）
+#     option 2 body paragraphs …
+#
+# The fill pass keeps the chosen option's body and drops everything else.
+_OPTION_PROMPT_RE = re.compile(
+    r"(?:以下|下列)[\s（()）]*[两二三四五六七八九十]\s*种.*?(?:选\s*择|选)[^。]*?请\s*删\s*除"
+    r"|[两二三四五六七八九十]\s*选\s*一"
+)
+_OPTION_HEADER_RE = re.compile(
+    r"^\s*[（(]?\s*[●○•·▪◆◇■□*\-—]*\s*第\s*([一二三四五六七八九十])\s*[种種项項条條]"
+)
+_SECTION_BREAK_RE = re.compile(
+    # CJK list marker followed by 、 ． or . — "一、" / "二．" — but NOT
+    # sub-section like "一.二" (digit after the period would be a sub-key).
+    r"^\s*(?:[一二三四五六七八九十]+\s*[、．](?!\d)"
+    r"|[一二三四五六七八九十]+\s*\.\s+"
+    # Top-level digit list marker: "1、" "1．" "1. " — but never "8.1".
+    r"|\d+\s*[、．](?!\d)"
+    r"|\d+\s*\.\s+(?=\D)"
+    # "第N章/节/条"
+    r"|第\s*[一二三四五六七八九十]+\s*[章节節条條]"
+    r"|附\s*[件录録]"
+    r"|[甲乙丙丁]\s*方\s*[：:])"
+)
+
+# Chinese-number map used by _normalize_option_choice (small/local; do not
+# import from chinese_amount to keep this self-contained).
+_CN_NUM_TO_INT = {
+    "一": 1, "壹": 1, "二": 2, "贰": 2, "两": 2, "三": 3, "叁": 3,
+    "四": 4, "肆": 4, "五": 5, "伍": 5, "六": 6, "陆": 6, "陸": 6,
+    "七": 7, "柒": 7, "八": 8, "捌": 8, "九": 9, "玖": 9, "十": 10, "拾": 10,
+}
+_ENGLISH_ORDINAL_TO_INT = {
+    "first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
+    "fourth": 4, "4th": 4, "fifth": 5, "5th": 5, "sixth": 6, "6th": 6,
+    "seventh": 7, "7th": 7, "eighth": 8, "8th": 8, "ninth": 9, "9th": 9,
+    "tenth": 10, "10th": 10,
+}
+
+
+def _normalize_option_choice(value: Any, n_options: int) -> Optional[int]:
+    """Coerce a user-provided option choice to a 1-based index ≤ n_options.
+
+    Accepts: int 1..n; numeric strings; Chinese ordinals ('一', '第一种',
+    '第二种', '贰' …); English ordinals ('first', '2nd'); plain English
+    cardinals ('1', '2'). Returns None on garbage / out-of-range.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):  # bool is an int subclass — reject explicitly
+        return None
+    if isinstance(value, int):
+        return value if 1 <= value <= n_options else None
+    if not isinstance(value, str):
+        return None
+    t = value.strip()
+    if not t:
+        return None
+    # Drop common decorators
+    t = t.strip("（()）()[]【】《》〈〉「」 　")
+    # "第N种" / "第N项" / etc.
+    m = re.match(r"^第\s*([一二三四五六七八九十\d]+)\s*[种種项項条條]?$", t)
+    if m:
+        token = m.group(1)
+        if token.isdigit():
+            n = int(token)
+            return n if 1 <= n <= n_options else None
+        if token in _CN_NUM_TO_INT:
+            n = _CN_NUM_TO_INT[token]
+            return n if 1 <= n <= n_options else None
+        return None
+    # Bare digit
+    if t.isdigit():
+        n = int(t)
+        return n if 1 <= n <= n_options else None
+    # Bare Chinese ordinal
+    if t in _CN_NUM_TO_INT:
+        n = _CN_NUM_TO_INT[t]
+        return n if 1 <= n <= n_options else None
+    # English ordinal/cardinal
+    low = t.lower()
+    if low in _ENGLISH_ORDINAL_TO_INT:
+        n = _ENGLISH_ORDINAL_TO_INT[low]
+        return n if 1 <= n <= n_options else None
+    return None
 
 
 def _split_scaffold(text: str) -> Optional[Dict[str, str]]:
@@ -269,6 +444,35 @@ class DocxTemplateSkill:
         slots_full = _scan_slots(doc)
         slots_public = [_slot_public_view(s) for s in slots_full]
         removals_full = _scan_removals(doc)
+        # Suppress removals whose paragraph is already owned by an
+        # option_choice slot — the slot fill handles their deletion.
+        consumed = _collect_option_choice_paragraph_ids(slots_full)
+        if consumed:
+            removals_full = [
+                r for r in removals_full
+                if _paragraph_element_id(
+                    (r.get("_meta") or {}).get("paragraph")
+                ) not in consumed
+            ]
+        # Suppress fillable slots that target a paragraph already marked for
+        # whole-paragraph removal. Otherwise a meta-note like "（…此句话非正
+        # 文，应删除）" surfaces as BOTH a fillable highlighted slot AND a
+        # removal — the agent typically fills one and leaves the meta-note
+        # behind. The removal owns the paragraph; drop the slot.
+        removal_para_ids = {
+            _paragraph_element_id((r.get("_meta") or {}).get("paragraph"))
+            for r in removals_full
+            if r.get("kind") == "instruction_paragraph"
+        }
+        removal_para_ids.discard(None)
+        if removal_para_ids:
+            slots_full = [
+                s for s in slots_full
+                if _paragraph_element_id(
+                    (s.get("_meta") or {}).get("paragraph")
+                ) not in removal_para_ids
+            ]
+            slots_public = [_slot_public_view(s) for s in slots_full]
         removals_public = [_slot_public_view(r) for r in removals_full]
 
         mode_detected = _detect_mode(jinja_vars, bracket_tokens, has_loops, has_conditionals)
@@ -446,6 +650,7 @@ class DocxTemplateSkill:
                     warnings.append(
                         f"Slot fill failed: {slot_pass.get('error', 'unknown error')}"
                     )
+                warnings.extend(slot_pass.get("reconciliation_notes") or [])
             if selected_removal_keys:
                 removal_pass = _apply_removals_in_place(
                     out_path, selected_removal_keys, removal_ids
@@ -465,6 +670,9 @@ class DocxTemplateSkill:
             )
             bracket_result["removals_applied"] = removal_pass.get("applied", [])
             bracket_result["removals_skipped"] = removal_pass.get("skipped", [])
+        warnings.extend(
+            (bracket_result.get("slot_fill") or {}).get("reconciliation_notes") or []
+        )
         bracket_result["warnings"] = warnings
         return bracket_result
 
@@ -820,7 +1028,143 @@ def _slot_public_view(slot: Dict[str, Any]) -> Dict[str, Any]:
     if meta.get("is_signature"):
         public["is_signature"] = True
         public["fill_policy"] = "leave_blank"
+    if slot.get("kind") == "option_choice" and meta.get("options"):
+        public["options"] = [
+            {"index": opt["index"], "header": opt["header"], "preview": opt["preview"]}
+            for opt in meta["options"]
+        ]
+        public["fill_policy"] = (
+            "Pass the option index (1.." + str(len(meta["options"])) +
+            ") or its Chinese label ('第一种', '第二种', ...) as slot_values[slot_id]. "
+            "On fill, the chosen option's body is kept; the prompt, each option's "
+            "header line, and all other options' bodies are removed."
+        )
     return public
+
+
+def _detect_option_choice_groups(body_paras) -> List[Dict[str, Any]]:
+    """Scan body paragraphs for the 二选一/三选一 alternative-options pattern.
+
+    Returns a list of group dicts. Each group has:
+      - prompt_paragraph: the instruction paragraph ("（以下两种…请删除）")
+      - options: list of {index, header (text), header_paragraph,
+        body_paragraphs (list), preview (str)}
+
+    Detection requires both a prompt paragraph AND at least 2 option headers
+    (`第N种`) within the next K paragraphs. v1 only scans body paragraphs.
+    """
+    groups: List[Dict[str, Any]] = []
+    K = 40
+    i = 0
+    while i < len(body_paras):
+        p = body_paras[i]
+        text = "".join((r.text or "") for r in p.runs).strip()
+        if not text or not _OPTION_PROMPT_RE.search(text):
+            i += 1
+            continue
+        # Found a prompt. Look ahead for option headers within K paragraphs.
+        end_idx = min(i + 1 + K, len(body_paras))
+        header_indices: List[Tuple[int, int]] = []  # (paragraph_index, option_index)
+        for j in range(i + 1, end_idx):
+            jt = "".join((r.text or "") for r in body_paras[j].runs).strip()
+            if not jt:
+                continue
+            mh = _OPTION_HEADER_RE.match(jt)
+            if mh:
+                opt_idx_raw = mh.group(1)
+                opt_idx = _CN_NUM_TO_INT.get(opt_idx_raw)
+                if opt_idx is not None:
+                    header_indices.append((j, opt_idx))
+                continue
+            # A section break before we found 2 headers aborts the group.
+            if not header_indices and (
+                _SECTION_BREAK_RE.match(jt)
+                or _is_heading(body_paras[j])
+                or _paragraph_has_list_numbering(body_paras[j])
+            ):
+                break
+        if len(header_indices) < 2:
+            i += 1
+            continue
+        # Walk options and collect each one's body paragraphs.
+        options: List[Dict[str, Any]] = []
+        for k, (hidx, opt_index) in enumerate(header_indices):
+            header_text = "".join((r.text or "") for r in body_paras[hidx].runs).strip()
+            # body: paragraphs after this header until next header / section
+            # break / K limit / doc end
+            body_paragraphs = []
+            body_text_parts = []
+            if k + 1 < len(header_indices):
+                next_header_idx = header_indices[k + 1][0]
+            else:
+                next_header_idx = end_idx
+            for m in range(hidx + 1, next_header_idx):
+                mt = "".join((r.text or "") for r in body_paras[m].runs).strip()
+                if (mt and _SECTION_BREAK_RE.match(mt)) or _is_heading(body_paras[m]) \
+                        or _paragraph_has_list_numbering(body_paras[m]):
+                    break
+                body_paragraphs.append(body_paras[m])
+                if mt:
+                    body_text_parts.append(mt)
+            preview = " / ".join(body_text_parts)[:80]
+            options.append({
+                "index": opt_index,
+                "header": header_text,
+                "header_paragraph": body_paras[hidx],
+                "body_paragraphs": body_paragraphs,
+                "preview": preview,
+            })
+        groups.append({
+            "prompt_paragraph": p,
+            "prompt_text": text,
+            "options": options,
+        })
+        # Skip past the last option's body to avoid re-detecting nested patterns.
+        last_body = options[-1]["body_paragraphs"]
+        if last_body:
+            last_idx = body_paras.index(last_body[-1])
+            i = last_idx + 1
+        else:
+            i = header_indices[-1][0] + 1
+    return groups
+
+
+def _paragraph_element_id(paragraph) -> Optional[int]:
+    """Identity that's stable across python-docx wrapper recreation.
+
+    `doc.paragraphs` builds fresh Paragraph wrappers on each call, so
+    `id(paragraph)` is not stable between scans. The underlying lxml
+    `<w:p>` element IS stable for the lifetime of the document.
+    """
+    if paragraph is None:
+        return None
+    try:
+        return id(paragraph._element)
+    except Exception:
+        return None
+
+
+def _collect_option_choice_paragraph_ids(slots: List[Dict[str, Any]]) -> Set[int]:
+    """Set of stable element-ids for every paragraph owned by an option_choice
+    slot (prompt + every option's header + body). Used to suppress duplicate
+    removal candidates whose drop is already handled by the slot fill."""
+    consumed: Set[int] = set()
+    for s in slots:
+        if s.get("kind") != "option_choice":
+            continue
+        meta = s.get("_meta", {}) or {}
+        eid = _paragraph_element_id(meta.get("prompt_paragraph"))
+        if eid is not None:
+            consumed.add(eid)
+        for opt in meta.get("options") or []:
+            eid = _paragraph_element_id(opt.get("header_paragraph"))
+            if eid is not None:
+                consumed.add(eid)
+            for bp in opt.get("body_paragraphs") or []:
+                eid = _paragraph_element_id(bp)
+                if eid is not None:
+                    consumed.add(eid)
+    return consumed
 
 
 def _scan_slots(doc) -> List[Dict[str, Any]]:
@@ -848,14 +1192,47 @@ def _scan_slots(doc) -> List[Dict[str, Any]]:
     # Body paragraphs (with neighbor lookahead for section_body_empty)
     body_paras = list(doc.paragraphs)
     seen_para_ids: Set[int] = set()
+    # First pass: detect 二选一 / 三选一 option-choice groups and mark every
+    # involved paragraph as consumed so the per-paragraph heuristics below
+    # don't re-emit them as separate slots/removals. The composite slot
+    # owns the drop of all unchosen-option paragraphs at fill time.
+    option_groups = _detect_option_choice_groups(body_paras)
+    for grp in option_groups:
+        # Best-effort label: the nearest preceding non-empty heading-like paragraph.
+        prompt_p = grp["prompt_paragraph"]
+        prompt_idx = body_paras.index(prompt_p)
+        label = None
+        for back in range(prompt_idx - 1, max(-1, prompt_idx - 8), -1):
+            bt = "".join((r.text or "") for r in body_paras[back].runs).strip()
+            if bt and (_is_heading(body_paras[back]) or _SECTION_BREAK_RE.match(bt)):
+                label = bt[:60]
+                break
+        if not label:
+            label = f"{len(grp['options'])}选1"
+        add(
+            "option_choice",
+            label,
+            _snippet(grp["prompt_text"], 0, len(grp["prompt_text"]), radius=80),
+            {
+                "prompt_paragraph": prompt_p,
+                "options": grp["options"],
+            },
+        )
+        seen_para_ids.add(id(prompt_p))
+        for opt in grp["options"]:
+            seen_para_ids.add(id(opt["header_paragraph"]))
+            for bp in opt["body_paragraphs"]:
+                seen_para_ids.add(id(bp))
     for i, p in enumerate(body_paras):
+        if id(p) in seen_para_ids:
+            continue
         before = len(slots)
         _scan_paragraph_for_slots(p, add)
         if len(slots) > before:
             seen_para_ids.add(id(p))
     # section_body_empty: heading followed by empty body paragraph
     for i, p in enumerate(body_paras[:-1]):
-        if not _is_heading(p):
+        if not _is_section_heading_like(p):
             continue
         nxt = body_paras[i + 1]
         if id(nxt) in seen_para_ids:
@@ -972,40 +1349,99 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
     #    like "<variable><scaffold>" (15个工作日, ¥850, 50%, etc.), we record
     #    the scaffold split so a bare-number user reply still produces a
     #    correctly-scaffolded output.
+    #
+    #    Highlighted spans can coexist with underlined-whitespace and inline-
+    #    whitespace blanks in the same paragraph (e.g. money lines with the
+    #    drafting note highlighted at the end). We emit all of them and only
+    #    skip downstream paragraph-level detection (underscores / angle /
+    #    label-only / phrase bank) so we don't double-count.
+    covered: List[Tuple[int, int]] = []
+
+    def _overlaps_covered(start: int, end: int) -> bool:
+        return any(not (end <= s or start >= e) for s, e in covered)
+
     highlighted_spans = _find_highlighted_spans(paragraph)
-    if highlighted_spans:
-        for start, end, runs, span_text in highlighted_spans:
-            label = _guess_label_before(text, start) or (span_text.strip() or None)
-            ctx = _snippet(text, start, end)
-            scaffold = _split_scaffold(span_text)
-            add("highlighted", label, ctx, {
-                "paragraph": paragraph,
-                "start": start,
-                "end": end,
-                "runs": runs,
-                "scaffold": scaffold,        # None if span isn't a known pattern
-                "span_text": span_text,      # full original highlighted text
-            })
-        return
+    for start, end, runs, span_text in highlighted_spans:
+        label = _guess_label_before(text, start) or (span_text.strip() or None)
+        ctx = _snippet(text, start, end)
+        scaffold = _split_scaffold(span_text)
+        add("highlighted", label, ctx, {
+            "paragraph": paragraph,
+            "start": start,
+            "end": end,
+            "runs": runs,
+            "scaffold": scaffold,        # None if span isn't a known pattern
+            "span_text": span_text,      # full original highlighted text
+        })
+        covered.append((start, end))
     # 0.5) Underlined whitespace spans — Word's "fill-in line" trick where the
     #      author selects a run of spaces and applies underline. There are no
     #      underscore characters in the document, but it looks like one to a
     #      human. Treat as an underscores-kind slot; centering pads with spaces
     #      (the inherited underline carries through so the line stays visible).
     uw_spans = _find_underlined_whitespace_spans(paragraph)
-    if uw_spans:
-        for start, end, runs, span_text in uw_spans:
-            label = _guess_label_before(text, start)
-            ctx = _snippet(text, start, end, radius=40)
-            is_sig = _looks_like_signature(label, text, start, end)
-            add("underscores", label, ctx, {
-                "paragraph": paragraph,
-                "start": start,
-                "end": end,
-                "is_signature": is_sig,
-                "pad_char": " ",
-                "source": "underlined_whitespace",
-            })
+    uw_emitted = False
+    for start, end, runs, span_text in uw_spans:
+        if _overlaps_covered(start, end):
+            continue
+        label = _guess_label_before(text, start)
+        ctx = _snippet(text, start, end, radius=40)
+        is_sig = _looks_like_signature(label, text, start, end)
+        add("underscores", label, ctx, {
+            "paragraph": paragraph,
+            "start": start,
+            "end": end,
+            "is_signature": is_sig,
+            "pad_char": " ",
+            "source": "underlined_whitespace",
+        })
+        covered.append((start, end))
+        uw_emitted = True
+    # 0.6) Date scaffold — `<ws>年<ws>月[<ws>日]` left as fill space in CN
+    #      forms. Detected before inline_blank so the WHOLE scaffold span
+    #      (gaps + 年/月/日 markers) becomes one slot. Otherwise we'd only
+    #      catch the leading gap and the agent's `2026年5月14日` value
+    #      would land next to the leftover `年   月   日` template text.
+    date_emitted = False
+    for m in _DATE_SCAFFOLD_RE.finditer(text):
+        ds, de = m.start(), m.end()
+        if _overlaps_covered(ds, de):
+            continue
+        label = _guess_label_before(text, ds) or "日期"
+        ctx = _snippet(text, ds, de, radius=40)
+        is_sig = _looks_like_signature(label, text, ds, de)
+        add("underscores", label, ctx, {
+            "paragraph": paragraph,
+            "start": ds,
+            "end": de,
+            "is_signature": is_sig,
+            "pad_char": " ",
+            "source": "date_scaffold",
+        })
+        covered.append((ds, de))
+        date_emitted = True
+    # 0.7) Inline whitespace blanks — no underline, no highlight, just spaces
+    #      between a label colon / currency symbol and sentence punctuation
+    #      or a unit marker. Common in CN government / contract templates.
+    inline_emitted = False
+    for m in _INLINE_BLANK_RE.finditer(text):
+        gs, ge = m.start("gap"), m.end("gap")
+        if _overlaps_covered(gs, ge):
+            continue
+        label = _guess_label_before(text, gs)
+        ctx = _snippet(text, gs, ge, radius=40)
+        is_sig = _looks_like_signature(label, text, gs, ge)
+        add("underscores", label, ctx, {
+            "paragraph": paragraph,
+            "start": gs,
+            "end": ge,
+            "is_signature": is_sig,
+            "pad_char": " ",
+            "source": "inline_whitespace_blank",
+        })
+        covered.append((gs, ge))
+        inline_emitted = True
+    if highlighted_spans or uw_emitted or date_emitted or inline_emitted:
         return
     # 1) underscore runs (may have multiple per paragraph)
     underscore_matches = list(_UNDERSCORE_RUN_RE.finditer(text))
@@ -1107,6 +1543,33 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
             })
 
 
+def _cell_tc_element(cell):
+    """Return the underlying <w:tc> XML element for a Cell wrapper.
+
+    Note: python-docx returns the **anchor** tc on every continuation row of
+    a vertically-merged region (so `cell._tc` is the same object across the
+    merge). Callers that need to deduplicate per-merge should use the tc
+    identity returned here as the dedupe key.
+    """
+    try:
+        return cell._tc
+    except Exception:
+        return None
+
+
+def _is_placeholder_cell(cell) -> bool:
+    """True if the cell's content is a seal/date template placeholder
+    (signature block waiting to be filled)."""
+    text = _cell_text(cell)
+    if not text.strip():
+        return False
+    if _SEAL_PLACEHOLDER_RE.search(text):
+        return True
+    if _DATE_PLACEHOLDER_RE.search(text):
+        return True
+    return False
+
+
 def _scan_table_for_slots(tbl, add: Callable[..., None]) -> None:
     # Best-guess column headers from row 0 (text-only)
     header_labels: List[str] = []
@@ -1114,16 +1577,65 @@ def _scan_table_for_slots(tbl, add: Callable[..., None]) -> None:
         for cell in tbl.rows[0].cells:
             header_labels.append(_cell_text(cell).strip())
 
+    # Track columns that already have a placeholder_cell slot. Empty cells
+    # below such a column are usually layout phantoms (a non-merged empty
+    # row directly after a vertically-merged anchor) and should not surface
+    # as separate fillable slots. Also dedupe by the underlying <w:tc> XML
+    # element so vertically-merged cells (which python-docx returns on every
+    # spanned row as the same anchor tc) only get scanned once.
+    #
+    # The set stores the lxml elements themselves rather than `id(tc)` —
+    # `id()` returns CPython memory addresses that can be recycled across
+    # gc'd proxy objects, so different tcs in the same scan were colliding
+    # and dropping legitimate slots. Storing the element references keeps
+    # them alive (so they hash stably by node identity) and equality follows
+    # underlying XML node identity.
+    placeholder_columns: Set[int] = set()
+    seen_cell_tcs: set = set()
+
     for ri, row in enumerate(tbl.rows):
         first_cell_text = _cell_text(row.cells[0]).strip() if row.cells else ""
         for ci, cell in enumerate(row.cells):
             # Nested tables first so order is stable
             for nested in cell.tables:
                 _scan_table_for_slots(nested, add)
+            tc = _cell_tc_element(cell)
+            already_emitted_for_tc = tc is not None and tc in seen_cell_tcs
+            # Placeholder cell (seal / stamp / date area). Emit once per merge
+            # anchor by deduping on the underlying <w:tc> identity.
+            if _is_placeholder_cell(cell) and not already_emitted_for_tc:
+                row_label = first_cell_text if ci > 0 else ""
+                col_label = header_labels[ci] if ci < len(header_labels) else ""
+                cell_text = _cell_text(cell).strip()
+                label = cell_text[:60] if cell_text else (col_label or row_label or "印章/日期")
+                ctx_bits = []
+                if row_label:
+                    ctx_bits.append(f"row='{row_label}'")
+                if col_label and col_label != cell_text:
+                    ctx_bits.append(f"col='{col_label}'")
+                context = (
+                    "[seal/date cell" + (", " + ", ".join(ctx_bits) if ctx_bits else "")
+                    + f": {cell_text[:60]}]"
+                )
+                add("placeholder_cell", label, context, {"cell": cell})
+                placeholder_columns.add(ci)
+                if tc is not None:
+                    seen_cell_tcs.add(tc)
+                continue
+            if already_emitted_for_tc:
+                # Continuation row of a cell we've already emitted (placeholder
+                # or otherwise) — don't re-scan its paragraphs.
+                continue
+            if tc is not None:
+                seen_cell_tcs.add(tc)
             for p in cell.paragraphs:
                 _scan_paragraph_for_slots(p, add)
             # Empty cell heuristic: no text and no nested tables
             if not _cell_text(cell).strip() and not cell.tables:
+                # Phantom cell under a column whose anchor was already emitted
+                # as a placeholder slot — skip.
+                if ci in placeholder_columns:
+                    continue
                 column_label = header_labels[ci] if ci < len(header_labels) else ""
                 row_label = first_cell_text if ci > 0 else ""
                 label = column_label or row_label
@@ -1171,6 +1683,113 @@ def _snippet(text: str, start: int, end: int, radius: int = 40) -> str:
 # Helpers — slot fill application                                         #
 # ---------------------------------------------------------------------- #
 
+def _slot_container_key(slot: Dict[str, Any]) -> Optional[Tuple[str, int]]:
+    """Identifier that groups slots living in the same table cell or
+    paragraph. Cell takes precedence — two slots in different paragraphs of
+    the same cell still count as paired."""
+    meta = slot.get("_meta") or {}
+    cell = meta.get("cell")
+    if cell is not None:
+        return ("cell", id(cell))
+    para = meta.get("paragraph")
+    if para is not None:
+        return ("paragraph", id(para))
+    return None
+
+
+def _reconcile_amount_pairs(
+    slots: List[Dict[str, Any]],
+    slot_values: Dict[str, Any],
+) -> Tuple[Dict[str, Any], List[str]]:
+    """Detect 大写 / 小写 amount slot pairs (same paragraph or table cell)
+    and reconcile their values using deterministic Chinese ↔ Arabic
+    conversion. Returns (possibly-updated slot_values, list of notes).
+
+    Rules:
+      - Both filled & agree → no-op.
+      - Both filled & disagree → trust whichever side parses cleanly. If
+        both parse, trust 大写 (capital-numeral grammar is self-checking).
+      - Only one filled → compute and inject the other side.
+      - Neither parses → leave untouched, append warning note.
+    """
+    notes: List[str] = []
+    if not slot_values:
+        return slot_values, notes
+    new_values = dict(slot_values)
+
+    groups: Dict[Tuple[str, int], List[Dict[str, Any]]] = defaultdict(list)
+    for s in slots:
+        key = _slot_container_key(s)
+        if key is not None:
+            groups[key].append(s)
+
+    for group in groups.values():
+        daxie = None
+        xiaoxie = None
+        for s in group:
+            text = " ".join(t for t in (s.get("label"), s.get("context")) if t)
+            if _DAXIE_LABEL_RE.search(text):
+                if daxie is None:
+                    daxie = s
+            elif _XIAOXIE_LABEL_RE.search(text):
+                if xiaoxie is None:
+                    xiaoxie = s
+        if not daxie or not xiaoxie or daxie["id"] == xiaoxie["id"]:
+            continue
+
+        d_id, x_id = daxie["id"], xiaoxie["id"]
+        d_val = new_values.get(d_id)
+        x_val = new_values.get(x_id)
+        d_dec = chinese_to_decimal(d_val) if d_val else None
+        x_dec = parse_arabic_amount(x_val) if x_val else None
+
+        if d_val and x_val:
+            if d_dec is not None and x_dec is not None and d_dec == x_dec:
+                continue
+            if d_dec is not None and x_dec is not None:
+                corrected = format_arabic_amount(d_dec)
+                notes.append(
+                    f"Amount mismatch reconciled ({d_id}/{x_id}): 大写={d_val!r} "
+                    f"(parsed as {d_dec}), 小写 was {x_val!r}, corrected to {corrected!r}."
+                )
+                new_values[x_id] = corrected
+            elif d_dec is not None:
+                corrected = format_arabic_amount(d_dec)
+                notes.append(
+                    f"Amount: 小写 {x_val!r} not parseable; overwritten with "
+                    f"{corrected!r} computed from 大写 {d_val!r}."
+                )
+                new_values[x_id] = corrected
+            elif x_dec is not None:
+                corrected = decimal_to_chinese(x_dec)
+                notes.append(
+                    f"Amount: 大写 {d_val!r} not parseable; overwritten with "
+                    f"{corrected!r} computed from 小写 {x_val!r}."
+                )
+                new_values[d_id] = corrected
+            else:
+                notes.append(
+                    f"Amount: neither 大写 {d_val!r} nor 小写 {x_val!r} parsed "
+                    f"as a Chinese contract amount; left as-is."
+                )
+        elif d_val:
+            if d_dec is not None:
+                corrected = format_arabic_amount(d_dec)
+                notes.append(
+                    f"Amount: 小写 ({x_id}) inferred as {corrected!r} from 大写 {d_val!r}."
+                )
+                new_values[x_id] = corrected
+        elif x_val:
+            if x_dec is not None:
+                corrected = decimal_to_chinese(x_dec)
+                notes.append(
+                    f"Amount: 大写 ({d_id}) inferred as {corrected!r} from 小写 {x_val!r}."
+                )
+                new_values[d_id] = corrected
+
+    return new_values, notes
+
+
 def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any]) -> Dict[str, Any]:
     """Apply a {slot_id: value} mapping to a freshly scanned slot list.
 
@@ -1178,6 +1797,7 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
     text-position order so character offsets remain valid across multiple
     fills in the same paragraph.
     """
+    slot_values, reconciliation_notes = _reconcile_amount_pairs(slots, slot_values)
     by_id = {s["id"]: s for s in slots}
     filled_ids: List[str] = []
     unknown_ids: List[str] = []
@@ -1243,7 +1863,7 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
                 # the value follows the marker rather than floating in the
                 # middle of the line.
                 fill_val = effective_val
-                if kind == "underscores":
+                if kind == "underscores" and meta.get("source") != "date_scaffold":
                     paragraph_text = "".join((r.text or "") for r in paragraph.runs)
                     span_text = paragraph_text[meta["start"]:meta["end"]]
                     prefix = paragraph_text[:meta["start"]]
@@ -1258,8 +1878,24 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
             deferred.append(("label_blank", meta, val_str, sid))
         elif kind == "empty_cell":
             deferred.append(("empty_cell", meta, val_str, sid))
+        elif kind == "placeholder_cell":
+            deferred.append(("placeholder_cell", meta, val_str, sid))
         elif kind == "section_body_empty":
             deferred.append(("section_body_empty", meta, val_str, sid))
+        elif kind == "option_choice":
+            options = meta.get("options") or []
+            chosen = _normalize_option_choice(value, len(options))
+            valid_indices = [opt["index"] for opt in options]
+            if chosen is None or chosen not in valid_indices:
+                reconciliation_notes.append(
+                    f"Option-choice slot {sid}: value {value!r} did not match a "
+                    f"valid option (expected one of {valid_indices} or labels "
+                    f"like '第一种'/'第二种'). Slot skipped; document left unchanged."
+                )
+                continue
+            choice_meta = dict(meta)
+            choice_meta["chosen_index"] = chosen
+            deferred.append(("option_choice", choice_meta, val_str, sid))
         else:
             unknown_ids.append(sid)
 
@@ -1300,25 +1936,51 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
         elif kind == "empty_cell":
             if _write_to_empty_cell(meta["cell"], val_str):
                 filled_ids.append(sid)
+        elif kind == "placeholder_cell":
+            if _write_to_placeholder_cell(meta["cell"], val_str):
+                filled_ids.append(sid)
         elif kind == "section_body_empty":
-            if _write_to_empty_paragraph(meta["paragraph"], val_str):
+            if _fill_section_body_empty(meta["paragraph"], val_str):
                 filled_ids.append(sid)
         elif kind == "border_line":
             if _write_to_empty_paragraph(meta["paragraph"], val_str):
                 _set_paragraph_centered(meta["paragraph"])
                 filled_ids.append(sid)
+        elif kind == "option_choice":
+            # Drop: prompt paragraph + every option's header paragraph
+            # (the chosen option's header is structural — '第N种：…' — and
+            # is removed too) + every non-chosen option's body paragraphs.
+            chosen = meta["chosen_index"]
+            to_drop = [meta["prompt_paragraph"]]
+            for opt in meta["options"]:
+                to_drop.append(opt["header_paragraph"])
+                if opt["index"] != chosen:
+                    to_drop.extend(opt["body_paragraphs"])
+            dropped_any = False
+            for p in to_drop:
+                if p is not None and _drop_paragraph(p):
+                    dropped_any = True
+            if dropped_any:
+                filled_ids.append(sid)
+                reconciliation_notes.append(
+                    f"Option-choice slot {sid}: kept 第{chosen}种, removed "
+                    f"prompt + {len(meta['options']) - 1} other option(s)."
+                )
 
     requested = set(slot_values.keys())
     signatures = set(skipped_signature_ids)
     skipped = sorted(
         (requested - set(filled_ids) - set(unknown_ids) - signatures) | signatures
     )
-    return {
+    outcome = {
         "filled_slot_ids": sorted(filled_ids),
         "unknown_slot_ids": sorted(unknown_ids),
         "skipped_slot_ids": skipped,
         "skipped_signature_slot_ids": sorted(signatures),
     }
+    if reconciliation_notes:
+        outcome["reconciliation_notes"] = reconciliation_notes
+    return outcome
 
 
 def _append_after_label(paragraph, value: str) -> bool:
@@ -1333,6 +1995,33 @@ def _append_after_label(paragraph, value: str) -> bool:
             r.text = r.text + sep + value
             return True
     runs[0].text = (runs[0].text or "") + " " + value
+    return True
+
+
+def _write_to_placeholder_cell(cell, value: str) -> bool:
+    """Replace ALL text in a seal/date placeholder cell with `value`.
+
+    Splits on '\\n' so multi-line values become multiple paragraphs.
+    Existing paragraphs are reused (preserving alignment and first-run
+    formatting); any leftover paragraphs are text-cleared but kept so the
+    cell's vertical structure / merge boundaries stay intact.
+    """
+    lines = value.split("\n") if value else [""]
+    paragraphs = list(cell.paragraphs)
+    for i, line in enumerate(lines):
+        if i < len(paragraphs):
+            p = paragraphs[i]
+            if p.runs:
+                p.runs[0].text = line
+                for r in p.runs[1:]:
+                    r.text = ""
+            else:
+                p.add_run(line)
+        else:
+            cell.add_paragraph(line)
+    for p in paragraphs[len(lines):]:
+        for r in p.runs:
+            r.text = ""
     return True
 
 
@@ -1358,6 +2047,336 @@ def _write_to_empty_paragraph(paragraph, value: str) -> bool:
             extra.text = ""
     else:
         paragraph.add_run(value)
+    return True
+
+
+# Leading numbered-list marker on a single line. Captures the numeric prefix
+# in group 1 and the body in group 2. Accepts `1. body`, `1、body`, `(1) body`,
+# `1) body`, `1) body`, `1．body`, etc. We don't accept `第N条 body` here —
+# that's section-numbering, not a list-item style.
+_NUMBERED_LINE_RE = re.compile(
+    r"^\s*"
+    r"(?:[(（])?\s*(\d{1,3})\s*[)）]?"   # number with optional brackets
+    # Separator: ASCII '.', full-width '．', dunhao '、', or colon. The
+    # following whitespace is optional — `1、甲方` (no space) is common in
+    # CN prose. For unbracketed numbers without any separator we still
+    # require at least one whitespace char so prose like `2024年` doesn't
+    # match.
+    r"(?:\s*[.．、:：]\s*|\s+)"
+    r"(.+?)\s*$"
+)
+
+
+def _split_numbered_lines(value: str) -> Optional[List[str]]:
+    """If `value` is a pure numbered list (every line a `N. body` item,
+    numbers incrementing by 1 from any start), return the bodies. Otherwise
+    None.
+
+    Lenient about the starting number — agents occasionally continue the
+    counter across sections (writing `8. a\\n9. b` for the second section).
+    The rendered Word list will restart at 1 regardless, since the fill
+    path creates a fresh <w:num> per list block.
+    """
+    if not value:
+        return None
+    lines = [ln for ln in value.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return None
+    bodies: List[str] = []
+    first_num: Optional[int] = None
+    for i, line in enumerate(lines):
+        m = _NUMBERED_LINE_RE.match(line)
+        if not m:
+            return None
+        n = int(m.group(1))
+        if first_num is None:
+            first_num = n
+        elif n != first_num + i:
+            return None
+        body = m.group(2).strip()
+        if not body:
+            return None
+        bodies.append(body)
+    return bodies
+
+
+def _segment_value(value: str) -> List[Tuple[str, Any]]:
+    """Split a fill value into a sequence of `(kind, content)` segments.
+
+    - `('prose', text)`   — a plain paragraph (text may contain '\\n' for
+      multiple consecutive non-list lines, kept together as separate
+      paragraphs at render time).
+    - `('list', bodies)`  — a contiguous block of numbered lines whose
+      numbers increment by 1. `bodies` is the list of item bodies with
+      their numeric prefix stripped.
+
+    Handles:
+      - intro prose followed by a list (`产品清单如下：\\n1. …`)
+      - header prose between two independent lists
+        (`甲方：\\n1.…\\n2.…\\n\\n乙方：\\n1.…\\n2.…`)
+      - agents that don't restart at 1 between sections (numbers are
+        accepted as long as they increment by 1)
+    """
+    if not value:
+        return []
+    segments: List[Tuple[str, Any]] = []
+    prose_buf: List[str] = []
+    list_buf: List[Tuple[int, str]] = []
+
+    def flush_prose():
+        if prose_buf:
+            segments.append(("prose", "\n".join(prose_buf)))
+            prose_buf.clear()
+
+    def flush_list():
+        if len(list_buf) >= 2:
+            segments.append(("list", [body for (_, body) in list_buf]))
+        else:
+            # Single numbered line is not a list — fold back into prose.
+            for n, body in list_buf:
+                prose_buf.append(f"{n}. {body}")
+        list_buf.clear()
+
+    for raw_line in value.splitlines():
+        line = raw_line.strip()
+        if not line:
+            # Blank line separates segments.
+            flush_list()
+            flush_prose()
+            continue
+        m = _NUMBERED_LINE_RE.match(line)
+        if m:
+            n = int(m.group(1))
+            body = m.group(2).strip()
+            if list_buf and n != list_buf[-1][0] + 1:
+                # Counter broke — end this list, start fresh.
+                flush_list()
+            if not list_buf:
+                flush_prose()
+            list_buf.append((n, body))
+        else:
+            flush_list()
+            prose_buf.append(line)
+    flush_list()
+    flush_prose()
+    return segments
+
+
+def _ensure_decimal_abstract_num(numbering_part) -> Optional[int]:
+    """Return an abstractNumId whose level-0 renders as `1. 2. 3.` decimal.
+
+    Reuses an existing definition when one matches; otherwise appends a
+    new one. Cached on the numbering part so the same document only
+    accumulates one new abstractNum no matter how many lists we add.
+    """
+    try:
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+    except ImportError:
+        return None
+    if numbering_part is None:
+        return None
+    cached = getattr(numbering_part, "_dts_decimal_abstract_id", None)
+    if cached is not None:
+        return cached
+    el = numbering_part.element
+
+    for absn in el.findall(qn("w:abstractNum")):
+        aid = absn.get(qn("w:abstractNumId"))
+        for lvl in absn.findall(qn("w:lvl")):
+            if lvl.get(qn("w:ilvl")) != "0":
+                continue
+            numFmt = lvl.find(qn("w:numFmt"))
+            lvlText = lvl.find(qn("w:lvlText"))
+            fmt = numFmt.get(qn("w:val")) if numFmt is not None else None
+            txt = lvlText.get(qn("w:val")) if lvlText is not None else None
+            if fmt == "decimal" and txt in ("%1.", "%1．"):
+                try:
+                    cached = int(aid)
+                except (TypeError, ValueError):
+                    cached = None
+                if cached is not None:
+                    numbering_part._dts_decimal_abstract_id = cached
+                    return cached
+            break
+
+    existing_abs = [
+        int(a.get(qn("w:abstractNumId")))
+        for a in el.findall(qn("w:abstractNum"))
+        if (a.get(qn("w:abstractNumId")) or "").lstrip("-").isdigit()
+    ]
+    new_abs_id = (max(existing_abs) + 1) if existing_abs else 0
+    absn = OxmlElement("w:abstractNum")
+    absn.set(qn("w:abstractNumId"), str(new_abs_id))
+    lvl = OxmlElement("w:lvl")
+    lvl.set(qn("w:ilvl"), "0")
+    start = OxmlElement("w:start"); start.set(qn("w:val"), "1"); lvl.append(start)
+    numFmt = OxmlElement("w:numFmt"); numFmt.set(qn("w:val"), "decimal"); lvl.append(numFmt)
+    lvlText = OxmlElement("w:lvlText"); lvlText.set(qn("w:val"), "%1."); lvl.append(lvlText)
+    lvlJc = OxmlElement("w:lvlJc"); lvlJc.set(qn("w:val"), "left"); lvl.append(lvlJc)
+    pPr_lvl = OxmlElement("w:pPr")
+    ind = OxmlElement("w:ind")
+    ind.set(qn("w:left"), "720")
+    ind.set(qn("w:hanging"), "360")
+    pPr_lvl.append(ind)
+    lvl.append(pPr_lvl)
+    absn.append(lvl)
+    first_num = el.find(qn("w:num"))
+    if first_num is not None:
+        first_num.addprevious(absn)
+    else:
+        el.append(absn)
+
+    numbering_part._dts_decimal_abstract_id = new_abs_id
+    return new_abs_id
+
+
+def _new_decimal_num_id(paragraph) -> Optional[int]:
+    """Create and return a FRESH `<w:num>` for decimal `1. 2. 3.` numbering.
+
+    The underlying abstractNum is shared across the document (created once),
+    but each call appends a brand-new `<w:num>` referencing it — that way
+    every list gets its own counter and Word renders each list starting at 1.
+    Returns None if the document has no numbering part.
+    """
+    try:
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+    except ImportError:
+        return None
+    try:
+        numbering_part = paragraph.part.numbering_part
+    except Exception:
+        return None
+    if numbering_part is None:
+        return None
+    abstract_id = _ensure_decimal_abstract_num(numbering_part)
+    if abstract_id is None:
+        return None
+    el = numbering_part.element
+    existing_num = [
+        int(n.get(qn("w:numId")))
+        for n in el.findall(qn("w:num"))
+        if (n.get(qn("w:numId")) or "").lstrip("-").isdigit()
+    ]
+    new_num_id = (max(existing_num) + 1) if existing_num else 1
+    num = OxmlElement("w:num")
+    num.set(qn("w:numId"), str(new_num_id))
+    aref = OxmlElement("w:abstractNumId")
+    aref.set(qn("w:val"), str(abstract_id))
+    num.append(aref)
+    # Explicit start-from-1 override. Without this, some Word versions
+    # continue the counter across sibling <w:num> elements that share an
+    # abstractNum — so section 五's list ends up numbered 9, 10, 11, 12 as
+    # a continuation of section 二's 1, 2, 3, 4 even though we handed out
+    # distinct numIds. Naming a startOverride forces Word to reset.
+    lvlOverride = OxmlElement("w:lvlOverride")
+    lvlOverride.set(qn("w:ilvl"), "0")
+    startOverride = OxmlElement("w:startOverride")
+    startOverride.set(qn("w:val"), "1")
+    lvlOverride.append(startOverride)
+    num.append(lvlOverride)
+    el.append(num)
+    return new_num_id
+
+
+def _apply_list_numbering(paragraph, num_id: int, ilvl: int = 0) -> None:
+    """Set <w:numPr><w:ilvl/><w:numId/></w:numPr> on the paragraph's pPr."""
+    try:
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+    except ImportError:
+        return
+    pPr = paragraph._p.get_or_add_pPr()
+    for old in pPr.findall(qn("w:numPr")):
+        pPr.remove(old)
+    numPr = OxmlElement("w:numPr")
+    ilvl_el = OxmlElement("w:ilvl"); ilvl_el.set(qn("w:val"), str(ilvl))
+    numId_el = OxmlElement("w:numId"); numId_el.set(qn("w:val"), str(num_id))
+    numPr.append(ilvl_el)
+    numPr.append(numId_el)
+    pPr.append(numPr)
+
+
+def _insert_paragraph_after(paragraph, text: str):
+    """Insert a new <w:p> sibling immediately after `paragraph`, copying its
+    pPr (so style / alignment carry over), and return the new Paragraph
+    wrapper. The new paragraph contains a single run with `text`.
+    """
+    from docx.text.paragraph import Paragraph
+    from copy import deepcopy
+    from docx.oxml.ns import qn
+    new_p = deepcopy(paragraph._p)
+    # Drop existing runs (we want a fresh single run).
+    for r in new_p.findall(qn("w:r")):
+        new_p.remove(r)
+    # Drop numPr so the caller can apply fresh numbering.
+    pPr = new_p.find(qn("w:pPr"))
+    if pPr is not None:
+        for old in pPr.findall(qn("w:numPr")):
+            pPr.remove(old)
+    paragraph._p.addnext(new_p)
+    wrapper = Paragraph(new_p, paragraph._parent)
+    if text:
+        wrapper.add_run(text)
+    return wrapper
+
+
+def _fill_section_body_empty(paragraph, value: str) -> bool:
+    """Fill a section_body_empty slot.
+
+    Segments `value` into prose blocks and numbered-list blocks (see
+    `_segment_value`). The existing empty paragraph is reused for the
+    first written line; subsequent lines are inserted after it. Each
+    list block gets its OWN fresh numId so Word renders independent
+    lists each starting at 1, regardless of what numbers the agent used.
+
+    Falls back to a single-paragraph plain-text write when there's no
+    structured content (single short prose value, no lists).
+    """
+    segments = _segment_value(value)
+    if not segments:
+        return _write_to_empty_paragraph(paragraph, value)
+    if len(segments) == 1 and segments[0][0] == "prose" and "\n" not in segments[0][1]:
+        # Fast path: a single short prose value (the common case for
+        # short, non-list section bodies).
+        return _write_to_empty_paragraph(paragraph, segments[0][1])
+
+    # Flatten segments into an ordered list of `(text, num_id_or_None)`.
+    plan: List[Tuple[str, Optional[int]]] = []
+    for kind, content in segments:
+        if kind == "prose":
+            for line in str(content).split("\n"):
+                line = line.strip()
+                if line:
+                    plan.append((line, None))
+        elif kind == "list":
+            list_num_id = _new_decimal_num_id(paragraph)
+            for body in content:
+                plan.append((body, list_num_id))
+    if not plan:
+        return _write_to_empty_paragraph(paragraph, value)
+
+    first_text, first_num_id = plan[0]
+    _write_to_empty_paragraph(paragraph, first_text)
+    if first_num_id is not None:
+        _apply_list_numbering(paragraph, first_num_id, ilvl=0)
+    else:
+        # Strip any pre-existing numPr that the template paragraph might
+        # have inherited — prose paragraphs should not be auto-numbered.
+        try:
+            from docx.oxml.ns import qn
+            pPr = paragraph._p.find(qn("w:pPr"))
+            if pPr is not None:
+                for old in pPr.findall(qn("w:numPr")):
+                    pPr.remove(old)
+        except Exception:
+            pass
+    prev = paragraph
+    for text, num_id in plan[1:]:
+        prev = _insert_paragraph_after(prev, text)
+        if num_id is not None:
+            _apply_list_numbering(prev, num_id, ilvl=0)
     return True
 
 
@@ -1453,6 +2472,49 @@ def _is_heading(paragraph) -> bool:
     except Exception:
         name = ""
     return bool(name and _HEADING_STYLE_RE.match(name))
+
+
+def _paragraph_has_list_numbering(paragraph) -> bool:
+    """True when the paragraph carries auto list numbering (w:pPr/w:numPr).
+
+    Chinese contract templates often style section headers like 不可抗力 /
+    违约责任 with a numbered list (numId=1) instead of putting "九、" / "十、"
+    in the run text, so a text-only regex won't see them as section breaks.
+    """
+    try:
+        pPr = paragraph._p.pPr
+    except Exception:
+        return False
+    return pPr is not None and pPr.numPr is not None
+
+
+def _is_section_heading_like(paragraph) -> bool:
+    """True when the paragraph looks like a section heading.
+
+    Covers two cases:
+      1. Built-in Heading / 标题 style — `_is_heading` already handles this.
+      2. Auto-numbered list paragraph (w:numPr) whose run text is short and
+         has no colon — e.g. `不可抗力`, `违约责任`, `合同争议的解决方式`.
+         These render with `九、` / `十、` prefixes from the numbering
+         definition but the text itself is just the title. Body sub-items
+         (`本合同技术开发风险责任由乙方承担。`) are longer and excluded.
+    """
+    if _is_heading(paragraph):
+        return True
+    if not _paragraph_has_list_numbering(paragraph):
+        return False
+    text = "".join((r.text or "") for r in paragraph.runs).strip()
+    if not text:
+        return False
+    # Heading-like: short title (<= 40 chars), no inline colon or sentence
+    # terminator, no leading sub-key like "10.1".
+    if len(text) > 40:
+        return False
+    if re.search(r"[:：。；！？]", text):
+        return False
+    if re.match(r"^\s*\d+\.\d+", text):
+        return False
+    return True
 
 
 _GAP_DECORATIVE_RE = re.compile(r"^[\s 　.\-—–·•・|/\\,;:：（）()\[\]]*$")
@@ -1879,7 +2941,18 @@ def _scan_removals(doc) -> List[Dict[str, Any]]:
         # deletion. Otherwise, treat the run containing the match as the
         # removal target — safer than nuking unrelated surrounding prose.
         cover = (m.end() - m.start()) / max(len(full.strip()), 1)
-        if cover >= 0.5 or _all_runs_hintlike(p):
+        # Parenthesized meta-notes: a paragraph whose entire content sits
+        # inside one pair of parens / brackets and contains a removal marker
+        # is itself the instruction — delete the whole thing regardless of
+        # how short the matched phrase is. e.g.
+        #   "（全文排版确保下表不跨页。此句话非正文，应删除）"
+        stripped = full.strip()
+        is_full_parenthetical = (
+            len(stripped) >= 4
+            and stripped[0] in "（(【[「『"
+            and stripped[-1] in "）)】]」』"
+        )
+        if cover >= 0.5 or _all_runs_hintlike(p) or is_full_parenthetical:
             add(
                 "instruction_paragraph",
                 _snippet(full, m.start(), m.end(), radius=80),
@@ -1948,6 +3021,15 @@ def _apply_removals_in_place(
         meta = fresh_r.get("_meta", {})
         if fresh_r["kind"] == "instruction_paragraph":
             paragraph = meta["paragraph"]
+            # "下表不跨页" / "keep table together" — before deleting the
+            # instruction, harden the next table so Word renders it on one
+            # page. Honors the author's layout intent rather than throwing it
+            # away with the meta-note.
+            full_text = "".join((r.text or "") for r in paragraph.runs)
+            if _KEEP_TABLE_TOGETHER_RE.search(full_text):
+                tbl_elem = _next_table_after(paragraph)
+                if tbl_elem is not None:
+                    _apply_keep_table_together(tbl_elem)
             if _drop_paragraph(paragraph):
                 applied.append(rid)
             else:
@@ -1984,6 +3066,74 @@ def _drop_paragraph(paragraph) -> bool:
         return True
     except Exception:
         return False
+
+
+def _next_table_after(paragraph):
+    """Return the next sibling <w:tbl> XML element after `paragraph`, or None.
+
+    Walks forward through the paragraph's parent (body or cell). Used to
+    locate the table that a `下表不跨页` instruction refers to.
+    """
+    try:
+        elem = paragraph._element
+        parent = elem.getparent()
+    except Exception:
+        return None
+    if parent is None:
+        return None
+    ns_tbl = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tbl"
+    seen = False
+    for sibling in parent:
+        if sibling is elem:
+            seen = True
+            continue
+        if not seen:
+            continue
+        if sibling.tag == ns_tbl:
+            return sibling
+    return None
+
+
+def _apply_keep_table_together(tbl_elem) -> bool:
+    """Harden a <w:tbl> so Word renders the whole table on one page:
+
+      - <w:cantSplit/> on every row's <w:trPr>  → no mid-row page break
+      - <w:keepNext/>  on every paragraph in the table except the very
+        last one → consecutive paragraphs (including paragraphs across
+        rows) stay on the same page.
+
+    Idempotent: existing cantSplit / keepNext elements are replaced.
+    Returns True if at least one row was touched.
+    """
+    try:
+        from docx.oxml import OxmlElement
+    except ImportError:
+        return False
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    rows = tbl_elem.findall(f"{ns}tr")
+    if not rows:
+        return False
+    for tr in rows:
+        trPr = tr.find(f"{ns}trPr")
+        if trPr is None:
+            trPr = OxmlElement("w:trPr")
+            # trPr must precede tc children
+            tr.insert(0, trPr)
+        for old in trPr.findall(f"{ns}cantSplit"):
+            trPr.remove(old)
+        trPr.append(OxmlElement("w:cantSplit"))
+    paragraphs = list(tbl_elem.iter(f"{ns}p"))
+    for p in paragraphs[:-1]:
+        pPr = p.find(f"{ns}pPr")
+        if pPr is None:
+            pPr = OxmlElement("w:pPr")
+            p.insert(0, pPr)
+        for old in pPr.findall(f"{ns}keepNext"):
+            pPr.remove(old)
+        # keepNext should appear before most other pPr children for safety,
+        # but Word tolerates either order; append for simplicity.
+        pPr.append(OxmlElement("w:keepNext"))
+    return True
 
 
 if __name__ == "__main__":  # pragma: no cover
