@@ -188,7 +188,7 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册信息
-            agent_name="IHEP_Internal_Assistant",
+            agent_name="Your Explorer",
             author = "ihep@ihep.ac.cn",
             # permission='groups: "drsai, payg"; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             # permission={
@@ -196,14 +196,11 @@ if __name__ == "__main__":
             #     "users": [], 
             #     "owner": "admin"
             #     },
-            description = "高能所内部办公助手：所内规章与办事流程等问题会提示你到 OA、职能处室或知识库查阅，不代替官方口径。",
+            description = "A personal assistant for you to explore the world.",
             version = "0.1.0",
-            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-a510f20c6c9d4443a582ad5b1dcc8f51/preview",
             examples=[
                 "/help",
-                "差旅报销要去哪里看最新规定？",
-                "ARP 课题经费相关问题应该找谁？",
-                "所里 VPN 或邮箱用不了，一般怎么报修？",
             ],
             agent_config = llm_mode_config,
             defult_config_name="hepai/minimax-m2.7-highspeed",
