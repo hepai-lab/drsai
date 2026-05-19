@@ -1665,6 +1665,133 @@ class DocumentProcessor:
                                     f"HINT: actual cell text is '{joined_hint[:120]}{'…' if len(joined_hint) > 120 else ''}'"
                                 )
 
+                    elif edit_type == 'add_table_row':
+                        # Append (or insert) a row into an existing table and
+                        # populate its cells. The new row clones a data row's
+                        # <w:trPr> + each cell's <w:tcPr> so column widths,
+                        # borders, and alignment survive.
+                        #
+                        # Template-row selection: by default pick the row with
+                        # the most <w:tc> elements (i.e. the most fully-split
+                        # data row). This avoids accidentally cloning a totals
+                        # row whose cells are merged via gridSpan — those rows
+                        # have far fewer underlying <w:tc> elements, and
+                        # writing into `row.cells` on a merged row clobbers the
+                        # same underlying cell repeatedly (only the last value
+                        # survives). The agent may override with
+                        # 'template_row_index'.
+                        from copy import deepcopy
+                        from docx.oxml.ns import qn
+                        from docx.table import _Cell
+                        table_index = edit.get('table_index', 0)
+                        values = edit.get('values') or edit.get('cells') or []
+                        position = edit.get('position', 'end')  # 'end' or int row index to insert BEFORE
+                        template_row_index = edit.get('template_row_index')
+                        if not isinstance(table_index, int) or not (0 <= table_index < len(doc.tables)):
+                            raise IndexError(f"table_index {table_index} out of range (have {len(doc.tables)} table(s))")
+                        if not isinstance(values, list):
+                            raise ValueError("add_table_row 'values' must be a list of cell strings")
+                        table = doc.tables[table_index]
+                        if not table.rows:
+                            raise ValueError(f"table {table_index} has no rows to clone formatting from")
+                        if isinstance(template_row_index, int):
+                            if not (0 <= template_row_index < len(table.rows)):
+                                raise IndexError(f"template_row_index {template_row_index} out of range (table has {len(table.rows)} row(s))")
+                            template_row = table.rows[template_row_index]
+                        else:
+                            # Pick the LAST row that ties for max <w:tc> count.
+                            # First-row-wins would pick the header in tables
+                            # like [header, data, data, merged-totals] — the
+                            # header has the same cell count as data rows but
+                            # carries header styling (bold, different font)
+                            # that the user does not want on new data rows.
+                            # Last-row-wins lands on a data row in that shape
+                            # while still skipping the merged totals row.
+                            best_idx = 0
+                            best_count = -1
+                            for ridx, r in enumerate(table.rows):
+                                tc_count = len(r._tr.findall(qn('w:tc')))
+                                if tc_count >= best_count:
+                                    best_count = tc_count
+                                    best_idx = ridx
+                            template_row = table.rows[best_idx]
+                        template_tr = template_row._tr
+                        new_tr = deepcopy(template_tr)
+                        # Blank every cell's text WHILE preserving formatting:
+                        #   - <w:tcPr> on each cell (widths, borders, vertical
+                        #     alignment) is left untouched.
+                        #   - For each paragraph, keep <w:pPr> (horizontal
+                        #     alignment, indent, spacing) AND keep the first
+                        #     <w:r> with its <w:rPr> (font, size, bold, color,
+                        #     east-asia font). Only clear the run's text and
+                        #     drop the trailing runs.
+                        # Dropping the runs entirely (an earlier approach) lost
+                        # <w:rPr>, so _set_cell_text would add a bare run with
+                        # default font, which Word renders left-without-style
+                        # — visually "mid alignment" against neighbouring
+                        # rows. Keeping the first run fixes that.
+                        for tc in new_tr.findall(qn('w:tc')):
+                            for p in list(tc.findall(qn('w:p'))):
+                                runs = list(p.findall(qn('w:r')))
+                                if not runs:
+                                    continue
+                                first_run = runs[0]
+                                for t_el in first_run.findall(qn('w:t')):
+                                    t_el.text = ''
+                                for extra_run in runs[1:]:
+                                    p.remove(extra_run)
+                        # Insert at desired position. NOTE: inserted_at is the
+                        # post-insert index. For append we read len(table.rows)-1
+                        # AFTER the append (off-by-one here was the original bug:
+                        # using len(table.rows) post-append points one past end
+                        # and raises IndexError inside the dispatcher).
+                        tbl_elem = template_tr.getparent()
+                        if position == 'end' or position is None:
+                            tbl_elem.append(new_tr)
+                            inserted_at = len(table.rows) - 1
+                        elif isinstance(position, int):
+                            row_count_before = len(table.rows)
+                            if not (0 <= position <= row_count_before):
+                                raise IndexError(f"add_table_row position {position} out of range (table has {row_count_before} row(s))")
+                            if position == row_count_before:
+                                tbl_elem.append(new_tr)
+                            else:
+                                tbl_elem.insert(list(tbl_elem).index(table.rows[position]._tr), new_tr)
+                            inserted_at = position
+                        else:
+                            raise ValueError(f"add_table_row 'position' must be 'end' or an int row index, got {position!r}")
+                        # Write values directly to the underlying <w:tc>
+                        # elements of new_tr (not table.rows[i].cells). row.cells
+                        # phantom-expands a gridSpan=N cell into N logical cells
+                        # that all map to the same underlying tc — looping over
+                        # those and writing values would clobber the same cell
+                        # repeatedly, leaving only the last value. Iterating
+                        # over <w:tc> elements directly writes once per real
+                        # cell.
+                        new_tcs = new_tr.findall(qn('w:tc'))
+                        for col_idx, val in enumerate(values):
+                            if col_idx >= len(new_tcs):
+                                break
+                            cell = _Cell(new_tcs[col_idx], table)
+                            _set_cell_text(cell, "" if val is None else str(val))
+                        changes_made.append(
+                            f"Added row at position {inserted_at} in table {table_index} "
+                            f"with {min(len(values), len(new_tcs))} cell value(s)"
+                        )
+
+                    elif edit_type == 'delete_table_row':
+                        from docx.oxml.ns import qn
+                        table_index = edit.get('table_index', 0)
+                        row = edit.get('row')
+                        if not isinstance(table_index, int) or not (0 <= table_index < len(doc.tables)):
+                            raise IndexError(f"table_index {table_index} out of range (have {len(doc.tables)} table(s))")
+                        table = doc.tables[table_index]
+                        if not isinstance(row, int) or not (0 <= row < len(table.rows)):
+                            raise IndexError(f"row {row} out of range for table {table_index} (have {len(table.rows)} row(s))")
+                        tr = table.rows[row]._tr
+                        tr.getparent().remove(tr)
+                        changes_made.append(f"Deleted row {row} from table {table_index}")
+
                     elif edit_type == 'delete_text':
                         # Properly delete text instead of replacing with empty string
                         target_text = edit.get('old_text', '')
@@ -2725,19 +2852,72 @@ class DocumentProcessor:
                         'runs': len(para.runs)
                     })
             
-            # Extract tables
+            # Extract tables — merge-aware. python-docx's `row.cells` returns
+            # the anchor cell wrapper for every grid position a horizontally-
+            # or vertically-merged cell occupies, so naive `[cell.text for cell
+            # in row.cells]` would emit the SAME prose multiple times. Agents
+            # reading that JSON have repeatedly mistaken the duplication for a
+            # bug and "fixed" it by overwriting all duplicates with a single
+            # short value — which clobbers the entire merged region because
+            # every continuation position writes to the same anchor tc.
+            # We collapse continuations to a clear sentinel string and emit a
+            # parallel `merges` list so callers (agent + frontend) can render
+            # the table truthfully.
             tables = []
             for i, table in enumerate(doc.tables):
-                table_data = []
-                for row in table.rows:
-                    row_data = [cell.text for cell in row.cells]
+                rows_list = list(table.rows)
+                # Resolve each grid position to its anchor coords. Iterating
+                # row order means a tc seen on an earlier row is the anchor of
+                # a vertical merge; a tc seen earlier in the same row is the
+                # anchor of a horizontal (gridSpan) merge.
+                tc_to_anchor: Dict[Any, tuple] = {}
+                anchor_grid: List[List[tuple]] = []
+                for ri, row in enumerate(rows_list):
+                    row_anchors: List[tuple] = []
+                    for ci, cell in enumerate(row.cells):
+                        tc = cell._tc
+                        if tc not in tc_to_anchor:
+                            tc_to_anchor[tc] = (ri, ci)
+                        row_anchors.append(tc_to_anchor[tc])
+                    anchor_grid.append(row_anchors)
+                # Build display data + merges list.
+                table_data: List[List[str]] = []
+                merges: List[Dict[str, Any]] = []
+                anchor_span: Dict[tuple, Dict[str, int]] = {}
+                for ri, row in enumerate(rows_list):
+                    row_data: List[str] = []
+                    for ci, cell in enumerate(row.cells):
+                        anchor = anchor_grid[ri][ci]
+                        if anchor != (ri, ci):
+                            row_data.append(f"⟨merged with r{anchor[0]}c{anchor[1]}⟩")
+                            span = anchor_span.setdefault(
+                                anchor, {"colspan": 1, "rowspan": 1}
+                            )
+                            if anchor[0] == ri:
+                                span["colspan"] = max(span["colspan"], ci - anchor[1] + 1)
+                            if anchor[1] == ci:
+                                span["rowspan"] = max(span["rowspan"], ri - anchor[0] + 1)
+                        else:
+                            row_data.append(cell.text)
+                            anchor_span.setdefault(
+                                anchor, {"colspan": 1, "rowspan": 1}
+                            )
                     table_data.append(row_data)
-                
+                for (ar, ac), span in anchor_span.items():
+                    if span["colspan"] == 1 and span["rowspan"] == 1:
+                        continue
+                    merges.append({
+                        "anchor": [ar, ac],
+                        "colspan": span["colspan"],
+                        "rowspan": span["rowspan"],
+                        "text": table_data[ar][ac],
+                    })
                 tables.append({
                     'index': i,
-                    'rows': len(table.rows),
+                    'rows': len(rows_list),
                     'cols': len(table.columns) if table.columns else 0,
-                    'data': table_data
+                    'data': table_data,
+                    'merges': merges,
                 })
             
             # Extract styles

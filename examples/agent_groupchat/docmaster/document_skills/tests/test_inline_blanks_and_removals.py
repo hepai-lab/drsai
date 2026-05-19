@@ -254,6 +254,133 @@ def test_run_level_removal_unsuppressed():
     assert hls, f"expected highlighted slot to remain; got {ins['slots']}"
 
 
+# ── Container section heading suppression ───────────────────────────────
+
+
+def test_container_section_heading_no_label_blank():
+    """A top-level numbered heading like '四、交货方式及时间、地点：' whose
+    body lives in the following paragraphs must NOT be emitted as a
+    label_blank — otherwise a value gets appended after the heading's colon
+    in addition to (or instead of) filling the structured sub-fields below."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    d.add_paragraph("四、交货方式及时间、地点：")
+    d.add_paragraph("交货方式：由乙方负责送货或办理货物托运，运输及保险费由乙方负担；")
+    d.add_paragraph("交货时间：合同签订之日起      周内；")
+    d.add_paragraph("交货地点：甲方单位（北京市石景山区玉泉路19号乙院）。")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    bad = [s for s in ins["slots"]
+           if s["kind"] == "label_blank"
+           and "交货方式及时间" in (s.get("label") or "")]
+    assert not bad, f"container heading should not produce label_blank; got {bad}"
+    # The sub-field heading "交货方式：" is also a Label: paragraph, but it
+    # legitimately has body content right after the colon ("由乙方负责..."),
+    # so it should be left alone (no label_blank emitted on a filled line).
+    filled_sub = [s for s in ins["slots"]
+                  if s["kind"] == "label_blank"
+                  and "交货方式" == (s.get("label") or "").strip()]
+    assert not filled_sub, f"already-filled sub-field should not get a slot; got {filled_sub}"
+
+
+def test_container_section_heading_auto_numbered():
+    """Same as above but the leading '四、' comes from Word's auto-numbering
+    (w:numPr), so the run text is just '交货方式及时间、地点：' with no
+    visible section marker. Real CN ministry templates render the section
+    number from a numbering definition — the suppression must still fire."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    _add_numbered_paragraph(d, "交货方式及时间、地点：", ilvl=1)
+    d.add_paragraph("交货方式：由乙方负责送货或办理货物托运，运输及保险费由乙方负担；")
+    d.add_paragraph("交货时间：合同签订之日起      周内；")
+    d.add_paragraph("交货地点：甲方单位（北京市石景山区玉泉路19号乙院）。")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    bad = [s for s in ins["slots"]
+           if s["kind"] == "label_blank"
+           and "交货方式及时间" in (s.get("label") or "")]
+    assert not bad, f"auto-numbered container heading must not produce label_blank; got {bad}"
+
+
+def test_container_section_heading_with_prose_body():
+    """Auto-numbered section heading like '产品的保修期及售后服务：' followed
+    by a plain prose body (no '：' label on the next paragraph). This must
+    still suppress the heading's label_blank — the value should go in the
+    prose body, not be appended after the heading colon."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    _add_numbered_paragraph(d, "产品的保修期及售后服务：", ilvl=0)
+    d.add_paragraph("本合同产品从甲方验收合格之日起，保修期或质量保证期    年。"
+                    "保修期内非因甲方人为原因产品如发生故障乙方应负责免费提供维修。")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    bad = [s for s in ins["slots"]
+           if s["kind"] == "label_blank" and "保修期" in (s.get("label") or "")]
+    assert not bad, f"container heading with prose body must not get label_blank; got {bad}"
+
+
+def test_container_section_heading_with_deeper_numbered_body():
+    """A heading at ilvl=0 followed by body items at ilvl=1 (same numId but
+    deeper level) — the heading is a parent, the items are its children.
+    Real example: '九、违约责任：' (ilvl=0) over '甲方无正当理由...' (ilvl=1)."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    _add_numbered_paragraph(d, "违约责任：", ilvl=0)
+    _add_numbered_paragraph(d,
+        "甲方无正当理由不按照本合同约定的期限和金额支付价款，应向乙方支付迟延付款违约金。",
+        ilvl=1)
+    _add_numbered_paragraph(d,
+        "除因不可抗力，乙方若不按合同规定的时间向甲方交货，甲方有权解除合同。",
+        ilvl=1)
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    bad = [s for s in ins["slots"]
+           if s["kind"] == "label_blank" and "违约责任" in (s.get("label") or "")]
+    assert not bad, f"heading over deeper-ilvl body must not get label_blank; got {bad}"
+
+
+def test_numbered_siblings_label_blank_retained():
+    """Two auto-numbered sibling paragraphs `项目名称：` / `项目编号：xxx`
+    must NOT trigger container suppression — they're peers, not parent/
+    child. The first one is still a fillable label_blank."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    _add_numbered_paragraph(d, "项目名称：", ilvl=1)
+    _add_numbered_paragraph(d, "项目编号：XYZ-001", ilvl=1)
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    lbs = [s for s in ins["slots"]
+           if s["kind"] == "label_blank" and "项目名称" in (s.get("label") or "")]
+    assert lbs, f"numbered sibling label_blank must be retained; got {ins['slots']}"
+
+
+def test_label_only_heading_retained_when_followed_by_section_break():
+    """A `Label:` paragraph followed by another top-level section break
+    (no body content under it) must still emit a label_blank — the value
+    legitimately goes after the colon."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    d.add_paragraph("四、项目名称：")
+    d.add_paragraph("五、技术要求：详见附件。")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    lbs = [s for s in ins["slots"]
+           if s["kind"] == "label_blank" and "项目名称" in (s.get("label") or "")]
+    assert lbs, f"expected label_blank for 项目名称; got {ins['slots']}"
+
+
 # ── Runner ───────────────────────────────────────────────────────────────
 
 
