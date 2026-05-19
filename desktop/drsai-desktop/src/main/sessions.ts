@@ -47,6 +47,16 @@ function buildPath(base: string, params: Record<string, string | number | undefi
   return qs ? `${base}?${qs}` : base;
 }
 
+function normalizeMessageContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (content === null || content === undefined) return "";
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return String(content);
+  }
+}
+
 // ── Types ───────────────────────────────────────────
 
 export interface SessionSummary {
@@ -62,9 +72,14 @@ export interface SessionSummary {
 
 export interface SessionMessage {
   id: number;
-  role: "user" | "assistant" | "tool";
+  /** Normalized role from backend: "user" | "assistant" | "tool" | "tool_request" | "thinking" */
+  role: string;
   content: string;
   timestamp: number;
+  /** Original autogen message type (e.g. "TextMessage", "ToolCallExecutionEvent"). */
+  msgType?: string;
+  /** Tool name for tool events. */
+  toolName?: string;
 }
 
 export interface SearchResult {
@@ -96,7 +111,8 @@ export async function listSessionsAsync(
       data: Array<Record<string, unknown>>;
     };
     if (!resp.data) return [];
-    return resp.data.map(
+    return resp.data
+      .map(
       (r: Record<string, unknown>) =>
         ({
           id: r.thread_id as string,
@@ -140,10 +156,12 @@ export async function getSessionMessagesAsync(
       (m: Record<string, unknown>, idx: number) =>
         ({
           id: idx,
-          role: (m.role as "user" | "assistant") || "user",
-          content: (m.content as string) || "",
+          role: (m.role as string) || "assistant",
+          content: normalizeMessageContent(m.content),
           timestamp:
             typeof m.timestamp === "number" ? m.timestamp : Date.now(),
+          msgType: (m.type as string) || undefined,
+          toolName: (m.toolName as string) || undefined,
         }) as SessionMessage,
     );
   } catch (err) {

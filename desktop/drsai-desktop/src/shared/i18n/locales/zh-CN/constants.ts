@@ -2,6 +2,9 @@
   // Provider labels
   autoDetect: "自动检测",
   // Provider setup cards
+  hepaiName: "HEPAI",
+  hepaiDesc: "IHEP AI API 网关",
+  hepaiTag: "推荐",
   openrouterName: "OpenRouter",
   openrouterDesc: "200+ 模型",
   openrouterTag: "推荐",

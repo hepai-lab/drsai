@@ -54,11 +54,19 @@ const drsaiAPI = {
   // DrSai engine info
   getDrSaiVersion: (): Promise<string | null> =>
     ipcRenderer.invoke("get-drsai-version"),
+  getDrsaiVersion: (): Promise<string | null> =>
+    ipcRenderer.invoke("get-drsai-version"),
   refreshDrSaiVersion: (): Promise<string | null> =>
+    ipcRenderer.invoke("refresh-drsai-version"),
+  refreshDrsaiVersion: (): Promise<string | null> =>
     ipcRenderer.invoke("refresh-drsai-version"),
   runDrSaiDoctor: (): Promise<string> =>
     ipcRenderer.invoke("run-drsai-doctor"),
+  runDrsaiDoctor: (): Promise<string> =>
+    ipcRenderer.invoke("run-drsai-doctor"),
   runDrSaiUpdate: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke("run-drsai-update"),
+  runDrsaiUpdate: (): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke("run-drsai-update"),
 
   // OpenClaw migration
@@ -86,11 +94,24 @@ const drsaiAPI = {
 
   getDrSaiHome: (profile?: string): Promise<string> =>
     ipcRenderer.invoke("get-drsai-home", profile),
+  getDrsaiHome: (profile?: string): Promise<string> =>
+    ipcRenderer.invoke("get-drsai-home", profile),
 
   getModelConfig: (
     profile?: string,
   ): Promise<{ provider: string; model: string; baseUrl: string }> =>
     ipcRenderer.invoke("get-model-config", profile),
+  getModelCatalog: (): Promise<{
+    default_alias: string;
+    models: Array<{
+      alias: string;
+      display_name: string;
+      client_type: string;
+      model: string;
+      token_limit: number;
+      max_tokens: number;
+    }>;
+  }> => ipcRenderer.invoke("get-model-catalog"),
 
   setModelConfig: (
     provider: string,
@@ -736,8 +757,17 @@ const drsaiAPI = {
     profile?: string,
   ): Promise<{ success: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke("run-drsai-backup", profile),
+  runDrsaiBackup: (
+    profile?: string,
+  ): Promise<{ success: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke("run-drsai-backup", profile),
 
   runDrSaiImport: (
+    archivePath: string,
+    profile?: string,
+  ): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke("run-drsai-import", archivePath, profile),
+  runDrsaiImport: (
     archivePath: string,
     profile?: string,
   ): Promise<{ success: boolean; error?: string }> =>
@@ -745,6 +775,7 @@ const drsaiAPI = {
 
   // Debug dump
   runDrSaiDump: (): Promise<string> => ipcRenderer.invoke("run-drsai-dump"),
+  runDrsaiDump: (): Promise<string> => ipcRenderer.invoke("run-drsai-dump"),
 
   // Memory providers
   discoverMemoryProviders: (

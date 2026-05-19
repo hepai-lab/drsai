@@ -116,7 +116,7 @@ from autogen_core import CancellationToken
 
 
 
-from drsai.backend.run_drsai_agent_factory import create_agent, load_llm_mode_config
+from drsai.backend.run_drsai_agent_factory import create_agent, load_llm_mode_config, build_model_catalog
 
 from drsai.configs.constant import FS_DIR
 
@@ -1026,6 +1026,13 @@ async def list_models():
     return {"object": "list", "data": models}
 
 
+@app.get("/v1/config/model-catalog")
+async def get_model_catalog():
+    """Return the default model catalog for desktop setup UI."""
+    llm_config = await asyncio.to_thread(load_llm_mode_config, None)
+    return build_model_catalog(llm_config)
+
+
 
 
 
@@ -1069,7 +1076,7 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
 
 
-    thread_id = request.thread_id
+    thread_id = request.thread_id or str(uuid.uuid4())
 
     user_id = request.user_id or _get_user_id()
 
@@ -1084,8 +1091,6 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
     async def generate_sse():
 
         """Generate SSE events from agent.run_stream()."""
-
-        session_id = thread_id or str(uuid.uuid4())
 
         has_content = False
 
@@ -1123,7 +1128,7 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
         except asyncio.CancelledError:
 
-            logger.info(f"Request cancelled for session {session_id}")
+            logger.info(f"Request cancelled for session {thread_id}")
 
             yield "data: [DONE]\n\n"
 
@@ -1139,7 +1144,7 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
         except Exception as e:
 
-            logger.error(f"Agent error for session {session_id}: {e}")
+            logger.error(f"Agent error for session {thread_id}: {e}")
 
             logger.error(traceback.format_exc())
 
@@ -1181,7 +1186,7 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
         headers={
 
-            "X-Drsai-Session-Id": thread_id or "default",
+            "X-Drsai-Session-Id": thread_id,
 
             "Cache-Control": "no-cache",
 
@@ -1281,7 +1286,13 @@ async def get_thread(
 
 ):
 
-    """Get messages for a specific session."""
+    """Get messages for a specific session.
+
+    Returns messages normalized to a uniform {role, content, type} format
+
+    so the desktop renderer does not need to understand autogen internals.
+
+    """
 
     store = _get_store(user_id)
 
@@ -1289,13 +1300,15 @@ async def get_thread(
 
     info = store.resolve(thread_id)
 
+    normalized = [_normalize_message(m) for m in msgs]
+
     return {
 
         "thread_id": thread_id,
 
         "name": info.name if info else "",
 
-        "messages": msgs,
+        "messages": normalized,
 
     }
 
@@ -1774,16 +1787,6 @@ async def get_memory(
 
 
 
-if __name__ == "__main__":
-
-    import uvicorn
-
-    uvicorn.run(app, host=DEFAULT_HOST, port=DEFAULT_PORT)
-
-
-
-
-
 # âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 # Config (desktop overrides)
@@ -2041,6 +2044,110 @@ def _session_info_to_dict(info) -> dict:
             result[attr] = getattr(info, attr)
 
     return result
+
+
+
+
+
+def _normalize_message(msg: dict) -> dict:
+
+    """Normalize an autogen message dict to a uniform {role, content, type, ...} format.
+
+
+
+    Autogen messages are stored with a ``type`` field (e.g. ``TextMessage``,
+
+    ``ToolCallExecutionEvent``, ``FunctionExecutionResultMessage``) and a
+
+    ``source`` field (``"user"`` / ``"assistant"``).  This helper maps those
+
+    to a simplified role that the desktop renderer understands:
+
+    - ``user``      â user bubble
+
+    - ``assistant``  â agent bubble (Markdown)
+
+    - ``tool``       â tool execution result
+
+    - ``tool_request``â tool call request
+
+    - ``thinking``   â thought/reasoning (collapsible)
+
+    """
+
+    msg_type = msg.get("type", "")
+
+    source = msg.get("source", "")
+
+    content = msg.get("content", "")
+
+
+
+    # Normalize content to string
+
+    if isinstance(content, str):
+
+        content_str = content
+
+    elif isinstance(content, (list, dict)):
+
+        try:
+
+            content_str = json.dumps(content, ensure_ascii=False)
+
+        except (TypeError, ValueError):
+
+            content_str = _safe_str(content)
+
+    elif content is None:
+
+        content_str = ""
+
+    else:
+
+        content_str = _safe_str(content)
+
+
+
+    # Map type + source â role
+
+    if msg_type == "TextMessage":
+
+        role = "user" if source == "user" else "assistant"
+
+    elif msg_type in ("ToolCallExecutionEvent", "FunctionExecutionResultMessage"):
+
+        role = "tool"
+
+    elif msg_type == "ToolCallRequestEvent":
+
+        role = "tool_request"
+
+    elif msg_type == "ThoughtEvent":
+
+        role = "thinking"
+
+    else:
+
+        # Best-effort fallback: use source if available
+
+        role = source if source in ("user", "assistant") else "assistant"
+
+
+
+    return {
+
+        "role": role,
+
+        "content": content_str,
+
+        "type": msg_type,
+
+        "source": source,
+
+        "timestamp": _safe_json(msg.get("timestamp")),
+
+    }
 
 
 

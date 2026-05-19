@@ -33,6 +33,9 @@ function TypingIndicator({
   );
 }
 
+/** Roles that represent agent-side output (not user input). */
+const AGENT_SIDE_ROLES = new Set(["agent", "tool", "tool_request", "thinking"]);
+
 export const MessageList = memo(function MessageList({
   messages,
   isLoading,
@@ -46,7 +49,8 @@ export const MessageList = memo(function MessageList({
   );
 
   const lastMessageIsAgent =
-    messages.length > 0 && messages[messages.length - 1].role === "agent";
+    messages.length > 0 &&
+    AGENT_SIDE_ROLES.has(messages[messages.length - 1].role);
 
   return (
     <>

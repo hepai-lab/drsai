@@ -1,4 +1,5 @@
 # DrSai Desktop
+跳过调试：```bash scripts/install.sh   --skip-setup   --dev-source /home/xiongdb/drsai```
 
 > 基于 Hermes Desktop 改造的 DrSai 桌面应用  
 > Python API Server + Electron 前端，通过 HTTP SSE 通信

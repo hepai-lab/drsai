@@ -121,9 +121,13 @@ interface DrSaiAPI {
 
   // DrSai engine info
   getDrSaiVersion: () => Promise<string | null>;
+  getDrsaiVersion: () => Promise<string | null>;
   refreshDrSaiVersion: () => Promise<string | null>;
+  refreshDrsaiVersion: () => Promise<string | null>;
   runDrSaiDoctor: () => Promise<string>;
+  runDrsaiDoctor: () => Promise<string>;
   runDrSaiUpdate: () => Promise<{ success: boolean; error?: string }>;
+  runDrsaiUpdate: () => Promise<{ success: boolean; error?: string }>;
 
   // OpenClaw migration
   checkOpenClaw: () => Promise<{ found: boolean; path: string | null }>;
@@ -138,9 +142,21 @@ interface DrSaiAPI {
   getConfig: (key: string, profile?: string) => Promise<string | null>;
   setConfig: (key: string, value: string, profile?: string) => Promise<boolean>;
   getDrSaiHome: (profile?: string) => Promise<string>;
+  getDrsaiHome: (profile?: string) => Promise<string>;
   getModelConfig: (
     profile?: string,
   ) => Promise<{ provider: string; model: string; baseUrl: string }>;
+  getModelCatalog: () => Promise<{
+    default_alias: string;
+    models: Array<{
+      alias: string;
+      display_name: string;
+      client_type: string;
+      model: string;
+      token_limit: number;
+      max_tokens: number;
+    }>;
+  }>;
   setModelConfig: (
     provider: string,
     model: string,
@@ -603,13 +619,21 @@ interface DrSaiAPI {
   runDrSaiBackup: (
     profile?: string,
   ) => Promise<{ success: boolean; path?: string; error?: string }>;
+  runDrsaiBackup: (
+    profile?: string,
+  ) => Promise<{ success: boolean; path?: string; error?: string }>;
   runDrSaiImport: (
+    archivePath: string,
+    profile?: string,
+  ) => Promise<{ success: boolean; error?: string }>;
+  runDrsaiImport: (
     archivePath: string,
     profile?: string,
   ) => Promise<{ success: boolean; error?: string }>;
 
   // Debug dump
   runDrSaiDump: () => Promise<string>;
+  runDrsaiDump: () => Promise<string>;
 
   // Memory providers
   discoverMemoryProviders: (profile?: string) => Promise<

@@ -324,22 +324,45 @@ def _extract_messages_from_thread(row: Thread) -> list[dict[str, Any]]:
     return []
 
 
+def _safe_content_str(val: Any) -> str:
+    """Coerce a message content value to a non-empty string for preview/name."""
+    if isinstance(val, str):
+        return val
+    if isinstance(val, (list, dict)):
+        try:
+            return json.dumps(val, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(val)
+    if val is None:
+        return ""
+    return str(val)
+
+
 def _thread_to_info(row: Thread) -> SessionInfo:
     msgs = _extract_messages_from_thread(row)
     preview = ""
-    for m in reversed(msgs):
+
+    # Extract the first user message as the auto-generated session name
+    auto_name = ""
+    for m in msgs:
         if isinstance(m, dict):
-            content = m.get("content") or ""
-            if isinstance(content, str) and content.strip():
+            source = m.get("source", "")
+            mtype = m.get("type", "")
+            content = _safe_content_str(m.get("content"))
+            # First user TextMessage → auto name
+            if not auto_name and source == "user" and content.strip():
+                auto_name = content.strip().splitlines()[0][:40]
+            # Last non-empty message → preview
+            if content.strip():
                 preview = content.strip().splitlines()[0][:120]
-                break
+
     meta = row.meta or {}
     name = meta.get("name") if isinstance(meta, dict) else None
     workdir = meta.get("workdir") if isinstance(meta, dict) else None
     ts = row.updated_at.isoformat() if hasattr(row.updated_at, "isoformat") else str(row.updated_at)
     return SessionInfo(
         thread_id=row.thread_id or "",
-        name=name or (row.thread_id or "")[:8],
+        name=name or auto_name or (row.thread_id or "")[:8],
         updated_at=ts,
         message_count=len(msgs),
         preview=preview,

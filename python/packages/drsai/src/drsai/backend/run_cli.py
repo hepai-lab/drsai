@@ -574,6 +574,23 @@ async def _run_repl(cfg: dict):
 
     store = CLISessionStore(db_manager, user_id)
 
+    # ── Prompt-label cache: avoid DB query (store.resolve) on every keystroke
+    _label_cache: dict = {"text": None, "dirty": True}
+
+    def _invalidate_label() -> None:
+        """Mark prompt label as dirty; next render will resolve session name."""
+        _label_cache["dirty"] = True
+
+    def _current_label() -> str:
+        if not _label_cache["dirty"]:
+            return _label_cache["text"]
+        info = store.resolve(current_session_id)
+        name = info.name if info else current_session_id[:8]
+        result = f"{name} [{current_session_id[:8]}]"
+        _label_cache["text"] = result
+        _label_cache["dirty"] = False
+        return result
+
     # ── Pick or create a session based on current workdir ───────────────────
     current_workdir = str(Path.cwd().resolve())
     
@@ -836,23 +853,6 @@ If a question can be answered by exploring the codebase, explore the codebase in
     stats = SessionStats(show_footer=True, ring_bell=False)
     renderer = DrSaiCLIRenderer(show_reasoning=False)
     last_user_msg: str = ""
-
-    # ── Prompt-label cache: avoid DB query (store.resolve) on every keystroke
-    _label_cache: dict = {"text": None, "dirty": True}
-
-    def _invalidate_label() -> None:
-        """Mark prompt label as dirty; next render will resolve session name."""
-        _label_cache["dirty"] = True
-
-    def _current_label() -> str:
-        if not _label_cache["dirty"]:
-            return _label_cache["text"]
-        info = store.resolve(current_session_id)
-        name = info.name if info else current_session_id[:8]
-        result = f"{name} [{current_session_id[:8]}]"
-        _label_cache["text"] = result
-        _label_cache["dirty"] = False
-        return result
 
     # ── Toolbar cache: avoids recomputing on every keystroke ────────────
     _toolbar_cache: dict = {"text": None, "dirty": True}

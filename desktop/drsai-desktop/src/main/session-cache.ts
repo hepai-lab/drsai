@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { DRSAI_HOME } from "./installer";
 import { safeWriteFile } from "./utils";
-import Database from "better-sqlite3";
 import { t } from "../shared/i18n";
 import { getAppLocale } from "./locale";
 
@@ -24,6 +23,13 @@ interface CacheData {
   sessions: CachedSession[];
   lastSync: number;
 }
+
+type BetterSqliteDatabase = {
+  prepare: (sql: string) => {
+    all: (...args: unknown[]) => unknown[];
+  };
+  close: () => void;
+};
 
 // Generate a short, readable title from the first user message
 function generateTitle(message: string): string {
@@ -81,9 +87,21 @@ function writeCache(data: CacheData): void {
   }
 }
 
-function getDb(): Database.Database | null {
+function getDb(): BetterSqliteDatabase | null {
   if (!existsSync(DB_PATH)) return null;
-  return new Database(DB_PATH, { readonly: true });
+  try {
+    // Lazy-load the native module so missing Electron ABI bindings do not crash
+    // the Sessions screen. If unavailable, we fall back to the JSON cache.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require("better-sqlite3") as new (
+      path: string,
+      options: { readonly: boolean },
+    ) => BetterSqliteDatabase;
+    return new Database(DB_PATH, { readonly: true });
+  } catch (err) {
+    console.warn("[session-cache] better-sqlite3 unavailable; using cached sessions only:", err);
+    return null;
+  }
 }
 
 // Sync from drsai DB to local cache — only fetches new/updated sessions

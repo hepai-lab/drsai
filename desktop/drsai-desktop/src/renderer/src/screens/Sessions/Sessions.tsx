@@ -100,7 +100,7 @@ function highlightSnippet(snippet: string): React.JSX.Element {
 
 function formatModel(model: string): string {
   const name = model.split("/").pop() || model;
-  // Shorten common patterns: "gpt-oss-20b:free" â†?"gpt-oss-20b"
+  // Shorten common patterns: "gpt-oss-20b:free" ?"gpt-oss-20b"
   return name.split(":")[0];
 }
 
@@ -165,14 +165,26 @@ function Sessions({
 
   const loadSessions = useCallback(async (): Promise<void> => {
     setLoading(true);
-    const cached = await window.drsaiAPI.listCachedSessions(50);
-    if (cached.length > 0) {
-      setSessions(cached);
+    try {
+      const remote = await window.drsaiAPI.listSessions(50);
+      setSessions(
+        remote.map((session) => ({
+          id: session.id,
+          title: session.title || session.preview || "New conversation",
+          startedAt: session.startedAt,
+          source: session.source,
+          messageCount: session.messageCount,
+          model: session.model,
+        })),
+      );
+      return;
+    } catch (err) {
+      console.warn("[sessions] listSessions failed; falling back to cached sessions", err);
+      const cached = await window.drsaiAPI.listCachedSessions(50);
+      setSessions(cached.slice(0, 50));
+    } finally {
       setLoading(false);
     }
-    const synced = await window.drsaiAPI.syncSessionCache();
-    setSessions(synced.slice(0, 50));
-    setLoading(false);
   }, []);
 
   useEffect(() => {
