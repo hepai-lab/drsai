@@ -255,6 +255,62 @@ _DEFAULT_OPENAI_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2"
 _DEFAULT_RAGFLOW_URL = "https://ragflow.ihep.ac.cn"
 
 
+DISPLAY_NAME_OVERRIDES: dict[str, str] = {
+    "claude-sonnet-4-6": "Claude Sonnet 4.6",
+    "claude-opus-4-7": "Claude Opus 4.7",
+    "claude-haiku-4-5": "Claude Haiku 4.5",
+    "gpt-5.3-codex": "GPT-5.3 Codex",
+    "gpt-5.4": "GPT-5.4",
+    "gpt-5.5": "GPT-5.5",
+    "deepseek-v4-pro": "DeepSeek V4 Pro",
+    "deepseek-v3.2": "DeepSeek V3.2",
+    "hepai/deepseek-v4-flash": "HEPAI DeepSeek V4 Flash",
+    "glm-5.1": "GLM-5.1",
+    "hepai/minimax-m2.7-highspeed": "HEPAI MiniMax M2.7 Highspeed",
+    "minimax-m2.7-highspeed": "MiniMax M2.7 Highspeed",
+}
+
+
+def _display_name_from_alias(alias: str) -> str:
+    if alias in DISPLAY_NAME_OVERRIDES:
+        return DISPLAY_NAME_OVERRIDES[alias]
+    raw = alias.split("/", 1)[-1]
+    normalized = raw.replace("-", " ").replace("_", " ").strip()
+    words = []
+    for word in normalized.split():
+        if word.lower() in {"gpt", "glm", "hepai", "claude", "deepseek", "minimax"}:
+            words.append(word.upper() if word.lower() in {"gpt", "glm", "hepai"} else word.capitalize())
+        elif len(word) <= 3 and any(ch.isdigit() for ch in word):
+            words.append(word.upper())
+        else:
+            words.append(word.capitalize())
+    return " ".join(words)
+
+
+def build_model_catalog(
+    llm_config: Optional[dict[str, ModelEntry]] = None,
+) -> dict[str, Any]:
+    config = llm_config or DEFAULT_LLM_MODE_CONFIG
+    models: list[dict[str, Any]] = []
+    for alias, entry in config.items():
+        client_type = entry.client_type if entry.client_type != "auto" else (
+            "anthropic" if any(tag in entry.model.lower() for tag in ["claude", "anthropic", "minimax"]) else "openai"
+        )
+        models.append({
+            "alias": alias,
+            "display_name": _display_name_from_alias(alias),
+            "client_type": client_type,
+            "model": entry.model,
+            "token_limit": entry.token_limit,
+            "max_tokens": entry.max_tokens,
+        })
+    models.sort(key=lambda item: (item["client_type"], item["display_name"], item["alias"]))
+    return {
+        "default_alias": DEFAULT_CONFIG_NAME,
+        "models": models,
+    }
+
+
 def load_llm_mode_config(path: Optional[str]) -> dict[str, ModelEntry]:
     """Load an external model catalog from YAML or JSON.
 

@@ -29,6 +29,7 @@ import {
   readLogs,
   InstallProgress,
 } from "./installer";
+import { getModelCatalog } from "./model-catalog";
 import {
   isRemoteMode,
   isRemoteOnlyMode,
@@ -217,6 +218,15 @@ function openExternalUrl(rawUrl: unknown): void {
   shell.openExternal(rawUrl).catch((err) => {
     console.error("[SECURITY] Failed to open external URL:", err);
   });
+}
+
+function autoStartLocalGateway(): void {
+  const conn = getConnectionConfig();
+  if (conn.mode !== "local") return;
+  const status = checkInstallStatus();
+  if (status.installed && !isGatewayRunning()) {
+    startGateway();
+  }
 }
 
 function createWindow(): void {
@@ -451,6 +461,10 @@ function setupIPC(): void {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh) return sshGetModelConfig(conn.ssh, profile);
     return getModelConfig(profile);
+  });
+
+  ipcMain.handle("get-model-catalog", async () => {
+    return getModelCatalog();
   });
 
   ipcMain.handle(
@@ -1332,6 +1346,7 @@ app.whenReady().then(() => {
   buildMenu();
   setupIPC();
   createWindow();
+  autoStartLocalGateway();
   setupUpdater();
 
   // Auto-start SSH tunnel if configured

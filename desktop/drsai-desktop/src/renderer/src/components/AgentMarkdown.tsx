@@ -4,7 +4,9 @@ import remarkGfm from "remark-gfm";
 import { Copy } from "lucide-react";
 import { useI18n } from "./useI18n";
 
-// Lazy-load the heavy syntax highlighter �?only imported when a code block renders
+// ── Lazy-load syntax highlighter ──────────────────
+// Only imported when a code block renders, keeping initial bundle small.
+
 let _highlighterMod: typeof import("react-syntax-highlighter") | null = null;
 let _oneDark: Record<string, React.CSSProperties> | null = null;
 let _loadingPromise: Promise<void> | null = null;
@@ -17,12 +19,13 @@ function loadHighlighter(): Promise<void> {
     import("react-syntax-highlighter/dist/esm/styles/prism/one-dark"),
   ]).then(([mod, style]) => {
     _highlighterMod = mod;
-    _oneDark = style.default;
+    _oneDark = style.default as Record<string, React.CSSProperties>;
   });
   return _loadingPromise;
 }
 
-// Diff viewer with colored +/- lines
+// ── Diff viewer ───────────────────────────────────
+
 function DiffView({ code }: { code: string }): React.JSX.Element {
   const lines = code.split("\n");
   return (
@@ -42,7 +45,8 @@ function DiffView({ code }: { code: string }): React.JSX.Element {
   );
 }
 
-// Code block with syntax highlighting and copy button (lazy-loaded highlighter)
+// ── Code block ────────────────────────────────────
+
 function CodeBlock({
   className,
   children,
@@ -60,7 +64,6 @@ function CodeBlock({
   const language = match ? match[1] : "";
   const isDiff = language === "diff";
 
-  // Trigger lazy load when code block mounts
   useEffect(() => {
     if (!highlighterReady) {
       loadHighlighter().then(() => setHighlighterReady(true));
@@ -68,7 +71,17 @@ function CodeBlock({
   }, [highlighterReady]);
 
   function handleCopy(): void {
-    navigator.clipboard.writeText(code);
+    navigator.clipboard.writeText(code).catch(() => {
+      // Fallback for environments where clipboard API is restricted
+      const ta = document.createElement("textarea");
+      ta.value = code;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    });
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
@@ -85,7 +98,7 @@ function CodeBlock({
         overflow: "auto",
       }}
     >
-      {code}
+      <code>{code}</code>
     </pre>
   );
 
@@ -123,15 +136,23 @@ function CodeBlock({
   );
 }
 
-// Shared Markdown renderer that opens links externally
-const AgentMarkdown = memo(function AgentMarkdown({ children }: { children: string }): React.JSX.Element {
+// ── Main Markdown renderer ────────────────────────
+
+const AgentMarkdown = memo(function AgentMarkdown({
+  children,
+}: {
+  children: string;
+}): React.JSX.Element {
   return (
     <Markdown
       remarkPlugins={[remarkGfm]}
       components={{
-        a: ({ href, children }) => (
+        // ── Links: open externally, block unsafe protocols ──
+        a: ({ href, children: linkChildren, ...props }) => (
           <a
             href={href}
+            target="_blank"
+            rel="noopener noreferrer"
             onClick={(e) => {
               e.preventDefault();
               if (!href) return;
@@ -145,24 +166,77 @@ const AgentMarkdown = memo(function AgentMarkdown({ children }: { children: stri
               }
               window.drsaiAPI.openExternal(href);
             }}
+            {...props}
           >
-            {children}
+            {linkChildren}
           </a>
         ),
-        code: ({ className, children, ...props }) => {
+
+        // ── Code: inline vs block ──
+        code: ({
+          className,
+          children: codeChildren,
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          ref: _codeRef,
+          ...props
+        }) => {
           const isInline =
             !className &&
-            typeof children === "string" &&
-            !children.includes("\n");
+            typeof codeChildren === "string" &&
+            !codeChildren.includes("\n");
           if (isInline) {
             return (
               <code className={className} {...props}>
-                {children}
+                {codeChildren}
               </code>
             );
           }
-          return <CodeBlock className={className}>{children}</CodeBlock>;
+          return (
+            <CodeBlock className={className}>{codeChildren}</CodeBlock>
+          );
         },
+
+        // ── Images: responsive, click-to-open ──
+        img: ({ src, alt }) => (
+          <a
+            href={src}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="chat-img-link"
+            onClick={(e) => {
+              e.preventDefault();
+              if (src) window.drsaiAPI.openExternal(src);
+            }}
+          >
+            <img src={src} alt={alt || ""} className="chat-img" />
+          </a>
+        ),
+
+        // ── Tables: wrap in scrollable container ──
+        table: ({ children: tableChildren }) => (
+          <div className="chat-table-wrap">
+            <table>{tableChildren}</table>
+          </div>
+        ),
+
+        // ── Blockquote ──
+        blockquote: ({ children: bqChildren }) => (
+          <blockquote className="chat-blockquote">{bqChildren}</blockquote>
+        ),
+
+        // ── Horizontal rule ──
+        hr: () => <hr className="chat-hr" />,
+
+        // ── Task list items (GFM) ──
+        input: ({ checked, disabled }) => (
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={disabled}
+            className="chat-task-check"
+            readOnly
+          />
+        ),
       }}
     >
       {children}

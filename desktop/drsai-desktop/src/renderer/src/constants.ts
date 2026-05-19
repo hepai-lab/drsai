@@ -42,6 +42,18 @@ export const PROVIDERS = {
 
   setup: [
     {
+      id: "hepai",
+      name: "constants.hepaiName",
+      desc: "constants.hepaiDesc",
+      tag: "constants.hepaiTag",
+      envKey: "HEPAI_API_KEY",
+      url: "https://aiapi.ihep.ac.cn",
+      placeholder: "sk-...",
+      configProvider: "openai",
+      baseUrl: "https://aiapi.ihep.ac.cn/apiv2",
+      needsKey: true,
+    },
+    {
       id: "openrouter",
       name: "constants.openrouterName",
       desc: "constants.openrouterDesc",

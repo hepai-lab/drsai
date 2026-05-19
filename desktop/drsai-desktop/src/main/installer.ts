@@ -605,7 +605,7 @@ export async function runInstall(
       const shellProfile = getShellProfile(home);
       const installCmd = [
         shellProfile ? `source "${shellProfile}" 2>/dev/null;` : "",
-        "curl -fsSL https://raw.githubusercontent.com/NousResearch/drsai-agent/main/scripts/install.sh | bash -s -- --skip-setup",
+        "curl -fsSL https://raw.githubusercontent.com/hepai-lab/drsai/main/scripts/install.sh | bash -s -- --skip-setup",
       ].join(" ");
 
       const basePath = getEnhancedPath();
@@ -708,7 +708,7 @@ async function runInstallWindows(emit: (t: string) => void): Promise<void> {
     // Force TLS 1.2 for older Windows PowerShell 5.1 hosts that still default
     // to TLS 1.0 — github raw refuses TLS < 1.2.
     "try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}",
-    "$url = 'https://raw.githubusercontent.com/NousResearch/drsai-agent/main/scripts/install.ps1'",
+    "$url = 'https://raw.githubusercontent.com/hepai-lab/drsai/main/scripts/install.ps1'",
     `$installer = Join-Path $env:TEMP ("drsai-install-script-" + [guid]::NewGuid().ToString() + ".ps1")`,
     // Windows PowerShell 5.1 parses BOM-less files as the legacy ANSI codepage,
     // which mangles the non-ASCII glyphs in install.ps1 and produces parse
@@ -790,7 +790,7 @@ async function runInstallWindows(emit: (t: string) => void): Promise<void> {
       } else {
         reject(
           new Error(
-            `Installation failed (exit code ${code}). Open PowerShell and try: irm https://raw.githubusercontent.com/NousResearch/drsai-agent/main/scripts/install.ps1 | iex`,
+            `Installation failed (exit code ${code}). Open PowerShell and try: irm https://raw.githubusercontent.com/hepai-lab/drsai/main/scripts/install.ps1 | iex`,
           ),
         );
       }

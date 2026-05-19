@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowRight, ExternalLink } from "../../assets/icons";
 import { PROVIDERS, LOCAL_PRESETS } from "../../constants";
 import { useI18n } from "../../components/useI18n";
@@ -11,6 +11,27 @@ interface SetupProps {
   onDismissVerifyWarning?: () => void;
 }
 
+interface ModelCatalogEntry {
+  alias: string;
+  displayName: string;
+  clientType: string;
+}
+
+const FALLBACK_MODEL_CATALOG: ModelCatalogEntry[] = [
+  { alias: "hepai/minimax-m2.7-highspeed", displayName: "HEPAI MiniMax M2.7 Highspeed", clientType: "anthropic" },
+  { alias: "claude-sonnet-4-6", displayName: "Claude Sonnet 4.6", clientType: "anthropic" },
+  { alias: "claude-opus-4-7", displayName: "Claude Opus 4.7", clientType: "anthropic" },
+  { alias: "claude-haiku-4-5", displayName: "Claude Haiku 4.5", clientType: "anthropic" },
+  { alias: "hepai/deepseek-v4-flash", displayName: "HEPAI DeepSeek V4 Flash", clientType: "openai" },
+  { alias: "gpt-5.3-codex", displayName: "GPT-5.3 Codex", clientType: "openai" },
+  { alias: "gpt-5.4", displayName: "GPT-5.4", clientType: "openai" },
+  { alias: "gpt-5.5", displayName: "GPT-5.5", clientType: "openai" },
+  { alias: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro", clientType: "openai" },
+  { alias: "deepseek-v3.2", displayName: "DeepSeek V3.2", clientType: "openai" },
+  { alias: "glm-5.1", displayName: "GLM-5.1", clientType: "openai" },
+  { alias: "minimax-m2.7-highspeed", displayName: "MiniMax M2.7 Highspeed", clientType: "anthropic" },
+];
+
 function Setup({
   onComplete,
   verifyWarning,
@@ -18,16 +39,33 @@ function Setup({
   onDismissVerifyWarning,
 }: SetupProps): React.JSX.Element {
   const { t } = useI18n();
-  const [selectedProvider, setSelectedProvider] = useState("openrouter");
+  const [selectedProvider, setSelectedProvider] = useState("hepai");
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("http://localhost:1234/v1");
-  const [modelName, setModelName] = useState("");
+  const [modelName, setModelName] = useState("hepai/minimax-m2.7-highspeed");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [showKey, setShowKey] = useState(false);
+  const [catalogModels, setCatalogModels] = useState<ModelCatalogEntry[]>(FALLBACK_MODEL_CATALOG);
 
   const provider = PROVIDERS.setup.find((p) => p.id === selectedProvider)!;
   const isLocal = selectedProvider === "local";
+  const isHepai = selectedProvider === "hepai";
+
+  useEffect(() => {
+    window.drsaiAPI.getModelCatalog().then((catalog) => {
+      const models = catalog.models.map((item) => ({
+        alias: item.alias,
+        displayName: item.display_name,
+        clientType: item.client_type,
+      }));
+      setCatalogModels(models);
+      setModelName((prev) => prev.trim() || catalog.default_alias);
+    }).catch(() => {
+      setCatalogModels(FALLBACK_MODEL_CATALOG);
+      setModelName((prev) => prev.trim() || "hepai/minimax-m2.7-highspeed");
+    });
+  }, []);
 
   function applyLocalPreset(presetBaseUrl: string): void {
     setBaseUrl(presetBaseUrl);
@@ -50,9 +88,29 @@ function Setup({
     return "CUSTOM_API_KEY";
   }
 
+  function resolveHepaiConfig(model: string): {
+    provider: string;
+    baseUrl: string;
+  } {
+    if (/claude|minimax/i.test(model)) {
+      return {
+        provider: "anthropic",
+        baseUrl: "https://aiapi.ihep.ac.cn/apiv2/anthropic",
+      };
+    }
+    return {
+      provider: "openai",
+      baseUrl: "https://aiapi.ihep.ac.cn/apiv2",
+    };
+  }
+
   async function handleContinue(): Promise<void> {
     if (provider.needsKey && !apiKey.trim()) {
       setError(t("setup.missingApiKey"));
+      return;
+    }
+    if (isHepai && !modelName.trim()) {
+      setError(t("setup.modelName"));
       return;
     }
     if (isLocal && !baseUrl.trim()) {
@@ -71,8 +129,17 @@ function Setup({
         await window.drsaiAPI.setEnv(envKey, apiKey.trim());
       }
 
-      const configProvider = isLocal ? "custom" : provider.configProvider;
-      const configBaseUrl = isLocal ? baseUrl.trim() : provider.baseUrl;
+      const hepaiConfig = isHepai ? resolveHepaiConfig(modelName.trim()) : null;
+      const configProvider = isLocal
+        ? "custom"
+        : isHepai
+          ? hepaiConfig!.provider
+          : provider.configProvider;
+      const configBaseUrl = isLocal
+        ? baseUrl.trim()
+        : isHepai
+          ? hepaiConfig!.baseUrl
+          : provider.baseUrl;
       const configModel = modelName.trim() || "";
       await window.drsaiAPI.setModelConfig(
         configProvider,
@@ -116,7 +183,61 @@ function Setup({
       </div>
 
       <div className="setup-form">
-        {isLocal ? (
+        {isHepai ? (
+          <>
+            <label className="setup-label">{t("setup.apiKeyLabel", { provider: "HEPAI" })}</label>
+            <div className="setup-input-group">
+              <input
+                className="input"
+                type={showKey ? "text" : "password"}
+                placeholder={provider.placeholder}
+                value={apiKey}
+                onChange={(e) => {
+                  setApiKey(e.target.value);
+                  setError("");
+                }}
+                onKeyDown={(e) => e.key === "Enter" && handleContinue()}
+                autoFocus
+              />
+              <button
+                className="setup-toggle-visibility"
+                onClick={() => setShowKey(!showKey)}
+                type="button"
+              >
+                {showKey ? t("common.hide") : t("common.show")}
+              </button>
+            </div>
+
+            <button
+              className="setup-link"
+              onClick={() => window.drsaiAPI.openExternal(provider.url)}
+            >
+              {t("setup.noKeyHint")}
+              <ExternalLink size={12} />
+            </button>
+
+            <label className="setup-label" style={{ marginTop: 16 }}>
+              {t("setup.modelName")}
+            </label>
+            <select
+              className="input"
+              value={modelName}
+              onChange={(e) => {
+                setModelName(e.target.value);
+                setError("");
+              }}
+            >
+              {catalogModels.map((item) => (
+                <option key={item.alias} value={item.alias}>
+                  {`${item.displayName} (${item.alias})`}
+                </option>
+              ))}
+            </select>
+            <div className="setup-field-hint">
+              Select a model from the Python default catalog. HEPAI will automatically choose the correct endpoint when saving the setup.
+            </div>
+          </>
+        ) : isLocal ? (
           <>
             <label className="setup-label">{t("setup.localGroupLabel")}</label>
             <div className="setup-local-presets">

@@ -24,7 +24,7 @@ import { ChildProcess, spawn } from "child_process";
 import { existsSync } from "fs";
 import http from "http";
 import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
-import { getUserName } from "./config";
+import { getModelConfig, getUserName } from "./config";
 import { DRSAI_PYTHON } from "./installer";
 
 // ────────────────────────────────────────────────────
@@ -122,6 +122,15 @@ function isApiServerReady(): Promise<boolean> {
   });
 }
 
+async function waitForApiReady(timeoutMs = 10000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isApiServerReady()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return false;
+}
+
 // ────────────────────────────────────────────────────
 //  HTTP SSE streaming (primary path)
 // ────────────────────────────────────────────────────
@@ -129,7 +138,7 @@ function isApiServerReady(): Promise<boolean> {
 function sendMessageViaApi(
   message: string,
   cb: ChatCallbacks,
-  _profile?: string,
+  profile?: string,
   resumeSessionId?: string,
   history?: Array<{ role: string; content: string }>,
 ): ChatHandle {
@@ -147,8 +156,9 @@ function sendMessageViaApi(
   }
   messages.push({ role: "user", content: message });
 
+  const modelConfig = getModelConfig(profile);
   const body = JSON.stringify({
-    model: "drsai",
+    model: modelConfig.model || "drsai",
     messages,
     stream: true,
     ...(resumeSessionId ? { thread_id: resumeSessionId } : {}),
@@ -324,92 +334,6 @@ function sendMessageViaApi(
 }
 
 // ────────────────────────────────────────────────────
-//  CLI fallback (spawn drsai chat process)
-// ────────────────────────────────────────────────────
-
-function sendMessageViaCli(
-  message: string,
-  cb: ChatCallbacks,
-  _profile?: string,
-  resumeSessionId?: string,
-): ChatHandle {
-  const args = ["-m", "drsai.backend.run_cli", "chat", "-q", message];
-  if (resumeSessionId) {
-    args.push("--resume", resumeSessionId);
-  }
-
-  const env: Record<string, string> = {
-    ...(process.env as Record<string, string>),
-    PYTHONUNBUFFERED: "1",
-  };
-
-  const proc = spawn(resolvePython(), args, {
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-    ...HIDDEN_SUBPROCESS_OPTIONS,
-  });
-
-  let hasOutput = false;
-  let capturedSessionId = "";
-  let outputBuffer = "";
-
-  function processOutput(raw: Buffer): void {
-    const text = stripAnsi(raw.toString());
-    outputBuffer += text;
-
-    const sidMatch = outputBuffer.match(/session_id:\s*(\S+)/);
-    if (sidMatch) capturedSessionId = sidMatch[1];
-
-    if (text.trim()) {
-      hasOutput = true;
-      cb.onChunk(text);
-    }
-  }
-
-  proc.stdout?.on("data", processOutput);
-
-  let stderrBuffer = "";
-  proc.stderr?.on("data", (data: Buffer) => {
-    const text = stripAnsi(data.toString());
-    if (!text.trim() || text.includes("UserWarning") || text.includes("FutureWarning")) {
-      return;
-    }
-    if (/Error|Traceback|failed|denied|unauthorized/i.test(text)) {
-      hasOutput = true;
-      cb.onChunk(text);
-    } else {
-      stderrBuffer += text;
-    }
-  });
-
-  proc.on("close", (code) => {
-    if (code === 0 || hasOutput) {
-      cb.onDone(capturedSessionId || undefined);
-    } else {
-      const detail = stderrBuffer.trim();
-      cb.onError(
-        detail
-          ? `DrSai exited with code ${code}: ${detail}`
-          : `DrSai exited with code ${code}. Check your configuration.`,
-      );
-    }
-  });
-
-  proc.on("error", (err) => {
-    cb.onError(`Failed to start DrSai CLI: ${err.message}`);
-  });
-
-  return {
-    abort: () => {
-      proc.kill("SIGTERM");
-      setTimeout(() => {
-        if (!proc.killed) proc.kill("SIGKILL");
-      }, 3000);
-    },
-  };
-}
-
-// ────────────────────────────────────────────────────
 //  Public API: auto-routes HTTP API or CLI fallback
 // ────────────────────────────────────────────────────
 
@@ -424,17 +348,25 @@ export async function sendMessage(
 ): Promise<ChatHandle> {
   ensureInitialized();
 
-  // Check API server availability (cached, re-check if previously false)
+  // Check API server availability (cached, re-check if previously false).
+  // If it is unavailable, start the structured gateway and wait briefly.
+  // Do not fall back to the interactive CLI: its banner/prompt/status output is
+  // terminal UI, not structured chat content, and should not be shown in desktop.
   if (apiServerAvailable === null || apiServerAvailable === false) {
     apiServerAvailable = await isApiServerReady();
   }
 
-  if (apiServerAvailable) {
-    return sendMessageViaApi(message, cb, profile, resumeSessionId, history);
+  if (!apiServerAvailable) {
+    startGateway(profile);
+    apiServerAvailable = await waitForApiReady(15000);
   }
 
-  // Fallback to CLI
-  return sendMessageViaCli(message, cb, profile, resumeSessionId);
+  if (!apiServerAvailable) {
+    cb.onError("DrSai API gateway is not ready. Check the gateway logs and configuration.");
+    return { abort: () => undefined };
+  }
+
+  return sendMessageViaApi(message, cb, profile, resumeSessionId, history);
 }
 
 // ────────────────────────────────────────────────────
@@ -444,7 +376,7 @@ export async function sendMessage(
 let _initialized = false;
 let _healthCheckInterval: ReturnType<typeof setInterval> | null = null;
 
-function ensureInitialized(): void {
+export function ensureInitialized(): void {
   if (_initialized) return;
   _initialized = true;
   startHealthPolling();

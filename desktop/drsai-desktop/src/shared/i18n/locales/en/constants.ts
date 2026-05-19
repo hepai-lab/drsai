@@ -2,6 +2,9 @@
   // Provider labels
   autoDetect: "Auto-detect",
   // Provider setup cards
+  hepaiName: "HEPAI",
+  hepaiDesc: "IHEP AI API gateway",
+  hepaiTag: "Recommended",
   openrouterName: "OpenRouter",
   openrouterDesc: "200+ models",
   openrouterTag: "Recommended",

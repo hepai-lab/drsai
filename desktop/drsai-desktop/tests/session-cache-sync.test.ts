@@ -18,10 +18,10 @@ const { TEST_HOME } = vi.hoisted(() => {
 });
 
 vi.mock("../src/main/installer", () => ({
-  HERMES_HOME: TEST_HOME,
-  HERMES_PYTHON: "/usr/bin/python3",
-  HERMES_SCRIPT: "/dev/null",
-  hermesCliArgs: (args: string[] = []) => ["/dev/null", ...args],
+  DRSAI_HOME: TEST_HOME,
+  DRSAI_PYTHON: "/usr/bin/python3",
+  DRSAI_SCRIPT: "/dev/null",
+  drsaiCliArgs: (args: string[] = []) => ["/dev/null", ...args],
   getEnhancedPath: () => process.env.PATH || "",
 }));
 

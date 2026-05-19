@@ -28,6 +28,9 @@ body {
     'Fira Sans',
     'Droid Sans',
     'Helvetica Neue',
+    "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
+    "WenQuanYi Micro Hei", "Hiragino Sans GB",
+    "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji",
     sans-serif;
   line-height: 1.6;
   text-rendering: optimizeLegibility;

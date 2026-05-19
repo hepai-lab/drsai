@@ -192,13 +192,22 @@ function Layout({
     setCurrentSessionId(null);
   }, []);
 
+  /** Map backend role strings to the desktop's MessageRole. */
+  function toMessageRole(r: string): ChatMessage["role"] {
+    if (r === "assistant") return "agent";
+    if (r === "user" || r === "tool" || r === "tool_request" || r === "thinking") return r;
+    return "agent";
+  }
+
   const handleResumeSession = useCallback(
     async (sessionId: string) => {
       const dbMessages = await window.drsaiAPI.getSessionMessages(sessionId);
       const chatMessages: ChatMessage[] = dbMessages.map((m) => ({
         id: `db-${m.id}`,
-        role: m.role === "user" ? "user" : "agent",
+        role: toMessageRole(m.role),
         content: m.content,
+        msgType: m.msgType,
+        toolName: m.toolName,
       }));
       setMessages(chatMessages);
       setCurrentSessionId(sessionId);
