@@ -49,6 +49,7 @@ import {
 import { SessionEditor } from "./session_editor";
 import { AppLayout } from "../../layout";
 import { useRightPanelStore } from "../../store/rightPanel";
+import { useIsCompactLayout } from "../../hooks/useMediaQuery";
 
 /** Extensions treated as inline-previewable images in the right-panel file list */
 const RIGHT_PANEL_IMAGE_EXT = new Set([
@@ -76,6 +77,7 @@ export const SessionManager: React.FC = () => {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | undefined>();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const isCompact = useIsCompactLayout();
   const [historySearchQuery, setHistorySearchQuery] = useState("");
   const historyScrollRef = useRef<HTMLDivElement | null>(null);
   const historyScrollTopRef = useRef(0);
@@ -115,6 +117,28 @@ export const SessionManager: React.FC = () => {
       navigate(createSearchWithView(location.search, viewId));
     },
     [location.search, navigate]
+  );
+
+  useEffect(() => {
+    if (isCompact) {
+      setIsSidebarOpen(false);
+    }
+  }, [isCompact]);
+
+  useEffect(() => {
+    if (isCompact) {
+      setIsSidebarOpen(false);
+    }
+  }, [activeSubMenuItem, isCompact]);
+
+  const handleSubMenuChange = useCallback(
+    (tabId: string) => {
+      navigateToMenu(tabId as MenuId);
+      if (isCompact) {
+        setIsSidebarOpen(false);
+      }
+    },
+    [isCompact, navigateToMenu]
   );
 
   const { user, darkMode } = useContext(appContext);
@@ -833,7 +857,7 @@ export const SessionManager: React.FC = () => {
         // LeftMenu
         activeSubMenuItem={activeSubMenuItem}
         activeMenuLabel={activeMenuLabel}
-        onSubMenuChange={(tabId) => navigateToMenu(tabId as MenuId)}
+        onSubMenuChange={handleSubMenuChange}
         showUsageAnalyticsNav={showUsageAnalyticsNav}
         canvasActiveView={activeCanvasView}
         onCanvasViewChange={navigateToView}

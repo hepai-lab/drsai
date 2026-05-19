@@ -13,6 +13,7 @@ const TABS: { id: RightPanelTab; label: string; icon: React.ReactNode }[] = [
 
 interface RightPanelProps {
   width?: number;
+  isCompact?: boolean;
   /** 历史会话 tab 的内容 */
   historyContent?: React.ReactNode;
   /** 文件 tab 的内容 */
@@ -23,6 +24,7 @@ interface RightPanelProps {
 
 const RightPanel: React.FC<RightPanelProps> = ({
   width = 380,
+  isCompact = false,
   historyContent,
   filesContent,
   onTabChange,
@@ -43,23 +45,30 @@ const RightPanel: React.FC<RightPanelProps> = ({
 
   const isDark = darkMode === "dark";
 
+  if (isCompact && !isOpen) {
+    return null;
+  }
+
+  const panelWidth = isCompact ? "100%" : isOpen ? width : 40;
+
   return (
     <div
-      className={`flex-shrink-0 flex flex-col h-full transition-all duration-300 overflow-hidden shadow-modern ${isOpen ? "rounded-2xl" : "rounded-lg"
-        } ${isDark
+      className={`flex-shrink-0 flex flex-col h-full transition-all duration-300 overflow-hidden shadow-modern ${
+        isOpen && !isCompact ? "rounded-2xl" : isCompact ? "rounded-none" : "rounded-lg"
+      } ${
+        isDark
           ? "bg-[#0d1117]/70 backdrop-blur-md shadow-modern-lg"
           : "bg-white/90 border border-gray-200/70 backdrop-blur-md"
-        }`}
-      style={{ width: isOpen ? width : 40 }}
+      }`}
+      style={{ width: panelWidth }}
     >
       {isOpen ? (
         <>
           {/* Tab bar */}
           <div
-            className={`flex-shrink-0 flex items-stretch ${isDark
-              ? "bg-white/[0.02]"
-              : "border-b border-gray-200/80 bg-white/70"
-              }`}
+            className={`flex-shrink-0 flex items-stretch ${
+              isDark ? "bg-white/[0.02]" : "border-b border-gray-200/80 bg-white/70"
+            }`}
           >
             {TABS.map((tab) => {
               const isActive = activeTab === tab.id;
@@ -71,10 +80,11 @@ const RightPanel: React.FC<RightPanelProps> = ({
                     setActiveTab(tab.id);
                     onTabChange?.(tab.id);
                   }}
-                  className={`relative flex flex-col items-center justify-center gap-0.5 h-11 text-[11px] font-medium transition-all select-none flex-1 ${isActive
-                    ? "text-accent bg-accent/[0.11]"
-                    : "text-secondary hover:text-primary hover:bg-tertiary/25"
-                    }`}
+                  className={`relative flex min-h-[44px] flex-col items-center justify-center gap-0.5 flex-1 text-[11px] font-medium transition-all select-none ${
+                    isActive
+                      ? "text-accent bg-accent/[0.11]"
+                      : "text-secondary hover:text-primary hover:bg-tertiary/25"
+                  }`}
                 >
                   <span className={`transition-transform ${isActive ? "scale-110" : ""}`}>
                     {tab.icon}
@@ -92,10 +102,11 @@ const RightPanel: React.FC<RightPanelProps> = ({
               type="button"
               onClick={() => setIsOpen(false)}
               title="收起面板"
-              className={`flex-shrink-0 flex items-center justify-center w-8 transition-colors ${isDark
-                ? "text-secondary hover:text-primary hover:bg-white/5"
-                : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
-                }`}
+              className={`flex-shrink-0 flex min-h-[44px] min-w-[44px] items-center justify-center transition-colors ${
+                isDark
+                  ? "text-secondary hover:text-primary hover:bg-white/5"
+                  : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
+              }`}
             >
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
@@ -110,45 +121,48 @@ const RightPanel: React.FC<RightPanelProps> = ({
               {historyContent ?? <Empty icon={<Clock />} text="暂无历史会话" />}
             </div>
             <div className={activeTab === "files" ? "h-full" : "hidden"}>
-              {filesContent ??
-                <div className="border border-gray-200/70 rounded-lg m-4  h-full flex items-center justify-center bg-gray-100/60">
+              {filesContent ?? (
+                <div className="border border-gray-200/70 rounded-lg m-4 h-full flex items-center justify-center bg-gray-100/60">
                   <Empty icon={<FileText />} text="暂无文件" />
                 </div>
-
-              }
+              )}
             </div>
           </div>
         </>
       ) : (
-        /* Collapsed strip */
+        /* Collapsed strip (desktop only) */
         <div className="flex flex-col items-center pt-1">
-          {/* Expand button */}
           <button
             type="button"
             onClick={() => setIsOpen(true)}
             title="展开面板"
-            className={`flex items-center justify-center w-full h-8 transition-colors ${isDark
-              ? "text-secondary hover:text-primary hover:bg-white/5"
-              : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
-              }`}
+            className={`flex items-center justify-center w-full h-8 transition-colors ${
+              isDark
+                ? "text-secondary hover:text-primary hover:bg-white/5"
+                : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
+            }`}
           >
             <ChevronLeft className="w-3.5 h-3.5" />
           </button>
 
-          {/* Tab icons */}
           <div className="flex flex-col items-center gap-1 mt-2">
             {TABS.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => { setIsOpen(true); setActiveTab(tab.id); onTabChange?.(tab.id); }}
+                onClick={() => {
+                  setIsOpen(true);
+                  setActiveTab(tab.id);
+                  onTabChange?.(tab.id);
+                }}
                 title={tab.label}
-                className={`flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${activeTab === tab.id
-                  ? "text-accent bg-accent/10"
-                  : isDark
-                    ? "text-secondary hover:text-primary hover:bg-white/5"
-                    : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
-                  }`}
+                className={`flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${
+                  activeTab === tab.id
+                    ? "text-accent bg-accent/10"
+                    : isDark
+                      ? "text-secondary hover:text-primary hover:bg-white/5"
+                      : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
+                }`}
               >
                 {tab.icon}
               </button>

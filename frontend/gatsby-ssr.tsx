@@ -46,6 +46,11 @@ export const replaceRenderer = ({
 
 export const onRenderBody = ({ setHeadComponents }) =>
   setHeadComponents([
+    <meta
+      key="viewport"
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />,
     <script
       key="myscript"
       dangerouslySetInnerHTML={{ __html: codeToRunOnClient }}

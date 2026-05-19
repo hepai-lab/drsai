@@ -750,6 +750,7 @@ html {
     margin: auto;
     height: 100%;
     font-family: "Segoe UI", "Open Sans", sans-serif;
+    overflow-x: hidden;
 }
 
 body {
@@ -761,6 +762,14 @@ body {
     height: 100%;
     font-size: 0.8rem; /* Ensure consistent font size */
     font-family: "Segoe UI", "Open Sans", sans-serif;
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
+}
+
+@supports (padding: env(safe-area-inset-bottom)) {
+    body {
+        padding-bottom: env(safe-area-inset-bottom);
+    }
 }
 
 /* 移除全局字体大小限制，让组件自己控制字体大小 */
