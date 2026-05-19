@@ -26,6 +26,9 @@ tmp/
 scratch/
 scratch.py
 
+# DocMaster — user-uploaded templates and fill outputs (never share)
+examples/agent_groupchat/docmaster/workspace/
+
 ########################
 # 操作系统相关文件
 ########################
