@@ -105,19 +105,26 @@ _DATE_SCAFFOLD_RE = re.compile(
 )
 
 # Inline whitespace blank: a whitespace run (3+ chars) bounded by a label
-# colon or currency symbol on the left, and sentence punctuation or a unit
-# marker on the right. Used to detect fields like:
+# colon, currency symbol, or amount-label marker on the left, and sentence
+# punctuation, a unit marker, or another amount-label on the right. Used
+# to detect fields like:
 #   "交货地点：         ；乙方负责..."   → blank between '：' and '；'
 #   "本项目总经费：    元（元）"          → blank between '：' and '元'
 #   "即￥        元（小写）"              → blank between '￥' and '元'
+#   "总计金额（含税）：（大写）   （小写）   "
+#       → two blanks: one after '（大写）' bounded by '（小写）',
+#         one after '（小写）' bounded by '$' (end of paragraph).
 # The gap may carry underline formatting (caught earlier by
 # _find_underlined_whitespace_spans); this regex is the no-underline fallback.
 _INLINE_BLANK_RE = re.compile(
-    r"(?P<lm>[:：¥$￥€£])"
+    r"(?P<lm>[:：¥$￥€£]|（大写）|\(大写\)|（小写）|\(小写\))"
     r"(?P<gap>[ \t　]{3,})"
     r"(?=[;；,，.。、元年月日天周个种号％%]"
     r"|工作日|（小写）|\(小写\)|（大写）|\(大写\)|$)"
 )
+# Match an amount-label marker on its own (for clean-label slot tagging).
+_DAXIE_MARKER_RE = re.compile(r"^[（(]大[写寫][)）]$")
+_XIAOXIE_MARKER_RE = re.compile(r"^[（(]小[写寫][)）]$")
 
 # Phrase bank for placeholder-like prose (bilingual). Matched as whole paragraph
 # OR as a parenthesised tail. Case-insensitive.
@@ -171,6 +178,58 @@ _REMOVAL_PHRASES = [
     # "非正文，应删除" — combined marker (covered by the two above, but the
     # joined form is the most common phrasing in CN ministry templates).
     r"非\s*正文[^。\n]{0,20}应\s*(?:删除|删去)",
+    # "正式文件（中/里/内）...删除" — drafting note explicitly scoped to
+    # "the formal/published version". Common phrasing:
+    #   "正式文件中这句话删除"
+    #   "正式版本删除此段"
+    #   "正式稿删去"
+    r"正式\s*(?:文件|文档|稿|版本|版|提交\s*稿)[^。\n]{0,40}(?:删除|删去|去掉)",
+    # Bare "此/这/该/本 + (句|句话|段|节|条|行|部分) + 删除"
+    # — directive form without preceding "应", "请", "需". Covers
+    # "此句话删除" / "这段删除" / "本行删去" / "该节去掉".
+    r"(?:此|这|该|本)\s*(?:句|句话|段|节|条|行|部分)\s*(?:话)?\s*(?:删除|删去|去除|去掉)",
+    # "空着" / "留空" — drafting note telling the reader to leave the field
+    # blank (e.g. "签订日期：    年  月  日（空着，后盖章的一方手写即可）").
+    # These are instructions to the signer, not template prose — strip them.
+    r"空\s*着",
+    r"留\s*空",
+    # "由X方手写/填写/签字/盖章" — explicit instruction that some party will
+    # complete the field by hand at signing. Same intent as 空着 but spelt out.
+    # The 'X方' alternation covers 甲/乙/丙/丁/双 + 方, '当事人', '签订方',
+    # 'X方' written out by role ('盖章方', '签字方', '收货方', etc.), or up
+    # to 6 CJK chars + 方 (catches '招标方', '中标方', '承包方', '发包方').
+    r"由\s*(?:[甲乙丙丁双]\s*方|当事人|签订?方|[一-鿿]{1,6}方)[^。\n]{0,30}"
+    r"(?:手\s*写|填\s*写|签\s*字|盖\s*章)",
+    # "(后)盖章(的)(一)?方 ... 手写/填写" — "the side that seals later
+    # will handwrite this." Covers "后盖章的一方手写即可",
+    # "盖章方填写", "盖章一方手写".
+    r"(?:后\s*)?盖\s*章\s*(?:的\s*)?(?:一?方)?[^。\n]{0,15}"
+    r"(?:手\s*写|填\s*写)",
+    # In-paren drafting notes — author addressing the future reader of the
+    # template ("here we suggest", "to avoid mistakes", "you can leave it
+    # blank"). These are the most common CN-template highlight-yellow notes
+    # and are NEVER part of the final document, but the inner text doesn't
+    # contain "删除" so the bank used to miss them.
+    #
+    # Anchoring on a clear instructional verb keeps false positives down —
+    # parenthetical proper nouns ("(中国科学院高能物理研究所)"), citations
+    # ("(参见附件1)" / "(下同)"), dates and code identifiers don't contain any
+    # of these stems, so they stay as template prose.
+    r"(?:这\s*里|此\s*处)\s*(?:建议|提示|应当?|应该|说明|注意)",
+    # "建议 + verb" — "建议不要写", "建议填入", "建议另起", "建议保留".
+    # Requires a following action verb so a parenthetical that only contains
+    # "建议" as a noun ("(我的建议)") doesn't trip the bank.
+    r"建\s*议\s*(?:不\s*要|不\s*写|不\s*填|写|填\s*入|填\s*写|保\s*留|"
+    r"删\s*除|删\s*去|另\s*起|改\s*为|采\s*用|参\s*考)",
+    # "避免 + 错/不一致/混淆" — explanatory drafting note ("...to avoid
+    # mistakes / inconsistency with the invoice").
+    r"避\s*免\s*[^。\n]{0,20}"
+    r"(?:写\s*错|出\s*错|错\s*误|混\s*淆|歧\s*义|不\s*一\s*致|与[^。\n]{1,20}不\s*一\s*致)",
+    # "可(不|以不) + 填/写" — "(this field can be left blank)".
+    r"可\s*(?:不|以\s*不)\s*(?:填|写|填\s*写)",
+    # "仅供参考" already in the bank above; add "供参考(用)" for plural variants
+    # ("以下条款仅供参考用").
+    r"供\s*参\s*考(?:\s*用)?",
 ]
 _RE_REMOVAL_BANK = re.compile(
     "|".join(f"(?:{p})" for p in _REMOVAL_PHRASES),
@@ -182,10 +241,18 @@ _RE_REMOVAL_BANK = re.compile(
 # the paragraph is hardened: cantSplit on every row + keepNext on every
 # paragraph (except the last) so Word renders the whole table on one page.
 _KEEP_TABLE_TOGETHER_RE = re.compile(
-    r"下\s*表\s*(?:不\s*跨\s*页|不\s*分\s*页|保持\s*在?\s*同\s*一\s*页|不\s*要\s*跨\s*页)"
-    r"|表\s*格\s*(?:不\s*跨\s*页|不\s*分\s*页|保持\s*在?\s*同\s*一\s*页)"
-    r"|本\s*表\s*(?:不\s*跨\s*页|不\s*分\s*页)"
-    r"|确\s*保\s*下\s*表\s*不\s*跨\s*页"
+    # 不/不要/不应/不能/不可/不得/不许/勿 — catch the full negation family
+    # since CN drafting notes vary ("下表不跨页", "下表不应跨页", "下表勿跨页").
+    r"下\s*表\s*(?:不(?:\s*(?:要|应|能|可|得|许))?\s*跨\s*页"
+    r"|不(?:\s*(?:要|应|能|可|得|许))?\s*分\s*页"
+    r"|保持\s*在?\s*同\s*一\s*页"
+    r"|勿\s*跨\s*页)"
+    r"|表\s*格\s*(?:不(?:\s*(?:要|应|能|可|得|许))?\s*跨\s*页"
+    r"|不(?:\s*(?:要|应|能|可|得|许))?\s*分\s*页"
+    r"|保持\s*在?\s*同\s*一\s*页)"
+    r"|本\s*表\s*(?:不(?:\s*(?:要|应|能|可|得|许))?\s*跨\s*页"
+    r"|不(?:\s*(?:要|应|能|可|得|许))?\s*分\s*页)"
+    r"|确\s*保\s*下\s*表\s*不(?:\s*(?:要|应|能|可|得|许))?\s*跨\s*页"
     r"|keep\s+(?:the\s+)?(?:following\s+|next\s+)?table\s+(?:together|on\s+one\s+page)"
     r"|table\s+(?:must\s+)?(?:stay|fit)\s+on\s+(?:one|a\s+single)\s+page",
     re.IGNORECASE,
@@ -1028,6 +1095,29 @@ def _slot_public_view(slot: Dict[str, Any]) -> Dict[str, Any]:
     if meta.get("is_signature"):
         public["is_signature"] = True
         public["fill_policy"] = "leave_blank"
+    if meta.get("original_label"):
+        # Surfaces the raw highlighted text when the label was rewritten by
+        # _enrich_meaningless_slot_labels (e.g. "必填" → "E-mail或传真").
+        # The agent can use this to confirm what was originally in the cell.
+        public["original_label"] = meta["original_label"]
+    # For span-replacement slot kinds, surface the EXACT characters that get
+    # replaced. Without this, the agent has only `context` (a snippet with
+    # surrounding prose) to look at, and frequently includes adjacent
+    # template prose in the slot_value — e.g. the slot at "...预付合同总额的
+    # _____（其中合同总额的20%作为定金），..." should be filled with just
+    # "90%", but agents have passed "90%（其中合同总额的20%作为定金）",
+    # leaving the original parenthetical in place and producing
+    # "90%（其中…20%作为定金）（其中…20%作为定金）". The `replaces` field
+    # makes the fill target unambiguous.
+    if slot.get("kind") == "underscores":
+        para = meta.get("paragraph")
+        start, end = meta.get("start"), meta.get("end")
+        if para is not None and start is not None and end is not None:
+            try:
+                full = "".join((r.text or "") for r in para.runs)
+                public["replaces"] = full[start:end]
+            except Exception:
+                pass
     if slot.get("kind") == "option_choice" and meta.get("options"):
         public["options"] = [
             {"index": opt["index"], "header": opt["header"], "preview": opt["preview"]}
@@ -1228,6 +1318,59 @@ def _scan_slots(doc) -> List[Dict[str, Any]]:
             continue
         before = len(slots)
         _scan_paragraph_for_slots(p, add)
+        # Suppress label_blank emitted for a top-level section heading whose
+        # body lives in the following paragraphs (e.g. "四、交货方式及时间、
+        # 地点：" followed by "交货方式：...", "交货时间：...", "交货地点：
+        # ..."). Without this, a value gets appended after the heading's colon
+        # AND the structured sub-fields below remain — duplicating content.
+        # The heading marker may be invisible in run text — CN ministry
+        # templates often render "四、" via Word's auto-numbering (w:numPr),
+        # so we also accept paragraphs that carry numbering / Heading style.
+        if len(slots) > before:
+            new_slots = slots[before:]
+            if any(s["kind"] == "label_blank" for s in new_slots):
+                p_text = "".join((r.text or "") for r in p.runs).strip()
+                if p_text.endswith(("：", ":")):
+                    follow_p = None
+                    follow_text = ""
+                    for j in range(i + 1, min(i + 6, len(body_paras))):
+                        nxt_text = "".join(
+                            (r.text or "") for r in body_paras[j].runs
+                        ).strip()
+                        if nxt_text:
+                            follow_p = body_paras[j]
+                            follow_text = nxt_text
+                            break
+                    if follow_text and not _SECTION_BREAK_RE.match(follow_text):
+                        p_ilvl = _paragraph_list_level(p)
+                        n_ilvl = (
+                            _paragraph_list_level(follow_p)
+                            if follow_p is not None else None
+                        )
+                        # Heading-above-body via numbering: heading carries
+                        # numbering; the next paragraph either has no
+                        # numbering at all (typical for prose bodies under a
+                        # numbered section) or sits at a strictly deeper ilvl
+                        # (typical for ordered sub-clauses under a top-level
+                        # 违约责任 / 售后服务 heading). Same-level sibling
+                        # numbering ("1. 项目名称：" / "2. 项目编号：xxx") is
+                        # excluded — those are peers, not parent/child.
+                        heading_above_body = (
+                            p_ilvl is not None
+                            and (n_ilvl is None or n_ilvl > p_ilvl)
+                        )
+                        # Indicators that p is a section heading (not a peer
+                        # of the lines below): visible section marker, Heading
+                        # style, OR numbering with body at deeper / no level.
+                        is_container = (
+                            bool(_SECTION_BREAK_RE.match(p_text))
+                            or _is_heading(p)
+                            or heading_above_body
+                        )
+                        if is_container:
+                            slots[:] = slots[:before] + [
+                                s for s in new_slots if s["kind"] != "label_blank"
+                            ]
         if len(slots) > before:
             seen_para_ids.add(id(p))
     # section_body_empty: heading followed by empty body paragraph
@@ -1320,6 +1463,13 @@ def _scan_slots(doc) -> List[Dict[str, Any]]:
     # Body tables
     for tbl in doc.tables:
         _scan_table_for_slots(tbl, add)
+    # After all body-table scanning, enrich meaningless labels ("必填",
+    # "待填", "请填", etc.) using the slot's table-row context. Without this,
+    # the agent sees N highlighted "必填" slots in a 甲方/乙方 contact table
+    # and has no idea which one is the email vs. address vs. phone — the
+    # template author's intent ("required field, fill in") is preserved in
+    # the row's label cell (e.g. "E-mail或传真"), not in the highlighted run.
+    _enrich_meaningless_slot_labels(slots, doc)
     # Headers / footers
     for section in doc.sections:
         for hf in (
@@ -1362,6 +1512,18 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
 
     highlighted_spans = _find_highlighted_spans(paragraph)
     for start, end, runs, span_text in highlighted_spans:
+        # Suppress slot emission for highlighted drafting notes — spans whose
+        # text is itself a deletion instruction ("空着，后盖章的一方手写即可",
+        # "（请删除）", "（此句话非正文）"). _scan_removals picks these up via
+        # the run-level instruction_run path (highlighted runs now count as
+        # hintlike) and fill_template auto-applies the resulting removals, so
+        # the drafting note gets cleared without the agent having to choose a
+        # fill value. We still mark the span as 'covered' so downstream
+        # underscore/inline-blank/label-only passes don't double-emit slots
+        # for the same character range.
+        if _RE_REMOVAL_BANK.search(span_text or ""):
+            covered.append((start, end))
+            continue
         label = _guess_label_before(text, start) or (span_text.strip() or None)
         ctx = _snippet(text, start, end)
         scaffold = _split_scaffold(span_text)
@@ -1428,7 +1590,19 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
         gs, ge = m.start("gap"), m.end("gap")
         if _overlaps_covered(gs, ge):
             continue
-        label = _guess_label_before(text, gs)
+        lm_text = m.group("lm")
+        # When the left marker is a 大写/小写 amount label, override the
+        # heuristic label with the clean marker text so the 大写/小写
+        # reconciler can pair them by label alone. Without this, both
+        # slots in a "...：（大写）___（小写）___" paragraph would carry
+        # context strings containing "大写" and get misclassified as a pair
+        # of 大写 slots.
+        if _DAXIE_MARKER_RE.match(lm_text):
+            label = "大写"
+        elif _XIAOXIE_MARKER_RE.match(lm_text):
+            label = "小写"
+        else:
+            label = _guess_label_before(text, gs)
         ctx = _snippet(text, gs, ge, radius=40)
         is_sig = _looks_like_signature(label, text, gs, ge)
         add("underscores", label, ctx, {
@@ -1657,6 +1831,118 @@ def _cell_text(cell) -> str:
     return "\n".join((p.text or "") for p in cell.paragraphs)
 
 
+# Labels that mean "fill in something here" but carry no field semantics — when
+# a highlighted slot's label is just one of these, the agent has no idea what
+# to put in. Used by _enrich_meaningless_slot_labels.
+_MEANINGLESS_FILL_LABELS = frozenset({
+    "必填", "必填项", "必填字段", "必须填写", "请填", "请填写", "请输入",
+    "待填", "待填写", "待补充", "待完善", "待确认",
+    "填写", "填入", "填空",
+    "tbd", "to be filled", "to be completed", "fill in", "required",
+    "n/a",
+})
+
+
+def _is_meaningless_fill_label(label: Optional[str]) -> bool:
+    if not label:
+        return False
+    return label.strip().lower() in _MEANINGLESS_FILL_LABELS
+
+
+def _paragraph_parent_cell_tc(paragraph):
+    """Walk up paragraph._element ancestors to find the enclosing <w:tc>.
+    Returns the lxml element or None if the paragraph isn't inside a cell."""
+    try:
+        el = paragraph._element
+    except AttributeError:
+        return None
+    cur = el.getparent()
+    while cur is not None:
+        tag = getattr(cur, "tag", "")
+        if isinstance(tag, str) and tag.endswith("}tc"):
+            return cur
+        cur = cur.getparent()
+    return None
+
+
+def _row_label_for_tc(target_tc, doc) -> Optional[str]:
+    """Find the most informative label cell in the same row as `target_tc`.
+
+    Walks every table (including nested) until it finds the row containing
+    `target_tc`, then returns the text of the first cell to the left that is
+    short enough to be a label, non-empty, distinct from the slot cell, and
+    not a vMerge continuation. Skips merge-anchor party indicators ("甲方",
+    "乙方") which carry no field semantics. Returns None when no usable
+    label cell is in row order.
+    """
+    def _walk_tables(tables):
+        for tbl in tables:
+            for row in tbl.rows:
+                cells = list(row.cells)
+                target_idx = None
+                for i, c in enumerate(cells):
+                    if c._tc is target_tc:
+                        target_idx = i
+                        break
+                if target_idx is None:
+                    # Recurse into nested tables.
+                    for c in cells:
+                        for nested in c.tables:
+                            hit = _walk_tables([nested])
+                            if hit is not None:
+                                return hit
+                    continue
+                # Found the row — scan cells to the left of the target for
+                # the best label candidate (closest non-empty, non-anchor cell).
+                seen_tcs: set = set()
+                for j in range(target_idx - 1, -1, -1):
+                    c = cells[j]
+                    if c._tc is target_tc or c._tc in seen_tcs:
+                        continue
+                    seen_tcs.add(c._tc)
+                    t = (_cell_text(c) or "").strip()
+                    if not t:
+                        continue
+                    if t in ("甲方", "乙方", "甲方（买方）", "乙方（卖方）"):
+                        # vMerge anchor for the party column — keep scanning.
+                        continue
+                    if len(t) > 40:
+                        # Long prose cell — unlikely to be a label, stop.
+                        return None
+                    return t.replace("\n", " ").strip()
+                return None
+        return None
+
+    return _walk_tables(doc.tables)
+
+
+def _enrich_meaningless_slot_labels(slots: List[Dict[str, Any]], doc) -> None:
+    """In-place: replace empty / meaningless slot labels with the row-label
+    cell text when the slot lives inside a table cell. The original label is
+    preserved in `_meta['original_label']` for debuggability."""
+    for s in slots:
+        # Only touch highlighted slots — other kinds (label_blank, empty_cell,
+        # placeholder_cell, option_choice) already have meaningful labels from
+        # their detection paths.
+        if s.get("kind") != "highlighted":
+            continue
+        label = s.get("label")
+        if not _is_meaningless_fill_label(label):
+            continue
+        meta = s.get("_meta") or {}
+        paragraph = meta.get("paragraph")
+        if paragraph is None:
+            continue
+        tc = _paragraph_parent_cell_tc(paragraph)
+        if tc is None:
+            continue
+        row_label = _row_label_for_tc(tc, doc)
+        if not row_label:
+            continue
+        meta["original_label"] = label
+        s["label"] = row_label
+
+
 def _guess_label_before(text: str, pos: int) -> Optional[str]:
     """Look at text[:pos] for a 'Label:' segment and return the label."""
     prefix = text[:pos]
@@ -1727,13 +2013,29 @@ def _reconcile_amount_pairs(
         daxie = None
         xiaoxie = None
         for s in group:
-            text = " ".join(t for t in (s.get("label"), s.get("context")) if t)
-            if _DAXIE_LABEL_RE.search(text):
+            # Classify by label first so two slots in the same paragraph
+            # (e.g. "...（大写）___（小写）___") get paired correctly. Using
+            # label+context together causes the trailing 小写 slot's context
+            # to match _DAXIE_LABEL_RE (the 大写 label is upstream in the
+            # paragraph text), misclassifying both slots as 大写.
+            label_text = s.get("label") or ""
+            if _DAXIE_LABEL_RE.search(label_text):
                 if daxie is None:
                     daxie = s
-            elif _XIAOXIE_LABEL_RE.search(text):
+                continue
+            if _XIAOXIE_LABEL_RE.search(label_text):
                 if xiaoxie is None:
                     xiaoxie = s
+                continue
+            # Fallback: no usable label — fall back to context, but check
+            # 小写 before 大写 since context strings often include both.
+            ctx_text = s.get("context") or ""
+            if _XIAOXIE_LABEL_RE.search(ctx_text) and not _DAXIE_LABEL_RE.search(ctx_text):
+                if xiaoxie is None:
+                    xiaoxie = s
+            elif _DAXIE_LABEL_RE.search(ctx_text) and not _XIAOXIE_LABEL_RE.search(ctx_text):
+                if daxie is None:
+                    daxie = s
         if not daxie or not xiaoxie or daxie["id"] == xiaoxie["id"]:
             continue
 
@@ -1802,6 +2104,7 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
     filled_ids: List[str] = []
     unknown_ids: List[str] = []
     skipped_signature_ids: List[str] = []
+    skipped_blank_ids: List[str] = []
 
     # Group span-based fills per paragraph (underscores, angle_bracketed,
     # placeholder_phrase, hint_text, highlighted). Per-batch tuple carries the
@@ -1822,6 +2125,17 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
         # lines (the human signs on paper after printing).
         if meta.get("is_signature"):
             skipped_signature_ids.append(sid)
+            continue
+        # Blank/None value means "don't fill this slot" — preserve the
+        # original placeholder text (underscores, hint runs, whitespace
+        # gaps). Earlier behavior collapsed the slot's underline / blank
+        # region to empty when the agent passed value="" for a slot it
+        # didn't actually want to fill (common in mutually-exclusive
+        # option-style sections — e.g. "一次总付" vs "分期支付" where the
+        # agent fills only one branch). 0 / False are kept as legitimate
+        # fills (str(0) == "0").
+        if value is None or (isinstance(value, str) and not value.strip()):
+            skipped_blank_ids.append(sid)
             continue
         val_str = "" if value is None else str(value)
         if kind in ("underscores", "angle_bracketed", "placeholder_phrase",
@@ -1969,14 +2283,18 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
 
     requested = set(slot_values.keys())
     signatures = set(skipped_signature_ids)
+    blanks = set(skipped_blank_ids)
     skipped = sorted(
-        (requested - set(filled_ids) - set(unknown_ids) - signatures) | signatures
+        (requested - set(filled_ids) - set(unknown_ids) - signatures - blanks)
+        | signatures
+        | blanks
     )
     outcome = {
         "filled_slot_ids": sorted(filled_ids),
         "unknown_slot_ids": sorted(unknown_ids),
         "skipped_slot_ids": skipped,
         "skipped_signature_slot_ids": sorted(signatures),
+        "skipped_blank_slot_ids": sorted(blanks),
     }
     if reconciliation_notes:
         outcome["reconciliation_notes"] = reconciliation_notes
@@ -2488,6 +2806,28 @@ def _paragraph_has_list_numbering(paragraph) -> bool:
     return pPr is not None and pPr.numPr is not None
 
 
+def _paragraph_list_level(paragraph) -> Optional[int]:
+    """Return the numbering ilvl (0-based) for a numbered paragraph, else None.
+
+    Used to distinguish a section heading from its body items: a "违约责任：" at
+    ilvl=0 followed by "甲方应..." items at ilvl=1 means the heading is
+    structurally a parent, not a sibling — so a value should fill the body
+    items, not be appended after the heading's colon.
+    """
+    try:
+        from docx.oxml.ns import qn
+        pPr = paragraph._p.pPr
+        if pPr is None or pPr.numPr is None:
+            return None
+        ilvl_el = pPr.numPr.find(qn("w:ilvl"))
+        if ilvl_el is None:
+            return 0
+        val = ilvl_el.get(qn("w:val"))
+        return int(val) if val is not None else 0
+    except Exception:
+        return None
+
+
 def _is_section_heading_like(paragraph) -> bool:
     """True when the paragraph looks like a section heading.
 
@@ -2832,9 +3172,18 @@ def _paragraph_is_empty(paragraph) -> bool:
 
 
 def _run_is_hintlike(run) -> bool:
-    """A run looks like an instruction/hint: italic, or a light/grey font color."""
+    """A run looks like an instruction/hint: italic, a light/grey font color,
+    or a Word highlight color. Used as a gate on `_RE_REMOVAL_BANK` phrase
+    matches — highlighted-but-otherwise-neutral runs containing phrases like
+    "空着" / "由甲方手写" are drafting notes the template author wants the
+    reader to act on, not template prose."""
     if getattr(run, "italic", False):
         return True
+    try:
+        if getattr(run.font, "highlight_color", None) is not None:
+            return True
+    except Exception:
+        pass
     try:
         color = run.font.color
         if color is not None and color.rgb is not None:
