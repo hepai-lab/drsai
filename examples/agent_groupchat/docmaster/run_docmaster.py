@@ -649,7 +649,7 @@ def create_word_editor_agent(
      · 用户确认要删除的项放入 removal_ids=["rm_0", "rm_2", ...]。
      · **必须**输出一个**新文件**，文件名在模板原名后加 "_filled" 后缀（例如 contract.docx → contract_filled.docx），放在用户工作目录下。**绝对不要覆盖**用户上传的原模板——用户保留原始模板用于多次填写。fill_docx_template_tool 会以原模板为底直接复制并仅替换占位符所在 run，**保留原模板的全部其他内容、样式、页眉页脚、表格、图片、批注等不变**。
    - **填写成功后（仅限新上传模板）**：如果这次填的模板是用户**新上传**的（不是从模板库通过 `get_template_path_tool` 取来的），主动问一句："要把这个模板保存进你的模板库吗？以后可以直接说'用 XX 模板'调用。要起什么名字 / 分类 / 别名？" 用户同意后调 `save_template_tool(template_path=<原模板路径>, name=..., description=..., category=..., tags=..., aliases=...)`。注意 template_path 传**原模板**，不是 _filled 文件。**模板已经在库里的不要重复问**——会重复保存。
-   - 第五步（强制约束）：模板相关流程**只能**用以下工具：`list_templates_tool` / `get_template_path_tool` / `save_template_tool` / `inspect_docx_template_tool` / `fill_docx_template_tool` / `convert_doc_to_docx_tool`。**禁止**用 run_bash、run_glob、run_read、run_write、run_edit 去浏览模板库、定位模板文件、读取或填充模板——即便某个工具返回看起来为空、超时或慢，也要**重试同一个工具**或把情况告诉用户，**不要**回退到 bash/文件系统操作来"找文件""列目录"或"读 XML"。模板路径**只能**通过 `get_template_path_tool` / 用户上传事件取得，不要 glob 模板目录；DOCX 内部结构由 inspect/fill 工具内部处理，外部 bash 操作只会破坏格式或读不到正确字段。
+   - 第五步（强制约束）：模板相关流程**只能**用以下工具：`list_templates_tool` / `get_template_path_tool` / `save_template_tool` / `delete_template_tool` / `inspect_docx_template_tool` / `fill_docx_template_tool` / `convert_doc_to_docx_tool`。**禁止**用 run_bash、run_glob、run_read、run_write、run_edit 去浏览模板库、定位模板文件、读取或填充模板——即便某个工具返回看起来为空、超时或慢，也要**重试同一个工具**或把情况告诉用户，**不要**回退到 bash/文件系统操作来"找文件""列目录"或"读 XML"。模板路径**只能**通过 `get_template_path_tool` / 用户上传事件取得，不要 glob 模板目录；DOCX 内部结构由 inspect/fill 工具内部处理，外部 bash 操作只会破坏格式或读不到正确字段。
 10. fill_docx_template_tool 默认 mode="auto"，会自动检测占位符风格——除非用户明确要求，否则不要强行指定 mode。若模板同时含 {{ }} 与 [TOKEN]，auto 模式会先按 Jinja 渲染再做一次方括号替换；slot_values 总是在最后一步应用，removal_ids 在保存输出文件后执行。
 11. 不要把 inspect_docx_template_tool 用在普通文档上——那应该使用 extract_docx_content_tool 来查看内容。但模板里**没有任何**占位符也属于合法用法：inspect 会返回 slots / removals 让你识别可填空和可删除的位置。
 12. fill_docx_template_tool 会保留整个文档的字体、颜色、加粗、斜体、对齐、段距等格式——只修改占位符所在的 run，周围的 run 和段落的样式都不动。对于 highlighted 类型的槽位，工具会**只清除该处的高亮**，但保留同一 run 的字体/字号/加粗/斜体/颜色等。因此**不要**在填模板之后再去"统一字体/格式"或调用 modify_docx_fonts_tool，那会覆盖用户模板的样式。
@@ -1422,6 +1422,44 @@ XML编辑工作流（仅用于 tracked changes）：
                 tags=tags,
                 aliases=aliases,
             )
+
+        def delete_template_tool(template_id: str):
+            """
+            从**当前用户自己的**模板库里删除一个模板（同时移除 catalog 条目和磁盘上的 .docx）。
+
+            什么时候用：
+            - 用户明说"删掉我的 XX 模板""不要这个模板了""把 XX 模板移除"。
+            - 用户先用 list_templates_tool 浏览之后明确指向某个模板要求删除。
+
+            ⚠️ 这是**破坏性**操作，文件会被真正删掉，不可撤销。调用前必须：
+            1. **先用 `get_template_path_tool` 或 `list_templates_tool` 把用户口中的
+               模板解析成一个明确的 id**（确认 source="mine"）。不要凭印象猜 id。
+            2. **必须先得到用户的明确确认**——念出要删除的模板名（和 id），
+               让用户回答"是/确定/删"之后再调本工具。如果用户只是问"我有哪些模板"
+               或泛泛抱怨，**不要**主动调用。
+            3. 如果 get_template_path_tool 返回 ambiguous=True，**不要**自己挑——
+               把候选念给用户，让用户确认具体是哪一个。
+
+            限制：
+            - 只能删除**当前用户自己的**模板（source="mine"）。
+            - **共享模板（source="shared"）不可删除**——本工具会返回失败。
+              如果用户想删共享模板，告诉他/她需要联系管理员。
+
+            Args:
+                template_id: 模板的精确 id（如 "tech-dev-3-1" 或 "cai-gou-he-tong-2"）。
+                    通常由 get_template_path_tool 的返回值或 list_templates_tool
+                    列表里的 id 字段得来。
+
+            Returns dict with:
+                success: True / False
+                removed_id: 成功时返回被删除的模板 id
+                message: 中文提示
+
+            删除成功后，可以提示用户"已删除，要看看剩下的模板吗？"，
+            如果用户想看再调 list_templates_tool。
+            """
+            skill = TemplateLibrarySkill(str(WORKSPACE))
+            return skill.delete(template_id=template_id, user_id=user_id)
 
         def add_bullet_list_tool(file_path: str, items: list, position: int | str = "end", style: str = "List Bullet"):
             """
@@ -2494,6 +2532,7 @@ XML编辑工作流（仅用于 tracked changes）：
             list_templates_tool,
             get_template_path_tool,
             save_template_tool,
+            delete_template_tool,
             add_bullet_list_tool,
             add_numbered_list_tool,
             add_comment_tool,
