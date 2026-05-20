@@ -40,10 +40,3 @@ def get_org_membership(db: DatabaseManager, user_id: str) -> Optional[Organizati
     if resp.status and resp.data:
         return resp.data[0]
     return None
-
-
-def is_org_admin(db: DatabaseManager, user_id: str, org_id: int) -> bool:
-    m = get_org_membership(db, user_id)
-    if not m or m.org_id != org_id:
-        return False
-    return str(m.role) == "org_admin"

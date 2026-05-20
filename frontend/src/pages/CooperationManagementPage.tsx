@@ -47,11 +47,7 @@ const CooperationManagementPage: React.FC = () => {
   }, [uid, access?.is_platform_admin, msgApi]);
 
   const loadDetail = useCallback(async () => {
-    if (!uid || !selectedOrgId || !access) return;
-    const can =
-      access.is_platform_admin ||
-      (access.org?.org_id === selectedOrgId && access.org?.is_org_admin);
-    if (!can) return;
+    if (!uid || !selectedOrgId || !access?.is_platform_admin) return;
     setLoading(true);
     try {
       const [m, a] = await Promise.all([
@@ -84,12 +80,6 @@ const CooperationManagementPage: React.FC = () => {
   useEffect(() => {
     if (access?.is_platform_admin) void loadOrgs();
   }, [access?.is_platform_admin, loadOrgs]);
-
-  useEffect(() => {
-    if (access?.org?.is_org_admin && !access?.is_platform_admin && access.org.org_id) {
-      setSelectedOrgId(access.org.org_id);
-    }
-  }, [access]);
 
   useEffect(() => {
     void loadDetail();
@@ -307,16 +297,14 @@ const CooperationManagementPage: React.FC = () => {
     },
   ];
 
-  const canManageSelected =
-    access?.is_platform_admin ||
-    (access?.org?.org_id === selectedOrgId && access?.org?.is_org_admin);
+  const canManageSelected = Boolean(access?.is_platform_admin && selectedOrgId);
 
   return (
     <div className="h-full min-h-0 flex flex-col p-4 overflow-auto">
       {holder}
       <div className="text-base font-semibold text-primary mb-1">合作组管理</div>
       <div className="text-xs text-secondary mb-4">
-        平台管理员可创建合作组、审批广场跨组申请；组管理员可维护本组成员与组内智能体白名单。
+        仅平台管理员可创建合作组、维护成员与组内智能体、审批广场跨组申请。
       </div>
 
       <Tabs
@@ -443,13 +431,8 @@ const CooperationManagementPage: React.FC = () => {
           <Form.Item name="user_id" label="用户邮箱 user_id" rules={[{ required: true }]}>
             <Input placeholder="user@example.com" />
           </Form.Item>
-          <Form.Item name="role" label="角色" initialValue="member">
-            <Select
-              options={[
-                { value: "member", label: "member" },
-                { value: "org_admin", label: "org_admin" },
-              ]}
-            />
+          <Form.Item name="role" hidden initialValue="member">
+            <Input />
           </Form.Item>
         </Form>
       </Modal>

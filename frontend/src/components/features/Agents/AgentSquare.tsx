@@ -6,7 +6,7 @@ import { appContext } from "../../../hooks/provider";
 import { Agent } from "../../../types/common";
 import { Button } from "../../common/Button";
 import { CustomAgentData } from "../../common/agent-form/CustomAgentForm";
-import { agentWorkerAPI, settingsAPI, agentAPI, organizationsAPI } from "../../views/api";
+import { agentWorkerAPI, settingsAPI, agentAPI } from "../../views/api";
 import { AgentCard, AgentCardData } from "./AgentCard";
 import CustomAgentModal from "./CustomAgentModal";
 import RemoteAgentModal from "./RemoteAgentModal";
@@ -14,8 +14,6 @@ import { getServerUrl } from "../../utils";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { DRSAI_RECENT_AGENTS_KEY } from "@/utils/recentAgentsStorage";
 import { pickLoginDefaultAgent } from "@/utils/agentPreference";
-import { isLocalPasswordLogin } from "@/utils/authSession";
-
 interface AgentSquareProps {
   agents: AgentCardData[];
   className?: string;
@@ -43,12 +41,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const [ownerFilter, setOwnerFilter] = useState<"all" | "mine" | "official">("all");
   const [sortBy, setSortBy] = useState<"recent" | "name">("recent");
   const [recentAgentIds, setRecentAgentIds] = useState<string[]>([]);
-  const [plazaRows, setPlazaRows] = useState<
-    { org_id: number; org_display_name: string; agent_id: string; snapshot: Record<string, unknown> }[]
-  >([]);
-  const [plazaLoading, setPlazaLoading] = useState(false);
-  /** 广场接口失败（如本地账号、未接入组织服务）时仍为 true，用于提示而非整页空白 */
-  const [plazaLoadError, setPlazaLoadError] = useState(false);
   /** 未配置平台模型 API Key：不阻塞页面，仍可使用「连接远程」 */
   const [noModelApiKeyForList, setNoModelApiKeyForList] = useState(false);
   /** Server-side user default agent id */
@@ -433,7 +425,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     return () => window.removeEventListener("drsai:recentAgentsUpdated", handler as EventListener);
   }, [readRecentAgentIds, syncRecentFromServer, user?.email]);
 
-  // 仅当用户/组织显式默认存在时自动写入 agentId；否则留空，由用户在智能体广场选择
+  // 仅当用户显式默认存在时自动写入 agentId；否则留空，由用户在智能体广场选择
   useEffect(() => {
     if (agentId) return;
     if (!agentList.length) return;
@@ -442,14 +434,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     let cancelled = false;
     void (async () => {
       try {
-        const [myOrg, userDefault] = await Promise.all([
-          organizationsAPI.getMyOrg(email).catch(() => null),
-          agentWorkerAPI.getUserDefaultAgent(email).catch(() => null),
-        ]);
+        const userDefault = await agentWorkerAPI.getUserDefaultAgent(email).catch(() => null);
         if (cancelled) return;
-        const orgDefault = (myOrg?.default_agent_id as string) || null;
         const userDefaultId = userDefault?.stored_default_agent_id ?? null;
-        const target = pickLoginDefaultAgent(agentList as Agent[], orgDefault, userDefaultId);
+        const target = pickLoginDefaultAgent(agentList as Agent[], null, userDefaultId);
         if (!target?.id) return;
         setAgentId(target.id);
         setMode(target.mode || "");
@@ -461,33 +449,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       cancelled = true;
     };
   }, [agentId, agentList, setAgentId, setMode, user?.email]);
-
-  useEffect(() => {
-    const email = user?.email;
-    if (!email) return;
-    let cancelled = false;
-    void (async () => {
-      setPlazaLoading(true);
-      setPlazaLoadError(false);
-      try {
-        const rows = await organizationsAPI.plazaList(email);
-        if (!cancelled) {
-          setPlazaRows(rows || []);
-          setPlazaLoadError(false);
-        }
-      } catch {
-        if (!cancelled) {
-          setPlazaRows([]);
-          setPlazaLoadError(true);
-        }
-      } finally {
-        if (!cancelled) setPlazaLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.email]);
 
   if (loading) {
     return (
@@ -683,54 +644,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
           </div>
         </div>
       </div>
-
-      {user?.email && plazaLoadError && isLocalPasswordLogin() && (
-        <div className="mb-3 ml-4 mr-4 rounded-xl border border-amber-200/90 bg-amber-50/95 px-3 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/35 dark:text-amber-100/95">
-          普通用户访问worker受限，暂不可用。不影响使用上方「连接远程」添加外部智能体。
-        </div>
-      )}
-
-      {user?.email && plazaRows.length > 0 && (
-        <div className="mb-4 ml-4 mr-4 rounded-xl border border-[#e7e7ef] bg-white/80 p-3 dark:border-[#2a2a3a] dark:bg-[#101018]/80">
-          <div className="mb-2 text-xs font-semibold text-[#55627a] dark:text-[#b6bdd0]">
-            其他合作组智能体（申请通过后可在「我的智能体」侧栏使用）
-            {plazaLoading ? <span className="ml-2 text-[10px] opacity-70">加载中…</span> : null}
-          </div>
-          <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
-            {plazaRows.map((row) => {
-              const snap = row.snapshot || {};
-              const name = (snap.name as string) || row.agent_id;
-              return (
-                <div
-                  key={`${row.org_id}-${row.agent_id}`}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#eee] px-2 py-1.5 text-xs dark:border-[#2a2a3a]"
-                >
-                  <div className="min-w-0">
-                    <span className="font-medium text-[#0f172a] dark:text-[#e4e8ff]">{name}</span>
-                    <span className="ml-2 text-[#9aa2b2]">
-                      {row.org_display_name || `org ${row.org_id}`}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-md bg-[#5d3fcd] px-2 py-1 text-[11px] font-medium text-white hover:bg-[#4c32b3]"
-                    onClick={async () => {
-                      try {
-                        await organizationsAPI.plazaApply(user.email!, row.org_id, row.agent_id);
-                        message.success("已提交申请，请等待平台管理员审批");
-                      } catch (e: any) {
-                        message.error(e?.message || "申请失败");
-                      }
-                    }}
-                  >
-                    申请使用
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* 检查是否没有智能体 */}
       {baseList.length === 0 ? (

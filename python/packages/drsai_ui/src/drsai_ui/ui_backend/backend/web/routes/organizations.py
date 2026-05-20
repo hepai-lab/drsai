@@ -16,7 +16,7 @@ from ...datamodel.db import (
     OrganizationAgent,
     OrganizationMember,
 )
-from ..authz import get_is_platform_admin, get_org_membership, is_org_admin
+from ..authz import get_is_platform_admin, get_org_membership
 from ..deps import get_db
 
 router = APIRouter()
@@ -27,16 +27,6 @@ def _require_platform_admin(db, operator_user_id: str) -> None:
         raise HTTPException(status_code=400, detail="Missing operator_user_id")
     if not get_is_platform_admin(db, operator_user_id):
         raise HTTPException(status_code=403, detail="Admin privileges required")
-
-
-def _require_org_admin_or_platform(db, operator_user_id: str, org_id: int) -> None:
-    if not operator_user_id:
-        raise HTTPException(status_code=400, detail="Missing operator_user_id")
-    if get_is_platform_admin(db, operator_user_id):
-        return
-    if is_org_admin(db, operator_user_id, org_id):
-        return
-    raise HTTPException(status_code=403, detail="Org admin or platform admin required")
 
 
 class OrgCreate(BaseModel):
@@ -54,7 +44,7 @@ class OrgUpdate(BaseModel):
 
 class MemberUpsert(BaseModel):
     user_id: str
-    role: str = "member"  # org_admin | member
+    role: str = "member"
 
 
 class OrgAgentUpsert(BaseModel):
@@ -93,7 +83,6 @@ async def org_access_summary(user_id: str, db=Depends(get_db)) -> Dict:
         org_payload = {
             "org_id": mem.org_id,
             "role": mem.role,
-            "is_org_admin": str(mem.role) == "org_admin",
             "default_agent_id": default_agent_id,
         }
     return {
@@ -187,7 +176,7 @@ async def delete_organization(org_id: int, operator_user_id: str, db=Depends(get
 
 @router.get("/{org_id}/members")
 async def list_members(org_id: int, operator_user_id: str, db=Depends(get_db)) -> Dict:
-    _require_org_admin_or_platform(db, operator_user_id, org_id)
+    _require_platform_admin(db, operator_user_id)
     resp = db.get(OrganizationMember, filters={"org_id": org_id}, return_json=False)
     rows = resp.data or []
     return {"status": True, "data": [r.model_dump(mode="json") for r in rows]}
@@ -200,7 +189,7 @@ async def add_member(
     operator_user_id: str,
     db=Depends(get_db),
 ) -> Dict:
-    _require_org_admin_or_platform(db, operator_user_id, org_id)
+    _require_platform_admin(db, operator_user_id)
     other = db.get(OrganizationMember, filters={"user_id": body.user_id}, return_json=False)
     if other.status and other.data:
         m = other.data[0]
@@ -210,7 +199,7 @@ async def add_member(
     member = OrganizationMember(
         org_id=org_id,
         user_id=body.user_id,
-        role=body.role if body.role in ("org_admin", "member") else "member",
+        role="member",
     )
     r = db.upsert(member, return_json=False)
     if not r.status:
@@ -225,7 +214,7 @@ async def remove_member(
     operator_user_id: str,
     db=Depends(get_db),
 ) -> Dict:
-    _require_org_admin_or_platform(db, operator_user_id, org_id)
+    _require_platform_admin(db, operator_user_id)
     db.delete(OrganizationMember, filters={"org_id": org_id, "user_id": user_id})
     return {"status": True, "data": {"removed": user_id}}
 
@@ -244,7 +233,7 @@ async def upsert_org_agent(
     operator_user_id: str,
     db=Depends(get_db),
 ) -> Dict:
-    _require_org_admin_or_platform(db, operator_user_id, org_id)
+    _require_platform_admin(db, operator_user_id)
     snap = dict(body.snapshot or {})
     snap["id"] = body.agent_id
     row = OrganizationAgent(org_id=org_id, agent_id=body.agent_id, snapshot=snap)
@@ -269,7 +258,7 @@ async def delete_org_agent(
     operator_user_id: str,
     db=Depends(get_db),
 ) -> Dict:
-    _require_org_admin_or_platform(db, operator_user_id, org_id)
+    _require_platform_admin(db, operator_user_id)
     db.delete(OrganizationAgent, filters={"org_id": org_id, "agent_id": agent_id})
     return {"status": True, "data": {"deleted": agent_id}}
 

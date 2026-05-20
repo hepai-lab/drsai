@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Modal, message } from 'antd';
 import { useModeConfigStore } from '@/store/modeConfig';
-import { agentAPI, agentWorkerAPI, organizationsAPI } from '@/components/views/api';
+import { agentAPI, agentWorkerAPI } from '@/components/views/api';
 import { getLocalStorage } from '@/components/utils';
 import { pickLoginDefaultAgent } from '@/utils/agentPreference';
 import type { Agent } from '@/types/common';
@@ -57,14 +57,12 @@ export const useAgentInfo = (userIdProp?: string) => {
       if (!id) {
         const sa = useModeConfigStore.getState().selectedAgent;
         try {
-          const [agents, myOrg, userDefault] = await Promise.all([
+          const [agents, userDefault] = await Promise.all([
             // Use UserAgents list for consistency with getUserAgentById
             agentWorkerAPI.getUserDefaultAgents(userId).then((r: any) => r?.data || []),
-            organizationsAPI.getMyOrg(userId).catch(() => null),
             agentWorkerAPI.getUserDefaultAgent(userId).catch(() => null),
           ]);
           if (cancelled) return;
-          const orgDefault = (myOrg?.default_agent_id as string) || null;
           // Use stored_default_agent_id so "not set" doesn't degrade into a forced builtin.
           const userDefaultId = userDefault?.stored_default_agent_id ?? null;
           const match =
@@ -75,7 +73,7 @@ export const useAgentInfo = (userIdProp?: string) => {
                   a.name === sa.name ||
                   (Boolean(sa.mode) && a.mode === sa.mode),
               )) ||
-            pickLoginDefaultAgent(agents || [], orgDefault, userDefaultId);
+            pickLoginDefaultAgent(agents || [], null, userDefaultId);
           if (match?.id) {
             setAgentId(match.id);
             return;
@@ -163,9 +161,8 @@ export const useAgentInfo = (userIdProp?: string) => {
         }
 
         try {
-          const [agents, myOrg, userDefault] = await Promise.all([
+          const [agents, userDefault] = await Promise.all([
             agentWorkerAPI.getUserDefaultAgents(userId).then((r: any) => r?.data || []),
-            organizationsAPI.getMyOrg(userId).catch(() => null),
             agentWorkerAPI.getUserDefaultAgent(userId).catch(() => null),
           ]);
           const byId = agents?.find((a: any) => a.id === id);
@@ -174,9 +171,8 @@ export const useAgentInfo = (userIdProp?: string) => {
             setAgentInfo(byId as Partial<Agent>);
             return;
           }
-          const orgDefault = (myOrg?.default_agent_id as string) || null;
           const userDefaultId = userDefault?.stored_default_agent_id ?? null;
-          const preferred = pickLoginDefaultAgent(agents || [], orgDefault, userDefaultId);
+          const preferred = pickLoginDefaultAgent(agents || [], null, userDefaultId);
           if (
             preferred?.id &&
             typeof preferred.id === 'string' &&

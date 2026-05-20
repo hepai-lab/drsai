@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { Agent } from "@/types/common";
-import { agentAPI, agentWorkerAPI, organizationsAPI } from "@/components/views/api";
+import { agentAPI, agentWorkerAPI } from "@/components/views/api";
 import { getLocalStorage } from "@/components/utils";
 import { getFirstRecentAgentId } from "@/utils/recentAgentsStorage";
 import { pickLoginDefaultAgent } from "@/utils/agentPreference";
@@ -71,16 +71,14 @@ export const useModeConfigStore = create<IModeConfig>()(
 
                 void Promise.all([
                     agentWorkerAPI.getUserDefaultAgents(userId).then((r: any) => r?.data || []),
-                    organizationsAPI.getMyOrg(userId).catch(() => null),
                     agentWorkerAPI.getUserDefaultAgent(userId).catch(() => null),
                 ])
-                    .then(([agents, myOrg, userDefault]) => {
-                        const orgDefault = (myOrg?.default_agent_id as string) || null;
+                    .then(([agents, userDefault]) => {
                         // Only treat explicitly stored default as personal preference.
                         const userDefaultId = userDefault?.stored_default_agent_id ?? null;
                         const preferred = pickLoginDefaultAgent(
                             agents || [],
-                            orgDefault,
+                            null,
                             userDefaultId,
                         );
                         const id = preferred?.id;
