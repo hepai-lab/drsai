@@ -190,12 +190,12 @@ if __name__ == "__main__":
             # 智能体注册信息
             agent_name="Your Explorer",
             author = "ihep@ihep.ac.cn",
-            # permission='groups: "drsai, payg"; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
-            # permission={
-            #     "groups": "drsai, payg", 
-            #     "users": [], 
-            #     "owner": "admin"
-            #     },
+            permission='groups: "drsai, payg"; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
+            permission={
+                "groups": "drsai, payg", 
+                "users": [], 
+                "owner": "admin"
+                },
             description = "A personal assistant for you to explore the world.",
             version = "0.1.0",
             logo="https://aiapi.ihep.ac.cn/apiv2/files/file-a510f20c6c9d4443a582ad5b1dcc8f51/preview",
