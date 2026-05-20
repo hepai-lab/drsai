@@ -646,36 +646,9 @@ const RecentAgentUsageScatterChart: React.FC<{ loading: boolean; rows: UsageEven
     );
 };
 
-const TopAgentsUsageBarChart: React.FC<{ loading: boolean; rows: TopAgentRow[] }> = ({
-    loading,
-    rows,
-}) => {
-    const hostRef = useRef<HTMLDivElement | null>(null);
-
-    const rowsWithName = useMemo(
-        () => rows.filter((r) => hasResolvedAgentName(r.agent_name)).slice(0, TOP_AGENTS_CHART_LIMIT),
-        [rows]
-    );
-
-    useEffect(() => {
-        const el = hostRef.current;
-        if (!el) return undefined;
-
-        let alive = true;
-        let chart: EChartsHandle | null = null;
-        const onResize = () => chart?.resize();
-
-        void import(/* webpackChunkName: "echarts" */ "echarts").then((mod) => {
-            if (!alive || !hostRef.current) return;
-            const ec = getEchartsFromImport(mod);
-            chart = ec.init(hostRef.current);
-            window.addEventListener("resize", onResize);
-
-            const ordered = [...rowsWithName].reverse();
-            const { axisMuted, splitMuted, labelColor, tipTitle, tipBody, accentBright } = ANALYTICS_CHART_COLORS;
-
-            chart.setOption(
-                {
+function buildTopAgentsBarOption(ordered: TopAgentRow[]) {
+    const { axisMuted, splitMuted, labelColor, tipTitle, tipBody, accentBright } = ANALYTICS_CHART_COLORS;
+    return {
                     backgroundColor: "transparent",
                     textStyle: { fontFamily: "system-ui, 'Segoe UI', sans-serif" },
                     title: { show: false },
@@ -756,18 +729,57 @@ const TopAgentsUsageBarChart: React.FC<{ loading: boolean; rows: TopAgentRow[] }
                             animationEasing: "cubicOut",
                         },
                     ],
-                },
-                true
-            );
+    };
+}
+
+const TopAgentsUsageBarChart: React.FC<{ loading: boolean; rows: TopAgentRow[] }> = ({
+    loading,
+    rows,
+}) => {
+    const hostRef = useRef<HTMLDivElement | null>(null);
+    const chartRef = useRef<EChartsHandle | null>(null);
+
+    const rowsWithName = useMemo(
+        () => rows.filter((r) => hasResolvedAgentName(r.agent_name)).slice(0, TOP_AGENTS_CHART_LIMIT),
+        [rows]
+    );
+
+    const ordered = useMemo(() => [...rowsWithName].reverse(), [rowsWithName]);
+
+    useEffect(() => {
+        const el = hostRef.current;
+        if (!el) return undefined;
+
+        let alive = true;
+        const onResize = () => chartRef.current?.resize();
+
+        void import(/* webpackChunkName: "echarts" */ "echarts").then((mod) => {
+            if (!alive || !hostRef.current) return;
+            const ec = getEchartsFromImport(mod);
+            chartRef.current = ec.init(hostRef.current);
+            window.addEventListener("resize", onResize);
+            if (ordered.length > 0) {
+                chartRef.current.setOption(buildTopAgentsBarOption(ordered), true);
+            }
         });
 
         return () => {
             alive = false;
             window.removeEventListener("resize", onResize);
-            chart?.dispose();
-            chart = null;
+            chartRef.current?.dispose();
+            chartRef.current = null;
         };
-    }, [rowsWithName]);
+    }, []);
+
+    useEffect(() => {
+        const chart = chartRef.current;
+        if (!chart || ordered.length === 0) return;
+        chart.setOption(buildTopAgentsBarOption(ordered), true);
+    }, [ordered]);
+
+    useEffect(() => {
+        if (!loading) chartRef.current?.resize();
+    }, [loading, ordered]);
 
     if (!loading && rows.length > 0 && rowsWithName.length === 0) {
         return (
@@ -788,33 +800,9 @@ const TopAgentsUsageBarChart: React.FC<{ loading: boolean; rows: TopAgentRow[] }
     );
 };
 
-const UserSessionsBarChart: React.FC<{ loading: boolean; rows: SessionUserRow[] }> = ({ loading, rows }) => {
-    const hostRef = useRef<HTMLDivElement | null>(null);
-
-    const ordered = useMemo(
-        () => [...rows].sort((a, b) => b.session_count - a.session_count).slice(0, TOP_USERS_CHART_LIMIT),
-        [rows]
-    );
-
-    useEffect(() => {
-        const el = hostRef.current;
-        if (!el) return undefined;
-
-        let alive = true;
-        let chart: EChartsHandle | null = null;
-        const onResize = () => chart?.resize();
-
-        void import(/* webpackChunkName: "echarts" */ "echarts").then((mod) => {
-            if (!alive || !hostRef.current) return;
-            const ec = getEchartsFromImport(mod);
-            chart = ec.init(hostRef.current);
-            window.addEventListener("resize", onResize);
-
-            const chartRows = [...ordered].reverse();
-            const { axisMuted, splitMuted, labelColor, tipTitle, tipBody, accentBright } = ANALYTICS_CHART_COLORS;
-
-            chart.setOption(
-                {
+function buildUserSessionsBarOption(chartRows: SessionUserRow[]) {
+    const { axisMuted, splitMuted, labelColor, tipTitle, tipBody, accentBright } = ANALYTICS_CHART_COLORS;
+    return {
                     backgroundColor: "transparent",
                     textStyle: { fontFamily: "system-ui, 'Segoe UI', sans-serif" },
                     title: { show: false },
@@ -900,18 +888,54 @@ const UserSessionsBarChart: React.FC<{ loading: boolean; rows: SessionUserRow[] 
                             animationEasing: "cubicOut",
                         },
                     ],
-                },
-                true
-            );
+    };
+}
+
+const UserSessionsBarChart: React.FC<{ loading: boolean; rows: SessionUserRow[] }> = ({ loading, rows }) => {
+    const hostRef = useRef<HTMLDivElement | null>(null);
+    const chartRef = useRef<EChartsHandle | null>(null);
+
+    const ordered = useMemo(
+        () => [...rows].sort((a, b) => b.session_count - a.session_count).slice(0, TOP_USERS_CHART_LIMIT),
+        [rows]
+    );
+
+    const chartRows = useMemo(() => [...ordered].reverse(), [ordered]);
+
+    useEffect(() => {
+        const el = hostRef.current;
+        if (!el) return undefined;
+
+        let alive = true;
+        const onResize = () => chartRef.current?.resize();
+
+        void import(/* webpackChunkName: "echarts" */ "echarts").then((mod) => {
+            if (!alive || !hostRef.current) return;
+            const ec = getEchartsFromImport(mod);
+            chartRef.current = ec.init(hostRef.current);
+            window.addEventListener("resize", onResize);
+            if (chartRows.length > 0) {
+                chartRef.current.setOption(buildUserSessionsBarOption(chartRows), true);
+            }
         });
 
         return () => {
             alive = false;
             window.removeEventListener("resize", onResize);
-            chart?.dispose();
-            chart = null;
+            chartRef.current?.dispose();
+            chartRef.current = null;
         };
-    }, [ordered]);
+    }, []);
+
+    useEffect(() => {
+        const chart = chartRef.current;
+        if (!chart || chartRows.length === 0) return;
+        chart.setOption(buildUserSessionsBarOption(chartRows), true);
+    }, [chartRows]);
+
+    useEffect(() => {
+        if (!loading) chartRef.current?.resize();
+    }, [loading, chartRows]);
 
     if (!loading && rows.length === 0) {
         return <span className="usage-analytics-muted text-sm">暂无用户会话数据</span>;

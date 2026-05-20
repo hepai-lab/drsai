@@ -170,19 +170,26 @@ async def usage_overview(
             .limit(safe_sessions)
         ).all()
 
-    # Sum usage_count by agent across all rows loaded (cheap aggregate for dashboard)
-    agent_use_totals: Dict[str, int] = {}
-    for r in usage_rows:
-        aid = str(r.agent_id or "")
-        if not aid:
-            continue
-        agent_use_totals[aid] = agent_use_totals.get(aid, 0) + int(r.use_count or 0)
+        # Full-table aggregate (not limited to usage_events sample) for stable rankings
+        agent_totals_rows = s.exec(
+            select(
+                UserAgentUsage.agent_id,
+                func.sum(UserAgentUsage.use_count).label("total_use_count"),
+            )
+            .where(UserAgentUsage.agent_id.isnot(None))
+            .group_by(UserAgentUsage.agent_id)
+            .order_by(func.sum(UserAgentUsage.use_count).desc())
+            .limit(40)
+        ).all()
 
-    top_agents_raw = sorted(
-        [{"agent_id": k, "total_use_count_records": v} for k, v in agent_use_totals.items()],
-        key=lambda x: x["total_use_count_records"],
-        reverse=True,
-    )[:40]
+    top_agents_raw = [
+        {
+            "agent_id": str(aid),
+            "total_use_count_records": int(total or 0),
+        }
+        for aid, total in agent_totals_rows
+        if aid and str(aid).strip()
+    ]
 
     label_ids: List[str] = []
     seen_ids: set[str] = set()

@@ -1214,7 +1214,7 @@ export type ManagedUser = {
 
 export type OrgAccess = {
     is_platform_admin: boolean;
-    org: { org_id: number; role: string; is_org_admin: boolean } | null;
+    org: { org_id: number; role: string; default_agent_id?: string | null } | null;
 };
 
 export type PlazaAgentRow = {

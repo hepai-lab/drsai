@@ -3,7 +3,7 @@ import { Agent } from '../../../types/common';
 import { useModeConfigStore } from '../../../store/modeConfig';
 import { getFirstRecentAgentId } from '../../../utils/recentAgentsStorage';
 import { pickLoginDefaultAgent } from '../../../utils/agentPreference';
-import { agentAPI, agentWorkerAPI, organizationsAPI } from '../api';
+import { agentAPI, agentWorkerAPI } from '../api';
 
 export const useAgentManager = (userEmail: string | undefined) => {
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -50,25 +50,19 @@ export const useAgentManager = (userEmail: string | undefined) => {
         return;
       }
 
-      let orgDefaultAgentId: string | null | undefined;
       let userDefaultAgentId: string | null | undefined;
       try {
-        const [myOrg, userDefault] = await Promise.all([
-          organizationsAPI.getMyOrg(userEmail).catch(() => null),
-          agentWorkerAPI.getUserDefaultAgent(userEmail).catch(() => null),
-        ]);
-        orgDefaultAgentId = (myOrg?.default_agent_id as string) || null;
+        const userDefault = await agentWorkerAPI.getUserDefaultAgent(userEmail).catch(() => null);
         // Treat personal default as "explicitly set by user".
         // Backend may return a resolved fallback in default_agent_id (e.g. Dr.Sai General)
         // even when the user never chose one; stored_default_agent_id preserves intent.
         userDefaultAgentId = userDefault?.stored_default_agent_id ?? null;
       } catch {
-        orgDefaultAgentId = undefined;
         userDefaultAgentId = undefined;
       }
 
       const { selectedAgent, agentId, mode } = useModeConfigStore.getState();
-      const policyDefault = pickLoginDefaultAgent(res, orgDefaultAgentId, userDefaultAgentId);
+      const policyDefault = pickLoginDefaultAgent(res, null, userDefaultAgentId);
       /** 无个人/组织显式默认时不自动选中列表首项，由用户在智能体广场选择 */
       const fallbackAgent = policyDefault;
 

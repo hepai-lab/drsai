@@ -514,7 +514,7 @@ class OrganizationMember(SQLModel, table=True):
     )
     org_id: int = Field(sa_column=Column(Integer, ForeignKey("organization.id", ondelete="CASCADE")))
     user_id: str = Field(index=True)
-    role: str = Field(default="member")  # org_admin | member
+    role: str = Field(default="member")
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )
