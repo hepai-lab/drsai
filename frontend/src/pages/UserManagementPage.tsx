@@ -57,20 +57,6 @@ const UserManagementPage: React.FC = () => {
         v === "sso" ? <Tag color="purple">SSO</Tag> : <Tag color="blue">LOCAL</Tag>,
     },
     {
-      title: "合作组",
-      key: "org",
-      width: 160,
-      render: (_: unknown, record: Row) =>
-        record.org_slug ? (
-          <span className="text-xs">
-            <Tag>{record.org_slug}</Tag>
-            {record.org_role ? <span className="text-secondary ml-1">{record.org_role}</span> : null}
-          </span>
-        ) : (
-          <span className="text-secondary text-xs">—</span>
-        ),
-    },
-    {
       title: "管理员",
       dataIndex: "is_admin",
       key: "is_admin",
@@ -105,9 +91,7 @@ const UserManagementPage: React.FC = () => {
       <div className="flex items-center justify-between gap-3 mb-3">
         <div>
           <div className="text-base font-semibold text-primary">用户管理</div>
-          <div className="text-xs text-secondary mt-1">
-            需要管理员权限。当前操作人：<span className="font-mono">{operatorUserId || "-"}</span>
-          </div>
+
         </div>
         <div className="flex items-center gap-2">
           <Input

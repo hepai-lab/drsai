@@ -167,8 +167,6 @@ async def get_agents_mode(user_id: str, db:DatabaseManager) -> Dict:
     '''
     获取侧边栏的 mode 配置
     '''
-    from drsai_ui.agent_factory.org_agent_merge import merge_sidebar_agents_mode
-
     response = db.get(AgentModeSettings, filters={"user_id": user_id})
     if not response.status or not response.data:
         # create a default agents_mode
@@ -181,7 +179,16 @@ async def get_agents_mode(user_id: str, db:DatabaseManager) -> Dict:
     else:
         settings = response.data[0]
 
-    merged = merge_sidebar_agents_mode(db, user_id, list(settings.agents_mode or []))
+    stored = [dict(a) for a in (settings.agents_mode or []) if isinstance(a, dict)]
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for agent in get_default_agent_mode_config(user_id=user_id):
+        if isinstance(agent, dict) and agent.get("id"):
+            by_id[str(agent["id"])] = dict(agent)
+    for agent in stored:
+        if isinstance(agent, dict) and agent.get("id"):
+            by_id[str(agent["id"])] = dict(agent)
+    merged = list(by_id.values())
+    _mark_featured_and_default_agents(merged)
     payload = settings.model_dump(mode="json")
     payload["agents_mode"] = merged
     return {"status": True, "data": payload}

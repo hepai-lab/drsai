@@ -21,11 +21,8 @@ export function pickPreferredAgentFromList<
 }
 
 /**
- * 登录后自动选中的智能体：**仅**在显式配置时返回，不做列表兜底。
- * 1. 用户在 AgentModeSettings 中保存的个人默认（stored_default_agent_id）
- * 2. 组织级别的 default_agent_id
- *
- * 新用户未设置个人默认且组织未指定时返回 undefined，由前端引导至智能体广场自行选择。
+ * 登录后自动选中的智能体：**仅**在用户显式设置个人默认时返回，不做列表兜底。
+ * 未设置时返回 undefined，由前端引导至智能体广场自行选择。
  */
 export function pickLoginDefaultAgent<
   T extends {
@@ -35,24 +32,11 @@ export function pickLoginDefaultAgent<
     is_default?: boolean;
     featured?: boolean;
   },
->(
-  agents: T[],
-  orgDefaultAgentId: string | null | undefined,
-  userDefaultAgentId?: string | null,
-): T | undefined {
+>(agents: T[], userDefaultAgentId?: string | null): T | undefined {
   if (!agents?.length) return undefined;
 
   const uid = (userDefaultAgentId || "").trim();
-  if (uid) {
-    const userHit = agents.find((a) => a.id === uid);
-    if (userHit) return userHit;
-  }
+  if (!uid) return undefined;
 
-  const oid = (orgDefaultAgentId || "").trim();
-  if (oid) {
-    const orgHit = agents.find((a) => a.id === oid);
-    if (orgHit) return orgHit;
-  }
-
-  return undefined;
+  return agents.find((a) => a.id === uid);
 }

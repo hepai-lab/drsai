@@ -6,6 +6,7 @@ import hashlib
 from ...datamodel.db import Userinfo
 from ...datamodel.db import UserRole
 from ..deps import get_db
+from ..auth_source import record_auth_source
 from ...datamodel.db import UserAgents, AgentModeSettings
 
 from .....agent_factory.agent_mode_cofigs import (
@@ -36,7 +37,11 @@ async def create_new_user(user_id: str, password: str, db=Depends(get_db)) -> Di
 
         # 创建新用户，密码进行哈希加密
         hashed_password = hash_password(password)
-        new_user = Userinfo(user_id=user_id, password=hashed_password)
+        new_user = Userinfo(
+            user_id=user_id,
+            password=hashed_password,
+            meta={"auth_source": "local"},
+        )
         result = db.upsert(new_user)
 
         if not result.status:
@@ -107,6 +112,8 @@ async def local_login(user_id: str, password: str, db=Depends(get_db)) -> Dict:
         hashed_password = hash_password(password)
         if user.password != hashed_password:
             raise HTTPException(status_code=401, detail="Invalid password")
+
+        record_auth_source(db, user_id, "local")
         
         response = db.get(AgentModeSettings, filters={"user_id": user_id})
         if not response.status or not response.data:

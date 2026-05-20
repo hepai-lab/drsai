@@ -4,7 +4,7 @@ import "./UsageAnalyticsPage.css";
 import { appContext } from "../../hooks/provider";
 import {
     adminAnalyticsAPI,
-    organizationsAPI,
+    userAPI,
     type AdminUsageOverviewData,
 } from "../../components/views/api";
 
@@ -49,6 +49,8 @@ function hasResolvedAgentName(agentName: unknown): boolean {
 type TopAgentRow = AdminUsageOverviewData["top_agents_by_usage_records"][number];
 
 type UsageEventRow = AdminUsageOverviewData["usage_events"][number];
+
+type SessionUsageScatterRow = NonNullable<AdminUsageOverviewData["session_usage_scatter"]>[number];
 
 type SessionUserRow = AdminUsageOverviewData["sessions_per_user"][number];
 
@@ -263,29 +265,65 @@ function formatAnalyticsTimeOnly(raw: string): string {
     });
 }
 
+/** 今日有效调用：按 Session（user + agent_mode_config）在北京日历日内创建计次。 */
 function computeTodayStats(overview: AdminUsageOverviewData | null): TodayStats | null {
     if (!overview) return null;
 
-    const todayKey = beijingTodayKey();
-    const usageEvents = overview.usage_events || [];
-    const sessions = overview.recent_sessions_preview || [];
+    const sessionStats = overview.today_session_stats;
+    const todayKey = sessionStats?.today_key ?? beijingTodayKey();
 
+    if (sessionStats) {
+        const recentEvents = (sessionStats.recent_by_user_agent ?? [])
+            .slice(0, RECENT_TODAY_FEED_LIMIT)
+            .map((row) => ({
+                time: formatAnalyticsTimeOnly(row.latest_created_at),
+                agentName: hasResolvedAgentName(row.agent_name) ? String(row.agent_name).trim() : "—",
+                userId: String(row.user_id || "—"),
+                useCount: Math.max(1, Number(row.session_count ?? 0) || 0),
+            }));
+
+        return {
+            todayKey,
+            dau: sessionStats.dau ?? 0,
+            activeAgents: sessionStats.active_agent_count ?? 0,
+            usagePairs: sessionStats.session_count ?? 0,
+            newSessions: sessionStats.session_count ?? 0,
+            activeSessions: sessionStats.sessions_updated_today ?? 0,
+            recentEvents,
+        };
+    }
+
+    // Fallback when backend has not yet exposed today_session_stats (sample only).
+    const sessions = overview.recent_sessions_preview || [];
+    const pairMap = new Map<
+        string,
+        { t: number; createdRaw: string; agentName: string; userId: string; count: number }
+    >();
     const todayUserIds = new Set<string>();
     const todayAgentIds = new Set<string>();
-    let usagePairs = 0;
-    const todayEvents: Array<{ t: number; row: UsageEventRow }> = [];
 
-    for (const row of usageEvents) {
-        const raw = usageEventTimeRaw(row);
+    for (const session of sessions) {
+        const raw = session.created_at;
         if (!isBeijingToday(raw)) continue;
-        usagePairs += 1;
-        if (row.user_id) todayUserIds.add(String(row.user_id));
-        if (hasResolvedAgentName(row.agent_name) && row.agent_id) {
-            todayAgentIds.add(String(row.agent_id));
-        }
+        const uid = String(session.user_id || "").trim();
+        const aid = session.agent_id != null ? String(session.agent_id).trim() : "";
+        if (!uid || !aid) continue;
         const d = parseAnalyticsInstant(String(raw));
-        if (!Number.isNaN(d.getTime())) {
-            todayEvents.push({ t: d.getTime(), row });
+        if (Number.isNaN(d.getTime())) continue;
+
+        todayUserIds.add(uid);
+        todayAgentIds.add(aid);
+        const key = `${uid}\x00${aid}`;
+        const agentName = hasResolvedAgentName(session.agent_name) ? String(session.agent_name).trim() : "—";
+        const existing = pairMap.get(key);
+        if (existing) {
+            existing.count += 1;
+            if (d.getTime() > existing.t) {
+                existing.t = d.getTime();
+                existing.createdRaw = String(raw);
+            }
+        } else {
+            pairMap.set(key, { t: d.getTime(), createdRaw: String(raw), agentName, userId: uid, count: 1 });
         }
     }
 
@@ -296,16 +334,18 @@ function computeTodayStats(overview: AdminUsageOverviewData | null): TodayStats 
         if (isBeijingToday(session.updated_at)) activeSessions += 1;
     }
 
-    todayEvents.sort((a, b) => b.t - a.t);
-    const recentEvents = todayEvents.slice(0, RECENT_TODAY_FEED_LIMIT).map(({ row }) => {
-        const raw = usageEventTimeRaw(row)!;
-        return {
-            time: formatAnalyticsTimeOnly(raw),
-            agentName: hasResolvedAgentName(row.agent_name) ? String(row.agent_name).trim() : "—",
-            userId: String(row.user_id || "—"),
-            useCount: Math.max(0, Number(row.use_count ?? 0) || 0),
-        };
-    });
+    const recentEvents = [...pairMap.values()]
+        .sort((a, b) => b.t - a.t)
+        .slice(0, RECENT_TODAY_FEED_LIMIT)
+        .map((row) => ({
+            time: formatAnalyticsTimeOnly(row.createdRaw),
+            agentName: row.agentName,
+            userId: row.userId,
+            useCount: row.count,
+        }));
+
+    let usagePairs = 0;
+    for (const row of pairMap.values()) usagePairs += row.count;
 
     return {
         todayKey,
@@ -318,10 +358,64 @@ function computeTodayStats(overview: AdminUsageOverviewData | null): TodayStats 
     };
 }
 
-function usageScatterYKey(row: UsageEventRow): string {
+function sessionScatterTimeRaw(row: SessionUsageScatterRow): string | undefined {
+    const raw = row.latest_created_at;
+    return raw != null && String(raw).trim() !== "" ? String(raw) : undefined;
+}
+
+function sessionScatterYKey(row: SessionUsageScatterRow): string {
     const name = String(row.agent_name ?? "").trim();
     const u = String(row.user_id || "—");
     return `${name}\x00${u}`;
+}
+
+function buildSessionUsageScatterFallback(
+    sessions: AdminUsageOverviewData["recent_sessions_preview"]
+): SessionUsageScatterRow[] {
+    const nowMs = Date.now();
+    const windowStartMs = nowMs - USAGE_SCATTER_WINDOW_MS;
+    const pairMap = new Map<
+        string,
+        { t: number; latest: string; agentName?: string | null; userId: string; agentId: string; count: number }
+    >();
+
+    for (const session of sessions || []) {
+        const raw = session.created_at;
+        if (raw == null || raw === "") continue;
+        const d = parseAnalyticsInstant(String(raw));
+        if (Number.isNaN(d.getTime()) || d.getTime() < windowStartMs) continue;
+        const uid = String(session.user_id || "").trim();
+        const aid = session.agent_id != null ? String(session.agent_id).trim() : "";
+        if (!uid || !aid) continue;
+        const key = `${uid}\x00${aid}`;
+        const existing = pairMap.get(key);
+        if (existing) {
+            existing.count += 1;
+            if (d.getTime() > existing.t) {
+                existing.t = d.getTime();
+                existing.latest = String(raw);
+            }
+        } else {
+            pairMap.set(key, {
+                t: d.getTime(),
+                latest: String(raw),
+                agentName: session.agent_name,
+                userId: uid,
+                agentId: aid,
+                count: 1,
+            });
+        }
+    }
+
+    return [...pairMap.values()]
+        .sort((a, b) => b.t - a.t)
+        .map((row) => ({
+            user_id: row.userId,
+            agent_id: row.agentId,
+            agent_name: row.agentName,
+            latest_created_at: row.latest,
+            session_count: row.count,
+        }));
 }
 
 function truncateAxisText(text: string, max: number): string {
@@ -346,8 +440,8 @@ function getEchartsFromImport(mod: unknown): { init: (dom: HTMLElement | null) =
     return candidate as { init: (dom: HTMLElement | null) => EChartsHandle };
 }
 
-/** 时间轴散点：X=调用时间，Y=智能体·用户，点大小≈use_count。 */
-const RecentAgentUsageScatterChart: React.FC<{ loading: boolean; rows: UsageEventRow[] }> = ({
+/** 时间轴散点：X=最近会话时间，Y=智能体·用户，点大小≈近 7 日会话数。 */
+const RecentAgentUsageScatterChart: React.FC<{ loading: boolean; rows: SessionUsageScatterRow[] }> = ({
     loading,
     rows,
 }) => {
@@ -360,7 +454,7 @@ const RecentAgentUsageScatterChart: React.FC<{ loading: boolean; rows: UsageEven
         let anyNamedWithValidTime = false;
         let namedInWindow = 0;
         for (const row of rows) {
-            const raw = usageEventTimeRaw(row);
+            const raw = sessionScatterTimeRaw(row);
             if (!raw) continue;
             const d = parseAnalyticsInstant(raw);
             if (Number.isNaN(d.getTime())) continue;
@@ -395,23 +489,23 @@ const RecentAgentUsageScatterChart: React.FC<{ loading: boolean; rows: UsageEven
                 yKey: string;
                 agentName: string;
                 userId: string;
-                useCount: number;
-                row: UsageEventRow;
+                sessionCount: number;
+                row: SessionUsageScatterRow;
             };
             const withTime: Prepared[] = [];
             for (const row of rows) {
                 if (!hasResolvedAgentName(row.agent_name)) continue;
-                const raw = usageEventTimeRaw(row);
+                const raw = sessionScatterTimeRaw(row);
                 if (!raw) continue;
                 const d = parseAnalyticsInstant(raw);
                 if (Number.isNaN(d.getTime())) continue;
-                const cnt = Math.max(1, Number(row.use_count ?? 0) || 1);
+                const cnt = Math.max(1, Number(row.session_count ?? 0) || 1);
                 withTime.push({
                     t: d.getTime(),
-                    yKey: usageScatterYKey(row),
+                    yKey: sessionScatterYKey(row),
                     agentName: String(row.agent_name ?? "").trim(),
                     userId: String(row.user_id || "—"),
-                    useCount: cnt,
+                    sessionCount: cnt,
                     row,
                 });
             }
@@ -431,8 +525,8 @@ const RecentAgentUsageScatterChart: React.FC<{ loading: boolean; rows: UsageEven
             let minCnt = Infinity;
             let maxCnt = 0;
             for (const p of prepared) {
-                minCnt = Math.min(minCnt, p.useCount);
-                maxCnt = Math.max(maxCnt, p.useCount);
+                minCnt = Math.min(minCnt, p.sessionCount);
+                maxCnt = Math.max(maxCnt, p.sessionCount);
             }
             if (!Number.isFinite(minCnt)) minCnt = 1;
             if (maxCnt <= minCnt) maxCnt = minCnt + 1;
@@ -441,8 +535,8 @@ const RecentAgentUsageScatterChart: React.FC<{ loading: boolean; rows: UsageEven
                 ANALYTICS_CHART_COLORS;
 
             const seriesData = prepared.map((p) => ({
-                value: [p.t, p.yKey, p.useCount] as [number, string, number],
-                symbolSize: Math.min(34, Math.sqrt(p.useCount) * 4 + 5),
+                value: [p.t, p.yKey, p.sessionCount] as [number, string, number],
+                symbolSize: Math.min(34, Math.sqrt(p.sessionCount) * 4 + 5),
             }));
 
             /** 无底右时间轴 slider，留白略小于原先「底栏+滑块」方案 */
@@ -485,7 +579,7 @@ const RecentAgentUsageScatterChart: React.FC<{ loading: boolean; rows: UsageEven
                             const item = prepared[idx];
                             if (!item) return "";
                             const r = item.row;
-                            const rawT = usageEventTimeRaw(r);
+                            const rawT = sessionScatterTimeRaw(r);
                             const when = rawT ? formatAnalyticsDateTime(rawT) : "—";
                             const aid = String(r.agent_id || "—");
                             const aname = String(r.agent_name ?? "").trim();
@@ -497,8 +591,8 @@ const RecentAgentUsageScatterChart: React.FC<{ loading: boolean; rows: UsageEven
 </div>
 <div style="padding:10px 12px;color:${tipBody}">
 <div>用户：<span style="font-family:monospace;font-size:11px">${String(r.user_id || "—")}</span></div>
-<div style="margin-top:6px">最近调用（北京时间）：<b style="color:${tipTitle}">${when}</b></div>
-<div style="margin-top:6px">use_count：<b style="color:${accentBright}">${item.useCount}</b></div>
+<div style="margin-top:6px">最近会话（北京时间）：<b style="color:${tipTitle}">${when}</b></div>
+<div style="margin-top:6px">近 ${USAGE_SCATTER_WINDOW_DAYS} 日会话：<b style="color:${accentBright}">${item.sessionCount}</b></div>
 </div>
 </div>`;
                         },
@@ -649,86 +743,86 @@ const RecentAgentUsageScatterChart: React.FC<{ loading: boolean; rows: UsageEven
 function buildTopAgentsBarOption(ordered: TopAgentRow[]) {
     const { axisMuted, splitMuted, labelColor, tipTitle, tipBody, accentBright } = ANALYTICS_CHART_COLORS;
     return {
-                    backgroundColor: "transparent",
-                    textStyle: { fontFamily: "system-ui, 'Segoe UI', sans-serif" },
-                    title: { show: false },
-                    tooltip: {
-                        trigger: "axis",
-                        axisPointer: { type: "shadow", shadowStyle: { color: "rgba(168, 85, 247, 0.18)" } },
-                        borderWidth: 0,
-                        padding: 0,
-                        extraCssText:
-                            "box-shadow:0 12px 40px rgba(76,29,149,0.35);border-radius:12px;overflow:hidden;",
-                        backgroundColor: "rgba(12, 8, 20, 0.96)",
-                        formatter: (params: unknown) => {
-                            const arr = Array.isArray(params) ? params : [params];
-                            const first = arr[0] as { dataIndex?: number } | undefined;
-                            const idx = first?.dataIndex ?? 0;
-                            const row = ordered[idx];
-                            if (!row) return "";
-                            const title = String(row.agent_name).trim();
-                            const rank = ordered.length - idx;
-                            return `<div style="max-width:400px;line-height:1.5;border:1px solid ${accentBright};border-radius:12px;overflow:hidden">
+        backgroundColor: "transparent",
+        textStyle: { fontFamily: "system-ui, 'Segoe UI', sans-serif" },
+        title: { show: false },
+        tooltip: {
+            trigger: "axis",
+            axisPointer: { type: "shadow", shadowStyle: { color: "rgba(168, 85, 247, 0.18)" } },
+            borderWidth: 0,
+            padding: 0,
+            extraCssText:
+                "box-shadow:0 12px 40px rgba(76,29,149,0.35);border-radius:12px;overflow:hidden;",
+            backgroundColor: "rgba(12, 8, 20, 0.96)",
+            formatter: (params: unknown) => {
+                const arr = Array.isArray(params) ? params : [params];
+                const first = arr[0] as { dataIndex?: number } | undefined;
+                const idx = first?.dataIndex ?? 0;
+                const row = ordered[idx];
+                if (!row) return "";
+                const title = String(row.agent_name).trim();
+                const rank = ordered.length - idx;
+                return `<div style="max-width:400px;line-height:1.5;border:1px solid ${accentBright};border-radius:12px;overflow:hidden">
 <div style="padding:10px 12px;background:linear-gradient(135deg,rgba(124,58,237,0.35),rgba(168,85,247,0.15));border-bottom:1px solid rgba(168,85,247,0.25)">
 <div style="font-size:10px;opacity:.85;color:${tipTitle};letter-spacing:.06em;font-weight:500">排名 <b>#${rank}</b></div>
 <div style="font-weight:700;font-size:13px;color:${tipTitle};margin-top:6px">${title}</div>
 <div style="font-size:11px;font-family:monospace;opacity:.85;word-break:break-all;margin-top:6px;color:${tipTitle}">${row.agent_id}</div>
 </div>
 <div style="padding:10px 12px;color:${tipBody}">
-<div>汇总 use_count：<b style="color:${accentBright}">${row.total_use_count_records}</b></div>
+<div>会话数：<b style="color:${accentBright}">${row.total_use_count_records}</b></div>
 </div>
 </div>`;
-                        },
-                    },
-                    grid: { left: "2%", right: "14%", bottom: 8, top: 8, containLabel: true },
-                    xAxis: {
-                        type: "value",
-                        name: "",
-                        nameTextStyle: { color: labelColor, fontSize: 10 },
-                        axisLine: { lineStyle: { color: axisMuted } },
-                        axisTick: { lineStyle: { color: axisMuted } },
-                        axisLabel: { color: labelColor, fontVariantNumeric: "tabular-nums" },
-                        splitLine: { lineStyle: { type: "dashed", color: splitMuted } },
-                    },
-                    yAxis: {
-                        type: "category",
-                        data: ordered.map((r) => String(r.agent_name).trim()),
-                        axisLine: { lineStyle: { color: axisMuted } },
-                        axisTick: { show: false },
-                        axisLabel: { width: 200, overflow: "truncate", interval: 0, color: labelColor },
-                        splitLine: { show: true, lineStyle: { type: "dashed", color: splitMuted } },
-                    },
-                    series: [
-                        {
-                            type: "bar",
-                            data: ordered.map((r) => r.total_use_count_records),
-                            barCategoryGap: "28%",
-                            barMaxWidth: 28,
-                            showBackground: true,
-                            backgroundStyle: {
-                                color: "rgba(124, 58, 237, 0.08)",
-                                borderRadius: [0, 10, 10, 0],
-                            },
-                            itemStyle: {
-                                borderRadius: [0, 8, 8, 0],
-                                color: accentBright,
-                                borderColor: "rgba(233, 213, 255, 0.2)",
-                                borderWidth: 1,
-                            },
-                            emphasis: { focus: "self" },
-                            label: {
-                                show: true,
-                                position: "right",
-                                formatter: "{c}",
-                                color: labelColor,
-                                fontSize: 10,
-                                fontWeight: 600,
-                                fontVariantNumeric: "tabular-nums",
-                            },
-                            animationDuration: 400,
-                            animationEasing: "cubicOut",
-                        },
-                    ],
+            },
+        },
+        grid: { left: "2%", right: "14%", bottom: 8, top: 8, containLabel: true },
+        xAxis: {
+            type: "value",
+            name: "",
+            nameTextStyle: { color: labelColor, fontSize: 10 },
+            axisLine: { lineStyle: { color: axisMuted } },
+            axisTick: { lineStyle: { color: axisMuted } },
+            axisLabel: { color: labelColor, fontVariantNumeric: "tabular-nums" },
+            splitLine: { lineStyle: { type: "dashed", color: splitMuted } },
+        },
+        yAxis: {
+            type: "category",
+            data: ordered.map((r) => String(r.agent_name).trim()),
+            axisLine: { lineStyle: { color: axisMuted } },
+            axisTick: { show: false },
+            axisLabel: { width: 200, overflow: "truncate", interval: 0, color: labelColor },
+            splitLine: { show: true, lineStyle: { type: "dashed", color: splitMuted } },
+        },
+        series: [
+            {
+                type: "bar",
+                data: ordered.map((r) => r.total_use_count_records),
+                barCategoryGap: "28%",
+                barMaxWidth: 28,
+                showBackground: true,
+                backgroundStyle: {
+                    color: "rgba(124, 58, 237, 0.08)",
+                    borderRadius: [0, 10, 10, 0],
+                },
+                itemStyle: {
+                    borderRadius: [0, 8, 8, 0],
+                    color: accentBright,
+                    borderColor: "rgba(233, 213, 255, 0.2)",
+                    borderWidth: 1,
+                },
+                emphasis: { focus: "self" },
+                label: {
+                    show: true,
+                    position: "right",
+                    formatter: "{c}",
+                    color: labelColor,
+                    fontSize: 10,
+                    fontWeight: 600,
+                    fontVariantNumeric: "tabular-nums",
+                },
+                animationDuration: 400,
+                animationEasing: "cubicOut",
+            },
+        ],
     };
 }
 
@@ -803,25 +897,25 @@ const TopAgentsUsageBarChart: React.FC<{ loading: boolean; rows: TopAgentRow[] }
 function buildUserSessionsBarOption(chartRows: SessionUserRow[]) {
     const { axisMuted, splitMuted, labelColor, tipTitle, tipBody, accentBright } = ANALYTICS_CHART_COLORS;
     return {
-                    backgroundColor: "transparent",
-                    textStyle: { fontFamily: "system-ui, 'Segoe UI', sans-serif" },
-                    title: { show: false },
-                    tooltip: {
-                        trigger: "axis",
-                        axisPointer: { type: "shadow", shadowStyle: { color: "rgba(168, 85, 247, 0.18)" } },
-                        borderWidth: 0,
-                        padding: 0,
-                        extraCssText:
-                            "box-shadow:0 12px 40px rgba(76,29,149,0.35);border-radius:12px;overflow:hidden;",
-                        backgroundColor: "rgba(12, 8, 20, 0.96)",
-                        formatter: (params: unknown) => {
-                            const arr = Array.isArray(params) ? params : [params];
-                            const first = arr[0] as { dataIndex?: number } | undefined;
-                            const idx = first?.dataIndex ?? 0;
-                            const row = chartRows[idx];
-                            if (!row) return "";
-                            const rank = chartRows.length - idx;
-                            return `<div style="max-width:400px;line-height:1.5;border:1px solid ${accentBright};border-radius:12px;overflow:hidden">
+        backgroundColor: "transparent",
+        textStyle: { fontFamily: "system-ui, 'Segoe UI', sans-serif" },
+        title: { show: false },
+        tooltip: {
+            trigger: "axis",
+            axisPointer: { type: "shadow", shadowStyle: { color: "rgba(168, 85, 247, 0.18)" } },
+            borderWidth: 0,
+            padding: 0,
+            extraCssText:
+                "box-shadow:0 12px 40px rgba(76,29,149,0.35);border-radius:12px;overflow:hidden;",
+            backgroundColor: "rgba(12, 8, 20, 0.96)",
+            formatter: (params: unknown) => {
+                const arr = Array.isArray(params) ? params : [params];
+                const first = arr[0] as { dataIndex?: number } | undefined;
+                const idx = first?.dataIndex ?? 0;
+                const row = chartRows[idx];
+                if (!row) return "";
+                const rank = chartRows.length - idx;
+                return `<div style="max-width:400px;line-height:1.5;border:1px solid ${accentBright};border-radius:12px;overflow:hidden">
 <div style="padding:10px 12px;background:linear-gradient(135deg,rgba(124,58,237,0.35),rgba(168,85,247,0.15));border-bottom:1px solid rgba(168,85,247,0.25)">
 <div style="font-size:10px;opacity:.85;color:${tipTitle};letter-spacing:.06em;font-weight:500">排名 <b>#${rank}</b></div>
 <div style="font-size:11px;font-family:monospace;word-break:break-all;margin-top:6px;color:${tipTitle}">${row.user_id}</div>
@@ -830,64 +924,64 @@ function buildUserSessionsBarOption(chartRows: SessionUserRow[]) {
 <div>会话数：<b style="color:${accentBright}">${row.session_count}</b></div>
 </div>
 </div>`;
-                        },
-                    },
-                    grid: { left: "2%", right: "14%", bottom: 8, top: 8, containLabel: true },
-                    xAxis: {
-                        type: "value",
-                        name: "",
-                        nameTextStyle: { color: labelColor, fontSize: 10 },
-                        axisLine: { lineStyle: { color: axisMuted } },
-                        axisTick: { lineStyle: { color: axisMuted } },
-                        axisLabel: { color: labelColor, fontVariantNumeric: "tabular-nums" },
-                        splitLine: { lineStyle: { type: "dashed", color: splitMuted } },
-                    },
-                    yAxis: {
-                        type: "category",
-                        data: chartRows.map((r) => r.user_id),
-                        axisLine: { lineStyle: { color: axisMuted } },
-                        axisTick: { show: false },
-                        axisLabel: {
-                            width: 220,
-                            overflow: "truncate",
-                            interval: 0,
-                            color: labelColor,
-                            fontFamily: "ui-monospace, monospace",
-                            fontSize: 10,
-                        },
-                        splitLine: { show: true, lineStyle: { type: "dashed", color: splitMuted } },
-                    },
-                    series: [
-                        {
-                            type: "bar",
-                            data: chartRows.map((r) => r.session_count),
-                            barCategoryGap: "28%",
-                            barMaxWidth: 24,
-                            showBackground: true,
-                            backgroundStyle: {
-                                color: "rgba(124, 58, 237, 0.08)",
-                                borderRadius: [0, 10, 10, 0],
-                            },
-                            itemStyle: {
-                                borderRadius: [0, 8, 8, 0],
-                                color: accentBright,
-                                borderColor: "rgba(233, 213, 255, 0.2)",
-                                borderWidth: 1,
-                            },
-                            emphasis: { focus: "self" },
-                            label: {
-                                show: true,
-                                position: "right",
-                                formatter: "{c}",
-                                color: labelColor,
-                                fontSize: 10,
-                                fontWeight: 600,
-                                fontVariantNumeric: "tabular-nums",
-                            },
-                            animationDuration: 400,
-                            animationEasing: "cubicOut",
-                        },
-                    ],
+            },
+        },
+        grid: { left: "2%", right: "14%", bottom: 8, top: 8, containLabel: true },
+        xAxis: {
+            type: "value",
+            name: "",
+            nameTextStyle: { color: labelColor, fontSize: 10 },
+            axisLine: { lineStyle: { color: axisMuted } },
+            axisTick: { lineStyle: { color: axisMuted } },
+            axisLabel: { color: labelColor, fontVariantNumeric: "tabular-nums" },
+            splitLine: { lineStyle: { type: "dashed", color: splitMuted } },
+        },
+        yAxis: {
+            type: "category",
+            data: chartRows.map((r) => r.user_id),
+            axisLine: { lineStyle: { color: axisMuted } },
+            axisTick: { show: false },
+            axisLabel: {
+                width: 220,
+                overflow: "truncate",
+                interval: 0,
+                color: labelColor,
+                fontFamily: "ui-monospace, monospace",
+                fontSize: 10,
+            },
+            splitLine: { show: true, lineStyle: { type: "dashed", color: splitMuted } },
+        },
+        series: [
+            {
+                type: "bar",
+                data: chartRows.map((r) => r.session_count),
+                barCategoryGap: "28%",
+                barMaxWidth: 24,
+                showBackground: true,
+                backgroundStyle: {
+                    color: "rgba(124, 58, 237, 0.08)",
+                    borderRadius: [0, 10, 10, 0],
+                },
+                itemStyle: {
+                    borderRadius: [0, 8, 8, 0],
+                    color: accentBright,
+                    borderColor: "rgba(233, 213, 255, 0.2)",
+                    borderWidth: 1,
+                },
+                emphasis: { focus: "self" },
+                label: {
+                    show: true,
+                    position: "right",
+                    formatter: "{c}",
+                    color: labelColor,
+                    fontSize: 10,
+                    fontWeight: 600,
+                    fontVariantNumeric: "tabular-nums",
+                },
+                animationDuration: 400,
+                animationEasing: "cubicOut",
+            },
+        ],
     };
 }
 
@@ -1018,21 +1112,21 @@ const TodayLivePanel: React.FC<{ loading: boolean; stats: TodayStats | null }> =
                 </div>
             ) : (
                 <div className="usage-analytics-today-feed">
-                        <div className="usage-analytics-today-section-title">最近打卡</div>
-                        {!loading && stats && stats.recentEvents.length === 0 ? (
-                            <span className="usage-analytics-muted text-sm">今日暂无打卡</span>
-                        ) : (
-                            <ul className="usage-analytics-today-feed-list">
-                                {(stats?.recentEvents ?? []).map((item, idx) => (
-                                    <li key={`${item.time}-${item.userId}-${idx}`} className="usage-analytics-today-feed-item">
-                                        <span className="usage-analytics-today-feed-time">{item.time}</span>
-                                        <span className="usage-analytics-today-feed-agent">{item.agentName}</span>
-                                        <span className="usage-analytics-today-feed-user">{item.userId}</span>
+                    <div className="usage-analytics-today-section-title">最近打卡</div>
+                    {!loading && stats && stats.recentEvents.length === 0 ? (
+                        <span className="usage-analytics-muted text-sm">今日暂无打卡</span>
+                    ) : (
+                        <ul className="usage-analytics-today-feed-list">
+                            {(stats?.recentEvents ?? []).map((item, idx) => (
+                                <li key={`${item.time}-${item.userId}-${idx}`} className="usage-analytics-today-feed-item">
+                                    <span className="usage-analytics-today-feed-time">{item.time}</span>
+                                    <span className="usage-analytics-today-feed-agent">{item.agentName}</span>
+                                    <span className="usage-analytics-today-feed-user">{item.userId}</span>
                                         <span className="usage-analytics-today-feed-count">×{item.useCount}</span>
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
                 </div>
             )}
         </div>
@@ -1056,7 +1150,7 @@ const UsageAnalyticsPage: React.FC = () => {
                 return;
             }
             try {
-                const access = await organizationsAPI.getAccess(uid);
+                const access = await userAPI.getAccess(uid);
                 if (!cancelled) setIsPlatformAdmin(!!access?.is_platform_admin);
             } catch {
                 if (!cancelled) setIsPlatformAdmin(false);
@@ -1095,6 +1189,12 @@ const UsageAnalyticsPage: React.FC = () => {
 
     const dashboardStats = useMemo(() => computeDashboardStats(overview), [overview]);
     const todayStats = useMemo(() => computeTodayStats(overview), [overview]);
+    const sessionScatterRows = useMemo((): SessionUsageScatterRow[] => {
+        if (overview?.session_usage_scatter?.length) {
+            return [...overview.session_usage_scatter];
+        }
+        return buildSessionUsageScatterFallback(overview?.recent_sessions_preview ?? []);
+    }, [overview]);
 
     const sampleLimitHint =
         overview?.limits?.usage_events != null
@@ -1211,10 +1311,7 @@ const UsageAnalyticsPage: React.FC = () => {
                             wide
                             loading={loading}
                         >
-                            <RecentAgentUsageScatterChart
-                                loading={loading}
-                                rows={[...(overview?.usage_events || [])]}
-                            />
+                            <RecentAgentUsageScatterChart loading={loading} rows={sessionScatterRows} />
                         </ChartCard>
                     </div>
                 </div>

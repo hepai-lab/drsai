@@ -77,6 +77,10 @@ interface ChatInputProps {
   onTextChange?: (text: string) => void;
   /** Already-uploaded files to show in the composer (e.g. chosen in 库) */
   serverFilesPrefill?: ServerUploadedFileInfo[] | null;
+  /** Visible heading id for textarea aria-labelledby */
+  composerLabelledBy?: string;
+  /** Fallback accessible name when composerLabelledBy is not set */
+  composerAriaLabel?: string;
 }
 
 const ChatInput = React.forwardRef<
@@ -98,6 +102,8 @@ const ChatInput = React.forwardRef<
       sessionId,
       onTextChange,
       serverFilesPrefill,
+      composerLabelledBy,
+      composerAriaLabel,
     },
     ref
   ) => {
@@ -1009,6 +1015,8 @@ const ChatInput = React.forwardRef<
                   <textarea
                     id="queryInput"
                     name="queryInput"
+                    aria-labelledby={composerLabelledBy}
+                    aria-label={composerLabelledBy ? undefined : composerAriaLabel}
                     onPaste={(e) => handlePaste(e, textAreaRef, setText)}
                     ref={textAreaRef}
                     defaultValue={""}
@@ -1070,6 +1078,7 @@ const ChatInput = React.forwardRef<
                       type="button"
                       onClick={handleSubmit}
                       disabled={isInputDisabled}
+                      aria-label="发送消息"
                       className={`transition-smooth rounded-full flex justify-center items-center w-10 h-10 ${isInputDisabled
                         ? "cursor-not-allowed opacity-50 bg-gray-400"
                         : darkMode === "dark"

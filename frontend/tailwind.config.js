@@ -60,6 +60,10 @@ module.exports = {
           '0%, 100%': { transform: 'translateY(0)' },
           '50%': { transform: 'translateY(-5px)' },
         },
+        'marquee-x': {
+          '0%': { transform: 'translateX(0)' },
+          '100%': { transform: 'translateX(-50%)' },
+        },
       },
       animation: {
         'fade-in': 'fade-in 0.3s ease-out',
@@ -70,6 +74,7 @@ module.exports = {
         'pulse-glow': 'pulse-glow 2s infinite',
         'float': 'float 3s ease-in-out infinite',
         'logo-hop': 'logo-hop 1.15s ease-in-out infinite',
+        'marquee-x': 'marquee-x var(--marquee-duration, 40s) linear infinite',
       },
       typography: {
         DEFAULT: {

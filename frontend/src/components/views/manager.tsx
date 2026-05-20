@@ -12,7 +12,7 @@ import { useAgentInfo } from "../features/Agents/useAgentInfo";
 import PlanList from "../features/Plans/PlanList";
 import { GeneralConfig, useSettingsStore } from "../store";
 import type { Session, FilesEvent, MessageFileItem } from "../types/datamodel";
-import { sessionAPI, settingsAPI, organizationsAPI } from "./api";
+import { sessionAPI, settingsAPI, userAPI } from "./api";
 import ChatView from "../../pages/chat/chat";
 import NewChatView from "../../pages/chat/NewChatView";
 import { useAgentManager } from "./hooks/useAgentManager";
@@ -28,7 +28,6 @@ import Config from "../../pages/settings/Config";
 import UsageAnalyticsPage from "../../pages/settings/UsageAnalyticsPage";
 import SkillsSquarePage from "../../pages/SkillsSquarePage";
 import UserManagementPage from "../../pages/UserManagementPage";
-import CooperationManagementPage from "../../pages/CooperationManagementPage";
 import LibraryPage from "../../pages/library/LibraryPage";
 import type { ServerUploadedFileInfo } from "../../pages/chat/chat/hooks/useFileUpload";
 import {
@@ -85,6 +84,8 @@ export const SessionManager: React.FC = () => {
   const [libraryAttachPrefill, setLibraryAttachPrefill] = useState<
     ServerUploadedFileInfo[] | null
   >(null);
+  /** Survives NewChatView → ChatView/WelcomeScreen so example chips do not flash on first send */
+  const [sampleTasksDismissed, setSampleTasksDismissed] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
   const [baseUrl, setBaseUrl] = useState<string | undefined>();
   const [sessionFileEvents, setSessionFileEvents] = useState<Record<number, FilesEvent[]>>({});
@@ -143,24 +144,24 @@ export const SessionManager: React.FC = () => {
 
   const { user, darkMode } = useContext(appContext);
   const rightPanelTab = useRightPanelStore((s) => s.layoutTab);
-  const [showUsageAnalyticsNav, setShowUsageAnalyticsNav] = useState(false);
+  const [showAdminNav, setShowAdminNav] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     const uid = user?.email;
     if (!uid) {
-      setShowUsageAnalyticsNav(false);
+      setShowAdminNav(false);
       return () => {
         cancelled = true;
       };
     }
-    organizationsAPI
+    userAPI
       .getAccess(uid)
       .then((a) => {
-        if (!cancelled) setShowUsageAnalyticsNav(Boolean(a?.is_platform_admin));
+        if (!cancelled) setShowAdminNav(Boolean(a?.is_platform_admin));
       })
       .catch(() => {
-        if (!cancelled) setShowUsageAnalyticsNav(false);
+        if (!cancelled) setShowAdminNav(false);
       });
     return () => {
       cancelled = true;
@@ -225,6 +226,11 @@ export const SessionManager: React.FC = () => {
     onSuccess: (msg) => messageApi.success(msg),
     onError: (msg) => messageApi.error(msg),
   });
+
+  const handleClearCurrentSession = useCallback(() => {
+    setSampleTasksDismissed(false);
+    clearCurrentSession();
+  }, [clearCurrentSession]);
 
   // WebSocket management
   const { getSessionSocket, closeSocket, stopSession } = useWebSocketManager();
@@ -330,12 +336,12 @@ export const SessionManager: React.FC = () => {
       ? (selectedAgent?.id !== agent.id && selectedAgent?.name !== agent.name)
       : (selectedAgent?.mode !== agent.mode);
     if (isDifferentAgent) {
-      clearCurrentSession();
+      handleClearCurrentSession();
     }
 
     navigateToMenu(MENU_IDS.currentSession);
 
-  }, [user?.email, selectedAgent, clearCurrentSession, setAgentId, setMode]);
+  }, [user?.email, selectedAgent, handleClearCurrentSession, setAgentId, setMode]);
 
   // Handle edit session
   const handleEditSession = useCallback(async (sessionData?: Session) => {
@@ -348,9 +354,9 @@ export const SessionManager: React.FC = () => {
       // 不创建新会话，只是清空当前会话
       // 保持当前选中的 agent 不变
       // 会话将在用户发送第一条消息时创建
-      clearCurrentSession();
+      handleClearCurrentSession();
     }
-  }, [clearCurrentSession]);
+  }, [handleClearCurrentSession]);
 
   // Handle save session
   const handleSaveSession = useCallback(async (sessionData: Partial<Session>) => {
@@ -469,7 +475,7 @@ export const SessionManager: React.FC = () => {
       }
 
       if (clearSession) {
-        clearCurrentSession();
+        handleClearCurrentSession();
         return;
       }
 
@@ -498,7 +504,7 @@ export const SessionManager: React.FC = () => {
         handleSwitchToCurrentSession as unknown as EventListener
       );
     };
-  }, [setSelectedAgent, sessions, setSessions, setSession, saveSessionId, setConfig, clearCurrentSession]);
+  }, [setSelectedAgent, sessions, setSessions, setSession, saveSessionId, setConfig, handleClearCurrentSession]);
 
   // Listen for sessionDeleted event and ensure NewChatView is shown
   useEffect(() => {
@@ -558,6 +564,10 @@ export const SessionManager: React.FC = () => {
             onRunStatusChange={updateSessionRunStatus}
             pendingFirstMessage={session?.id === s.id ? pendingFirstMessage : null}
             onPendingMessageSent={() => setPendingFirstMessage(null)}
+            suppressSampleTasks={
+              session?.id === s.id &&
+              (sampleTasksDismissed || !!pendingFirstMessage)
+            }
             libraryServerFilesPrefill={
               session?.id === s.id ? libraryAttachPrefill : null
             }
@@ -573,6 +583,7 @@ export const SessionManager: React.FC = () => {
     getSessionSocket,
     updateSessionRunStatus,
     pendingFirstMessage,
+    sampleTasksDismissed,
     libraryAttachPrefill,
     handleFileEventsChange,
   ]);
@@ -858,7 +869,7 @@ export const SessionManager: React.FC = () => {
         activeSubMenuItem={activeSubMenuItem}
         activeMenuLabel={activeMenuLabel}
         onSubMenuChange={handleSubMenuChange}
-        showUsageAnalyticsNav={showUsageAnalyticsNav}
+        showAdminNav={showAdminNav}
         canvasActiveView={activeCanvasView}
         onCanvasViewChange={navigateToView}
         canvasFilePreviewContent={<FilePreviewPage file={selectedPreviewFile} sessionId={session?.id ?? null} onFileEvent={(evt) => {
@@ -882,7 +893,7 @@ export const SessionManager: React.FC = () => {
         onNewSession={() => {
           navigateToMenu(MENU_IDS.currentSession);
           navigateToView("chat");
-          clearCurrentSession();
+          handleClearCurrentSession();
         }}
         showNewSessionButton={Boolean(session)}
       >
@@ -897,7 +908,10 @@ export const SessionManager: React.FC = () => {
                 <NewChatView
                   agent={chatAgent}
                   serverFilesPrefill={libraryAttachPrefill}
+                  suppressSampleTasks={sampleTasksDismissed}
+                  onDismissSampleTasks={() => setSampleTasksDismissed(true)}
                   onSubmit={async (agent, query, files, plan) => {
+                    setSampleTasksDismissed(true);
                     await createNewChatSession(agent, query, files, plan);
                   }}
                 />
@@ -954,8 +968,6 @@ export const SessionManager: React.FC = () => {
           <ChannelsPage />
         ) : activeSubMenuItem === MENU_IDS.logs ? (
           <LogsPage />
-        ) : activeSubMenuItem === MENU_IDS.cooperationManagement ? (
-          <CooperationManagementPage />
         ) : activeSubMenuItem === MENU_IDS.agentManagement ? (
           <AgentManagementPage />
         ) : activeSubMenuItem === MENU_IDS.userManagement ? (

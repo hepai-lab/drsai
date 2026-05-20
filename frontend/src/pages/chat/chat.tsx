@@ -57,6 +57,8 @@ interface ChatViewProps {
   onPendingMessageSent?: () => void;
   /** From 库: attach already-uploaded files to the input */
   libraryServerFilesPrefill?: ServerUploadedFileInfo[] | null;
+  /** Hide example chips after new-chat flow (see manager sampleTasksDismissed) */
+  suppressSampleTasks?: boolean;
   /** Notify parent when current run file events change */
   onFileEventsChange?: (sessionId: number, fileEvents: FilesEvent[]) => void;
 }
@@ -71,6 +73,7 @@ export default function ChatView({
   onPendingMessageSent,
   libraryServerFilesPrefill,
   onFileEventsChange,
+  suppressSampleTasks = false,
 }: ChatViewProps) {
   // Context and store
   const settingsConfig = useSettingsStore((state) => state.config);
@@ -672,6 +675,7 @@ export default function ChatView({
               error={error}
               isPlanMessage={isPlanMessage}
               chatInputRef={chatInputRef}
+              suppressSampleTasks={suppressSampleTasks || !!pendingFirstMessage}
               serverFilesPrefill={
                 noMessagesYet ? libraryServerFilesPrefill ?? null : null
               }

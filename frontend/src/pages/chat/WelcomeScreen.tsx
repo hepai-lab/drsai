@@ -35,6 +35,8 @@ interface WelcomeScreenProps {
     onPause: () => void;
     onExecutePlan: (plan: IPlan) => void;
     serverFilesPrefill?: ServerUploadedFileInfo[] | null;
+    /** From manager — keep examples hidden after NewChatView → session transition */
+    suppressSampleTasks?: boolean;
 }
 
 export default function WelcomeScreen({
@@ -48,8 +50,16 @@ export default function WelcomeScreen({
     onPause,
     onExecutePlan,
     serverFilesPrefill,
+    suppressSampleTasks = false,
 }: WelcomeScreenProps) {
     const [hasInputValue, setHasInputValue] = React.useState(false);
+    const [hideSampleTasks, setHideSampleTasks] = React.useState(suppressSampleTasks);
+
+    React.useEffect(() => {
+        if (hasInputValue || suppressSampleTasks) {
+            setHideSampleTasks(true);
+        }
+    }, [hasInputValue, suppressSampleTasks]);
 
     return (
         <div
@@ -92,6 +102,7 @@ export default function WelcomeScreen({
                         plan?: IPlan,
                         llm?: { label: string; value: string }
                     ) => {
+                        setHideSampleTasks(true);
                         onSubmit(query, files, accepted, plan, llm);
                     }}
                     error={error}
@@ -111,13 +122,10 @@ export default function WelcomeScreen({
             </div>
 
             <SampleTasks
-                hasInputValue={hasInputValue}
+                hidden={suppressSampleTasks || hideSampleTasks || hasInputValue}
                 onSelect={(task: string) => {
-                    setTimeout(() => {
-                        if (chatInputRef.current) {
-                            chatInputRef.current.setValue(task);
-                        }
-                    }, 200);
+                    setHideSampleTasks(true);
+                    chatInputRef.current?.setValue(task);
                 }}
             />
         </div>

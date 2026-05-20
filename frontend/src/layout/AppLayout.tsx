@@ -19,7 +19,8 @@ interface AppLayoutProps {
   activeSubMenuItem: string;
   activeMenuLabel: string;
   onSubMenuChange: (tabId: string) => void;
-  showUsageAnalyticsNav?: boolean;
+  /** 平台管理员可见：使用分析、用户管理 */
+  showAdminNav?: boolean;
 
   // RightPanel
   rightPanelWidth?: number;
@@ -42,7 +43,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   activeSubMenuItem,
   activeMenuLabel,
   onSubMenuChange,
-  showUsageAnalyticsNav = false,
+  showAdminNav = false,
   rightPanelWidth = 380,
   rightPanelHistory,
   rightPanelFiles,
@@ -172,7 +173,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       activeSubMenuItem={activeSubMenuItem}
       onSubMenuChange={onSubMenuChange}
       onClose={onToggleSidebar}
-      showUsageAnalyticsNav={showUsageAnalyticsNav}
+      showAdminNav={showAdminNav}
     />
   );
 
