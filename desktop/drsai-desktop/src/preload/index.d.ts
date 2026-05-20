@@ -155,6 +155,7 @@ interface DrSaiAPI {
       model: string;
       token_limit: number;
       max_tokens: number;
+      reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
     }>;
   }>;
   setModelConfig: (
@@ -347,6 +348,7 @@ interface DrSaiAPI {
   getSkillContent: (skillPath: string) => Promise<string>;
   installSkill: (
     identifier: string,
+    source?: string,
     profile?: string,
   ) => Promise<{ success: boolean; error?: string }>;
   uninstallSkill: (
@@ -406,32 +408,65 @@ interface DrSaiAPI {
     entries: Array<{ key: string; label: string }>,
   ) => Promise<boolean>;
 
-  // Models
-  listModels: () => Promise<
-    Array<{
-      id: string;
-      name: string;
-      provider: string;
+  // Models (unified backend API)
+  listModels: () => Promise<{
+    default_alias: string;
+    models: Array<{
+      alias: string;
+      display_name: string;
+      client_type: string;
       model: string;
-      baseUrl: string;
-      createdAt: number;
-    }>
-  >;
-  addModel: (
-    name: string,
-    provider: string,
-    model: string,
-    baseUrl: string,
-  ) => Promise<{
-    id: string;
-    name: string;
-    provider: string;
-    model: string;
-    baseUrl: string;
-    createdAt: number;
+      token_limit: number;
+      max_tokens: number;
+      reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+    }>;
   }>;
-  removeModel: (id: string) => Promise<boolean>;
-  updateModel: (id: string, fields: Record<string, string>) => Promise<boolean>;
+  getModelDetail: (alias: string) => Promise<{
+    alias: string;
+    display_name: string;
+    client_type: string;
+    model: string;
+    token_limit: number;
+    max_tokens: number;
+    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+  }>;
+  addModel: (body: {
+    alias: string;
+    model: string;
+    token_limit?: number;
+    max_tokens?: number;
+    client_type?: string;
+    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+  }) => Promise<{
+    alias: string;
+    display_name: string;
+    client_type: string;
+    model: string;
+    token_limit: number;
+    max_tokens: number;
+    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+  }>;
+  updateModel: (
+    alias: string,
+    body: {
+      model?: string;
+      token_limit?: number;
+      max_tokens?: number;
+      client_type?: string;
+      reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+      new_alias?: string;
+    },
+  ) => Promise<{
+    alias: string;
+    display_name: string;
+    client_type: string;
+    model: string;
+    token_limit: number;
+    max_tokens: number;
+    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+  }>;
+  removeModel: (alias: string) => Promise<{ ok: boolean; new_default_alias: string }>;
+  setDefaultModel: (alias: string) => Promise<{ default_alias: string }>;
 
   // Claw3D
   claw3dStatus: () => Promise<{

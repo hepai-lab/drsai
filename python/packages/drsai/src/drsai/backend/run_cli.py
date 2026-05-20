@@ -343,7 +343,7 @@ def _interactive_setup(*, api_key_only: bool = False) -> dict:
         # ── Default model ──────────────────────────────────────────────────────────────────────────────────────
         typer.echo("")
         cfg["defult_config_name"] = typer.prompt(
-            "  Default model name (e.g. hepai/minimax-m2.7-highspeed)",
+            "  Default model name (e.g. hepai/deepseek-v4-pro)",
             default=cfg.get("defult_config_name") or "",
         ).strip() or None
 

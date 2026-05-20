@@ -93,10 +93,23 @@ export async function getSkillContentAsync(skillPath: string): Promise<string> {
   }
 }
 
-// ── Bundled skills (not supported via API yet) ─────
+// ── Bundled skills ─────────────────────────────────
 
 export function listBundledSkills(): SkillSearchResult[] {
-  return [];
+  return []; // Sync fallback
+}
+
+export async function listBundledSkillsAsync(): Promise<SkillSearchResult[]> {
+  try {
+    const user = getUserName();
+    const resp = (await apiGet<{ data: SkillSearchResult[] }>(
+      `/v1/skills/available?user_id=${encodeURIComponent(user)}`,
+    )) as { data: SkillSearchResult[] };
+    return resp.data || [];
+  } catch (err) {
+    console.error("[skills] listBundledSkillsAsync failed:", err);
+    return [];
+  }
 }
 
 // ── Install / Uninstall ────────────────────────────
@@ -138,12 +151,12 @@ function apiDelete(path: string): Promise<void> {
 export async function installSkillAsync(
   name: string,
   content: string,
+  source?: string,
 ): Promise<boolean> {
   try {
-    await apiPost(`/v1/skills/install?user_id=${encodeURIComponent(getUserName())}`, {
-      name,
-      content,
-    });
+    const body: Record<string, string> = { name, content };
+    if (source) body.source = source;
+    await apiPost(`/v1/skills/install?user_id=${encodeURIComponent(getUserName())}`, body);
     return true;
   } catch (err) {
     console.error("[skills] installSkillAsync failed:", err);

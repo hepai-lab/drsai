@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PROVIDERS } from "../../../constants";
 import { useI18n } from "../../../components/useI18n";
-import type { ModelGroup } from "../types";
+import type { ModelGroup, ModelItem } from "../types";
 
 interface UseModelConfigResult {
   currentModel: string;
@@ -17,24 +17,23 @@ interface UseModelConfigResult {
   ) => Promise<void>;
 }
 
-function groupModelsByProvider(
-  models: { provider: string; model: string; name: string; baseUrl?: string }[],
+function groupModelsByClientType(
+  models: ModelItem[],
 ): ModelGroup[] {
   const groupMap = new Map<string, ModelGroup>();
   for (const m of models) {
-    if (!groupMap.has(m.provider)) {
-      groupMap.set(m.provider, {
-        provider: m.provider,
-        providerLabel: PROVIDERS.labels[m.provider] || m.provider,
+    const key = m.client_type || "auto";
+    if (!groupMap.has(key)) {
+      const labelKey = key === "anthropic" ? "constants.anthropicName"
+        : key === "openai" ? "constants.openaiName"
+        : PROVIDERS.labels[key] || key;
+      groupMap.set(key, {
+        client_type: key,
+        providerLabel: labelKey,
         models: [],
       });
     }
-    groupMap.get(m.provider)!.models.push({
-      provider: m.provider,
-      model: m.model,
-      label: m.name,
-      baseUrl: m.baseUrl || "",
-    });
+    groupMap.get(key)!.models.push(m);
   }
   return Array.from(groupMap.values());
 }
@@ -45,22 +44,21 @@ export function useModelConfig(profile?: string): UseModelConfigResult {
   const [currentProvider, setCurrentProvider] = useState("auto");
   const [currentBaseUrl, setCurrentBaseUrl] = useState("");
   const [modelGroups, setModelGroups] = useState<ModelGroup[]>([]);
+  const [allModels, setAllModels] = useState<ModelItem[]>([]);
 
   const reload = useCallback(async (): Promise<void> => {
-    const [mc, savedModels] = await Promise.all([
+    const [mc, catalog] = await Promise.all([
       window.drsaiAPI.getModelConfig(profile),
       window.drsaiAPI.listModels(),
     ]);
     setCurrentModel(mc.model);
     setCurrentProvider(mc.provider);
     setCurrentBaseUrl(mc.baseUrl);
-    setModelGroups(groupModelsByProvider(savedModels));
+    setAllModels(catalog.models);
+    setModelGroups(groupModelsByClientType(catalog.models));
   }, [profile]);
 
-  // Initial load + reload whenever the profile changes (canonical
-  // load-on-mount; setState happens inside `reload` via an awaited IPC call).
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     reload();
   }, [reload]);
 
@@ -75,13 +73,15 @@ export function useModelConfig(profile?: string): UseModelConfigResult {
   );
 
   const displayModel = useMemo(
-    () =>
-      currentModel
-        ? currentModel.split("/").pop() || currentModel
-        : currentProvider === "auto"
-          ? t("chat.auto")
-          : t("chat.noModel"),
-    [currentModel, currentProvider, t],
+    () => {
+      if (!currentModel) {
+        return currentProvider === "auto" ? t("chat.auto") : t("chat.noModel");
+      }
+      const found = allModels.find((m) => m.model === currentModel);
+      if (found) return found.display_name;
+      return currentModel.split("/").pop() || currentModel;
+    },
+    [currentModel, currentProvider, t, allModels],
   );
 
   return {

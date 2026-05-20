@@ -116,7 +116,18 @@ from autogen_core import CancellationToken
 
 
 
-from drsai.backend.run_drsai_agent_factory import create_agent, load_llm_mode_config, build_model_catalog
+from drsai.backend.run_drsai_agent_factory import (
+    create_agent,
+    load_llm_mode_config,
+    build_model_catalog,
+    ModelEntry,
+    ReasoningConfig,
+    ensure_llm_config_file,
+    save_llm_mode_config,
+    get_llm_config_file_path,
+    DEFAULT_CONFIG_NAME,
+    _display_name_from_alias,
+)
 
 from drsai.configs.constant import FS_DIR
 
@@ -315,7 +326,8 @@ class ContentRequest(BaseModel):
 
 class SkillInstallRequest(BaseModel):
     name: str = Field(..., description="Skill name (directory name)")
-    content: str = Field(..., description="SKILL.md content")
+    content: str = Field(default="", description="SKILL.md content (optional if source is provided)")
+    source: str | None = Field(default=None, description="Source collection name for installing from bundled skills")
 
 
 
@@ -1033,6 +1045,172 @@ async def get_model_catalog():
     return build_model_catalog(llm_config)
 
 
+# ── Model Config CRUD helpers ────────────────────────────────────────────────
+
+def _get_live_llm_config() -> tuple[dict[str, ModelEntry], str]:
+    """Get current llm config + default_alias, resolving file path."""
+    config_path = get_llm_config_file_path()
+    llm_config = load_llm_mode_config(config_path)
+    default_alias = DEFAULT_CONFIG_NAME
+    if config_path:
+        import yaml
+        try:
+            raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
+            if "_default_alias" in raw:
+                default_alias = raw["_default_alias"]
+        except Exception:
+            pass
+    return llm_config, default_alias
+
+
+# ── Model Config CRUD Pydantic models ────────────────────────────────────────
+
+class ModelConfigCreate(BaseModel):
+    alias: str
+    model: str
+    token_limit: int = 128000
+    max_tokens: int = 0
+    client_type: str = "auto"
+    reasoning: dict | None = None
+
+
+class ModelConfigUpdate(BaseModel):
+    model: str | None = None
+    token_limit: int | None = None
+    max_tokens: int | None = None
+    client_type: str | None = None
+    reasoning: dict | None = None
+    new_alias: str | None = None
+
+
+# ── Model Config CRUD endpoints ──────────────────────────────────────────────
+
+@app.get("/v1/models/config")
+async def list_model_configs():
+    """List all models with full ModelEntry configuration."""
+    llm_config, default_alias = await asyncio.to_thread(_get_live_llm_config)
+    return build_model_catalog(llm_config, default_alias=default_alias)
+
+
+@app.get("/v1/models/config/{alias}")
+async def get_model_config(alias: str):
+    """Get single model configuration by alias."""
+    llm_config, _ = await asyncio.to_thread(_get_live_llm_config)
+    entry = llm_config.get(alias)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Model '{alias}' not found")
+    return {
+        "alias": alias,
+        "display_name": _display_name_from_alias(alias),
+        **entry.to_dict(),
+    }
+
+
+@app.post("/v1/models/config")
+async def create_model_config(body: ModelConfigCreate):
+    """Create a new model configuration."""
+    llm_config, default_alias = await asyncio.to_thread(_get_live_llm_config)
+
+    if body.alias in llm_config:
+        raise HTTPException(status_code=409, detail=f"Model '{body.alias}' already exists")
+
+    reasoning = ReasoningConfig(
+        supported=body.reasoning.get("supported", False) if body.reasoning else False,
+        effort_levels=body.reasoning.get("effort_levels", []) if body.reasoning else [],
+        param_type=body.reasoning.get("param_type", "none") if body.reasoning else "none",
+    )
+
+    llm_config[body.alias] = ModelEntry(
+        model=body.model,
+        token_limit=body.token_limit,
+        max_tokens=body.max_tokens,
+        client_type=body.client_type,
+        reasoning=reasoning,
+    )
+
+    await asyncio.to_thread(save_llm_mode_config, llm_config, default_alias)
+    return {
+        "alias": body.alias,
+        "display_name": _display_name_from_alias(body.alias),
+        **llm_config[body.alias].to_dict(),
+    }
+
+
+@app.put("/v1/models/config/{alias}")
+async def update_model_config(alias: str, body: ModelConfigUpdate):
+    """Update an existing model configuration."""
+    llm_config, default_alias = await asyncio.to_thread(_get_live_llm_config)
+
+    if alias not in llm_config:
+        raise HTTPException(status_code=404, detail=f"Model '{alias}' not found")
+
+    entry = llm_config[alias]
+
+    if body.model is not None:
+        entry.model = body.model
+    if body.token_limit is not None:
+        entry.token_limit = body.token_limit
+    if body.max_tokens is not None:
+        entry.max_tokens = body.max_tokens
+    if body.client_type is not None:
+        entry.client_type = body.client_type
+    if body.reasoning is not None:
+        entry.reasoning = ReasoningConfig(
+            supported=body.reasoning.get("supported", entry.reasoning.supported),
+            effort_levels=body.reasoning.get("effort_levels", entry.reasoning.effort_levels),
+            param_type=body.reasoning.get("param_type", entry.reasoning.param_type),
+        )
+
+    # Handle rename
+    if body.new_alias and body.new_alias != alias:
+        if body.new_alias in llm_config:
+            raise HTTPException(status_code=409, detail=f"Model '{body.new_alias}' already exists")
+        llm_config[body.new_alias] = entry
+        del llm_config[alias]
+        if default_alias == alias:
+            default_alias = body.new_alias
+
+    await asyncio.to_thread(save_llm_mode_config, llm_config, default_alias)
+    final_alias = body.new_alias or alias
+    return {
+        "alias": final_alias,
+        "display_name": _display_name_from_alias(final_alias),
+        **llm_config[final_alias].to_dict(),
+    }
+
+
+@app.delete("/v1/models/config/{alias}")
+async def delete_model_config(alias: str):
+    """Delete a model configuration."""
+    llm_config, default_alias = await asyncio.to_thread(_get_live_llm_config)
+
+    if alias not in llm_config:
+        raise HTTPException(status_code=404, detail=f"Model '{alias}' not found")
+
+    del llm_config[alias]
+
+    new_default = default_alias
+    if default_alias == alias:
+        new_default = next(iter(llm_config)) if llm_config else DEFAULT_CONFIG_NAME
+
+    await asyncio.to_thread(save_llm_mode_config, llm_config, new_default)
+    return {"ok": True, "new_default_alias": new_default}
+
+
+@app.put("/v1/models/config/default/{alias}")
+async def set_default_model_config(alias: str):
+    """Set the default model alias."""
+    llm_config, _ = await asyncio.to_thread(_get_live_llm_config)
+
+    if alias not in llm_config:
+        raise HTTPException(status_code=404, detail=f"Model '{alias}' not found")
+
+    await asyncio.to_thread(save_llm_mode_config, llm_config, alias)
+    return {"default_alias": alias}
+
+
+
+
 
 
 
@@ -1425,7 +1603,9 @@ def _get_skills_dir(user_id: str | None = None) -> Path:
 
     from drsai.backend.run_drsai_agent_factory import WORKDIR
 
-    return Path(WORKDIR) / uid / "skills"
+    # Aligned with UserProfileManager: skills_dir = config_path / "skills"
+    #   where config_path = WORKDIR / user_id / "configs"
+    return Path(WORKDIR) / uid / "configs" / "skills"
 
 
 def _get_config_dir(user_id: str | None = None) -> Path:
@@ -1433,6 +1613,61 @@ def _get_config_dir(user_id: str | None = None) -> Path:
     from drsai.backend.run_drsai_agent_factory import WORKDIR
     uid = user_id or _get_user_id()
     return Path(WORKDIR) / uid / "configs"
+
+
+def _get_available_skills_dirs() -> list[Path]:
+    """Find all available/bundled skill collection directories.
+
+    Searches:
+      1. ``SYSTEM_SKILLS_DIR`` env var (colon-separated list)
+      2. ``AGENT_SKILLS_DIR`` env var (colon-separated list)
+      3. Project-root ``agent_skills/`` collections
+    """
+    dirs: list[Path] = []
+
+    for env_name in ("SYSTEM_SKILLS_DIR", "AGENT_SKILLS_DIR"):
+        env_val = os.environ.get(env_name)
+        if env_val:
+            for d in env_val.split(":"):
+                p = Path(d).expanduser()
+                if p.exists() and p.is_dir():
+                    dirs.append(p.resolve())
+
+    # Also scan project-root agent_skills/ collections
+    project_root_candidates = [
+        Path(__file__).resolve().parents[6],  # gateway → backend → drsai → src → pkg → python → project
+        Path.cwd(),
+    ]
+    for root in project_root_candidates:
+        agent_skills_root = root / "agent_skills"
+        if agent_skills_root.exists() and agent_skills_root.is_dir():
+            for collection in sorted(agent_skills_root.iterdir()):
+                if collection.is_dir() and not collection.name.startswith("."):
+                    resolved = collection.resolve()
+                    if resolved not in dirs:
+                        dirs.append(resolved)
+
+    return dirs
+
+
+def _find_bundled_skill_md(name: str, source: str | None = None) -> Path | None:
+    """Find a SKILL.md in the bundled skill collections.
+
+    Args:
+        name: Skill name (directory name).
+        source: Optional collection name to restrict the search.
+            If not provided, all collections are scanned.
+
+    Returns:
+        Path to SKILL.md if found, else None.
+    """
+    for skills_dir in _get_available_skills_dirs():
+        if source and skills_dir.name != source:
+            continue
+        candidate = skills_dir / name / "SKILL.md"
+        if candidate.exists():
+            return candidate
+    return None
 
 
 
@@ -1456,62 +1691,112 @@ async def list_skills(
 
     if skills_dir.exists():
 
-        for category_dir in sorted(skills_dir.iterdir()):
+        for skill_dir in sorted(skills_dir.iterdir()):
 
-            if not category_dir.is_dir():
+            if not skill_dir.is_dir():
 
                 continue
 
-            for skill_dir in sorted(category_dir.iterdir()):
+            skill_md = skill_dir / "SKILL.md"
 
-                if not skill_dir.is_dir():
+            if not skill_md.exists():
 
-                    continue
+                continue
 
-                skill_md = skill_dir / "SKILL.md"
+            try:
 
-                if not skill_md.exists():
+                content = skill_md.read_text(encoding="utf-8", errors="replace")[:4000]
 
-                    continue
+                name, description, category = _parse_skill_frontmatter(content)
 
-                try:
+                skills.append({
 
-                    content = skill_md.read_text(encoding="utf-8", errors="replace")[:4000]
+                    "name": name or skill_dir.name,
 
-                    name, description = _parse_skill_frontmatter(content)
+                    "category": category or "",
 
-                    skills.append({
+                    "description": description or "",
 
-                        "name": name or skill_dir.name,
+                    "path": str(skill_dir),
 
-                        "category": category_dir.name,
+                })
 
-                        "description": description or "",
+            except Exception:
 
-                        "path": str(skill_dir),
+                skills.append({
 
-                    })
+                    "name": skill_dir.name,
 
-                except Exception:
+                    "category": "",
 
-                    skills.append({
+                    "description": "",
 
-                        "name": skill_dir.name,
+                    "path": str(skill_dir),
 
-                        "category": category_dir.name,
-
-                        "description": "",
-
-                        "path": str(skill_dir),
-
-                    })
+                })
 
 
 
     return {"object": "list", "data": sorted(skills, key=lambda s: (s["category"], s["name"]))}
 
 
+@app.get("/v1/skills/available")
+async def list_available_skills(
+    user_id: str | None = Query(default=None),
+):
+    """List bundled/available skills from agent_skills collections.
 
+    Returns all skills from system collections with an ``installed`` flag
+    indicating whether the skill already exists in the user's skills dir.
+    """
+    # Resolve installed set
+    installed_names: set[str] = set()
+    user_skills_dir = _get_skills_dir(user_id)
+    if user_skills_dir.exists():
+        for d in user_skills_dir.iterdir():
+            if d.is_dir() and (d / "SKILL.md").exists():
+                installed_names.add(d.name)
+
+    results: list[dict] = []
+    for skills_dir in _get_available_skills_dirs():
+        source_name = skills_dir.name
+        if not skills_dir.exists():
+            continue
+        for skill_dir in sorted(skills_dir.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            skill_md = skill_dir / "SKILL.md"
+            if not skill_md.exists():
+                continue
+            try:
+                content = skill_md.read_text(encoding="utf-8", errors="replace")[:4000]
+                name, description, _category = _parse_skill_frontmatter(content)
+                name = name or skill_dir.name
+                results.append({
+                    "name": name,
+                    "description": description or "",
+                    "category": source_name,
+                    "source": source_name,
+                    "installed": name in installed_names,
+                })
+            except Exception:
+                results.append({
+                    "name": skill_dir.name,
+                    "description": "",
+                    "category": source_name,
+                    "source": source_name,
+                    "installed": skill_dir.name in installed_names,
+                })
+
+    # Deduplicate by name (first occurrence wins)
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for r in results:
+        if r["name"] not in seen:
+            seen.add(r["name"])
+            deduped.append(r)
+
+    return {"object": "list", "data": sorted(deduped, key=lambda s: (s["category"], s["name"]))}
 
 
 @app.get("/v1/skills/{skill_path:path}")
@@ -1550,11 +1835,32 @@ async def install_skill(
     req: SkillInstallRequest,
     user_id: str | None = Query(default=None),
 ):
-    """Install a skill by writing SKILL.md to the user's skills directory."""
+    """Install a skill by writing SKILL.md to the user's skills directory.
+
+    If ``source`` is provided, the backend reads SKILL.md from the
+    bundled ``agent_skills/{source}/{name}/`` directory and copies it.
+    Otherwise, ``content`` is written directly.
+    """
     skills_dir = _get_skills_dir(user_id)
     skill_dir = skills_dir / req.name
+
+    # Determine content: from bundled source or from request body
+    content = req.content
+    if req.source and not content:
+        # Install from a bundled collection
+        bundled_skill_md = _find_bundled_skill_md(req.name, req.source)
+        if bundled_skill_md is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Bundled skill '{req.name}' not found in source '{req.source}'",
+            )
+        content = bundled_skill_md.read_text(encoding="utf-8", errors="replace")
+
+    if not content:
+        raise HTTPException(status_code=400, detail="content must not be empty")
+
     skill_dir.mkdir(parents=True, exist_ok=True)
-    (skill_dir / "SKILL.md").write_text(req.content, encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text(content, encoding="utf-8")
     return {"status": "ok", "name": req.name, "path": str(skill_dir)}
 
 
@@ -1573,11 +1879,11 @@ async def uninstall_skill(
     return {"status": "ok", "name": skill_name}
 
 
-def _parse_skill_frontmatter(content: str) -> tuple[str, str]:
+def _parse_skill_frontmatter(content: str) -> tuple[str, str, str]:
 
-    """Parse SKILL.md frontmatter for name and description."""
+    """Parse SKILL.md frontmatter for name, description, and category."""
 
-    name, description = "", ""
+    name, description, category = "", "", ""
 
     if not content.startswith("---"):
 
@@ -1597,7 +1903,7 @@ def _parse_skill_frontmatter(content: str) -> tuple[str, str]:
 
             description = para.group(0).strip()[:120]
 
-        return name, description
+        return name, description, category
 
 
 
@@ -1605,7 +1911,7 @@ def _parse_skill_frontmatter(content: str) -> tuple[str, str]:
 
     if end_idx == -1:
 
-        return name, description
+        return name, description, category
 
 
 
@@ -1625,9 +1931,15 @@ def _parse_skill_frontmatter(content: str) -> tuple[str, str]:
 
         description = desc_match.group(1).strip()
 
+    cat_match = re.search(r"^\s*category:\s*[\"']?([^\"'\n]+)[\"']?\s*$", frontmatter, re.MULTILINE)
+
+    if cat_match:
+
+        category = cat_match.group(1).strip()
 
 
-    return name, description
+
+    return name, description, category
 
 
 
