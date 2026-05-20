@@ -62,7 +62,7 @@ export const useAgentManager = (userEmail: string | undefined) => {
       }
 
       const { selectedAgent, agentId, mode } = useModeConfigStore.getState();
-      const policyDefault = pickLoginDefaultAgent(res, null, userDefaultAgentId);
+      const policyDefault = pickLoginDefaultAgent(res, userDefaultAgentId);
       /** 无个人/组织显式默认时不自动选中列表首项，由用户在智能体广场选择 */
       const fallbackAgent = policyDefault;
 

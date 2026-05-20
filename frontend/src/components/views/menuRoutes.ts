@@ -14,7 +14,6 @@ export const MENU_IDS = {
   logs: "logs",
   agentManagement: "agent_management",
   userManagement: "user_management",
-  cooperationManagement: "cooperation_management",
 } as const;
 
 export type MenuId = (typeof MENU_IDS)[keyof typeof MENU_IDS];
@@ -38,7 +37,6 @@ export const MENU_LABELS: Record<MenuId, string> = {
   [MENU_IDS.logs]: "日志",
   [MENU_IDS.agentManagement]: "智能体管理",
   [MENU_IDS.userManagement]: "用户管理",
-  [MENU_IDS.cooperationManagement]: "合作组管理",
 };
 
 export const getMenuIdFromSearch = (search: string): MenuId => {

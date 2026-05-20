@@ -3,40 +3,42 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
-
-from ..datamodel.db import OrganizationMember, UserRole
+from ..datamodel.db import UserRole
 from ..database import DatabaseManager
 
 
-def is_test_all_admin_mode() -> bool:
-    """
-    Testing convenience:
-    - In non-PROD environments, treat all users as admin by default.
-    - Override via DEFAULT_ALL_ADMIN=true|false.
-    """
-    v = os.getenv("DEFAULT_ALL_ADMIN")
-    if v is not None:
-        return v.lower() == "true"
-    return os.getenv("SERVICE_MODE", "DEV") != "PROD"
+def _platform_admin_user_ids_from_env() -> set[str]:
+    """Comma-separated allowlist persisted to UserRole on startup."""
+    ids: set[str] = set()
+    for key in ("PLATFORM_ADMIN_USER_IDS", "INITIAL_ADMIN_USER_ID"):
+        raw = os.getenv(key, "")
+        if not raw:
+            continue
+        for part in raw.split(","):
+            uid = part.strip()
+            if uid:
+                ids.add(uid)
+    return ids
+
+
+def bootstrap_platform_admins(db: DatabaseManager) -> None:
+    """Ensure configured user ids have UserRole.is_admin=true."""
+    for user_id in _platform_admin_user_ids_from_env():
+        existing = db.get(UserRole, filters={"user_id": user_id}, return_json=False)
+        if existing.status and existing.data:
+            role: UserRole = existing.data[0]
+            if not role.is_admin:
+                role.is_admin = True
+                db.upsert(role)
+        else:
+            db.upsert(UserRole(user_id=user_id, is_admin=True))
 
 
 def get_is_platform_admin(db: DatabaseManager, user_id: str) -> bool:
     if not user_id:
         return False
-    if is_test_all_admin_mode():
-        return True
     role_resp = db.get(UserRole, filters={"user_id": user_id}, return_json=False)
     if role_resp.status and role_resp.data:
         role: UserRole = role_resp.data[0]
         return bool(role.is_admin)
     return False
-
-
-def get_org_membership(db: DatabaseManager, user_id: str) -> Optional[OrganizationMember]:
-    if not user_id:
-        return None
-    resp = db.get(OrganizationMember, filters={"user_id": user_id}, return_json=False)
-    if resp.status and resp.data:
-        return resp.data[0]
-    return None

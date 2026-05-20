@@ -1206,250 +1206,11 @@ export type ManagedUser = {
     user_id: string;
     auth_source: "local" | "sso";
     is_admin: boolean;
-    org_id?: number | null;
-    org_slug?: string | null;
-    org_display_name?: string | null;
-    org_role?: string | null;
 };
 
-export type OrgAccess = {
+export type UserAccess = {
     is_platform_admin: boolean;
-    org: { org_id: number; role: string; default_agent_id?: string | null } | null;
 };
-
-export type PlazaAgentRow = {
-    org_id: number;
-    org_slug: string;
-    org_display_name: string;
-    agent_id: string;
-    snapshot: Record<string, unknown>;
-};
-
-export class OrganizationsAPI {
-    private getBaseUrl(): string {
-        return getServerUrl();
-    }
-
-    private getHeaders(): HeadersInit {
-        return { "Content-Type": "application/json" };
-    }
-
-    async getAccess(userId: string): Promise<OrgAccess> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/access?user_id=${encodeURIComponent(userId)}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "access");
-        return data.data;
-    }
-
-    async getMyOrg(userId: string): Promise<Record<string, unknown> | null> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/me?user_id=${encodeURIComponent(userId)}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "me");
-        return data.data ?? null;
-    }
-
-    async listCatalog(): Promise<{ id: number; slug: string; display_name: string }[]> {
-        const response = await fetch(`${this.getBaseUrl()}/orgs/catalog`, { headers: this.getHeaders() });
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "catalog");
-        return data.data || [];
-    }
-
-    async listOrgs(operatorUserId: string): Promise<any[]> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "orgs");
-        return data.data || [];
-    }
-
-    async createOrg(
-        operatorUserId: string,
-        body: { slug: string; display_name?: string; default_agent_id?: string | null }
-    ): Promise<any> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            {
-                method: "POST",
-                headers: this.getHeaders(),
-                body: JSON.stringify(body),
-            }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "create org");
-        return data.data;
-    }
-
-    async deleteOrg(operatorUserId: string, orgId: number): Promise<void> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/${orgId}?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            { method: "DELETE", headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "delete org");
-    }
-
-    async listMembers(operatorUserId: string, orgId: number): Promise<any[]> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/${orgId}/members?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "members");
-        return data.data || [];
-    }
-
-    async addMember(operatorUserId: string, orgId: number, userId: string, role: string): Promise<any> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/${orgId}/members?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            {
-                method: "POST",
-                headers: this.getHeaders(),
-                body: JSON.stringify({ user_id: userId, role }),
-            }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "add member");
-        return data.data;
-    }
-
-    async removeMember(operatorUserId: string, orgId: number, userId: string): Promise<void> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/${orgId}/members/${encodeURIComponent(
-                userId
-            )}?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            { method: "DELETE", headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "remove member");
-    }
-
-    async listOrgAgents(orgId: number): Promise<any[]> {
-        const response = await fetch(`${this.getBaseUrl()}/orgs/${orgId}/agents`, {
-            headers: this.getHeaders(),
-        });
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "org agents");
-        return data.data || [];
-    }
-
-    async upsertOrgAgent(
-        operatorUserId: string,
-        orgId: number,
-        agentId: string,
-        snapshot: Record<string, unknown>
-    ): Promise<any> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/${orgId}/agents?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            {
-                method: "POST",
-                headers: this.getHeaders(),
-                body: JSON.stringify({ agent_id: agentId, snapshot }),
-            }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "save org agent");
-        return data.data;
-    }
-
-    async deleteOrgAgent(operatorUserId: string, orgId: number, agentId: string): Promise<void> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/${orgId}/agents/${encodeURIComponent(
-                agentId
-            )}?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            { method: "DELETE", headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "delete org agent");
-    }
-
-    async plazaList(userId: string): Promise<PlazaAgentRow[]> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/plaza/agents?user_id=${encodeURIComponent(userId)}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "plaza");
-        return data.data || [];
-    }
-
-    async plazaApply(applicantUserId: string, targetOrgId: number, requestedAgentId: string): Promise<any> {
-        const response = await fetch(`${this.getBaseUrl()}/orgs/plaza/requests`, {
-            method: "POST",
-            headers: this.getHeaders(),
-            body: JSON.stringify({
-                applicant_user_id: applicantUserId,
-                target_org_id: targetOrgId,
-                requested_agent_id: requestedAgentId,
-            }),
-        });
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "apply");
-        return data.data;
-    }
-
-    async plazaMyRequests(applicantUserId: string): Promise<any[]> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/plaza/requests/mine?applicant_user_id=${encodeURIComponent(
-                applicantUserId
-            )}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "mine");
-        return data.data || [];
-    }
-
-    async plazaPending(operatorUserId: string): Promise<any[]> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/plaza/requests/pending?operator_user_id=${encodeURIComponent(
-                operatorUserId
-            )}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "pending");
-        return data.data || [];
-    }
-
-    async plazaApprove(operatorUserId: string, requestUuid: string, message?: string): Promise<any> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/plaza/requests/${encodeURIComponent(requestUuid)}/approve`,
-            {
-                method: "PUT",
-                headers: this.getHeaders(),
-                body: JSON.stringify({ operator_user_id: operatorUserId, message: message || null }),
-            }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "approve");
-        return data.data;
-    }
-
-    async plazaReject(operatorUserId: string, requestUuid: string, message?: string): Promise<any> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/plaza/requests/${encodeURIComponent(requestUuid)}/reject`,
-            {
-                method: "PUT",
-                headers: this.getHeaders(),
-                body: JSON.stringify({ operator_user_id: operatorUserId, message: message || null }),
-            }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "reject");
-        return data.data;
-    }
-}
-
-export const organizationsAPI = new OrganizationsAPI();
 
 export type AdminUsageOverviewData = {
     usage_events: Array<{
@@ -1459,6 +1220,8 @@ export type AdminUsageOverviewData = {
         last_used_at?: string | null;
         updated_at?: string | null;
         use_count?: number;
+        today_use_day?: string | null;
+        today_use_count?: number;
         [key: string]: unknown;
     }>;
     top_agents_by_usage_records: Array<{
@@ -1480,6 +1243,27 @@ export type AdminUsageOverviewData = {
         agent_name?: string | null;
         updated_at?: string | null;
         created_at?: string | null;
+    }>;
+    today_session_stats?: {
+        today_key: string;
+        session_count: number;
+        dau: number;
+        active_agent_count: number;
+        sessions_updated_today: number;
+        recent_by_user_agent: Array<{
+            user_id: string;
+            agent_id: string;
+            agent_name?: string | null;
+            session_count: number;
+            latest_created_at: string;
+        }>;
+    };
+    session_usage_scatter?: Array<{
+        user_id: string;
+        agent_id: string;
+        agent_name?: string | null;
+        latest_created_at: string;
+        session_count: number;
     }>;
     limits: { usage_events?: number; session_sample_rows?: number };
 };
@@ -1525,6 +1309,27 @@ export class UserAPI {
         return {
             "Content-Type": "application/json",
         };
+    }
+
+    async getAccess(userId: string): Promise<UserAccess> {
+        const base = this.getBaseUrl();
+        const q = `user_id=${encodeURIComponent(userId)}`;
+        const urls = [`${base}/users/access?${q}`, `${base}/orgs/access?${q}`];
+        let lastError = "access";
+        for (const url of urls) {
+            const response = await fetch(url, { headers: this.getHeaders() });
+            const data = await response.json().catch(() => ({}));
+            if (response.ok && data.status && data.data) {
+                return {
+                    is_platform_admin: Boolean(data.data.is_platform_admin),
+                };
+            }
+            lastError =
+                typeof data.detail === "string"
+                    ? data.detail
+                    : data.message || `HTTP ${response.status}`;
+        }
+        throw new Error(lastError);
     }
 
     async listUsers(operatorUserId: string): Promise<ManagedUser[]> {

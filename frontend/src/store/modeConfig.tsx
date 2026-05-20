@@ -76,11 +76,7 @@ export const useModeConfigStore = create<IModeConfig>()(
                     .then(([agents, userDefault]) => {
                         // Only treat explicitly stored default as personal preference.
                         const userDefaultId = userDefault?.stored_default_agent_id ?? null;
-                        const preferred = pickLoginDefaultAgent(
-                            agents || [],
-                            null,
-                            userDefaultId,
-                        );
+                        const preferred = pickLoginDefaultAgent(agents || [], userDefaultId);
                         const id = preferred?.id;
                         if (!id || typeof id !== "string") return;
                         const { agentId: cur, setAgentId: setId } =

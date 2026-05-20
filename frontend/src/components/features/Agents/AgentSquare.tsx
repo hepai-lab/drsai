@@ -437,7 +437,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         const userDefault = await agentWorkerAPI.getUserDefaultAgent(email).catch(() => null);
         if (cancelled) return;
         const userDefaultId = userDefault?.stored_default_agent_id ?? null;
-        const target = pickLoginDefaultAgent(agentList as Agent[], null, userDefaultId);
+        const target = pickLoginDefaultAgent(agentList as Agent[], userDefaultId);
         if (!target?.id) return;
         setAgentId(target.id);
         setMode(target.mode || "");

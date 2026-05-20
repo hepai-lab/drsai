@@ -73,7 +73,7 @@ export const useAgentInfo = (userIdProp?: string) => {
                   a.name === sa.name ||
                   (Boolean(sa.mode) && a.mode === sa.mode),
               )) ||
-            pickLoginDefaultAgent(agents || [], null, userDefaultId);
+            pickLoginDefaultAgent(agents || [], userDefaultId);
           if (match?.id) {
             setAgentId(match.id);
             return;
@@ -172,7 +172,7 @@ export const useAgentInfo = (userIdProp?: string) => {
             return;
           }
           const userDefaultId = userDefault?.stored_default_agent_id ?? null;
-          const preferred = pickLoginDefaultAgent(agents || [], null, userDefaultId);
+          const preferred = pickLoginDefaultAgent(agents || [], userDefaultId);
           if (
             preferred?.id &&
             typeof preferred.id === 'string' &&

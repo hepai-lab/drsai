@@ -19,6 +19,7 @@ from .jwt import create_jwt_token, AccessToken, AccessTokenData
 from datetime import timedelta
 
 from  drsai_ui.ui_backend.backend.web.deps import get_db
+from drsai_ui.ui_backend.backend.web.auth_source import record_auth_source
 from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, AgentModeConfig, UserAgents
 from drsai_ui.agent_factory.agent_mode_cofigs import (
     get_agent_mode_config, 
@@ -209,6 +210,7 @@ async def auth(request: Request, db=Depends(get_db)):
 
     # 更新用户的默认智能体配置
     user_id = userdata['cstnetId']
+    record_auth_source(db, user_id, "sso")
     response_agent = db.get(AgentModeSettings, filters={"user_id": user_id})
     if not response_agent.status or not response_agent.data:
         # 将默认的配置存储进入对应的数据库

@@ -1,20 +1,30 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Set
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...datamodel.db import (
     AgentModeSettings,
-    Organization,
-    OrganizationMember,
     UserRole,
     Userinfo,
 )
 from ..deps import get_db
 from ..authz import get_is_platform_admin
+from ..auth_source import record_auth_source, resolve_auth_source
 
 router = APIRouter()
+
+
+@router.get("/access")
+async def user_access_summary(user_id: str, db=Depends(get_db)) -> Dict:
+    """Frontend: platform admin flag for the signed-in user."""
+    return {
+        "status": True,
+        "data": {
+            "is_platform_admin": get_is_platform_admin(db, user_id),
+        },
+    }
 
 
 def _require_admin(db, operator_user_id: str) -> None:
@@ -29,9 +39,10 @@ async def list_users(operator_user_id: str, db=Depends(get_db)) -> Dict:
     """
     Merge local + SSO users into one list.
 
-    Current heuristic:
-    - local users: present in Userinfo table
-    - sso users: present in AgentModeSettings table but not in Userinfo
+    auth_source resolution (see auth_source.py):
+    - Userinfo.meta.auth_source when recorded at login
+    - else Userinfo with password -> local
+    - else AgentModeSettings only -> sso
     """
     _require_admin(db, operator_user_id)
 
@@ -51,41 +62,22 @@ async def list_users(operator_user_id: str, db=Depends(get_db)) -> Dict:
     roles = db.get(UserRole, return_json=False).data or []
     role_map = {str(r.user_id): bool(r.is_admin) for r in roles if getattr(r, "user_id", None)}
 
-    local_set = {str(u.user_id) for u in local_users if getattr(u, "user_id", None)}
-
-    members = db.get(OrganizationMember, return_json=False).data or []
-    all_orgs = db.get(Organization, return_json=False).data or []
-    org_map: Dict[int, Organization] = {int(o.id): o for o in all_orgs if o.id is not None}
-    org_by_user: Dict[str, dict] = {}
-    for m in members:
-        uid = getattr(m, "user_id", None)
-        if not uid:
-            continue
-        o = org_map.get(int(m.org_id))
-        slug = getattr(o, "slug", "") if o else ""
-        display_name = getattr(o, "display_name", "") if o else ""
-        org_by_user[str(uid)] = {
-            "org_id": m.org_id,
-            "org_slug": slug or None,
-            "org_display_name": display_name or None,
-            "org_role": str(getattr(m, "role", "member") or "member"),
-        }
+    local_by_id = {
+        str(u.user_id): u for u in local_users if getattr(u, "user_id", None)
+    }
+    agent_user_ids = {
+        str(a.user_id) for a in agent_users if getattr(a, "user_id", None)
+    }
 
     data: List[dict] = []
     for uid in sorted(user_ids):
-        row: dict = {
-            "user_id": uid,
-            "auth_source": "local" if uid in local_set else "sso",
-            "is_admin": role_map.get(uid, False),
-        }
-        if uid in org_by_user:
-            row.update(org_by_user[uid])
-        else:
-            row["org_id"] = None
-            row["org_slug"] = None
-            row["org_display_name"] = None
-            row["org_role"] = None
-        data.append(row)
+        data.append(
+            {
+                "user_id": uid,
+                "auth_source": resolve_auth_source(uid, local_by_id, agent_user_ids),
+                "is_admin": role_map.get(uid, False),
+            }
+        )
 
     return {"status": True, "data": data}
 

@@ -17,6 +17,7 @@ from .config import settings
 from .deps import cleanup_managers, init_managers
 from .initialization import AppInitializer
 from .routes import (
+    access_compat,
     admin_analytics,
     plans,
     runs,
@@ -31,7 +32,6 @@ from .routes import (
     models,
     local_login,
     users,
-    organizations,
     skills,
 )
 import httpx
@@ -222,9 +222,9 @@ api.include_router(
 )
 
 api.include_router(
-    organizations.router,
+    access_compat.router,
     prefix="/orgs",
-    tags=["organizations"],
+    tags=["access-compat"],
     responses={404: {"description": "Not found"}},
 )
 

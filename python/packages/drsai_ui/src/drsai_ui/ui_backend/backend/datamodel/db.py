@@ -465,6 +465,15 @@ class UserAgentUsage(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
     use_count: int = Field(default=0)
+    # Beijing calendar day (YYYY-MM-DD) for today_use_count; resets at midnight 北京时间.
+    today_use_day: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String, nullable=True, index=True),
+    )
+    today_use_count: Optional[int] = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=True, server_default="0"),
+    )
 
     @field_serializer("created_at", "updated_at", "last_used_at")
     def serialize_datetime(self, value: Any) -> Optional[str]:

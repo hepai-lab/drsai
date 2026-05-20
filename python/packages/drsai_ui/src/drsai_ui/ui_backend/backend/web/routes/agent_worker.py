@@ -1,6 +1,7 @@
 from typing import Dict, List, Any  
 import asyncio, os, json
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 # from openai import OpenAI
@@ -23,6 +24,23 @@ from .....agent_factory.agent_mode_cofigs import (
 from loguru import logger
 
 router = APIRouter()
+
+ANALYTICS_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _beijing_day_key(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ANALYTICS_TZ).strftime("%Y-%m-%d")
+
+
+def _bump_daily_use(row: UserAgentUsage, now: datetime) -> None:
+    day_key = _beijing_day_key(now)
+    if getattr(row, "today_use_day", None) == day_key:
+        row.today_use_count = (row.today_use_count or 0) + 1
+    else:
+        row.today_use_day = day_key
+        row.today_use_count = 1
 
 # @router.get("/ddf_agents")
 # async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
@@ -309,17 +327,21 @@ async def record_user_agent_usage(
             if existing:
                 existing.last_used_at = now
                 existing.use_count = (existing.use_count or 0) + 1
+                _bump_daily_use(existing, now)
                 existing.updated_at = now
                 session.add(existing)
                 session.commit()
                 session.refresh(existing)
                 return {"status": True, "data": existing.model_dump(mode="json")}
 
+            day_key = _beijing_day_key(now)
             row = UserAgentUsage(
                 user_id=request.user_id,
                 agent_id=request.agent_id,
                 last_used_at=now,
                 use_count=1,
+                today_use_day=day_key,
+                today_use_count=1,
                 created_at=now,
                 updated_at=now,
             )

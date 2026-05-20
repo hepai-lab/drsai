@@ -27,7 +27,10 @@ const ENABLE_SKILL_DOWNLOAD = false;
 const ENABLE_HEPAI_SKILL_ZIP_UPLOAD = true;
 
 const LIST_ROW_ACTION_BTN =
-    "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-tertiary/40 text-secondary transition-colors duration-200 hover:bg-accent/15 hover:text-accent dark:bg-white/[0.06]";
+    "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent text-secondary transition-[background-color,border-color,color,opacity] duration-200 hover:border-border-primary/60 hover:bg-tertiary/40 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 dark:hover:border-white/10 dark:hover:bg-white/[0.06]";
+
+const SEARCH_INPUT_CLS =
+    "w-full rounded-xl border border-primary/40 bg-tertiary/10 py-2 pl-9 pr-3 text-sm text-primary outline-none placeholder:text-secondary/60 transition-[border-color,box-shadow] duration-200 focus:border-accent/50 focus:ring-1 focus:ring-accent/30 dark:border-white/10 dark:bg-white/[0.04]";
 
 const HEPAI_MAX_ZIP_BYTES = 10 * 1024 * 1024;
 /** 与提示文案一致：文件夹打包内文件数上限 */
@@ -453,199 +456,218 @@ const SkillsSquarePage: React.FC = () => {
         }
     };
 
+    const openPublishModal = () => {
+        resetPublishForm();
+        setHepaiUploadOpen(true);
+    };
+
+    const listSummary =
+        hepaiRows.length === 0
+            ? null
+            : search.trim()
+              ? `共 ${hepaiRows.length} 个技能 · 匹配 ${filteredHepaiRows.length} 个`
+              : `共 ${hepaiRows.length} 个技能`;
+
     return (
-        <div className="relative flex h-full min-h-0 flex-col bg-background">
-            <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-                <div className="absolute -top-28 left-[15%] h-64 w-64 rounded-full bg-accent/[0.1] blur-3xl dark:bg-accent/[0.16]" />
-                <div className="absolute top-16 right-[-6%] h-72 w-72 rounded-full bg-blue-700/[0.09] blur-3xl dark:bg-blue-700/[0.14]" />
-                <div
-                    className="absolute inset-0 opacity-[0.4] dark:opacity-[0.24]"
-                    style={{
-                        backgroundImage: `linear-gradient(rgba(148,163,184,0.06) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(148,163,184,0.06) 1px, transparent 1px)`,
-                        backgroundSize: "40px 40px",
-                    }}
-                />
+        <div className="relative flex h-full min-h-0 flex-col bg-primary">
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-48 overflow-hidden" aria-hidden>
+                <div className="absolute left-1/2 top-0 h-40 w-[min(560px,90vw)] -translate-x-1/2 rounded-full bg-accent/[0.07] blur-3xl dark:bg-accent/[0.11]" />
             </div>
 
-            <div className="relative z-10 flex min-h-0 flex-1 flex-col">
-                <div className="shrink-0 border-b border-tertiary/40 px-4 pb-4 pt-5 dark:border-transparent dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0))] dark:shadow-[0_1px_0_rgba(255,255,255,0.06)_inset,0_14px_36px_rgba(0,0,0,0.4)]">
-                    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="min-w-0 animate-slide-up">
-                            <h1 className="font-agent flex items-center gap-2.5 text-lg font-medium tracking-normal text-slate-600 sm:text-xl dark:text-slate-200">
-                                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-tertiary/40 text-accent dark:bg-white/[0.06]">
+            <div className="relative z-10 flex min-h-0 flex-1 flex-col p-4 sm:p-5">
+                <header className="shrink-0">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                            <p className="font-agent-mono text-[10px] font-medium uppercase tracking-[0.2em] text-accent">
+                                SkillHub
+                            </p>
+                            <div className="mt-1.5 flex items-center gap-2.5">
+                                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-border-primary/50 bg-tertiary/30 text-accent dark:border-white/10 dark:bg-white/[0.05]">
                                     <Wrench className="h-[18px] w-[18px]" aria-hidden />
                                 </span>
-                                <span className="leading-snug font-medium tracking-wide">SKILLS</span>
-                            </h1>
-                        </div>
-                        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end animate-slide-up [animation-delay:50ms] [animation-fill-mode:backwards]">
-                            {ENABLE_HEPAI_SKILL_ZIP_UPLOAD ? (
-                                <span
-                                    role="button"
-                                    tabIndex={0}
-                                    className={[
-                                        "inline-flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-xl px-4 text-sm font-medium",
-                                        "border border-accent/35 bg-accent/12 text-slate-700 dark:text-slate-200",
-                                        "transition-[background-color,border-color,transform] duration-200 ease-out",
-                                        "hover:border-accent/50 hover:bg-accent/18",
-                                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                                        "active:scale-[0.98]",
-                                    ].join(" ")}
-                                    onClick={() => {
-                                        resetPublishForm();
-                                        setHepaiUploadOpen(true);
-                                    }}
-                                    onKeyDown={(e) => {
-                                        if (e.key === "Enter" || e.key === " ") {
-                                            e.preventDefault();
-                                            resetPublishForm();
-                                            setHepaiUploadOpen(true);
-                                        }
-                                    }}
-                                >
-                                    <span className="text-base font-medium leading-none">+</span>
-                                    发布 Skill
-                                </span>
+                                <h1 className="font-agent text-xl font-semibold tracking-[-0.02em] text-primary sm:text-[1.35rem]">
+                                    技能广场
+                                </h1>
+                            </div>
+                            <p className="mt-2 max-w-md text-sm leading-relaxed text-secondary">
+                                浏览、预览与分享 Agent 技能包
+                            </p>
+                            {listSummary ? (
+                                <p className="mt-1 text-xs text-secondary/80">{listSummary}</p>
                             ) : null}
+                        </div>
 
-                            <Input
-                                allowClear
-                                prefix={<Search className="h-4 w-4 text-secondary" />}
-                                placeholder="搜索名称或描述"
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                className="w-full sm:max-w-xs [&_.ant-input]:rounded-xl [&_.ant-input]:border-tertiary/40 [&_.ant-input]:bg-background/55 [&_.ant-input]:py-1.5 [&_.ant-input]:text-slate-700 dark:[&_.ant-input]:border-white/10 dark:[&_.ant-input]:bg-white/[0.04] dark:[&_.ant-input]:text-slate-200"
-                            />
+                        <div className="flex w-full flex-col gap-2 sm:w-auto sm:min-w-[280px] sm:flex-row sm:items-center sm:justify-end">
+                            <div className="relative flex-1 sm:max-w-xs">
+                                <Search
+                                    className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-secondary"
+                                    aria-hidden
+                                />
+                                <input
+                                    type="search"
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    placeholder="搜索名称或描述"
+                                    className={SEARCH_INPUT_CLS}
+                                />
+                            </div>
+                            {ENABLE_HEPAI_SKILL_ZIP_UPLOAD ? (
+                                <Button
+                                    variant="primary"
+                                    size="sm"
+                                    icon={<Upload className="h-4 w-4" aria-hidden />}
+                                    className="shrink-0"
+                                    onClick={openPublishModal}
+                                >
+                                    发布 Skill
+                                </Button>
+                            ) : null}
                         </div>
                     </div>
-                </div>
+                </header>
 
-                <div className="min-h-0 flex-1 overflow-auto px-4 py-5">
-                    <div className="mx-auto max-w-6xl">
+                <div className="min-h-0 flex-1 overflow-auto pt-5">
+                    <div className="mx-auto max-w-5xl">
                         {hepaiRows.length === 0 ? (
-                            <div className="animate-fade-in flex flex-col items-center justify-center rounded-2xl border border-dashed border-tertiary/55 bg-tertiary/10 px-6 py-16 text-center dark:border-white/12 dark:bg-white/[0.03]">
-                                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-tertiary/40 dark:bg-white/[0.06]">
-                                    <Package className="h-7 w-7 text-accent" aria-hidden />
+                            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border-primary/70 bg-tertiary/15 px-6 py-20 text-center dark:border-white/12 dark:bg-white/[0.02]">
+                                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-border-primary/50 bg-primary shadow-sm dark:border-white/10">
+                                    <Package className="h-8 w-8 text-accent" strokeWidth={1.75} aria-hidden />
                                 </div>
-                                <p className="text-sm font-medium text-slate-700 dark:text-slate-200">暂无技能包</p>
-                                <p className="mt-1 text-xs text-secondary">发布 Skill 后即可出现在此列表</p>
+                                <p className="text-base font-medium text-primary">还没有技能包</p>
+                                <p className="mt-2 max-w-xs text-sm leading-relaxed text-secondary">
+                                    上传包含 SKILL.md 的 zip 包，审核通过后会展示在这里
+                                </p>
                                 {ENABLE_HEPAI_SKILL_ZIP_UPLOAD ? (
-                                    <button
-                                        type="button"
-                                        className="mt-5 inline-flex h-9 items-center gap-2 rounded-xl border border-accent/40 bg-accent/14 px-4 text-sm font-medium text-slate-700 transition hover:border-accent/55 hover:bg-accent/22 dark:text-slate-200"
-                                        onClick={() => {
-                                            resetPublishForm();
-                                            setHepaiUploadOpen(true);
-                                        }}
+                                    <Button
+                                        variant="primary"
+                                        size="sm"
+                                        icon={<Upload className="h-4 w-4" aria-hidden />}
+                                        className="mt-6"
+                                        onClick={openPublishModal}
                                     >
-                                        <span className="text-base font-medium leading-none">+</span>
-                                        发布 Skill
-                                    </button>
+                                        发布第一个 Skill
+                                    </Button>
                                 ) : null}
                             </div>
                         ) : filteredHepaiRows.length === 0 ? (
-                            <div className="animate-fade-in flex flex-col items-center justify-center rounded-2xl border border-tertiary/50 bg-tertiary/10 px-6 py-12 dark:border-white/10 dark:bg-white/[0.03]">
-                                <Search className="mb-2 h-9 w-9 text-secondary opacity-80" aria-hidden />
-                                <p className="text-sm font-medium text-slate-700 dark:text-slate-200">无匹配项</p>
-                                <p className="mt-1 text-xs text-secondary">清空搜索或换关键词</p>
+                            <div className="flex flex-col items-center justify-center rounded-2xl border border-border-primary/60 bg-tertiary/10 px-6 py-16 text-center dark:border-white/10 dark:bg-white/[0.02]">
+                                <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-tertiary/40 dark:bg-white/[0.06]">
+                                    <Search className="h-5 w-5 text-secondary" aria-hidden />
+                                </div>
+                                <p className="text-sm font-medium text-primary">没有匹配的技能</p>
+                                <p className="mt-1.5 text-xs text-secondary">试试其他关键词，或清空搜索</p>
+                                <button
+                                    type="button"
+                                    className="mt-4 text-xs font-medium text-accent transition-colors hover:text-accent/80"
+                                    onClick={() => setSearch("")}
+                                >
+                                    清空搜索
+                                </button>
                             </div>
                         ) : (
-                            <div className="overflow-hidden rounded-2xl border border-tertiary/50 bg-background/40 dark:border-white/[0.06] dark:bg-white/[0.02]">
-                                <ul className="divide-y divide-tertiary/45 text-sm dark:divide-white/[0.08]">
-                                    {filteredHepaiRows.map((r) => {
-                                        const desc = displayDescription(r, skillMdDescById[r.id]);
-                                        const RowIcon = rowListIconComponent(r);
-                                        const primaryTitle = rowPrimaryTitle(r);
-                                        const { ext } = splitArchiveName(r.filename);
-                                        const absTime = new Date(r.createdAtMs).toLocaleString();
-                                        const uploader =
-                                            r.uploadedBy?.trim() || user?.email?.trim() || "";
-                                        const copied = copiedRowId === r.id;
-                                        return (
-                                            <li key={r.id} className="px-4 py-3.5 sm:px-4 sm:py-4">
-                                                <div className="flex items-center gap-3 sm:gap-4">
-                                                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-accent/[0.12] text-accent dark:bg-accent/[0.16]">
-                                                        <RowIcon className="h-[24px] w-[24px]" strokeWidth={2} aria-hidden />
-                                                    </div>
-                                                    <div className="min-w-0 flex-1">
+                            <ul className="flex flex-col gap-2">
+                                {filteredHepaiRows.map((r) => {
+                                    const desc = displayDescription(r, skillMdDescById[r.id]);
+                                    const RowIcon = rowListIconComponent(r);
+                                    const primaryTitle = rowPrimaryTitle(r);
+                                    const { ext } = splitArchiveName(r.filename);
+                                    const absTime = new Date(r.createdAtMs).toLocaleString();
+                                    const uploader =
+                                        r.uploadedBy?.trim() || user?.email?.trim() || "";
+                                    const copied = copiedRowId === r.id;
+                                    return (
+                                        <li
+                                            key={r.id}
+                                            className="group rounded-xl border border-border-primary/55 bg-primary transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-px hover:border-accent/30 hover:shadow-[0_8px_24px_rgba(52,61,88,0.06)] dark:border-white/[0.08] dark:bg-white/[0.02] dark:hover:border-accent/25 dark:hover:shadow-[0_10px_28px_rgba(0,0,0,0.22)]"
+                                        >
+                                            <div className="flex items-start gap-3 px-4 py-3.5 sm:items-center sm:gap-4 sm:py-4">
+                                                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-accent/15 bg-accent/[0.08] text-accent dark:border-accent/20 dark:bg-accent/[0.12]">
+                                                    <RowIcon className="h-[22px] w-[22px]" strokeWidth={2} aria-hidden />
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                                                         <div
-                                                            className="truncate text-[15px] font-medium leading-snug text-slate-800 dark:text-slate-100"
+                                                            className="truncate text-[15px] font-medium leading-snug text-primary"
                                                             title={`${primaryTitle}${ext}`}
                                                         >
                                                             <span>{primaryTitle}</span>
                                                             {ext ? (
-                                                                <span className="font-mono text-sm font-normal text-slate-400 dark:text-slate-500">
+                                                                <span className="font-agent-mono text-xs font-normal text-secondary/70">
                                                                     {ext}
                                                                 </span>
                                                             ) : null}
                                                         </div>
-                                                        {desc ? (
-                                                            <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">
-                                                                {desc}
-                                                            </p>
+                                                        {ext ? (
+                                                            <span className="inline-flex shrink-0 items-center rounded-full border border-border-primary/60 bg-tertiary/25 px-2 py-0.5 font-agent-mono text-[10px] font-medium uppercase tracking-wide text-secondary dark:border-white/10 dark:bg-white/[0.05]">
+                                                                zip
+                                                            </span>
                                                         ) : null}
-                                                        <p className="mt-1.5 text-xs leading-relaxed text-secondary">
-                                                            {uploader ? (
-                                                                <>
-                                                                    <span
-                                                                        className="max-w-[14rem] truncate text-secondary/90"
-                                                                        title={uploader}
-                                                                    >
-                                                                        {uploader}
-                                                                    </span>
-                                                                    <span className="text-secondary/50"> 发布</span>
-                                                                </>
-                                                            ) : (
-                                                                <span className="text-secondary/75">发布</span>
-                                                            )}
-                                                            <span className="mx-1.5 text-secondary/40">·</span>
-                                                            <span className="tabular-nums">{formatRelativePast(r.createdAtMs)}</span>
-                                                            <span className="mx-1.5 text-secondary/40">·</span>
-                                                            <span className="tabular-nums text-secondary/85">{absTime}</span>
+                                                    </div>
+                                                    {desc ? (
+                                                        <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-secondary">
+                                                            {desc}
                                                         </p>
-                                                    </div>
-
-                                                    <div className="flex shrink-0 items-center gap-1.5">
-                                                        <button
-                                                            type="button"
-                                                            className={LIST_ROW_ACTION_BTN}
-                                                            onClick={() => void openSkillMdPreview(r.id, r.filename)}
-                                                            title="预览 SKILL.md"
-                                                            aria-label="预览 SKILL.md"
+                                                    ) : null}
+                                                    <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-secondary">
+                                                        {uploader ? (
+                                                            <span
+                                                                className="max-w-[12rem] truncate rounded-md bg-tertiary/30 px-1.5 py-0.5 dark:bg-white/[0.05]"
+                                                                title={uploader}
+                                                            >
+                                                                {uploader}
+                                                            </span>
+                                                        ) : null}
+                                                        <span
+                                                            className="tabular-nums text-secondary/85"
+                                                            title={absTime}
                                                         >
-                                                            <Eye className="h-4 w-4" aria-hidden />
-                                                        </button>
-                                                        <a
-                                                            href={r.previewUrl}
-                                                            target="_blank"
-                                                            rel="noreferrer"
-                                                            className={LIST_ROW_ACTION_BTN}
-                                                            title="下载"
-                                                            aria-label="下载"
-                                                        >
-                                                            <Download className="h-4 w-4" aria-hidden />
-                                                        </a>
-                                                        <button
-                                                            type="button"
-                                                            className={LIST_ROW_ACTION_BTN}
-                                                            onClick={() => void copyPreviewUrl(r.id, r.previewUrl)}
-                                                            title={copied ? "已复制" : "复制链接"}
-                                                            aria-label={copied ? "已复制" : "复制链接"}
-                                                        >
-                                                            {copied ? (
-                                                                <Check className="h-4 w-4" strokeWidth={2.5} aria-hidden />
-                                                            ) : (
-                                                                <Copy className="h-4 w-4" aria-hidden />
-                                                            )}
-                                                        </button>
-                                                    </div>
+                                                            {formatRelativePast(r.createdAtMs)}
+                                                        </span>
+                                                    </p>
                                                 </div>
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
-                            </div>
+
+                                                <div className="flex shrink-0 items-center gap-0.5 opacity-100 sm:opacity-70 sm:transition-opacity sm:duration-200 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                                                    <button
+                                                        type="button"
+                                                        className={LIST_ROW_ACTION_BTN}
+                                                        onClick={() => void openSkillMdPreview(r.id, r.filename)}
+                                                        title="预览 SKILL.md"
+                                                        aria-label="预览 SKILL.md"
+                                                    >
+                                                        <Eye className="h-4 w-4" aria-hidden />
+                                                    </button>
+                                                    <a
+                                                        href={r.previewUrl}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className={LIST_ROW_ACTION_BTN}
+                                                        title="下载"
+                                                        aria-label="下载"
+                                                    >
+                                                        <Download className="h-4 w-4" aria-hidden />
+                                                    </a>
+                                                    <button
+                                                        type="button"
+                                                        className={[
+                                                            LIST_ROW_ACTION_BTN,
+                                                            copied ? "border-accent/35 bg-accent/10 text-accent" : "",
+                                                        ].join(" ")}
+                                                        onClick={() => void copyPreviewUrl(r.id, r.previewUrl)}
+                                                        title={copied ? "已复制" : "复制链接"}
+                                                        aria-label={copied ? "已复制" : "复制链接"}
+                                                    >
+                                                        {copied ? (
+                                                            <Check className="h-4 w-4" strokeWidth={2.5} aria-hidden />
+                                                        ) : (
+                                                            <Copy className="h-4 w-4" aria-hidden />
+                                                        )}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
                         )}
                     </div>
                 </div>
@@ -711,11 +733,11 @@ const SkillsSquarePage: React.FC = () => {
                             <Upload className="h-5 w-5" aria-hidden />
                         </span>
                         <div className="min-w-0 flex-1">
-                            <div className="font-agent text-base font-semibold leading-tight text-slate-800 dark:text-slate-100">
+                            <div className="font-agent text-base font-semibold leading-tight text-primary">
                                 发布新技能
                             </div>
                             <p className="mt-1.5 text-xs font-normal leading-relaxed text-secondary">
-                                上传您的 Skill 文件，审核通过后将同步展示在 SkillHub 技能广场
+                                上传 Skill 包，审核通过后展示在技能广场
                             </p>
                         </div>
                     </div>
@@ -757,7 +779,7 @@ const SkillsSquarePage: React.FC = () => {
             >
                 <div className="space-y-4">
                     <div>
-                        <div className="mb-1.5 text-sm font-medium text-slate-800 dark:text-slate-100">
+                        <div className="mb-1.5 text-sm font-medium text-primary">
                             Skill 文件 <span className="text-red-500">*</span>
                         </div>
                         <input
@@ -787,7 +809,7 @@ const SkillsSquarePage: React.FC = () => {
                                 "flex min-h-[140px] flex-col items-center justify-center gap-2 rounded-2xl border-2 px-4 py-6 transition-[border-color,background-color,box-shadow]",
                                 hepaiPickPreview
                                     ? "border-accent/35 bg-accent/[0.06] shadow-sm ring-1 ring-accent/10 dark:border-accent/30 dark:bg-accent/[0.08] dark:ring-accent/15"
-                                    : "border-dashed border-slate-200 bg-slate-50/90 dark:border-white/12 dark:bg-white/[0.03]",
+                                    : "border-dashed border-border-primary/70 bg-tertiary/20 dark:border-white/12 dark:bg-white/[0.02]",
                             ].join(" ")}
                             onDragOver={(e) => {
                                 e.preventDefault();
@@ -810,7 +832,7 @@ const SkillsSquarePage: React.FC = () => {
                                         strokeWidth={1.75}
                                         aria-hidden
                                     />
-                                    <span className="max-w-full truncate px-1 text-center text-sm font-semibold text-slate-800 dark:text-slate-100">
+                                    <span className="max-w-full truncate px-1 text-center text-sm font-semibold text-primary">
                                         {hepaiPickPreview.name}
                                     </span>
                                     <span className="text-xs tabular-nums text-secondary">
@@ -854,7 +876,7 @@ const SkillsSquarePage: React.FC = () => {
                     </div>
 
                     <div>
-                        <div className="mb-1.5 text-sm font-medium text-slate-800 dark:text-slate-100">
+                        <div className="mb-1.5 text-sm font-medium text-primary">
                             显示名称 <span className="text-red-500">*</span>
                         </div>
                         <Input
@@ -866,7 +888,7 @@ const SkillsSquarePage: React.FC = () => {
                     </div>
 
                     <div>
-                        <div className="mb-1.5 text-sm font-medium text-slate-800 dark:text-slate-100">图标</div>
+                        <div className="mb-1.5 text-sm font-medium text-primary">图标</div>
                         <Select
                             allowClear
                             placeholder="为你的 Skill 选择一个合适的图标"
@@ -886,7 +908,7 @@ const SkillsSquarePage: React.FC = () => {
                     </div>
 
                     <div>
-                        <div className="mb-1.5 text-sm font-medium text-slate-800 dark:text-slate-100">描述</div>
+                        <div className="mb-1.5 text-sm font-medium text-primary">描述</div>
                         <Input.TextArea
                             rows={3}
                             placeholder="该描述会从 SKILL.md 的 description 字段中自动提取，也支持手动填写"
@@ -897,7 +919,7 @@ const SkillsSquarePage: React.FC = () => {
                     </div>
 
                     <div>
-                        <div className="mb-1.5 text-sm font-medium text-slate-800 dark:text-slate-100">
+                        <div className="mb-1.5 text-sm font-medium text-primary">
                             版本号 <span className="text-red-500">*</span>
                         </div>
                         <Input
@@ -909,7 +931,7 @@ const SkillsSquarePage: React.FC = () => {
                     </div>
 
                     <div>
-                        <div className="mb-1.5 text-sm font-medium text-slate-800 dark:text-slate-100">变更说明</div>
+                        <div className="mb-1.5 text-sm font-medium text-primary">变更说明</div>
                         <Input.TextArea
                             rows={2}
                             placeholder="描述本次版本的主要变更内容"
@@ -928,12 +950,12 @@ const SkillsSquarePage: React.FC = () => {
                             <FileText className="h-5 w-5" strokeWidth={2} aria-hidden />
                         </span>
                         <div className="min-w-0 flex-1">
-                            <div className="font-agent text-base font-semibold leading-tight text-slate-800 dark:text-slate-100">
+                            <div className="font-agent text-base font-semibold leading-tight text-primary">
                                 SKILL.md 预览
                             </div>
                             {skillMdTitle ? (
                                 <div
-                                    className="mt-1 truncate text-sm font-medium leading-snug text-slate-600 dark:text-slate-300"
+                                    className="mt-1 truncate text-sm font-medium leading-snug text-secondary"
                                     title={skillMdTitle}
                                 >
                                     {(() => {
@@ -942,7 +964,7 @@ const SkillsSquarePage: React.FC = () => {
                                             <>
                                                 <span>{stem}</span>
                                                 {ext ? (
-                                                    <span className="font-mono text-[13px] font-normal text-slate-400 dark:text-slate-500">
+                                                    <span className="font-agent-mono text-[13px] font-normal text-secondary/70">
                                                         {ext}
                                                     </span>
                                                 ) : null}
@@ -1007,7 +1029,7 @@ const SkillsSquarePage: React.FC = () => {
                 ) : (
                     <div className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-tertiary/50 bg-tertiary/[0.06] px-6 py-10 text-center dark:border-white/[0.1] dark:bg-white/[0.02]">
                         <FileText className="h-10 w-10 text-secondary/70" strokeWidth={1.5} aria-hidden />
-                        <p className="text-sm font-medium text-slate-700 dark:text-slate-200">暂无可预览内容</p>
+                        <p className="text-sm font-medium text-primary">暂无可预览内容</p>
                         <p className="max-w-sm text-xs leading-relaxed text-secondary">
                             请确认 ZIP 内包含有效的 SKILL.md
                         </p>

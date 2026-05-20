@@ -81,6 +81,10 @@ async def init_managers(
         _db_manager = DatabaseManager(engine_uri=database_uri, base_dir=app_root)
         _db_manager.initialize_database(auto_upgrade=settings.UPGRADE_DATABASE)
 
+        from .authz import bootstrap_platform_admins
+
+        bootstrap_platform_admins(_db_manager)
+
         # init default team config
         await _db_manager.import_teams_from_directory(
             config_dir, settings.DEFAULT_USER_ID, check_exists=True
