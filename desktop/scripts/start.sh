@@ -12,7 +12,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+# desktop/scripts/ → desktop/ → project root
+PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 DRSAI_API_PORT="${DRSAI_API_PORT:-8642}"
 DRSAI_API_HOST="${DRSAI_API_HOST:-127.0.0.1}"
 API_URL="http://${DRSAI_API_HOST}:${DRSAI_API_PORT}"
@@ -42,17 +43,11 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-# ── Step 1: Start DrSai API Server ──────────────────────────────────────────
-echo -e "${CYAN}[1/3]${NC} Starting DrSai API server on ${API_URL}..."
+# ── Step 1: Start DrSai API Gateway ─────────────────────────────────────────
+echo -e "${CYAN}[1/3]${NC} Starting DrSai API gateway on ${API_URL}..."
 
-if [ -f "$PROJECT_DIR/drsai_api_server.py" ]; then
-    API_SERVER_SCRIPT="$PROJECT_DIR/drsai_api_server.py"
-else
-    # Try the drsai package path as fallback
-    API_SERVER_SCRIPT="$PROJECT_DIR/drsai_api_server.py"
-fi
-
-python "$API_SERVER_SCRIPT" &
+PYTHONPATH="$PROJECT_DIR/python/packages/drsai/src:$PYTHONPATH" \
+python -m drsai.backend.gateway &
 DRSAI_API_PID=$!
 
 # ── Step 2: Wait for API to be healthy ──────────────────────────────────────

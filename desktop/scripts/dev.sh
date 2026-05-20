@@ -2,8 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # DrSai Desktop — Development mode
 #
-# Starts the API server and Electron in dev mode with hot reload.
-# Best used when you're actively modifying the Electron frontend code.
+# Starts the API gateway and Electron in dev mode with hot reload.
 #
 # Usage:
 #   ./scripts/dev.sh
@@ -11,7 +10,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+# desktop/scripts/ → desktop/ → project root
+PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 DRSAI_API_PORT="${DRSAI_API_PORT:-8642}"
 API_URL="http://127.0.0.1:${DRSAI_API_PORT}"
 
@@ -31,13 +31,15 @@ cleanup() {
 }
 trap cleanup INT TERM
 
-# Start API server in background (with hot reload via uvicorn --reload)
-echo -e "${CYAN}Starting API server (with hot reload)...${NC}"
-DRSAI_API_PORT="$DRSAI_API_PORT" uvicorn drsai_api_server:app \
+# Start API gateway in background (with hot reload via uvicorn --reload)
+echo -e "${CYAN}Starting API gateway (with hot reload)...${NC}"
+PYTHONPATH="$PROJECT_DIR/python/packages/drsai/src:$PYTHONPATH" \
+DRSAI_API_PORT="$DRSAI_API_PORT" \
+uvicorn drsai.backend.gateway:app \
     --host 127.0.0.1 \
     --port "$DRSAI_API_PORT" \
     --reload \
-    --reload-dir "$PROJECT_DIR" &
+    --reload-dir "$PROJECT_DIR/python/packages/drsai/src/drsai/backend" &
 DRSAI_API_PID=$!
 
 # Wait for API

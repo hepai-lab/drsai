@@ -55,15 +55,6 @@ try {
     Write-Host "  WARNING: Python not found. DrSai API server won't start." -ForegroundColor Yellow
 }
 
-# DrSai API script check
-$apiScript = Join-Path $ProjectRoot "desktop\drsai_api_server.py"
-if (-not (Test-Path $apiScript)) {
-    Write-Host "  WARNING: drsai_api_server.py not found at $apiScript" -ForegroundColor Yellow
-    Write-Host "  Set DRSAI_API_SCRIPT env var to point to your API server." -ForegroundColor Yellow
-} else {
-    Write-Host "  API:     drsai_api_server.py found" -ForegroundColor Green
-}
-
 Write-Host ""
 
 # ── Command Dispatch ─────────────────────────────────────
@@ -112,14 +103,10 @@ switch ($Command) {
             Write-Host "  DRSAI_HOME = $env:DRSAI_HOME" -ForegroundColor Green
         }
 
-        # Set API script path
-        if (-not $env:DRSAI_API_SCRIPT) {
-            $defaultScript = Join-Path $ProjectRoot "desktop\drsai_api_server.py"
-            if (Test-Path $defaultScript) {
-                $env:DRSAI_API_SCRIPT = $defaultScript
-                Write-Host "  DRSAI_API_SCRIPT = $env:DRSAI_API_SCRIPT" -ForegroundColor Green
-            }
-        }
+        # Ensure drsai package is importable
+        $drsaiSrc = Join-Path $ProjectRoot "python\packages\drsai\src"
+        $env:PYTHONPATH = "$drsaiSrc;$env:PYTHONPATH"
+        Write-Host "  PYTHONPATH += $drsaiSrc" -ForegroundColor Green
 
         Write-Host "[4/4] Starting DrSai Desktop (dev mode)..." -ForegroundColor Yellow
         Write-Host ""
