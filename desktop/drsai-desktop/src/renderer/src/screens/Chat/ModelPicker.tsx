@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { useI18n } from "../../components/useI18n";
-import type { ModelGroup } from "./types";
+import type { ModelGroup, ModelItem } from "./types";
 
 interface ModelPickerProps {
   currentModel: string;
@@ -69,21 +69,22 @@ export const ModelPicker = memo(function ModelPicker({
       {isOpen && (
         <div className="chat-model-dropdown">
           {modelGroups.map((group) => (
-            <div key={group.provider} className="chat-model-group">
+            <div key={group.client_type} className="chat-model-group">
               <div className="chat-model-group-label">
                 {t(group.providerLabel)}
               </div>
               {group.models.map((m) => {
                 const active =
-                  currentModel === m.model && currentProvider === m.provider;
+                  currentModel === m.model &&
+                  currentProvider === m.client_type;
                 return (
                   <button
-                    key={`${m.provider}:${m.model}`}
+                    key={`${m.client_type}:${m.alias}`}
                     className={`chat-model-option ${active ? "active" : ""}`}
-                    onClick={() => select(m.provider, m.model, m.baseUrl)}
+                    onClick={() => select(m.client_type, m.model, "")}
                   >
-                    <span className="chat-model-option-label">{m.label}</span>
-                    <span className="chat-model-option-id">{m.model}</span>
+                    <span className="chat-model-option-label">{m.display_name}</span>
+                    <span className="chat-model-option-id">{m.alias}</span>
                   </button>
                 );
               })}

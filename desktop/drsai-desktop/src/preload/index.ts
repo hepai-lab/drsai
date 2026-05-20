@@ -110,6 +110,7 @@ const drsaiAPI = {
       model: string;
       token_limit: number;
       max_tokens: number;
+      reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
     }>;
   }> => ipcRenderer.invoke("get-model-catalog"),
 
@@ -395,9 +396,10 @@ const drsaiAPI = {
     ipcRenderer.invoke("get-skill-content", skillPath),
   installSkill: (
     identifier: string,
+    source?: string,
     profile?: string,
   ): Promise<{ success: boolean; error?: string }> =>
-    ipcRenderer.invoke("install-skill", identifier, profile),
+    ipcRenderer.invoke("install-skill", identifier, source, profile),
   uninstallSkill: (
     name: string,
     profile?: string,
@@ -462,37 +464,72 @@ const drsaiAPI = {
   ): Promise<boolean> =>
     ipcRenderer.invoke("set-credential-pool", provider, entries),
 
-  // Models
-  listModels: (): Promise<
-    Array<{
-      id: string;
-      name: string;
-      provider: string;
+  // Models (unified backend API)
+  listModels: (): Promise<{
+    default_alias: string;
+    models: Array<{
+      alias: string;
+      display_name: string;
+      client_type: string;
       model: string;
-      baseUrl: string;
-      createdAt: number;
-    }>
-  > => ipcRenderer.invoke("list-models"),
+      token_limit: number;
+      max_tokens: number;
+      reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+    }>;
+  }> => ipcRenderer.invoke("list-models"),
 
-  addModel: (
-    name: string,
-    provider: string,
-    model: string,
-    baseUrl: string,
-  ): Promise<{
-    id: string;
-    name: string;
-    provider: string;
+  getModelDetail: (alias: string): Promise<{
+    alias: string;
+    display_name: string;
+    client_type: string;
     model: string;
-    baseUrl: string;
-    createdAt: number;
-  }> => ipcRenderer.invoke("add-model", name, provider, model, baseUrl),
+    token_limit: number;
+    max_tokens: number;
+    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+  }> => ipcRenderer.invoke("get-model-detail", alias),
 
-  removeModel: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke("remove-model", id),
+  addModel: (body: {
+    alias: string;
+    model: string;
+    token_limit?: number;
+    max_tokens?: number;
+    client_type?: string;
+    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+  }): Promise<{
+    alias: string;
+    display_name: string;
+    client_type: string;
+    model: string;
+    token_limit: number;
+    max_tokens: number;
+    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+  }> => ipcRenderer.invoke("add-model", body),
 
-  updateModel: (id: string, fields: Record<string, string>): Promise<boolean> =>
-    ipcRenderer.invoke("update-model", id, fields),
+  updateModel: (
+    alias: string,
+    body: {
+      model?: string;
+      token_limit?: number;
+      max_tokens?: number;
+      client_type?: string;
+      reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+      new_alias?: string;
+    },
+  ): Promise<{
+    alias: string;
+    display_name: string;
+    client_type: string;
+    model: string;
+    token_limit: number;
+    max_tokens: number;
+    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+  }> => ipcRenderer.invoke("update-model", alias, body),
+
+  removeModel: (alias: string): Promise<{ ok: boolean; new_default_alias: string }> =>
+    ipcRenderer.invoke("remove-model", alias),
+
+  setDefaultModel: (alias: string): Promise<{ default_alias: string }> =>
+    ipcRenderer.invoke("set-default-model", alias),
 
   // Claw3D
   claw3dStatus: (): Promise<{

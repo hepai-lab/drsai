@@ -14,15 +14,20 @@ export interface ChatMessage {
   toolPayload?: string;
 }
 
+export interface ModelItem {
+  alias: string;
+  display_name: string;
+  client_type: string;
+  model: string;
+  token_limit: number;
+  max_tokens: number;
+  reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+}
+
 export interface ModelGroup {
-  provider: string;
+  client_type: string;
   providerLabel: string;
-  models: {
-    provider: string;
-    model: string;
-    label: string;
-    baseUrl: string;
-  }[];
+  models: ModelItem[];
 }
 
 export interface UsageState {

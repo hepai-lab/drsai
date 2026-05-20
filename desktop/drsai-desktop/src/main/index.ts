@@ -29,7 +29,14 @@ import {
   readLogs,
   InstallProgress,
 } from "./installer";
-import { getModelCatalog } from "./model-catalog";
+import {
+  getModelCatalog,
+  getModelConfig,
+  createModelConfig,
+  updateModelConfig,
+  deleteModelConfig,
+  setDefaultModelConfig,
+} from "./model-catalog";
 import {
   isRemoteMode,
   isRemoteOnlyMode,
@@ -90,7 +97,7 @@ import {
   updateSessionTitle,
   updateSessionTitleAsync,
 } from "./session-cache";
-import { listModels, addModel, removeModel, updateModel } from "./models";
+
 import {
   listProfiles,
   createProfile,
@@ -111,6 +118,7 @@ import {
   listInstalledSkills,
   listInstalledSkillsAsync,
   listBundledSkills,
+  listBundledSkillsAsync,
   getSkillContent,
   getSkillContentAsync,
   installSkillAsync,
@@ -192,7 +200,6 @@ import {
   sshSetPlatformEnabled,
   sshListCachedSessions,
   sshRunDoctor,
-  sshListModels,
   sshRunUpdate,
   sshRunDump,
   sshDiscoverMemoryProviders,
@@ -844,10 +851,10 @@ function setupIPC(): void {
     if (conn.mode === "ssh" && conn.ssh) return sshListInstalledSkills(conn.ssh, profile);
     return listInstalledSkillsAsync(profile);
   });
-  ipcMain.handle("list-bundled-skills", () => {
+  ipcMain.handle("list-bundled-skills", async () => {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh) return sshListBundledSkills(conn.ssh);
-    return listBundledSkills();
+    return listBundledSkillsAsync();
   });
   ipcMain.handle("get-skill-content", async (_event, skillPath: string) => {
     const conn = getConnectionConfig();
@@ -856,10 +863,10 @@ function setupIPC(): void {
   });
   ipcMain.handle(
     "install-skill",
-    async (_event, identifier: string, _profile?: string) => {
+    async (_event, identifier: string, source?: string, _profile?: string) => {
       const conn = getConnectionConfig();
       if (conn.mode === "ssh" && conn.ssh) return sshInstallSkill(conn.ssh, identifier);
-      const ok = await installSkillAsync(identifier, "");
+      const ok = await installSkillAsync(identifier, "", source);
       return { success: ok, error: ok ? undefined : "Install failed" };
     },
   );
@@ -914,23 +921,28 @@ function setupIPC(): void {
     },
   );
 
-  // Models
-  ipcMain.handle("list-models", () => {
-    const conn = getConnectionConfig();
-    if (conn.mode === "ssh" && conn.ssh) return sshListModels(conn.ssh);
-    return listModels();
+  // Models (new unified backend API)
+  ipcMain.handle("list-models", async () => {
+    return getModelCatalog();
   });
-  ipcMain.handle(
-    "add-model",
-    (_event, name: string, provider: string, model: string, baseUrl: string) =>
-      addModel(name, provider, model, baseUrl),
-  );
-  ipcMain.handle("remove-model", (_event, id: string) => removeModel(id));
-  ipcMain.handle(
-    "update-model",
-    (_event, id: string, fields: Record<string, string>) =>
-      updateModel(id, fields),
-  );
+  ipcMain.handle("get-model-detail", async (_event, alias: string) => {
+    return getModelConfig(alias);
+  });
+  ipcMain.handle("add-model", async (_event, body: {
+    alias: string; model: string; token_limit?: number;
+    max_tokens?: number; client_type?: string; reasoning?: Record<string, unknown>;
+  }) => {
+    return createModelConfig(body);
+  });
+  ipcMain.handle("update-model", async (_event, alias: string, body: Record<string, unknown>) => {
+    return updateModelConfig(alias, body);
+  });
+  ipcMain.handle("remove-model", async (_event, alias: string) => {
+    return deleteModelConfig(alias);
+  });
+  ipcMain.handle("set-default-model", async (_event, alias: string) => {
+    return setDefaultModelConfig(alias);
+  });
 
   // Claw3D
   ipcMain.handle("claw3d-status", () => getClaw3dStatus());

@@ -64,10 +64,10 @@ function Skills({ profile }: SkillsProps): React.JSX.Element {
     setDetailContent(content);
   }
 
-  async function handleInstall(name: string): Promise<void> {
+  async function handleInstall(name: string, source?: string): Promise<void> {
     setActionInProgress(name);
     setError("");
-    const result = await window.drsaiAPI.installSkill(name, profile);
+    const result = await window.drsaiAPI.installSkill(name, source, profile);
     setActionInProgress(null);
     if (result.success) {
       await loadInstalled();
@@ -335,7 +335,7 @@ function Skills({ profile }: SkillsProps): React.JSX.Element {
                       className="btn btn-primary btn-sm skills-card-install-btn"
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleInstall(skill.name);
+                        handleInstall(skill.name, skill.source);
                       }}
                       disabled={isActioning}
                     >

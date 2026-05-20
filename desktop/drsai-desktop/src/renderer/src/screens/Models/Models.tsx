@@ -4,56 +4,42 @@ import { PROVIDERS } from "../../constants";
 import { useI18n } from "../../components/useI18n";
 import BrandLogo from "../../components/common/BrandLogo";
 
-interface SavedModel {
-  id: string;
-  name: string;
-  provider: string;
+interface ModelItem {
+  alias: string;
+  display_name: string;
+  client_type: string;
   model: string;
-  baseUrl: string;
-  createdAt: number;
+  token_limit: number;
+  max_tokens: number;
+  reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
 }
 
-function providerLabelKey(value: string): string {
-  return PROVIDERS.options.find((p) => p.value === value)?.label || value;
+interface CatalogResponse {
+  default_alias: string;
+  models: ModelItem[];
 }
 
 function Models(): React.JSX.Element {
   const { t } = useI18n();
-  const [models, setModels] = useState<SavedModel[]>([]);
+  const [catalog, setCatalog] = useState<CatalogResponse | null>(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
-  const [editingModel, setEditingModel] = useState<SavedModel | null>(null);
-  const [formName, setFormName] = useState("");
-  const [formProvider, setFormProvider] = useState("openrouter");
+  const [editingModel, setEditingModel] = useState<ModelItem | null>(null);
+  const [formAlias, setFormAlias] = useState("");
   const [formModel, setFormModel] = useState("");
-  const [formBaseUrl, setFormBaseUrl] = useState("");
-  const [formApiKey, setFormApiKey] = useState("");
-  const [showApiKey, setShowApiKey] = useState(false);
+  const [formClientType, setFormClientType] = useState("openai");
+  const [formTokenLimit, setFormTokenLimit] = useState(128000);
+  const [formMaxTokens, setFormMaxTokens] = useState(0);
+  const [formReasoningSupported, setFormReasoningSupported] = useState(false);
   const [formError, setFormError] = useState("");
 
-  function resolveCustomEnvKey(url: string): string {
-    if (!url) return "CUSTOM_API_KEY";
-    if (/openrouter\.ai/i.test(url)) return "OPENROUTER_API_KEY";
-    if (/anthropic\.com/i.test(url)) return "ANTHROPIC_API_KEY";
-    if (/openai\.com/i.test(url)) return "OPENAI_API_KEY";
-    if (/huggingface\.co/i.test(url)) return "HF_TOKEN";
-    if (/api\.groq\.com/i.test(url)) return "GROQ_API_KEY";
-    if (/api\.deepseek\.com/i.test(url)) return "DEEPSEEK_API_KEY";
-    if (/api\.together\.xyz/i.test(url)) return "TOGETHER_API_KEY";
-    if (/api\.fireworks\.ai/i.test(url)) return "FIREWORKS_API_KEY";
-    if (/api\.cerebras\.ai/i.test(url)) return "CEREBRAS_API_KEY";
-    if (/api\.mistral\.ai/i.test(url)) return "MISTRAL_API_KEY";
-    if (/api\.perplexity\.ai/i.test(url)) return "PERPLEXITY_API_KEY";
-    return "CUSTOM_API_KEY";
-  }
-
   const loadModels = useCallback(async () => {
-    const list = await window.drsaiAPI.listModels();
-    setModels(list);
+    const data = await window.drsaiAPI.listModels();
+    setCatalog(data);
     setLoading(false);
   }, []);
 
@@ -63,24 +49,24 @@ function Models(): React.JSX.Element {
 
   function openAddModal(): void {
     setEditingModel(null);
-    setFormName("");
-    setFormProvider("openrouter");
+    setFormAlias("");
     setFormModel("");
-    setFormBaseUrl("");
-    setFormApiKey("");
-    setShowApiKey(false);
+    setFormClientType("openai");
+    setFormTokenLimit(128000);
+    setFormMaxTokens(0);
+    setFormReasoningSupported(false);
     setFormError("");
     setShowModal(true);
   }
 
-  function openEditModal(m: SavedModel): void {
+  function openEditModal(m: ModelItem): void {
     setEditingModel(m);
-    setFormName(m.name);
-    setFormProvider(m.provider);
+    setFormAlias(m.alias);
     setFormModel(m.model);
-    setFormBaseUrl(m.baseUrl);
-    setFormApiKey("");
-    setShowApiKey(false);
+    setFormClientType(m.client_type);
+    setFormTokenLimit(m.token_limit);
+    setFormMaxTokens(m.max_tokens);
+    setFormReasoningSupported(m.reasoning?.supported || false);
     setFormError("");
     setShowModal(true);
   }
@@ -92,52 +78,60 @@ function Models(): React.JSX.Element {
   }
 
   async function handleSave(): Promise<void> {
-    const name = formName.trim();
+    const alias = formAlias.trim();
     const model = formModel.trim();
-    if (!name || !model) {
+    if (!alias || !model) {
       setFormError(t("models.nameRequired"));
       return;
     }
     setFormError("");
 
     if (editingModel) {
-      await window.drsaiAPI.updateModel(editingModel.id, {
-        name,
-        provider: formProvider,
+      await window.drsaiAPI.updateModel(editingModel.alias, {
         model,
-        baseUrl: formBaseUrl.trim(),
+        client_type: formClientType,
+        token_limit: formTokenLimit,
+        max_tokens: formMaxTokens,
+        reasoning: {
+          supported: formReasoningSupported,
+          effort_levels: [],
+          param_type: formClientType === "anthropic" ? "adaptive" : "reasoning_effort",
+        },
+        new_alias: alias !== editingModel.alias ? alias : undefined,
       });
     } else {
-      await window.drsaiAPI.addModel(
-        name,
-        formProvider,
+      await window.drsaiAPI.addModel({
+        alias,
         model,
-        formBaseUrl.trim(),
-      );
-    }
-
-    if (formApiKey.trim() && formProvider === "custom") {
-      const envKey = resolveCustomEnvKey(formBaseUrl.trim());
-      await window.drsaiAPI.setEnv(envKey, formApiKey.trim());
+        client_type: formClientType,
+        token_limit: formTokenLimit,
+        max_tokens: formMaxTokens,
+        reasoning: formReasoningSupported
+          ? { supported: true, effort_levels: [], param_type: formClientType === "anthropic" ? "adaptive" : "reasoning_effort" }
+          : undefined,
+      });
     }
 
     closeModal();
     await loadModels();
   }
 
-  async function handleDelete(id: string): Promise<void> {
-    await window.drsaiAPI.removeModel(id);
+  async function handleDelete(alias: string): Promise<void> {
+    await window.drsaiAPI.removeModel(alias);
     setConfirmDelete(null);
     await loadModels();
   }
+
+  const models = catalog?.models || [];
+  const defaultAlias = catalog?.default_alias;
 
   const filtered = models.filter((m) => {
     if (!search) return true;
     const q = search.toLowerCase();
     return (
-      m.name.toLowerCase().includes(q) ||
-      m.model.toLowerCase().includes(q) ||
-      m.provider.toLowerCase().includes(q)
+      m.alias.toLowerCase().includes(q) ||
+      m.display_name.toLowerCase().includes(q) ||
+      m.model.toLowerCase().includes(q)
     );
   });
 
@@ -167,197 +161,147 @@ function Models(): React.JSX.Element {
         </button>
       </div>
 
-      {models.length > 0 && (
-        <div className="models-search">
-          <Search size={14} />
-          <input
-            className="models-search-input"
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t("models.searchPlaceholder")}
-          />
-        </div>
-      )}
+      <div className="models-search">
+        <Search size={14} />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={t("models.searchPlaceholder")}
+        />
+        {search && (
+          <button className="models-search-clear" onClick={() => setSearch("")}>
+            <X size={14} />
+          </button>
+        )}
+      </div>
 
       {filtered.length === 0 ? (
         <div className="models-empty">
-          {models.length === 0 ? (
-            <>
-              <p className="models-empty-text">{t("models.empty")}</p>
-              <p className="models-empty-hint">{t("models.emptyHint")}</p>
-            </>
-          ) : (
-            <p className="models-empty-text">{t("models.noMatch")}</p>
-          )}
+          {search ? t("models.noResults") : t("models.noModels")}
         </div>
       ) : (
-        <div className="models-grid">
+        <div className="models-list">
           {filtered.map((m) => (
-            <div
-              key={m.id}
-              className="models-card"
-              onClick={() => openEditModal(m)}
-            >
-              <div className="models-card-header">
-                <div className="models-card-title">
-                  <BrandLogo provider={m.provider} modelId={m.model} size={20} />
-                  <div className="models-card-name">{m.name}</div>
-                </div>
-                <span className="models-card-provider">
-                  {t(providerLabelKey(m.provider))}
-                </span>
+            <div key={m.alias} className="models-card" onClick={() => openEditModal(m)}>
+              <div className="models-card-main">
+                <span className="models-card-name">{m.display_name}</span>
+                {m.alias === defaultAlias && (
+                  <span className="models-card-badge">{t("models.default")}</span>
+                )}
+                <span className="models-card-alias">{m.alias}</span>
               </div>
-              <div className="models-card-model">{m.model}</div>
-              {m.baseUrl && <div className="models-card-url">{m.baseUrl}</div>}
-              <div className="models-card-footer">
-                {confirmDelete === m.id ? (
-                  <div
-                    className="models-card-confirm"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <span>{t("models.deleteConfirm")}</span>
-                    <button
-                      className="btn btn-sm"
-                      style={{ color: "var(--error)" }}
-                      onClick={() => handleDelete(m.id)}
-                    >
-                      {t("models.yes")}
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      onClick={() => setConfirmDelete(null)}
-                    >
-                      {t("models.no")}
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    className="btn-ghost models-card-delete"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setConfirmDelete(m.id);
-                    }}
-                    title={t("models.deleteModelTitle")}
-                  >
-                    <Trash size={14} />
-                  </button>
+              <div className="models-card-meta">
+                <span className="models-card-client">{m.client_type}</span>
+                <span className="models-card-tokens">
+                  {m.token_limit >= 1000000 ? `${(m.token_limit / 1000000).toFixed(1)}M` : `${(m.token_limit / 1000).toFixed(0)}K`} ctx
+                </span>
+                {m.reasoning?.supported && (
+                  <span className="models-card-reasoning">{t("models.reasoning")}</span>
                 )}
               </div>
+              <div className="models-card-model">{m.model}</div>
+              <button
+                className="models-card-delete"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setConfirmDelete(m.alias);
+                }}
+              >
+                <Trash size={14} />
+              </button>
             </div>
           ))}
         </div>
       )}
 
-      {showModal && (
-        <div className="models-modal-overlay" onClick={closeModal}>
-          <div className="models-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="models-modal-header">
-              <h2 className="models-modal-title">
-                {editingModel ? t("models.editModel") : t("models.addModel")}
-              </h2>
-              <button className="btn-ghost" onClick={closeModal}>
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="models-modal-body">
-              <div className="models-modal-field">
-                <label className="models-modal-label">
-                  {t("models.displayName")}
-                </label>
-                <input
-                  className="input"
-                  type="text"
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
-                  placeholder={t("models.namePlaceholder")}
-                  autoFocus
-                />
-              </div>
-
-              <div className="models-modal-field">
-                <label className="models-modal-label">
-                  {t("common.provider")}
-                </label>
-                <select
-                  className="input"
-                  value={formProvider}
-                  onChange={(e) => setFormProvider(e.target.value)}
-                >
-                  {PROVIDERS.options.map((p) => (
-                    <option key={p.value} value={p.value}>
-                      {t(p.label)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="models-modal-field">
-                <label className="models-modal-label">
-                  {t("models.modelId")}
-                </label>
-                <input
-                  className="input"
-                  type="text"
-                  value={formModel}
-                  onChange={(e) => setFormModel(e.target.value)}
-                  placeholder={t("models.modelIdPlaceholder")}
-                />
-              </div>
-
-              <div className="models-modal-field">
-                <label className="models-modal-label">
-                  {t("common.baseUrl")} ({t("common.optional")})
-                </label>
-                <input
-                  className="input"
-                  type="text"
-                  value={formBaseUrl}
-                  onChange={(e) => setFormBaseUrl(e.target.value)}
-                  placeholder={t("models.baseUrlPlaceholder")}
-                />
-                <span className="models-modal-hint">
-                  {t("models.customProviderHint")}
-                </span>
-              </div>
-
-              {formProvider === "custom" && (
-                <div className="models-modal-field">
-                  <label className="models-modal-label">
-                    {t("models.apiKeyLabel")} ({t("common.optional")})
-                  </label>
-                  <div className="setup-input-group">
-                    <input
-                      className="input"
-                      type={showApiKey ? "text" : "password"}
-                      value={formApiKey}
-                      onChange={(e) => setFormApiKey(e.target.value)}
-                      placeholder="sk-..."
-                    />
-                    <button
-                      className="setup-toggle-visibility"
-                      onClick={() => setShowApiKey(!showApiKey)}
-                      type="button"
-                    >
-                      {showApiKey ? t("common.hide") : t("common.show")}
-                    </button>
-                  </div>
-                  <span className="models-modal-hint">
-                    {t("models.apiKeyHint")}
-                  </span>
-                </div>
-              )}
-
-              {formError && <div className="models-error">{formError}</div>}
-            </div>
-
-            <div className="models-modal-footer">
-              <button className="btn btn-secondary btn-sm" onClick={closeModal}>
+      {confirmDelete && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <p>{t("models.confirmDelete")}</p>
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={() => setConfirmDelete(null)}>
                 {t("common.cancel")}
               </button>
-              <button className="btn btn-primary btn-sm" onClick={handleSave}>
-                {editingModel ? t("models.update") : t("models.addModel")}
+              <button className="btn btn-danger" onClick={() => handleDelete(confirmDelete)}>
+                {t("common.delete")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showModal && (
+        <div className="modal-overlay">
+          <div className="modal modal-lg">
+            <h2>{editingModel ? t("models.editModel") : t("models.addModel")}</h2>
+            {formError && <p className="form-error">{formError}</p>}
+
+            <div className="form-group">
+              <label>{t("models.alias")}</label>
+              <input
+                type="text"
+                value={formAlias}
+                onChange={(e) => setFormAlias(e.target.value)}
+                placeholder="claude-sonnet-4-6"
+              />
+            </div>
+
+            <div className="form-group">
+              <label>{t("models.modelId")}</label>
+              <input
+                type="text"
+                value={formModel}
+                onChange={(e) => setFormModel(e.target.value)}
+                placeholder="anthropic/claude-sonnet-4-6"
+              />
+            </div>
+
+            <div className="form-group">
+              <label>{t("models.clientType")}</label>
+              <select value={formClientType} onChange={(e) => setFormClientType(e.target.value)}>
+                <option value="anthropic">Anthropic</option>
+                <option value="openai">OpenAI</option>
+                <option value="auto">Auto</option>
+              </select>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label>{t("models.tokenLimit")}</label>
+                <input
+                  type="number"
+                  value={formTokenLimit}
+                  onChange={(e) => setFormTokenLimit(Number(e.target.value))}
+                />
+              </div>
+              <div className="form-group">
+                <label>{t("models.maxTokens")}</label>
+                <input
+                  type="number"
+                  value={formMaxTokens}
+                  onChange={(e) => setFormMaxTokens(Number(e.target.value))}
+                />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={formReasoningSupported}
+                  onChange={(e) => setFormReasoningSupported(e.target.checked)}
+                />
+                {" "}{t("models.reasoningSupported")}
+              </label>
+            </div>
+
+            <div className="modal-actions">
+              <button className="btn btn-secondary" onClick={closeModal}>
+                {t("common.cancel")}
+              </button>
+              <button className="btn btn-primary" onClick={handleSave}>
+                {t("common.save")}
               </button>
             </div>
           </div>
