@@ -116,11 +116,15 @@ _DATE_SCAFFOLD_RE = re.compile(
 #         one after '（小写）' bounded by '$' (end of paragraph).
 # The gap may carry underline formatting (caught earlier by
 # _find_underlined_whitespace_spans); this regex is the no-underline fallback.
+# Extension: a `/` or `\` between two whitespace runs is a draft mark
+# placed by the template author ("建筑面积：    /    平方米；") — the gap
+# on either side of the slash is fillable, and the value should REPLACE
+# the slash. Detected here so the gap+slash+gap region becomes one slot.
 _INLINE_BLANK_RE = re.compile(
     r"(?P<lm>[:：¥$￥€£]|（大写）|\(大写\)|（小写）|\(小写\))"
-    r"(?P<gap>[ \t　]{3,})"
-    r"(?=[;；,，.。、元年月日天周个种号％%]"
-    r"|工作日|（小写）|\(小写\)|（大写）|\(大写\)|$)"
+    r"(?P<gap>[ \t　]{2,}[/\\][ \t　]{2,}|[ \t　]{3,})"
+    r"(?=[;；,，.。、元年月日天周个种号％%米]"
+    r"|工作日|平方米|小时|分钟|（小写）|\(小写\)|（大写）|\(大写\)|$)"
 )
 # Match an amount-label marker on its own (for clean-label slot tagging).
 _DAXIE_MARKER_RE = re.compile(r"^[（(]大[写寫][)）]$")
@@ -599,6 +603,7 @@ class DocxTemplateSkill:
         mode: str = "auto",
         slot_values: Optional[Dict[str, Any]] = None,
         removal_ids: Optional[List[str]] = None,
+        force_fresh: bool = False,
     ) -> Dict[str, Any]:
         path = Path(template_path)
         if not path.exists():
@@ -610,6 +615,50 @@ class DocxTemplateSkill:
         context = context or {}
         slot_values = slot_values or {}
         removal_ids = list(removal_ids) if removal_ids else []
+
+        # Chunked-fill continuation: if the same output_path already exists
+        # from a previous fill_template call, switch the source to that
+        # partial-fill so prior batches are preserved. Without this, an
+        # agent that splits a large fill across multiple tool calls — each
+        # using the original template_path — would wipe out earlier
+        # batches on every call.
+        #
+        # IMPORTANT: when the source is swapped, slot ids shift because
+        # the per-scan counter only sees REMAINING blank slots. So we ALSO
+        # accept the original (canonical) id as the lookup key by matching
+        # on the descriptive label tail. The caller can pass either the
+        # canonical id from the FIRST inspect_template call or a fresh id
+        # from a re-inspection of the partial doc — both resolve correctly.
+        #
+        # `force_fresh=True` is the agent's escape hatch: skip the auto-
+        # detect entirely and just overwrite output_path with a fresh fill
+        # from the original template. Past sessions had the agent loop on
+        # this auto-detect — fill went wrong, agent retried with the same
+        # output_path, the tool quietly swapped to "continuation", slot ids
+        # shifted, and the loop never converged.
+        chunked_continuation = False
+        canonical_id_map: Optional[Dict[str, str]] = None
+        out_path_check = Path(output_path)
+        if (
+            not force_fresh
+            and out_path_check.exists()
+            and out_path_check.resolve() != path.resolve()
+            and slot_values
+            and not context
+            and not removal_ids
+        ):
+            try:
+                with zipfile.ZipFile(str(out_path_check)) as _z:
+                    is_docx = "word/document.xml" in _z.namelist()
+            except (zipfile.BadZipFile, OSError):
+                is_docx = False
+            if is_docx:
+                canonical_id_map = _build_canonical_id_map(
+                    str(path), str(out_path_check)
+                )
+                if canonical_id_map is not None:
+                    path = out_path_check
+                    chunked_continuation = True
         if not isinstance(context, dict):
             return {
                 "success": False,
@@ -638,6 +687,36 @@ class DocxTemplateSkill:
             return inspect
         detected = inspect["mode_detected"]
         warnings: List[str] = list(inspect.get("warnings", []))
+        if chunked_continuation:
+            warnings.append(
+                f"⚠ CONTINUATION MODE: output_path {out_path_check} already "
+                f"exists, so this fill is treated as a continuation of the "
+                f"prior partial fill (source swapped to the partial doc). "
+                f"If you did NOT intend this — i.e. you wanted to start over "
+                f"from the original template — re-call fill_template with "
+                f"`force_fresh=True` (do NOT use run_bash to delete the "
+                f"file) or pick a different output_path."
+            )
+            if canonical_id_map and slot_values:
+                # Translate canonical ids (from the FIRST inspect of the
+                # original template) to the partial doc's current ids. The
+                # counter shifts when prior fills consume blank markers, so
+                # an id like 'slot_004_签订时间' from the canonical scan may
+                # be e.g. 'slot_002_签订时间' after three earlier fills.
+                translated: Dict[str, Any] = {}
+                translations: List[str] = []
+                for k, v in slot_values.items():
+                    new_k = canonical_id_map.get(k, k)
+                    translated[new_k] = v
+                    if new_k != k:
+                        translations.append(f"{k} → {new_k}")
+                slot_values = translated
+                if translations:
+                    warnings.append(
+                        "Translated canonical slot ids to current ids in "
+                        "partial doc: " + ", ".join(translations[:10])
+                        + ("..." if len(translations) > 10 else "")
+                    )
         # Selected removals: keep the original inspect ids so we can replay them
         # on a fresh scan of the output document after fill passes complete.
         selected_removal_keys: List[Tuple[str, str, str]] = []
@@ -727,6 +806,13 @@ class DocxTemplateSkill:
             jinja_result["warnings"] = warnings
             if slot_report:
                 jinja_result["slot_fill"] = slot_report
+            jinja_result["chunked_continuation"] = chunked_continuation
+            if chunked_continuation:
+                jinja_result["continuation_notice"] = (
+                    "Continuation mode triggered: output_path already existed "
+                    "and was used as the source. If unintended, retry with "
+                    "force_fresh=True."
+                )
             return jinja_result
 
         # bracket / slot-only path: a single python-docx load handles both
@@ -741,6 +827,13 @@ class DocxTemplateSkill:
             (bracket_result.get("slot_fill") or {}).get("reconciliation_notes") or []
         )
         bracket_result["warnings"] = warnings
+        bracket_result["chunked_continuation"] = chunked_continuation
+        if chunked_continuation:
+            bracket_result["continuation_notice"] = (
+                "Continuation mode triggered: output_path already existed "
+                "and was used as the source. If unintended, retry with "
+                "force_fresh=True."
+            )
         return bracket_result
 
     # ------------------------------------------------------------------ #
@@ -850,6 +943,20 @@ class DocxTemplateSkill:
         if slot_values:
             slots = _scan_slots(doc)
             slot_outcome = _apply_slot_values(slots, slot_values)
+            if slot_outcome.get("rejected"):
+                return {
+                    "success": False,
+                    "error": "legacy_slot_ids",
+                    "message": (
+                        "Refused to fill: caller used bare legacy slot ids "
+                        "(e.g. 'slot_4') instead of the descriptive ids "
+                        "returned by inspect_template. See "
+                        "slot_fill.legacy_canonical_map for the required keys."
+                    ),
+                    "slot_fill": slot_outcome,
+                }
+
+        _strip_stranded_draft_marks(doc)
 
         try:
             doc.save(str(output_path))
@@ -903,6 +1010,16 @@ class DocxTemplateSkill:
             return {"success": False, "error": str(exc), "message": f"Could not open {docx_path}: {exc}"}
         slots = _scan_slots(doc)
         outcome = _apply_slot_values(slots, slot_values)
+        if outcome.get("rejected"):
+            outcome["success"] = False
+            outcome["error"] = "legacy_slot_ids"
+            outcome["message"] = (
+                "Refused to fill: caller used bare legacy slot ids "
+                "instead of the descriptive ids returned by inspect_template. "
+                "See legacy_canonical_map for the required keys."
+            )
+            return outcome
+        _strip_stranded_draft_marks(doc)
         try:
             doc.save(str(docx_path))
         except Exception as exc:
@@ -1257,6 +1374,104 @@ def _collect_option_choice_paragraph_ids(slots: List[Dict[str, Any]]) -> Set[int
     return consumed
 
 
+# Leading list/section markers that should NOT appear in slot ids — they're
+# repetitive ("1．", "（1）", "2．", "3．"...) and would make ids ambiguous.
+_SLOT_ID_LEAD_MARKER_RE = re.compile(
+    r"^[\s 　]*"
+    r"(?:第[一二三四五六七八九十百零〇\d]+[条章节款项]|"
+    r"[（(]\s*\d+\s*[）)]|"
+    r"\d+[\.\．、:：])"
+    r"[\s 　]*"
+)
+
+# Characters that should be stripped from a label before embedding it in a
+# slot id — punctuation, brackets, whitespace, colons. CJK letters, ASCII
+# letters, ASCII digits, and underscores are kept.
+_SLOT_ID_DROP_RE = re.compile(
+    r"[^A-Za-z0-9_一-鿿㐀-䶿]+"
+)
+
+
+def _build_canonical_id_map(
+    original_path: str, partial_path: str
+) -> Optional[Dict[str, str]]:
+    """Map canonical slot ids (as returned by inspect_template on the ORIGINAL
+    template) to their current ids in a partial-fill output document.
+
+    Returns ``None`` if either file fails to scan. Returns a possibly-empty
+    dict otherwise; entries for partial-doc slots that have no clear match
+    are simply absent (caller falls back to the partial-doc id verbatim).
+
+    Matching strategy: both docs are scanned in document order, then partial
+    slots are paired with original slots by walking both lists and skipping
+    over original slots that no longer appear in the partial (those are the
+    already-filled ones). Pairing keys on (kind, label) — stable across
+    fills because labels come from the surrounding prose, not the blank
+    region itself.
+    """
+    try:
+        from docx import Document
+    except ImportError:
+        return None
+    try:
+        orig_doc = Document(original_path)
+        part_doc = Document(partial_path)
+    except Exception:
+        return None
+    try:
+        orig_slots = _scan_slots(orig_doc)
+        part_slots = _scan_slots(part_doc)
+    except Exception:
+        return None
+    mapping: Dict[str, str] = {}
+    i = 0  # walker into orig_slots
+    for ps in part_slots:
+        pk = (ps["kind"], ps.get("label") or "")
+        # Walk forward in originals until we find a (kind, label) match.
+        # Original slots passed over are presumed already filled.
+        j = i
+        while j < len(orig_slots):
+            os_ = orig_slots[j]
+            ok = (os_["kind"], os_.get("label") or "")
+            if ok == pk:
+                break
+            j += 1
+        if j < len(orig_slots):
+            mapping[orig_slots[j]["id"]] = ps["id"]
+            i = j + 1
+    # Also surface the inverse mapping for identity slots (original id == new
+    # id) — these are slots whose counter didn't shift. Caller looks up the
+    # canonical id directly; identity entries make the lookup uniform.
+    part_ids = {ps["id"] for ps in part_slots}
+    for os_ in orig_slots:
+        if os_["id"] in part_ids and os_["id"] not in mapping:
+            mapping[os_["id"]] = os_["id"]
+    return mapping
+
+
+def _make_slot_id(counter: int, label: Optional[str]) -> str:
+    """Produce a stable, human-readable slot id like ``slot_023_签订时间``.
+
+    The numeric prefix (zero-padded to 3 digits for sort stability) is the
+    canonical disambiguator — labels in long Chinese form templates repeat
+    heavily (1．/2．/3．). Including a sanitized label tail in the id makes
+    it far easier for an LLM caller to map values to the correct slot, and
+    the numeric prefix guarantees uniqueness even when labels collide.
+    """
+    short = ""
+    if label:
+        stripped = _SLOT_ID_LEAD_MARKER_RE.sub("", label).strip()
+        cleaned = _SLOT_ID_DROP_RE.sub("", stripped)
+        # Cap to ~10 CJK chars / 20 ASCII chars — enough to disambiguate
+        # without bloating the id.
+        if len(cleaned) > 20:
+            cleaned = cleaned[:20]
+        short = cleaned
+    if short:
+        return f"slot_{counter:03d}_{short}"
+    return f"slot_{counter:03d}"
+
+
 def _scan_slots(doc) -> List[Dict[str, Any]]:
     """Walk a python-docx Document and produce slot candidates with live refs.
 
@@ -1269,7 +1484,7 @@ def _scan_slots(doc) -> List[Dict[str, Any]]:
     counter = [0]
 
     def add(kind: str, label: Optional[str], context: str, meta: Dict[str, Any]) -> None:
-        slot_id = f"slot_{counter[0]}"
+        slot_id = _make_slot_id(counter[0], label)
         counter[0] += 1
         slots.append({
             "id": slot_id,
@@ -1541,7 +1756,8 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
     #      underscore characters in the document, but it looks like one to a
     #      human. Treat as an underscores-kind slot; centering pads with spaces
     #      (the inherited underline carries through so the line stays visible).
-    uw_spans = _find_underlined_whitespace_spans(paragraph)
+    raw_uw_spans = _find_underlined_whitespace_spans(paragraph)
+    uw_spans = _expand_and_merge_uw_spans(text, raw_uw_spans)
     uw_emitted = False
     for start, end, runs, span_text in uw_spans:
         if _overlaps_covered(start, end):
@@ -1624,35 +1840,63 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
         # (e.g. a page divider) with no surrounding label or signature context.
         if _is_decorative_underscore_paragraph(text, underscore_matches):
             return
-        # Composite check: when several underscore runs are separated only by
-        # whitespace / decorators (the digit-cell pattern, e.g. "¥ ____ ____
-        # ____" used for one logical amount field), merge them into a single
-        # slot so the agent fills it ONCE — preventing the "85008500…" bug
-        # where the same value lands in every position.
-        if len(underscore_matches) >= 2 and _gaps_are_decorative(text, underscore_matches):
-            positions = [(m.start(), m.end()) for m in underscore_matches]
+        # Group adjacent underscore runs that are separated only by decorator
+        # characters (whitespace, '/', '\\', '.', '-', ...). A group of >1
+        # entries is a "fill region" — '建筑面积：____/____平方米' or
+        # '¥ ____ ____ ____'. Gaps containing Chinese / letters / digits
+        # always break the group so labelled siblings stay separate.
+        underscore_groups = _group_decorative_underscore_matches(
+            text, underscore_matches
+        )
+        for group in underscore_groups:
+            if len(group) == 1:
+                m = group[0]
+                # Absorb a trailing draft-mark + whitespace tail
+                # ('____/         平方米' or '号/' at end of paragraph) into the
+                # slot so the fill replaces them too.
+                end_extended = _extend_span_right_past_draft_marks(text, m.end())
+                label = _guess_label_before(text, m.start())
+                context = _snippet(text, m.start(), end_extended)
+                is_sig = _looks_like_signature(label, text, m.start(), end_extended)
+                add("underscores", label, context, {
+                    "paragraph": paragraph,
+                    "start": m.start(),
+                    "end": end_extended,
+                    "is_signature": is_sig,
+                })
+                continue
+            positions = [(m.start(), m.end()) for m in group]
             span_start = positions[0][0]
             span_end = positions[-1][1]
             label = _guess_label_before(text, span_start)
             ctx = _snippet(text, span_start, span_end, radius=60)
             is_sig = _looks_like_signature(label, text, span_start, span_end)
-            add("underscores", label, ctx, {
-                "paragraph": paragraph,
-                "start": span_start,
-                "end": span_end,
-                "positions": positions,   # multi-position composite
-                "composite": True,
-                "is_signature": is_sig,
-            })
-        else:
-            for m in underscore_matches:
-                label = _guess_label_before(text, m.start())
-                context = _snippet(text, m.start(), m.end())
-                is_sig = _looks_like_signature(label, text, m.start(), m.end())
-                add("underscores", label, context, {
+            # Inter-gap contains non-whitespace decorator chars ('/', '\\',
+            # '.', '-')? Then those are draft marks inside one fill region:
+            # emit ONE span covering everything so the fill absorbs them.
+            # Pure-whitespace gaps stay composite (digit-cell pattern).
+            has_decorator_gap = any(
+                text[positions[i][1]:positions[i + 1][0]].strip()
+                for i in range(len(positions) - 1)
+            )
+            if has_decorator_gap:
+                span_end_extended = _extend_span_right_past_draft_marks(
+                    text, span_end
+                )
+                add("underscores", label, ctx, {
                     "paragraph": paragraph,
-                    "start": m.start(),
-                    "end": m.end(),
+                    "start": span_start,
+                    "end": span_end_extended,
+                    "is_signature": is_sig,
+                    "pad_char": " ",
+                })
+            else:
+                add("underscores", label, ctx, {
+                    "paragraph": paragraph,
+                    "start": span_start,
+                    "end": span_end,
+                    "positions": positions,   # multi-position composite
+                    "composite": True,
                     "is_signature": is_sig,
                 })
         return  # don't double-count this paragraph as label_blank
@@ -1946,6 +2190,14 @@ def _enrich_meaningless_slot_labels(slots: List[Dict[str, Any]], doc) -> None:
 def _guess_label_before(text: str, pos: int) -> Optional[str]:
     """Look at text[:pos] for a 'Label:' segment and return the label."""
     prefix = text[:pos]
+    # Crop at the nearest preceding sentence terminator so a label like
+    # '层数：' isn't dragged through the previous field's '____/____' or
+    # the prior clause. Without this, slot ids for paragraphs with
+    # multiple fields look like 'slot_001_________平方米层数'.
+    for sep in ("；", ";", "。", "?", "？", "!", "！", "\n"):
+        idx = prefix.rfind(sep)
+        if idx != -1:
+            prefix = prefix[idx + 1:]
     m = _LABEL_BEFORE_RE.search(prefix)
     if m:
         return m.group(1).strip()
@@ -2099,8 +2351,92 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
     text-position order so character offsets remain valid across multiple
     fills in the same paragraph.
     """
-    slot_values, reconciliation_notes = _reconcile_amount_pairs(slots, slot_values)
     by_id = {s["id"]: s for s in slots}
+    # Forgiving lookup by leading numeric token. Lets legacy callers (and
+    # LLMs that drop the descriptive tail) hit the right slot when they
+    # pass "slot_4" / "slot_004" instead of the canonical "slot_004_签订时间".
+    # Built only when there's a unique slot per number — collisions fall
+    # through to unknown_slot_ids so we never silently mis-route a value.
+    by_num: Dict[str, str] = {}
+    num_re = re.compile(r"^slot_0*(\d+)")
+    seen_nums: Set[str] = set()
+    dup_nums: Set[str] = set()
+    for s in slots:
+        m = num_re.match(s["id"])
+        if m:
+            n = m.group(1)
+            if n in seen_nums:
+                dup_nums.add(n)
+            seen_nums.add(n)
+            by_num[n] = s["id"]
+    for n in dup_nums:
+        by_num.pop(n, None)
+    # Refuse bare legacy keys (`slot_4`, `slot_004`) when the canonical id
+    # carries a descriptive tail (`slot_004_签订时间`). Past incidents had the
+    # LLM emit ~120 bare `slot_N` keys for a 79-slot template and rely on
+    # numeric collision — values landed on semantically wrong slots. The bare
+    # form is also forbidden by the prompt; rejecting at the boundary keeps a
+    # buggy caller from silently producing a corrupted document.
+    legacy_pattern = re.compile(r"^slot_\d+$")
+    rejected_legacy: List[Dict[str, str]] = []
+    for k in slot_values:
+        if k in by_id:
+            continue
+        if not legacy_pattern.match(k):
+            continue
+        m = num_re.match(k)
+        if not m:
+            continue
+        canon = by_num.get(m.group(1))
+        if canon and canon != k and legacy_pattern.match(canon) is None:
+            rejected_legacy.append({"given": k, "canonical": canon})
+    if rejected_legacy:
+        return {
+            "filled_slot_ids": [],
+            "unknown_slot_ids": [],
+            "skipped_slot_ids": sorted(slot_values.keys()),
+            "skipped_signature_slot_ids": [],
+            "skipped_blank_slot_ids": [],
+            "rejected_legacy_slot_ids": sorted(
+                {item["given"] for item in rejected_legacy}
+            ),
+            "legacy_canonical_map": {
+                item["given"]: item["canonical"] for item in rejected_legacy
+            },
+            "rejected": True,
+            "reconciliation_notes": [
+                "Refused to fill: caller used bare legacy slot ids "
+                f"({sorted({item['given'] for item in rejected_legacy})}) "
+                "instead of the descriptive ids returned by inspect_template. "
+                "Re-call fill_template with the canonical ids (e.g. "
+                + ", ".join(
+                    f"{item['given']!r} → {item['canonical']!r}"
+                    for item in rejected_legacy[:5]
+                )
+                + ")."
+            ],
+        }
+    # Canonicalize legacy keys up front so amount reconciliation and the
+    # main fill loop both see canonical ids.
+    canonical_values: Dict[str, Any] = {}
+    canonicalization_notes: List[str] = []
+    for k, v in slot_values.items():
+        if k in by_id:
+            canonical_values[k] = v
+            continue
+        m = num_re.match(k)
+        if m and m.group(1) in by_num:
+            canon = by_num[m.group(1)]
+            canonical_values[canon] = v
+            if canon != k:
+                canonicalization_notes.append(
+                    f"Slot id {k!r} resolved to canonical id {canon!r}."
+                )
+        else:
+            canonical_values[k] = v  # keep so it shows up in unknown_slot_ids
+    slot_values = canonical_values
+    slot_values, reconciliation_notes = _reconcile_amount_pairs(slots, slot_values)
+    reconciliation_notes = canonicalization_notes + reconciliation_notes
     filled_ids: List[str] = []
     unknown_ids: List[str] = []
     skipped_signature_ids: List[str] = []
@@ -2877,6 +3213,27 @@ def _gaps_are_decorative(text: str, matches) -> bool:
     return True
 
 
+def _group_decorative_underscore_matches(text, matches):
+    """Group consecutive underscore matches that are separated only by
+    decorator-only gaps (whitespace, '/', '\\', '.', '-', ...).
+
+    Returns a list of groups; each group is a non-empty list of matches.
+    Two consecutive matches join a group iff the text between them passes
+    `_GAP_DECORATIVE_RE` and is ≤ 12 chars. A group of one match is just
+    that match standing alone (no neighbors qualified to merge with it).
+    """
+    if not matches:
+        return []
+    groups = [[matches[0]]]
+    for i in range(1, len(matches)):
+        gap = text[matches[i - 1].end():matches[i].start()]
+        if _GAP_DECORATIVE_RE.match(gap) and len(gap) <= 12:
+            groups[-1].append(matches[i])
+        else:
+            groups.append([matches[i]])
+    return groups
+
+
 # A paragraph made up of only underscores plus pure decoration is a divider,
 # not a fillable field. Removing underscore + decoration chars from such a
 # paragraph leaves nothing behind.
@@ -3115,6 +3472,188 @@ def _find_underlined_whitespace_spans(
     if cur_start is not None:
         spans.append((cur_start, offset, cur_runs, "".join(cur_text)))
     return [s for s in spans if len(s[3]) >= 3]
+
+
+# Boundary tokens for extending an underlined-whitespace fill region.
+# A slot's effective replace span extends across draft marks ('/','／'),
+# whitespace, and inline sample text until one of these is reached. Longer
+# alternatives (平方米, （大写）, etc.) appear before bare single-char units so
+# Python's `re.match` consumes the longest valid token first. The same token
+# set is used walking RIGHT (forward extension stops AT the match) and LEFT
+# (backward extension stops AFTER the match).
+_UW_BOUNDARY_TOKENS = (
+    "平方米", "工作日", "小时", "分钟",
+    "（大写）", "(大写)", "（小写）", "(小写)",
+)
+_UW_BOUNDARY_SINGLE_CHARS = ":：;；。?？!！米元日天周月年个号％%¥$￥€£"
+_UW_RIGHT_STOP_RE = re.compile(
+    r"[" + re.escape(_UW_BOUNDARY_SINGLE_CHARS) + r"]"
+    r"|" + r"|".join(re.escape(t) for t in _UW_BOUNDARY_TOKENS)
+)
+
+
+def _extend_span_right_past_draft_marks(
+    text: str, end: int, max_extension: int = 80
+) -> int:
+    """Walk RIGHT from `end` past any combination of whitespace and draft
+    marks (`/`, `\\`, `／`, `＼`) until either a hard boundary is hit
+    (sentence punctuation, unit token, amount marker — see
+    `_UW_RIGHT_STOP_RE`) or no draft mark / whitespace remains.
+
+    Returns the new end position. The walk only consumes whitespace and
+    draft marks — any other character (including Chinese / letters /
+    digits) ends the extension immediately, so we never absorb the next
+    field's label or value.
+
+    Used by the underscore-character scan path so trailing `/         平
+    方米` regions following a `____` slot get folded into the slot — the
+    underlined-whitespace path has its own (more general) extension via
+    `_expand_and_merge_uw_spans`.
+    """
+    n = len(text)
+    bound = min(n, end + max_extension)
+    i = end
+    saw_anything = False
+    while i < bound:
+        # Hit a hard right-stop boundary token? Stop here without consuming it.
+        if _UW_RIGHT_STOP_RE.match(text, i):
+            return i if saw_anything else end
+        c = text[i]
+        if c in " \t　/\\／＼":
+            i += 1
+            saw_anything = True
+            continue
+        # Anything else (Chinese, letters, digits, punctuation we didn't list)
+        # ends the extension.
+        return i if saw_anything else end
+    return i if saw_anything else end
+
+
+# Stranded draft marks: a `/` or `\\` (full or half width) right after a value
+# char, followed by ≥3 whitespace chars, ending at a known boundary token or
+# end-of-paragraph. Catches templates whose underscore blanks were already
+# replaced by values but left the draft slash + gap behind, e.g.
+#   '建筑面积：12000/        平方米；层数：6/              '
+#   '批准文号：京发改〔2025〕第0128号/             '
+# The two constraints — `(?<=\S)` before the mark, and a strict ≥3 whitespace
+# gap followed by a boundary lookahead — keep real separators like
+# '单价/数量', '2026/05/20', or '1/3' safe (no whitespace after the mark).
+_STRANDED_DRAFT_MARK_RE = re.compile(
+    r"(?<=\S)"
+    r"(?P<mark>[/\\／＼])"
+    r"(?P<gap>[ \t　]{3,})"
+    r"(?=[" + re.escape(_UW_BOUNDARY_SINGLE_CHARS) + r"]"
+    r"|" + r"|".join(re.escape(t) for t in _UW_BOUNDARY_TOKENS) +
+    r"|$)"
+)
+
+
+def _strip_stranded_draft_marks(doc) -> int:
+    """Walk every paragraph and erase stranded draft-mark+gap regions.
+    Returns the count of erasures. Runs as a pre-save cleanup so the fix
+    applies even when the scanner found no slot to attach to (template
+    authors sometimes leave `数字/      平方米` style noise after pre-filled
+    values, which would otherwise survive every fill)."""
+    n = 0
+    for paragraph in _iter_all_paragraphs(doc):
+        text = paragraph.text
+        if not text:
+            continue
+        matches = list(_STRANDED_DRAFT_MARK_RE.finditer(text))
+        if not matches:
+            continue
+        # Apply in reverse so earlier offsets stay valid.
+        for m in reversed(matches):
+            _replace_paragraph_span(paragraph, m.start("mark"), m.end("gap"), "")
+            n += 1
+    return n
+
+
+def _expand_and_merge_uw_spans(
+    text: str,
+    uw_spans: List[Tuple[int, int, List[Any], str]],
+    max_left_distance: int = 40,
+) -> List[Tuple[int, int, List[Any], str]]:
+    """Expand each underlined-whitespace span to cover its full fill region.
+
+    CN form templates commonly look like:
+      "承包方式：  包工包料                          "  → sample + trailing gap
+      "建筑面积：       /        平方米；层数：    /  "  → leading gap + slash + trailing gap
+    The narrow `_find_underlined_whitespace_spans` only catches the long
+    whitespace runs, leaving '/', sample text, and short leading gaps as
+    literal content. This helper:
+
+      - Walks LEFT from each span back to the nearest label colon ('：' or
+        non-numeric ':') within `max_left_distance`, absorbing any sample
+        text and short leading whitespace into the span.
+      - Walks RIGHT past trailing draft marks and whitespace until hitting
+        a hard punctuation boundary ('；', '。', '?', etc.), a unit token
+        (平方米, 米, 元, 日, ...), an amount marker ((大写)/(小写)), or
+        the start of the next uw span.
+      - Merges consecutive spans whose right extension reaches the next
+        span's start without crossing a hard boundary (so a "label：<gap>
+        <sample>  <gap>" line becomes ONE slot covering the whole region).
+
+    Returns expanded spans as `(left, right, merged_runs, text[left:right])`
+    tuples in document order.
+    """
+    if not uw_spans:
+        return []
+    uw_spans = sorted(uw_spans, key=lambda s: s[0])
+    n = len(text)
+
+    def find_left_anchor(start_idx: int) -> int:
+        lo = max(0, start_idx - max_left_distance)
+        i = start_idx
+        while i > lo:
+            # Multi-char token ending at i (i.e., text[i-len(token):i] == token)
+            matched = False
+            for token in _UW_BOUNDARY_TOKENS:
+                tlen = len(token)
+                if i - tlen >= 0 and text[i - tlen:i] == token:
+                    return i
+            c = text[i - 1]
+            if c == ":" and (i - 1 == 0 or not text[i - 2].isdigit()):
+                return i
+            if c in _UW_BOUNDARY_SINGLE_CHARS and c != ":":
+                return i
+            i -= 1
+        return start_idx
+
+    def find_right_anchor(start_idx: int, bound: int) -> Tuple[int, bool]:
+        # Returns (position, hit_boundary). hit_boundary=False means we ran
+        # up to `bound` without hitting a hard stop — caller may merge with
+        # the next span.
+        i = start_idx
+        while i < bound:
+            if _UW_RIGHT_STOP_RE.match(text, i):
+                return i, True
+            i += 1
+        return bound, False
+
+    expanded: List[Tuple[int, int, List[Any], bool]] = []
+    for idx, (start, end, runs, _stext) in enumerate(uw_spans):
+        left = find_left_anchor(start)
+        next_start = uw_spans[idx + 1][0] if idx + 1 < len(uw_spans) else n
+        right, hit_boundary = find_right_anchor(end, next_start)
+        merge_with_next = (not hit_boundary) and (idx + 1 < len(uw_spans))
+        expanded.append((left, right, list(runs), merge_with_next))
+
+    merged: List[Tuple[int, int, List[Any], bool]] = []
+    for left, right, runs, merge_with_next in expanded:
+        if merged:
+            p_left, p_right, p_runs, p_merge = merged[-1]
+            if p_merge or left <= p_right:
+                merged[-1] = (
+                    p_left,
+                    max(p_right, right),
+                    p_runs + runs,
+                    merge_with_next,
+                )
+                continue
+        merged.append((left, right, runs, merge_with_next))
+
+    return [(l, r, runs, text[l:r]) for l, r, runs, _ in merged]
 
 
 def _set_paragraph_centered(paragraph) -> None:

@@ -798,16 +798,22 @@ def create_word_editor_agent(
      · 把用户确认要删除的 id 收集进列表。**永远不要自动删除**——红色斜体的备注也可能是用户故意保留的注解。
    - 第四步：用 fill_docx_template_tool 生成新文档：
      · 显式占位符的值放入 context。
-     · 用户确认的 slot 值放入 slot_values={"slot_0": "...", "slot_1": "...", ...}。
+     · 用户确认的 slot 值放入 slot_values={"slot_003_签订时间": "...", "slot_005_签订地点": "...", ...}。slot id 形如 `slot_NNN_<标签>`（如 `slot_004_签订时间`），**必须**把 inspect_template 返回的 id **整段**作为 key，包括尾部的描述标签。**绝对禁止**自己改写成 `slot_4` / `slot_004` 这种**无标签**的旧短格式——填充工具会在保存前**直接拒绝**这种调用并返回 `rejected_legacy_slot_ids`，整次 fill 失败、不会写出文件。上次因为 LLM 用 `slot_0..slot_120` 这种裸编号给一个只有 79 个槽位的模板编号，结果值被错误地按数字前缀路由到语义完全不同的槽位（"甲方"被填进了"中华人民共和国合同法"），整份合同作废。**每个 key 都要原样复制 inspect 返回的 `id`**——一个字符都不要省。
      · 用户确认要删除的项放入 removal_ids=["rm_0", "rm_2", ...]。
      · **必须**输出一个**新文件**，文件名在模板原名后加 "_filled" 后缀（例如 contract.docx → contract_filled.docx），放在用户工作目录下。**绝对不要覆盖**用户上传的原模板——用户保留原始模板用于多次填写。fill_docx_template_tool 会以原模板为底直接复制并仅替换占位符所在 run，**保留原模板的全部其他内容、样式、页眉页脚、表格、图片、批注等不变**。
+     · **优先一次调用填完所有 slot**——把所有用户确认的 slot 值放进**同一个** fill_docx_template_tool 调用的 slot_values 里。这样模型的 token 预算、JSON 输出和 slot id 编号都在同一个 inspect 上下文里、最稳定。**不要**为了"分批确认"就分多次调用——每次调用都要重新 inspect、重新做编号映射，出错面变大。
+     · **如果实在因为槽位太多（>80个）需要分批 fill 才能避免 completion token 截断**：
+       1) **第二次及之后**的调用，必须把 `template_path` 设为**上一次的 output_path**（即正在累积的 _filled 文件），而不是用户原始模板。原模板每次都用、会**抹掉**前一次填好的所有 slot——只有最后一次填进去的少数几个 slot 会留下，前面全部丢失。
+       2) slot_values 的 key 用**第一次** inspect_template 返回的 canonical id（如 `slot_003_受托方乙方`）。工具检测到 output_path 已存在时会自动把 canonical id 翻译成当前 partial 文档的 id，**不要**自己用第二次 inspect 的新编号——后续 inspect 的编号是基于"还剩下的空槽"重新计数的，跟第一次不一样。
+       3) **绝对不要**两次调用都把 `template_path` 设为原模板而 `output_path` 设为同一个文件——这就是去年（2026-05-20）智能仓储合同那次大量空白的根因，前三次填的 slot 全部被第四次调用从原模板复制时覆盖掉。
+     · **填错了想从头再来怎么办（关键，避免死循环）**：如果 fill 的结果不对，**绝对不要**用 run_bash 去删除/移动 _filled 文件——workspace guard 会拒绝，并且每次重试都会让 tool 默默地把已有的 _filled 当成"上一次的部分填充"来续填，slot id 偏移越来越严重，agent 就会陷入"重新 inspect → 槽位变了 → 再填一次 → 又偏了"的循环（2026-05 真实发生过）。正确做法只有两条：（A）在 fill_docx_template_tool 上加 `force_fresh=True`，工具会忽略已有的 _filled、直接用原模板**覆盖**写新文件；（B）换一个新的 output_path（例如 `contract_filled_v2.docx`）。如果 fill 的返回里出现 `chunked_continuation: true` 或 `continuation_notice` 字段、而你又不是在做分块 continuation，就是这个陷阱——立刻用 force_fresh=True 重新调用。
    - **填写成功后（仅限新上传模板）**：如果这次填的模板是用户**新上传**的（不是从模板库通过 `get_template_path_tool` 取来的），主动问一句："要把这个模板保存进你的模板库吗？以后可以直接说'用 XX 模板'调用。要起什么名字 / 分类 / 别名？" 用户同意后调 `save_template_tool(template_path=<原模板路径>, name=..., description=..., category=..., tags=..., aliases=...)`。注意 template_path 传**原模板**，不是 _filled 文件。**模板已经在库里的不要重复问**——会重复保存。
    - 第五步（强制约束）：模板相关流程**只能**用以下工具：`list_templates_tool` / `get_template_path_tool` / `save_template_tool` / `delete_template_tool` / `inspect_docx_template_tool` / `fill_docx_template_tool` / `convert_doc_to_docx_tool`。**禁止**用 run_bash、run_glob、run_read、run_write、run_edit 去浏览模板库、定位模板文件、读取或填充模板——即便某个工具返回看起来为空、超时或慢，也要**重试同一个工具**或把情况告诉用户，**不要**回退到 bash/文件系统操作来"找文件""列目录"或"读 XML"。模板路径**只能**通过 `get_template_path_tool` / 用户上传事件取得，不要 glob 模板目录；DOCX 内部结构由 inspect/fill 工具内部处理，外部 bash 操作只会破坏格式或读不到正确字段。
    - **填写后的修正流程（关键，避免胡乱回退到 run_bash）**：`fill_docx_template_tool` 成功之后，**这个 _filled 文件已经没有占位符了**——再次调用 `inspect_docx_template_tool` / `fill_docx_template_tool` 通常什么都不会做（slots 都已消费），**不要重复 fill**。如果检查后发现某些表格单元格仍为空或填错了位置，必须按以下顺序处理：
      · **第一步：诊断**——调 `extract_docx_content_tool(file_path=<_filled 文件路径>)` 把 tables 读出来，记下错位/空白单元格的 `table_index` / `row` / `col` 和当前文本。
      · **第二步：用 `edit_docx_tool` 修复**——把每个修复都写成 `{'type': 'set_cell_text', ...}` 或 `{'type': 'replace_in_cell', ...}`（见规则 14）放进一次 `edit_docx_tool` 调用的 edits 数组里。**绝对不要**用 run_bash / run_write / run_edit 去改 .docx 文件——任何把 .docx 当文本/二进制改的尝试都会**损坏文档结构**（出现重复段落、丢失格式、xml 报错），过去用户就因为这种回退导致 "（价格含税，单位：人民币元）" 被重复粘了一份还把总计行覆盖掉了。
      · **第三步：验证**——再调一次 `extract_docx_content_tool` 把刚改过的那张表读出来，**核对**修复目标的单元格是不是符合预期（金额单元格非空、写对位置）。不要凭印象就说"已修复"。
-     · 工具名只有 `edit_docx_tool`——**没有** `edit_docx_content_tool` 这个名字。如果脑子里跳出 `edit_docx_content_tool`，那一定是 `edit_docx_tool`，不要因为找不到这个名字就回退到 run_bash。
+     · 标准名是 `edit_docx_tool`。`edit_docx_content_tool` / `edit_docx_content` 是兼容别名，参数完全一致，调用任意一个都行——但**绝对**不要因为"找不到工具"就回退到 `run_bash` / `run_write` / `run_edit`。如果某个名字真的报"未注册"，先把所有 `edit_*` 名字都试一遍（`edit_docx_tool`、`edit_docx_content_tool`、`edit_docx_content`），再来汇报"工具都找不到"——绝不直接拿 bash 去改 .docx。
 10. fill_docx_template_tool 默认 mode="auto"，会自动检测占位符风格——除非用户明确要求，否则不要强行指定 mode。若模板同时含 {{ }} 与 [TOKEN]，auto 模式会先按 Jinja 渲染再做一次方括号替换；slot_values 总是在最后一步应用，removal_ids 在保存输出文件后执行。
 11. 不要把 inspect_docx_template_tool 用在普通文档上——那应该使用 extract_docx_content_tool 来查看内容。但模板里**没有任何**占位符也属于合法用法：inspect 会返回 slots / removals 让你识别可填空和可删除的位置。
 12. fill_docx_template_tool 会保留整个文档的字体、颜色、加粗、斜体、对齐、段距等格式——只修改占位符所在的 run，周围的 run 和段落的样式都不动。对于 highlighted 类型的槽位，工具会**只清除该处的高亮**，但保留同一 run 的字体/字号/加粗/斜体/颜色等。因此**不要**在填模板之后再去"统一字体/格式"或调用 modify_docx_fonts_tool，那会覆盖用户模板的样式。
@@ -1388,7 +1394,11 @@ XML编辑工作流（仅用于 tracked changes）：
                   label = best-guess field name (may be None for stray cases).
                   context = surrounding snippet for disambiguation.
                   Pass the slot ids back via fill_docx_template_tool's
-                  slot_values argument once the user confirms each.
+                  slot_values argument once the user confirms each. Each id
+                  has the form `slot_NNN_<label>` (e.g.
+                  `slot_004_PatientName`); copy it VERBATIM — the trailing
+                  label is part of the id, and fill_docx_template_tool
+                  REJECTS bare numeric forms like `slot_4` outright.
                 removals: list of {id, kind, text, reason} dicts of paragraphs/
                     runs that look like template instructions to be deleted
                     before publishing (e.g. "Delete this before submitting",
@@ -1414,6 +1424,7 @@ XML编辑工作流（仅用于 tracked changes）：
             mode: str = "auto",
             slot_values: dict = None,
             removal_ids: list = None,
+            force_fresh: bool = False,
         ):
             """
             Fill a DOCX template with values and save to a new DOCX file.
@@ -1428,8 +1439,40 @@ XML编辑工作流（仅用于 tracked changes）：
               tokens must be uppercase-leading (alnum, underscore, dash).
             - Heuristic slots: for templates without placeholder syntax. Call
               inspect_docx_template_tool first to discover slot ids, confirm
-              what each holds with the user, then pass
-              slot_values={"slot_0": "Alice", "slot_1": "2026-05-13", ...}.
+              what each holds with the user, then pass slot_values using the
+              ids returned VERBATIM — they look like
+              {"slot_000_PatientName": "Alice",
+               "slot_001_Diagnosis": "Mild hypertension", ...}.
+              The trailing label after the counter is PART OF the id. Bare
+              forms like "slot_0" or "slot_001" (no descriptive tail) are
+              REJECTED at the fill boundary — the tool refuses to save and
+              returns `slot_fill.rejected_legacy_slot_ids` plus a
+              `legacy_canonical_map` showing the correct id for each rejected
+              key. Past incident (2026-05): the LLM emitted `slot_0..slot_120`
+              for a 79-slot contract template, values were routed by numeric
+              prefix to semantically wrong slots, and the whole contract had
+              to be discarded. Copy each id character-for-character from
+              inspect's output.
+
+            Chunked fills (large templates with many slots): prefer ONE call
+            covering all slots. If you must split into multiple calls, the
+            2nd+ calls MUST set `template_path` to the PREVIOUS call's
+            `output_path` so prior fills are preserved. You may pass the
+            canonical slot ids from the FIRST inspect_docx_template_tool —
+            the tool auto-translates them to the partial document's current
+            ids.
+
+            Implicit continuation: if `output_path` already exists from a
+            previous call (and you didn't set `template_path` to that file),
+            the tool auto-switches the source to the partial doc so prior
+            fills survive — the response will carry `chunked_continuation:
+            True` and a `continuation_notice` field. If that was NOT what
+            you wanted (e.g. the previous fill went sideways and you want
+            to start over from the original template), re-call this tool
+            with `force_fresh=True`. **Do NOT use run_bash / rm / mv to
+            delete or move the output file** — the workspace guards reject
+            those, and it makes the loop worse. Either `force_fresh=True`
+            or a fresh `output_path` is the right recovery move.
 
             Run-level formatting (bold/italic/color/font) in the template is
             preserved — only the runs that span the matched placeholder text
@@ -1463,6 +1506,12 @@ XML编辑工作流（仅用于 tracked changes）：
                     notes, etc.). Removals run last, after all fill passes,
                     on the saved output file. Pass None or [] to keep all
                     template prose intact.
+                force_fresh: When True, skip the implicit chunked-continuation
+                    auto-detect: even if `output_path` already exists, write
+                    a fresh fill from `template_path` and overwrite the
+                    output. Use this to recover from a botched previous
+                    fill — NEVER use run_bash to delete the file. Default
+                    False (preserve prior partial fills when re-running).
             """
             guard = _guard_template_path(template_path)
             if guard is not None:
@@ -1475,6 +1524,7 @@ XML编辑工作流（仅用于 tracked changes）：
                 mode=mode,
                 slot_values=slot_values or {},
                 removal_ids=removal_ids or [],
+                force_fresh=force_fresh,
             )
             if result.get('success', False):
                 fe_data = _build_files_event_data(
@@ -2693,9 +2743,26 @@ XML编辑工作流（仅用于 tracked changes）：
             finally:
                 _sys.path[:] = _saved
 
+        # Aliases for names the model frequently hallucinates. Each is a thin
+        # wrapper around `edit_docx_tool` so a wrong-name call still succeeds
+        # instead of triggering a multi-turn "tool not found" recovery loop
+        # (observed 2026-05 — agent typed `edit_docx_content_tool` and
+        # `edit_docx_content`, then fell back to forbidden run_bash).
+        def edit_docx_content_tool(file_path: str, edits: list):
+            """Alias for edit_docx_tool — accepts the same arguments. Prefer
+            calling edit_docx_tool directly; this alias exists only so that
+            calls written under the wrong name still work."""
+            return edit_docx_tool(file_path, edits)
+
+        def edit_docx_content(file_path: str, edits: list):
+            """Alias for edit_docx_tool — see edit_docx_content_tool."""
+            return edit_docx_tool(file_path, edits)
+
         tools = [
             process_document,
             edit_docx_tool,
+            edit_docx_content_tool,   # alias — DO NOT remove (anti-loop guard)
+            edit_docx_content,        # alias — DO NOT remove (anti-loop guard)
             extract_docx_content_tool,
             # New enhanced editing tools
             delete_docx_content_tool,
