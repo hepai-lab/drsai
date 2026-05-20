@@ -56,7 +56,7 @@ For templates that users authored without thinking about placeholders. The inspe
 | `option_choice` | The Chinese contract "二选一 / 三选一" pattern: an instruction paragraph like `（以下两种选择适合的一种，不选的一种请删除）` followed (within 40 paragraphs) by ≥2 option headers of the form `第N种` (optionally wrapped in `（●…）`). Each option's body is the paragraphs after its header until the next option header or a top-level section break. | One composite slot, with an `options` list `[{index, header, preview}, ...]`. The agent passes the chosen index (`1`, `2`, … — or labels like `"第一种"`/`"第二种"`/`"first"`) in `slot_values`. On fill: the instruction prompt is removed, the chosen option's header line is removed (its body is kept), and every non-chosen option's header **and full body** are removed. Paragraphs that fall inside an option group are **not** also emitted as separate slots or removal candidates — the composite slot owns their deletion. |
 
 Each slot comes back with:
-- `id` — opaque string like `"slot_3"`. Use this as the key in `slot_values`.
+- `id` — string like `"slot_003_签订时间"` (3-digit position + sanitized label tail; the label tail is omitted when the field's only label is a list marker like `1．`/`(2)`/`第三条`). Use this verbatim as the key in `slot_values`. Legacy keys `"slot_3"` / `"slot_003"` also resolve when the numeric prefix is unambiguous.
 - `kind` — one of the seven above.
 - `label` — best-guess field name (e.g. "Patient Name"), or `None` for a stray underscore line with no surrounding label.
 - `context` — surrounding text snippet for disambiguation.
@@ -89,21 +89,21 @@ Returns the detected style, the list of placeholders, and the list of slot candi
   "has_loops":       False,
   "has_conditionals": False,
   "slots": [
-    {"id": "slot_0", "kind": "underscores",
+    {"id": "slot_000_PatientName", "kind": "underscores",
      "label": "Patient Name", "context": "Patient Name: __________"},
-    {"id": "slot_1", "kind": "label_blank",
+    {"id": "slot_001_Diagnosis",   "kind": "label_blank",
      "label": "Diagnosis",    "context": "Diagnosis:"},
-    {"id": "slot_2", "kind": "angle_bracketed",
+    {"id": "slot_002_yourname",    "kind": "angle_bracketed",
      "label": "your name",    "context": "Dear <your name>, welcome."},
-    {"id": "slot_3", "kind": "placeholder_phrase",
+    {"id": "slot_003_Replacethiswithyour", "kind": "placeholder_phrase",
      "label": "Replace this with your bio here",
      "context": "Replace this with your bio here."},
-    {"id": "slot_4", "kind": "hint_text",
+    {"id": "slot_004_Author",      "kind": "hint_text",
      "label": "Author",       "context": "Author: (insert your full name)"},
-    {"id": "slot_5", "kind": "section_body_empty",
+    {"id": "slot_005_Background",  "kind": "section_body_empty",
      "label": "Background",
      "context": "(empty body under heading 'Background')"},
-    {"id": "slot_6", "kind": "empty_cell",
+    {"id": "slot_006_Value",       "kind": "empty_cell",
      "label": "Value",        "context": "[empty cell, row='Age', col='Value']"},
   ],
   "removals": [
@@ -137,7 +137,7 @@ Renders the template into `output_path`. If `removal_ids` is provided, the liste
   "unused_keys":   [],
   "substitutions": 2,
   "slot_fill": {
-    "filled_slot_ids":  ["slot_0", "slot_1", "slot_2"],
+    "filled_slot_ids":  ["slot_000_PatientName", "slot_001_Diagnosis", "slot_006_Value"],
     "unknown_slot_ids": [],
     "skipped_slot_ids": [],
     "skipped_signature_slot_ids": [],
@@ -162,15 +162,17 @@ Diagnosis:
 
 ```python
 inspect = inspect_docx_template_tool(".../intake_form.docx")
-# inspect["slots"] tells DocMaster: slot_0=underscores ("Patient Name"),
-# slot_1=label_blank ("Diagnosis"), slot_2=empty_cell ("Value" under "Age" row).
+# inspect["slots"] tells DocMaster: slot_000_PatientName=underscores ("Patient Name"),
+# slot_001_Diagnosis=label_blank ("Diagnosis"), slot_002_Value=empty_cell ("Value" under "Age" row).
 # DocMaster confirms each with the user.
 
 fill_docx_template_tool(
     template_path=".../intake_form.docx",
     output_path  =".../intake_form_filled.docx",
     context      ={"DATE": "2026-05-13"},
-    slot_values  ={"slot_0": "Alice Wong", "slot_1": "Mild hypertension", "slot_2": "42"},
+    slot_values  ={"slot_000_PatientName": "Alice Wong",
+                    "slot_001_Diagnosis": "Mild hypertension",
+                    "slot_002_Value": "42"},
 )
 ```
 

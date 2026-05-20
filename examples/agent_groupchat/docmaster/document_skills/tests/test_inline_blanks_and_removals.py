@@ -91,6 +91,328 @@ def test_inline_blank_money_paragraph_two_gaps():
     assert hls, "expected highlighted drafting note to still surface as a slot"
 
 
+def test_uw_span_absorbs_slash_draft_mark():
+    """`label：   /   unit；` — the '/' between two underlined gaps is a
+    draft mark, NOT alternatives. The fill must replace the whole region
+    (leading gap + slash + trailing gap) cleanly, leaving '平方米' intact."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("建筑面积：")
+    r1 = p.add_run("       ")
+    r1.font.underline = True
+    p.add_run("/")
+    r2 = p.add_run("        ")
+    r2.font.underline = True
+    p.add_run("平方米；")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    blanks = [s for s in ins["slots"]
+              if s["kind"] == "underscores" and "建筑面积" in (s.get("label") or "")]
+    assert blanks, f"expected a slot for 建筑面积; got {ins['slots']}"
+    out = tmp / "out.docx"
+    skill.fill_template(str(tpl), str(out), slot_values={blanks[0]["id"]: "8500"})
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "/" not in body, f"slash draft mark should be replaced: {body!r}"
+    assert "8500" in body and "平方米" in body, body
+
+
+def test_uw_span_absorbs_sample_text():
+    """`label：  <sample>  ` — when an underlined gap follows sample text
+    (no hard boundary in between), the slot must cover both so the fill
+    REPLACES the sample instead of appending alongside it."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("承包方式：  包工包料")
+    r = p.add_run("                                     ")
+    r.font.underline = True
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    blanks = [s for s in ins["slots"]
+              if s["kind"] == "underscores" and "承包方式" in (s.get("label") or "")]
+    assert blanks, f"expected a slot for 承包方式; got {ins['slots']}"
+    out = tmp / "out.docx"
+    skill.fill_template(str(tpl), str(out),
+                        slot_values={blanks[0]["id"]: "总包"})
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    # Sample '包工包料' must be gone; new value '总包' present exactly once.
+    assert "包工包料" not in body, f"sample text must be replaced: {body!r}"
+    assert body.count("总包") == 1, body
+
+
+def test_uw_spans_merge_across_sample_list():
+    """`label：  <gap1> <sample,with,顿号> <gap2>` — two underlined gaps
+    separated by sample text containing only 顿号 ('、') must merge into one
+    slot, since 顿号 is intra-list punctuation, not a slot boundary."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("承包范围：")
+    r1 = p.add_run("    ")
+    r1.font.underline = True
+    p.add_run("包括防水、门窗更换、粉刷等")
+    r2 = p.add_run("                ")
+    r2.font.underline = True
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    blanks = [s for s in ins["slots"]
+              if s["kind"] == "underscores" and "承包范围" in (s.get("label") or "")]
+    # Should be exactly ONE merged slot, not two.
+    assert len(blanks) == 1, f"expected 1 merged slot, got {len(blanks)}: {blanks}"
+    out = tmp / "out.docx"
+    skill.fill_template(str(tpl), str(out),
+                        slot_values={blanks[0]["id"]: "外墙防水、门窗更换"})
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "包括防水" not in body and "粉刷等" not in body, body
+    assert "外墙防水、门窗更换" in body, body
+
+
+def test_underscore_pair_with_slash_draft_mark_absorbs_separator():
+    """`____/____` between a label and a unit is a single fillable region
+    where `/` is a draft mark, not a separator preserving formatting. Past
+    behavior emitted a 'composite' slot covering both underscore runs but
+    left the literal `/` between them — output was `12000/平方米` instead of
+    `12000 平方米`."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("建筑面积：____/____平方米")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    slot = next(s for s in ins["slots"] if s["kind"] == "underscores")
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out), slot_values={slot["id"]: "12000"}
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "/" not in body, f"draft slash should be absorbed: {body!r}"
+    assert "12000" in body and "平方米" in body, body
+
+
+def test_underscore_pair_with_backslash_draft_mark_absorbs_separator():
+    """Same as the slash case, but with backslash. Both are equivalently
+    used as draft marks in CN templates."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("结构类型：____\\____ ；檐高：____ 米")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    structure_slot = next(
+        s for s in ins["slots"]
+        if s["kind"] == "underscores" and "结构类型" in (s.get("label") or "")
+    )
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out), slot_values={structure_slot["id"]: "框架剪力墙"}
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "\\" not in body, f"draft backslash should be absorbed: {body!r}"
+    assert "框架剪力墙" in body, body
+
+
+def test_underscore_digit_cell_composite_preserved():
+    """`¥ ____ ____ ____` with PURE whitespace between cells stays a
+    digit-cell composite — first cell takes the value, others blank. This
+    must keep working after the slash-absorption fix."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("总价：¥ ____ ____ ____ 元")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    slot = next(s for s in ins["slots"] if s["kind"] == "underscores")
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out), slot_values={slot["id"]: "8500"}
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    # Value placed once; '元' and '¥' still in place.
+    assert body.count("8500") == 1, body
+    assert "¥" in body and "元" in body, body
+
+
+def test_inline_blank_with_slash_draft_mark_detected():
+    """`label：    /    ；` — plain (no-underline) whitespace gap broken by
+    a single slash draft mark. The inline-blank scanner missed this because
+    its regex required contiguous whitespace, so the slot was never emitted
+    and the draft mark survived the fill."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    d.add_paragraph("建筑面积：    /    平方米；")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    blanks = [
+        s for s in ins["slots"]
+        if s["kind"] == "underscores" and "建筑面积" in (s.get("label") or "")
+    ]
+    assert blanks, f"expected an inline-blank slot for 建筑面积; got {ins['slots']}"
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out), slot_values={blanks[0]["id"]: "12000"}
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "/" not in body, f"draft slash should be absorbed: {body!r}"
+    assert "12000" in body and "平方米" in body, body
+
+
+def test_inline_blank_with_backslash_draft_mark_detected():
+    """Same case but with backslash."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    d.add_paragraph("承包范围：    \\    ；")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    blanks = [
+        s for s in ins["slots"]
+        if s["kind"] == "underscores" and "承包范围" in (s.get("label") or "")
+    ]
+    assert blanks, f"expected an inline-blank slot for 承包范围; got {ins['slots']}"
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out), slot_values={blanks[0]["id"]: "外墙翻新"}
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "\\" not in body, f"draft backslash should be absorbed: {body!r}"
+    assert "外墙翻新" in body, body
+
+
+def test_inline_blank_normal_slash_in_label_preserved():
+    """Counter-test: a slash that's part of a real label like '檐高/跨度'
+    must NOT be treated as a draft mark — it's structural punctuation
+    inside the label, not a fillable region. The slot's RIGHT side
+    (after the colon) is what gets filled."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    d.add_paragraph("檐高/跨度：    平方米；")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    blanks = [s for s in ins["slots"] if s["kind"] == "underscores"]
+    assert blanks, f"expected a slot; got {ins['slots']}"
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out), slot_values={blanks[0]["id"]: "48"}
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    # The '檐高/跨度' label slash must remain intact.
+    assert "檐高/跨度" in body, body
+    assert "48" in body, body
+
+
+def test_force_fresh_skips_continuation_autodetect():
+    """When `force_fresh=True`, fill_template must overwrite an existing
+    output_path with a fresh fill from the original template, even if the
+    output file already exists. Past sessions had the agent loop because
+    the implicit continuation auto-detect kept swapping the source to a
+    botched partial fill — `force_fresh` is the documented escape hatch."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("甲方：")
+    r = p.add_run("                ")
+    r.font.underline = True
+    p2 = d.add_paragraph()
+    p2.add_run("乙方：")
+    r2 = p2.add_run("                ")
+    r2.font.underline = True
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    slots_by_label = {s.get("label"): s["id"] for s in ins["slots"]}
+    out = tmp / "out.docx"
+    # First fill: WRONG values (simulate a botched run).
+    skill.fill_template(
+        str(tpl), str(out),
+        slot_values={
+            slots_by_label["甲方"]: "WRONG_PARTY_A",
+            slots_by_label["乙方"]: "WRONG_PARTY_B",
+        },
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "WRONG_PARTY_A" in body, body
+    # Second fill WITHOUT force_fresh: should trigger continuation mode and
+    # surface the notice. Slots were already consumed by the partial doc, so
+    # canonical ids no longer resolve — the agent's intent (re-fill from the
+    # original) is silently lost.
+    res_continuation = skill.fill_template(
+        str(tpl), str(out),
+        slot_values={
+            slots_by_label["甲方"]: "Acme",
+            slots_by_label["乙方"]: "Beta",
+        },
+    )
+    assert res_continuation.get("chunked_continuation") is True, res_continuation
+    assert res_continuation.get("continuation_notice"), res_continuation
+    # Third fill WITH force_fresh: overwrite from the original template.
+    res_fresh = skill.fill_template(
+        str(tpl), str(out),
+        slot_values={
+            slots_by_label["甲方"]: "Acme",
+            slots_by_label["乙方"]: "Beta",
+        },
+        force_fresh=True,
+    )
+    assert res_fresh.get("chunked_continuation") is False, res_fresh
+    assert "continuation_notice" not in res_fresh, res_fresh
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "WRONG_PARTY_A" not in body and "WRONG_PARTY_B" not in body, body
+    assert "Acme" in body and "Beta" in body, body
+
+
+def test_legacy_slot_id_rejected_at_fill_boundary():
+    """When inspect_template returned descriptive ids like
+    `slot_000_<label>`, a caller passing the bare legacy form `slot_0` must
+    be rejected before any document mutation — silently routing on the
+    numeric prefix corrupted real fills in past incidents."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("甲方：")
+    r = p.add_run("                ")
+    r.font.underline = True
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    slot = next(s for s in ins["slots"] if s["kind"] == "underscores")
+    canonical = slot["id"]
+    assert canonical != "slot_0", (
+        f"expected descriptive canonical id, got {canonical!r}"
+    )
+    out = tmp / "out.docx"
+    # Caller uses the legacy bare form — must be refused.
+    result = skill.fill_template(
+        str(tpl), str(out), slot_values={"slot_0": "Acme Corp"}
+    )
+    sf = result.get("slot_fill") or result
+    assert sf.get("rejected") is True, sf
+    assert "slot_0" in (sf.get("rejected_legacy_slot_ids") or []), sf
+    assert sf.get("legacy_canonical_map", {}).get("slot_0") == canonical, sf
+    # No mutation should reach the output document — fill_template signals
+    # failure when slot-fill is the only requested operation.
+    assert result.get("success") is False, result
+
+
 def test_inline_blank_not_triggered_in_normal_prose():
     """Plain prose with a colon and only a single space afterward must NOT
     be detected as a blank — the regex requires ≥3 whitespace chars."""
@@ -379,6 +701,180 @@ def test_label_only_heading_retained_when_followed_by_section_break():
     lbs = [s for s in ins["slots"]
            if s["kind"] == "label_blank" and "项目名称" in (s.get("label") or "")]
     assert lbs, f"expected label_blank for 项目名称; got {ins['slots']}"
+
+
+def test_underscore_slot_absorbs_trailing_slash_plus_plain_gap():
+    """`____/         平方米` — single underscore run followed by a slash and
+    plenty of whitespace before the unit. The slot must extend rightward over
+    the slash + whitespace so the fill replaces them all (otherwise output is
+    `12000/         平方米` with the draft mark surviving)."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("建筑面积：________/         平方米；")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    slot = next(
+        s for s in ins["slots"]
+        if s["kind"] == "underscores" and "建筑面积" in (s.get("label") or "")
+    )
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out), slot_values={slot["id"]: "12000"}
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "/" not in body, f"draft slash should be absorbed: {body!r}"
+    assert "12000" in body and "平方米" in body, body
+
+
+def test_underscore_slot_absorbs_trailing_slash_at_end_of_line():
+    """`京发改〔2025〕第0128号/` — value already in place, but author left a
+    trailing `/` draft mark with nothing after it. The fillable region (the
+    underscore slot) should extend to consume that trailing slash."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("批准文号：________/")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    slot = next(
+        s for s in ins["slots"]
+        if s["kind"] == "underscores" and "批准文号" in (s.get("label") or "")
+    )
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out),
+        slot_values={slot["id"]: "京发改〔2025〕第0128号"},
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert not body.rstrip().endswith("/"), (
+        f"trailing draft slash should be absorbed: {body!r}"
+    )
+    assert "京发改〔2025〕第0128号" in body, body
+
+
+def test_underscore_decorator_group_absorbs_trailing_slash_plus_gap():
+    """Decorator-gap group `____/____` followed by `/         平方米` — both
+    the inter-pair slash AND the trailing slash+whitespace should be absorbed
+    into one slot (the prior fix handled the inter-pair slash; this test
+    nails the trailing extension)."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("结构类型：____\\____         ；檐高：____ 米")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    structure_slot = next(
+        s for s in ins["slots"]
+        if s["kind"] == "underscores" and "结构类型" in (s.get("label") or "")
+    )
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out),
+        slot_values={structure_slot["id"]: "框架剪力墙"},
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    # The 结构类型 fill must absorb the inter-pair backslash AND the trailing
+    # whitespace gap before `；` (no draft mark survives anywhere in the
+    # 结构类型 region).
+    assert "\\" not in body, f"draft backslash should be absorbed: {body!r}"
+    # No `/` in the structure-type half either (檐高's underscores haven't been
+    # filled, but they don't have a slash before them).
+    structure_segment = body.split("檐高")[0]
+    assert "/" not in structure_segment, (
+        f"draft slashes should be absorbed in 结构类型 region: {body!r}"
+    )
+    assert "框架剪力墙" in body, body
+
+
+def test_strip_stranded_draft_marks_handles_baked_in_value_with_unit():
+    """Template with value already baked in: `建筑面积：12000/        平方米`.
+    No underscores remain, so the scanner can't attach a slot — but the
+    stranded `/        ` between `12000` and `平方米` must still be cleaned
+    up during fill. Without the pre-save cleanup pass, the output keeps the
+    draft mark and the user sees `12000/        平方米` in the result."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    d.add_paragraph("建筑面积：12000/        平方米；层数：6/              ")
+    # Add a fillable slot somewhere else so fill_template doesn't bail out
+    # on "nothing to fill" (the cleanup runs on the final document regardless).
+    d.add_paragraph("项目名称：________")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    slot = next(s for s in ins["slots"]
+                if s["kind"] == "underscores" and "项目名称" in (s.get("label") or ""))
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out),
+        slot_values={slot["id"]: "示例工程"},
+        force_fresh=True,
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "12000/" not in body, f"stranded slash should be cleaned: {body!r}"
+    assert "12000" in body and "平方米" in body, body
+    assert "6/" not in body, f"trailing draft slash should be cleaned: {body!r}"
+
+
+def test_strip_stranded_draft_marks_preserves_real_separator():
+    """A real `XX/YY` separator (no whitespace between the slash and the
+    value on each side) must NOT be cleaned — only `value / ≥3 spaces /
+    boundary` patterns are stranded draft marks."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    d.add_paragraph("檐高/跨度：48米")
+    d.add_paragraph("日期：2026/05/20")
+    d.add_paragraph("规格：1/3 标准")
+    d.add_paragraph("占位：________")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    slot = next(s for s in ins["slots"]
+                if s["kind"] == "underscores" and "占位" in (s.get("label") or ""))
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out),
+        slot_values={slot["id"]: "x"},
+        force_fresh=True,
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "檐高/跨度" in body, body
+    assert "2026/05/20" in body, body
+    assert "1/3" in body, body
+
+
+def test_strip_stranded_draft_marks_at_end_of_paragraph():
+    """Trailing `<value>/<whitespace>` at end of paragraph (no boundary
+    token after) must also be cleaned. Real CN templates: `京发改第0128号/`
+    followed only by trailing whitespace."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    d.add_paragraph("批准文号：京发改〔2025〕第0128号/             ")
+    d.add_paragraph("占位：________")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    slot = next(s for s in ins["slots"]
+                if s["kind"] == "underscores" and "占位" in (s.get("label") or ""))
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out),
+        slot_values={slot["id"]: "x"},
+        force_fresh=True,
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    # No `/` should follow the 批准文号 value.
+    assert "0128号/" not in body, f"end-of-line draft slash should be cleaned: {body!r}"
+    assert "0128号" in body, body
 
 
 # ── Runner ───────────────────────────────────────────────────────────────
