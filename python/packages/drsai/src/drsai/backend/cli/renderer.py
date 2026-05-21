@@ -59,6 +59,7 @@ try:
     from .display import (
         build_tool_preview,
         get_cute_tool_message,
+        KawaiiSpinner,
         LocalEditSnapshot,
         capture_local_edit_snapshot,
         render_edit_diff_with_delta,
@@ -73,6 +74,11 @@ except ImportError:
         return None
     def get_cute_tool_message(tool_name, args, duration, result=None):  # type: ignore
         return f"⚡ {tool_name}"
+    class KawaiiSpinner:  # type: ignore
+        def __init__(self, *args, **kwargs): pass
+        def start(self): pass
+        def stop(self, final_message=None): pass
+        def update_text(self, new_message): pass
     class LocalEditSnapshot:  # type: ignore
         def __init__(self, paths=None, before=None):
             self.paths = paths or []
@@ -127,7 +133,8 @@ class DrSaiCLIRenderer:
         self._subagent_active: bool = False
         self._subagent_name: str = ""
         self._subagent_header_printed: bool = False
-        # Configure tool preview length
+        # Live spinner for tool execution (from display.py KawaiiSpinner)
+        self._spinner: Optional[KawaiiSpinner] = None
         if TUI_MODULE_AVAILABLE:
             set_tool_preview_max_len(tool_preview_max_len)
 
@@ -253,6 +260,11 @@ class DrSaiCLIRenderer:
         self._subagent_name = ""
         self._subagent_header_printed = False
 
+        # Start the spinner — renders at terminal bottom via ANSI save/restore
+        # cursor while patch_stdout proxies renderer output above it.
+        self._spinner = KawaiiSpinner(message="running…", spinner_type="dots")
+        self._spinner.start()
+
         async for message in stream:
             if isinstance(message, ModelClientStreamingChunkEvent):
                 src = getattr(message, "source", "") or ""
@@ -347,6 +359,11 @@ class DrSaiCLIRenderer:
         # Draw a dim horizontal line so the user's next prompt is visually
         # isolated from the agent's output.
         self.print_turn_separator()
+
+        # Stop the spinner
+        if self._spinner is not None:
+            self._spinner.stop()
+            self._spinner = None
 
     # ── Streaming chunks ────────────────────────────────────────────────────
     def _handle_chunk(self, text: str, state: ReasoningStreamState) -> None:
