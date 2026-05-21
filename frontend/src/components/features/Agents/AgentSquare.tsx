@@ -13,7 +13,8 @@ import RemoteAgentModal from "./RemoteAgentModal";
 import { getServerUrl } from "../../utils";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { DRSAI_RECENT_AGENTS_KEY } from "@/utils/recentAgentsStorage";
-import { pickLoginDefaultAgent } from "@/utils/agentPreference";
+import { parseModelApiKeyFromSettingsConfig } from "@/utils/modelApiKey";
+import { pickAgentForSessionStart } from "@/utils/agentPreference";
 interface AgentSquareProps {
   agents: AgentCardData[];
   className?: string;
@@ -157,8 +158,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     } catch {
       parsed = {};
     }
-    const modelConfig = (parsed?.model_config as { config?: Record<string, unknown> } | undefined)?.config || {};
-    const apiKey = modelConfig.api_key as string | undefined;
+    const modelConfig =
+      (parsed?.model_config as { config?: Record<string, unknown> } | undefined)
+        ?.config || {};
+    const apiKey = parseModelApiKeyFromSettingsConfig(settings);
     const baseUrl = modelConfig.base_url as string | undefined;
     return { apiKey, baseUrl };
   }, []);
@@ -437,7 +440,15 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         const userDefault = await agentWorkerAPI.getUserDefaultAgent(email).catch(() => null);
         if (cancelled) return;
         const userDefaultId = userDefault?.stored_default_agent_id ?? null;
-        const target = pickLoginDefaultAgent(agentList as Agent[], userDefaultId);
+        const platformPolicy = {
+          auto_load_default_agent: userDefault?.auto_load_default_agent,
+          default_agent_name: userDefault?.default_agent_name ?? null,
+        };
+        const target = pickAgentForSessionStart(
+          agentList as Agent[],
+          userDefaultId,
+          platformPolicy,
+        );
         if (!target?.id) return;
         setAgentId(target.id);
         setMode(target.mode || "");

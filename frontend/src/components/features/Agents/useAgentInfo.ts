@@ -3,7 +3,7 @@ import { Modal, message } from 'antd';
 import { useModeConfigStore } from '@/store/modeConfig';
 import { agentAPI, agentWorkerAPI } from '@/components/views/api';
 import { getLocalStorage } from '@/components/utils';
-import { pickLoginDefaultAgent } from '@/utils/agentPreference';
+import { pickAgentForSessionStart } from '@/utils/agentPreference';
 import type { Agent } from '@/types/common';
 
 const pendingAgentInfoRequests = new Map<string, Promise<Partial<Agent>>>();
@@ -55,35 +55,10 @@ export const useAgentInfo = (userIdProp?: string) => {
       }
 
       if (!id) {
+        // 首屏 catalog 与默认选中由 useAgentManager.fetchAgentList 负责，此处不并行拉 list。
         const sa = useModeConfigStore.getState().selectedAgent;
-        try {
-          const [agents, userDefault] = await Promise.all([
-            // Use UserAgents list for consistency with getUserAgentById
-            agentWorkerAPI.getUserDefaultAgents(userId).then((r: any) => r?.data || []),
-            agentWorkerAPI.getUserDefaultAgent(userId).catch(() => null),
-          ]);
-          if (cancelled) return;
-          // Use stored_default_agent_id so "not set" doesn't degrade into a forced builtin.
-          const userDefaultId = userDefault?.stored_default_agent_id ?? null;
-          const match =
-            (sa?.id && agents?.find((a: any) => a.id === sa.id)) ||
-            (sa?.name &&
-              agents?.find(
-                (a: any) =>
-                  a.name === sa.name ||
-                  (Boolean(sa.mode) && a.mode === sa.mode),
-              )) ||
-            pickLoginDefaultAgent(agents || [], userDefaultId);
-          if (match?.id) {
-            setAgentId(match.id);
-            return;
-          }
-        } catch {
-          // ignore
-        }
-        const sa2 = useModeConfigStore.getState().selectedAgent;
-        if (sa2?.name) {
-          setAgentInfo(sa2 as Partial<Agent>);
+        if (sa?.name) {
+          setAgentInfo(sa as Partial<Agent>);
         } else {
           setAgentInfo(null);
         }
@@ -162,7 +137,7 @@ export const useAgentInfo = (userIdProp?: string) => {
 
         try {
           const [agents, userDefault] = await Promise.all([
-            agentWorkerAPI.getUserDefaultAgents(userId).then((r: any) => r?.data || []),
+            agentWorkerAPI.getUserAgents(userId, "", false),
             agentWorkerAPI.getUserDefaultAgent(userId).catch(() => null),
           ]);
           const byId = agents?.find((a: any) => a.id === id);
@@ -172,7 +147,15 @@ export const useAgentInfo = (userIdProp?: string) => {
             return;
           }
           const userDefaultId = userDefault?.stored_default_agent_id ?? null;
-          const preferred = pickLoginDefaultAgent(agents || [], userDefaultId);
+          const platformPolicy = {
+            auto_load_default_agent: userDefault?.auto_load_default_agent,
+            default_agent_name: userDefault?.default_agent_name ?? null,
+          };
+          const preferred = pickAgentForSessionStart(
+            agents || [],
+            userDefaultId,
+            platformPolicy,
+          );
           if (
             preferred?.id &&
             typeof preferred.id === 'string' &&

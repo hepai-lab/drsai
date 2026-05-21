@@ -236,7 +236,15 @@ export const SessionManager: React.FC = () => {
   const { getSessionSocket, closeSocket, stopSession } = useWebSocketManager();
 
   // Agent management
-  const { agents, fetchAgentList, deleteAgent, agentCatalogLoaded } = useAgentManager(user?.email);
+  const {
+    agents,
+    fetchAgentList,
+    deleteAgent,
+    agentCatalogLoaded,
+    catalogRefreshing,
+    catalogLoadingHint,
+    platformAgentPolicy,
+  } = useAgentManager(user?.email);
 
   const { agentInfo } = useAgentInfo(user?.email);
 
@@ -928,9 +936,16 @@ export const SessionManager: React.FC = () => {
             } else if (!agentCatalogLoaded || (agentId && !agentInfo && !selectedAgent)) {
               return (
                 <div className="flex items-center justify-center h-full text-secondary">
-                  <div className="text-center">
+                  <div className="text-center px-6 max-w-md">
                     <Spin size="large" />
-                    <p className="mt-4 text-sm">加载中…</p>
+                    <p
+                      key={catalogRefreshing ? catalogLoadingHint : "loading"}
+                      className="mt-4 text-sm transition-opacity duration-300"
+                    >
+                      {catalogRefreshing && catalogLoadingHint
+                        ? catalogLoadingHint
+                        : "加载中…"}
+                    </p>
                   </div>
                 </div>
               );
@@ -949,7 +964,9 @@ export const SessionManager: React.FC = () => {
                 <div className="text-center max-w-md space-y-4">
                   <p className="text-base text-primary font-medium">先选一个智能体再开始对话</p>
                   <p className="text-sm">
-                    你还没有选择聊天要用的智能体。请到智能体广场挑选，或设置你的默认智能体。
+                    {platformAgentPolicy?.auto_load_default_agent === false
+                      ? "你还没有选择聊天要用的智能体。请到智能体广场挑选一个开始试用。"
+                      : "你还没有选择聊天要用的智能体。请到智能体广场挑选，或设置你的默认智能体。"}
                   </p>
                   <Button type="primary" size="large" onClick={() => navigateToMenu(MENU_IDS.agentSquare)}>
                     前往智能体广场

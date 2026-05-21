@@ -18,6 +18,7 @@ load_dotenv()
 
 from .....agent_factory.agent_mode_cofigs import (
     get_default_agent_mode_config,
+    get_platform_agent_policy,
     get_user_agents,
 )
 
@@ -190,41 +191,6 @@ async def remove_remote_agent(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
     
-
-@router.get("/user_default_agents/list")
-async def user_default_agents(user_id: str, db=Depends(get_db)) -> Dict:
-    '''
-    获取 drsai UI 侧为用户缓存的智能体列表（user_agents 表）；
-    若尚无记录则先用 get_default_agent_mode_config 初始化再返回。
-    '''
-    try:
-        response = db.get(UserAgents, filters={"user_id": user_id})
-        if not (response.status and response.data):
-            agents_list: List[Dict[str, Any]] = []
-            agents_list.extend(get_default_agent_mode_config(user_id=user_id))
-            user_agents = UserAgents(
-                user_id=user_id,
-                agents=agents_list
-            )
-            db.upsert(user_agents)
-
-        response = db.get(UserAgents, filters={"user_id": user_id})
-        if not (response.status and response.data):
-            return {
-                "status": True,
-                "message": "Get user's default agents successfully",
-                "data": [],
-            }
-        user_agents_row: UserAgents = response.data[0]
-        agents_after = user_agents_row.agents or []
-        return {
-            "status": True,
-            "message": "Get user's default agents successfully",
-            "data": agents_after,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
 
 @router.get("/user_agents/list")
 async def get_user_agents_route(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
@@ -450,6 +416,7 @@ async def get_user_default_agent(user_id: str, db=Depends(get_db)) -> Dict:
             "data": {
                 "default_agent_id": resolved,
                 "stored_default_agent_id": stored,
+                **get_platform_agent_policy(),
             },
         }
     except Exception as e:

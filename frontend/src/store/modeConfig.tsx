@@ -1,10 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { Agent } from "@/types/common";
-import { agentAPI, agentWorkerAPI } from "@/components/views/api";
-import { getLocalStorage } from "@/components/utils";
-import { getFirstRecentAgentId } from "@/utils/recentAgentsStorage";
-import { pickLoginDefaultAgent } from "@/utils/agentPreference";
 
 interface IModeConfig {
     mode: string;
@@ -57,41 +53,7 @@ export const useModeConfigStore = create<IModeConfig>()(
                 agentId: state.agentId,
                 mode: state.mode,
             }),
-            // 注意：recentAgents 仅用于 UI 展示，不应覆盖“默认智能体”选择。
-            // 否则一旦 recent[0] 恰好是历史遗留的 builtin（如 eab8...），会把用户显式默认顶掉。
-            onRehydrateStorage: () => (state) => {
-                if (!state) return;
-                const { agentId } = useModeConfigStore.getState();
-                if (agentId) return;
-
-                const userId = getLocalStorage("user_email", false) as
-                    | string
-                    | null;
-                if (!userId) return;
-
-                void Promise.all([
-                    agentWorkerAPI.getUserDefaultAgents(userId).then((r: any) => r?.data || []),
-                    agentWorkerAPI.getUserDefaultAgent(userId).catch(() => null),
-                ])
-                    .then(([agents, userDefault]) => {
-                        // Only treat explicitly stored default as personal preference.
-                        const userDefaultId = userDefault?.stored_default_agent_id ?? null;
-                        const preferred = pickLoginDefaultAgent(agents || [], userDefaultId);
-                        const id = preferred?.id;
-                        if (!id || typeof id !== "string") return;
-                        const { agentId: cur, setAgentId: setId } =
-                            useModeConfigStore.getState();
-                        if (!cur) {
-                            setId(id);
-                        }
-                    })
-                    .catch((err) => {
-                        console.warn(
-                            "获取 agent 列表失败，无法设置默认 agentId:",
-                            err
-                        );
-                    });
-            },
+            // 首屏 catalog / 默认智能体由 useAgentManager.fetchAgentList 统一拉取，避免并行 list 抢 is_refresh。
         }
     )
 );

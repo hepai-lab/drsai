@@ -3,7 +3,6 @@
 import * as React from "react";
 import { navigate } from "gatsby";
 import { appContext } from "../hooks/provider";
-import { agentWorkerAPI } from "../components/views/api";
 
 const CallbackPage = () => {
     const { setUser } = React.useContext(appContext);
@@ -26,14 +25,8 @@ const CallbackPage = () => {
         localStorage.removeItem("drsai-mode-config");
 
         setUser({ name: username, email: username, username });
-
-        agentWorkerAPI.getUserDefaultAgents(username)
-            .then(() => navigate("/", { replace: true }))
-            .catch((err) => {
-                console.error("Failed to initialize user default agents:", err);
-                navigate("/", { replace: true });
-            });
-    }, []);
+        navigate("/", { replace: true });
+    }, [setUser]);
 
     if (error) {
         return (

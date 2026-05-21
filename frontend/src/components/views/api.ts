@@ -797,19 +797,6 @@ export class AgentWorkerAPI {
         return data;
     }
 
-    async getUserDefaultAgents(userId: string): Promise<any> {
-        const url = `${this.getBaseUrl()}/agentworker/user_default_agents/list?user_id=${encodeURIComponent(userId)}`;
-        const response = await fetch(url, {
-            headers: {
-                "Content-Type": "application/json",
-            },
-        });
-        const data = await response.json();
-        if (!data.status)
-            throw new Error(data.message || "Failed to fetch user default agents");
-        return data;
-    }
-
     async recordUserAgentUsage(userId: string, agentId: string): Promise<any> {
         const response = await fetch(
             `${this.getBaseUrl()}/agentworker/user_agent/usage`,
@@ -845,7 +832,12 @@ export class AgentWorkerAPI {
         return data.data || [];
     }
 
-    async getUserDefaultAgent(userId: string): Promise<{ default_agent_id: string | null; stored_default_agent_id: string | null }> {
+    async getUserDefaultAgent(userId: string): Promise<{
+        default_agent_id: string | null;
+        stored_default_agent_id: string | null;
+        auto_load_default_agent?: boolean;
+        default_agent_name?: string | null;
+    }> {
         const url = `${this.getBaseUrl()}/agentworker/user_default_agent?user_id=${encodeURIComponent(userId)}`;
         const response = await fetch(url, {
             headers: { "Content-Type": "application/json" },

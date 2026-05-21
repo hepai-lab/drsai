@@ -45,6 +45,71 @@ def _float_env(name: str, default: float, min_value: float = 0.1) -> float:
     return max(min_value, value)
 
 
+def get_platform_auto_load_default_agent() -> bool:
+    """Whether brand-new users (no personal default / usage) auto-select a platform agent."""
+    return _truthy_env(os.getenv("DRSUI_AUTO_LOAD_DEFAULT_AGENT"))
+
+
+def get_platform_default_agent_name() -> str | None:
+    """Agent display name to match in /user_agents/list when auto-load is enabled."""
+    raw = os.getenv("DRSUI_DEFAULT_AGENT_NAME")
+    if raw is None:
+        return None
+    name = raw.strip()
+    return name or None
+
+
+def find_agent_by_name(agents: List[Dict[str, Any]], name: str | None) -> Dict[str, Any] | None:
+    target = (name or "").strip()
+    if not target:
+        return None
+    return next(
+        (agent for agent in agents if str(agent.get("name") or "").strip() == target),
+        None,
+    )
+
+
+def get_platform_agent_policy() -> Dict[str, Any]:
+    return {
+        "auto_load_default_agent": get_platform_auto_load_default_agent(),
+        "default_agent_name": get_platform_default_agent_name(),
+    }
+
+
+def _resolve_platform_api_key(
+    authorization: str | None,
+    *,
+    user_id: str | None = None,
+    is_refresh: bool = False,
+) -> str:
+    """Prefer caller Bearer; on DDF refresh without Bearer use user's HepAI key; else admin env."""
+    apikey = ""
+    if authorization and authorization.startswith("Bearer "):
+        apikey = authorization[7:].strip()
+    if apikey:
+        return apikey
+    if is_refresh and user_id:
+        try:
+            from drsai_ui.drsai_adapter.singleton import (
+                personal_key_config_fetcher as fetcher,
+            )
+
+            personal = fetcher.get_personal_key(username=user_id).strip()
+            if personal:
+                return personal
+        except Exception as exc:
+            logger.warning(
+                "Failed to resolve personal HepAI API key for user %s: %s",
+                user_id,
+                exc,
+            )
+    for env_name in ("HEPAI_APP_ADMIN_API_KEY", "HEPAI_API_KEY"):
+        candidate = (os.getenv(env_name) or "").strip()
+        if candidate:
+            return candidate
+    return ""
+
+
 def _mark_featured_and_default_agents(agents: List[Dict[str, Any]]) -> None:
     """
     Add UI-related flags to agent dicts.
@@ -217,12 +282,10 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                         # Return cached data
                         return {"status": True, "data": agents_old}
 
-        # Extract API key from Authorization header (Bearer format)
-        if not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Invalid authorization header format")
-        
-        apikey = authorization[7:]  # Remove "Bearer " prefix
-        if not apikey.strip():
+        apikey = _resolve_platform_api_key(
+            authorization, user_id=user_id, is_refresh=is_refresh
+        )
+        if not apikey:
             return {"status": True, "data": agents_old}
 
         client = HepAI(
