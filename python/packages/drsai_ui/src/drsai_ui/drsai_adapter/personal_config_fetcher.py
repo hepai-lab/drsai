@@ -45,28 +45,11 @@ class PersonalKeyConfigFetcher:
 
     def _fetch_personal_key_raw(self, username: str) -> str:
         """
-        Same endpoint as hepai Key.fetch_api_key, without cast_to=APIKeyInfo
-        (avoids unexpected keyword 'ext_data' when API adds fields).
+        Same endpoint as hepai Key.fetch_api_key, via raw HTTP
+        (avoids SDK model mismatch e.g. unexpected keyword 'ext_data').
         """
-        key = self.client.key
-        path = f"{key.prefix}/fetch_api_key"
-        post = getattr(key, "_post", None)
-        if callable(post):
-            try:
-                raw = post(
-                    path,
-                    body={"username": username},
-                    cast_to=dict,
-                )
-                token = _extract_api_key_from_json(raw)
-                if token:
-                    return token
-            except (TypeError, ValueError) as exc:
-                logger.warning(
-                    "HepAI _post(..., cast_to=dict) fallback failed: {}", exc
-                )
-
         admin_api_key = os.environ["HEPAI_APP_ADMIN_API_KEY"]
+        key = self.client.key
         prefix = str(getattr(key, "prefix", "") or "").strip("/")
         rel = f"{prefix}/fetch_api_key" if prefix else "fetch_api_key"
         url = f"{self._hepai_base_url}/{rel}"
@@ -116,13 +99,13 @@ class PersonalKeyConfigFetcher:
                 if "ext_data" not in err and "unexpected keyword" not in err:
                     raise
                 logger.warning(
-                    "HepAI fetch_api_key model mismatch ({}); using raw JSON fallback",
+                    "HepAI fetch_api_key model mismatch ({}); using raw HTTP fallback",
                     exc,
                 )
                 return self._fetch_personal_key_raw(username)
 
             if not api_key or not getattr(api_key, "api_key", None):
-                raise ValueError(f"API key for user {username} not found.")
+                return self._fetch_personal_key_raw(username)
             return cast(APIKeyInfo, api_key).api_key
         else:
             api_key = os.getenv("HEPAI_API_KEY", "hepai_api_key_not_found")

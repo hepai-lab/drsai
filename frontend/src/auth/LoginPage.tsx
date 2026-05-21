@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { HelpCircle, Sun, Moon, Globe } from "lucide-react";
 import { appContext } from "../hooks/provider";
-import { authAPI, agentWorkerAPI } from "../components/views/api";
+import { authAPI } from "../components/views/api";
 
 type LoginTab = "sso" | "login" | "register";
 
@@ -87,11 +87,6 @@ const LoginPage: React.FC = () => {
                 localStorage.setItem("user_name", loginUsername);
                 setUser({ name: loginUsername, email: loginUsername, username: loginUsername });
                 localStorage.removeItem("drsai-mode-config");
-                try {
-                    await agentWorkerAPI.getUserDefaultAgents(loginUsername);
-                } catch {
-                    // 即使失败也继续
-                }
                 window.location.href = "/";
             }
         } catch (err: any) {
