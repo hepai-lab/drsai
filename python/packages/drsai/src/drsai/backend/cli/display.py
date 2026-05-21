@@ -551,15 +551,6 @@ class KawaiiSpinner:
         except ImportError:
             return False
 
-    def _is_vscode_terminal(self) -> bool:
-        """Return True when running inside VS Code's integrated terminal.
-
-        VS Code's terminal doesn't correctly handle ANSI save/restore cursor
-        sequences (\\0337/\\0338) — it renders them as visible characters
-        instead of executing them.  On this platform we fall back to no spinner.
-        """
-        return os.getenv("TERM_PROGRAM", "").lower() == "vscode"
-
     def _animate(self) -> None:
         """Animation loop running in background thread."""
         # Non-TTY: just print once and wait
@@ -574,14 +565,7 @@ class KawaiiSpinner:
         # (with raw=True) preserves ANSI escapes, and because the spinner
         # thread writes through the same self._out (captured StdoutProxy),
         # there is no stdout/stderr dual-stream race.
-        # Exception: VS Code terminal does not correctly handle \\0337/\\0338
-        # (it renders them as visible characters), so we fall back to no-op.
         if self._is_patch_stdout_proxy():
-            if self._is_vscode_terminal():
-                # VS Code: ANSI save/restore broken, show nothing during render
-                while self.running:
-                    time.sleep(0.5)
-                return
             while self.running:
                 frame = self.spinner_frames[self.frame_idx % len(self.spinner_frames)]
                 elapsed = time.time() - self.start_time if self.start_time else 0
@@ -639,15 +623,12 @@ class KawaiiSpinner:
             self.thread.join(timeout=0.5)
 
         in_proxy = self._is_patch_stdout_proxy()
-        is_vscode = self._is_vscode_terminal()
         is_tty = self._is_tty
 
         if in_proxy:
-            if is_vscode:
-                pass  # spinner was hidden, nothing to clear
-            else:
-                # Clear the bottom-anchored spinner row via same ANSI mechanism
-                self._write("\0337\033[999B\033[999D\033[K\0338", end='', flush=True)
+            # Clear the current spinner line — \r returns to current row start,
+            # \033[K erases to end of line.
+            self._write("\r\033[K", end='', flush=True)
         elif is_tty:
             blanks = ' ' * max(self.last_line_len + 5, 40)
             self._write(f"\r{blanks}\r", end='', flush=True)
