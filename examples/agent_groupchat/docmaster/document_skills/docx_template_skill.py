@@ -123,7 +123,7 @@ _DATE_SCAFFOLD_RE = re.compile(
 _INLINE_BLANK_RE = re.compile(
     r"(?P<lm>[:：¥$￥€£]|（大写）|\(大写\)|（小写）|\(小写\))"
     r"(?P<gap>[ \t　]{2,}[/\\][ \t　]{2,}|[ \t　]{3,})"
-    r"(?=[;；,，.。、元年月日天周个种号％%米]"
+    r"(?=[;；,，.。、元年月日天周个种号份％%米]"
     r"|工作日|平方米|小时|分钟|（小写）|\(小写\)|（大写）|\(大写\)|$)"
 )
 # Match an amount-label marker on its own (for clean-label slot tagging).
@@ -3485,11 +3485,28 @@ _UW_BOUNDARY_TOKENS = (
     "平方米", "工作日", "小时", "分钟",
     "（大写）", "(大写)", "（小写）", "(小写)",
 )
-_UW_BOUNDARY_SINGLE_CHARS = ":：;；。?？!！米元日天周月年个号％%¥$￥€£"
+# Right-side boundary chars for an underlined-whitespace fill region.
+# Unit chars `份` and `种` are common contract / form units that should
+# always terminate a fill ("本合同一式X份", "三种方式"). Parens `（(）)`
+# are boundaries so a gap immediately followed by an inline option marker
+# (`（甲、乙、双）方所有`) doesn't get the option text + trailing prose
+# swallowed into the slot. Comma and 顿号 are deliberately NOT in this set
+# — they appear inside sample list text between merged UW gaps (see
+# test_uw_spans_merge_across_sample_list).
+_UW_BOUNDARY_SINGLE_CHARS = ":：;；。?？!！米元日天周月年个号份种（(）)％%¥$￥€£"
 _UW_RIGHT_STOP_RE = re.compile(
     r"[" + re.escape(_UW_BOUNDARY_SINGLE_CHARS) + r"]"
     r"|" + r"|".join(re.escape(t) for t in _UW_BOUNDARY_TOKENS)
 )
+
+# Merge-blocker between two UW gaps. If ANY right-stop char (sentence
+# terminator, unit char, paren, etc.) appears in the prose between gap1's
+# trailing-whitespace edge and gap2's start, the gaps belong to different
+# slots — don't merge across them. Reuses `_UW_RIGHT_STOP_RE` so any char
+# that would naturally end a fill region also prevents an over-merge.
+# 顿号 (`、`) is intentionally NOT in the stop set, since it's the canonical
+# intra-list separator inside sample text between merged gaps.
+_UW_MERGE_BLOCKER_RE = _UW_RIGHT_STOP_RE
 
 
 def _extend_span_right_past_draft_marks(
@@ -3603,40 +3620,75 @@ def _expand_and_merge_uw_spans(
     n = len(text)
 
     def find_left_anchor(start_idx: int) -> int:
+        # Walk LEFT from `start_idx` to find a label colon (`:` or `：`)
+        # within `max_left_distance` chars. Returns the position just AFTER
+        # the colon so the slot can absorb any sample text between the colon
+        # and the gap.
+        #
+        # If we hit ANY other boundary first (sentence punctuation `。?？!！`,
+        # clause separator `;；`, unit char `元/日/份/种/...`, paren `（(）)`,
+        # or a multi-char unit token like `平方米`), abort expansion and
+        # return `start_idx` unchanged. Those chars are hard stops — the
+        # slot must not cross them, AND they don't signal "sample text
+        # follows", so the slot shouldn't absorb anything past them either.
+        # Previously we treated every boundary as an anchor-to-absorb-to,
+        # which made `...解决。<prose>第<gap>种...` slurp the prose between
+        # `。` and the gap into the slot.
         lo = max(0, start_idx - max_left_distance)
         i = start_idx
         while i > lo:
-            # Multi-char token ending at i (i.e., text[i-len(token):i] == token)
-            matched = False
             for token in _UW_BOUNDARY_TOKENS:
                 tlen = len(token)
                 if i - tlen >= 0 and text[i - tlen:i] == token:
-                    return i
+                    return start_idx
             c = text[i - 1]
-            if c == ":" and (i - 1 == 0 or not text[i - 2].isdigit()):
+            if c in (":", "：") and (i - 1 == 0 or not text[i - 2].isdigit()):
                 return i
-            if c in _UW_BOUNDARY_SINGLE_CHARS and c != ":":
-                return i
+            if c in _UW_BOUNDARY_SINGLE_CHARS:
+                return start_idx
             i -= 1
         return start_idx
 
-    def find_right_anchor(start_idx: int, bound: int) -> Tuple[int, bool]:
-        # Returns (position, hit_boundary). hit_boundary=False means we ran
-        # up to `bound` without hitting a hard stop — caller may merge with
-        # the next span.
+    def find_right_extent(start_idx: int, bound: int, has_next: bool
+                          ) -> Tuple[int, bool]:
+        # Two-stage right walk. Returns (right, merge_with_next).
+        #
+        # Stage 1: consume trailing whitespace and draft marks (/ \ ／ ＼).
+        #          These are ALWAYS safe to absorb — they're filler the
+        #          template author left around the underlined line.
+        # Stage 2: if a next UW gap exists in this paragraph AND no hard
+        #          sentence boundary (. ? ! 。 ？ ！ ; ；) appears between
+        #          us and it, the prose in between is sample text — merge
+        #          to the next gap's start. Else stop at Stage 1's end.
+        #
+        # Previously the walk was "step char-by-char until any boundary in
+        # the wide _UW_BOUNDARY set is hit." That treated everything between
+        # the gap and the boundary as "absorbable sample text", which in
+        # flowing CN prose (`<gap>的方式使用。`) silently swallowed entire
+        # clauses. The structural problem: CN prose between a gap and the
+        # next 。 rarely contains any boundary char, so the walk had no
+        # natural stopping point. The two-stage approach makes the slot's
+        # right edge the END of the underlined region itself — extending
+        # only when there is positive evidence (a next gap, no sentence
+        # break between) that more text belongs to the slot.
+        n_text = len(text)
         i = start_idx
-        while i < bound:
-            if _UW_RIGHT_STOP_RE.match(text, i):
-                return i, True
+        while i < bound and i < n_text and text[i] in " \t　/\\／＼":
             i += 1
-        return bound, False
+        extend_end = i
+        if not has_next:
+            return extend_end, False
+        between = text[extend_end:bound]
+        if _UW_MERGE_BLOCKER_RE.search(between):
+            return extend_end, False
+        return bound, True
 
     expanded: List[Tuple[int, int, List[Any], bool]] = []
     for idx, (start, end, runs, _stext) in enumerate(uw_spans):
         left = find_left_anchor(start)
-        next_start = uw_spans[idx + 1][0] if idx + 1 < len(uw_spans) else n
-        right, hit_boundary = find_right_anchor(end, next_start)
-        merge_with_next = (not hit_boundary) and (idx + 1 < len(uw_spans))
+        has_next = idx + 1 < len(uw_spans)
+        next_start = uw_spans[idx + 1][0] if has_next else n
+        right, merge_with_next = find_right_extent(end, next_start, has_next)
         expanded.append((left, right, list(runs), merge_with_next))
 
     merged: List[Tuple[int, int, List[Any], bool]] = []
