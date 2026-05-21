@@ -877,6 +877,183 @@ def test_strip_stranded_draft_marks_at_end_of_paragraph():
     assert "0128号" in body, body
 
 
+def test_uw_span_stops_at_open_paren_option_marker():
+    """`归 <underlined gap> （甲、乙、双）方所有。` — the UW walker must stop
+    at `（`, NOT swallow `（甲、乙、双）方所有` until `。`. The option marker
+    plus trailing prose ('方所有') must survive the fill."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("第十八条  乙方利用研究开发经费所购置与研究开发工作有关的设备、器材、资料等财产，归")
+    r_gap = p.add_run("           ")
+    r_gap.font.underline = True
+    p.add_run("（甲、乙、双）方所有。")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    blanks = [s for s in ins["slots"] if s["kind"] == "underscores"]
+    assert len(blanks) == 1, f"expected 1 slot, got {len(blanks)}: {blanks}"
+    out = tmp / "out.docx"
+    skill.fill_template(str(tpl), str(out),
+                        slot_values={blanks[0]["id"]: "乙"})
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "（甲、乙、双）方所有。" in body, (
+        f"option marker + trailing prose must survive: {body!r}"
+    )
+    assert "乙" in body, body
+
+
+def test_uw_span_stops_at_open_paren_inside_option_body():
+    """`1．<gap>（甲、乙、双）方享有...。` — inline option marker after a UW
+    gap inside an option-numbered paragraph. Same pattern as above."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("1．")
+    r_gap = p.add_run("          ")
+    r_gap.font.underline = True
+    p.add_run("（甲、乙、双）方享有申请专利的权利。")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    blanks = [s for s in ins["slots"] if s["kind"] == "underscores"]
+    assert len(blanks) == 1, f"expected 1 slot, got {len(blanks)}: {blanks}"
+    out = tmp / "out.docx"
+    skill.fill_template(str(tpl), str(out),
+                        slot_values={blanks[0]["id"]: "双"})
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "（甲、乙、双）方享有申请专利的权利。" in body, (
+        f"option marker + trailing prose must survive: {body!r}"
+    )
+    assert "双" in body, body
+
+
+def test_uw_left_anchor_does_not_cross_sentence_period():
+    """`...解决。协商、调解不成的，确定按以下第<gap>种方式处理：` — the left
+    anchor must NOT cross the `。` from the previous sentence. Without this
+    guard, the slot absorbs the prose between `。` and the gap, which then
+    gets overwritten by the fill value."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("第二十四条：双方因履行本合同而发生的争议，应协商、调解解决。"
+              "协商、调解不成的，确定按以下第")
+    r_gap = p.add_run("      ")
+    r_gap.font.underline = True
+    p.add_run("种方式处理：")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    blanks = [s for s in ins["slots"] if s["kind"] == "underscores"]
+    assert len(blanks) == 1, f"expected 1 slot, got {len(blanks)}: {blanks}"
+    out = tmp / "out.docx"
+    skill.fill_template(str(tpl), str(out),
+                        slot_values={blanks[0]["id"]: "1"})
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "协商、调解不成的，确定按以下第" in body, (
+        f"prose between previous 。 and the gap must survive: {body!r}"
+    )
+    assert "种方式处理：" in body, body
+    assert "1" in body, body
+
+
+def test_uw_right_walk_does_not_swallow_prose_to_period():
+    """`由乙方以<gap>的方式使用。` — Chinese particles (`的`, `方`, `式`) and
+    flowing prose contain no boundary chars, so the OLD walk would slurp
+    everything up to `。`. The new two-stage walk stops at the trailing-
+    whitespace edge instead, leaving `的方式使用` intact."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("第六条  本合同的研究开发经费由乙方以")
+    r_gap = p.add_run("              ")
+    r_gap.font.underline = True
+    p.add_run("的方式使用。")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    blanks = [s for s in ins["slots"] if s["kind"] == "underscores"]
+    assert len(blanks) == 1, f"expected 1 slot, got {len(blanks)}: {blanks}"
+    out = tmp / "out.docx"
+    skill.fill_template(str(tpl), str(out),
+                        slot_values={blanks[0]["id"]: "专款专用、独立核算"})
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "的方式使用。" in body, (
+        f"prose after the gap must survive the fill: {body!r}"
+    )
+    assert "专款专用、独立核算" in body, body
+
+
+def test_uw_two_gaps_in_same_paragraph_stay_isolated():
+    """Two UW gaps separated by a full sentence (`<gap1>的方式使用。甲方有
+    权以<gap2>的方式...`) must NOT merge. Each gap is its own slot, and the
+    prose between them must survive."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("第六条  本合同的研究开发经费由乙方以")
+    r1 = p.add_run("              ")
+    r1.font.underline = True
+    p.add_run("的方式使用。甲方有权以")
+    r2 = p.add_run("        ")
+    r2.font.underline = True
+    p.add_run("的方式检查乙方进行研究开发工作和使用研究开发经费的情况，"
+              "但不得妨碍乙方的正常工作。")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    blanks = [s for s in ins["slots"] if s["kind"] == "underscores"]
+    assert len(blanks) == 2, f"expected 2 separate slots, got {len(blanks)}: {blanks}"
+    out = tmp / "out.docx"
+    skill.fill_template(
+        str(tpl), str(out),
+        slot_values={
+            blanks[0]["id"]: "专款专用、独立核算",
+            blanks[1]["id"]: "定期审查财务报告和项目进度报告",
+        },
+    )
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "的方式使用。" in body, body
+    assert "的方式检查乙方进行研究开发工作和使用研究开发经费的情况" in body, body
+    assert "但不得妨碍乙方的正常工作。" in body, body
+    assert "专款专用、独立核算" in body, body
+    assert "定期审查财务报告和项目进度报告" in body, body
+
+
+def test_uw_span_stops_at_fen_unit():
+    """`本合同一式 <underlined gap> 份，具有同等法律效力。` — the gap before
+    '份' is the fillable slot. The walker MUST stop at '份' (a unit char) and
+    MUST NOT continue past the comma into the rest of the clause; otherwise
+    the trailing prose '份，具有同等法律效力' gets sucked into the slot and
+    overwritten by the fill value."""
+    tmp = Path(tempfile.mkdtemp())
+    d = Document()
+    p = d.add_paragraph()
+    p.add_run("第二十八条  本合同一式")
+    r_gap = p.add_run("            ")
+    r_gap.font.underline = True
+    p.add_run("份，具有同等法律效力。")
+    tpl = tmp / "tpl.docx"
+    d.save(str(tpl))
+    skill = dts.DocxTemplateSkill(str(tmp))
+    ins = skill.inspect_template(str(tpl))
+    blanks = [s for s in ins["slots"] if s["kind"] == "underscores"]
+    assert len(blanks) == 1, f"expected exactly 1 slot, got {len(blanks)}: {blanks}"
+    out = tmp / "out.docx"
+    skill.fill_template(str(tpl), str(out),
+                        slot_values={blanks[0]["id"]: "四"})
+    body = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "份，具有同等法律效力。" in body, (
+        f"trailing clause must survive the fill: {body!r}"
+    )
+    assert "四" in body, body
+
+
 # ── Runner ───────────────────────────────────────────────────────────────
 
 
