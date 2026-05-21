@@ -560,10 +560,25 @@ class KawaiiSpinner:
                 time.sleep(0.5)
             return
 
-        # Inside prompt_toolkit: delegate to TUI widget
+        # Inside prompt_toolkit (patch_stdout active): use ANSI save/restore
+        # cursor to anchor spinner at terminal bottom row.  StdoutProxy
+        # (with raw=True) preserves ANSI escapes, and because the spinner
+        # thread writes through the same self._out (captured StdoutProxy),
+        # there is no stdout/stderr dual-stream race.
         if self._is_patch_stdout_proxy():
             while self.running:
-                time.sleep(0.1)
+                frame = self.spinner_frames[self.frame_idx % len(self.spinner_frames)]
+                elapsed = time.time() - self.start_time if self.start_time else 0
+                line = f"  {frame} {self.message} ({elapsed:.1f}s)"
+                # \0337 = save cursor, \033[999B = move to bottom,
+                # \033[999D = move to col 0, \033[K = erase line,
+                # \0338 = restore cursor
+                self._write(
+                    f"\0337\033[999B\033[999D\033[K{line}    \0338",
+                    end='', flush=True
+                )
+                self.frame_idx += 1
+                time.sleep(0.12)
             return
 
         # Normal TTY animation
@@ -607,14 +622,19 @@ class KawaiiSpinner:
         if self.thread:
             self.thread.join(timeout=0.5)
 
+        in_proxy = self._is_patch_stdout_proxy()
         is_tty = self._is_tty
-        if is_tty:
+
+        if in_proxy:
+            # Clear the bottom-anchored spinner row via same ANSI mechanism
+            self._write("\0337\033[999B\033[999D\033[K\0338", end='', flush=True)
+        elif is_tty:
             blanks = ' ' * max(self.last_line_len + 5, 40)
             self._write(f"\r{blanks}\r", end='', flush=True)
 
         if final_message:
             elapsed = f" ({time.time() - self.start_time:.1f}s)" if self.start_time else ""
-            if is_tty:
+            if in_proxy or is_tty:
                 self._write(f"  {final_message}", flush=True)
             else:
                 self._write(f"  [done] {final_message}{elapsed}", flush=True)
