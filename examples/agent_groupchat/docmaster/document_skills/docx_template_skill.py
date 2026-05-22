@@ -1933,8 +1933,15 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
     #      (the inherited underline carries through so the line stays visible).
     raw_uw_spans = _find_underlined_whitespace_spans(paragraph)
     uw_spans = _expand_and_merge_uw_spans(text, raw_uw_spans)
+    # Coalesce `<uw>年<uw>月[<uw>日]` runs into ONE span. Without this each
+    # gap becomes its own slot and the agent fills `2026年` into the year
+    # gap, `2026月` into the month gap, etc. — producing the
+    # "2026 年2026月 7 日" duplication.
+    uw_spans = _merge_uw_date_scaffold_spans(text, uw_spans)
     uw_emitted = False
-    for start, end, runs, span_text in uw_spans:
+    for entry in uw_spans:
+        start, end, runs, span_text = entry[0], entry[1], entry[2], entry[3]
+        source = entry[4] if len(entry) >= 5 else "underlined_whitespace"
         if _overlaps_covered(start, end):
             continue
         label = _guess_label_before(text, start)
@@ -1946,7 +1953,7 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
             "end": end,
             "is_signature": is_sig,
             "pad_char": " ",
-            "source": "underlined_whitespace",
+            "source": source,
         })
         covered.append((start, end))
         uw_emitted = True
@@ -4049,6 +4056,69 @@ def _expand_and_merge_uw_spans(
         merged.append((left, right, runs, merge_with_next))
 
     return [(l, r, runs, text[l:r]) for l, r, runs, _ in merged]
+
+
+def _merge_uw_date_scaffold_spans(
+    text: str,
+    uw_spans: List[Tuple[int, int, List[Any], str]],
+) -> List[Tuple[int, int, List[Any], str, str]]:
+    """Merge `<uw-gap>年<uw-gap>月[<uw-gap>日]` into ONE span.
+
+    Word's "underlined-whitespace date" pattern produces three (or two) tiny
+    UW gaps separated only by the single CJK date markers `年` / `月` / `日`.
+    Each gap on its own becomes an underscores slot and the agent ends up
+    filling the year value into all three (`2026 年2026月 7 日`). Merging them
+    into a single fill region — and absorbing the trailing `日` — restores
+    the natural "one date = one slot" expectation.
+
+    Returns 5-tuples `(left, right, runs, span_text, source)` where source is
+    `date_scaffold` for merged date spans and `underlined_whitespace`
+    otherwise. Callers that don't care about the source can ignore the 5th
+    field.
+    """
+    if not uw_spans:
+        return []
+    n = len(text)
+    out: List[Tuple[int, int, List[Any], str, str]] = []
+    i = 0
+    while i < len(uw_spans):
+        s, e, runs, _st = uw_spans[i]
+        # Year-anchor: next char after this UW span must be '年'.
+        if e < n and text[e] == "年":
+            grp_runs = list(runs)
+            right = e + 1  # include '年'
+            j = i + 1
+            # Optional month: '月' immediately after right OR after the next UW
+            # gap that starts at `right`.
+            if j < len(uw_spans) and uw_spans[j][0] == right:
+                ns, ne, nruns, _ = uw_spans[j]
+                if ne < n and text[ne] == "月":
+                    grp_runs.extend(nruns)
+                    right = ne + 1
+                    j += 1
+                    # Optional day: '日' after another UW gap at `right`.
+                    if j < len(uw_spans) and uw_spans[j][0] == right:
+                        ds, de, druns, _ = uw_spans[j]
+                        if de < n and text[de] == "日":
+                            grp_runs.extend(druns)
+                            right = de + 1
+                            j += 1
+                    elif right < n and text[right] == "日":
+                        # No UW gap before 日 — still absorb the marker.
+                        right += 1
+            elif right < n and text[right] == "月":
+                # Year gap directly followed by '年月' with no gap between
+                # markers (rare but valid template).
+                right += 1
+                if right < n and text[right] == "日":
+                    right += 1
+            if right > e + 1:  # we absorbed at least '月' (or '日')
+                out.append((s, right, grp_runs, text[s:right], "date_scaffold"))
+                i = j
+                continue
+        out.append((s, e, runs, text[s:e], "underlined_whitespace"))
+        i += 1
+    return out
 
 
 def _set_paragraph_centered(paragraph) -> None:
