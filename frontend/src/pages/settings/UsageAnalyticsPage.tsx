@@ -48,11 +48,22 @@ function hasResolvedAgentName(agentName: unknown): boolean {
 
 type TopAgentRow = AdminUsageOverviewData["top_agents_by_usage_records"][number];
 
-type UsageEventRow = AdminUsageOverviewData["usage_events"][number];
-
 type SessionUsageScatterRow = NonNullable<AdminUsageOverviewData["session_usage_scatter"]>[number];
 
 type SessionUserRow = AdminUsageOverviewData["sessions_per_user"][number];
+
+type TodayStats = {
+    todayKey: string;
+    dau: number;
+    usagePairs: number;
+    newSessions: number;
+    recentEvents: Array<{
+        time: string;
+        agentName: string;
+        userId: string;
+        useCount: number;
+    }>;
+};
 
 type DashboardStats = {
     activeUsers: number;
@@ -219,38 +230,9 @@ const AnalyticsShell: React.FC<{ children: React.ReactNode }> = ({ children }) =
         </div>
     </ConfigProvider>
 );
-function usageEventTimeRaw(row: UsageEventRow): string | undefined {
-    const a = row.last_used_at ?? row.updated_at;
-    if (a != null && String(a).trim() !== "") return String(a);
-    const c = row.created_at as string | undefined;
-    if (c != null && String(c).trim() !== "") return String(c);
-    return undefined;
-}
-
-type TodayStats = {
-    todayKey: string;
-    dau: number;
-    activeAgents: number;
-    usagePairs: number;
-    newSessions: number;
-    activeSessions: number;
-    recentEvents: Array<{
-        time: string;
-        agentName: string;
-        userId: string;
-        useCount: number;
-    }>;
-};
 
 function beijingTodayKey(): string {
     return beijingDayKey(Date.now());
-}
-
-function isBeijingToday(raw: string | null | undefined): boolean {
-    if (raw == null || raw === "") return false;
-    const d = parseAnalyticsInstant(String(raw));
-    if (Number.isNaN(d.getTime())) return false;
-    return beijingDayKey(d.getTime()) === beijingTodayKey();
 }
 
 function formatAnalyticsTimeOnly(raw: string): string {
@@ -267,93 +249,24 @@ function formatAnalyticsTimeOnly(raw: string): string {
 
 /** 今日有效调用：按 Session（user + agent_mode_config）在北京日历日内创建计次。 */
 function computeTodayStats(overview: AdminUsageOverviewData | null): TodayStats | null {
-    if (!overview) return null;
+    if (!overview?.today_session_stats) return null;
 
     const sessionStats = overview.today_session_stats;
-    const todayKey = sessionStats?.today_key ?? beijingTodayKey();
-
-    if (sessionStats) {
-        const recentEvents = (sessionStats.recent_by_user_agent ?? [])
-            .slice(0, RECENT_TODAY_FEED_LIMIT)
-            .map((row) => ({
-                time: formatAnalyticsTimeOnly(row.latest_created_at),
-                agentName: hasResolvedAgentName(row.agent_name) ? String(row.agent_name).trim() : "—",
-                userId: String(row.user_id || "—"),
-                useCount: Math.max(1, Number(row.session_count ?? 0) || 0),
-            }));
-
-        return {
-            todayKey,
-            dau: sessionStats.dau ?? 0,
-            activeAgents: sessionStats.active_agent_count ?? 0,
-            usagePairs: sessionStats.session_count ?? 0,
-            newSessions: sessionStats.session_count ?? 0,
-            activeSessions: sessionStats.sessions_updated_today ?? 0,
-            recentEvents,
-        };
-    }
-
-    // Fallback when backend has not yet exposed today_session_stats (sample only).
-    const sessions = overview.recent_sessions_preview || [];
-    const pairMap = new Map<
-        string,
-        { t: number; createdRaw: string; agentName: string; userId: string; count: number }
-    >();
-    const todayUserIds = new Set<string>();
-    const todayAgentIds = new Set<string>();
-
-    for (const session of sessions) {
-        const raw = session.created_at;
-        if (!isBeijingToday(raw)) continue;
-        const uid = String(session.user_id || "").trim();
-        const aid = session.agent_id != null ? String(session.agent_id).trim() : "";
-        if (!uid || !aid) continue;
-        const d = parseAnalyticsInstant(String(raw));
-        if (Number.isNaN(d.getTime())) continue;
-
-        todayUserIds.add(uid);
-        todayAgentIds.add(aid);
-        const key = `${uid}\x00${aid}`;
-        const agentName = hasResolvedAgentName(session.agent_name) ? String(session.agent_name).trim() : "—";
-        const existing = pairMap.get(key);
-        if (existing) {
-            existing.count += 1;
-            if (d.getTime() > existing.t) {
-                existing.t = d.getTime();
-                existing.createdRaw = String(raw);
-            }
-        } else {
-            pairMap.set(key, { t: d.getTime(), createdRaw: String(raw), agentName, userId: uid, count: 1 });
-        }
-    }
-
-    let newSessions = 0;
-    let activeSessions = 0;
-    for (const session of sessions) {
-        if (isBeijingToday(session.created_at)) newSessions += 1;
-        if (isBeijingToday(session.updated_at)) activeSessions += 1;
-    }
-
-    const recentEvents = [...pairMap.values()]
-        .sort((a, b) => b.t - a.t)
+    const todayKey = sessionStats.today_key ?? beijingTodayKey();
+    const recentEvents = (sessionStats.recent_by_user_agent ?? [])
         .slice(0, RECENT_TODAY_FEED_LIMIT)
         .map((row) => ({
-            time: formatAnalyticsTimeOnly(row.createdRaw),
-            agentName: row.agentName,
-            userId: row.userId,
-            useCount: row.count,
+            time: formatAnalyticsTimeOnly(row.latest_created_at),
+            agentName: hasResolvedAgentName(row.agent_name) ? String(row.agent_name).trim() : "—",
+            userId: String(row.user_id || "—"),
+            useCount: Math.max(1, Number(row.session_count ?? 0) || 0),
         }));
-
-    let usagePairs = 0;
-    for (const row of pairMap.values()) usagePairs += row.count;
 
     return {
         todayKey,
-        dau: todayUserIds.size,
-        activeAgents: todayAgentIds.size,
-        usagePairs,
-        newSessions,
-        activeSessions,
+        dau: sessionStats.dau ?? 0,
+        usagePairs: sessionStats.session_count ?? 0,
+        newSessions: sessionStats.session_count ?? 0,
         recentEvents,
     };
 }
@@ -367,55 +280,6 @@ function sessionScatterYKey(row: SessionUsageScatterRow): string {
     const name = String(row.agent_name ?? "").trim();
     const u = String(row.user_id || "—");
     return `${name}\x00${u}`;
-}
-
-function buildSessionUsageScatterFallback(
-    sessions: AdminUsageOverviewData["recent_sessions_preview"]
-): SessionUsageScatterRow[] {
-    const nowMs = Date.now();
-    const windowStartMs = nowMs - USAGE_SCATTER_WINDOW_MS;
-    const pairMap = new Map<
-        string,
-        { t: number; latest: string; agentName?: string | null; userId: string; agentId: string; count: number }
-    >();
-
-    for (const session of sessions || []) {
-        const raw = session.created_at;
-        if (raw == null || raw === "") continue;
-        const d = parseAnalyticsInstant(String(raw));
-        if (Number.isNaN(d.getTime()) || d.getTime() < windowStartMs) continue;
-        const uid = String(session.user_id || "").trim();
-        const aid = session.agent_id != null ? String(session.agent_id).trim() : "";
-        if (!uid || !aid) continue;
-        const key = `${uid}\x00${aid}`;
-        const existing = pairMap.get(key);
-        if (existing) {
-            existing.count += 1;
-            if (d.getTime() > existing.t) {
-                existing.t = d.getTime();
-                existing.latest = String(raw);
-            }
-        } else {
-            pairMap.set(key, {
-                t: d.getTime(),
-                latest: String(raw),
-                agentName: session.agent_name,
-                userId: uid,
-                agentId: aid,
-                count: 1,
-            });
-        }
-    }
-
-    return [...pairMap.values()]
-        .sort((a, b) => b.t - a.t)
-        .map((row) => ({
-            user_id: row.userId,
-            agent_id: row.agentId,
-            agent_name: row.agentName,
-            latest_created_at: row.latest,
-            session_count: row.count,
-        }));
 }
 
 function truncateAxisText(text: string, max: number): string {
@@ -1092,8 +956,7 @@ const TodayLivePanel: React.FC<{ loading: boolean; stats: TodayStats | null }> =
         stats &&
         stats.dau === 0 &&
         stats.usagePairs === 0 &&
-        stats.newSessions === 0 &&
-        stats.activeSessions === 0;
+        stats.newSessions === 0;
 
     const dauChip = loading ? "—" : (stats?.dau ?? 0);
     const checkInChip = loading ? "—" : (stats?.usagePairs ?? 0);
@@ -1189,12 +1052,10 @@ const UsageAnalyticsPage: React.FC = () => {
 
     const dashboardStats = useMemo(() => computeDashboardStats(overview), [overview]);
     const todayStats = useMemo(() => computeTodayStats(overview), [overview]);
-    const sessionScatterRows = useMemo((): SessionUsageScatterRow[] => {
-        if (overview?.session_usage_scatter?.length) {
-            return [...overview.session_usage_scatter];
-        }
-        return buildSessionUsageScatterFallback(overview?.recent_sessions_preview ?? []);
-    }, [overview]);
+    const sessionScatterRows = useMemo(
+        (): SessionUsageScatterRow[] => [...(overview?.session_usage_scatter ?? [])],
+        [overview]
+    );
 
     const sampleLimitHint =
         overview?.limits?.usage_events != null
