@@ -117,6 +117,11 @@ export default function WelcomeScreen({
                     onTextChange={(text) => {
                         setHasInputValue(text.trim().length > 0);
                     }}
+                    onClear={() => {
+                        if (!suppressSampleTasks) {
+                            setHideSampleTasks(false);
+                        }
+                    }}
                     serverFilesPrefill={serverFilesPrefill}
                 />
             </div>

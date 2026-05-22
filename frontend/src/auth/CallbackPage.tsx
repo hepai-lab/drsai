@@ -25,7 +25,7 @@ const CallbackPage = () => {
         localStorage.removeItem("drsai-mode-config");
 
         setUser({ name: username, email: username, username });
-        navigate("/", { replace: true });
+        navigate("/?menu=current_session&view=chat", { replace: true });
     }, [setUser]);
 
     if (error) {

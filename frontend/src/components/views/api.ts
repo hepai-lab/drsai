@@ -1235,6 +1235,11 @@ export type AdminUsageOverviewData = {
         latest_created_at: string;
         session_count: number;
     }>;
+    usage_daily_trends?: Array<{
+        day_key: string;
+        agent_session_count: number;
+        active_user_count: number;
+    }>;
     limits: { usage_events?: number };
 };
 

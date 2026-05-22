@@ -4,3 +4,10 @@ public
 src/gatsby-types.d.ts
 .env.development
 .env.production
+
+# Playwright E2E（本地 restore 时生成，不提交）
+e2e/
+playwright.config.ts
+test-results/
+e2e-report/
+playwright-report/

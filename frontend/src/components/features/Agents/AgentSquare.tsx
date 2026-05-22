@@ -569,7 +569,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     <div className={`flex flex-col h-full ${className}`}>
       {/* 工具条（置顶） */}
       <div className="sticky top-0 z-10 mb-4 bg-transparent pr-4">
-        <div className="ml-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#e7e7ef] bg-white/70 px-3 py-2 backdrop-blur dark:border-[#2a2a3a] dark:bg-[#101018]/70">
+        <div className="ml-4 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white/70 px-3 py-2 backdrop-blur dark:border-[#2a2a3a] dark:bg-[#101018]/70">
           <div className="flex min-w-[260px] flex-1 items-center gap-2">
             <div className="text-sm font-semibold text-[#233457] dark:text-[#e4e8ff]">
               智能体
@@ -643,12 +643,12 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
             </select>
 
             <Button
-              variant="primary"
+              variant="secondary"
               size="sm"
               onClick={handleRefresh}
               disabled={isRefreshing}
               icon={<RefreshCw className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`} />}
-              className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white border-0 shadow-none"
+              className="h-8 rounded-lg !border border-[#d4c9ff] bg-[#f5f3ff]/90 px-3 text-xs font-medium text-[#5d3fcd] shadow-[0_1px_0_rgba(93,63,205,0.08)] backdrop-blur-sm hover:border-[#b5a1ff] hover:bg-[#ece9ff] hover:shadow-[0_10px_30px_rgba(93,63,205,0.18)] active:translate-y-0 dark:border-[#5d3fcd]/40 dark:bg-[#2a2342]/80 dark:text-[#bca8ff] dark:hover:border-[#7c5ce8] dark:hover:bg-[#322a4a]"
             >
               刷新
             </Button>

@@ -87,7 +87,7 @@ const LoginPage: React.FC = () => {
                 localStorage.setItem("user_name", loginUsername);
                 setUser({ name: loginUsername, email: loginUsername, username: loginUsername });
                 localStorage.removeItem("drsai-mode-config");
-                window.location.href = "/";
+                window.location.href = "/?menu=current_session&view=chat";
             }
         } catch (err: any) {
             setError(err.message || "登录失败，请重试");

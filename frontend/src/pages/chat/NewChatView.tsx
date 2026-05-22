@@ -205,6 +205,11 @@ export default function NewChatView({
                             onTextChange={(text) => {
                                 setHasInputValue(text.trim().length > 0);
                             }}
+                            onClear={() => {
+                                if (!suppressSampleTasks) {
+                                    setHideSampleTasks(false);
+                                }
+                            }}
                             serverFilesPrefill={serverFilesPrefill}
                         />
                     </div>
@@ -217,7 +222,6 @@ export default function NewChatView({
                             isSubmitting
                         }
                         onSelect={(task: string) => {
-                            onDismissSampleTasks?.();
                             setHideSampleTasks(true);
                             chatInputRef.current?.setValue(task);
                         }}

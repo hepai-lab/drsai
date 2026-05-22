@@ -1,8 +1,12 @@
 import { Bot, ChevronRight, FileText, Grid2X2, PanelLeftOpen, Plus } from "lucide-react";
 import React, { useContext, useMemo } from "react";
-import { CanvasViewId } from "../components/views/menuRoutes";
-import { MENU_IDS, createSearchWithMenu, createSearchWithView } from "../components/views/menuRoutes";
-import { getMenuIdFromSearch } from "../components/views/menuRoutes";
+import {
+  CanvasViewId,
+  MENU_IDS,
+  type MenuId,
+  createSearchWithMenu,
+  createSearchWithView,
+} from "../components/views/menuRoutes";
 import { appContext } from "../hooks/provider";
 import { useConfigStore } from "../hooks/store";
 import { useLocation, useNavigate } from "../hooks/useRouter";
@@ -17,6 +21,8 @@ interface CanvasProps {
   children: React.ReactNode;
   filePreviewContent?: React.ReactNode;
   activeView: CanvasViewId;
+  /** 与侧栏一致的有效菜单（含乐观 pending），勿仅用 URL */
+  activeMenuId: MenuId;
   activeMenuLabel: string;
   onViewChange: (view: CanvasViewId) => void;
   onNewSession?: () => void;
@@ -29,6 +35,7 @@ const Canvas: React.FC<CanvasProps> = ({
   children,
   filePreviewContent,
   activeView,
+  activeMenuId,
   activeMenuLabel,
   onViewChange,
   onNewSession,
@@ -39,7 +46,6 @@ const Canvas: React.FC<CanvasProps> = ({
   const { darkMode } = useContext(appContext);
   const location = useLocation();
   const navigate = useNavigate();
-  const activeMenuId = getMenuIdFromSearch(location.search);
   const session = useConfigStore((s) => s.session);
   const agentInfo = useModeConfigStore((s) => s.agentInfo);
   const selectedAgent = useModeConfigStore((s) => s.selectedAgent);
@@ -79,11 +85,10 @@ const Canvas: React.FC<CanvasProps> = ({
     <div className="h-full flex flex-col min-h-0 overflow-hidden">
       {/* Breadcrumb */}
       <div
-        className={`relative flex-shrink-0 flex items-center gap-1 px-2 sm:px-4 h-11 text-sm ${
-          darkMode === "dark"
+        className={`relative flex-shrink-0 flex items-center gap-1 px-2 sm:px-4 h-11 text-sm ${darkMode === "dark"
             ? "bg-white/[0.02]"
             : "border-b border-gray-200/80 bg-white/60"
-        }`}
+          }`}
       >
         {/* Root */}
         <div className="flex items-center gap-1 min-w-0 flex-shrink z-10">
@@ -109,24 +114,22 @@ const Canvas: React.FC<CanvasProps> = ({
           >
             <div className="flex max-w-[min(480px,52vw)] min-w-0 items-center gap-2.5 p-0">
               <Bot
-                className={`h-6 w-6 flex-shrink-0 motion-reduce:animate-none ${
-                  agentOfflineSnapshot
-                    ? `opacity-45 grayscale ${
-                        darkMode === "dark"
-                          ? "text-white/45"
-                          : "text-slate-400"
-                      }`
+                className={`h-6 w-6 flex-shrink-0 motion-reduce:animate-none ${agentOfflineSnapshot
+                    ? `opacity-45 grayscale ${darkMode === "dark"
+                      ? "text-white/45"
+                      : "text-slate-400"
+                    }`
                     : "text-accent opacity-90 animate-logo-hop"
-                }`}
+                  }`}
                 strokeWidth={2}
                 aria-hidden={!agentOfflineSnapshot}
                 {...(agentOfflineSnapshot
                   ? {
-                      "aria-label":
-                        "智能体已从列表移除，当前为会话中的存档配置",
-                      title:
-                        "智能体已从列表移除，当前为会话中的存档配置",
-                    }
+                    "aria-label":
+                      "智能体已从列表移除，当前为会话中的存档配置",
+                    title:
+                      "智能体已从列表移除，当前为会话中的存档配置",
+                  }
                   : {})}
               />
               <div className="flex min-w-0 flex-1 flex-row flex-nowrap items-baseline gap-x-1 text-left font-agent">

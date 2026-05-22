@@ -7,7 +7,7 @@ import TopNav from "./TopNav";
 import LeftMenu from "./LeftMenu";
 import Canvas from "./Canvas";
 import RightPanel from "./RightPanel";
-import { CanvasViewId } from "../components/views/menuRoutes";
+import { CanvasViewId, type MenuId } from "../components/views/menuRoutes";
 import { useRightPanelStore } from "../store/rightPanel";
 
 interface AppLayoutProps {
@@ -263,6 +263,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           >
             <Canvas
               activeView={canvasActiveView}
+              activeMenuId={activeSubMenuItem as MenuId}
               activeMenuLabel={activeMenuLabel}
               onViewChange={onCanvasViewChange}
               filePreviewContent={canvasFilePreviewContent}
