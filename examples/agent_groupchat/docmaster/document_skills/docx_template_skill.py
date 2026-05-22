@@ -604,6 +604,7 @@ class DocxTemplateSkill:
         slot_values: Optional[Dict[str, Any]] = None,
         removal_ids: Optional[List[str]] = None,
         force_fresh: bool = False,
+        replace_prefilled: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         path = Path(template_path)
         if not path.exists():
@@ -615,6 +616,13 @@ class DocxTemplateSkill:
         context = context or {}
         slot_values = slot_values or {}
         removal_ids = list(removal_ids) if removal_ids else []
+        replace_prefilled = replace_prefilled or {}
+        if not isinstance(replace_prefilled, dict):
+            return {
+                "success": False,
+                "error": "Invalid replace_prefilled",
+                "message": "replace_prefilled must be a dict of {slot_id: new_text}",
+            }
 
         # Chunked-fill continuation: if the same output_path already exists
         # from a previous fill_template call, switch the source to that
@@ -738,6 +746,7 @@ class DocxTemplateSkill:
             detected == "none"
             and not slot_values
             and not selected_removal_keys
+            and not replace_prefilled
             and mode == "auto"
         )
         if nothing_to_fill:
@@ -789,8 +798,10 @@ class DocxTemplateSkill:
                         f"Jinja render succeeded but bracket-pass failed: "
                         f"{bracket_pass.get('error', 'unknown error')}"
                     )
-            if slot_values:
-                slot_pass = self._fill_slots_in_place(out_path, slot_values)
+            if slot_values or replace_prefilled:
+                slot_pass = self._fill_slots_in_place(
+                    out_path, slot_values, replace_prefilled
+                )
                 slot_report = slot_pass
                 if not slot_pass.get("success"):
                     warnings.append(
@@ -816,7 +827,11 @@ class DocxTemplateSkill:
             return jinja_result
 
         # bracket / slot-only path: a single python-docx load handles both
-        bracket_result = self._fill_brackets(path, out_path, context, slot_values=slot_values)
+        bracket_result = self._fill_brackets(
+            path, out_path, context,
+            slot_values=slot_values,
+            replace_prefilled=replace_prefilled,
+        )
         if bracket_result.get("success") and selected_removal_keys:
             removal_pass = _apply_removals_in_place(
                 out_path, selected_removal_keys, removal_ids
@@ -906,6 +921,7 @@ class DocxTemplateSkill:
         output_path: Path,
         context: Dict[str, Any],
         slot_values: Optional[Dict[str, Any]] = None,
+        replace_prefilled: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         try:
             from docx import Document
@@ -940,9 +956,9 @@ class DocxTemplateSkill:
 
         # Slot pass on the same doc, if any
         slot_outcome: Dict[str, Any] = {}
-        if slot_values:
+        if slot_values or replace_prefilled:
             slots = _scan_slots(doc)
-            slot_outcome = _apply_slot_values(slots, slot_values)
+            slot_outcome = _apply_slot_values(slots, slot_values or {}, replace_prefilled or {})
             if slot_outcome.get("rejected"):
                 return {
                     "success": False,
@@ -998,7 +1014,12 @@ class DocxTemplateSkill:
             )
         return result
 
-    def _fill_slots_in_place(self, docx_path: Path, slot_values: Dict[str, Any]) -> Dict[str, Any]:
+    def _fill_slots_in_place(
+        self,
+        docx_path: Path,
+        slot_values: Dict[str, Any],
+        replace_prefilled: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Apply slot_values to a docx already on disk (used after Jinja pass)."""
         try:
             from docx import Document
@@ -1009,7 +1030,7 @@ class DocxTemplateSkill:
         except Exception as exc:
             return {"success": False, "error": str(exc), "message": f"Could not open {docx_path}: {exc}"}
         slots = _scan_slots(doc)
-        outcome = _apply_slot_values(slots, slot_values)
+        outcome = _apply_slot_values(slots, slot_values, replace_prefilled or {})
         if outcome.get("rejected"):
             outcome["success"] = False
             outcome["error"] = "legacy_slot_ids"
@@ -1235,6 +1256,19 @@ def _slot_public_view(slot: Dict[str, Any]) -> Dict[str, Any]:
                 public["replaces"] = full[start:end]
             except Exception:
                 pass
+    if meta.get("is_prefilled"):
+        public["is_prefilled"] = True
+        public["existing_text"] = meta.get("existing_text", "")
+        public["fill_policy"] = (
+            "This slot's paragraph (or its body) already contains substantive "
+            "content (see `existing_text`). By default fill_template will NOT "
+            "overwrite it — passing a value via slot_values is skipped. "
+            "Show `existing_text` to the user and ask whether to keep, edit, "
+            "or replace it. To replace, pass the new value via "
+            "fill_docx_template_tool's `replace_prefilled={slot_id: new_text}` "
+            "argument; the tool will wipe the existing content and write the "
+            "new text while preserving paragraph-level formatting."
+        )
     if slot.get("kind") == "option_choice" and meta.get("options"):
         public["options"] = [
             {"index": opt["index"], "header": opt["header"], "preview": opt["preview"]}
@@ -1701,7 +1735,148 @@ def _scan_slots(doc) -> List[Dict[str, Any]]:
                 _scan_paragraph_for_slots(p, add)
             for tbl in hf.tables:
                 _scan_table_for_slots(tbl, add)
+    # Annotate slots whose paragraph or following body already contains
+    # substantive content. These get `_meta['is_prefilled']` and
+    # `_meta['existing_text']` so downstream surfaces (the public slot
+    # view, _apply_slot_values) can prompt the user to confirm replacement
+    # rather than blindly write a duplicate.
+    _annotate_prefilled_slots(slots, body_paras)
     return slots
+
+
+# Punctuation / list-marker / whitespace characters that don't count as
+# "real content" when deciding whether a slot's paragraph is prefilled.
+# Strip these out and check what remains; ≥3 surviving chars means there's
+# meaningful prose in the paragraph next to the slot.
+_PREFILLED_TRIVIAL_RE = re.compile(
+    r"[\s　()（）\[\]【】0-9一二三四五六七八九十百千.、:：;；,，\-_·•★※/／\\＼]+"
+)
+
+
+# A list-item-like opener for label_blank prefilled detection. The body
+# paragraph(s) under "...为：" are typically numbered/lettered items —
+# `（1）`, `1.`, `1、`, `①`, `a.`, `一、` etc. This pattern excludes
+# unrelated paragraphs (titles, captions, the next section's prose) from
+# being mistaken for the slot's body.
+_LIST_ITEM_OPENER_RE = re.compile(
+    r"^[\s　]*"
+    r"(?:[（(][\d０-９a-zA-Zａ-ｚＡ-Ｚ一二三四五六七八九十]{1,3}[)）]"
+    r"|[\d０-９]{1,3}[.。、)）]"
+    r"|[一二三四五六七八九十]{1,3}[、.。)）]"
+    r"|[a-zA-Zａ-ｚＡ-Ｚ][.。、)）]"
+    r"|[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]"
+    r"|[★●•·○◆■])"
+)
+
+
+def _annotate_prefilled_slots(slots: List[Dict[str, Any]], body_paras: List[Any]) -> None:
+    """Mark heuristic slots whose surrounding paragraph already has content.
+
+    Two cases:
+      - In-paragraph spans (underscores, angle_bracketed, placeholder_phrase,
+        hint_text, highlighted): the paragraph has substantive non-whitespace
+        text outside the slot's [start:end] span. The slot is filling a
+        trailing/embedded blank in a paragraph that's already populated.
+      - Label_blank: the immediately-following body paragraph(s) contain
+        substantive prose (the body of the section is already written).
+
+    A normal "Label: _____" pattern is NOT prefilled — text before the slot
+    ending in a colon is a label prefix, which is the expected template
+    structure. Prefilled requires either (a) substantive content AFTER the
+    slot span, or (b) prefix that ends in a sentence terminator like `；。`
+    rather than a label colon.
+    """
+    para_index = {id(p): idx for idx, p in enumerate(body_paras)}
+    for slot in slots:
+        kind = slot.get("kind")
+        meta = slot.get("_meta") or {}
+        if kind in ("underscores", "angle_bracketed", "placeholder_phrase",
+                    "hint_text", "highlighted"):
+            paragraph = meta.get("paragraph")
+            start, end = meta.get("start"), meta.get("end")
+            if paragraph is None or start is None or end is None:
+                continue
+            try:
+                full = "".join((r.text or "") for r in paragraph.runs)
+            except Exception:
+                continue
+            prefix = full[:start]
+            suffix = full[end:]
+            # Only flag in-paragraph slots that sit at the end of an
+            # already-completed line — i.e. nothing meaningful follows the
+            # slot, and the prefix is a sentence (ends in `；。!?`) carrying
+            # substantive text. Mid-paragraph blanks ("计划开工日期：    年
+            # ...日") are normal fill-in-the-blank patterns and must not be
+            # flagged. Same with "Label: ____" (prefix ends in colon).
+            suffix_stripped = suffix.strip()
+            if suffix_stripped:
+                # Anything substantive after the slot means it's not a
+                # trailing-blank case. The user's bug ('（1）...；___')
+                # has empty suffix.
+                continue
+            prefix_stripped = prefix.strip()
+            if not prefix_stripped:
+                continue
+            last_char = prefix_stripped[-1]
+            sentence_terminators = ("；", ";", "。", ".", "!", "！", "?", "？")
+            if last_char not in sentence_terminators:
+                continue
+            meaningful = _PREFILLED_TRIVIAL_RE.sub("", prefix_stripped)
+            if len(meaningful) >= 3:
+                meta["is_prefilled"] = True
+                meta["existing_text"] = prefix_stripped[:200]
+        elif kind == "label_blank":
+            paragraph = meta.get("paragraph")
+            if paragraph is None:
+                continue
+            idx = para_index.get(id(paragraph))
+            if idx is None:
+                continue
+            # Require the very first non-empty following paragraph to look
+            # like a list item — `(1)`, `1.`, `①`, `一、`, etc. Without
+            # this, an unrelated next paragraph (a title, a caption, the
+            # next section's prose) gets misread as the slot's body and
+            # the slot is wrongly flagged prefilled.
+            first_body_idx = None
+            for j in range(idx + 1, min(idx + 6, len(body_paras))):
+                t = "".join((r.text or "") for r in body_paras[j].runs).strip()
+                if t:
+                    first_body_idx = j
+                    break
+            if first_body_idx is None:
+                continue
+            first_text = "".join(
+                (r.text or "") for r in body_paras[first_body_idx].runs
+            ).strip()
+            if not _LIST_ITEM_OPENER_RE.match(first_text):
+                continue
+            if _is_section_heading_like(body_paras[first_body_idx]):
+                continue
+            body_chunks: List[str] = []
+            body_targets: List[Any] = []
+            for j in range(first_body_idx, min(first_body_idx + 30, len(body_paras))):
+                nxt = body_paras[j]
+                nxt_text = "".join((r.text or "") for r in nxt.runs).strip()
+                if not nxt_text:
+                    if body_chunks:
+                        break
+                    continue
+                if _is_section_heading_like(nxt) or _SECTION_BREAK_RE.match(nxt_text):
+                    break
+                # Stop at the first paragraph that doesn't look like a
+                # continuation of the list (or wraps onto another list
+                # item's text).
+                if not _LIST_ITEM_OPENER_RE.match(nxt_text):
+                    break
+                body_chunks.append(nxt_text)
+                body_targets.append(nxt)
+            if body_chunks:
+                joined = "\n".join(body_chunks)
+                meaningful = _PREFILLED_TRIVIAL_RE.sub("", joined)
+                if len(meaningful) >= 3:
+                    meta["is_prefilled"] = True
+                    meta["existing_text"] = joined[:400]
+                    meta["prefilled_body_paragraphs"] = body_targets
 
 
 def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
@@ -2344,13 +2519,25 @@ def _reconcile_amount_pairs(
     return new_values, notes
 
 
-def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any]) -> Dict[str, Any]:
+def _apply_slot_values(
+    slots: List[Dict[str, Any]],
+    slot_values: Dict[str, Any],
+    replace_prefilled: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Apply a {slot_id: value} mapping to a freshly scanned slot list.
 
     Underscore-kind slots are grouped by paragraph and applied in reverse
     text-position order so character offsets remain valid across multiple
     fills in the same paragraph.
+
+    `replace_prefilled` is an opt-in {slot_id: new_text} mapping for slots
+    that `_annotate_prefilled_slots` flagged as already populated. When a
+    slot id appears here, the existing paragraph (or label_blank body) is
+    wiped and rewritten with the new value. Without an entry here, a
+    prefilled slot's fill value is SKIPPED so the tool doesn't duplicate
+    pre-existing content.
     """
+    replace_prefilled = replace_prefilled or {}
     by_id = {s["id"]: s for s in slots}
     # Forgiving lookup by leading numeric token. Lets legacy callers (and
     # LLMs that drop the descriptive tail) hit the right slot when they
@@ -2437,10 +2624,26 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
     slot_values = canonical_values
     slot_values, reconciliation_notes = _reconcile_amount_pairs(slots, slot_values)
     reconciliation_notes = canonicalization_notes + reconciliation_notes
+
+    # Canonicalize replace_prefilled keys the same way slot_values are.
+    canonical_replace: Dict[str, Any] = {}
+    for k, v in replace_prefilled.items():
+        if k in by_id:
+            canonical_replace[k] = v
+            continue
+        m = num_re.match(k)
+        if m and m.group(1) in by_num:
+            canonical_replace[by_num[m.group(1)]] = v
+        else:
+            canonical_replace[k] = v  # surfaces as unknown later
+    replace_prefilled = canonical_replace
+
     filled_ids: List[str] = []
     unknown_ids: List[str] = []
     skipped_signature_ids: List[str] = []
     skipped_blank_ids: List[str] = []
+    skipped_prefilled_ids: List[Dict[str, str]] = []
+    replaced_prefilled_ids: List[str] = []
 
     # Group span-based fills per paragraph (underscores, angle_bracketed,
     # placeholder_phrase, hint_text, highlighted). Per-batch tuple carries the
@@ -2461,6 +2664,24 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
         # lines (the human signs on paper after printing).
         if meta.get("is_signature"):
             skipped_signature_ids.append(sid)
+            continue
+        # Prefilled slots: the paragraph (or its body) already has substantive
+        # content. By default, do NOT write here — otherwise the agent's fill
+        # gets appended next to existing content, producing duplicated lines
+        # (the 2026-05 "1.5 合同文件的优先顺序" bug). To overwrite, the caller
+        # must opt in via replace_prefilled[sid], which triggers a paragraph-
+        # level wipe-and-rewrite handled in a separate pass below.
+        if meta.get("is_prefilled") and sid not in replace_prefilled:
+            skipped_prefilled_ids.append({
+                "id": sid,
+                "existing_text": meta.get("existing_text", "")[:200],
+            })
+            continue
+        # If the caller passed BOTH slot_values[sid] AND replace_prefilled[sid],
+        # the replace_prefilled pass owns the write — drop the duplicate
+        # slot_values entry so we don't span-fill on top of the paragraph
+        # rewrite.
+        if sid in replace_prefilled:
             continue
         # Blank/None value means "don't fill this slot" — preserve the
         # original placeholder text (underscores, hint runs, whitespace
@@ -2617,13 +2838,49 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
                     f"prompt + {len(meta['options']) - 1} other option(s)."
                 )
 
+    # replace_prefilled pass: paragraph-level wipe + rewrite for slots whose
+    # paragraph (or label_blank body) was flagged is_prefilled. Runs after
+    # the deferred fills so we don't fight with span replacements.
+    unknown_prefilled_ids: List[str] = []
+    skipped_not_prefilled_ids: List[str] = []
+    for sid, new_value in replace_prefilled.items():
+        slot = by_id.get(sid)
+        if not slot:
+            unknown_prefilled_ids.append(sid)
+            continue
+        meta = slot.get("_meta", {})
+        if not meta.get("is_prefilled"):
+            skipped_not_prefilled_ids.append(sid)
+            continue
+        kind = slot["kind"]
+        new_text = "" if new_value is None else str(new_value)
+        if kind in ("underscores", "angle_bracketed", "placeholder_phrase",
+                    "hint_text", "highlighted"):
+            paragraph = meta.get("paragraph")
+            if paragraph is not None and _replace_paragraph_text(paragraph, new_text):
+                replaced_prefilled_ids.append(sid)
+        elif kind == "label_blank":
+            label_para = meta.get("paragraph")
+            body_paras = meta.get("prefilled_body_paragraphs") or []
+            if label_para is not None and body_paras:
+                if _replace_label_blank_body(label_para, body_paras, new_text):
+                    replaced_prefilled_ids.append(sid)
+            elif label_para is not None:
+                # No body paragraphs were tracked — append after the label.
+                if _append_after_label(label_para, new_text):
+                    replaced_prefilled_ids.append(sid)
+        else:
+            skipped_not_prefilled_ids.append(sid)
+
     requested = set(slot_values.keys())
     signatures = set(skipped_signature_ids)
     blanks = set(skipped_blank_ids)
+    prefilled_skipped = {entry["id"] for entry in skipped_prefilled_ids}
     skipped = sorted(
-        (requested - set(filled_ids) - set(unknown_ids) - signatures - blanks)
+        (requested - set(filled_ids) - set(unknown_ids) - signatures - blanks - prefilled_skipped)
         | signatures
         | blanks
+        | prefilled_skipped
     )
     outcome = {
         "filled_slot_ids": sorted(filled_ids),
@@ -2632,9 +2889,95 @@ def _apply_slot_values(slots: List[Dict[str, Any]], slot_values: Dict[str, Any])
         "skipped_signature_slot_ids": sorted(signatures),
         "skipped_blank_slot_ids": sorted(blanks),
     }
+    if skipped_prefilled_ids:
+        outcome["skipped_prefilled_slot_ids"] = skipped_prefilled_ids
+    if replaced_prefilled_ids:
+        outcome["replaced_prefilled_slot_ids"] = sorted(replaced_prefilled_ids)
+    if unknown_prefilled_ids:
+        outcome["unknown_replace_prefilled_ids"] = sorted(unknown_prefilled_ids)
+    if skipped_not_prefilled_ids:
+        outcome["skipped_replace_prefilled_ids"] = sorted(skipped_not_prefilled_ids)
+        reconciliation_notes.append(
+            "replace_prefilled was passed for slot id(s) that are NOT flagged "
+            f"is_prefilled: {sorted(skipped_not_prefilled_ids)}. Use slot_values "
+            "for normal fills; replace_prefilled is only for slots inspect "
+            "reports as is_prefilled=true."
+        )
     if reconciliation_notes:
         outcome["reconciliation_notes"] = reconciliation_notes
     return outcome
+
+
+def _replace_paragraph_text(paragraph, new_text: str) -> bool:
+    """Wipe all run text in a paragraph and write `new_text` into the first run.
+
+    Preserves paragraph-level formatting (alignment, style, indentation) and
+    the first run's character formatting (font, size, color, bold, etc.).
+    Other runs are kept structurally but emptied so any complex inline
+    structure (hyperlinks, bookmarks) on the paragraph isn't disturbed.
+    """
+    runs = list(paragraph.runs)
+    if not runs:
+        paragraph.add_run(new_text)
+        return True
+    # Drop underline on the first run if it's only there because the
+    # paragraph was a fillable underlined-whitespace template line — without
+    # this, the new content stays underlined when the user typically wants
+    # plain replacement text. Keep underline only if the run was non-empty
+    # before AND its content was non-whitespace (genuine underline styling).
+    first_run = runs[0]
+    try:
+        prior = first_run.text or ""
+    except Exception:
+        prior = ""
+    first_run.text = new_text
+    try:
+        if prior.strip() == "" or all((r.text or "").strip() == "" for r in runs):
+            first_run.underline = False
+    except Exception:
+        pass
+    for r in runs[1:]:
+        try:
+            r.text = ""
+        except Exception:
+            pass
+    return True
+
+
+def _replace_label_blank_body(label_para, body_paras: List[Any], new_text: str) -> bool:
+    """Replace the body paragraphs that follow a label_blank slot.
+
+    Splits `new_text` on '\\n'. Each line goes into a successive body
+    paragraph, reusing the existing paragraph elements so formatting is
+    preserved. If new_text has fewer lines than existing paragraphs, the
+    extras are emptied. If more, additional paragraphs are inserted after
+    the last existing one by deep-copying its XML element so style /
+    numbering carry over.
+    """
+    if not body_paras:
+        return False
+    lines = new_text.split("\n") if new_text else [""]
+    # Pad lines list when we have more body paragraphs than new lines so
+    # the trailing originals get cleared.
+    targets = list(body_paras)
+    while len(targets) < len(lines):
+        last = targets[-1]
+        try:
+            from copy import deepcopy
+            new_p_el = deepcopy(last._p)
+            # Strip text from the cloned paragraph so we don't carry over
+            # the previous content into the placeholder we just inserted.
+            for r in new_p_el.findall(".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"):
+                r.text = ""
+            last._p.addnext(new_p_el)
+            new_paragraph_obj = last.__class__(new_p_el, last._parent)
+            targets.append(new_paragraph_obj)
+        except Exception:
+            return False
+    for i, target in enumerate(targets):
+        line = lines[i] if i < len(lines) else ""
+        _replace_paragraph_text(target, line)
+    return True
 
 
 def _append_after_label(paragraph, value: str) -> bool:
