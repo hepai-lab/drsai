@@ -48,7 +48,7 @@ function hasResolvedAgentName(agentName: unknown): boolean {
 
 type TopAgentRow = AdminUsageOverviewData["top_agents_by_usage_records"][number];
 
-type SessionUsageScatterRow = NonNullable<AdminUsageOverviewData["session_usage_scatter"]>[number];
+type UsageDailyTrendRow = NonNullable<AdminUsageOverviewData["usage_daily_trends"]>[number];
 
 type SessionUserRow = AdminUsageOverviewData["sessions_per_user"][number];
 
@@ -124,8 +124,10 @@ function computeDashboardStats(overview: AdminUsageOverviewData | null): Dashboa
 
 const CHART_HEIGHT = {
     row: 300,
-    scatter: 420,
+    trend: 420,
 } as const;
+
+const USAGE_TREND_WINDOW_DAYS = 7;
 
 const RECENT_TODAY_FEED_LIMIT = 20;
 
@@ -178,13 +180,6 @@ const ChartCard: React.FC<{
         </div>
     </div>
 );
-
-const USAGE_SCATTER_MAX_POINTS = 350;
-
-/** 图上只展示「最近一周」内的打卡（滚动 7×24h，本地毫秒时间轴）。 */
-const USAGE_SCATTER_WINDOW_DAYS = 7;
-
-const USAGE_SCATTER_WINDOW_MS = USAGE_SCATTER_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
 const ANALYTICS_CHART_COLORS = {
     axisMuted: "rgba(168, 85, 247, 0.28)",
@@ -271,20 +266,10 @@ function computeTodayStats(overview: AdminUsageOverviewData | null): TodayStats 
     };
 }
 
-function sessionScatterTimeRaw(row: SessionUsageScatterRow): string | undefined {
-    const raw = row.latest_created_at;
-    return raw != null && String(raw).trim() !== "" ? String(raw) : undefined;
-}
-
-function sessionScatterYKey(row: SessionUsageScatterRow): string {
-    const name = String(row.agent_name ?? "").trim();
-    const u = String(row.user_id || "—");
-    return `${name}\x00${u}`;
-}
-
-function truncateAxisText(text: string, max: number): string {
-    if (text.length <= max) return text;
-    return `${text.slice(0, max - 1)}…`;
+function formatTrendDayLabel(dayKey: string): string {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayKey.trim());
+    if (!m) return dayKey;
+    return `${m[2]}-${m[3]}`;
 }
 
 type EChartsHandle = {
@@ -304,295 +289,201 @@ function getEchartsFromImport(mod: unknown): { init: (dom: HTMLElement | null) =
     return candidate as { init: (dom: HTMLElement | null) => EChartsHandle };
 }
 
-/** 时间轴散点：X=最近会话时间，Y=智能体·用户，点大小≈近 7 日会话数。 */
-const RecentAgentUsageScatterChart: React.FC<{ loading: boolean; rows: SessionUsageScatterRow[] }> = ({
+function buildUsageDailyTrendLineOption(ordered: UsageDailyTrendRow[]) {
+    const { axisMuted, splitMuted, labelColor, tipTitle, tipBody, accentBright } = ANALYTICS_CHART_COLORS;
+    const dayLabels = ordered.map((r) => formatTrendDayLabel(r.day_key));
+    const agentSeries = ordered.map((r) => Math.max(0, Number(r.agent_session_count ?? 0) || 0));
+    const userSeries = ordered.map((r) => Math.max(0, Number(r.active_user_count ?? 0) || 0));
+
+    return {
+        backgroundColor: "transparent",
+        textStyle: { fontFamily: "system-ui, 'Segoe UI', sans-serif" },
+        title: { show: false },
+        legend: {
+            top: 4,
+            right: 8,
+            textStyle: { color: labelColor, fontSize: 11 },
+            itemWidth: 18,
+            itemHeight: 8,
+            itemGap: 16,
+        },
+        tooltip: {
+            trigger: "axis",
+            axisPointer: {
+                type: "line",
+                lineStyle: { color: "rgba(168, 85, 247, 0.45)", width: 1 },
+            },
+            borderWidth: 0,
+            padding: 0,
+            extraCssText:
+                "box-shadow:0 12px 40px rgba(76,29,149,0.35);border-radius:12px;overflow:hidden;",
+            backgroundColor: "rgba(12, 8, 20, 0.96)",
+            formatter: (params: unknown) => {
+                const arr = Array.isArray(params) ? params : [params];
+                const first = arr[0] as { dataIndex?: number } | undefined;
+                const idx = first?.dataIndex ?? 0;
+                const row = ordered[idx];
+                if (!row) return "";
+                const agentVal = agentSeries[idx] ?? 0;
+                const userVal = userSeries[idx] ?? 0;
+                return `<div style="max-width:320px;line-height:1.5;border:1px solid ${accentBright};border-radius:12px;overflow:hidden">
+<div style="padding:10px 12px;background:linear-gradient(135deg,rgba(124,58,237,0.35),rgba(168,85,247,0.15));border-bottom:1px solid rgba(168,85,247,0.25)">
+<div style="font-weight:700;font-size:13px;color:${tipTitle}">${row.day_key}（北京）</div>
+</div>
+<div style="padding:10px 12px;color:${tipBody}">
+<div>智能体调用：<b style="color:${accentBright}">${agentVal}</b></div>
+<div style="margin-top:6px">用户使用（活跃人数）：<b style="color:#e879f9">${userVal}</b></div>
+</div>
+</div>`;
+            },
+        },
+        grid: { left: "4%", right: "4%", bottom: 36, top: 44, containLabel: true },
+        xAxis: {
+            type: "category",
+            data: dayLabels,
+            name: "日期",
+            nameTextStyle: { color: labelColor, fontSize: 11 },
+            axisLine: { lineStyle: { color: axisMuted } },
+            axisTick: { lineStyle: { color: axisMuted } },
+            axisLabel: { color: labelColor, fontVariantNumeric: "tabular-nums" },
+            splitLine: { show: true, lineStyle: { type: "dashed", color: splitMuted } },
+        },
+        yAxis: {
+            type: "value",
+            name: "数量",
+            minInterval: 1,
+            nameTextStyle: { color: labelColor, fontSize: 11 },
+            axisLine: { lineStyle: { color: axisMuted } },
+            axisTick: { lineStyle: { color: axisMuted } },
+            axisLabel: { color: labelColor, fontVariantNumeric: "tabular-nums" },
+            splitLine: { lineStyle: { type: "dashed", color: splitMuted } },
+        },
+        series: [
+            {
+                name: "智能体调用",
+                type: "line",
+                smooth: true,
+                symbol: "circle",
+                symbolSize: 7,
+                data: agentSeries,
+                lineStyle: { width: 2.5, color: accentBright },
+                itemStyle: { color: accentBright, borderColor: "rgba(233, 213, 255, 0.35)", borderWidth: 1 },
+                areaStyle: {
+                    color: {
+                        type: "linear",
+                        x: 0,
+                        y: 0,
+                        x2: 0,
+                        y2: 1,
+                        colorStops: [
+                            { offset: 0, color: "rgba(192, 132, 252, 0.28)" },
+                            { offset: 1, color: "rgba(124, 58, 237, 0.02)" },
+                        ],
+                    },
+                },
+                emphasis: { focus: "series" },
+                animationDuration: 480,
+                animationEasing: "cubicOut",
+            },
+            {
+                name: "用户使用",
+                type: "line",
+                smooth: true,
+                symbol: "circle",
+                symbolSize: 7,
+                data: userSeries,
+                lineStyle: { width: 2.5, color: "#e879f9" },
+                itemStyle: { color: "#e879f9", borderColor: "rgba(233, 213, 255, 0.35)", borderWidth: 1 },
+                areaStyle: {
+                    color: {
+                        type: "linear",
+                        x: 0,
+                        y: 0,
+                        x2: 0,
+                        y2: 1,
+                        colorStops: [
+                            { offset: 0, color: "rgba(232, 121, 249, 0.22)" },
+                            { offset: 1, color: "rgba(124, 58, 237, 0.02)" },
+                        ],
+                    },
+                },
+                emphasis: { focus: "series" },
+                animationDuration: 480,
+                animationEasing: "cubicOut",
+            },
+        ],
+    };
+}
+
+/** 近 7 日按北京日历日：智能体会话数 vs 活跃用户数。 */
+const UsageDailyTrendLineChart: React.FC<{ loading: boolean; rows: UsageDailyTrendRow[] }> = ({
     loading,
     rows,
 }) => {
     const hostRef = useRef<HTMLDivElement | null>(null);
+    const chartRef = useRef<EChartsHandle | null>(null);
 
-    const scatterWindowStats = useMemo(() => {
-        const nowMs = Date.now();
-        const windowStartMs = nowMs - USAGE_SCATTER_WINDOW_MS;
-        let anyValidTime = false;
-        let anyNamedWithValidTime = false;
-        let namedInWindow = 0;
-        for (const row of rows) {
-            const raw = sessionScatterTimeRaw(row);
-            if (!raw) continue;
-            const d = parseAnalyticsInstant(raw);
-            if (Number.isNaN(d.getTime())) continue;
-            anyValidTime = true;
-            if (!hasResolvedAgentName(row.agent_name)) continue;
-            anyNamedWithValidTime = true;
-            if (d.getTime() >= windowStartMs) namedInWindow++;
-        }
-        return {
-            anyValidTime,
-            anyNamedWithValidTime,
-            namedInWindow,
-        };
-    }, [rows]);
+    const ordered = useMemo(
+        () =>
+            [...rows].sort((a, b) =>
+                String(a.day_key).localeCompare(String(b.day_key), "en", { numeric: true })
+            ),
+        [rows]
+    );
+
+    const hasAnyActivity = useMemo(
+        () =>
+            ordered.some(
+                (r) =>
+                    (Number(r.agent_session_count ?? 0) || 0) > 0 ||
+                    (Number(r.active_user_count ?? 0) || 0) > 0
+            ),
+        [ordered]
+    );
 
     useEffect(() => {
         const el = hostRef.current;
         if (!el) return undefined;
 
         let alive = true;
-        let chart: EChartsHandle | null = null;
-        const onResize = () => chart?.resize();
+        const onResize = () => chartRef.current?.resize();
 
         void import(/* webpackChunkName: "echarts" */ "echarts").then((mod) => {
             if (!alive || !hostRef.current) return;
             const ec = getEchartsFromImport(mod);
-            chart = ec.init(hostRef.current);
+            chartRef.current = ec.init(hostRef.current);
             window.addEventListener("resize", onResize);
-
-            type Prepared = {
-                t: number;
-                yKey: string;
-                agentName: string;
-                userId: string;
-                sessionCount: number;
-                row: SessionUsageScatterRow;
-            };
-            const withTime: Prepared[] = [];
-            for (const row of rows) {
-                if (!hasResolvedAgentName(row.agent_name)) continue;
-                const raw = sessionScatterTimeRaw(row);
-                if (!raw) continue;
-                const d = parseAnalyticsInstant(raw);
-                if (Number.isNaN(d.getTime())) continue;
-                const cnt = Math.max(1, Number(row.session_count ?? 0) || 1);
-                withTime.push({
-                    t: d.getTime(),
-                    yKey: sessionScatterYKey(row),
-                    agentName: String(row.agent_name ?? "").trim(),
-                    userId: String(row.user_id || "—"),
-                    sessionCount: cnt,
-                    row,
-                });
+            if (ordered.length > 0) {
+                chartRef.current.setOption(buildUsageDailyTrendLineOption(ordered), true);
             }
-            withTime.sort((a, b) => a.t - b.t);
-            const nowMs = Date.now();
-            const windowStartMs = nowMs - USAGE_SCATTER_WINDOW_MS;
-            const inWindowAll = withTime.filter((p) => p.t >= windowStartMs);
-            const prepared =
-                inWindowAll.length > USAGE_SCATTER_MAX_POINTS
-                    ? inWindowAll.slice(-USAGE_SCATTER_MAX_POINTS)
-                    : inWindowAll;
-
-            const yCats = prepared.map((p) => p.yKey);
-            const yLabelMeta = Object.fromEntries(
-                prepared.map((p) => [p.yKey, { agentName: p.agentName, userId: p.userId }])
-            );
-            let minCnt = Infinity;
-            let maxCnt = 0;
-            for (const p of prepared) {
-                minCnt = Math.min(minCnt, p.sessionCount);
-                maxCnt = Math.max(maxCnt, p.sessionCount);
-            }
-            if (!Number.isFinite(minCnt)) minCnt = 1;
-            if (maxCnt <= minCnt) maxCnt = minCnt + 1;
-
-            const { axisMuted, splitMuted, labelColor, tipTitle, tipBody, accent, accentBright, gradient } =
-                ANALYTICS_CHART_COLORS;
-
-            const seriesData = prepared.map((p) => ({
-                value: [p.t, p.yKey, p.sessionCount] as [number, string, number],
-                symbolSize: Math.min(34, Math.sqrt(p.sessionCount) * 4 + 5),
-            }));
-
-            /** 无底右时间轴 slider，留白略小于原先「底栏+滑块」方案 */
-            const bottomPad = prepared.length > 28 ? 62 : 40;
-            const dataZoom: unknown[] = [{ type: "inside", xAxisIndex: 0, filterMode: "none" }];
-            if (prepared.length > 24) {
-                const yRangePct = Math.min(100, (24 / Math.max(1, yCats.length)) * 100);
-                dataZoom.push({
-                    type: "slider",
-                    yAxisIndex: 0,
-                    width: 12,
-                    right: 6,
-                    top: 20,
-                    bottom: bottomPad,
-                    filterMode: "none",
-                    start: Math.max(0, 100 - yRangePct),
-                    end: 100,
-                    borderColor: axisMuted,
-                    fillerColor: "rgba(124, 58, 237, 0.18)",
-                    handleStyle: { color: accentBright, borderColor: accent },
-                    textStyle: { color: labelColor, fontSize: 10 },
-                });
-            }
-
-            chart.setOption(
-                {
-                    backgroundColor: "transparent",
-                    textStyle: { fontFamily: "system-ui, 'Segoe UI', sans-serif" },
-                    title: { show: false },
-                    tooltip: {
-                        trigger: "item",
-                        borderWidth: 0,
-                        padding: 0,
-                        extraCssText:
-                            "box-shadow:0 12px 40px rgba(76,29,149,0.35);border-radius:12px;overflow:hidden;",
-                        backgroundColor: "rgba(12, 8, 20, 0.96)",
-                        formatter: (params: unknown) => {
-                            const p = params as { dataIndex?: number };
-                            const idx = p.dataIndex ?? 0;
-                            const item = prepared[idx];
-                            if (!item) return "";
-                            const r = item.row;
-                            const rawT = sessionScatterTimeRaw(r);
-                            const when = rawT ? formatAnalyticsDateTime(rawT) : "—";
-                            const aid = String(r.agent_id || "—");
-                            const aname = String(r.agent_name ?? "").trim();
-                            const tipBorder = accentBright;
-                            return `<div style="max-width:400px;line-height:1.5;border:1px solid ${tipBorder};border-radius:12px;overflow:hidden">
-<div style="padding:10px 12px;background:linear-gradient(135deg,rgba(124,58,237,0.35),rgba(168,85,247,0.15));border-bottom:1px solid rgba(168,85,247,0.25)">
-<div style="font-weight:700;font-size:13px;color:${tipTitle}">${aname}</div>
-<div style="font-size:11px;font-family:monospace;opacity:.85;word-break:break-all;margin-top:6px;color:${tipTitle}">${aid}</div>
-</div>
-<div style="padding:10px 12px;color:${tipBody}">
-<div>用户：<span style="font-family:monospace;font-size:11px">${String(r.user_id || "—")}</span></div>
-<div style="margin-top:6px">最近会话（北京时间）：<b style="color:${tipTitle}">${when}</b></div>
-<div style="margin-top:6px">近 ${USAGE_SCATTER_WINDOW_DAYS} 日会话：<b style="color:${accentBright}">${item.sessionCount}</b></div>
-</div>
-</div>`;
-                        },
-                    },
-                    visualMap: {
-                        show: prepared.length > 0,
-                        type: "continuous",
-                        dimension: 2,
-                        min: minCnt,
-                        max: maxCnt,
-                        orient: "vertical",
-                        right: prepared.length > 24 ? 22 : 12,
-                        top: 36,
-                        bottom: bottomPad + 4,
-                        calculable: true,
-                        precision: 0,
-                        // text: ["多档位", "少档位"],
-                        textStyle: { color: labelColor, fontSize: 10 },
-                        inRange: {
-                            color: [...gradient],
-                        },
-                    },
-                    grid: {
-                        left: "18%",
-                        right: prepared.length > 24 ? "14%" : "12%",
-                        top: 16,
-                        bottom: bottomPad,
-                        containLabel: false,
-                    },
-                    dataZoom,
-                    xAxis: {
-                        type: "time",
-                        name: "调用时间",
-                        min: windowStartMs,
-                        max: nowMs,
-                        nameTextStyle: { color: labelColor, fontSize: 11 },
-                        axisLine: { lineStyle: { color: axisMuted } },
-                        axisTick: { lineStyle: { color: axisMuted } },
-                        axisLabel: {
-                            color: labelColor,
-                            formatter: (v: string) =>
-                                new Date(v).toLocaleString("zh-CN", {
-                                    hour12: false,
-                                    timeZone: ANALYTICS_DISPLAY_TZ,
-                                    month: "2-digit",
-                                    day: "2-digit",
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                }),
-                        },
-                        splitLine: {
-                            show: true,
-                            lineStyle: { type: "dashed", color: splitMuted },
-                        },
-                    },
-                    yAxis: {
-                        type: "category",
-                        data: yCats,
-                        axisLine: { lineStyle: { color: axisMuted } },
-                        axisTick: { show: false },
-                        axisLabel: {
-                            width: 160,
-                            interval: 0,
-                            overflow: "truncate",
-                            color: labelColor,
-                            fontSize: 11,
-                            formatter: (key: string) => {
-                                const meta = yLabelMeta[key];
-                                if (!meta) return key;
-                                return truncateAxisText(meta.agentName, 28);
-                            },
-                            lineHeight: 22,
-                        },
-                        splitLine: { show: true, lineStyle: { type: "dashed", color: splitMuted } },
-                    },
-                    series: [
-                        {
-                            type: "scatter",
-                            data: seriesData,
-                            symbol: "circle",
-                            itemStyle: {
-                                borderColor: "rgba(233, 213, 255, 0.28)",
-                                borderWidth: 1.2,
-                                shadowBlur: 12,
-                                shadowColor: "rgba(168, 85, 247, 0.55)",
-                            },
-                            emphasis: {
-                                scale: 1.22,
-                                focus: "self",
-                                itemStyle: {
-                                    shadowBlur: 22,
-                                    shadowColor: "rgba(192, 132, 252, 0.75)",
-                                    borderWidth: 2,
-                                },
-                            },
-                            animationDuration: 480,
-                            animationEasing: "cubicOut",
-                        },
-                    ],
-                },
-                true
-            );
         });
 
         return () => {
             alive = false;
             window.removeEventListener("resize", onResize);
-            chart?.dispose();
-            chart = null;
+            chartRef.current?.dispose();
+            chartRef.current = null;
         };
-    }, [rows]);
+    }, []);
 
-    if (!loading && rows.length === 0) {
-        return <span className="usage-analytics-muted text-sm">暂无打卡数据</span>;
+    useEffect(() => {
+        const chart = chartRef.current;
+        if (!chart || ordered.length === 0) return;
+        chart.setOption(buildUsageDailyTrendLineOption(ordered), true);
+    }, [ordered]);
+
+    useEffect(() => {
+        if (!loading) chartRef.current?.resize();
+    }, [loading, ordered]);
+
+    if (!loading && ordered.length === 0) {
+        return <span className="usage-analytics-muted text-sm">暂无近 {USAGE_TREND_WINDOW_DAYS} 日趋势数据</span>;
     }
 
-    if (!loading && !scatterWindowStats.anyValidTime && rows.length > 0) {
+    if (!loading && !hasAnyActivity) {
         return (
             <span className="usage-analytics-muted text-sm">
-                有 {rows.length} 条打卡记录，但缺少可解析的调用时间；请检查服务端时间字段。
-            </span>
-        );
-    }
-
-    if (!loading && scatterWindowStats.anyValidTime && !scatterWindowStats.anyNamedWithValidTime) {
-        return (
-            <span className="usage-analytics-muted text-sm">
-                当前样本中未能解析出智能体显示名称；已隐藏这些记录。名称解析成功后刷新即可展示。
-            </span>
-        );
-    }
-
-    if (!loading && scatterWindowStats.namedInWindow === 0) {
-        return (
-            <span className="usage-analytics-muted text-sm">
-                最近一周内暂无「已解析名称」的打卡记录。
+                近 {USAGE_TREND_WINDOW_DAYS} 日内暂无有效会话记录。
             </span>
         );
     }
@@ -1052,8 +943,8 @@ const UsageAnalyticsPage: React.FC = () => {
 
     const dashboardStats = useMemo(() => computeDashboardStats(overview), [overview]);
     const todayStats = useMemo(() => computeTodayStats(overview), [overview]);
-    const sessionScatterRows = useMemo(
-        (): SessionUsageScatterRow[] => [...(overview?.session_usage_scatter ?? [])],
+    const usageDailyTrendRows = useMemo(
+        (): UsageDailyTrendRow[] => [...(overview?.usage_daily_trends ?? [])],
         [overview]
     );
 
@@ -1165,14 +1056,14 @@ const UsageAnalyticsPage: React.FC = () => {
                         </div>
 
                         <ChartCard
-                            title="调用分布"
-                            caption="散点= user×智能体 · 大小≈累计 use_count"
+                            title="调用趋势"
+                            caption="按北京日历日 · 紫线=智能体会话数 · 粉线=活跃用户数"
                             badge="近 7 日"
-                            height={CHART_HEIGHT.scatter}
+                            height={CHART_HEIGHT.trend}
                             wide
                             loading={loading}
                         >
-                            <RecentAgentUsageScatterChart loading={loading} rows={sessionScatterRows} />
+                            <UsageDailyTrendLineChart loading={loading} rows={usageDailyTrendRows} />
                         </ChartCard>
                     </div>
                 </div>

@@ -130,6 +130,75 @@ def _build_today_session_stats(
 
 
 SESSION_SCATTER_WINDOW_DAYS = 7
+USAGE_DAILY_TREND_DAYS = 7
+
+
+def _beijing_day_keys_last_n(days: int) -> List[str]:
+    """Ascending Beijing calendar day keys covering the last `days` days (inclusive of today)."""
+    n = max(1, int(days))
+    today = datetime.now(ANALYTICS_TZ).date()
+    return [(today - timedelta(days=n - 1 - i)).strftime("%Y-%m-%d") for i in range(n)]
+
+
+def _session_beijing_day_key(row: ChatSessionRecord) -> Optional[str]:
+    raw = row.created_at
+    if isinstance(raw, datetime):
+        dt = raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+        return dt.astimezone(ANALYTICS_TZ).strftime("%Y-%m-%d")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(ANALYTICS_TZ).strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+    return None
+
+
+def _build_usage_daily_trends(
+    db_engine: Any,
+    window_days: int = USAGE_DAILY_TREND_DAYS,
+) -> List[Dict[str, Any]]:
+    """
+    Per Beijing calendar day in the rolling window:
+    - agent_session_count: effective sessions (user + agent resolved)
+    - active_user_count: distinct users with at least one such session
+    """
+    day_keys = _beijing_day_keys_last_n(window_days)
+    start_utc, _ = _beijing_day_utc_range(day_keys[0])
+    _, end_utc = _beijing_day_utc_range(day_keys[-1])
+
+    with DBSession(db_engine) as s:
+        window_sessions = s.exec(
+            select(ChatSessionRecord)
+            .where(ChatSessionRecord.created_at >= start_utc)
+            .where(ChatSessionRecord.created_at < end_utc)
+        ).all()
+
+    agent_counts: Dict[str, int] = {k: 0 for k in day_keys}
+    users_by_day: Dict[str, set[str]] = {k: set() for k in day_keys}
+
+    for row in window_sessions:
+        uid = str(row.user_id or "").strip()
+        cfg = row.agent_mode_config if isinstance(row.agent_mode_config, dict) else None
+        aid = _agent_id_from_session_config(cfg)
+        if not uid or not aid:
+            continue
+        day_key = _session_beijing_day_key(row)
+        if not day_key or day_key not in agent_counts:
+            continue
+        agent_counts[day_key] += 1
+        users_by_day[day_key].add(uid)
+
+    return [
+        {
+            "day_key": k,
+            "agent_session_count": int(agent_counts[k]),
+            "active_user_count": len(users_by_day[k]),
+        }
+        for k in day_keys
+    ]
 
 
 def _build_session_usage_scatter(
@@ -367,6 +436,7 @@ async def usage_overview(
     agent_labels = _collect_agent_labels(db.engine, label_ids)
     today_session_stats = _build_today_session_stats(db.engine, agent_labels)
     session_usage_scatter = _build_session_usage_scatter(db.engine, agent_labels)
+    usage_daily_trends = _build_usage_daily_trends(db.engine)
 
     usage_serial: List[Dict[str, Any]] = []
     for r in usage_rows:
@@ -405,6 +475,7 @@ async def usage_overview(
             "runs_per_user": runs_per_user[:200],
             "today_session_stats": today_session_stats,
             "session_usage_scatter": session_usage_scatter,
+            "usage_daily_trends": usage_daily_trends,
             "limits": {"usage_events": safe_usage},
         },
     }

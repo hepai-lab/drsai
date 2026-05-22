@@ -1,13 +1,12 @@
 import { appContext } from "@/hooks/provider";
 import { Dropdown, message, Spin, Button } from "antd";
-import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { MoreVertical, Search, Share2, Trash2 } from "lucide-react";
 import { parse } from "yaml";
 import { useConfigStore } from "../../hooks/store";
 import { useModeConfigStore } from "../../store/modeConfig";
 import { Agent } from "../../types/common";
-import { AgentSquare } from "../features/Agents/AgentSquare";
 import { useAgentInfo } from "../features/Agents/useAgentInfo";
 import PlanList from "../features/Plans/PlanList";
 import { GeneralConfig, useSettingsStore } from "../store";
@@ -25,14 +24,13 @@ import ChannelsPage from "../../pages/settings/ChannelsPage";
 import FilePreviewPage from "../../pages/FilePreviewPage";
 import LogsPage from "../../pages/settings/LogsPage";
 import Config from "../../pages/settings/Config";
-import UsageAnalyticsPage from "../../pages/settings/UsageAnalyticsPage";
-import SkillsSquarePage from "../../pages/SkillsSquarePage";
 import UserManagementPage from "../../pages/UserManagementPage";
-import LibraryPage from "../../pages/library/LibraryPage";
 import type { ServerUploadedFileInfo } from "../../pages/chat/chat/hooks/useFileUpload";
 import {
   MENU_LABELS,
   MENU_IDS,
+  DEFAULT_MENU_ID,
+  DEFAULT_VIEW_ID,
   type CanvasViewId,
   type MenuId,
   createSearchWithMenu,
@@ -49,6 +47,19 @@ import { SessionEditor } from "./session_editor";
 import { AppLayout } from "../../layout";
 import { useRightPanelStore } from "../../store/rightPanel";
 import { useIsCompactLayout } from "../../hooks/useMediaQuery";
+
+const AgentSquare = React.lazy(() =>
+  import("../features/Agents/AgentSquare").then((m) => ({ default: m.AgentSquare }))
+);
+const SkillsSquarePage = React.lazy(() => import("../../pages/SkillsSquarePage"));
+const UsageAnalyticsPage = React.lazy(() => import("../../pages/settings/UsageAnalyticsPage"));
+const LibraryPage = React.lazy(() => import("../../pages/library/LibraryPage"));
+
+const MenuPanelFallback = () => (
+  <div className="flex h-full items-center justify-center text-secondary">
+    <Spin />
+  </div>
+);
 
 /** Extensions treated as inline-previewable images in the right-panel file list */
 const RIGHT_PANEL_IMAGE_EXT = new Set([
@@ -92,10 +103,20 @@ export const SessionManager: React.FC = () => {
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<MessageFileItem | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
-  const activeSubMenuItem = useMemo(
+  const [pendingMenuId, setPendingMenuId] = useState<MenuId | null>(null);
+
+  const menuFromUrl = useMemo(
     () => getMenuIdFromSearch(location.search),
     [location.search]
   );
+  const activeSubMenuItem = pendingMenuId ?? menuFromUrl;
+
+  useEffect(() => {
+    if (pendingMenuId !== null && menuFromUrl === pendingMenuId) {
+      setPendingMenuId(null);
+    }
+  }, [pendingMenuId, menuFromUrl]);
+
   const activeCanvasView = useMemo(
     () => getCanvasViewFromSearch(location.search),
     [location.search]
@@ -105,10 +126,22 @@ export const SessionManager: React.FC = () => {
     [activeSubMenuItem]
   );
 
+  // 登入后常为 / 无 query，补全默认 menu/view（走 history，不触发 Gatsby page-data）
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(location.search);
+    if (params.has("menu") && params.has("view")) return;
+    const next = createSearchWithView(
+      createSearchWithMenu(location.search, DEFAULT_MENU_ID),
+      DEFAULT_VIEW_ID
+    );
+    navigate(next, { replace: true });
+  }, [location.search, navigate]);
+
   const navigateToMenu = useCallback(
     (menuId: MenuId) => {
       const withMenu = createSearchWithMenu(location.search, menuId);
-      navigate(createSearchWithView(withMenu, "chat"));
+      navigate(createSearchWithView(withMenu, DEFAULT_VIEW_ID));
     },
     [location.search, navigate]
   );
@@ -134,7 +167,9 @@ export const SessionManager: React.FC = () => {
 
   const handleSubMenuChange = useCallback(
     (tabId: string) => {
-      navigateToMenu(tabId as MenuId);
+      const menuId = tabId as MenuId;
+      flushSync(() => setPendingMenuId(menuId));
+      navigateToMenu(menuId);
       if (isCompact) {
         setIsSidebarOpen(false);
       }
@@ -146,6 +181,15 @@ export const SessionManager: React.FC = () => {
   const rightPanelTab = useRightPanelStore((s) => s.layoutTab);
   const [showAdminNav, setShowAdminNav] = useState(false);
 
+  const deferAfterPaint = useCallback((fn: () => void) => {
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(fn, { timeout: 2500 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(fn, 1);
+    return () => window.clearTimeout(id);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const uid = user?.email;
@@ -155,18 +199,21 @@ export const SessionManager: React.FC = () => {
         cancelled = true;
       };
     }
-    userAPI
-      .getAccess(uid)
-      .then((a) => {
-        if (!cancelled) setShowAdminNav(Boolean(a?.is_platform_admin));
-      })
-      .catch(() => {
-        if (!cancelled) setShowAdminNav(false);
-      });
+    const cancelDefer = deferAfterPaint(() => {
+      userAPI
+        .getAccess(uid)
+        .then((a) => {
+          if (!cancelled) setShowAdminNav(Boolean(a?.is_platform_admin));
+        })
+        .catch(() => {
+          if (!cancelled) setShowAdminNav(false);
+        });
+    });
     return () => {
       cancelled = true;
+      cancelDefer();
     };
-  }, [user?.email]);
+  }, [user?.email, deferAfterPaint]);
   const formatFileSize = useCallback((size: number | null | undefined) => {
     if (typeof size !== "number" || !Number.isFinite(size) || size <= 0) return "-";
     if (size < 1024) return `${size} B`;
@@ -248,30 +295,22 @@ export const SessionManager: React.FC = () => {
 
   const { agentInfo } = useAgentInfo(user?.email);
 
-  // Load settings on page refresh
+  // 延后拉配置，避免登入后占满主线程导致菜单点击无响应
   useEffect(() => {
-    const loadSettings = async () => {
-      if (user?.email) {
+    if (!user?.email) return;
+    return deferAfterPaint(() => {
+      void (async () => {
         try {
-          // 请求全局setting配置
-          const settings = await settingsAPI.getSettings(user.email) as GeneralConfig;
-          // 不再使用服务端/历史里的 default_agent_id 驱动前端选中的智能体
+          const settings = (await settingsAPI.getSettings(user.email)) as GeneralConfig;
           const { default_agent_id: _omit, ...settingsForStore } = settings as GeneralConfig & {
             default_agent_id?: string;
           };
-
-          // 存储到store
           updateSettingsConfig(settingsForStore as GeneralConfig);
-
-          // 更新前端页面渲染（通过store的更新自动触发）
-          // 同时提取baseUrl用于其他用途
           if (settings.model_configs) {
             try {
               const parsed = parse(settings.model_configs);
               const baseUrl = parsed.model_config?.config?.base_url;
-              if (baseUrl) {
-                setBaseUrl(baseUrl);
-              }
+              if (baseUrl) setBaseUrl(baseUrl);
             } catch (parseError) {
               console.warn("Failed to parse model_configs for baseUrl:", parseError);
             }
@@ -279,23 +318,21 @@ export const SessionManager: React.FC = () => {
         } catch (error) {
           console.error("Failed to load settings:", error);
         }
-      }
-    };
-    loadSettings();
-  }, [user?.email, updateSettingsConfig]);
+      })();
+    });
+  }, [user?.email, updateSettingsConfig, deferAfterPaint]);
 
-  // 等 modeConfig 从 localStorage rehydrate 后再拉列表，否则 agentId 未恢复会误选默认智能体
   useEffect(() => {
     if (!user?.email) return;
-    const run = () => fetchAgentList();
-    if (useModeConfigStore.persist.hasHydrated()) {
-      run();
-      return;
-    }
-    return useModeConfigStore.persist.onFinishHydration(() => {
-      run();
+    return deferAfterPaint(() => {
+      const run = () => fetchAgentList();
+      if (useModeConfigStore.persist.hasHydrated()) {
+        run();
+        return;
+      }
+      useModeConfigStore.persist.onFinishHydration(run);
     });
-  }, [user?.email, fetchAgentList]);
+  }, [user?.email, fetchAgentList, deferAfterPaint]);
 
   useEffect(() => {
     const handleAgentListChanged = () => {
@@ -316,8 +353,11 @@ export const SessionManager: React.FC = () => {
   }, [fetchAgentList]);
 
   useEffect(() => {
-    fetchSessions();
-  }, [fetchSessions]);
+    if (!user?.email) return;
+    return deferAfterPaint(() => {
+      fetchSessions();
+    });
+  }, [user?.email, fetchSessions, deferAfterPaint]);
 
   // 库 → 聊天 时把文件放在 state 里传给 NewChatView；不要用短时定时器清空，否则智能体信息未加载完时
   // NewChatView 尚未挂载，prefill 已被清空，输入框收不到附件。
@@ -977,10 +1017,14 @@ export const SessionManager: React.FC = () => {
           })()
         ) : activeSubMenuItem === MENU_IDS.agentSquare || activeSubMenuItem === MENU_IDS.myAgents ? (
           <div className="h-full overflow-hidden">
-            <AgentSquare agents={[]} handleAgentList={fetchAgentList} />
+            <Suspense fallback={<MenuPanelFallback />}>
+              <AgentSquare agents={[]} handleAgentList={fetchAgentList} />
+            </Suspense>
           </div>
         ) : activeSubMenuItem === MENU_IDS.skillsSquare ? (
-          <SkillsSquarePage />
+          <Suspense fallback={<MenuPanelFallback />}>
+            <SkillsSquarePage />
+          </Suspense>
         ) : activeSubMenuItem === MENU_IDS.channels ? (
           <ChannelsPage />
         ) : activeSubMenuItem === MENU_IDS.logs ? (
@@ -990,7 +1034,9 @@ export const SessionManager: React.FC = () => {
         ) : activeSubMenuItem === MENU_IDS.userManagement ? (
           <UserManagementPage />
         ) : activeSubMenuItem === MENU_IDS.usageAnalytics ? (
-          <UsageAnalyticsPage />
+          <Suspense fallback={<MenuPanelFallback />}>
+            <UsageAnalyticsPage />
+          </Suspense>
         ) : activeSubMenuItem === MENU_IDS.profile ? (
           <Config />
         ) : activeSubMenuItem === MENU_IDS.savedPlan ? (
@@ -1003,6 +1049,7 @@ export const SessionManager: React.FC = () => {
           </div>
         ) : activeSubMenuItem === MENU_IDS.library ? (
           <div className="h-full min-h-0 overflow-hidden">
+            <Suspense fallback={<MenuPanelFallback />}>
             <LibraryPage
               onStartChat={async (files, query) => {
                 const chatAgent = (agentInfo || selectedAgent) as import("../../types/common").Agent;
@@ -1019,6 +1066,7 @@ export const SessionManager: React.FC = () => {
                 navigate(createSearchWithView(withMenu, "chat"));
               }}
             />
+            </Suspense>
           </div>
         ) : (
           <div className="flex items-center justify-center h-full text-secondary">

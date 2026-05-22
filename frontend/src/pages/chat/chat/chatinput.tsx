@@ -76,6 +76,8 @@ interface ChatInputProps {
   onExecutePlan?: (plan: IPlan) => void;
   sessionId: number;
   onTextChange?: (text: string) => void;
+  /** Fired when the user clears the composer via the clear button */
+  onClear?: () => void;
   /** Already-uploaded files to show in the composer (e.g. chosen in 库) */
   serverFilesPrefill?: ServerUploadedFileInfo[] | null;
   /** Visible heading id for textarea aria-labelledby */
@@ -102,6 +104,7 @@ const ChatInput = React.forwardRef<
       onExecutePlan,
       sessionId,
       onTextChange,
+      onClear,
       serverFilesPrefill,
       composerLabelledBy,
       composerAriaLabel,
@@ -661,6 +664,8 @@ const ChatInput = React.forwardRef<
       if (onTextChange) {
         onTextChange("");
       }
+
+      onClear?.();
     };
 
     return (

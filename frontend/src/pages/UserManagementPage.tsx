@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Input, Switch, Table, Tag, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { appContext } from "../hooks/provider";
@@ -12,7 +12,26 @@ const UserManagementPage: React.FC = () => {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
+  const [tableScrollY, setTableScrollY] = useState<number>();
+  const tableWrapRef = useRef<HTMLDivElement>(null);
   const [msgApi, holder] = message.useMessage();
+
+  useEffect(() => {
+    const el = tableWrapRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+
+    const TABLE_CHROME = 112;
+
+    const update = () => {
+      const next = el.clientHeight - TABLE_CHROME;
+      setTableScrollY(next > 120 ? next : undefined);
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const load = useCallback(async () => {
     if (!operatorUserId) {
@@ -107,7 +126,7 @@ const UserManagementPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0">
+      <div ref={tableWrapRef} className="flex-1 min-h-0 h-full">
         <Table<Row>
           size="middle"
           bordered
@@ -115,6 +134,7 @@ const UserManagementPage: React.FC = () => {
           columns={columns}
           dataSource={filtered}
           pagination={{ pageSize: 20, showSizeChanger: true }}
+          scroll={tableScrollY ? { y: tableScrollY } : undefined}
         />
       </div>
     </div>
