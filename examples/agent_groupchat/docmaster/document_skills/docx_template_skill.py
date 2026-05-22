@@ -77,6 +77,14 @@ _SIGNATURE_RE = re.compile(
 # <placeholder> or 《占位符》 — angle-bracketed slot tokens
 _ANGLE_BRACKET_RE = re.compile(r"<([^<>\n]{1,80})>|《([^《》\n]{1,80})》")
 
+# Double-asterisk fill markers — `**` used in CN contract templates either
+# as a paired wrapper around sample text (`**项目50台**设备运输`) OR as a
+# bare infix the user should fill in (`上海**物流有限公司`). Per
+# product decision, each `**` is its OWN slot: the agent inserts a value
+# at the marker, and a paired `**...**` becomes two adjacent slots so the
+# user can independently keep or overwrite the sample between them.
+_ASTERISK_MARK_RE = re.compile(r"\*\*")
+
 # Seal / stamp / date-placeholder cell — Chinese contract signature blocks
 # often contain a vertically-merged cell with template text like
 # "合 同 章 \n\n 年  月  日". This is a fillable region (the user signs/stamps
@@ -2095,6 +2103,27 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
                 "start": m.start(),
                 "end": m.end(),
             })
+        return
+    # 2.5) `**` asterisk fill markers. Each `**` run is one slot replacing
+    #      just the marker — paired `**XX**` therefore becomes two adjacent
+    #      slots (so the sample `XX` between them stays as-is unless the
+    #      user explicitly overwrites it). Bare `**` infixes (e.g.
+    #      `上海**物流`) become a single slot.
+    asterisk_matches = [
+        m for m in _ASTERISK_MARK_RE.finditer(text)
+        if not _overlaps_covered(m.start(), m.end())
+    ]
+    if asterisk_matches:
+        for m in asterisk_matches:
+            label = _guess_label_before(text, m.start()) or "*"
+            ctx = _snippet(text, m.start(), m.end())
+            add("angle_bracketed", label, ctx, {
+                "paragraph": paragraph,
+                "start": m.start(),
+                "end": m.end(),
+                "source": "asterisk_marker",
+            })
+            covered.append((m.start(), m.end()))
         return
     # 3) "Label:" at end of paragraph with no value after
     m = _LABEL_ONLY_RE.match(text)
