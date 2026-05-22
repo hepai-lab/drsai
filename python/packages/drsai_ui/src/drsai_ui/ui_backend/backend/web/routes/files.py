@@ -386,15 +386,15 @@ async def get_user_session_files(session_id: str, user_id: str, db=Depends(get_d
     检索用户上传的文件列表
     """
     response = db.get(UserFiles, filters={"user_id": user_id})
-    if not response.status or not response.data:
+    if not response.status:
         return {"status": False, "data": {}}
-    else:
-        userfiles: UserFiles = response.data[0]
-        if userfiles.files:
-            files_list = _flat_user_library_files(userfiles.files)
-            return {"status": True, "data": files_list}
-
+    if not response.data:
         return {"status": True, "data": []}
+    userfiles: UserFiles = response.data[0]
+    if userfiles.files:
+        files_list = _flat_user_library_files(userfiles.files)
+        return {"status": True, "data": files_list}
+    return {"status": True, "data": []}
 
 
 class EditDocxRequest(BaseModel):

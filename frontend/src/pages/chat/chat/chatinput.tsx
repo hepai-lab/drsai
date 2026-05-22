@@ -16,7 +16,8 @@ import {
 } from "antd";
 import type { RcFile } from "antd/es/upload/interface";
 import {
-  BotIcon,
+  Brain,
+  ChevronDownIcon,
   PaperclipIcon,
   PlusIcon,
   WrenchIcon
@@ -865,7 +866,7 @@ const ChatInput = React.forwardRef<
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
           >
-            <div className="flex w-full">
+            <div className="flex w-full flex-col">
               <div className="flex-1 relative">
                 <form
                   onSubmit={(e) => {
@@ -928,49 +929,6 @@ const ChatInput = React.forwardRef<
                                 <span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Attach Skill</span>
                               </div>
                             </Menu.Item>
-                            <Menu.SubMenu
-                              key="llm-options"
-                              title={<span className={darkMode === "dark" ? "text-gray-300" : "text-magenta-600"}>Agent Mode</span>}
-                              icon={
-                                <BotIcon
-                                  className={`w-4 h-4 flex-shrink-0 ${darkMode === "dark"
-                                    ? "text-gray-300"
-                                    : "text-magenta-600"
-                                    }`}
-                                />
-                              }
-                            >
-                              {llmList.length === 0 ? (
-                                <Menu.Item
-                                  disabled
-                                  key="no-llm-options"
-                                  className={darkMode === "dark" ? "text-gray-500" : ""}
-                                >
-                                  <span className={darkMode === "dark" ? "text-gray-500" : ""}>
-                                    No Agent Mode
-                                  </span>
-                                </Menu.Item>
-                              ) : (
-                                llmList.map((llm) => (
-                                  <Menu.Item
-                                    key={llm.value}
-                                    onClick={() => {
-                                      handleLLMSelect(llm);
-                                    }}
-                                    className={darkMode === "dark" ? "text-gray-300 hover:text-white" : ""}
-                                  >
-                                    <span className="flex w-full items-center justify-between">
-                                      <span className={darkMode === "dark" ? "text-gray-300" : ""}>
-                                        {llm.label}
-                                      </span>
-                                      {llm.label === selectedLlmLabel && (
-                                        <span className="ml-2 text-green-500 font-bold">√</span>
-                                      )}
-                                    </span>
-                                  </Menu.Item>
-                                ))
-                              )}
-                            </Menu.SubMenu>
                           </Menu>
                         }
                         trigger={["click"]}
@@ -1090,6 +1048,65 @@ const ChatInput = React.forwardRef<
                     </button>
                   </div>
                 </form>
+                {llmList.length > 0 && (
+                  <div
+                    className={`chat-input-model-bar flex items-center gap-2 border-t px-4 py-2 ${darkMode === "dark"
+                      ? "border-border-primary/40"
+                      : "border-gray-200/80"
+                      } ${isInputDisabled ? "pointer-events-none opacity-50" : ""}`}
+                  >
+                    <Brain
+                      className={`h-3.5 w-3.5 shrink-0 ${darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
+                        }`}
+                      aria-hidden
+                    />
+
+                    <Dropdown
+                      overlay={
+                        <Menu className={darkMode === "dark" ? "dark-menu" : ""}>
+                          {llmList.map((llm) => (
+                            <Menu.Item
+                              key={llm.value}
+                              onClick={() => {
+                                handleLLMSelect(llm);
+                              }}
+                              className={darkMode === "dark" ? "text-gray-300 hover:text-white" : ""}
+                            >
+                              <span className="flex w-full min-w-[10rem] items-center justify-between">
+                                <span className={darkMode === "dark" ? "text-gray-300" : ""}>
+                                  {llm.label}
+                                </span>
+                                {llm.label === selectedLlmLabel && (
+                                  <span className="ml-2 font-bold text-green-500">√</span>
+                                )}
+                              </span>
+                            </Menu.Item>
+                          ))}
+                        </Menu>
+                      }
+                      trigger={["click"]}
+                      disabled={isInputDisabled}
+                    >
+                      <button
+                        type="button"
+                        className={`chat-input-model-trigger inline-flex max-w-full items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium transition-smooth ${darkMode === "dark"
+                          ? "bg-white/5 text-gray-200 hover:bg-white/10"
+                          : "bg-violet-50 text-magenta-800 hover:bg-violet-100"
+                          }`}
+                        aria-label={`Switch model, current: ${selectedLlmLabel || llmList[0]?.label}`}
+                      >
+                        <span className="truncate">
+                          {selectedLlmLabel || llmList[0]?.label || "—"}
+                        </span>
+                        <ChevronDownIcon
+                          className={`h-3.5 w-3.5 shrink-0 ${darkMode === "dark" ? "text-gray-400" : "text-magenta-600"
+                            }`}
+                          aria-hidden
+                        />
+                      </button>
+                    </Dropdown>
+                  </div>
+                )}
               </div>
             </div>
           </div>
