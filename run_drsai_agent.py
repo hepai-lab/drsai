@@ -191,11 +191,11 @@ if __name__ == "__main__":
             agent_name="Your Explorer",
             author = "ihep@ihep.ac.cn",
             permission='groups: "drsai, payg"; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
-            permission={
-                "groups": "drsai, payg", 
-                "users": [], 
-                "owner": "admin"
-                },
+            # permission={
+            #     "groups": "drsai, payg", 
+            #     "users": [], 
+            #     "owner": "admin"
+            #     },
             description = "A personal assistant for you to explore the world.",
             version = "0.1.0",
             logo="https://aiapi.ihep.ac.cn/apiv2/files/file-a510f20c6c9d4443a582ad5b1dcc8f51/preview",
@@ -203,7 +203,7 @@ if __name__ == "__main__":
                 "/help",
             ],
             agent_config = llm_mode_config,
-            defult_config_name="hepai/minimax-m2.7-highspeed",
+            defult_config_name="gpt-5.2",
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务配置
