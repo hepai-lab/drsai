@@ -68,12 +68,6 @@ def _build_today_session_stats(
             .where(ChatSessionRecord.created_at < end_utc)
             .order_by(ChatSessionRecord.created_at.desc())
         ).all()
-        updated_today = s.exec(
-            select(ChatSessionRecord)
-            .where(ChatSessionRecord.updated_at >= start_utc)
-            .where(ChatSessionRecord.updated_at < end_utc)
-        ).all()
-
     pair_counts: Dict[Tuple[str, str], int] = {}
     pair_latest: Dict[Tuple[str, str], str] = {}
     pair_agent_name: Dict[Tuple[str, str], Optional[str]] = {}
@@ -119,21 +113,19 @@ def _build_today_session_stats(
         )
     recent_by_user_agent.sort(key=lambda x: x["latest_created_at"], reverse=True)
 
-    sessions_updated_today = 0
-    for row in updated_today:
-        uid = str(row.user_id or "").strip()
-        cfg = row.agent_mode_config if isinstance(row.agent_mode_config, dict) else None
-        aid = _agent_id_from_session_config(cfg)
-        if uid and aid:
-            sessions_updated_today += 1
-
     return {
         "today_key": today_key,
         "session_count": sum(pair_counts.values()),
         "dau": len(today_user_ids),
-        "active_agent_count": len(today_agent_ids),
-        "sessions_updated_today": sessions_updated_today,
-        "recent_by_user_agent": recent_by_user_agent[:120],
+        "recent_by_user_agent": [
+            {
+                "user_id": row["user_id"],
+                "agent_name": row.get("agent_name"),
+                "session_count": row["session_count"],
+                "latest_created_at": row["latest_created_at"],
+            }
+            for row in recent_by_user_agent[:20]
+        ],
     }
 
 
@@ -324,25 +316,10 @@ def _collect_agent_labels(db_engine: Any, agent_ids: List[str]) -> Dict[str, str
     return out
 
 
-def _usage_row_to_api_dict(row: UserAgentUsage) -> Dict[str, Any]:
-    """model_dump + ORM fallback so SQLite string/null timestamps still surface in admin JSON."""
-    data: Dict[str, Any] = row.model_dump(mode="json")
-    for key in ("last_used_at", "updated_at", "created_at"):
-        if data.get(key) is not None:
-            continue
-        raw = getattr(row, key, None)
-        if isinstance(raw, datetime):
-            data[key] = raw.isoformat()
-        elif isinstance(raw, str) and raw.strip():
-            data[key] = raw.strip()
-    return data
-
-
 @router.get("/usage-overview")
 async def usage_overview(
     operator_user_id: str,
     usage_limit: int = 400,
-    session_sample_limit: int = 800,
     db=Depends(get_db),
 ) -> Dict[str, Any]:
     """
@@ -352,7 +329,6 @@ async def usage_overview(
     _require_platform_admin(db, operator_user_id)
 
     safe_usage = max(1, min(int(usage_limit), 5000))
-    safe_sessions = max(1, min(int(session_sample_limit), 10000))
 
     with DBSession(db.engine) as s:
         usage_rows = s.exec(
@@ -371,12 +347,6 @@ async def usage_overview(
             select(Run.user_id, func.count(Run.id)).where(Run.user_id.isnot(None)).group_by(Run.user_id)
         ).all()
 
-        recent_sessions = s.exec(
-            select(ChatSessionRecord)
-            .order_by(ChatSessionRecord.updated_at.desc())
-            .limit(safe_sessions)
-        ).all()
-
     top_agents_raw, sessions_per_user = _build_session_rankings(db.engine)
 
     label_ids: List[str] = []
@@ -393,9 +363,6 @@ async def usage_overview(
         _push_label_id(getattr(r, "agent_id", None))
     for x in top_agents_raw:
         _push_label_id(x["agent_id"])
-    for row in recent_sessions:
-        cfg = row.agent_mode_config
-        _push_label_id(_agent_id_from_session_config(cfg if isinstance(cfg, dict) else None))
 
     agent_labels = _collect_agent_labels(db.engine, label_ids)
     today_session_stats = _build_today_session_stats(db.engine, agent_labels)
@@ -403,12 +370,17 @@ async def usage_overview(
 
     usage_serial: List[Dict[str, Any]] = []
     for r in usage_rows:
-        if not getattr(r, "user_id", None):
+        uid = getattr(r, "user_id", None)
+        if not uid:
             continue
-        row_d = _usage_row_to_api_dict(r)
-        uaid = str(row_d.get("agent_id") or "").strip()
-        row_d["agent_name"] = agent_labels.get(uaid) if uaid else None
-        usage_serial.append(row_d)
+        aid = str(getattr(r, "agent_id", "") or "").strip()
+        usage_serial.append(
+            {
+                "user_id": str(uid),
+                "agent_id": aid,
+                "use_count": int(getattr(r, "use_count", 0) or 0),
+            }
+        )
 
     top_agents_by_usage_records = [
         {
@@ -424,40 +396,6 @@ async def usage_overview(
     ]
     runs_per_user.sort(key=lambda x: x["run_count"], reverse=True)
 
-    sess_agent_counts: Dict[str, Dict[str, int]] = {}
-    recent_session_rows: List[Dict[str, Any]] = []
-    for row in recent_sessions:
-        uid = row.user_id
-        cfg = row.agent_mode_config
-        aid = _agent_id_from_session_config(cfg if isinstance(cfg, dict) else None) or "__unknown_agent__"
-
-        bucket = sess_agent_counts.setdefault(str(uid or ""), {})
-        bucket[aid] = bucket.get(aid, 0) + 1
-
-        updated = row.updated_at.isoformat() if row.updated_at else None
-        created = row.created_at.isoformat() if row.created_at else None
-        if len(recent_session_rows) < 120:
-            resolved_aid = None if aid == "__unknown_agent__" else aid
-            recent_session_rows.append(
-                {
-                    "session_id": row.id,
-                    "user_id": row.user_id,
-                    "name": row.name,
-                    "agent_id": resolved_aid,
-                    "agent_name": agent_labels.get(resolved_aid) if resolved_aid else None,
-                    "updated_at": updated,
-                    "created_at": created,
-                }
-            )
-
-    session_agent_summary = []
-    for uid, agents in sess_agent_counts.items():
-        parts = sorted(agents.items(), key=lambda kv: kv[1], reverse=True)[:15]
-        session_agent_summary.append(
-            {"user_id": uid, "sessions_by_agent_sample": [{"agent_id": k, "count": v} for k, v in parts]}
-        )
-    session_agent_summary.sort(key=lambda x: sum(p["count"] for p in x["sessions_by_agent_sample"]), reverse=True)
-
     return {
         "status": True,
         "data": {
@@ -465,10 +403,8 @@ async def usage_overview(
             "top_agents_by_usage_records": top_agents_by_usage_records,
             "sessions_per_user": sessions_per_user[:200],
             "runs_per_user": runs_per_user[:200],
-            "session_agent_summary_sample": session_agent_summary[:120],
-            "recent_sessions_preview": recent_session_rows,
             "today_session_stats": today_session_stats,
             "session_usage_scatter": session_usage_scatter,
-            "limits": {"usage_events": safe_usage, "session_sample_rows": safe_sessions},
+            "limits": {"usage_events": safe_usage},
         },
     }

@@ -1206,15 +1206,9 @@ export type UserAccess = {
 
 export type AdminUsageOverviewData = {
     usage_events: Array<{
-        user_id?: string;
-        agent_id?: string;
-        agent_name?: string | null;
-        last_used_at?: string | null;
-        updated_at?: string | null;
-        use_count?: number;
-        today_use_day?: string | null;
-        today_use_count?: number;
-        [key: string]: unknown;
+        user_id: string;
+        agent_id: string;
+        use_count: number;
     }>;
     top_agents_by_usage_records: Array<{
         agent_id: string;
@@ -1223,28 +1217,12 @@ export type AdminUsageOverviewData = {
     }>;
     sessions_per_user: Array<{ user_id: string; session_count: number }>;
     runs_per_user: Array<{ user_id: string; run_count: number }>;
-    session_agent_summary_sample: Array<{
-        user_id: string;
-        sessions_by_agent_sample: Array<{ agent_id: string; count: number }>;
-    }>;
-    recent_sessions_preview: Array<{
-        session_id?: number | null;
-        user_id?: string | null;
-        name?: string | null;
-        agent_id?: string | null;
-        agent_name?: string | null;
-        updated_at?: string | null;
-        created_at?: string | null;
-    }>;
     today_session_stats?: {
         today_key: string;
         session_count: number;
         dau: number;
-        active_agent_count: number;
-        sessions_updated_today: number;
         recent_by_user_agent: Array<{
             user_id: string;
-            agent_id: string;
             agent_name?: string | null;
             session_count: number;
             latest_created_at: string;
@@ -1257,7 +1235,7 @@ export type AdminUsageOverviewData = {
         latest_created_at: string;
         session_count: number;
     }>;
-    limits: { usage_events?: number; session_sample_rows?: number };
+    limits: { usage_events?: number };
 };
 
 /** Platform-admin cross-user usage aggregates (requires `UserRole.is_admin`). */
