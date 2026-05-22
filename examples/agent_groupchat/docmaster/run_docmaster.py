@@ -790,6 +790,7 @@ def create_word_editor_agent(
      · 对 highlighted 槽位，确认内容时**必须把整段高亮文字原样念给用户**（用 slot 的 `span_text` 字段，里面是高亮区域的完整原文）。例如高亮文字是「15个工作日」，要问"高亮的『15个工作日』要改成什么？"而不是只问"工作日改几天"。
      · **underscores 槽位的 `replaces` 字段**：inspect 会返回该字段，给出**精确**要被替换的字符（例如 `'     '` 5 个空格，或者 `'_______'` 7 个下划线）。slot 的 `context` 显示槽位前后的句子作为环境信息——但**填值时只替换 `replaces` 那一段**。**绝对不要**把 context 中前后已有的模板正文（比如紧跟在空白后面的括号说明 "（其中合同总额的20%作为定金）"、单位 "元/工作日/%" 等）复制进 slot_values 里——否则会出现 "90%（其中合同总额的20%作为定金）（其中合同总额的20%作为定金）" 这类括号被重复粘贴的 bug，因为模板里的原括号本来就还在。slot_values 里只放**真正要填进空白的值**（如 "90%" 或 "90"），其余 prose 让模板自己保留。
      · 如果 highlighted slot 带有 `scaffold` 字段（说明工具识别出了"变量 + 单位"形式，比如 15+个工作日、¥+850、50+%、2025年5月14日 等），**意味着填充时只换变量部分、保留前后的单位/币符/百分号**：用户回"20"，最终会写成"20个工作日"。即使如此，**你给 slot_values 时也最好直接传完整字符串**（"20个工作日"），不要只传"20"——只把数字作为兜底逻辑，避免歧义。绝对不要把"15个工作日"原样替换成"20"丢掉单位。
+     · **`is_prefilled: true` 槽位（关键，避免重复填写）**：inspect 返回的 slot 如果带 `is_prefilled: true` 字段，说明该槽位的段落（或 label_blank 下面的正文段落）**已经写好了实质内容**——`existing_text` 字段会显示当前的内容（最多 200/400 字）。这通常发生在：用户在上传模板前已经手动填了某个章节（如"1.5 合同文件的优先顺序"下已经列了 7 条文件清单），或者模板自带示例填充。**绝对不要**把这种槽位当成普通空白槽位往 `slot_values` 里塞值——填了也会被工具默认 skip 掉（防止 2026-05 "（1）变更洽商…（1）变更洽商…" 重复行 bug），返回里会出现 `skipped_prefilled_slot_ids`。正确流程：(1) 把 `existing_text` **原样读给用户**："我看到 1.5 节已经写了这些：……，要保留原样、修改、还是替换？"(2) 用户说**保留**——不用做任何事，槽位会维持原样；(3) 用户说**替换**——把新内容通过 `fill_docx_template_tool` 的 `replace_prefilled={slot_id: 新内容}` 参数（**不是 slot_values**）传入。工具会**清空整段原有内容并写入新值**，保留段落的对齐、缩进、编号样式以及第一个 run 的字体格式。`label_blank` 类槽位的 body 可能跨多个段落（比如"合同文件组成"下的 7 条），新值里用 `\\n` 分隔每一项，工具会按行写入既有段落（多余的清空，不够的克隆最后一段插入），保证编号列表的视觉结构不变。
      · **当章节标题（如"一、甲方委托乙方提供以下维修服务："）带有"以下/如下/下表/following/below"等字样、且后面紧跟一张表格时，要把每条维修服务/物品作为表格的一行来填，而不是把描述文字塞在标题和表格之间的空段落里。**inspect 已经默认不会在这种情况下emit section_body_empty 槽位；如果用户需要新增多条服务/产品行：先调 `edit_docx_tool` 用 `add_table_row` 增行（`{'type': 'add_table_row', 'table_index': N, 'values': ['第一列', '第二列', ...], 'position': 'end'}`，工具会**自动克隆最后一行的格式**——列宽、边框、对齐都会跟着——所以新加的行视觉上和原有行一致），如果还要改原有行用 `set_cell_text` / `replace_in_cell`，一次 `edit_docx_tool` 调用可以把多个 `add_table_row` + 多个 `set_cell_text` 全部放进 `edits` 数组里。**绝对不要**因为某个操作"看似不支持"就回退到 `unpack_docx_tool` + 手动改 XML + `pack_docx_tool`——这条路几乎一定会破坏文档结构（曾经把样式表搞坏）。如果 `add_table_row` 真的失败了，先把错误信息念给用户，再讨论替代方案，不要静默地直接拆包改 XML。
      · 如果多个 slots 共享相同或近似的 label（比如表格里多个"总价"、"大写"、"小写"单元格），**逐个**问用户该填什么，**不要**把同一个数字往所有看似相同的格子里灌。"总价" = 单价×数量的合计；"大写" / "小写" 是同一个金额的中文大写 / 阿拉伯数字两种写法——三者**值不同**，要按语义分别计算/转换后再填。
      · **中文数字的用法（关键，避免误用大写）**：大写数字 "壹/贰/叁/肆/伍/陆/柒/捌/玖/拾/佰/仟/万/亿/元/整" **只用于金额**——而且只在 slot 的 label 或上下文出现"大写"/"in words"/"capital amount"，或与一个"小写"金额槽位配对时才用。**所有其它中文数字填充**——年限（"保修期 一 年"）、月数、周数、天数（"3天内"）、工作日数、合同期限、产品数量、序号、百分比、版次、人数、份数、第几条等——一律用**阿拉伯数字**（"1"、"3"、"15"）或**小写中文数字**（"一/二/三/四/五/六/七/八/九/十/百/千"），**严禁**用"壹/贰/叁..."。错误示范："保修期或质量保证期 壹 年"（壹是大写）；正确："保修期或质量保证期 1 年" 或 "保修期或质量保证期 一 年"。如果用户没明确指定"用大写"，默认用阿拉伯数字；用户说"用中文"再用小写。
@@ -1393,6 +1394,19 @@ XML编辑工作流（仅用于 tracked changes）：
                                                 as a separate removal.
                   label = best-guess field name (may be None for stray cases).
                   context = surrounding snippet for disambiguation.
+                  is_prefilled (optional bool) + existing_text: when present
+                  and true, the slot's paragraph (or its label_blank body)
+                  ALREADY contains substantive content — e.g. the user
+                  pre-typed values under a section heading before asking
+                  docmaster to fill the rest. By default fill_docx_template_tool
+                  SKIPS these slots when given via `slot_values` (passes them
+                  through unchanged) to avoid duplicate-content bugs. To
+                  overwrite, read `existing_text` to the user, ask whether
+                  to keep or replace, and if replace, pass the new value
+                  through fill_docx_template_tool's `replace_prefilled`
+                  argument (NOT slot_values). The tool wipes the existing
+                  paragraph(s) and writes the new value while preserving
+                  paragraph-level formatting.
                   Pass the slot ids back via fill_docx_template_tool's
                   slot_values argument once the user confirms each. Each id
                   has the form `slot_NNN_<label>` (e.g.
@@ -1425,6 +1439,7 @@ XML编辑工作流（仅用于 tracked changes）：
             slot_values: dict = None,
             removal_ids: list = None,
             force_fresh: bool = False,
+            replace_prefilled: dict = None,
         ):
             """
             Fill a DOCX template with values and save to a new DOCX file.
@@ -1512,6 +1527,32 @@ XML编辑工作流（仅用于 tracked changes）：
                     output. Use this to recover from a botched previous
                     fill — NEVER use run_bash to delete the file. Default
                     False (preserve prior partial fills when re-running).
+                replace_prefilled: Optional {slot_id: new_text} for slots
+                    inspect_docx_template_tool flagged with
+                    `is_prefilled: true`. A prefilled slot is one whose
+                    paragraph (or its body, for `label_blank` kind) already
+                    contains substantive content — e.g. the user pre-typed
+                    a numbered list under "1.5 合同文件的优先顺序" before
+                    asking docmaster to fill the rest of the contract.
+                    By default these slots are SKIPPED by the normal
+                    `slot_values` pass to avoid the duplication bug
+                    (2026-05) where the agent's value was appended next to
+                    the existing content. To OVERWRITE a prefilled slot,
+                    confirm the change with the user, then pass the new
+                    text here. The tool wipes the existing paragraph
+                    (or all consecutive body paragraphs for label_blank)
+                    and writes the new value, preserving paragraph-level
+                    formatting (alignment, style, numbering) and the
+                    first run's character formatting. For label_blank
+                    bodies with multiple lines, separate items with `\\n`
+                    — each line becomes a separate body paragraph (extra
+                    paragraphs are inserted by cloning the last existing
+                    body paragraph so list numbering / indents survive).
+                    Workflow: (1) inspect, (2) note slots with
+                    `is_prefilled: true` and their `existing_text`,
+                    (3) read `existing_text` to the user and ASK whether
+                    to keep / replace, (4) only if the user says replace,
+                    pass {slot_id: new_text} here.
             """
             guard = _guard_template_path(template_path)
             if guard is not None:
@@ -1525,6 +1566,7 @@ XML编辑工作流（仅用于 tracked changes）：
                 slot_values=slot_values or {},
                 removal_ids=removal_ids or [],
                 force_fresh=force_fresh,
+                replace_prefilled=replace_prefilled or {},
             )
             if result.get('success', False):
                 fe_data = _build_files_event_data(
