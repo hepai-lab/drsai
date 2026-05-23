@@ -25,6 +25,8 @@ export interface TextInputProps {
   placeholder?: string
   disabled?: boolean
   onSubmit: (text: string) => void
+  /** When true, Enter on an empty input still fires onSubmit(""). Useful for "press Enter to skip" prompts. */
+  allowEmpty?: boolean
   /** Pool of completion candidates (e.g. ["/help", "/model", ...]). Optional. */
   completions?: string[]
   /** Persistent history shared across renders. Caller can supply a ref. */
@@ -36,6 +38,7 @@ export function TextInput({
   placeholder,
   disabled,
   onSubmit,
+  allowEmpty = false,
   completions = [],
   history: externalHistory,
 }: TextInputProps) {
@@ -144,10 +147,10 @@ export function TextInput({
         return
       }
       const trimmed = value.trim()
-      if (trimmed) {
+      if (trimmed || allowEmpty) {
         onSubmit(trimmed)
-        // Push to history (dedupe consecutive)
-        if (history.length === 0 || history[history.length - 1] !== trimmed) {
+        // Push non-empty entries into history (dedupe consecutive)
+        if (trimmed && (history.length === 0 || history[history.length - 1] !== trimmed)) {
           history.push(trimmed)
         }
         setHistoryIdx(-1)

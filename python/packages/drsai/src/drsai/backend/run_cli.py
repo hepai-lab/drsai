@@ -192,8 +192,128 @@ def chat(
     _launch_tui(attach_url=attach)
 
 
+def _has_any_api_key(cfg: dict) -> bool:
+    """Return True if any usable API key is reachable via config or env."""
+    return any([
+        cfg.get("api_key"),
+        cfg.get("anthropic_api_key"),
+        cfg.get("openai_api_key"),
+        os.environ.get("HEPAI_API_KEY"),
+        os.environ.get("ANTHROPIC_API_KEY"),
+        os.environ.get("OPENAI_API_KEY"),
+    ])
+
+
+def _setup_wizard(*, first_run: bool) -> dict:
+    """Interactive first-time setup — prompts for user_id + API key.
+
+    Called automatically before launching the TUI when:
+      - cli_config.json doesn't exist yet (first install), OR
+      - no usable API key is reachable (config + env are both empty).
+
+    Returns the (possibly updated) config dict, already saved to disk.
+    """
+    import getpass
+    from drsai.backend.cli.config import mask_key
+
+    cfg = cli_config.load_config()
+
+    if first_run:
+        typer.echo(typer.style(
+            "\n  Welcome to DrSai! Let's configure your profile.\n",
+            fg=typer.colors.GREEN, bold=True,
+        ))
+    else:
+        typer.echo(typer.style(
+            "\n  ⚠ No API key configured — set one up to continue.\n",
+            fg=typer.colors.YELLOW, bold=True,
+        ))
+    typer.echo(f"  Config will be saved to: {cli_config.CLI_CONFIG_PATH}\n")
+
+    # ── User identity (only on first run) ───────────────────────────────────
+    if first_run:
+        cfg["user_id"] = typer.prompt(
+            "  Your user id",
+            default=cfg.get("user_id") or "anonymous",
+        ).strip() or "anonymous"
+
+        default_model = typer.prompt(
+            "  Default model alias (e.g. hepai/deepseek-v4-pro, claude-sonnet-4-6) — Enter to skip",
+            default=cfg.get("defult_config_name") or "",
+            show_default=False,
+        ).strip()
+        cfg["defult_config_name"] = default_model or None
+
+    # ── API key ─────────────────────────────────────────────────────────────
+    typer.echo("")
+    typer.echo(typer.style("  ── API Key ──", fg=typer.colors.CYAN, bold=True))
+    typer.echo("    1. HepAI     (推荐 — 国内高速, https://hepai.ai)")
+    typer.echo("    2. Anthropic (Claude 系列)")
+    typer.echo("    3. OpenAI    (GPT 系列)")
+    typer.echo("    4. 跳过 — 我会通过环境变量设置")
+    typer.echo("")
+    choice = typer.prompt("  选择 (1-4)", default="1").strip()
+
+    def _ask_key(label: str, cfg_key: str, env_key: str, base_url_label: Optional[str] = None,
+                 base_url_cfg_key: Optional[str] = None, base_url_env_key: Optional[str] = None) -> None:
+        typer.echo(typer.style(f"\n  {label}", fg=typer.colors.CYAN))
+        try:
+            key = getpass.getpass("  API Key (输入隐藏): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            typer.echo("\n  Cancelled.")
+            return
+        if key:
+            cfg[cfg_key] = key
+            os.environ[env_key] = key
+            typer.echo(typer.style(
+                f"  ✓ {label} Key saved: {mask_key(key)}", fg=typer.colors.GREEN,
+            ))
+        else:
+            typer.echo(typer.style("  ⚠ Empty key — skipped", fg=typer.colors.YELLOW))
+        if base_url_label and base_url_cfg_key:
+            try:
+                bu = typer.prompt(
+                    f"  {base_url_label} (可选, Enter 跳过)",
+                    default=cfg.get(base_url_cfg_key) or "",
+                    show_default=False,
+                ).strip()
+            except (KeyboardInterrupt, EOFError):
+                bu = ""
+            if bu:
+                cfg[base_url_cfg_key] = bu
+                if base_url_env_key:
+                    os.environ[base_url_env_key] = bu
+
+    if choice == "1":
+        _ask_key("HepAI", "api_key", "HEPAI_API_KEY",
+                 base_url_label="HepAI Base URL", base_url_cfg_key="openai_base_url",
+                 base_url_env_key="OPENAI_BASE_URL")
+    elif choice == "2":
+        _ask_key("Anthropic", "anthropic_api_key", "ANTHROPIC_API_KEY",
+                 base_url_label="Anthropic Base URL", base_url_cfg_key="anthropic_base_url",
+                 base_url_env_key="ANTHROPIC_BASE_URL")
+    elif choice == "3":
+        _ask_key("OpenAI", "openai_api_key", "OPENAI_API_KEY",
+                 base_url_label="OpenAI Base URL", base_url_cfg_key="openai_base_url",
+                 base_url_env_key="OPENAI_BASE_URL")
+    else:
+        typer.echo(
+            "\n  Skipped. Set one of HEPAI_API_KEY / ANTHROPIC_API_KEY / "
+            "OPENAI_API_KEY environment variables before next launch."
+        )
+
+    cli_config.save_config(cfg)
+    typer.echo(typer.style(f"\n  ✓ Saved to {cli_config.CLI_CONFIG_PATH}\n", fg=typer.colors.GREEN))
+    return cfg
+
+
 def _launch_tui(*, attach_url: Optional[str] = None) -> None:
-    """Spawn the Ink TUI subprocess."""
+    """Spawn the Ink TUI subprocess.
+
+    Before launching, run the setup wizard on first install or whenever no
+    API key is reachable. Skipped silently when attaching to a remote gateway
+    (the remote already has its own config).
+    """
     ui_dir = _find_ui_tui_dir()
     if ui_dir is None:
         typer.echo(
@@ -204,6 +324,19 @@ def _launch_tui(*, attach_url: Optional[str] = None) -> None:
             )
         )
         raise typer.Exit(1)
+
+    # ── First-run / missing-API-key wizard ──────────────────────────────
+    # Skip when --attach is given (remote gateway has its own config) or when
+    # running headless (no TTY → can't prompt interactively).
+    if not attach_url and sys.stdin.isatty() and sys.stdout.isatty():
+        first_run = not cli_config.CLI_CONFIG_PATH.exists()
+        cfg = cli_config.load_config() if not first_run else dict(cli_config.DEFAULT_CONFIG)
+        if first_run or not _has_any_api_key(cfg):
+            try:
+                _setup_wizard(first_run=first_run)
+            except (KeyboardInterrupt, EOFError):
+                typer.echo("\n  Setup cancelled. You can re-run any time with: drsai config\n")
+                raise typer.Exit(130)
 
     cmd, base_args = _resolve_node_runner(ui_dir)
     if not cmd:

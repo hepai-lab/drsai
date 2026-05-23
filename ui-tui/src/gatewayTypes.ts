@@ -46,6 +46,13 @@ export interface GatewaySkin {
   colors?: Record<string, string>
   banner_hero?: string
   banner_logo?: string
+  ws_attach_url?: string
+}
+
+export interface SetupStatus {
+  config_exists: boolean
+  has_api_key: boolean
+  setup_required: boolean
 }
 
 // ── Session info ─────────────────────────────────────────────────────
@@ -149,7 +156,7 @@ interface BaseEvent {
 
 export type GatewayEvent =
   // Lifecycle
-  | (BaseEvent & { type: 'gateway.ready'; payload?: { skin?: GatewaySkin } })
+  | (BaseEvent & { type: 'gateway.ready'; payload?: { skin?: GatewaySkin; setup?: SetupStatus } })
   | (BaseEvent & { type: 'gateway.stderr'; payload: { line: string } })
   | (BaseEvent & { type: 'gateway.protocol_error'; payload?: { preview?: string } })
   | (BaseEvent & { type: 'gateway.exit'; payload?: { code?: number | null; reason?: string } })
