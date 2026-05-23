@@ -162,6 +162,35 @@ def _log_exit(reason: str) -> None:
 # ── Main loop ────────────────────────────────────────────────────────
 
 
+def _setup_status() -> dict:
+    """Inspect config + env to see whether the user has done first-run setup.
+
+    Returns a dict shipped in ``gateway.ready`` so the UI can show an
+    "unconfigured" banner / refuse to run prompts when nothing is ready.
+    """
+    has_api_key = False
+    config_path_exists = False
+    try:
+        from drsai.backend.cli import config as cli_config
+        config_path_exists = cli_config.CLI_CONFIG_PATH.exists()
+        cfg = cli_config.load_config() if config_path_exists else {}
+        has_api_key = any([
+            cfg.get("api_key"),
+            cfg.get("anthropic_api_key"),
+            cfg.get("openai_api_key"),
+            os.environ.get("HEPAI_API_KEY"),
+            os.environ.get("ANTHROPIC_API_KEY"),
+            os.environ.get("OPENAI_API_KEY"),
+        ])
+    except Exception:
+        logger.exception("setup status probe failed")
+    return {
+        "config_exists": config_path_exists,
+        "has_api_key": has_api_key,
+        "setup_required": (not config_path_exists) or (not has_api_key),
+    }
+
+
 def main() -> None:
     # Optionally start WebSocket server for attach mode
     ws_url = None
@@ -179,10 +208,15 @@ def main() -> None:
     if ws_url:
         skin["ws_attach_url"] = ws_url
 
+    setup = _setup_status()
+
     if not write_json({
         "jsonrpc": "2.0",
         "method": "event",
-        "params": {"type": "gateway.ready", "payload": {"skin": skin}},
+        "params": {
+            "type": "gateway.ready",
+            "payload": {"skin": skin, "setup": setup},
+        },
     }):
         _log_exit("startup write failed (broken stdout pipe before first event)")
         sys.exit(0)

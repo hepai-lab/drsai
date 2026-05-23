@@ -10,13 +10,14 @@
 
 import { useStore } from '@nanostores/react'
 import { Box, Text, useApp, useInput } from 'ink'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { createGatewayEventHandler } from './app/createGatewayEventHandler.js'
 import { TurnController } from './app/turnController.js'
 import { $current, $transcript } from './app/turnStore.js'
 import { $connectionError, $connectionStatus, $userId } from './app/uiStore.js'
 import { AppLayout } from './components/appLayout.js'
+import { SetupScreen } from './components/setupScreen.js'
 import type { GatewayClient } from './gatewayClient.js'
 import type { SessionCreateResult, SessionInfo, SessionListResult, SessionResumeResult } from './gatewayTypes.js'
 import { theme } from './theme.js'
@@ -27,6 +28,7 @@ interface AppProps {
 
 type Bootstrap =
   | { phase: 'connecting' }
+  | { phase: 'setup'; configExists: boolean }
   | { phase: 'resuming'; session: SessionInfo }
   | { phase: 'ready'; sessionId: string; controller: TurnController }
   | { phase: 'error'; message: string }
@@ -34,6 +36,10 @@ type Bootstrap =
 export function App({ gw }: AppProps) {
   const { exit } = useApp()
   const [boot, setBoot] = useState<Bootstrap>({ phase: 'connecting' })
+
+  // Ref so the SetupScreen can trigger the post-setup boot path without
+  // needing the App's effect to re-run (which would recreate the controller).
+  const setupCompleteHandlerRef = useRef<(() => Promise<void>) | null>(null)
 
   // Hard-exit on Ctrl+D so the user can always escape even if the UI is wedged.
   useInput((_input, key) => {
@@ -82,42 +88,84 @@ export function App({ gw }: AppProps) {
     const handler = createGatewayEventHandler(gw, controller)
     const unsub = gw.onAny(handler)
 
+    // Capture setup status from gateway.ready before deciding to boot.
+    // Stored in a closure so the async block below can read it.
+    interface SetupSnapshot {
+      setup_required?: boolean
+      config_exists?: boolean
+    }
+    let setupStatus: SetupSnapshot | null = null
+    const unsubSetup = gw.onEvent('gateway.ready', ev => {
+      const p = ev.payload as { setup?: SetupSnapshot } | undefined
+      if (p?.setup) setupStatus = p.setup
+    })
+
+    // Resolve session + ready phase. Reusable so SetupScreen.onComplete can
+    // re-run it after the user enters credentials.
+    async function resolveSession() {
+      // Resolve session: most_recent for current cwd → create new (named after cwd)
+      // Do NOT fall back to list[0] — that would grab some random old session
+      // from an unrelated workdir.
+      let session: SessionInfo | null = null
+      const recent = await gw.request<{ session: SessionInfo | null; user_id?: string }>(
+        'session.most_recent',
+        {},
+      )
+      if (recent.user_id) $userId.set(recent.user_id)
+      if (recent.session) {
+        session = recent.session
+      }
+      if (!session) {
+        const created = await gw.request<SessionCreateResult>('session.create', {
+          name: process.env.DRSAI_SESSION_NAME || undefined,
+        })
+        session = created.session
+        if (created.user_id) $userId.set(created.user_id)
+      }
+
+      if (cancelled) return
+      setBoot({ phase: 'resuming', session })
+
+      const result = await gw.request<SessionResumeResult>('session.resume', {
+        session_id: session.session_id,
+      })
+      if (cancelled) return
+      const userId = (result as { user_id?: string }).user_id || $userId.get()
+      if (userId) $userId.set(userId)
+
+      setBoot({ phase: 'ready', sessionId: result.session.session_id, controller })
+    }
+
+    // Stash on the App's closure so SetupScreen can trigger it after save.
+    setupCompleteHandlerRef.current = async () => {
+      try {
+        await resolveSession()
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        setBoot({ phase: 'error', message: msg })
+      }
+    }
+
     void (async () => {
       try {
         await gw.ready_()
+        // The gateway.ready handler above has now run (synchronously, before
+        // ready_ resolves), so setupStatus is populated if the gateway sent it.
+        unsubSetup()
         if (cancelled) return
 
-        // Resolve session: most_recent for current cwd → create new (named after cwd)
-        // Do NOT fall back to list[0] — that would grab some random old session
-        // from an unrelated workdir.
-        let session: SessionInfo | null = null
-        const recent = await gw.request<{ session: SessionInfo | null; user_id?: string }>(
-          'session.most_recent',
-          {},
-        )
-        if (recent.user_id) $userId.set(recent.user_id)
-        if (recent.session) {
-          session = recent.session
-        }
-        if (!session) {
-          const created = await gw.request<SessionCreateResult>('session.create', {
-            name: process.env.DRSAI_SESSION_NAME || undefined,
+        // First-run or missing-API-key → drop into the interactive setup
+        // screen. SetupScreen.onComplete will call our resolveSession later.
+        const captured = setupStatus as SetupSnapshot | null
+        if (captured?.setup_required) {
+          setBoot({
+            phase: 'setup',
+            configExists: !!captured.config_exists,
           })
-          session = created.session
-          if (created.user_id) $userId.set(created.user_id)
+          return
         }
 
-        if (cancelled) return
-        setBoot({ phase: 'resuming', session })
-
-        const result = await gw.request<SessionResumeResult>('session.resume', {
-          session_id: session.session_id,
-        })
-        if (cancelled) return
-        const userId = (result as { user_id?: string }).user_id || $userId.get()
-        if (userId) $userId.set(userId)
-
-        setBoot({ phase: 'ready', sessionId: result.session.session_id, controller })
+        await resolveSession()
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         if (!cancelled) setBoot({ phase: 'error', message: msg })
@@ -137,6 +185,18 @@ export function App({ gw }: AppProps) {
     return (
       <BootScreen
         text={`resuming session ${boot.session.name} (${boot.session.session_id.slice(0, 8)})… first run can take ~30-60s for skill loading`}
+      />
+    )
+  }
+  if (boot.phase === 'setup') {
+    return (
+      <SetupScreen
+        gw={gw}
+        configExists={boot.configExists}
+        onComplete={() => {
+          setBoot({ phase: 'connecting' })
+          void setupCompleteHandlerRef.current?.()
+        }}
       />
     )
   }
