@@ -39,10 +39,10 @@ from autogen_ext.code_executors._common import(
     lang_to_cmd,
     infer_lang,
 )
-from autogen_ext.code_executors.docker._docker_code_executor import (
-    DockerCommandLineCodeExecutor,
-    DockerCommandLineCodeExecutorConfig
-)
+# from autogen_ext.code_executors.docker._docker_code_executor import (
+#     DockerCommandLineCodeExecutor,
+#     DockerCommandLineCodeExecutorConfig
+# )
 # from autogen_ext.code_executors.jupyter import (
 #     JupyterCodeExecutor, 
 #     JupyterCodeResult
