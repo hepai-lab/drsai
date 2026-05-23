@@ -1,0 +1,29 @@
+{
+  "name": "@drsai/ui-tui",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "DrSai TUI — React/Ink frontend over JSON-RPC gateway",
+  "scripts": {
+    "dev": "tsx src/entry.tsx",
+    "watch": "tsx --watch src/entry.tsx",
+    "start": "node dist/entry.mjs",
+    "build": "node scripts/build.mjs",
+    "type-check": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@nanostores/react": "^1.0.0",
+    "ink": "^6.0.0",
+    "nanostores": "^1.0.0",
+    "react": "^19.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/ws": "^8.5.0",
+    "esbuild": "^0.28.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

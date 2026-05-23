@@ -342,18 +342,21 @@ def _thread_to_info(row: Thread) -> SessionInfo:
     msgs = _extract_messages_from_thread(row)
     preview = ""
 
-    # Extract the first user message as the auto-generated session name
+    # Extract the first user message as the auto-generated session name,
+    # and the LAST user message as the preview (so /list shows what the user
+    # last asked about, not the assistant's last reply).
     auto_name = ""
     for m in msgs:
         if isinstance(m, dict):
-            source = m.get("source", "")
-            mtype = m.get("type", "")
+            source = (m.get("source") or m.get("role") or "").lower()
             content = _safe_content_str(m.get("content"))
+            if not content.strip():
+                continue
             # First user TextMessage → auto name
-            if not auto_name and source == "user" and content.strip():
+            if not auto_name and source == "user":
                 auto_name = content.strip().splitlines()[0][:40]
-            # Last non-empty message → preview
-            if content.strip():
+            # Track last user message → preview
+            if source == "user":
                 preview = content.strip().splitlines()[0][:120]
 
     meta = row.meta or {}

@@ -492,8 +492,12 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             if thought_deltas:
                 thought = "".join(thought_deltas).lstrip("<think>").rstrip("</think>")
             else:
-            # Store any text alongside tool calls as thoughts
+                # Store any text alongside tool calls as thoughts.
+                # Normalize empty text to None so it is not serialized as an
+                # empty Anthropic text block when switching providers.
                 thought = "".join(content_deltas)
+            if isinstance(thought, str) and not thought.strip():
+                thought = None
         else:
             # This is a text response (possibly with thoughts)
             if content_deltas:
