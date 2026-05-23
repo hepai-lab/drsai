@@ -2469,7 +2469,23 @@ def _normalize_message(msg: dict) -> dict:
 # âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def main():
-    """Start the DrSai API gateway (uvicorn)."""
+    """Start the DrSai API gateway (uvicorn).
+
+    NOTE: This is the legacy OpenAI-compatible SSE gateway used by the
+    Electron desktop app. The new TUI uses ``drsai.backend.tui_gateway``
+    (JSON-RPC). This module is preserved for desktop compatibility and
+    will be deprecated when the Electron client migrates to JSON-RPC.
+    """
+    import sys
+    sys.stderr.write(
+        "\n"
+        "================================================================\n"
+        "  WARNING: gateway.py is the LEGACY SSE gateway (desktop only).\n"
+        "  The new TUI uses drsai.backend.tui_gateway (JSON-RPC).\n"
+        "  This module will be removed once the Electron client migrates.\n"
+        "================================================================\n\n"
+    )
+    sys.stderr.flush()
     import uvicorn
     uvicorn.run(app, host=DEFAULT_HOST, port=DEFAULT_PORT)
 

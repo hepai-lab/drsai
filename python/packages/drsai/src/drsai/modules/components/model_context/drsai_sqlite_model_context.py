@@ -215,10 +215,13 @@ class DrSaiSQLiteChatCompletionContext(
                         else:
                             rebuilt.append(item)
                     content = rebuilt
+                raw_thought = raw.get('thought')
+                if isinstance(raw_thought, str) and not raw_thought.strip():
+                    raw_thought = None
                 return AssistantMessage(
                     content=content,
                     source=raw.get('source', 'assistant'),
-                    thought=raw.get('thought'),
+                    thought=raw_thought,
                 )
             elif message_type == 'tool':
                 # Reconstruct FunctionExecutionResultMessage

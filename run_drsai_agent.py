@@ -32,6 +32,20 @@ RAGFLOW_TOKEN=os.getenv('RAGFLOW_TOKEN')
 MEMORY_DATASET_ID=os.getenv('MEMORY_DATASET_ID')
 SYSTEM_SKILLS_DIR=os.getenv('SYSTEM_SKILLS_DIR')
 
+def _as_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on", "enable", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "disable", "disabled"}:
+        return False
+    return default
+
 llm_mode_config = DEFAULT_LLM_MODE_CONFIG
 
 def create_agent(
@@ -40,7 +54,21 @@ def create_agent(
         user_id: str|None = None, 
         db_manager: DatabaseManager|None = None,
         defult_config_name: str|None = "hepai/deepseek-v4-flash",
+        anthropic_cache_enabled: bool | None = None,
+        anthropic_cache_ttl: str | None = None,
 ) -> DrSaiAssistant:
+    if anthropic_cache_enabled is None:
+        anthropic_cache_enabled = _as_bool(os.getenv("DRSAI_ANTHROPIC_CACHE_ENABLED"), default=True)
+    if anthropic_cache_ttl is None:
+        anthropic_cache_ttl = os.getenv("DRSAI_ANTHROPIC_CACHE_TTL") or "1h"
+    anthropic_cache_ttl = str(anthropic_cache_ttl)
+    if anthropic_cache_ttl not in {"5m", "1h"}:
+        anthropic_cache_ttl = "1h"
+    anthropic_cache_control = (
+        {"type": "ephemeral", "ttl": anthropic_cache_ttl}
+        if anthropic_cache_enabled
+        else None
+    )
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
@@ -51,8 +79,10 @@ def create_agent(
         token_limit = entry.token_limit
         max_tokens = entry.max_tokens
         if ("claude" in llm_model) or ("minimax" in llm_model):
-            model_info=_MODEL_INFO["claude-sonnet-4-5"]
+            model_info = dict(_MODEL_INFO["claude-sonnet-4-5"])
             model_info["token_model"] = "claude-3-5-sonnet-20240620"
+            if anthropic_cache_control is not None:
+                model_info["anthropic_cache_control"] = anthropic_cache_control
             model_client = HepAIAnthropicChatCompletionClient(
                 model=llm_model,
                 base_url="https://aiapi.ihep.ac.cn/apiv2/anthropic",
