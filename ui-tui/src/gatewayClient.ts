@@ -120,6 +120,13 @@ export class GatewayClient extends EventEmitter {
     const env = { ...process.env }
     const existingPath = env.PYTHONPATH?.trim()
     env.PYTHONPATH = existingPath ? `${root}${delimiter}${existingPath}` : root
+    // Force UTF-8 on the Python subprocess regardless of OS / locale.
+    // On Windows (cp936 / cp1252) the gateway's stdout would otherwise be
+    // encoded with the system code page and mangle Chinese in JSON frames.
+    // PYTHONIOENCODING covers Python 3 stdio; PYTHONUTF8=1 enables the
+    // "UTF-8 mode" introduced in 3.7 which also affects file-path handling.
+    env.PYTHONIOENCODING = 'utf-8'
+    env.PYTHONUTF8 = '1'
 
     this.readyTimer = setTimeout(() => {
       if (!this.ready) {
@@ -135,6 +142,11 @@ export class GatewayClient extends EventEmitter {
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
+
+    // Force UTF-8 decoding on the subprocess's stdout/stderr so multi-byte
+    // characters (CJK in JSON frames, etc.) survive intact regardless of OS.
+    this.proc.stdout!.setEncoding('utf8')
+    this.proc.stderr!.setEncoding('utf8')
 
     const stdoutRl = createInterface({ input: this.proc.stdout! })
     stdoutRl.on('line', raw => {

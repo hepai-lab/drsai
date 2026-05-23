@@ -107,16 +107,27 @@ class StdioTransport:
         # exploding the entire response — drsai's agent metadata frequently
         # contains Path objects. Anything still unserialisable (cycles, raw
         # bytes) re-raises so the crash log captures it.
+        #
+        # Lone surrogate pairs (e.g. \udc8a) can sneak in when an LLM stream
+        # is chopped mid-multibyte and we surrogateescape-decoded the bytes.
+        # ``json.dumps`` refuses to encode them by default — we explicitly
+        # set ``ensure_ascii=False`` and then re-encode the produced string
+        # with ``errors="replace"`` (when writing UTF-8 bytes) so a single
+        # bad char never tears down a whole turn.
         try:
             line = json.dumps(obj, ensure_ascii=False, default=str) + "\n"
-        except TypeError as exc:
-            # Last-resort: emit a stub error frame so the UI sees *something*.
-            logger.error("StdioTransport: payload not JSON-serialisable: %s", exc)
-            line = json.dumps({
-                "jsonrpc": "2.0",
-                "id": obj.get("id"),
-                "error": {"code": -32603, "message": f"serialization error: {exc}"},
-            }) + "\n"
+        except (TypeError, UnicodeEncodeError) as exc:
+            # First retry: ensure_ascii=True escapes everything to \uXXXX,
+            # avoiding lone-surrogate issues entirely. Lossless for valid text.
+            try:
+                line = json.dumps(obj, ensure_ascii=True, default=str) + "\n"
+            except (TypeError, ValueError) as exc2:
+                logger.error("StdioTransport: payload not JSON-serialisable: %s / %s", exc, exc2)
+                line = json.dumps({
+                    "jsonrpc": "2.0",
+                    "id": obj.get("id") if isinstance(obj, dict) else None,
+                    "error": {"code": -32603, "message": f"serialization error: {exc}"},
+                }) + "\n"
 
         with self._lock:
             stream = self._stream_getter()
@@ -124,8 +135,19 @@ class StdioTransport:
                 stream.write(line)
             except BrokenPipeError:
                 return False
+            except UnicodeEncodeError as e:
+                # Stream's encoding (e.g. cp936 on Chinese Windows) can't
+                # represent some character. Fall back to safe ASCII encoding.
+                # This shouldn't happen now that entry.py forces UTF-8 stdio,
+                # but acts as a belt-and-braces guard for unforced contexts.
+                logger.warning("Stream encoding can't handle frame; retrying ascii: %s", e)
+                try:
+                    safe = line.encode("utf-8", errors="replace").decode("ascii", errors="replace")
+                    stream.write(safe)
+                except Exception:
+                    return False
             except ValueError as e:
-                if isinstance(e, UnicodeEncodeError) or "closed file" not in str(e):
+                if "closed file" not in str(e):
                     raise
                 return False
             except OSError as e:
@@ -140,7 +162,7 @@ class StdioTransport:
                 except BrokenPipeError:
                     return False
                 except ValueError as e:
-                    if isinstance(e, UnicodeEncodeError) or "closed file" not in str(e):
+                    if "closed file" not in str(e):
                         raise
                     return False
                 except OSError as e:

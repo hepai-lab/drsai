@@ -22,6 +22,31 @@ import traceback
 
 logger = logging.getLogger(__name__)
 
+# ── Force UTF-8 on stdin/stdout/stderr (Windows fix) ────────────────────────
+# On Windows the default console code page is GBK (cp936) on Chinese systems.
+# JSON-RPC frames containing Chinese characters get mangled when Python encodes
+# them with the system locale instead of UTF-8. Force UTF-8 on all three
+# streams *before* any logging / handler import — once a TextIOWrapper has been
+# used you can't reconfigure it.
+def _force_utf8_io() -> None:
+    for stream_name in ("stdin", "stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            # errors="replace" handles lone surrogates (e.g. token boundaries
+            # mid-multibyte sequence from the LLM stream) without crashing
+            # json.dumps. We accept that one or two characters may render as
+            # "?" rather than letting the whole frame fail.
+            reconfigure(encoding="utf-8", errors="replace", newline="\n")
+        except Exception:
+            pass
+
+_force_utf8_io()
+
 # Strip '' and '.' from sys.path so a local utils/ in CWD can't shadow
 # installed drsai modules. Mirrors hermes-agent's hardening.
 sys.path = [p for p in sys.path if p not in {"", "."}]
