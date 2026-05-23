@@ -19,6 +19,7 @@ To use the legacy REPL, run ``python -m drsai.backend.run_cli_legacy``.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -30,6 +31,8 @@ import typer
 
 from drsai.configs.constant import APPNAME, VERSION
 from drsai.backend.cli import config as cli_config
+
+logger = logging.getLogger(__name__)
 
 
 app = typer.Typer(
@@ -82,25 +85,88 @@ def _find_ui_tui_dir() -> Optional[Path]:
 def _resolve_node_runner(ui_dir: Path) -> tuple[str, list[str]]:
     """Return (command, base_args) for launching the Ink UI.
 
-    Prefers the pre-built bundle (dist/entry.mjs) over dev tooling. This means
-    PyPI users only need ``node`` installed, not pnpm/npm.
-
     Resolution order:
-    1. node dist/entry.mjs   (pre-built bundle, PyPI distribution)
-    2. pnpm dev              (dev mode with sources)
-    3. npm run dev           (dev mode fallback)
+    1. ``$DRSAI_NODE``        — explicit user override
+    2. system ``node``        — fastest path when present
+    3. ``pnpm dev`` / ``npm run dev``  — dev mode with sources, no bundle needed
+    4. portable ``node``      — auto-download + cache under ~/.drsai/cache/node
+                                (Playwright/Puppeteer-style; ~25 MB one-time)
+
+    Steps 1, 2, 4 require the prebuilt bundle ``dist/entry.mjs`` to exist
+    (it ships inside the wheel for PyPI installs). Step 3 is for in-repo dev.
     """
     bundle = ui_dir / "dist" / "entry.mjs"
-    if bundle.exists() and shutil.which("node"):
-        return "node", [str(bundle)]
+
+    # 1. Honour an explicit DRSAI_NODE env var first — useful for nvm/fnm/scoop
+    # installs in non-standard locations or for offline air-gapped environments.
+    explicit_node = os.environ.get("DRSAI_NODE", "").strip()
+    if explicit_node and Path(explicit_node).exists() and bundle.exists():
+        return explicit_node, [str(bundle)]
+
+    # 2. System node on PATH (covers most dev machines + CI)
+    if bundle.exists():
+        node = _which_any("node")
+        if node:
+            return node, [str(bundle)]
+
+    # 3. Dev mode: launch via pnpm/npm so source changes hot-reload
     if (ui_dir / "package.json").exists():
-        if shutil.which("pnpm"):
-            return "pnpm", ["dev"]
-        if shutil.which("npm"):
-            return "npm", ["run", "dev"]
-    if shutil.which("node") and bundle.exists():
-        return "node", [str(bundle)]
+        pnpm = _which_any("pnpm")
+        if pnpm:
+            return pnpm, ["dev"]
+        npm = _which_any("npm")
+        if npm:
+            return npm, ["run", "dev"]
+
+    # 4. Auto-download a portable Node runtime if the bundle is present.
+    # This is the "pip install drsai && drsai" path — no Node required on host.
+    if bundle.exists():
+        try:
+            from ._node_bootstrap import ensure_portable_node
+            node = ensure_portable_node()
+            return node, [str(bundle)]
+        except Exception as exc:
+            logger.warning("Portable Node bootstrap failed: %s", exc)
+
     return "", []
+
+
+def _which_any(name: str) -> Optional[str]:
+    """``shutil.which`` plus a few Windows-specific fallbacks.
+
+    Windows installers sometimes register node under ``ProgramFiles\\nodejs``
+    without touching the user PATH; if a fresh PowerShell session is open
+    before the installer's PATH refresh propagates, ``shutil.which`` misses it.
+    Check the well-known install locations as a fallback before giving up.
+    """
+    found = shutil.which(name)
+    if found:
+        return found
+
+    if sys.platform != "win32":
+        return None
+
+    # Common Windows install locations
+    candidates = []
+    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    for base in [
+        Path(program_files) / "nodejs",
+        Path(program_files_x86) / "nodejs",
+        Path(local_appdata) / "Programs" / "nodejs" if local_appdata else None,
+        # Scoop default
+        Path(local_appdata) / "scoop" / "shims" if local_appdata else None,
+    ]:
+        if base is None:
+            continue
+        for ext in (".exe", ".cmd", ".bat", ""):
+            p = base / f"{name}{ext}"
+            if p.is_file():
+                candidates.append(str(p))
+                break
+
+    return candidates[0] if candidates else None
 
 
 # ── Commands ─────────────────────────────────────────────────────────────────
@@ -141,12 +207,51 @@ def _launch_tui(*, attach_url: Optional[str] = None) -> None:
 
     cmd, base_args = _resolve_node_runner(ui_dir)
     if not cmd:
-        typer.echo(
-            typer.style(
-                "Error: no Node.js runtime found (need pnpm, npm, or node).",
-                fg=typer.colors.RED,
-            )
-        )
+        bundle = ui_dir / "dist" / "entry.mjs"
+        has_bundle = bundle.exists()
+        has_src = (ui_dir / "package.json").exists()
+        no_download = (os.environ.get("DRSAI_NODE_NO_DOWNLOAD") or "").strip() in {
+            "1", "true", "yes", "on",
+        }
+
+        msg = [
+            "Error: cannot launch TUI.",
+            "",
+            "The DrSai TUI is a React/Ink app and needs Node.js (≥ 20) to run.",
+            "",
+            f"Checked for: $DRSAI_NODE, node on PATH, pnpm, npm "
+            f"(bundle: {has_bundle}, source: {has_src})",
+        ]
+        if has_bundle and not no_download:
+            msg += [
+                "",
+                "An auto-download of portable Node.js was also attempted but failed.",
+                "Most likely cause: network unreachable / proxy / mirror blocked.",
+                "",
+                "Options:",
+                "  • Install Node.js system-wide:  https://nodejs.org/",
+                "  • Or set a closer mirror:",
+                "      DRSAI_NODE_MIRROR=https://npmmirror.com/mirrors/node  drsai",
+                "  • Or point at an existing node:",
+                "      DRSAI_NODE=/full/path/to/node  drsai",
+            ]
+        elif has_bundle and no_download:
+            msg += [
+                "",
+                "DRSAI_NODE_NO_DOWNLOAD=1 is set, so auto-download is disabled.",
+                "",
+                "Options:",
+                "  • Install Node.js system-wide:  https://nodejs.org/",
+                "  • Or point at an existing node:  DRSAI_NODE=/full/path/to/node",
+                "  • Or unset DRSAI_NODE_NO_DOWNLOAD to allow auto-download (~25 MB).",
+            ]
+        else:
+            msg += [
+                "",
+                "The ui-tui bundle is missing — your install looks incomplete.",
+                "Rebuild it from source:  cd ui-tui && pnpm install && pnpm build",
+            ]
+        typer.echo(typer.style("\n".join(msg), fg=typer.colors.RED))
         raise typer.Exit(1)
 
     env = os.environ.copy()
@@ -154,7 +259,16 @@ def _launch_tui(*, attach_url: Optional[str] = None) -> None:
         env["DRSAI_TUI_ATTACH_URL"] = attach_url
 
     try:
-        result = subprocess.run([cmd, *base_args], cwd=str(ui_dir), env=env)
+        # On Windows, pnpm/npm are .cmd/.ps1 shims — Python's CreateProcess
+        # can't execute them without shell=True. We pass an absolute path from
+        # _which_any when possible, but fall back to shell=True for safety.
+        use_shell = sys.platform == "win32" and not cmd.lower().endswith((".exe",))
+        if use_shell:
+            # Quote args containing spaces (e.g. bundle path may contain spaces)
+            cmd_line = " ".join(f'"{a}"' if " " in a else a for a in [cmd, *base_args])
+            result = subprocess.run(cmd_line, cwd=str(ui_dir), env=env, shell=True)
+        else:
+            result = subprocess.run([cmd, *base_args], cwd=str(ui_dir), env=env)
         raise typer.Exit(result.returncode)
     except KeyboardInterrupt:
         raise typer.Exit(130)
