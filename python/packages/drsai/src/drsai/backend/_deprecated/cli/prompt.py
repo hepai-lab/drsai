@@ -42,6 +42,8 @@ try:
         submit_approval_response,
         submit_secret_response,
     )
+    # Approval / clarify state lives on the DrSaiTUIState singleton now
+    from .state import get_tui_state
     from .curses_ui import (
         curses_checklist,
         curses_radiolist,
@@ -54,6 +56,7 @@ except ImportError:
     HAS_TUI_CALLBACKS = False
     CallbackState = None  # type: ignore
     get_callback_state = None  # type: ignore
+    get_tui_state = None  # type: ignore
     submit_clarify_response = None  # type: ignore
     submit_approval_response = None  # type: ignore
     submit_secret_response = None  # type: ignore
@@ -107,11 +110,8 @@ class DrSaiPrompt:
         self._bottom_toolbar_fn = bottom_toolbar_fn
         self._use_toolkit = sys.stdin.isatty()
         self._session: Optional[PromptSession] = None
-        self._callback_state: Optional["CallbackState"] = None
         if self._use_toolkit:
             self._setup_toolkit()
-        if HAS_TUI_CALLBACKS:
-            self._callback_state = get_callback_state()
 
     def update_bottom_toolbar_fn(self, new_fn: Callable[[], str]) -> None:
         """Update the bottom toolbar function dynamically."""
@@ -183,45 +183,49 @@ class DrSaiPrompt:
     # ── Interactive Confirmation Support (Hermes-style) ─────────────────────
     def has_pending_clarify(self) -> bool:
         """Check if there's a pending clarify request."""
-        if not HAS_TUI_CALLBACKS or self._callback_state is None:
+        if not HAS_TUI_CALLBACKS:
             return False
-        return self._callback_state._clarify_state is not None
+        return get_tui_state().clarify_state is not None
 
     def has_pending_approval(self) -> bool:
         """Check if there's a pending approval request."""
-        if not HAS_TUI_CALLBACKS or self._callback_state is None:
+        if not HAS_TUI_CALLBACKS:
             return False
-        return self._callback_state._approval_state is not None
+        return get_tui_state().approval_state is not None
 
     def has_pending_secret(self) -> bool:
         """Check if there's a pending secret request."""
-        if not HAS_TUI_CALLBACKS or self._callback_state is None:
+        if not HAS_TUI_CALLBACKS:
             return False
-        return self._callback_state._secret_state is not None
+        # Secret state still lives on the legacy CallbackState for now.
+        cb = get_callback_state()
+        return cb is not None and cb._secret_state is not None
 
     def handle_clarify_input(self, input_text: str) -> bool:
         """Handle input for a clarify request.
+
+        Reads the pending ClarifyState from the TUI singleton and submits
+        the response via ``submit_clarify_response``.
 
         Returns True if the input was consumed as a clarify response.
         """
         if not self.has_pending_clarify():
             return False
 
-        state = self._callback_state._clarify_state
-        if state is None:
+        clarify_state = get_tui_state().clarify_state
+        if clarify_state is None:
             return False
 
         # Free-text input mode
-        if state.get("_freetext") or not state.get("choices"):
+        if clarify_state.is_freetext:
             submit_clarify_response(input_text)
             return True
 
         # Numbered choice mode
         try:
             idx = int(input_text.strip()) - 1
-            choices = state.get("choices", [])
-            if 0 <= idx < len(choices):
-                submit_clarify_response(choices[idx])
+            if 0 <= idx < len(clarify_state.choices):
+                submit_clarify_response(clarify_state.choices[idx])
                 return True
         except ValueError:
             pass
@@ -231,17 +235,19 @@ class DrSaiPrompt:
     def render_clarify_prompt(self) -> Optional[str]:
         """Render a clarify prompt for display in TUI.
 
+        Reads the pending ClarifyState from the TUI singleton.
+
         Returns the formatted prompt string, or None if no pending clarify.
         """
         if not self.has_pending_clarify():
             return None
 
-        state = self._callback_state._clarify_state
+        state = get_tui_state().clarify_state
         if state is None:
             return None
 
-        question = state.get("question", "Please clarify:")
-        choices = state.get("choices", [])
+        question = state.question or "Please clarify:"
+        choices = state.choices
 
         lines = [f"\n  {question}\n"]
         if choices:
@@ -254,17 +260,19 @@ class DrSaiPrompt:
     def render_approval_prompt(self) -> Optional[str]:
         """Render an approval prompt for display in TUI.
 
+        Reads the pending ApprovalState from the TUI singleton.
+
         Returns the formatted prompt string, or None if no pending approval.
         """
         if not self.has_pending_approval():
             return None
 
-        state = self._callback_state._approval_state
+        state = get_tui_state().approval_state
         if state is None:
             return None
 
-        command = state.get("command", "")
-        description = state.get("description", "This command may be destructive.")
+        command = state.command or ""
+        description = state.description or "This command may be destructive."
 
         lines = [
             f"\n  ⚠️  {description}",
@@ -275,8 +283,7 @@ class DrSaiPrompt:
             "    3. always (approve for all future executions)",
             "    4. deny (don't execute)",
         ]
-        choices = state.get("choices", [])
-        if "view" in choices:
+        if "view" in state.choices:
             lines.append("    5. view (see full command)")
         return "\n".join(lines)
 
@@ -288,7 +295,8 @@ class DrSaiPrompt:
         if not self.has_pending_secret():
             return None
 
-        state = self._callback_state._secret_state
+        cb = get_callback_state()
+        state = cb._secret_state if cb else None
         if state is None:
             return None
 

@@ -146,6 +146,78 @@ class ModelEntry:
 # Synced with /home/xiongdb/drsai_test/llm_mode_config.example.json
 
 DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
+    # ── DeepSeek ─────────────────────────────────────────────────────
+    # DeepSeek V4 Pro: context=1M, output up to 384K (input/output are separate pools)
+    # DeepSeek V3.2: context=163,840 (shared input+output)
+    # Sources: DeepSeek API docs (api-docs.deepseek.com), litellm, OpenRouter
+    "hepai/deepseek-v4-pro": ModelEntry(
+        model="hepai/deepseek-v4-pro",
+        token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
+        max_tokens=64000,      # max output per request (DeepSeek supports extended output)
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="is_r1_model"),
+    ),
+    
+    "hepai/deepseek-v4-flash": ModelEntry(
+        model="hepai/deepseek-v4-flash",
+        token_limit=10000000,      # context window: 163,840 (shared input+output)
+        max_tokens=64000,       # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+    ),
+    "deepseek-v4-pro": ModelEntry(
+        model="deepseek-ai/deepseek-v4-pro",
+        token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
+        max_tokens=64000,      # max output per request (DeepSeek supports extended output)
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="is_r1_model"),
+    ),
+    "deepseek-v4-flash": ModelEntry(
+        model="deepseek-ai/deepseek-v4-flash",
+        token_limit=10000000,      # context window: 163,840 (shared input+output)
+        max_tokens=64000,       # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+    ),
+    # ── OpenAI GPT ───────────────────────────────────────────────────
+    "gpt-5.4": ModelEntry(
+        model="openai/gpt-5.4",
+        token_limit=1050000,     # max input tokens (output comes from this pool)
+        max_tokens=64000,      # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+    ),
+    "gpt-5.5": ModelEntry(
+        model="openai/gpt-5.5",
+        token_limit=1050000,     # max input tokens (output comes from this pool)
+        max_tokens=64000,      # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+    ),
+    # ── Zhipu GLM ────────────────────────────────────────────────────
+    # Sources: litellm (zai/glm-5), OpenRouter
+    "glm-5.1": ModelEntry(
+        model="zhipu/glm-5.1",
+        token_limit=200000,      # context window: 200K
+        max_tokens=64000,      # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
+    ),
+    # ── MiniMax ──────────────────────────────────────────────────────
+    "minimax-m2.7-highspeed": ModelEntry(
+        model="minimax/minimax-m2.7-highspeed",
+        token_limit=196608,
+        max_tokens=64000,
+        client_type="anthropic",
+        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+    ),
+    "hepai/minimax-m2.7-highspeed": ModelEntry(
+        model="hepai/minimax-m2.7-highspeed",
+        token_limit=196608,
+        max_tokens=64000,
+        client_type="anthropic",
+        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+    ),
     # ── Anthropic Claude ──────────────────────────────────────────────
     # token_limit = total context window (input + output share the same window)
     # max_tokens  = maximum output tokens per request (Anthropic API requires this)
@@ -171,83 +243,10 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
     ),
-    # ── OpenAI GPT ───────────────────────────────────────────────────
-    # Sources: litellm, OpenRouter
-    "gpt-5.3-codex": ModelEntry(
-        model="openai/gpt-5.3-codex",
-        token_limit=272000,      # max input tokens (output comes from this pool)
-        max_tokens=64000,      # max output per request
-        client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-    ),
-    "gpt-5.4": ModelEntry(
-        model="openai/gpt-5.4",
-        token_limit=1050000,     # max input tokens (output comes from this pool)
-        max_tokens=64000,      # max output per request
-        client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-    ),
-    "gpt-5.5": ModelEntry(
-        model="openai/gpt-5.5",
-        token_limit=1050000,     # max input tokens (output comes from this pool)
-        max_tokens=64000,      # max output per request
-        client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
-    ),
-    # ── DeepSeek ─────────────────────────────────────────────────────
-    # DeepSeek V4 Pro: context=1M, output up to 384K (input/output are separate pools)
-    # DeepSeek V3.2: context=163,840 (shared input+output)
-    # Sources: DeepSeek API docs (api-docs.deepseek.com), litellm, OpenRouter
-    "deepseek-v4-pro": ModelEntry(
-        model="deepseek-ai/deepseek-v4-pro",
-        token_limit=1048576,     # context window: 1M (input+output shared, per DeepSeek docs)
-        max_tokens=64000,      # max output per request (DeepSeek supports extended output)
-        client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="is_r1_model"),
-    ),
-    "deepseek-v3.2": ModelEntry(
-        model="deepseek-ai/deepseek-v3.2",
-        token_limit=163840,      # context window: 163,840 (shared input+output)
-        max_tokens=65536,       # max output per request
-        client_type="openai",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
-    ),
-    "hepai/deepseek-v4-flash": ModelEntry(
-        model="hepai/deepseek-v4-flash",
-        token_limit=10000000,      # context window: 163,840 (shared input+output)
-        max_tokens=64000,       # max output per request
-        client_type="openai",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
-    ),
-    # ── Zhipu GLM ────────────────────────────────────────────────────
-    # Sources: litellm (zai/glm-5), OpenRouter
-    "glm-5.1": ModelEntry(
-        model="zhipu/glm-5.1",
-        token_limit=200000,      # context window: 200K
-        max_tokens=64000,      # max output per request
-        client_type="openai",
-        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
-    ),
-    # ── MiniMax ──────────────────────────────────────────────────────
-    # MiniMax M2.7: context≈196K, official API default max_output=8192 but supports up to 65K
-    # Sources: OpenRouter (context_length=196,608), litellm (MiniMax-M2.5 reference)
-    "hepai/minimax-m2.7-highspeed": ModelEntry(
-        model="hepai/minimax-m2.7-highspeed",
-        token_limit=196608,
-        max_tokens=64000,
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
-    ),
-    "minimax-m2.7-highspeed": ModelEntry(
-        model="minimax/minimax-m2.7-highspeed",
-        token_limit=196608,
-        max_tokens=64000,
-        client_type="anthropic",
-        reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
-    ),
 }
 
-DEFAULT_CONFIG_NAME = "hepai/minimax-m2.7-highspeed"
+DEFAULT_CONFIG_NAME = "hepai/deepseek-v4-pro"
+
 
 # Endpoint defaults — match run_drsai_agent.py
 _DEFAULT_ANTHROPIC_BASE_URL = "https://aiapi.ihep.ac.cn/apiv2/anthropic"
@@ -371,9 +370,25 @@ def _resolve(cli_cfg: dict[str, Any], cfg_key: str, *env_keys: str, default: str
         v = os.environ.get(env_key)
         if v:
             return v
-    v = cli_cfg.get(cfg_key)
-    if v:
-        return str(v)
+    if cfg_key in cli_cfg:
+        v = cli_cfg.get(cfg_key)
+        if v is not None and v != "":
+            return str(v)
+    return default
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on", "enable", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "disable", "disabled"}:
+        return False
     return default
 
 
@@ -483,6 +498,31 @@ def create_agent(
         cli_cfg, "openai_api_key", "OPENAI_API_KEY", "HEPAI_API_KEY",
     ) or api_key
 
+    anthropic_cache_enabled = _as_bool(
+        _resolve(
+            cli_cfg,
+            "anthropic_cache_enabled",
+            "DRSAI_ANTHROPIC_CACHE_ENABLED",
+            default=True,
+        ),
+        default=True,
+    )
+    anthropic_cache_ttl = str(
+        _resolve(
+            cli_cfg,
+            "anthropic_cache_ttl",
+            "DRSAI_ANTHROPIC_CACHE_TTL",
+            default="1h",
+        )
+    )
+    if anthropic_cache_ttl not in {"5m", "1h"}:
+        anthropic_cache_ttl = "1h"
+    anthropic_cache_control = (
+        {"type": "ephemeral", "ttl": anthropic_cache_ttl}
+        if anthropic_cache_enabled
+        else None
+    )
+
     skills_dir = _resolve(cli_cfg, "skills_dir", "SYSTEM_SKILLS_DIR") or None
     rag_flow_url = _resolve(
         cli_cfg, "ragflow_url", "RAGFLOW_URL", default=_DEFAULT_RAGFLOW_URL,
@@ -543,6 +583,8 @@ def create_agent(
             model_info["token_model"] = "claude-3-5-sonnet-20240620"
             # Add reasoning config to model_info for client to use
             model_info["reasoning_config"] = reasoning_config
+            if anthropic_cache_control is not None:
+                model_info["anthropic_cache_control"] = anthropic_cache_control
             return HepAIAnthropicChatCompletionClient(
                 model=llm_model,
                 base_url=anthropic_base_url,
