@@ -7,13 +7,18 @@
 ## Quick Start (End Users)
 
 ```bash
-# Prerequisites: Python ≥ 3.11, Node.js ≥ 20
+# Prerequisites: Python ≥ 3.11. (Node.js is auto-downloaded on first run.)
 
 pip install drsai
 drsai             # Launches the interactive TUI
 ```
 
-That's it. The wheel ships with a pre-built TUI bundle — no `npm`/`pnpm`/`node_modules` setup needed.
+That's it. The wheel ships with a pre-built TUI bundle, and on first launch
+DrSai auto-downloads a portable Node.js runtime (~25 MB, one-time, cached in
+`~/.drsai/cache/node/`). Subsequent launches are instant.
+
+If you'd rather use a system Node, install Node.js ≥ 20 from <https://nodejs.org/>
+and DrSai will use it automatically.
 
 ---
 
@@ -41,7 +46,7 @@ DrSai ships **two processes** that talk over JSON-RPC:
 | Tool | Version | Why |
 |------|---------|-----|
 | Python | ≥ 3.11 | Backend, agent runtime |
-| Node.js | ≥ 20 | Run the TUI bundle (`node dist/entry.mjs`) |
+| Node.js | ≥ 20 | Run the TUI bundle. **Auto-downloaded on first launch** (~25 MB) if not on PATH. |
 | pnpm | ≥ 9 (dev only) | Build the TUI bundle |
 | pip / build | latest | Build the wheel |
 | twine | latest | Upload to PyPI |
@@ -321,6 +326,10 @@ Console scripts installed by pip:
 | `DRSAI_PYTHON` | Python interpreter for gateway subprocess | `python3` |
 | `DRSAI_PYTHON_SRC_ROOT` | Override PYTHONPATH for gateway | auto |
 | `DRSAI_UI_TUI_DIR` | Override ui-tui location | auto |
+| `DRSAI_NODE` | Explicit path to a node executable (skips auto-download) | unset |
+| `DRSAI_NODE_MIRROR` | Mirror for portable Node download (e.g. `https://npmmirror.com/mirrors/node` for China) | `https://nodejs.org/dist` |
+| `DRSAI_NODE_CACHE_DIR` | Where to cache the portable Node runtime | `~/.drsai/cache/node` |
+| `DRSAI_NODE_NO_DOWNLOAD` | Set to `1` to disable auto-download (air-gapped envs) | unset |
 | `DRSAI_TUI_ENABLE_WS` | Start WebSocket server in gateway | unset |
 | `DRSAI_TUI_WS_PORT` | WebSocket port | `8765` |
 | `DRSAI_TUI_ATTACH_URL` | UI attaches via WebSocket instead of spawning | unset |
@@ -335,18 +344,41 @@ Console scripts installed by pip:
 
 ## Troubleshooting
 
-### `pip install` succeeded but `drsai chat` errors out
+### `pip install` succeeded but `drsai chat` errors out on Node download
 
-**Check Node.js is installed and ≥ 20:**
+DrSai auto-downloads a portable Node.js runtime (~25 MB) on first launch from
+`https://nodejs.org/dist`. If that fails (offline, behind a proxy, blocked region):
 
+**Option 1 — use a closer mirror**
 ```bash
-node --version
+export DRSAI_NODE_MIRROR=https://npmmirror.com/mirrors/node   # China mirror
+drsai
 ```
 
-If absent, install:
-- macOS: `brew install node`
-- Ubuntu/Debian: `curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash - && sudo apt install nodejs`
-- Windows: <https://nodejs.org/>
+**Option 2 — install Node.js system-wide and let DrSai pick it up**
+```bash
+# macOS:    brew install node
+# Ubuntu:   apt install nodejs
+# Windows:  https://nodejs.org/ (LTS installer)
+node --version    # must succeed
+drsai
+```
+
+**Option 3 — point at an existing node binary**
+```bash
+export DRSAI_NODE=/full/path/to/node
+drsai
+```
+
+**Option 4 — air-gapped install**
+Pre-download a Node tarball matching your platform from
+`https://nodejs.org/dist/v20.18.0/`, extract under
+`~/.drsai/cache/node/v20.18.0/<platform>/` (so e.g.
+`~/.drsai/cache/node/v20.18.0/linux-x64/bin/node` exists), then:
+```bash
+export DRSAI_NODE_NO_DOWNLOAD=1
+drsai
+```
 
 ### TUI starts but gateway crashes
 
