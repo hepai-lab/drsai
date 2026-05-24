@@ -1,40 +1,18 @@
 /**
  * Memory management via DrSai API Gateway.
  *
- * Calls /v1/memory endpoints instead of reading the filesystem directly.
+ * Hermes-style curated memory: MEMORY.md (§-delimited agent notes) and
+ * USER.md (free-form user profile blob), both bounded.  All operations go
+ * through /v1/memory* endpoints — the gateway is the single source of truth
+ * so concurrent writes from the LLM (memory tool) and the desktop UI stay
+ * consistent.
  */
 
-import { getUserName } from "./config";
 import http from "http";
-
-// ── API helpers ─────────────────────────────────────
+import { getUserName } from "./config";
 
 const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "8642", 10);
 const DRSAI_API_URL = `http://127.0.0.1:${DRSAI_API_PORT}`;
-
-function apiGet<T>(path: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const url = `${DRSAI_API_URL}${path}`;
-    http
-      .request(url, { method: "GET", timeout: 10000 }, (res) => {
-        let body = "";
-        res.on("data", (d) => (body += d.toString()));
-        res.on("end", () => {
-          try {
-            resolve(JSON.parse(body));
-          } catch {
-            reject(new Error(`Invalid JSON from API: ${body.slice(0, 200)}`));
-          }
-        });
-      })
-      .on("error", reject)
-      .on("timeout", function (this: http.ClientRequest) {
-        this.destroy();
-        reject(new Error("API request timed out"));
-      })
-      .end();
-  });
-}
 
 // ── Types ───────────────────────────────────────────
 
@@ -62,94 +40,166 @@ export interface MemoryInfo {
   stats: { totalSessions: number; totalMessages: number };
 }
 
+// ── HTTP helpers ────────────────────────────────────
+
+function userQuery(): string {
+  const u = getUserName();
+  return u ? `?user_id=${encodeURIComponent(u)}` : "";
+}
+
+function apiRequest<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const url = `${DRSAI_API_URL}${path}`;
+    const bodyStr = body !== undefined ? JSON.stringify(body) : undefined;
+    const req = http.request(
+      url,
+      {
+        method,
+        timeout: 10000,
+        headers: bodyStr
+          ? {
+              "Content-Type": "application/json",
+              "Content-Length": String(Buffer.byteLength(bodyStr)),
+            }
+          : {},
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (d: Buffer) => (data += d.toString()));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 400) {
+            let detail = data;
+            try {
+              detail = JSON.parse(data).detail || data;
+            } catch {
+              /* keep raw */
+            }
+            reject(new Error(detail));
+            return;
+          }
+          try {
+            resolve(data ? (JSON.parse(data) as T) : ({} as T));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("Memory API request timed out"));
+    });
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
+
 // ── Read ────────────────────────────────────────────
 
+const EMPTY_INFO: MemoryInfo = {
+  memory: {
+    content: "",
+    exists: false,
+    lastModified: null,
+    entries: [],
+    charCount: 0,
+    charLimit: 2200,
+  },
+  user: {
+    content: "",
+    exists: false,
+    lastModified: null,
+    charCount: 0,
+    charLimit: 1375,
+  },
+  stats: { totalSessions: 0, totalMessages: 0 },
+};
+
 export function readMemory(_profile?: string): MemoryInfo {
-  // Sync fallback — returns empty state
-  return {
-    memory: {
-      content: "",
-      exists: false,
-      lastModified: null,
-      entries: [],
-      charCount: 0,
-      charLimit: 2200,
-    },
-    user: {
-      content: "",
-      exists: false,
-      lastModified: null,
-      charCount: 0,
-      charLimit: 1375,
-    },
-    stats: { totalSessions: 0, totalMessages: 0 },
-  };
+  // Sync fallback (IPC handler returns the cached empty state when the
+  // gateway isn't reachable). UI should call readMemoryAsync.
+  return { ...EMPTY_INFO };
 }
 
 export async function readMemoryAsync(
   _profile?: string,
 ): Promise<MemoryInfo> {
   try {
-    const user = getUserName();
-    const resp = (await apiGet<{
-      memory: { content: string; exists: boolean; charCount: number };
-      user: { content: string; exists: boolean; charCount: number };
-    }>(`/v1/memory?user_id=${encodeURIComponent(user)}`)) as {
-      memory: { content: string; exists: boolean; charCount: number };
-      user: { content: string; exists: boolean; charCount: number };
-    };
-
-    return {
-      memory: {
-        content: resp.memory?.content || "",
-        exists: resp.memory?.exists || false,
-        lastModified: null,
-        entries: [],
-        charCount: resp.memory?.charCount || 0,
-        charLimit: 2200,
-      },
-      user: {
-        content: resp.user?.content || "",
-        exists: resp.user?.exists || false,
-        lastModified: null,
-        charCount: resp.user?.charCount || 0,
-        charLimit: 1375,
-      },
-      stats: { totalSessions: 0, totalMessages: 0 },
-    };
+    return await apiRequest<MemoryInfo>("GET", `/v1/memory${userQuery()}`);
   } catch (err) {
     console.error("[memory] readMemoryAsync failed:", err);
-    return readMemory(); // fallback to empty
+    return { ...EMPTY_INFO };
   }
 }
 
-// ── Write operations (not yet supported via API) ────
+// ── Write operations ────────────────────────────────
 
-export function addMemoryEntry(
-  _content: string,
+export async function addMemoryEntry(
+  content: string,
   _profile?: string,
-): { success: boolean; error?: string } {
-  return { success: false, error: "Memory write via API not yet implemented" };
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await apiRequest<MemoryInfo>(
+      "POST",
+      `/v1/memory/entries${userQuery()}`,
+      { content },
+    );
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
+  }
 }
 
-export function updateMemoryEntry(
-  _index: number,
-  _content: string,
+export async function updateMemoryEntry(
+  index: number,
+  content: string,
   _profile?: string,
-): { success: boolean; error?: string } {
-  return { success: false, error: "Memory write via API not yet implemented" };
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await apiRequest<MemoryInfo>(
+      "PUT",
+      `/v1/memory/entries/${index}${userQuery()}`,
+      { content },
+    );
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
+  }
 }
 
-export function removeMemoryEntry(
-  _index: number,
+export async function removeMemoryEntry(
+  index: number,
   _profile?: string,
-): boolean {
-  return false;
+): Promise<boolean> {
+  try {
+    await apiRequest<MemoryInfo>(
+      "DELETE",
+      `/v1/memory/entries/${index}${userQuery()}`,
+    );
+    return true;
+  } catch (err) {
+    console.error("[memory] removeMemoryEntry failed:", err);
+    return false;
+  }
 }
 
-export function writeUserProfile(
-  _content: string,
+export async function writeUserProfile(
+  content: string,
   _profile?: string,
-): { success: boolean; error?: string } {
-  return { success: false, error: "Memory write via API not yet implemented" };
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await apiRequest<MemoryInfo>(
+      "PUT",
+      `/v1/memory/user${userQuery()}`,
+      { content },
+    );
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
+  }
 }

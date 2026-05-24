@@ -47,6 +47,41 @@ function apiPut(path: string, body: unknown): Promise<void> {
   });
 }
 
+function apiPost<T>(path: string, body?: unknown): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const data = body !== undefined ? JSON.stringify(body) : "";
+    const req = http.request(
+      `${DRSAI_API_URL}${path}`,
+      {
+        method: "POST",
+        headers: body !== undefined
+          ? { "Content-Type": "application/json" }
+          : {},
+        timeout: 10000,
+      },
+      (res: http.IncomingMessage) => {
+        let buf = "";
+        res.on("data", (d: Buffer) => (buf += d.toString()));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 400) {
+            reject(new Error(buf || `HTTP ${res.statusCode}`));
+            return;
+          }
+          try { resolve(buf ? (JSON.parse(buf) as T) : ({} as T)); }
+          catch (e) { reject(e); }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", function (this: http.ClientRequest) {
+      this.destroy();
+      reject(new Error("Request timed out"));
+    });
+    if (body !== undefined) req.write(data);
+    req.end();
+  });
+}
+
 export async function readSoul(_profile?: string): Promise<string> {
   try {
     const resp = (await apiGet<{ content: string; exists: boolean }>(
@@ -69,6 +104,14 @@ export async function writeSoul(content: string, _profile?: string): Promise<boo
   }
 }
 
-export async function resetSoul(_profile?: string): Promise<boolean> {
-  return writeSoul("");
+export async function resetSoul(_profile?: string): Promise<string> {
+  try {
+    const resp = await apiPost<{ content: string; exists: boolean }>(
+      "/v1/config/agents-md/reset",
+    );
+    return resp.content || "";
+  } catch (err) {
+    console.error("[soul] resetSoul failed:", err);
+    return "";
+  }
 }

@@ -46,7 +46,7 @@ trap cleanup INT TERM EXIT
 # ── Step 1: Start DrSai API Gateway ─────────────────────────────────────────
 echo -e "${CYAN}[1/3]${NC} Starting DrSai API gateway on ${API_URL}..."
 
-PYTHONPATH="$PROJECT_DIR/python/packages/drsai/src:$PYTHONPATH" \
+PYTHONPATH="$PROJECT_DIR/python/packages/drsai/src${PYTHONPATH:+:$PYTHONPATH}" \
 python -m drsai.backend.gateway &
 DRSAI_API_PID=$!
 

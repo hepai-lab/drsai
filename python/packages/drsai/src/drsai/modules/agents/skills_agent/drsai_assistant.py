@@ -315,12 +315,27 @@ class DrSaiAssistant(DrSaiAgent):
             thread_id=self._thread_id,
         )
         self._update_user_config_tools = [self._user_profile_manager.get_user_config_tool()]
+
+        # === curated memory (hermes-style MEMORY.md / USER.md entries) ===
+        from drsai.modules.components.memory import CuratedMemoryStore
+        self._curated_memory = CuratedMemoryStore(
+            memory_path=self._user_profile_manager.memorie_path,
+            user_path=self._user_profile_manager.user_md,
+        )
+        try:
+            self._curated_memory.load_from_disk()
+        except Exception as e:
+            logger.warning(f"Failed to load curated memory: {e}")
+
         # combine system messages
         self._only_system_message = only_system_message
         if not self._only_system_message:
             user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
+            memory_block = self._curated_memory.system_prompt_block()
             enhanced_system_message = f"""{self._developer_system_message}\n{user_sys_prompt}\n
 Current Session_ID is {self._thread_id}"""
+            if memory_block:
+                enhanced_system_message += f"\n\n{memory_block}"
         else:
             enhanced_system_message = self._developer_system_message
         self._system_messages = [SystemMessage(content=enhanced_system_message)]
@@ -498,7 +513,7 @@ Current Session_ID is {self._thread_id}"""
     def _register_context_tools(self) -> None:
         """根据 context 类型注册相应的工具
 
-        对子智能体场景安全：如果工具名已存在于 ``self._tools`` 中则跳过，
+        对子智能体场景安全：如果工具名已存在于 ``self._tools`` 中则跳过,
         避免从父智能体继承工具后又重复添加（DrSaiAgent.__init__ 的唯一性
         检查只能覆盖传入 tools 参数，检测不到此处的追加）。
         """
@@ -507,18 +522,80 @@ Current Session_ID is {self._thread_id}"""
         funcs = [
             self._user_profile_manager.read_session_memory_by_index,  # TODO: 后面进行测试修正
         ]
-        
+
         if hasattr(self._model_context, 'retrieve_from_memory'):
             funcs.append(self._model_context.retrieve_from_memory)
         if hasattr(self._model_context, 'summry_conversation_to_memory'):
             funcs.append(self._model_context.summry_conversation_to_memory)
-        
+
         for func in funcs:
             if func and callable(func):
                 tool_name = getattr(func, '__name__', '')
                 if tool_name not in existing_names:
                     self._tools.append(FunctionTool(func, description=func.__doc__ or str(func)))
                     existing_names.add(tool_name)
+
+        # === curated memory tool (hermes-style add/replace/remove/read) ===
+        if "memory" not in existing_names and getattr(self, "_curated_memory", None):
+            store = self._curated_memory
+            import json as _json
+
+            def memory(
+                action: str,
+                target: str = "memory",
+                content: str = "",
+                old_text: str = "",
+            ) -> str:
+                """Persistent curated memory across sessions. Two stores: ``memory`` (your agent notes — environment facts, conventions, things learned about the project) and ``user`` (the user profile — preferences, habits, what they care about).
+
+                ``action`` selects the operation:
+                  - ``add``: append a new entry to MEMORY.md. ``content`` required.
+                  - ``replace``: find an entry containing ``old_text`` and replace it with ``content``. Both required.
+                  - ``remove``: delete the entry containing ``old_text``. ``old_text`` required.
+                  - ``read``: list current entries (or USER.md text when ``target=user``).
+                  - ``write_user``: overwrite USER.md with ``content``. Only valid when ``target=user``.
+
+                Stores are bounded (MEMORY.md ≤ 2200 chars, USER.md ≤ 1375 chars). Failed mutations return an error JSON with the current usage. Entries injected into the system prompt at session start — mid-session writes update the file but NOT the live prompt (preserves prefix cache).
+
+                Returns a JSON string with the result.
+                """
+                target = (target or "memory").lower()
+                if target not in ("memory", "user"):
+                    return _json.dumps({"success": False, "error": "target must be 'memory' or 'user'"})
+
+                if action == "add":
+                    if target == "user":
+                        return _json.dumps({"success": False, "error": "USER.md does not support add — use action=write_user."})
+                    return _json.dumps(store.add_entry(content))
+
+                if action == "replace":
+                    if target == "user":
+                        return _json.dumps(store.write_user(content))
+                    return _json.dumps(store.replace_by_text(old_text, content))
+
+                if action == "remove":
+                    if target == "user":
+                        return _json.dumps({"success": False, "error": "USER.md does not support remove — use write_user with empty content to clear."})
+                    return _json.dumps(store.remove_by_text(old_text))
+
+                if action == "read":
+                    if target == "user":
+                        return _json.dumps({"success": True, "content": store.read_user(), "charCount": len(store.read_user()), "charLimit": store.user_char_limit})
+                    entries = store.list_entries()
+                    return _json.dumps({
+                        "success": True,
+                        "entries": entries,
+                        "charCount": store.char_counts()["memory"],
+                        "charLimit": store.memory_char_limit,
+                    })
+
+                if action == "write_user":
+                    return _json.dumps(store.write_user(content))
+
+                return _json.dumps({"success": False, "error": f"Unknown action '{action}'. Use add/replace/remove/read/write_user."})
+
+            self._tools.append(FunctionTool(memory, description=memory.__doc__ or "memory tool"))
+            existing_names.add("memory")
 
     def set_task_manager(self, task_manager):
         """设置定时任务管理器实例
@@ -691,6 +768,11 @@ Current Session_ID is {self._thread_id}"""
             additional_prompt  — 工具提示词（在 ⑥ 之后追加）
         """
         user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
+        memory_block = (
+            self._curated_memory.system_prompt_block()
+            if getattr(self, "_curated_memory", None)
+            else ""
+        )
         parts = []
         if self._injected_prefix:
             parts.extend([self._injected_prefix, ""])
@@ -698,6 +780,8 @@ Current Session_ID is {self._thread_id}"""
             parts.extend([self._developer_system_message, ""])
         if user_sys_prompt:
             parts.extend([user_sys_prompt, ""])
+        if memory_block:
+            parts.extend([memory_block, ""])
         if self._project_instructions:
             parts.extend([self._project_instructions, ""])
         parts.append(f"Current Session_ID is {self._thread_id}")
@@ -740,6 +824,11 @@ Current Session_ID is {self._thread_id}"""
             self._project_instructions = project_instructions
 
         user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
+        memory_block = (
+            self._curated_memory.system_prompt_block()
+            if getattr(self, "_curated_memory", None)
+            else ""
+        )
 
         parts = []
         if prefix:
@@ -748,6 +837,8 @@ Current Session_ID is {self._thread_id}"""
             parts.extend([self._developer_system_message, ""])
         if user_sys_prompt:
             parts.extend([user_sys_prompt, ""])
+        if memory_block:
+            parts.extend([memory_block, ""])
         if self._project_instructions:
             parts.extend([self._project_instructions, ""])
         parts.append(f"Current Session_ID is {self._thread_id}")

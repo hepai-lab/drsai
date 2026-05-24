@@ -24,7 +24,8 @@ import { ChildProcess, spawn } from "child_process";
 import { existsSync } from "fs";
 import http from "http";
 import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
-import { getModelConfig, getUserName } from "./config";
+import { getUserName } from "./config";
+import { getModelCatalog } from "./model-catalog";
 import { DRSAI_PYTHON } from "./installer";
 
 // ────────────────────────────────────────────────────
@@ -138,9 +139,10 @@ async function waitForApiReady(timeoutMs = 10000): Promise<boolean> {
 function sendMessageViaApi(
   message: string,
   cb: ChatCallbacks,
-  profile?: string,
+  _profile?: string,
   resumeSessionId?: string,
   history?: Array<{ role: string; content: string }>,
+  modelAlias?: string,
 ): ChatHandle {
   const controller = new AbortController();
 
@@ -156,9 +158,11 @@ function sendMessageViaApi(
   }
   messages.push({ role: "user", content: message });
 
-  const modelConfig = getModelConfig(profile);
+  // Pass the alias as the OpenAI ``model`` field. The gateway maps anything
+  // other than the sentinel "drsai" to a model_alias and re-creates the
+  // agent if the alias changed since the last turn.
   const body = JSON.stringify({
-    model: modelConfig.model || "drsai",
+    model: modelAlias || "drsai",
     messages,
     stream: true,
     ...(resumeSessionId ? { thread_id: resumeSessionId } : {}),
@@ -366,7 +370,18 @@ export async function sendMessage(
     return { abort: () => undefined };
   }
 
-  return sendMessageViaApi(message, cb, profile, resumeSessionId, history);
+  // Resolve current default alias from the gateway. Best-effort: if the
+  // call fails, fall back to the "drsai" sentinel so the backend uses its
+  // own configured default.
+  let modelAlias: string | undefined;
+  try {
+    const catalog = await getModelCatalog();
+    modelAlias = catalog?.default_alias;
+  } catch (err) {
+    console.warn("[drsai] getModelCatalog failed; using server default:", (err as Error).message);
+  }
+
+  return sendMessageViaApi(message, cb, profile, resumeSessionId, history, modelAlias);
 }
 
 // ────────────────────────────────────────────────────
@@ -476,6 +491,67 @@ export function restartGateway(profile?: string): void {
   setTimeout(() => {
     startGateway(profile);
   }, 500);
+}
+
+// ────────────────────────────────────────────────────
+//  Thread control (pause / resume / stop)
+// ────────────────────────────────────────────────────
+
+function postThreadAction(
+  threadId: string,
+  action: "pause" | "resume" | "stop",
+  userId?: string,
+): Promise<{ status: string; thread_id: string } | null> {
+  return new Promise((resolve) => {
+    const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+    const url = `${DRSAI_API_URL}/v1/threads/${encodeURIComponent(threadId)}/${action}${qs}`;
+    const req = http.request(
+      url,
+      { method: "POST", timeout: 5000 },
+      (res) => {
+        let body = "";
+        res.on("data", (d) => (body += d.toString()));
+        res.on("end", () => {
+          if (res.statusCode === 200) {
+            try {
+              resolve(JSON.parse(body));
+            } catch {
+              resolve(null);
+            }
+          } else {
+            resolve(null);
+          }
+        });
+      },
+    );
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.end();
+  });
+}
+
+export function pauseThread(
+  threadId: string,
+  userId?: string,
+): Promise<boolean> {
+  return postThreadAction(threadId, "pause", userId).then((r) => r !== null);
+}
+
+export function resumeThread(
+  threadId: string,
+  userId?: string,
+): Promise<boolean> {
+  return postThreadAction(threadId, "resume", userId).then((r) => r !== null);
+}
+
+export function stopThread(
+  threadId: string,
+  userId?: string,
+): Promise<boolean> {
+  return postThreadAction(threadId, "stop", userId).then((r) => r !== null);
 }
 
 // ────────────────────────────────────────────────────

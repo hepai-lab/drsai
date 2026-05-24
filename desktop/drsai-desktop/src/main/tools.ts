@@ -1,293 +1,115 @@
-import { existsSync, readFileSync } from "fs";
-import { join } from "path";
-import { profileHome, safeWriteFile } from "./utils";
-import { t } from "../shared/i18n";
-import { getAppLocale } from "./locale";
-
-export interface ToolsetInfo {
-  key: string;
-  label: string;
-  description: string;
-  enabled: boolean;
-}
-
-const TOOLSET_DEFS: {
-  key: string;
-  labelKey: string;
-  descriptionKey: string;
-}[] = [
-  {
-    key: "web",
-    labelKey: "tools.web.label",
-    descriptionKey: "tools.web.description",
-  },
-  {
-    key: "browser",
-    labelKey: "tools.browser.label",
-    descriptionKey: "tools.browser.description",
-  },
-  {
-    key: "terminal",
-    labelKey: "tools.terminal.label",
-    descriptionKey: "tools.terminal.description",
-  },
-  {
-    key: "file",
-    labelKey: "tools.file.label",
-    descriptionKey: "tools.file.description",
-  },
-  {
-    key: "code_execution",
-    labelKey: "tools.code_execution.label",
-    descriptionKey: "tools.code_execution.description",
-  },
-  {
-    key: "vision",
-    labelKey: "tools.vision.label",
-    descriptionKey: "tools.vision.description",
-  },
-  {
-    key: "image_gen",
-    labelKey: "tools.image_gen.label",
-    descriptionKey: "tools.image_gen.description",
-  },
-  {
-    key: "tts",
-    labelKey: "tools.tts.label",
-    descriptionKey: "tools.tts.description",
-  },
-  {
-    key: "skills",
-    labelKey: "tools.skills.label",
-    descriptionKey: "tools.skills.description",
-  },
-  {
-    key: "memory",
-    labelKey: "tools.memory.label",
-    descriptionKey: "tools.memory.description",
-  },
-  {
-    key: "session_search",
-    labelKey: "tools.session_search.label",
-    descriptionKey: "tools.session_search.description",
-  },
-  {
-    key: "clarify",
-    labelKey: "tools.clarify.label",
-    descriptionKey: "tools.clarify.description",
-  },
-  {
-    key: "delegation",
-    labelKey: "tools.delegation.label",
-    descriptionKey: "tools.delegation.description",
-  },
-  {
-    key: "cronjob",
-    labelKey: "tools.cronjob.label",
-    descriptionKey: "tools.cronjob.description",
-  },
-  {
-    key: "moa",
-    labelKey: "tools.moa.label",
-    descriptionKey: "tools.moa.description",
-  },
-  {
-    key: "todo",
-    labelKey: "tools.todo.label",
-    descriptionKey: "tools.todo.description",
-  },
-];
-
-function localizeToolDefs(
-  enabled: boolean | ((key: string) => boolean),
-): ToolsetInfo[] {
-  const locale = getAppLocale();
-  return TOOLSET_DEFS.map((toolDef) => ({
-    key: toolDef.key,
-    label: t(toolDef.labelKey, locale),
-    description: t(toolDef.descriptionKey, locale),
-    enabled: typeof enabled === "function" ? enabled(toolDef.key) : enabled,
-  }));
-}
-
 /**
- * Parse the platform_toolsets.cli list from config.yaml.
- * The yaml structure looks like:
- *   platform_toolsets:
- *     cli:
- *       - web
- *       - browser
- *       ...
- * We use line-by-line parsing to stay consistent with config.ts (no yaml dep).
+ * Tool configuration via DrSai API Gateway.
+ *
+ * Backed by /v1/config/tools — reads/writes TOOLS_CONFIG.json in the user's
+ * workdir. Each entry is an MCP server or a free-form local-tool description.
  */
-function parseEnabledToolsets(configContent: string): Set<string> {
-  const enabled = new Set<string>();
-  const lines = configContent.split("\n");
 
-  let inPlatformToolsets = false;
-  let inCli = false;
+import http from "http";
+import { getUserName } from "./config";
 
-  for (const line of lines) {
-    const trimmed = line.trimEnd();
+const DRSAI_API_PORT = parseInt(process.env.DRSAI_API_PORT || "8642", 10);
+const DRSAI_API_URL = `http://127.0.0.1:${DRSAI_API_PORT}`;
 
-    // Detect section headers
-    if (/^\s*platform_toolsets\s*:/.test(trimmed)) {
-      inPlatformToolsets = true;
-      inCli = false;
-      continue;
-    }
-
-    if (inPlatformToolsets && /^\s+cli\s*:/.test(trimmed)) {
-      inCli = true;
-      continue;
-    }
-
-    // Exit sections on un-indent
-    if (inPlatformToolsets && /^\S/.test(trimmed) && !/^\s*$/.test(trimmed)) {
-      inPlatformToolsets = false;
-      inCli = false;
-      continue;
-    }
-
-    if (inCli && /^\s{4}\S/.test(trimmed) && !/^\s{4,}-/.test(trimmed)) {
-      // A new key at the same level as cli — we've left the cli section
-      inCli = false;
-      continue;
-    }
-
-    // Parse list items inside cli:
-    if (inCli) {
-      const match = trimmed.match(/^\s+-\s+["']?(\w+)["']?/);
-      if (match) {
-        enabled.add(match[1]);
-      }
-    }
-  }
-
-  return enabled;
+export interface ToolEntry {
+  type: string;
+  config: Record<string, unknown>;
+  name?: string | null;
+  enabled?: boolean;
 }
 
-export function getToolsets(profile?: string): ToolsetInfo[] {
-  const configFile = join(profileHome(profile), "config.yaml");
-
-  // If no config, assume all toolsets are enabled (drsai default behavior)
-  if (!existsSync(configFile)) {
-    return localizeToolDefs(true);
-  }
-
-  try {
-    const content = readFileSync(configFile, "utf-8");
-    const enabledSet = parseEnabledToolsets(content);
-
-    // If no platform_toolsets.cli section exists, all are enabled by default
-    if (enabledSet.size === 0 && !content.includes("platform_toolsets")) {
-      return localizeToolDefs(true);
-    }
-
-    return localizeToolDefs((key) => enabledSet.has(key));
-  } catch {
-    return localizeToolDefs(true);
-  }
+export interface ToolEntryWithIndex extends ToolEntry {
+  index: number;
 }
 
-export function setToolsetEnabled(
-  key: string,
-  enabled: boolean,
-  profile?: string,
-): boolean {
-  const configFile = join(profileHome(profile), "config.yaml");
-  if (!existsSync(configFile)) return false;
-
-  try {
-    const content = readFileSync(configFile, "utf-8");
-    const currentEnabled = parseEnabledToolsets(content);
-
-    if (enabled) {
-      currentEnabled.add(key);
-    } else {
-      currentEnabled.delete(key);
-    }
-
-    // Rebuild the platform_toolsets.cli section
-    const toolsetLines = Array.from(currentEnabled)
-      .sort()
-      .map((t) => `      - ${t}`)
-      .join("\n");
-
-    const newSection = `  cli:\n${toolsetLines}`;
-
-    // Check if platform_toolsets section exists
-    if (content.includes("platform_toolsets")) {
-      // Replace existing cli section within platform_toolsets
-      const lines = content.split("\n");
-      const result: string[] = [];
-      let inPlatformToolsets = false;
-      let inCli = false;
-      let cliInserted = false;
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const trimmed = line.trimEnd();
-
-        if (/^\s*platform_toolsets\s*:/.test(trimmed)) {
-          inPlatformToolsets = true;
-          result.push(line);
-          continue;
-        }
-
-        if (inPlatformToolsets && /^\s+cli\s*:/.test(trimmed)) {
-          inCli = true;
-          // Output the new cli section
-          result.push(newSection);
-          cliInserted = true;
-          continue;
-        }
-
-        if (inCli) {
-          // Skip old list items
-          if (/^\s+-\s/.test(trimmed)) continue;
-          // End of cli section
-          if (
-            /^\s{4}\S/.test(trimmed) ||
-            /^\S/.test(trimmed) ||
-            trimmed === ""
-          ) {
-            inCli = false;
-            if (
-              trimmed === "" &&
-              i + 1 < lines.length &&
-              /^\S/.test(lines[i + 1].trimEnd())
-            ) {
-              result.push(line);
-              continue;
+function apiRequest<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const url = `${DRSAI_API_URL}${path}`;
+    const bodyStr = body !== undefined ? JSON.stringify(body) : undefined;
+    const req = http.request(
+      url,
+      {
+        method,
+        timeout: 10000,
+        headers: bodyStr
+          ? {
+              "Content-Type": "application/json",
+              "Content-Length": String(Buffer.byteLength(bodyStr)),
             }
-            result.push(line);
-            continue;
+          : {},
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (d: Buffer) => (data += d.toString()));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 400) {
+            let detail = data;
+            try {
+              detail = JSON.parse(data).detail || data;
+            } catch {
+              /* keep raw */
+            }
+            reject(new Error(detail));
+            return;
           }
-          continue;
-        }
-
-        if (inPlatformToolsets && /^\S/.test(trimmed) && trimmed !== "") {
-          inPlatformToolsets = false;
-          if (!cliInserted) {
-            result.push(newSection);
-            cliInserted = true;
+          try {
+            resolve(data ? (JSON.parse(data) as T) : ({} as T));
+          } catch (e) {
+            reject(e);
           }
-        }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("Tool API request timed out"));
+    });
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
 
-        result.push(line);
-      }
+function userQuery(): string {
+  const u = getUserName();
+  return u ? `?user_id=${encodeURIComponent(u)}` : "";
+}
 
-      safeWriteFile(configFile, result.join("\n"));
-    } else {
-      // Append platform_toolsets section at end
-      const newContent =
-        content.trimEnd() + "\n\nplatform_toolsets:\n" + newSection + "\n";
-      safeWriteFile(configFile, newContent);
-    }
+export async function listTools(): Promise<ToolEntryWithIndex[]> {
+  const resp = await apiRequest<{ object: string; data: ToolEntry[] }>(
+    "GET",
+    `/v1/config/tools${userQuery()}`,
+  );
+  return (resp.data || []).map((entry, index) => ({ ...entry, index }));
+}
 
-    return true;
-  } catch {
-    return false;
-  }
+export async function createTool(entry: ToolEntry): Promise<ToolEntryWithIndex> {
+  return apiRequest<ToolEntryWithIndex>(
+    "POST",
+    `/v1/config/tools${userQuery()}`,
+    entry,
+  );
+}
+
+export async function updateTool(
+  index: number,
+  entry: ToolEntry,
+): Promise<ToolEntryWithIndex> {
+  return apiRequest<ToolEntryWithIndex>(
+    "PUT",
+    `/v1/config/tools/${index}${userQuery()}`,
+    entry,
+  );
+}
+
+export async function deleteTool(index: number): Promise<boolean> {
+  await apiRequest<{ status: string }>(
+    "DELETE",
+    `/v1/config/tools/${index}${userQuery()}`,
+  );
+  return true;
 }

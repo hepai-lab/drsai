@@ -214,6 +214,9 @@ interface DrSaiAPI {
     history?: Array<{ role: string; content: string }>,
   ) => Promise<{ response: string; sessionId?: string }>;
   abortChat: () => Promise<void>;
+  pauseThread: (threadId: string, userId?: string) => Promise<boolean>;
+  resumeThread: (threadId: string, userId?: string) => Promise<boolean>;
+  stopThread: (threadId: string, userId?: string) => Promise<boolean>;
   onChatChunk: (callback: (chunk: string) => void) => () => void;
   onChatDone: (callback: (sessionId?: string) => void) => () => void;
   onChatToolProgress: (callback: (tool: string) => void) => () => void;
@@ -318,17 +321,32 @@ interface DrSaiAPI {
   writeSoul: (content: string, profile?: string) => Promise<boolean>;
   resetSoul: (profile?: string) => Promise<string>;
 
-  // Tools
-  getToolsets: (
-    profile?: string,
-  ) => Promise<
-    Array<{ key: string; label: string; description: string; enabled: boolean }>
+  // Tools (MCP servers + local-tool descriptions in TOOLS_CONFIG.json)
+  listTools: () => Promise<
+    Array<{
+      index: number;
+      type: string;
+      config: Record<string, unknown>;
+      name?: string | null;
+      enabled?: boolean;
+    }>
   >;
-  setToolsetEnabled: (
-    key: string,
-    enabled: boolean,
-    profile?: string,
-  ) => Promise<boolean>;
+  createTool: (entry: {
+    type: string;
+    config: Record<string, unknown>;
+    name?: string | null;
+    enabled?: boolean;
+  }) => Promise<{ index: number; type: string; config: Record<string, unknown> }>;
+  updateTool: (
+    index: number,
+    entry: {
+      type: string;
+      config: Record<string, unknown>;
+      name?: string | null;
+      enabled?: boolean;
+    },
+  ) => Promise<{ index: number; type: string; config: Record<string, unknown> }>;
+  deleteTool: (index: number) => Promise<boolean>;
 
   // Skills
   listInstalledSkills: (

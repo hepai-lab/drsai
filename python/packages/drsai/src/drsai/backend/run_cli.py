@@ -391,6 +391,13 @@ def _launch_tui(*, attach_url: Optional[str] = None) -> None:
     if attach_url:
         env["DRSAI_TUI_ATTACH_URL"] = attach_url
 
+    # Capture the directory the *user* invoked ``drsai`` from. We have to
+    # ``cwd=ui_dir`` for the Node subprocess (so it can find package.json /
+    # node_modules / dist), but the gateway needs to treat the user's cwd as
+    # the workspace — sessions are bound to that, not to ui-tui/.
+    user_cwd = os.environ.get("DRSAI_USER_CWD") or str(Path.cwd().resolve())
+    env["DRSAI_USER_CWD"] = user_cwd
+
     try:
         # On Windows, pnpm/npm are .cmd/.ps1 shims — Python's CreateProcess
         # can't execute them without shell=True. We pass an absolute path from

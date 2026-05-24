@@ -76,7 +76,7 @@ export async function getModelCatalog(): Promise<ModelCatalogResponse> {
   return httpRequest<ModelCatalogResponse>("GET", "/v1/models/config");
 }
 
-export async function getModelConfig(alias: string): Promise<ModelCatalogEntry & { alias: string }> {
+export async function getModelDetail(alias: string): Promise<ModelCatalogEntry & { alias: string }> {
   return httpRequest<ModelCatalogEntry & { alias: string }>(
     "GET",
     `/v1/models/config/${encodeURIComponent(alias)}`,

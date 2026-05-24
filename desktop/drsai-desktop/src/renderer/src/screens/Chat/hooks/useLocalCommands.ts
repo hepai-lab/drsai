@@ -86,17 +86,21 @@ export function useLocalCommands({
         }
 
         case "/tools": {
-          const tools = await window.drsaiAPI.getToolsets(profile);
+          const tools = await window.drsaiAPI.listTools();
           if (!tools.length) {
             addAgentMessage(t("memory.noToolsetsFound"));
           } else {
             const rows = tools
-              .map(
-                (tool) =>
-                  `- **${tool.label}** —${tool.description} ${tool.enabled ? "*(enabled)*" : "*(disabled)*"}`,
-              )
+              .map((tool) => {
+                const name =
+                  tool.name ||
+                  (tool.config as { name?: string }).name ||
+                  `${tool.type}-${tool.index}`;
+                const status = tool.enabled === false ? "*(disabled)*" : "*(enabled)*";
+                return `- **${name}** — \`${tool.type}\` ${status}`;
+              })
               .join("\n");
-            addAgentMessage(`**Available Toolsets**\n\n${rows}`);
+            addAgentMessage(`**Configured Tools**\n\n${rows}`);
           }
           return true;
         }

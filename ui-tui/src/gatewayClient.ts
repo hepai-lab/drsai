@@ -137,8 +137,14 @@ export class GatewayClient extends EventEmitter {
     }, STARTUP_TIMEOUT_MS)
     this.readyTimer.unref?.()
 
+    // The user's "real" working directory comes from DRSAI_USER_CWD if the
+    // ``drsai`` launcher set it (the launcher chdirs us into ui-tui/ so node
+    // can resolve modules; the gateway must NOT see ui-tui/ as cwd).
+    // Fall back to process.cwd() for ``pnpm dev`` invocations.
+    const gatewayCwd = process.env.DRSAI_USER_CWD?.trim() || process.cwd()
+
     this.proc = spawn(python, ['-m', 'drsai.backend.tui_gateway'], {
-      cwd: process.cwd(),
+      cwd: gatewayCwd,
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
     })

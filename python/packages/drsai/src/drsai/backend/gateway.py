@@ -70,6 +70,8 @@ import json
 
 import os
 
+import re
+
 import sys
 
 import time
@@ -79,6 +81,8 @@ import traceback
 import uuid
 
 from contextlib import asynccontextmanager
+
+from datetime import datetime
 
 from pathlib import Path
 
@@ -328,6 +332,19 @@ class SkillInstallRequest(BaseModel):
     name: str = Field(..., description="Skill name (directory name)")
     content: str = Field(default="", description="SKILL.md content (optional if source is provided)")
     source: str | None = Field(default=None, description="Source collection name for installing from bundled skills")
+
+
+class ToolEntry(BaseModel):
+    """A single tool entry in TOOLS_CONFIG.json.
+
+    type: ``mcp-std`` | ``mcp-sse`` | other (local). Anything else is treated
+    as a free-form local-tool description that the agent surfaces to the LLM
+    via tool prompts but does not invoke directly.
+    """
+    type: str = Field(..., description="Tool type: mcp-std | mcp-sse | <local>")
+    config: dict = Field(default_factory=dict, description="Tool-specific config payload")
+    name: str | None = Field(default=None, description="Optional display name (UI only)")
+    enabled: bool = Field(default=True, description="UI-only flag; disabled entries are skipped on load")
 
 
 
@@ -935,6 +952,26 @@ class AgentManager:
 
         }
 
+    async def evict_user(self, user_id: str) -> int:
+        """Drop every agent for ``user_id`` from the pool without saving state.
+
+        Used after a config / env / model-catalog write so the next chat turn
+        creates a fresh agent that re-reads the new values.  Saved Thread
+        state will be re-loaded on the new agent.
+        """
+        async with self._global_lock:
+            prefix = f"{user_id}:"
+            keys = [k for k in self._agents if k.startswith(prefix)]
+            for k in keys:
+                agent = self._agents.pop(k, None)
+                self._model_aliases.pop(k, None)
+                if agent is not None and hasattr(agent, "close"):
+                    try:
+                        await agent.close()
+                    except Exception as e:
+                        logger.debug(f"close() during evict failed for {k}: {e}")
+            return len(keys)
+
 
 
     async def list_models(self) -> list[dict]:
@@ -988,6 +1025,14 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("DrSai API Server shutting down")
+
+    # Stop any cron schedulers we started so background tasks unwind cleanly
+    for uid, sm in list(_schedulers.items()):
+        try:
+            await sm.stop()
+            logger.info(f"Stopped ScheduledTaskManager for user {uid}")
+        except Exception as e:
+            logger.warning(f"Failed to stop scheduler for {uid}: {e}")
 
 
 
@@ -1973,6 +2018,47 @@ async def put_agents_md(
     return {"status": "ok"}
 
 
+@app.post("/v1/config/agents-md/reset")
+async def reset_agents_md(user_id: str | None = Query(default=None)):
+    """Reset AGENTS.md to the default template by re-running UserProfileManager init.
+
+    Deletes the current file, then constructs a temporary UserProfileManager
+    pointed at this user's storage so its ``_create_agents_md`` writes a
+    fresh default. Returns the new content. Evicts cached agents so the
+    next chat turn rebuilds the system prompt.
+    """
+    uid = user_id or _get_user_id()
+    cfg_dir = _get_config_dir(uid)
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    agents_md = cfg_dir / "AGENTS.md"
+    try:
+        if agents_md.exists():
+            agents_md.unlink()
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to remove AGENTS.md: {e}")
+
+    # Rebuild via UserProfileManager. work_dir is the parent of cfg_dir
+    # ("configs"); UserProfileManager treats it as its storage root.
+    from drsai.modules.agents.skills_agent.managers import UserProfileManager
+    try:
+        UserProfileManager(
+            agent_name="Assistant",
+            work_dir=cfg_dir.parent,
+            user_id=uid,
+            thread_id="__reset__",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reset failed: {e}")
+
+    content = agents_md.read_text(encoding="utf-8") if agents_md.exists() else ""
+    # Evict cached agents so the next turn picks up the new prompt
+    try:
+        await manager.evict_user(uid)
+    except Exception as e:
+        logger.debug(f"evict_user during reset failed: {e}")
+    return {"content": content, "exists": agents_md.exists()}
+
+
 @app.get("/v1/config/user-md")
 async def get_user_md(
     user_id: str | None = Query(default=None),
@@ -1998,6 +2084,80 @@ async def put_user_md(
     return {"status": "ok"}
 
 
+# ── Tools (TOOLS_CONFIG.json — MCP servers + local tool descriptions) ────────
+
+def _tools_config_path(user_id: str | None = None) -> Path:
+    return _get_config_dir(user_id) / "TOOLS_CONFIG.json"
+
+
+def _read_tools_config(user_id: str | None = None) -> list[dict]:
+    p = _tools_config_path(user_id)
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return data
+        return []
+    except Exception as e:
+        logger.warning(f"Failed to parse TOOLS_CONFIG.json: {e}")
+        return []
+
+
+def _write_tools_config(entries: list[dict], user_id: str | None = None) -> None:
+    p = _tools_config_path(user_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(entries, indent=4, ensure_ascii=False), encoding="utf-8")
+
+
+@app.get("/v1/config/tools")
+async def list_tools(user_id: str | None = Query(default=None)):
+    """Return all configured tools (MCP servers + local tool descriptions)."""
+    entries = _read_tools_config(user_id)
+    return {"object": "list", "data": entries}
+
+
+@app.post("/v1/config/tools")
+async def create_tool(
+    req: ToolEntry,
+    user_id: str | None = Query(default=None),
+):
+    """Append a new tool entry to TOOLS_CONFIG.json."""
+    entries = _read_tools_config(user_id)
+    entries.append(req.model_dump())
+    _write_tools_config(entries, user_id)
+    return {"index": len(entries) - 1, **req.model_dump()}
+
+
+@app.put("/v1/config/tools/{index}")
+async def update_tool(
+    index: int,
+    req: ToolEntry,
+    user_id: str | None = Query(default=None),
+):
+    """Replace the tool entry at ``index``."""
+    entries = _read_tools_config(user_id)
+    if index < 0 or index >= len(entries):
+        raise HTTPException(status_code=404, detail=f"Tool index {index} not found")
+    entries[index] = req.model_dump()
+    _write_tools_config(entries, user_id)
+    return {"index": index, **entries[index]}
+
+
+@app.delete("/v1/config/tools/{index}")
+async def delete_tool(
+    index: int,
+    user_id: str | None = Query(default=None),
+):
+    """Remove the tool entry at ``index``."""
+    entries = _read_tools_config(user_id)
+    if index < 0 or index >= len(entries):
+        raise HTTPException(status_code=404, detail=f"Tool index {index} not found")
+    removed = entries.pop(index)
+    _write_tools_config(entries, user_id)
+    return {"status": "ok", "removed": removed}
+
+
 
 
 
@@ -2011,81 +2171,155 @@ async def put_user_md(
 
 
 
-def _get_memory_dir(user_id: str | None = None) -> Path:
-
-    """Resolve the memories directory for a user."""
-
-    uid = user_id or _get_user_id()
-
-    from drsai.backend.run_drsai_agent_factory import WORKDIR
-
-    return Path(WORKDIR) / uid / "memories"
+from drsai.modules.components.memory import (
+    CuratedMemoryStore,
+    DEFAULT_MEMORY_CHAR_LIMIT,
+    DEFAULT_USER_CHAR_LIMIT,
+)
 
 
+def _get_curated_store(user_id: str | None = None) -> CuratedMemoryStore:
+    """Build a CuratedMemoryStore pointing at this user's MEMORY.md / USER.md.
+
+    Files live in ``WORKDIR/<user_id>/configs/`` — the same directory the
+    agent's UserProfileManager writes to, so reads/writes here are seen by
+    the running agent on the next system-prompt rebuild.
+    """
+    cfg_dir = _get_config_dir(user_id)
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    return CuratedMemoryStore(
+        memory_path=cfg_dir / "MEMORY.md",
+        user_path=cfg_dir / "USER.md",
+    )
 
 
+def _memory_payload(user_id: str | None = None) -> dict:
+    """Build the GET /v1/memory response payload (hermes-shaped)."""
+    store = _get_curated_store(user_id)
+    entries = store.list_entries()
+    mem_path = store.memory_path
+    user_path = store.user_path
+    mtimes = store.last_modified()
+    counts = store.char_counts()
+    user_content = store.read_user()
 
-@app.get("/v1/memory")
+    # Session / message stats from the shared DB
+    total_sessions, total_messages = 0, 0
+    try:
+        db = _get_db()
+        from drsai.modules.managers.datamodel.db import Thread as _Thread, SessionMessage as _SM
+        uid = user_id or _get_user_id()
+        s_resp = db.get(_Thread, filters={"user_id": uid}, return_json=False)
+        if s_resp.status and s_resp.data:
+            total_sessions = len(s_resp.data)
+        m_resp = db.get(_SM, filters={"user_id": uid}, return_json=False)
+        if m_resp.status and m_resp.data:
+            total_messages = len(m_resp.data)
+    except Exception as e:
+        logger.debug(f"Memory stats unavailable: {e}")
 
-async def get_memory(
-
-    user_id: str | None = Query(default=None),
-
-):
-
-    """Get memory entries and user profile for the given user."""
-
-    mem_dir = _get_memory_dir(user_id)
-
-    memory_file = mem_dir / "MEMORY.md"
-
-    user_file = mem_dir / "USER.md"
-
-
-
-    result = {
-
-        "memory": {"content": "", "exists": False, "charCount": 0},
-
-        "user": {"content": "", "exists": False, "charCount": 0},
-
+    return {
+        "memory": {
+            "content": "\n§\n".join(e["content"] for e in entries) if entries else "",
+            "exists": mem_path.exists(),
+            "lastModified": mtimes["memory"],
+            "entries": entries,
+            "charCount": counts["memory"],
+            "charLimit": store.memory_char_limit,
+        },
+        "user": {
+            "content": user_content,
+            "exists": user_path.exists(),
+            "lastModified": mtimes["user"],
+            "charCount": counts["user"],
+            "charLimit": store.user_char_limit,
+        },
+        "stats": {
+            "totalSessions": total_sessions,
+            "totalMessages": total_messages,
+        },
     }
 
 
-
-    if memory_file.exists():
-
-        content = memory_file.read_text(encoding="utf-8", errors="replace")
-
-        result["memory"] = {
-
-            "content": content,
-
-            "exists": True,
-
-            "charCount": len(content),
-
-        }
+@app.get("/v1/memory")
+async def get_memory(user_id: str | None = Query(default=None)):
+    """Get memory entries, user profile, and stats for the given user."""
+    return _memory_payload(user_id)
 
 
-
-    if user_file.exists():
-
-        content = user_file.read_text(encoding="utf-8", errors="replace")
-
-        result["user"] = {
-
-            "content": content,
-
-            "exists": True,
-
-            "charCount": len(content),
-
-        }
+# ── Memory mutation models ─────────────────────────────────────────────────
 
 
+class MemoryEntryRequest(BaseModel):
+    content: str = Field(..., description="Entry content (will be trimmed).")
 
-    return result
+
+class MemoryUserRequest(BaseModel):
+    content: str = Field(..., description="Full USER.md replacement content.")
+
+
+@app.post("/v1/memory/entries")
+async def add_memory_entry(
+    req: MemoryEntryRequest,
+    user_id: str | None = Query(default=None),
+):
+    """Append a new entry to MEMORY.md."""
+    store = _get_curated_store(user_id)
+    result = store.add_entry(req.content)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Add failed"))
+    return _memory_payload(user_id)
+
+
+@app.put("/v1/memory/entries/{index}")
+async def update_memory_entry(
+    index: int,
+    req: MemoryEntryRequest,
+    user_id: str | None = Query(default=None),
+):
+    """Replace MEMORY.md entry at ``index``."""
+    store = _get_curated_store(user_id)
+    result = store.update_entry(index, req.content)
+    if not result.get("success"):
+        code = 404 if "not found" in result.get("error", "").lower() else 400
+        raise HTTPException(status_code=code, detail=result.get("error", "Update failed"))
+    return _memory_payload(user_id)
+
+
+@app.delete("/v1/memory/entries/{index}")
+async def delete_memory_entry(
+    index: int,
+    user_id: str | None = Query(default=None),
+):
+    """Delete MEMORY.md entry at ``index``."""
+    store = _get_curated_store(user_id)
+    result = store.remove_entry(index)
+    if not result.get("success"):
+        code = 404 if "not found" in result.get("error", "").lower() else 400
+        raise HTTPException(status_code=code, detail=result.get("error", "Delete failed"))
+    return _memory_payload(user_id)
+
+
+@app.put("/v1/memory/user")
+async def write_memory_user(
+    req: MemoryUserRequest,
+    user_id: str | None = Query(default=None),
+):
+    """Overwrite USER.md with ``content`` (bounded by user_char_limit)."""
+    store = _get_curated_store(user_id)
+    result = store.write_user(req.content)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Write failed"))
+    return _memory_payload(user_id)
+
+
+@app.get("/v1/memory/limits")
+async def get_memory_limits():
+    """Return curated-memory character limits (constants)."""
+    return {
+        "memoryCharLimit": DEFAULT_MEMORY_CHAR_LIMIT,
+        "userCharLimit": DEFAULT_USER_CHAR_LIMIT,
+    }
 
 
 
@@ -2138,6 +2372,818 @@ async def set_user_name(req: UserNameRequest):
     logger.info(f"Desktop user name set to: {name}")
 
     return {"user_name": name}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Env file (.env) — read/write the agent's environment variables
+# ════════════════════════════════════════════════════════════════════════════
+
+_ENV_FILE = Path(FS_DIR) / ".env"
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Keys whose values are masked in GET responses. Writes still accept the real
+# value via PUT; the mask exists so the value isn't echoed back to the UI
+# unmasked.
+_SENSITIVE_ENV_KEYS = (
+    "_API_KEY",
+    "_TOKEN",
+    "_SECRET",
+    "_PASSWORD",
+)
+
+
+class EnvSetRequest(BaseModel):
+    value: str = Field(..., description="Value to write. Single-line strings only.")
+
+
+def _read_env_file() -> dict[str, str]:
+    """Parse FS_DIR/.env into a plain dict. Missing file → empty dict."""
+    out: dict[str, str] = {}
+    if not _ENV_FILE.exists():
+        return out
+    try:
+        raw = _ENV_FILE.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.warning(f"Failed to read {_ENV_FILE}: {e}")
+        return out
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        k, _, v = s.partition("=")
+        k = k.strip()
+        v = v.strip()
+        if (v.startswith('"') and v.endswith('"')) or (
+            v.startswith("'") and v.endswith("'")
+        ):
+            v = v[1:-1]
+        out[k] = v
+    return out
+
+
+def _write_env_file(env: dict[str, str]) -> None:
+    """Persist env dict to FS_DIR/.env. Atomic via tempfile + replace."""
+    _ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    body = "\n".join(f"{k}={v}" for k, v in env.items()) + ("\n" if env else "")
+    tmp = _ENV_FILE.with_suffix(_ENV_FILE.suffix + ".tmp")
+    tmp.write_text(body, encoding="utf-8")
+    os.replace(tmp, _ENV_FILE)
+
+
+def _mask_env(env: dict[str, str]) -> dict[str, str]:
+    """Replace sensitive values with a placeholder for display."""
+    masked: dict[str, str] = {}
+    for k, v in env.items():
+        sensitive = any(suffix in k.upper() for suffix in _SENSITIVE_ENV_KEYS)
+        if sensitive and v:
+            masked[k] = f"***{v[-4:]}" if len(v) > 4 else "***"
+        else:
+            masked[k] = v
+    return masked
+
+
+@app.get("/v1/config/env")
+async def get_env(
+    masked: bool = Query(default=True, description="Mask sensitive values."),
+):
+    """Return the contents of FS_DIR/.env.
+
+    Sensitive keys (containing API_KEY/TOKEN/SECRET/PASSWORD) are masked by
+    default — pass ``masked=false`` only when the caller needs the real
+    value (e.g. to populate a 'show key' modal).
+    """
+    env = _read_env_file()
+    return {
+        "path": str(_ENV_FILE),
+        "env": _mask_env(env) if masked else env,
+    }
+
+
+@app.put("/v1/config/env/{key}")
+async def set_env_value(
+    key: str,
+    req: EnvSetRequest,
+):
+    """Set or update a single env var, then evict cached agents so the next
+    chat turn picks up the new value via :func:`load_dotenv`."""
+    if not _ENV_KEY_RE.match(key):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid env var name. Use letters, digits, and underscores, and do not start with a digit.",
+        )
+    if "\n" in req.value or "\r" in req.value or "\0" in req.value:
+        raise HTTPException(
+            status_code=400,
+            detail="Env var values must be single-line strings.",
+        )
+
+    env = _read_env_file()
+    env[key] = req.value
+    _write_env_file(env)
+    # Refresh the running process so the next agent creation sees it
+    os.environ[key] = req.value
+    evicted = await manager.evict_user(_get_user_id())
+    return {"ok": True, "key": key, "evicted_sessions": evicted}
+
+
+@app.delete("/v1/config/env/{key}")
+async def delete_env_value(key: str):
+    """Remove a single env var."""
+    if not _ENV_KEY_RE.match(key):
+        raise HTTPException(status_code=400, detail="Invalid env var name.")
+    env = _read_env_file()
+    if key not in env:
+        raise HTTPException(status_code=404, detail=f"Env var '{key}' not found.")
+    env.pop(key)
+    _write_env_file(env)
+    os.environ.pop(key, None)
+    evicted = await manager.evict_user(_get_user_id())
+    return {"ok": True, "evicted_sessions": evicted}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# CLI config (cli_config.json) — structured agent settings
+# ════════════════════════════════════════════════════════════════════════════
+
+# Keys writable through the API. ``api_key`` family is intentionally excluded
+# — those should go through /v1/config/env instead so they live in .env and
+# benefit from masking.
+_CLI_CONFIG_WRITABLE = {
+    "user_id",
+    "defult_config_name",
+    "plan_mode",
+    "workspace_enabled",
+    "dangerous_allowed",
+}
+
+# Keys masked when returned via GET.
+_CLI_CONFIG_SENSITIVE = {
+    "api_key",
+    "anthropic_api_key",
+    "openai_api_key",
+}
+
+
+class CliConfigSetRequest(BaseModel):
+    value: Any = Field(..., description="New value. Booleans, ints, strings, or null.")
+
+
+@app.get("/v1/config/cli")
+async def get_cli_config():
+    """Return cli_config.json with sensitive values masked."""
+    from drsai.backend.cli.config import load_config, CLI_CONFIG_PATH
+
+    cfg = load_config()
+    safe = dict(cfg)
+    for k in _CLI_CONFIG_SENSITIVE:
+        v = safe.get(k)
+        if isinstance(v, str) and v:
+            safe[k] = f"***{v[-4:]}" if len(v) > 4 else "***"
+    return {"path": str(CLI_CONFIG_PATH), "config": safe}
+
+
+@app.put("/v1/config/cli/{key}")
+async def set_cli_config(key: str, req: CliConfigSetRequest):
+    """Update a single cli_config.json key, then evict cached agents."""
+    if key not in _CLI_CONFIG_WRITABLE:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Key '{key}' is not writable. Writable keys: "
+                f"{sorted(_CLI_CONFIG_WRITABLE)}"
+            ),
+        )
+    from drsai.backend.cli.config import update_config
+
+    update_config(**{key: req.value})
+    evicted = await manager.evict_user(_get_user_id())
+    return {"ok": True, "key": key, "value": req.value, "evicted_sessions": evicted}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Platform toggles (telegram / discord / slack / whatsapp / signal)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# These are placeholder endpoints kept compatible with the desktop UI. drsai
+# itself does not yet ship messaging-platform plugins; the on/off state is
+# persisted in cli_config.json under ``platforms`` so it survives restarts
+# and is available the moment plugins land.
+
+_SUPPORTED_PLATFORMS = ("telegram", "discord", "slack", "whatsapp", "signal")
+
+
+class PlatformToggleRequest(BaseModel):
+    enabled: bool
+
+
+@app.get("/v1/config/platforms")
+async def list_platforms():
+    """Return ``{platform: enabled}`` for every supported platform."""
+    from drsai.backend.cli.config import load_config
+
+    cfg = load_config()
+    raw = cfg.get("platforms") or {}
+    return {
+        "platforms": {p: bool(raw.get(p, False)) for p in _SUPPORTED_PLATFORMS},
+        "implemented": False,
+        "note": (
+            "Stored in cli_config.json[platforms]. drsai does not yet ship "
+            "messaging-platform plugins; the toggles are persisted for future use."
+        ),
+    }
+
+
+@app.put("/v1/config/platforms/{name}")
+async def set_platform(name: str, req: PlatformToggleRequest):
+    """Toggle a single platform on/off (persisted; not yet runtime-effective)."""
+    if name not in _SUPPORTED_PLATFORMS:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown platform '{name}'. Supported: {list(_SUPPORTED_PLATFORMS)}",
+        )
+    from drsai.backend.cli.config import load_config, save_config
+
+    cfg = load_config()
+    platforms = dict(cfg.get("platforms") or {})
+    platforms[name] = bool(req.enabled)
+    cfg["platforms"] = platforms
+    save_config(cfg)
+    return {"ok": True, "name": name, "enabled": platforms[name]}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Logs — tail FS_DIR/logs/*.log files
+# ════════════════════════════════════════════════════════════════════════════
+#
+# drsai's default logger only writes to stderr; persistent log files are
+# created by the desktop launcher (which captures stderr to disk) and by
+# any opt-in ``logger.add(...)`` the application sets up. This endpoint
+# returns the tail of whatever it finds in FS_DIR/logs/, defaulting to the
+# names the desktop UI knows about.
+
+_LOG_DIR = Path(FS_DIR) / "logs"
+_ALLOWED_LOG_NAMES = ("agent.log", "errors.log", "gateway.log")
+
+
+@app.get("/v1/logs")
+async def get_logs(
+    file: str = Query(default="agent.log", description="Log file name."),
+    lines: int = Query(default=200, ge=1, le=5000),
+):
+    """Return the last ``lines`` lines of FS_DIR/logs/<file>.
+
+    The ``file`` argument is restricted to a small allowlist to avoid path
+    traversal. Missing files return an empty payload instead of 404 so the
+    UI can render a "no logs yet" state.
+    """
+    if file not in _ALLOWED_LOG_NAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown log file '{file}'. Allowed: {list(_ALLOWED_LOG_NAMES)}",
+        )
+    full_path = _LOG_DIR / file
+    if not full_path.exists():
+        return {"path": str(full_path), "content": "", "exists": False}
+    try:
+        # Tail without loading the whole file: read last ~64KB then split.
+        with full_path.open("rb") as f:
+            try:
+                f.seek(-64 * 1024, os.SEEK_END)
+            except OSError:
+                f.seek(0)
+            data = f.read().decode("utf-8", errors="replace")
+        all_lines = data.splitlines()
+        tail = "\n".join(all_lines[-lines:])
+        return {"path": str(full_path), "content": tail, "exists": True}
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read log: {e}")
+
+
+@app.get("/v1/logs/list")
+async def list_log_files():
+    """Return which of the well-known log files exist."""
+    if not _LOG_DIR.exists():
+        return {"path": str(_LOG_DIR), "files": []}
+    files: list[dict[str, Any]] = []
+    for name in _ALLOWED_LOG_NAMES:
+        p = _LOG_DIR / name
+        if p.exists():
+            try:
+                files.append({"name": name, "size": p.stat().st_size})
+            except OSError:
+                files.append({"name": name, "size": None})
+    return {"path": str(_LOG_DIR), "files": files}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Cron jobs — wraps modules.agents.skills_agent.managers.ScheduledTaskManager
+# ════════════════════════════════════════════════════════════════════════════
+#
+# One manager per user_id, stored at WORKDIR/<user_id>/scheduler/. A single
+# background scheduler-loop runs per manager and calls back into
+# AgentManager.run_stream() when a task fires, so cron tasks share the same
+# agent + Thread state machinery as interactive chat.
+
+from drsai.modules.agents.skills_agent.managers.scheduled_task_manager import (
+    ScheduledTaskManager,
+    ScheduledTask,
+    ScheduleType,
+    TaskStatus,
+    TaskNotification,
+)
+
+
+_schedulers: dict[str, ScheduledTaskManager] = {}
+_scheduler_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _agent_executor_for(user_id: str):
+    """Build the ``agent_executor`` callable that ScheduledTaskManager invokes
+    when a task fires. The returned coroutine drains AgentManager.run_stream
+    into a text result, mirroring how interactive chat consumes events.
+    """
+    async def _exec(
+        uid: str,
+        sid: str,
+        prompt: str,
+        output_file: Path,
+        execution_context: dict | None = None,
+    ) -> str:
+        del execution_context  # captured at task creation; the run_stream call
+                               # path uses the per-thread saved state already.
+        result_parts: list[str] = []
+        try:
+            async for event in manager.run_stream(
+                task=prompt,
+                thread_id=sid,
+                user_id=uid,
+                cancellation_token=None,
+            ):
+                # Stream text deltas to the output file while collecting
+                # them so the final string is the full assistant response.
+                text = getattr(event, "content", None)
+                if isinstance(text, str) and text:
+                    result_parts.append(text)
+                    try:
+                        with open(output_file, "a", encoding="utf-8") as f:
+                            f.write(text)
+                    except OSError:
+                        pass
+        except Exception as e:
+            logger.error(f"cron task {sid} agent_executor failed: {e}")
+            return f"[error] {e}"
+        return "".join(result_parts)
+    return _exec
+
+
+async def _scheduler_for(user_id: str | None = None) -> ScheduledTaskManager:
+    """Get-or-create the per-user ScheduledTaskManager and ensure it's running."""
+    uid = user_id or _get_user_id()
+    if uid not in _scheduler_locks:
+        _scheduler_locks[uid] = asyncio.Lock()
+    async with _scheduler_locks[uid]:
+        if uid in _schedulers:
+            return _schedulers[uid]
+        from drsai.backend.run_drsai_agent_factory import WORKDIR
+        work_dir = Path(WORKDIR) / uid / "scheduler"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        executor = await _agent_executor_for(uid)
+        sm = ScheduledTaskManager(work_dir=work_dir, agent_executor=executor)
+        await sm.start()
+        _schedulers[uid] = sm
+        logger.info(f"Started ScheduledTaskManager for user {uid}")
+        return sm
+
+
+# Renderer-facing shape — preserves desktop's existing field names.
+def _task_to_desktop(t: ScheduledTask) -> dict:
+    state_map = {
+        TaskStatus.ENABLED: "active",
+        TaskStatus.RUNNING: "active",
+        TaskStatus.DISABLED: "paused",
+        TaskStatus.ERROR: "active",
+    }
+    return {
+        "id": t.task_id,
+        "name": t.task_name,
+        "schedule": t.schedule_config,
+        "prompt": t.prompt,
+        "state": state_map.get(t.status, "active"),
+        "enabled": t.status != TaskStatus.DISABLED,
+        "next_run_at": t.next_run,
+        "last_run_at": t.last_run,
+        "last_status": "error" if t.error_count and (t.last_error or "") else (
+            "success" if t.run_count else None
+        ),
+        "last_error": t.last_error,
+        "repeat": None,
+        "deliver": [],
+        "skills": [],
+        "script": None,
+    }
+
+
+class CronCreateRequest(BaseModel):
+    schedule: str = Field(..., description="cron expression / interval seconds / ISO datetime")
+    prompt: str = Field(..., min_length=1)
+    name: str | None = None
+    deliver: str | None = None
+    schedule_type: str | None = Field(
+        default=None,
+        description="cron | interval | datetime. Inferred from ``schedule`` if omitted.",
+    )
+
+
+def _infer_schedule_type(schedule: str) -> ScheduleType:
+    s = (schedule or "").strip()
+    # Pure integer → interval seconds
+    if s.isdigit():
+        return ScheduleType.INTERVAL
+    # ISO datetime-ish
+    if re.match(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", s):
+        return ScheduleType.DATETIME
+    return ScheduleType.CRON
+
+
+@app.get("/v1/cronjobs")
+async def list_cron_jobs(
+    include_disabled: bool = Query(default=True),
+    user_id: str | None = Query(default=None),
+):
+    """List the user's cron jobs."""
+    sm = await _scheduler_for(user_id)
+    tasks = await sm.list_tasks(user_id=user_id or _get_user_id())
+    if not include_disabled:
+        tasks = [t for t in tasks if t.status != TaskStatus.DISABLED]
+    return [_task_to_desktop(t) for t in tasks]
+
+
+@app.post("/v1/cronjobs")
+async def create_cron_job(
+    req: CronCreateRequest,
+    user_id: str | None = Query(default=None),
+):
+    """Schedule a new cron job."""
+    uid = user_id or _get_user_id()
+    sm = await _scheduler_for(uid)
+    sched_type = (
+        ScheduleType(req.schedule_type)
+        if req.schedule_type in {st.value for st in ScheduleType}
+        else _infer_schedule_type(req.schedule)
+    )
+    task = ScheduledTask(
+        user_id=uid,
+        session_id=f"cron-{uuid.uuid4().hex[:8]}",
+        task_name=req.name or req.prompt[:40],
+        prompt=req.prompt,
+        schedule_type=sched_type,
+        schedule_config=req.schedule,
+    )
+    await sm.add_task(task)
+    return _task_to_desktop(task)
+
+
+@app.delete("/v1/cronjobs/{job_id}")
+async def delete_cron_job(
+    job_id: str,
+    user_id: str | None = Query(default=None),
+):
+    sm = await _scheduler_for(user_id)
+    ok = await sm.remove_task(job_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Cron job '{job_id}' not found")
+    return {"ok": True}
+
+
+@app.post("/v1/cronjobs/{job_id}/pause")
+async def pause_cron_job(
+    job_id: str,
+    user_id: str | None = Query(default=None),
+):
+    sm = await _scheduler_for(user_id)
+    task = await sm.get_task(job_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Cron job '{job_id}' not found")
+    await sm.update_task_status(job_id, TaskStatus.DISABLED)
+    return _task_to_desktop(await sm.get_task(job_id))
+
+
+@app.post("/v1/cronjobs/{job_id}/resume")
+async def resume_cron_job(
+    job_id: str,
+    user_id: str | None = Query(default=None),
+):
+    sm = await _scheduler_for(user_id)
+    task = await sm.get_task(job_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Cron job '{job_id}' not found")
+    await sm.update_task_status(job_id, TaskStatus.ENABLED)
+    return _task_to_desktop(await sm.get_task(job_id))
+
+
+@app.post("/v1/cronjobs/{job_id}/trigger")
+async def trigger_cron_job(
+    job_id: str,
+    user_id: str | None = Query(default=None),
+):
+    """Fire a cron job immediately (out of band)."""
+    sm = await _scheduler_for(user_id)
+    task = await sm.get_task(job_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Cron job '{job_id}' not found")
+    asyncio.create_task(sm._execute_task(task))
+    return _task_to_desktop(task)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Kanban — file-backed boards / tasks
+# ════════════════════════════════════════════════════════════════════════════
+#
+# drsai has no native kanban runtime; this is a thin JSON-file store keyed by
+# user_id so the desktop Kanban screen has somewhere to persist state until a
+# real backend lands. Lives at WORKDIR/<user_id>/kanban/{boards,tasks}.json.
+
+_KANBAN_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _kanban_dir(user_id: str | None = None) -> Path:
+    from drsai.backend.run_drsai_agent_factory import WORKDIR
+    uid = user_id or _get_user_id()
+    d = Path(WORKDIR) / uid / "kanban"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+async def _kanban_lock(user_id: str | None = None) -> asyncio.Lock:
+    uid = user_id or _get_user_id()
+    if uid not in _KANBAN_LOCKS:
+        _KANBAN_LOCKS[uid] = asyncio.Lock()
+    return _KANBAN_LOCKS[uid]
+
+
+def _read_kanban(user_id: str | None = None) -> dict:
+    """Load the JSON store; bootstrap a single default board on first use."""
+    p = _kanban_dir(user_id) / "store.json"
+    if not p.exists():
+        data = {
+            "current_board": "default",
+            "boards": {
+                "default": {
+                    "slug": "default",
+                    "name": "Default",
+                    "archived": False,
+                    "created_at": datetime.now().isoformat(),
+                }
+            },
+            "tasks": {},
+        }
+        p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return data
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {"current_board": "default", "boards": {}, "tasks": {}}
+
+
+def _write_kanban(data: dict, user_id: str | None = None) -> None:
+    p = _kanban_dir(user_id) / "store.json"
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+class KanbanBoardCreate(BaseModel):
+    slug: str
+    name: str | None = None
+    switch: bool = False
+
+
+class KanbanTaskCreate(BaseModel):
+    title: str
+    body: str | None = None
+    assignee: str | None = None
+    priority: int = 0
+    tenant: str | None = None
+    workspace: str | None = None
+    triage: bool = False
+    skills: list[str] = Field(default_factory=list)
+    max_retries: int = 0
+    board: str | None = None
+
+
+@app.get("/v1/kanban/boards")
+async def kanban_list_boards(
+    include_archived: bool = Query(default=False),
+    user_id: str | None = Query(default=None),
+):
+    lock = await _kanban_lock(user_id)
+    async with lock:
+        data = _read_kanban(user_id)
+    boards = list(data.get("boards", {}).values())
+    if not include_archived:
+        boards = [b for b in boards if not b.get("archived")]
+    return boards
+
+
+@app.get("/v1/kanban/board")
+async def kanban_current_board(user_id: str | None = Query(default=None)):
+    lock = await _kanban_lock(user_id)
+    async with lock:
+        data = _read_kanban(user_id)
+    slug = data.get("current_board") or "default"
+    return data.get("boards", {}).get(slug) or {"slug": slug, "name": slug}
+
+
+@app.post("/v1/kanban/boards")
+async def kanban_create_board(
+    req: KanbanBoardCreate,
+    user_id: str | None = Query(default=None),
+):
+    lock = await _kanban_lock(user_id)
+    async with lock:
+        data = _read_kanban(user_id)
+        if req.slug in data.get("boards", {}):
+            raise HTTPException(status_code=409, detail=f"Board '{req.slug}' already exists")
+        board = {
+            "slug": req.slug,
+            "name": req.name or req.slug,
+            "archived": False,
+            "created_at": datetime.now().isoformat(),
+        }
+        data.setdefault("boards", {})[req.slug] = board
+        if req.switch:
+            data["current_board"] = req.slug
+        _write_kanban(data, user_id)
+    return board
+
+
+@app.delete("/v1/kanban/boards/{slug}")
+async def kanban_remove_board(
+    slug: str,
+    hard_delete: bool = Query(default=False),
+    user_id: str | None = Query(default=None),
+):
+    lock = await _kanban_lock(user_id)
+    async with lock:
+        data = _read_kanban(user_id)
+        boards = data.get("boards", {})
+        if slug not in boards:
+            raise HTTPException(status_code=404, detail=f"Board '{slug}' not found")
+        if hard_delete:
+            boards.pop(slug, None)
+            data["tasks"] = {
+                tid: t for tid, t in data.get("tasks", {}).items() if t.get("board") != slug
+            }
+        else:
+            boards[slug]["archived"] = True
+        if data.get("current_board") == slug:
+            remaining = [s for s, b in boards.items() if not b.get("archived")]
+            data["current_board"] = remaining[0] if remaining else "default"
+        _write_kanban(data, user_id)
+    return {"ok": True}
+
+
+@app.post("/v1/kanban/boards/{slug}/switch")
+async def kanban_switch_board(
+    slug: str,
+    user_id: str | None = Query(default=None),
+):
+    lock = await _kanban_lock(user_id)
+    async with lock:
+        data = _read_kanban(user_id)
+        if slug not in data.get("boards", {}):
+            raise HTTPException(status_code=404, detail=f"Board '{slug}' not found")
+        data["current_board"] = slug
+        _write_kanban(data, user_id)
+    return data["boards"][slug]
+
+
+@app.get("/v1/kanban/tasks")
+async def kanban_list_tasks(
+    board: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    assignee: str | None = Query(default=None),
+    include_archived: bool = Query(default=False),
+    user_id: str | None = Query(default=None),
+):
+    lock = await _kanban_lock(user_id)
+    async with lock:
+        data = _read_kanban(user_id)
+    board_slug = board or data.get("current_board") or "default"
+    tasks = [
+        t for t in data.get("tasks", {}).values()
+        if (t.get("board") or "default") == board_slug
+    ]
+    if status:
+        tasks = [t for t in tasks if t.get("status") == status]
+    if assignee:
+        tasks = [t for t in tasks if t.get("assignee") == assignee]
+    if not include_archived:
+        tasks = [t for t in tasks if not t.get("archived")]
+    tasks.sort(key=lambda t: (t.get("created_at") or ""))
+    return tasks
+
+
+@app.get("/v1/kanban/tasks/{task_id}")
+async def kanban_get_task(
+    task_id: str,
+    user_id: str | None = Query(default=None),
+):
+    lock = await _kanban_lock(user_id)
+    async with lock:
+        data = _read_kanban(user_id)
+    task = data.get("tasks", {}).get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return task
+
+
+@app.post("/v1/kanban/tasks")
+async def kanban_create_task(
+    req: KanbanTaskCreate,
+    user_id: str | None = Query(default=None),
+):
+    lock = await _kanban_lock(user_id)
+    async with lock:
+        data = _read_kanban(user_id)
+        board_slug = req.board or data.get("current_board") or "default"
+        task = {
+            "id": f"k-{uuid.uuid4().hex[:8]}",
+            "board": board_slug,
+            "title": req.title,
+            "body": req.body or "",
+            "assignee": req.assignee,
+            "priority": req.priority,
+            "tenant": req.tenant,
+            "workspace": req.workspace,
+            "skills": req.skills,
+            "max_retries": req.max_retries,
+            "status": "triage" if req.triage else "open",
+            "blocked": False,
+            "block_reason": None,
+            "archived": False,
+            "comments": [],
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+        }
+        data.setdefault("tasks", {})[task["id"]] = task
+        _write_kanban(data, user_id)
+    return task
+
+
+class KanbanTaskUpdate(BaseModel):
+    title: str | None = None
+    body: str | None = None
+    assignee: str | None = None
+    status: str | None = None
+    archived: bool | None = None
+    blocked: bool | None = None
+    block_reason: str | None = None
+
+
+@app.patch("/v1/kanban/tasks/{task_id}")
+async def kanban_update_task(
+    task_id: str,
+    req: KanbanTaskUpdate,
+    user_id: str | None = Query(default=None),
+):
+    lock = await _kanban_lock(user_id)
+    async with lock:
+        data = _read_kanban(user_id)
+        task = data.get("tasks", {}).get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+        for k, v in req.model_dump(exclude_unset=True).items():
+            task[k] = v
+        task["updated_at"] = datetime.now().isoformat()
+        _write_kanban(data, user_id)
+    return task
+
+
+class KanbanCommentCreate(BaseModel):
+    body: str
+
+
+@app.post("/v1/kanban/tasks/{task_id}/comments")
+async def kanban_comment_task(
+    task_id: str,
+    req: KanbanCommentCreate,
+    user_id: str | None = Query(default=None),
+):
+    lock = await _kanban_lock(user_id)
+    async with lock:
+        data = _read_kanban(user_id)
+        task = data.get("tasks", {}).get(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+        comment = {
+            "id": f"c-{uuid.uuid4().hex[:6]}",
+            "body": req.body,
+            "created_at": datetime.now().isoformat(),
+        }
+        task.setdefault("comments", []).append(comment)
+        task["updated_at"] = comment["created_at"]
+        _write_kanban(data, user_id)
+    return comment
 
 
 

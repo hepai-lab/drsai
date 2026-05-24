@@ -31,7 +31,7 @@ import {
 } from "./installer";
 import {
   getModelCatalog,
-  getModelConfig,
+  getModelDetail,
   createModelConfig,
   updateModelConfig,
   deleteModelConfig,
@@ -49,6 +49,9 @@ import {
   restartGateway,
   ensureSshTunnelIfNeeded,
   setSshRemoteApiKey,
+  pauseThread,
+  resumeThread,
+  stopThread,
 } from "./drsai";
 import {
   startSshTunnel,
@@ -113,7 +116,7 @@ import {
   writeUserProfile,
 } from "./memory";
 import { readSoul, writeSoul, resetSoul } from "./soul";
-import { getToolsets, setToolsetEnabled } from "./tools";
+import { listTools, createTool, updateTool, deleteTool, type ToolEntry } from "./tools";
 import {
   listInstalledSkills,
   listInstalledSkillsAsync,
@@ -175,8 +178,6 @@ import {
   sshReadSoul,
   sshWriteSoul,
   sshResetSoul,
-  sshGetToolsets,
-  sshSetToolsetEnabled,
   sshReadEnv,
   sshSetEnvValue,
   sshGetConfigValue,
@@ -426,15 +427,9 @@ function setupIPC(): void {
         await sshSetEnvValue(conn.ssh, key, value, profile);
         return true;
       }
-      setEnvValue(key, value, profile);
-      // Restart gateway so it picks up the new API key
-      if (
-        (isGatewayRunning() && key.endsWith("_API_KEY")) ||
-        key.endsWith("_TOKEN") ||
-        key === "HF_TOKEN"
-      ) {
-        restartGateway(profile);
-      }
+      // gateway PUT /v1/config/env evicts cached agents so the next chat
+      // turn picks up the new value via load_dotenv — no restart needed.
+      await setEnvValue(key, value, profile);
       return true;
     },
   );
@@ -453,7 +448,7 @@ function setupIPC(): void {
         await sshSetConfigValue(conn.ssh, key, value, profile);
         return true;
       }
-      setConfigValue(key, value, profile);
+      await setConfigValue(key, value, profile);
       return true;
     },
   );
@@ -699,6 +694,23 @@ function setupIPC(): void {
     }
   });
 
+  // Thread control — gateway-side pause/resume/stop with state persistence
+  ipcMain.handle(
+    "pause-thread",
+    async (_event, threadId: string, userId?: string) =>
+      pauseThread(threadId, userId),
+  );
+  ipcMain.handle(
+    "resume-thread",
+    async (_event, threadId: string, userId?: string) =>
+      resumeThread(threadId, userId),
+  );
+  ipcMain.handle(
+    "stop-thread",
+    async (_event, threadId: string, userId?: string) =>
+      stopThread(threadId, userId),
+  );
+
   // Gateway
   ipcMain.handle("start-gateway", async () => {
     const conn = getConnectionConfig();
@@ -731,11 +743,9 @@ function setupIPC(): void {
         await sshSetPlatformEnabled(conn.ssh, platform, enabled, profile);
         return true;
       }
-      setPlatformEnabled(platform, enabled, profile);
-      // Restart gateway so it picks up the new platform config
-      if (isGatewayRunning()) {
-        restartGateway(profile);
-      }
+      // gateway persists the flag in cli_config.json[platforms]. drsai has
+      // no messaging-platform runtime yet, so no agent restart is required.
+      await setPlatformEnabled(platform, enabled, profile);
       return true;
     },
   );
@@ -830,19 +840,17 @@ function setupIPC(): void {
     return resetSoul(profile);
   });
 
-  // Tools
-  ipcMain.handle("get-toolsets", (_event, profile?: string) => {
-    const conn = getConnectionConfig();
-    if (conn.mode === "ssh" && conn.ssh) return sshGetToolsets(conn.ssh, profile);
-    return getToolsets(profile);
-  });
+  // Tools (MCP servers + local-tool descriptions in TOOLS_CONFIG.json)
+  ipcMain.handle("list-tools", async () => listTools());
+  ipcMain.handle("create-tool", async (_event, entry: ToolEntry) =>
+    createTool(entry),
+  );
   ipcMain.handle(
-    "set-toolset-enabled",
-    (_event, key: string, enabled: boolean, profile?: string) => {
-      const conn = getConnectionConfig();
-      if (conn.mode === "ssh" && conn.ssh) return sshSetToolsetEnabled(conn.ssh, key, enabled, profile);
-      return setToolsetEnabled(key, enabled, profile);
-    },
+    "update-tool",
+    async (_event, index: number, entry: ToolEntry) => updateTool(index, entry),
+  );
+  ipcMain.handle("delete-tool", async (_event, index: number) =>
+    deleteTool(index),
   );
 
   // Skills
@@ -926,7 +934,7 @@ function setupIPC(): void {
     return getModelCatalog();
   });
   ipcMain.handle("get-model-detail", async (_event, alias: string) => {
-    return getModelConfig(alias);
+    return getModelDetail(alias);
   });
   ipcMain.handle("add-model", async (_event, body: {
     alias: string; model: string; token_limit?: number;
