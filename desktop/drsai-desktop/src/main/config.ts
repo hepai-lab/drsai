@@ -1,7 +1,74 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import http from "http";
 import { DRSAI_HOME } from "./installer";
 import { profilePaths, escapeRegex, safeWriteFile } from "./utils";
+
+// ── Gateway HTTP helpers ─────────────────────────────────
+//
+// env / config-yaml / platform reads-and-writes go through the DrSai backend
+// gateway so the running agent picks up changes (env -> dotenv reload via
+// agent re-create; cli_config.json -> structured settings). The "profile"
+// arg is preserved for IPC signature compatibility but ignored — drsai has
+// no profile concept yet (user_id is the equivalent).
+
+const DRSAI_API_PORT_FOR_CONFIG = parseInt(
+  process.env.DRSAI_API_PORT || "8642",
+  10,
+);
+const DRSAI_API_URL_FOR_CONFIG = `http://127.0.0.1:${DRSAI_API_PORT_FOR_CONFIG}`;
+
+function gatewayRequest<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const url = `${DRSAI_API_URL_FOR_CONFIG}${path}`;
+    const bodyStr = body !== undefined ? JSON.stringify(body) : undefined;
+    const req = http.request(
+      url,
+      {
+        method,
+        timeout: 5000,
+        headers: bodyStr
+          ? {
+              "Content-Type": "application/json",
+              "Content-Length": String(Buffer.byteLength(bodyStr)),
+            }
+          : {},
+      },
+      (res) => {
+        let data = "";
+        res.on("data", (d: Buffer) => (data += d.toString()));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 400) {
+            let detail = data;
+            try {
+              detail = JSON.parse(data).detail || data;
+            } catch {
+              /* keep raw */
+            }
+            reject(new Error(detail));
+            return;
+          }
+          try {
+            resolve(data ? (JSON.parse(data) as T) : ({} as T));
+          } catch (e) {
+            reject(e);
+          }
+        });
+      },
+    );
+    req.on("error", reject);
+    req.on("timeout", () => {
+      req.destroy();
+      reject(new Error("Gateway config request timed out"));
+    });
+    if (bodyStr) req.write(bodyStr);
+    req.end();
+  });
+}
 
 // ── Connection Config (local / remote / ssh) ─────────────
 
@@ -158,72 +225,39 @@ function invalidateCache(prefix: string): void {
   }
 }
 
-export function readEnv(profile?: string): Record<string, string> {
-  const cacheKey = `env:${profile || "default"}`;
-  const cached = getCached<Record<string, string>>(cacheKey);
-  if (cached) return cached;
+// ── Env (.env) — backed by /v1/config/env ───────────────
+//
+// The renderer treats these as sync (no await on the IPC return), but the
+// HTTP roundtrip forces async. The returned Promise resolves through ipcMain
+// transparently. The "profile" argument is ignored — drsai has a single
+// shared .env at FS_DIR/.env.
 
-  const { envFile } = profilePaths(profile);
-  if (!existsSync(envFile)) return {};
-
-  const content = readFileSync(envFile, "utf-8");
-  const result: Record<string, string> = {};
-
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("#") || !trimmed.includes("=")) continue;
-
-    const eqIndex = trimmed.indexOf("=");
-    const key = trimmed.substring(0, eqIndex).trim();
-    let value = trimmed.substring(eqIndex + 1).trim();
-
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-
-    if (value) result[key] = value;
+export async function readEnv(
+  _profile?: string,
+): Promise<Record<string, string>> {
+  try {
+    const resp = await gatewayRequest<{
+      path: string;
+      env: Record<string, string>;
+    }>("GET", "/v1/config/env?masked=false");
+    return resp.env || {};
+  } catch (err) {
+    console.warn("[config] readEnv via gateway failed:", (err as Error).message);
+    return {};
   }
-
-  setCache(cacheKey, result);
-  return result;
 }
 
-export function setEnvValue(
+export async function setEnvValue(
   key: string,
   value: string,
-  profile?: string,
-): void {
+  _profile?: string,
+): Promise<void> {
   validateEnvEntry(key, value);
-
-  const { envFile } = profilePaths(profile);
-  invalidateCache(`env:${profile || "default"}`);
-
-  if (!existsSync(envFile)) {
-    safeWriteFile(envFile, `${key}=${value}\n`);
-    return;
-  }
-
-  const content = readFileSync(envFile, "utf-8");
-  const lines = content.split("\n");
-  let found = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (trimmed.match(new RegExp(`^#?\\s*${escapeRegex(key)}\\s*=`))) {
-      lines[i] = `${key}=${value}`;
-      found = true;
-      break;
-    }
-  }
-
-  if (!found) {
-    lines.push(`${key}=${value}`);
-  }
-
-  safeWriteFile(envFile, lines.join("\n"));
+  await gatewayRequest<{ ok: boolean }>(
+    "PUT",
+    `/v1/config/env/${encodeURIComponent(key)}`,
+    { value },
+  );
 }
 
 export function validateEnvEntry(key: string, value: string): void {
@@ -238,38 +272,65 @@ export function validateEnvEntry(key: string, value: string): void {
   }
 }
 
-export function getConfigValue(key: string, profile?: string): string | null {
-  const { configFile } = profilePaths(profile);
-  if (!existsSync(configFile)) return null;
+// ── Config (cli_config.json) — backed by /v1/config/cli ──
+//
+// Only flat keys that match cli_config.json fields are writable
+// (plan_mode / workspace_enabled / dangerous_allowed / user_id /
+// defult_config_name).  Dotted/legacy keys like ``agent.service_tier`` or
+// ``network.proxy`` are hermes-specific and not implemented in drsai —
+// reads return null, writes are silently ignored so renderer code that
+// probes for them stays safe.
 
-  const content = readFileSync(configFile, "utf-8");
-  const regex = new RegExp(
-    `^\\s*${escapeRegex(key)}:\\s*["']?([^"'\\n#]+)["']?`,
-    "m",
-  );
-  const match = content.match(regex);
-  return match ? match[1].trim() : null;
+const _DOTTED_KEY_RE = /\./;
+
+export async function getConfigValue(
+  key: string,
+  _profile?: string,
+): Promise<string | null> {
+  if (_DOTTED_KEY_RE.test(key)) return null;
+  try {
+    const resp = await gatewayRequest<{
+      path: string;
+      config: Record<string, unknown>;
+    }>("GET", "/v1/config/cli");
+    const v = resp.config?.[key];
+    if (v === undefined || v === null) return null;
+    if (typeof v === "string") return v;
+    if (typeof v === "boolean") return v ? "true" : "false";
+    return String(v);
+  } catch (err) {
+    console.warn(
+      "[config] getConfigValue via gateway failed:",
+      (err as Error).message,
+    );
+    return null;
+  }
 }
 
-export function setConfigValue(
+export async function setConfigValue(
   key: string,
   value: string,
-  profile?: string,
-): void {
-  const { configFile } = profilePaths(profile);
-  if (!existsSync(configFile)) return;
-
-  let content = readFileSync(configFile, "utf-8");
-  const regex = new RegExp(
-    `^(\\s*#?\\s*${escapeRegex(key)}:\\s*)["']?[^"'\\n#]*["']?`,
-    "m",
-  );
-
-  if (regex.test(content)) {
-    content = content.replace(regex, `$1"${value}"`);
+  _profile?: string,
+): Promise<void> {
+  if (_DOTTED_KEY_RE.test(key)) return; // hermes-only key — no-op
+  // Coerce well-known booleans
+  let payload: string | boolean = value;
+  if (value === "true") payload = true;
+  else if (value === "false") payload = false;
+  try {
+    await gatewayRequest<{ ok: boolean }>(
+      "PUT",
+      `/v1/config/cli/${encodeURIComponent(key)}`,
+      { value: payload },
+    );
+  } catch (err) {
+    // 400 means non-writable key — log and ignore so legacy renderer
+    // code (e.g. trying to set hermes-only flags) doesn't crash.
+    console.warn(
+      `[config] setConfigValue('${key}') failed:`,
+      (err as Error).message,
+    );
   }
-
-  safeWriteFile(configFile, content);
 }
 
 export function getModelConfig(profile?: string): {
@@ -364,93 +425,46 @@ export function getDrsaiHome(profile?: string): string {
   return profilePaths(profile).home;
 }
 
-// ── Platform enabled/disabled in config.yaml ────────────
+// ── Platform toggles — backed by /v1/config/platforms ────
+//
+// drsai does not yet ship messaging-platform plugins; the gateway persists
+// these flags in cli_config.json[platforms] so the UI state survives
+// restarts and lights up the moment plugins land.
 
-const SUPPORTED_PLATFORMS = [
-  "telegram",
-  "discord",
-  "slack",
-  "whatsapp",
-  "signal",
-];
-
-export function getPlatformEnabled(profile?: string): Record<string, boolean> {
-  const { configFile } = profilePaths(profile);
-  if (!existsSync(configFile)) return {};
-
-  const content = readFileSync(configFile, "utf-8");
-  const result: Record<string, boolean> = {};
-
-  for (const platform of SUPPORTED_PLATFORMS) {
-    // Match "  platform:\n    enabled: true/false" under the platforms: block
-    const re = new RegExp(
-      `^[ \\t]+${platform}:\\s*\\n[ \\t]+enabled:\\s*(true|false)`,
-      "m",
+export async function getPlatformEnabled(
+  _profile?: string,
+): Promise<Record<string, boolean>> {
+  try {
+    const resp = await gatewayRequest<{
+      platforms: Record<string, boolean>;
+    }>("GET", "/v1/config/platforms");
+    return resp.platforms || {};
+  } catch (err) {
+    console.warn(
+      "[config] getPlatformEnabled via gateway failed:",
+      (err as Error).message,
     );
-    const match = content.match(re);
-    result[platform] = match ? match[1] === "true" : false;
+    return {};
   }
-
-  return result;
 }
 
-export function setPlatformEnabled(
+export async function setPlatformEnabled(
   platform: string,
   enabled: boolean,
-  profile?: string,
-): void {
-  if (!SUPPORTED_PLATFORMS.includes(platform)) return;
-
-  const { configFile } = profilePaths(profile);
-  if (!existsSync(configFile)) return;
-
-  let content = readFileSync(configFile, "utf-8");
-
-  // Check if the platform entry already exists under platforms:
-  const existingRe = new RegExp(
-    `^([ \\t]+${platform}:\\s*\\n[ \\t]+enabled:\\s*)(?:true|false)`,
-    "m",
-  );
-
-  if (existingRe.test(content)) {
-    // Update existing entry
-    content = content.replace(existingRe, `$1${enabled}`);
-  } else {
-    // Append new platform entry after the platforms: block
-    // Find the platforms: line and insert after the last existing platform entry
-    const platformsIdx = content.indexOf("\nplatforms:");
-    if (platformsIdx === -1) {
-      // No platforms section at all — append one
-      content += `\nplatforms:\n  ${platform}:\n    enabled: ${enabled}\n`;
-    } else {
-      // Insert the new platform at the end of the platforms block.
-      // Find the next top-level key (non-indented, non-comment, non-empty line)
-      // after the platforms: line.
-      const afterPlatforms = content.substring(platformsIdx + 1);
-      const lines = afterPlatforms.split("\n");
-      let insertOffset = platformsIdx + 1; // after the \n
-      // Skip the "platforms:" line itself
-      insertOffset += lines[0].length + 1;
-
-      // Skip all indented lines (children of platforms:)
-      for (let i = 1; i < lines.length; i++) {
-        const line = lines[i];
-        if (line.trim() === "" || /^\s/.test(line)) {
-          insertOffset += line.length + 1;
-        } else {
-          break;
-        }
-      }
-
-      const entry = `  ${platform}:\n    enabled: ${enabled}\n`;
-      content =
-        content.substring(0, insertOffset) +
-        entry +
-        content.substring(insertOffset);
-    }
+  _profile?: string,
+): Promise<void> {
+  try {
+    await gatewayRequest<{ ok: boolean }>(
+      "PUT",
+      `/v1/config/platforms/${encodeURIComponent(platform)}`,
+      { enabled },
+    );
+  } catch (err) {
+    console.warn(
+      `[config] setPlatformEnabled('${platform}') failed:`,
+      (err as Error).message,
+    );
   }
-
-  safeWriteFile(configFile, content);
 }
 
 // ── Credential Pool (auth.json) ──────────────────────────

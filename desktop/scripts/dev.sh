@@ -33,7 +33,7 @@ trap cleanup INT TERM
 
 # Start API gateway in background (with hot reload via uvicorn --reload)
 echo -e "${CYAN}Starting API gateway (with hot reload)...${NC}"
-PYTHONPATH="$PROJECT_DIR/python/packages/drsai/src:$PYTHONPATH" \
+PYTHONPATH="$PROJECT_DIR/python/packages/drsai/src${PYTHONPATH:+:$PYTHONPATH}" \
 DRSAI_API_PORT="$DRSAI_API_PORT" \
 uvicorn drsai.backend.gateway:app \
     --host 127.0.0.1 \
@@ -54,8 +54,11 @@ for i in $(seq 1 30); do
 done
 
 # Start Electron dev
+# DRSAI_DEV_SKIP_INSTALL=1 tells the Electron app to skip the bootstrap
+# (git clone → venv → pip install). The gateway is already running locally
+# from this very script, so we don't want the UI re-running the installer.
 echo -e "${CYAN}Starting Electron dev mode...${NC}"
-cd "$PROJECT_DIR/drsai-desktop"
-npm run dev
+cd "$PROJECT_DIR/desktop/drsai-desktop"
+DRSAI_DEV_SKIP_INSTALL=1 npm run dev
 
 cleanup

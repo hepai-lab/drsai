@@ -953,91 +953,14 @@ export interface MemoryProviderInfo {
 }
 
 /**
- * Discover available memory providers by scanning the plugins directory
- * and reading config.yaml for the active provider.
+ * drsai has no memory-provider plugin system (hermes-only feature).
+ * Returns an empty list so the Memory screen's Providers tab — if shown —
+ * shows "No providers found" instead of crashing.
  */
 export function discoverMemoryProviders(
-  profile?: string,
+  _profile?: string,
 ): MemoryProviderInfo[] {
-  const pluginsDir = join(DRSAI_REPO, "plugins", "memory");
-  if (!existsSync(pluginsDir)) return [];
-
-  const activeProvider = getActiveMemoryProvider(profile);
-
-  // Known providers with their metadata (from plugin.yaml files)
-  const KNOWN_PROVIDERS: Record<
-    string,
-    { description: string; envVars: string[]; pip?: string }
-  > = {
-    honcho: {
-      description: "memory.providers.honcho",
-      envVars: ["HONCHO_API_KEY"],
-      pip: "honcho-ai",
-    },
-    hindsight: {
-      description: "memory.providers.hindsight",
-      envVars: ["HINDSIGHT_API_KEY", "HINDSIGHT_API_URL", "HINDSIGHT_BANK_ID"],
-      pip: "hindsight-client",
-    },
-    mem0: {
-      description: "memory.providers.mem0",
-      envVars: ["MEM0_API_KEY"],
-      pip: "mem0ai",
-    },
-    retaindb: {
-      description: "memory.providers.retaindb",
-      envVars: ["RETAINDB_API_KEY"],
-    },
-    supermemory: {
-      description: "memory.providers.supermemory",
-      envVars: ["SUPERMEMORY_API_KEY"],
-      pip: "supermemory",
-    },
-    holographic: {
-      description: "memory.providers.holographic",
-      envVars: [],
-    },
-    openviking: {
-      description: "memory.providers.openviking",
-      envVars: ["OPENVIKING_ENDPOINT", "OPENVIKING_API_KEY"],
-    },
-    byterover: {
-      description: "memory.providers.byterover",
-      envVars: ["BRV_API_KEY"],
-    },
-  };
-
-  const results: MemoryProviderInfo[] = [];
-
-  try {
-    const dirs = readdirSync(pluginsDir, { withFileTypes: true });
-    for (const d of dirs) {
-      if (!d.isDirectory() || d.name.startsWith("_")) continue;
-      const name = d.name;
-      const known = KNOWN_PROVIDERS[name];
-      const initFile = join(pluginsDir, name, "__init__.py");
-      const installed = existsSync(initFile);
-
-      results.push({
-        name,
-        description: known?.description || name,
-        installed,
-        active: name === activeProvider,
-        envVars: known?.envVars || [],
-      });
-    }
-  } catch {
-    /* non-fatal */
-  }
-
-  // Sort: active first, then installed, then alphabetical
-  results.sort((a, b) => {
-    if (a.active !== b.active) return a.active ? -1 : 1;
-    if (a.installed !== b.installed) return a.installed ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-
-  return results;
+  return [];
 }
 
 /**
@@ -1059,60 +982,46 @@ export function getActiveMemoryProvider(profile?: string): string {
 //  MCP server management
 // ────────────────────────────────────────────────────
 
-export function listMcpServers(
-  profile?: string,
-): Array<{ name: string; type: string; enabled: boolean; detail: string }> {
+/**
+ * Project the agent's tool-config (TOOLS_CONFIG.json) onto the MCP-server
+ * view the renderer expects. ``mcp-sse`` → ``http``, ``mcp-std`` → ``stdio``,
+ * local-tool entries are filtered out. Returns a Promise so the caller can
+ * await it; the IPC handler is async-aware.
+ */
+export async function listMcpServers(
+  _profile?: string,
+): Promise<Array<{ name: string; type: string; enabled: boolean; detail: string }>> {
   try {
-    const configPath = join(profileHome(profile), "config.yaml");
-    if (!existsSync(configPath)) return [];
-    const content = readFileSync(configPath, "utf-8");
-    // Simple YAML parse for mcp_servers section
-    const match = content.match(/^mcp_servers:\s*\n((?:[ \t]+.+\n)*)/m);
-    if (!match) return [];
-
-    const servers: Array<{
+    const { listTools } = require("./tools") as typeof import("./tools");
+    const tools = await listTools();
+    const out: Array<{
       name: string;
       type: string;
       enabled: boolean;
       detail: string;
     }> = [];
-    const block = match[1];
-    // Each top-level key under mcp_servers is a server name (2-space indent)
-    const nameRe = /^[ ]{2}(\w[\w-]*):\s*$/gm;
-    let m: RegExpExecArray | null;
-    while ((m = nameRe.exec(block)) !== null) {
-      const name = m[1];
-      // Extract following indented block for this server.
-      // Find the next line at exactly 2-space indent (next server name).
-      const start = m.index + m[0].length;
-      const nextMatch = /\n {2}\w/g;
-      nextMatch.lastIndex = start;
-      const next = nextMatch.exec(block);
-      const serverBlock = block.slice(start, next ? next.index : undefined);
-      const hasUrl = /url:/.test(serverBlock);
-      const hasCommand = /command:/.test(serverBlock);
-      const enabledMatch = serverBlock.match(/enabled:\s*(true|false)/i);
-      const enabled =
-        enabledMatch === null || enabledMatch[1].toLowerCase() === "true";
-
+    for (const t of tools) {
+      if (t.type !== "mcp-std" && t.type !== "mcp-sse") continue;
+      const cfg = t.config || {};
+      const isSse = t.type === "mcp-sse";
       let detail = "";
-      if (hasUrl) {
-        const urlMatch = serverBlock.match(/url:\s*["']?([^\s"']+)/);
-        detail = urlMatch?.[1] || "HTTP";
-      } else if (hasCommand) {
-        const cmdMatch = serverBlock.match(/command:\s*["']?([^\s"']+)/);
-        detail = cmdMatch?.[1] || "stdio";
+      if (isSse) {
+        detail = (cfg.url as string) || "HTTP";
+      } else {
+        const cmd = (cfg.command as string) || "";
+        const args = Array.isArray(cfg.args) ? (cfg.args as string[]).join(" ") : "";
+        detail = `${cmd} ${args}`.trim() || "stdio";
       }
-
-      servers.push({
-        name,
-        type: hasUrl ? "http" : "stdio",
-        enabled,
+      out.push({
+        name: t.name || `${t.type}-${t.index}`,
+        type: isSse ? "http" : "stdio",
+        enabled: t.enabled !== false,
         detail,
       });
     }
-    return servers;
-  } catch {
+    return out;
+  } catch (err) {
+    console.warn("[installer] listMcpServers failed:", (err as Error).message);
     return [];
   }
 }
@@ -1121,22 +1030,50 @@ export function listMcpServers(
 //  Log viewer
 // ────────────────────────────────────────────────────
 
-export function readLogs(
+export async function readLogs(
   logFile = "agent.log",
   lines = 200,
-): { content: string; path: string } {
+): Promise<{ content: string; path: string }> {
+  // Prefer the gateway: it sees the agent's real log paths even when the
+  // desktop's DRSAI_HOME differs from the server's FS_DIR.
+  try {
+    const port = parseInt(process.env.DRSAI_API_PORT || "8642", 10);
+    const url = `http://127.0.0.1:${port}/v1/logs?file=${encodeURIComponent(logFile)}&lines=${lines}`;
+    const resp = await new Promise<{ content: string; path: string }>(
+      (resolve, reject) => {
+        const httpMod = require("http") as typeof import("http");
+        const req = httpMod.request(url, { method: "GET", timeout: 5000 }, (res) => {
+          let body = "";
+          res.on("data", (d: Buffer) => (body += d.toString()));
+          res.on("end", () => {
+            if (res.statusCode && res.statusCode >= 400) {
+              reject(new Error(body || `HTTP ${res.statusCode}`));
+              return;
+            }
+            try { resolve(JSON.parse(body)); }
+            catch (e) { reject(e); }
+          });
+        });
+        req.on("error", reject);
+        req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+        req.end();
+      },
+    );
+    return { content: resp.content || "", path: resp.path || "" };
+  } catch (err) {
+    console.warn("[installer] readLogs via gateway failed, falling back to local file:", (err as Error).message);
+  }
+
+  // Local fallback when the gateway is down — read DRSAI_HOME/logs directly.
   const logsDir = join(DRSAI_HOME, "logs");
-  // Sanitize: only allow known log file names
   const allowed = ["agent.log", "errors.log", "gateway.log"];
   const file = allowed.includes(logFile) ? logFile : "agent.log";
   const fullPath = join(logsDir, file);
-
   if (!existsSync(fullPath)) {
     return { content: "", path: fullPath };
   }
   try {
     const content = readFileSync(fullPath, "utf-8");
-    // Return the last N lines
     const allLines = content.split("\n");
     const tail = allLines.slice(-lines).join("\n");
     return { content: tail, path: fullPath };

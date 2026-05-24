@@ -37,6 +37,9 @@ RUN mkdir -p /etc/supervisor/conf.d
 # 升级pip和安装常用工具
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
+# # 安装 Claude Code 支持（Anthropic SDK）
+# RUN pip install --no-cache-dir anthropic
+
 # 安装 Claude Code CLI 工具
 RUN npm install -g @anthropic-ai/claude-code
 
@@ -49,11 +52,14 @@ RUN curl -fsSL https://github.com/coder/code-server/releases/download/v4.116.0/c
     && dpkg -i /tmp/code-server.deb \
     && rm /tmp/code-server.deb
 
-# 配置 code-server
+# 配置 code-server - 使用环境变量确保绑定到所有接口
 RUN mkdir -p /root/.config/code-server
 RUN echo 'bind-addr: 0.0.0.0:8080' > /root/.config/code-server/config.yaml \
     && echo 'auth: none' >> /root/.config/code-server/config.yaml \
     && echo 'cert: false' >> /root/.config/code-server/config.yaml
+
+# 设置环境变量强制使用指定的配置
+ENV CODESERVER_CONFIG=/root/.config/code-server/config.yaml
 
 # 复制整个项目到容器内
 COPY . /app
@@ -84,5 +90,24 @@ EXPOSE 22 42858 8086 8080
 # 设置默认工作目录
 WORKDIR /app
 
-# # 默认启动命令
-# CMD ["python", "run_drsai_agent.py"]
+# 创建启动脚本
+RUN cat > /app/start-services.sh << 'EOF'
+#!/bin/bash
+
+# 启动 SSH 服务
+service ssh start
+
+# 启动 code-server
+code-server --config /root/.config/code-server/config.yaml &
+
+# 启动 drsai 服务（即使失败也保持容器运行）
+python run_drsai_agent.py || true
+
+# 保持容器运行
+tail -f /dev/null
+EOF
+
+RUN chmod +x /app/start-services.sh
+
+# 默认启动命令
+CMD ["bash", "/app/start-services.sh"]

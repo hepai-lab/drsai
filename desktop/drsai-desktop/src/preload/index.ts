@@ -200,6 +200,13 @@ const drsaiAPI = {
 
   abortChat: (): Promise<void> => ipcRenderer.invoke("abort-chat"),
 
+  pauseThread: (threadId: string, userId?: string): Promise<boolean> =>
+    ipcRenderer.invoke("pause-thread", threadId, userId),
+  resumeThread: (threadId: string, userId?: string): Promise<boolean> =>
+    ipcRenderer.invoke("resume-thread", threadId, userId),
+  stopThread: (threadId: string, userId?: string): Promise<boolean> =>
+    ipcRenderer.invoke("stop-thread", threadId, userId),
+
   onChatChunk: (callback: (chunk: string) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, chunk: string): void =>
       callback(chunk);
@@ -364,18 +371,35 @@ const drsaiAPI = {
   resetSoul: (profile?: string): Promise<string> =>
     ipcRenderer.invoke("reset-soul", profile),
 
-  // Tools
-  getToolsets: (
-    profile?: string,
-  ): Promise<
-    Array<{ key: string; label: string; description: string; enabled: boolean }>
-  > => ipcRenderer.invoke("get-toolsets", profile),
-  setToolsetEnabled: (
-    key: string,
-    enabled: boolean,
-    profile?: string,
-  ): Promise<boolean> =>
-    ipcRenderer.invoke("set-toolset-enabled", key, enabled, profile),
+  // Tools (MCP servers + local-tool descriptions in TOOLS_CONFIG.json)
+  listTools: (): Promise<
+    Array<{
+      index: number;
+      type: string;
+      config: Record<string, unknown>;
+      name?: string | null;
+      enabled?: boolean;
+    }>
+  > => ipcRenderer.invoke("list-tools"),
+  createTool: (entry: {
+    type: string;
+    config: Record<string, unknown>;
+    name?: string | null;
+    enabled?: boolean;
+  }): Promise<{ index: number; type: string; config: Record<string, unknown> }> =>
+    ipcRenderer.invoke("create-tool", entry),
+  updateTool: (
+    index: number,
+    entry: {
+      type: string;
+      config: Record<string, unknown>;
+      name?: string | null;
+      enabled?: boolean;
+    },
+  ): Promise<{ index: number; type: string; config: Record<string, unknown> }> =>
+    ipcRenderer.invoke("update-tool", index, entry),
+  deleteTool: (index: number): Promise<boolean> =>
+    ipcRenderer.invoke("delete-tool", index),
 
   // Skills
   listInstalledSkills: (

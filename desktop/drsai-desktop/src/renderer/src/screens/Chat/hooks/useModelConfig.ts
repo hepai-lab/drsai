@@ -38,7 +38,7 @@ function groupModelsByClientType(
   return Array.from(groupMap.values());
 }
 
-export function useModelConfig(profile?: string): UseModelConfigResult {
+export function useModelConfig(_profile?: string): UseModelConfigResult {
   const { t } = useI18n();
   const [currentModel, setCurrentModel] = useState("");
   const [currentProvider, setCurrentProvider] = useState("auto");
@@ -47,29 +47,48 @@ export function useModelConfig(profile?: string): UseModelConfigResult {
   const [allModels, setAllModels] = useState<ModelItem[]>([]);
 
   const reload = useCallback(async (): Promise<void> => {
-    const [mc, catalog] = await Promise.all([
-      window.drsaiAPI.getModelConfig(profile),
-      window.drsaiAPI.listModels(),
-    ]);
-    setCurrentModel(mc.model);
-    setCurrentProvider(mc.provider);
-    setCurrentBaseUrl(mc.baseUrl);
+    // drsai backend: source of truth is the model catalog
+    // (/v1/models/config). The "current" model is whichever alias the
+    // catalog marks as default.
+    const catalog = await window.drsaiAPI.listModels();
     setAllModels(catalog.models);
     setModelGroups(groupModelsByClientType(catalog.models));
-  }, [profile]);
+    const def = catalog.models.find((m) => m.alias === catalog.default_alias)
+      || catalog.models[0];
+    if (def) {
+      setCurrentModel(def.model);
+      setCurrentProvider(def.client_type || "auto");
+      setCurrentBaseUrl("");
+    } else {
+      setCurrentModel("");
+      setCurrentProvider("auto");
+      setCurrentBaseUrl("");
+    }
+  }, []);
 
   useEffect(() => {
     reload();
   }, [reload]);
 
   const selectModel = useCallback(
-    async (provider: string, model: string, baseUrl: string): Promise<void> => {
-      await window.drsaiAPI.setModelConfig(provider, model, baseUrl, profile);
-      setCurrentModel(model);
-      setCurrentProvider(provider);
-      setCurrentBaseUrl(baseUrl);
+    async (provider: string, model: string, _baseUrl: string): Promise<void> => {
+      // ModelPicker passes (provider, model, baseUrl); we need the catalog
+      // alias to call /v1/models/config/default/{alias}.
+      const item = allModels.find((m) => m.model === model);
+      if (!item) {
+        console.warn("[useModelConfig] no alias found for model:", model);
+        return;
+      }
+      try {
+        await window.drsaiAPI.setDefaultModel(item.alias);
+        setCurrentModel(item.model);
+        setCurrentProvider(provider || item.client_type || "auto");
+        setCurrentBaseUrl("");
+      } catch (err) {
+        console.error("[useModelConfig] setDefaultModel failed:", err);
+      }
     },
-    [profile],
+    [allModels],
   );
 
   const displayModel = useMemo(
