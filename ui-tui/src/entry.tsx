@@ -11,6 +11,40 @@ import { App } from './app.js'
 import { GatewayClient } from './gatewayClient.js'
 
 const gw = new GatewayClient()
+
+let terminalRestored = false
+function restoreTerminal(): void {
+  if (terminalRestored) return
+  terminalRestored = true
+  try {
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(false)
+      process.stdin.pause()
+    }
+  } catch {
+    // Best-effort restoration only.
+  }
+  try {
+    // Ensure the terminal cursor is visible again even if the app exits early.
+    process.stdout.write('\x1b[?25h')
+  } catch {
+    // ignore
+  }
+}
+
+process.once('exit', restoreTerminal)
+process.once('SIGINT', () => {
+  restoreTerminal()
+  gw.kill()
+  process.exit(130)
+})
+process.once('SIGTERM', () => {
+  restoreTerminal()
+  gw.kill()
+  process.exit(143)
+})
+
+// Start after handlers are installed so even early failures restore the terminal.
 gw.start()
 
 if (!process.stdin.isTTY) {
@@ -34,6 +68,7 @@ if (!process.stdin.isTTY) {
   process.stdout.write('\x1b[2J\x1b[H')
   const ink = render(<App gw={gw} />, { exitOnCtrlC: false })
   ink.waitUntilExit().then(() => {
+    restoreTerminal()
     gw.kill()
     process.exit(0)
   })

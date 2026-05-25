@@ -1,15 +1,13 @@
 /**
  * StreamingAssistant — renders the in-flight assistant turn from $current.
  *
- * During streaming we deliberately render plain text (with <think> blocks stripped)
- * instead of running the full markdown parser on every delta. Reasons:
- *   1. Token boundaries are arbitrary — a half-arrived table row gets misparsed
- *      as a paragraph, then later "rewritten" as a table once the closing rows
- *      stream in. The intermediate states look garbled.
- *   2. Re-parsing/re-rendering markdown on every token wastes CPU.
+ * Uses MarkdownRenderer for incremental formatting. Incomplete markdown
+ * structures (e.g. a table with only a header row) gracefully fall back
+ * to paragraph rendering until the structure is complete.
  *
- * When the turn finishes, it moves into the <Static> transcript and gets the
- * full <MarkdownRenderer> treatment with proper tables/headers/lists/code blocks.
+ * The rendering "snaps" into place once closing markers arrive (e.g. the
+ * `|---|---|` separator line makes a table appear). This is much better
+ * than showing raw markdown source for the entire streaming duration.
  */
 
 import { useStore } from '@nanostores/react'
@@ -19,7 +17,7 @@ import { $current } from '../app/turnStore.js'
 import { $showReasoning } from '../app/uiStore.js'
 import { theme } from '../theme.js'
 
-import { stripThinkBlocks } from './markdownRenderer.js'
+import { MarkdownRenderer, stripThinkBlocks } from './markdownRenderer.js'
 import { ToolCallLine } from './toolCallLine.js'
 
 export function StreamingAssistant() {
@@ -47,7 +45,7 @@ export function StreamingAssistant() {
 
       {cleanText && (
         <Box marginTop={1}>
-          <Text color={theme.assistant}>{cleanText}</Text>
+          <MarkdownRenderer text={cleanText} color={theme.assistant} />
         </Box>
       )}
 

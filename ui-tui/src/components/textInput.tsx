@@ -3,7 +3,7 @@
  *
  * Features:
  *   - Enter         submit
- *   - Esc+Enter / Shift+Enter / Alt+Enter  insert newline
+ *   - Alt+Enter / Shift+Enter / Esc then Enter / Ctrl+O  insert newline
  *   - Backspace     delete one char
  *   - Left/Right    move cursor
  *   - Up/Down       walk through command history (when at first/last line)
@@ -31,6 +31,8 @@ export interface TextInputProps {
   completions?: string[]
   /** Persistent history shared across renders. Caller can supply a ref. */
   history?: string[]
+  /** Called whenever this component appends a new history entry. */
+  onHistoryChange?: (history: string[]) => void
 }
 
 export function TextInput({
@@ -41,9 +43,11 @@ export function TextInput({
   allowEmpty = false,
   completions = [],
   history: externalHistory,
+  onHistoryChange,
 }: TextInputProps) {
   const [value, setValue] = useState('')
   const [cursor, setCursor] = useState(0)
+  const pendingEscapeRef = useRef(false)
 
   // Internal history if caller didn't pass one. Stored in a ref so it survives
   // re-renders without triggering them.
@@ -71,8 +75,33 @@ export function TextInput({
     resetCompletion()
   }
 
+  function insertNewline() {
+    const next = value.slice(0, cursor) + '\n' + value.slice(cursor)
+    setValue(next)
+    setCursor(cursor + 1)
+    pendingEscapeRef.current = false
+    resetCompletion()
+  }
+
   useInput((input, key) => {
     if (disabled) return
+
+    // Esc then Enter is a portable newline chord in terminals that don't
+    // distinguish Shift+Enter. Record Esc here and consume it; the next
+    // Enter inserts a newline instead of submitting. Any other key cancels it.
+    if (key.escape) {
+      pendingEscapeRef.current = true
+      return
+    }
+    if (pendingEscapeRef.current && !key.return) {
+      pendingEscapeRef.current = false
+    }
+
+    // Ctrl+O: reliable cross-terminal newline shortcut.
+    if (key.ctrl && input === 'o') {
+      insertNewline()
+      return
+    }
 
     // ── Tab: cycle slash command completions ────────────────────────────
     if (key.tab && !key.shift) {
@@ -139,22 +168,22 @@ export function TextInput({
 
     // ── Enter: submit (or newline) ──────────────────────────────────────
     if (key.return) {
-      if (key.meta || key.shift) {
-        const next = value.slice(0, cursor) + '\n' + value.slice(cursor)
-        setValue(next)
-        setCursor(cursor + 1)
-        resetCompletion()
+      if (key.meta || key.shift || pendingEscapeRef.current) {
+        insertNewline()
         return
       }
       const trimmed = value.trim()
       if (trimmed || allowEmpty) {
-        onSubmit(trimmed)
-        // Push non-empty entries into history (dedupe consecutive)
+        // Push non-empty entries into history (dedupe consecutive) before submit,
+        // so the caller can persist it even if submit starts async work.
         if (trimmed && (history.length === 0 || history[history.length - 1] !== trimmed)) {
           history.push(trimmed)
+          onHistoryChange?.(history)
         }
+        onSubmit(trimmed)
         setHistoryIdx(-1)
         draftRef.current = ''
+        pendingEscapeRef.current = false
         setValue('')
         setCursor(0)
         resetCompletion()
@@ -227,11 +256,15 @@ export function TextInput({
         <Text color={theme.primary}>{prompt}</Text>
         <Box flexGrow={1}>
           {showPlaceholder ? (
-            <Text color={theme.muted} dimColor>{placeholder}</Text>
+            <Text>
+              {!disabled && <Text color={theme.text} inverse> </Text>}
+              <Text> </Text>
+              <Text color={theme.muted} dimColor>{placeholder}</Text>
+            </Text>
           ) : (
             <Text>
               <Text color={theme.text}>{before}</Text>
-              <Text color={theme.text} inverse>{cursorChar}</Text>
+              {!disabled && <Text color={theme.text} inverse>{cursorChar}</Text>}
               <Text color={theme.text}>{after}</Text>
             </Text>
           )}

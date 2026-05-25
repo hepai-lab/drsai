@@ -3,9 +3,10 @@
  */
 
 import { useStore } from '@nanostores/react'
-import { Box, Text, useInput } from 'ink'
+import { Box, Text, useApp, useInput } from 'ink'
 import { useEffect, useRef, useState } from 'react'
 
+import { loadPromptHistory, savePromptHistory } from '../app/promptHistory.js'
 import { $isStreaming } from '../app/turnStore.js'
 import type { TurnController } from '../app/turnController.js'
 import type { SessionInfo, SessionListResult } from '../gatewayTypes.js'
@@ -22,12 +23,14 @@ export interface ComposerPaneProps {
 }
 
 export function ComposerPane({ sessionId, controller, switchSession }: ComposerPaneProps) {
+  const { exit } = useApp()
   const isStreaming = useStore($isStreaming)
   const [slashOutput, setSlashOutput] = useState<string | null>(null)
   const [sessionPicker, setSessionPicker] = useState<SessionInfo[] | null>(null)
   const [modelPicker, setModelPicker] = useState<ModelEntry[] | null>(null)
   const [completions, setCompletions] = useState<string[]>([])
-  const historyRef = useRef<string[]>([])
+  const [initialHistory] = useState(() => loadPromptHistory())
+  const historyRef = useRef<string[]>(initialHistory)
 
   // Load slash command catalog once for Tab completion
   useEffect(() => {
@@ -88,7 +91,8 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
 
       // Special case: /quit should exit
       if (command === 'quit' || command === 'exit' || command === 'q') {
-        process.exit(0)
+        controller.gw.kill()
+        exit()
         return
       }
 
@@ -244,10 +248,11 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
       ) : (
         <TextInput
           prompt=" › "
-          placeholder="type a message (/ for commands, Tab to complete, ↑/↓ history, Ctrl+D to exit)"
+          placeholder="type a message (Alt+Enter/Ctrl+O newline, / commands, Tab complete, ↑/↓ history)"
           onSubmit={handleSubmit}
           completions={completions}
           history={historyRef.current}
+          onHistoryChange={savePromptHistory}
         />
       )}
     </Box>
