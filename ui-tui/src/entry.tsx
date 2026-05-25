@@ -12,10 +12,16 @@ import { GatewayClient } from './gatewayClient.js'
 
 const gw = new GatewayClient()
 
+let inkInstance: ReturnType<typeof render> | null = null
 let terminalRestored = false
 function restoreTerminal(): void {
   if (terminalRestored) return
   terminalRestored = true
+  try {
+    inkInstance?.clear()
+  } catch {
+    // ignore
+  }
   try {
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(false)
@@ -66,8 +72,8 @@ if (!process.stdin.isTTY) {
 } else {
   // Interactive Ink path
   process.stdout.write('\x1b[2J\x1b[H')
-  const ink = render(<App gw={gw} />, { exitOnCtrlC: false })
-  ink.waitUntilExit().then(() => {
+  inkInstance = render(<App gw={gw} />, { exitOnCtrlC: false })
+  inkInstance.waitUntilExit().then(() => {
     restoreTerminal()
     gw.kill()
     process.exit(0)

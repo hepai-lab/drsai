@@ -2,14 +2,24 @@
  * TextInput — multiline text input for Ink with command history + Tab completion.
  *
  * Features:
- *   - Enter         submit
+ *   - Enter              submit (single-line) / see paste note below
  *   - Alt+Enter / Shift+Enter / Esc then Enter / Ctrl+O  insert newline
- *   - Backspace     delete one char
- *   - Left/Right    move cursor
- *   - Up/Down       walk through command history (when at first/last line)
- *   - Tab           cycle through slash-command completions (only when input starts with /)
- *   - Ctrl+U        clear current line
- *   - Ctrl+A / Ctrl+E   start / end of line
+ *   - Backspace          delete one char
+ *   - Left/Right         move cursor
+ *   - Up/Down            move between lines in multiline input;
+ *                        at boundary (first/last line) walk command history
+ *   - Tab                cycle through slash-command completions
+ *   - Ctrl+A / Ctrl+E    start / end of current line
+ *   - Ctrl+U             clear current line
+ *   - Ctrl+Home          start of entire text (if terminal sends it)
+ *   - Ctrl+End           end of entire text (if terminal sends it)
+ *
+ * Paste handling:
+ *   Modern terminals with bracketed-paste send the entire pasted text as a
+ *   single `input` string including `\n` — no special handling needed.
+ *   For terminals without bracketed-paste, we detect rapid Return keypresses
+ *   (< 80 ms after previous input) as part of a paste and insert a newline
+ *   instead of submitting.
  *
  * Command history persists in-memory for the session; the parent supplies
  * `completions` (a flat list of `/command` strings) to drive Tab.
@@ -19,6 +29,47 @@ import { Box, Text, useInput } from 'ink'
 import { useRef, useState } from 'react'
 
 import { theme } from '../theme.js'
+
+const BRACKET_PASTE_RE = /\x1b?\[20[01]~/g
+const BRACKET_PASTE_DETECT_RE = /\x1b?\[20[01]~/
+
+function normalisePastedText(text: string): string {
+  return text.replace(BRACKET_PASTE_RE, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+}
+
+function looksLikePastedText(input: string): boolean {
+  // Bracketed paste markers are unambiguous — always a paste.
+  if (BRACKET_PASTE_DETECT_RE.test(input)) return true
+  // Otherwise it's only a paste if it contains a newline AND has more than
+  // just the newline itself — a single \n is just the Enter key, which ink
+  // sometimes delivers alongside key.return. Treating that as a paste
+  // would flip the Enter→submit semantics into Enter→newline.
+  if (input.length <= 1) return false
+  return input.includes('\n') || input.includes('\r')
+}
+
+// ── Helpers: cursor ↔ (line, col) conversion ──────────────────────────
+
+/** Given `value` and a character-offset `cursor`, return [lineIndex, col]. */
+function getLineAndCol(value: string, cursor: number): [number, number] {
+  const lines = value.slice(0, cursor).split('\n')
+  return [lines.length - 1, lines[lines.length - 1].length]
+}
+
+/** Given the pre-split `lines` array and a target [line, col], return the
+ *  character offset.  Col is clamped to the line's length. */
+function cursorFromLineCol(lines: string[], line: number, col: number): number {
+  let pos = 0
+  for (let i = 0; i < line && i < lines.length; i++) {
+    pos += lines[i].length + 1 // +1 for the \n
+  }
+  if (line < lines.length) {
+    pos += Math.min(col, lines[line].length)
+  }
+  return pos
+}
+
+// ── Component ─────────────────────────────────────────────────────────
 
 export interface TextInputProps {
   prompt: string
@@ -33,6 +84,18 @@ export interface TextInputProps {
   history?: string[]
   /** Called whenever this component appends a new history entry. */
   onHistoryChange?: (history: string[]) => void
+  /**
+   * Called when a multi-character paste payload is detected. The return
+   * value controls what ends up in the input value:
+   *
+   *   - ``string`` → insert that string at the cursor instead of the raw
+   *     pasted text. Use this to collapse a long paste into a token like
+   *     ``[[ Pasted #1: 1.2k lines ]]`` while the parent stashes the
+   *     original text in a side table.
+   *   - ``null`` → parent fully handled it; do not modify the input.
+   *   - ``undefined`` (or no callback) → fall back to literal insertion.
+   */
+  onPaste?: (text: string) => string | null | undefined
 }
 
 export function TextInput({
@@ -44,6 +107,7 @@ export function TextInput({
   completions = [],
   history: externalHistory,
   onHistoryChange,
+  onPaste,
 }: TextInputProps) {
   const [value, setValue] = useState('')
   const [cursor, setCursor] = useState(0)
@@ -62,6 +126,15 @@ export function TextInput({
   const [tabCandidates, setTabCandidates] = useState<string[]>([])
   const [tabIdx, setTabIdx] = useState(0)
 
+  // Paste-burst detection: when a multi-char paste payload is seen, we set
+  // `pasteBurstUntilRef` to a short deadline. Any Return key arriving before
+  // that deadline is treated as part of the paste (i.e. inserted as \n
+  // instead of submitting). This is intentionally a TIGHT window (~60ms);
+  // we do not measure time-since-last-typed-key because fast typists hit
+  // Return < 80ms after a normal character all the time, and we don't want
+  // their Enter to be silently turned into a newline.
+  const pasteBurstUntilRef = useRef(0)
+
   function resetCompletion() {
     if (tabCandidates.length > 0) {
       setTabCandidates([])
@@ -75,16 +148,46 @@ export function TextInput({
     resetCompletion()
   }
 
-  function insertNewline() {
-    const next = value.slice(0, cursor) + '\n' + value.slice(cursor)
+  function insertText(text: string) {
+    if (!text) return
+    const next = value.slice(0, cursor) + text + value.slice(cursor)
     setValue(next)
-    setCursor(cursor + 1)
+    setCursor(cursor + text.length)
     pendingEscapeRef.current = false
     resetCompletion()
+    if (historyIdx !== -1) {
+      // User edited while browsing history → exit browse mode.
+      setHistoryIdx(-1)
+      draftRef.current = next
+    }
+  }
+
+  function insertNewline() {
+    insertText('\n')
   }
 
   useInput((input, key) => {
     if (disabled) return
+
+    // Bracketed-paste and many terminals deliver a paste as one multi-character
+    // input payload. Treat it as literal text insertion before key.return can
+    // accidentally submit the first line. Also mark a short paste-burst
+    // window so any Return key arriving inside it counts as a pasted newline.
+    if (input && looksLikePastedText(input)) {
+      const pastedText = normalisePastedText(input)
+      const replacement = onPaste?.(pastedText)
+      if (replacement === undefined) {
+        // No callback or it returned undefined → insert raw text.
+        insertText(pastedText)
+      } else if (replacement === null) {
+        // Parent fully handled it (e.g. stored to clipboard buffer).
+      } else {
+        // Parent returned a substitute string (collapsed token).
+        insertText(replacement)
+      }
+      pasteBurstUntilRef.current = Date.now() + 60
+      return
+    }
 
     // Esc then Enter is a portable newline chord in terminals that don't
     // distinguish Shift+Enter. Record Esc here and consume it; the next
@@ -138,40 +241,67 @@ export function TextInput({
       return
     }
 
-    // ── Up/Down: command history ────────────────────────────────────────
+    // ── Up/Down: line-aware navigation + command history ────────────────
     if (key.upArrow) {
-      if (history.length === 0) return
-      if (historyIdx === -1) {
-        // start browsing — snapshot current draft
-        draftRef.current = value
-        const last = history.length - 1
-        setHistoryIdx(last)
-        setText(history[last])
-      } else if (historyIdx > 0) {
-        setHistoryIdx(historyIdx - 1)
-        setText(history[historyIdx - 1])
+      const allLines = value.split('\n')
+      const [curLine, curCol] = getLineAndCol(value, cursor)
+
+      if (curLine > 0) {
+        // Move cursor up one line (keep column if possible)
+        const newCursor = cursorFromLineCol(allLines, curLine - 1, curCol)
+        setCursor(newCursor)
+        resetCompletion()
+      } else if (history.length > 0) {
+        // Already on first line → browse history
+        if (historyIdx === -1) {
+          // Start browsing — snapshot current draft
+          draftRef.current = value
+          const last = history.length - 1
+          setHistoryIdx(last)
+          setText(history[last])
+        } else if (historyIdx > 0) {
+          setHistoryIdx(historyIdx - 1)
+          setText(history[historyIdx - 1])
+        }
       }
       return
     }
     if (key.downArrow) {
-      if (historyIdx === -1) return
-      if (historyIdx < history.length - 1) {
-        setHistoryIdx(historyIdx + 1)
-        setText(history[historyIdx + 1])
-      } else {
-        // Past the end — restore draft
-        setHistoryIdx(-1)
-        setText(draftRef.current)
+      const allLines = value.split('\n')
+      const [curLine, curCol] = getLineAndCol(value, cursor)
+
+      if (curLine < allLines.length - 1) {
+        // Move cursor down one line (keep column if possible)
+        const newCursor = cursorFromLineCol(allLines, curLine + 1, curCol)
+        setCursor(newCursor)
+        resetCompletion()
+      } else if (historyIdx !== -1) {
+        // Already on last line → browse history forward
+        if (historyIdx < history.length - 1) {
+          setHistoryIdx(historyIdx + 1)
+          setText(history[historyIdx + 1])
+        } else {
+          // Past the end — restore draft
+          setHistoryIdx(-1)
+          setText(draftRef.current)
+        }
       }
       return
     }
 
-    // ── Enter: submit (or newline) ──────────────────────────────────────
+    // ── Enter: submit or newline ────────────────────────────────────────
     if (key.return) {
-      if (key.meta || key.shift || pendingEscapeRef.current) {
+      // Only treat Return as a pasted newline when we are still inside a
+      // paste burst that started with a multi-char paste payload. This
+      // avoids the previous heuristic that swallowed normal Enter from
+      // fast typists who hit Return shortly after a character.
+      const inPasteBurst = Date.now() < pasteBurstUntilRef.current
+
+      if (key.meta || key.shift || pendingEscapeRef.current || inPasteBurst) {
         insertNewline()
         return
       }
+
       const trimmed = value.trim()
       if (trimmed || allowEmpty) {
         // Push non-empty entries into history (dedupe consecutive) before submit,
@@ -213,63 +343,104 @@ export function TextInput({
       return
     }
 
-    // Ctrl+A → start of line, Ctrl+E → end of line, Ctrl+U → clear
+    // Ctrl+A → start of current line, Ctrl+E → end of current line
+    // (In multi-line mode this is more useful than jumping to position 0
+    // or value.length; single-line behaviour is identical.)
     if (key.ctrl && input === 'a') {
-      setCursor(0)
+      const [, col] = getLineAndCol(value, cursor)
+      setCursor(cursor - col)
       return
     }
     if (key.ctrl && input === 'e') {
-      setCursor(value.length)
+      const [line] = getLineAndCol(value, cursor)
+      const lines = value.split('\n')
+      const lineStart = cursor - getLineAndCol(value, cursor)[1]
+      setCursor(lineStart + lines[line].length)
       return
     }
+    // Ctrl+U → clear current line
     if (key.ctrl && input === 'u') {
-      setValue('')
-      setCursor(0)
+      const [line, col] = getLineAndCol(value, cursor)
+      const lines = value.split('\n')
+      const lineStart = cursor - col
+      const lineEnd = lineStart + lines[line].length
+      const next = value.slice(0, lineStart) + value.slice(lineEnd)
+      setValue(next)
+      setCursor(lineStart)
       resetCompletion()
       return
     }
 
-    // Plain printable input (multi-character paste lands here too).
+    // Plain printable input. Multi-character non-newline bursts are inserted
+    // atomically; multiline/bracketed paste is handled near the top.
     if (input && !key.ctrl && !key.meta) {
-      const next = value.slice(0, cursor) + input + value.slice(cursor)
-      setValue(next)
-      setCursor(cursor + input.length)
-      resetCompletion()
-      if (historyIdx !== -1) {
-        // User started typing while browsing history → exit browse mode
-        setHistoryIdx(-1)
-        draftRef.current = next
-      }
+      insertText(input)
     }
   })
 
-  // Render with a visible block-cursor at `cursor` position.
-  const before = value.slice(0, cursor)
-  const at = value[cursor] ?? ' '
-  const after = value.slice(cursor + 1)
+  // ── Render ──────────────────────────────────────────────────────────────
+  //
+  // Multi-line content is rendered line-by-line so that Ink layouts each
+  // line correctly.  The cursor block is placed on the appropriate line.
+  // Continuation lines are indented to align with the first line's text.
+
   const showPlaceholder = !value && placeholder
-  const cursorChar = disabled ? '' : at
+
+  // Compute cursor line/col for rendering
+  const allLines = value.split('\n')
+  const [cursorLine, cursorCol] = getLineAndCol(value, cursor)
+
+  // Continuation-line indent = same width as the prompt string
+  const indent = ' '.repeat(prompt.length)
 
   return (
     <Box flexDirection="column">
-      <Box>
-        <Text color={theme.primary}>{prompt}</Text>
-        <Box flexGrow={1}>
-          {showPlaceholder ? (
+      {showPlaceholder ? (
+        <Box>
+          <Text color={theme.primary}>{prompt}</Text>
+          <Box flexGrow={1}>
             <Text>
               {!disabled && <Text color={theme.text} inverse> </Text>}
               <Text> </Text>
               <Text color={theme.muted} dimColor>{placeholder}</Text>
             </Text>
-          ) : (
-            <Text>
-              <Text color={theme.text}>{before}</Text>
-              {!disabled && <Text color={theme.text} inverse>{cursorChar}</Text>}
-              <Text color={theme.text}>{after}</Text>
-            </Text>
-          )}
+          </Box>
         </Box>
-      </Box>
+      ) : (
+        allLines.map((line, i) => {
+          const isFirstLine = i === 0
+          const isCursorLine = i === cursorLine
+
+          // Prefix: prompt on first line, indent on continuation lines
+          const prefix = isFirstLine
+            ? <Text color={theme.primary}>{prompt}</Text>
+            : <Text>{indent}</Text>
+
+          if (isCursorLine) {
+            const before = line.slice(0, cursorCol)
+            const at = line[cursorCol] ?? ' '
+            const after = line.slice(cursorCol + 1)
+
+            return (
+              <Box key={i}>
+                {prefix}
+                <Text>
+                  <Text color={theme.text}>{before}</Text>
+                  {!disabled && <Text color={theme.text} inverse>{at}</Text>}
+                  <Text color={theme.text}>{after}</Text>
+                </Text>
+              </Box>
+            )
+          }
+
+          return (
+            <Box key={i}>
+              {prefix}
+              <Text color={theme.text}>{line || ' '}</Text>
+            </Box>
+          )
+        })
+      )}
       {tabCandidates.length > 1 && (
         <Box paddingLeft={2} flexDirection="column">
           <Text color={theme.muted} dimColor>

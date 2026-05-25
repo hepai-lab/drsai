@@ -14,6 +14,7 @@ import { theme } from '../theme.js'
 
 import { ModelPicker, type ModelEntry } from './modelPicker.js'
 import { SessionPicker } from './sessionPicker.js'
+import { SlashOutputOverlay } from './slashOutputOverlay.js'
 import { TextInput } from './textInput.js'
 
 export interface ComposerPaneProps {
@@ -26,11 +27,45 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   const { exit } = useApp()
   const isStreaming = useStore($isStreaming)
   const [slashOutput, setSlashOutput] = useState<string | null>(null)
+  const slashOutputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [sessionPicker, setSessionPicker] = useState<SessionInfo[] | null>(null)
   const [modelPicker, setModelPicker] = useState<ModelEntry[] | null>(null)
   const [completions, setCompletions] = useState<string[]>([])
   const [initialHistory] = useState(() => loadPromptHistory())
   const historyRef = useRef<string[]>(initialHistory)
+
+  // Long-paste collapsing: when a paste exceeds the threshold we insert a
+  // ``[[ Pasted #N: ... → /path/to/paste.txt ]]`` token into the visible input
+  // and remember the real text in ``pasteSnipsRef``. On submit we substitute
+  // the token back to the real text for the agent, while the transcript keeps
+  // the compact token so huge logs/code files do not flood the TUI.
+  const pasteSnipsRef = useRef<Array<{ inputLabel: string; displayLabel: string; text: string; path?: string }>>([])
+  const pasteCounterRef = useRef(0)
+
+  function clearSlashOutputTimer() {
+    if (slashOutputTimerRef.current) {
+      clearTimeout(slashOutputTimerRef.current)
+      slashOutputTimerRef.current = null
+    }
+  }
+
+  function showSlashOutput(output: string, timeoutMs?: number) {
+    clearSlashOutputTimer()
+    setSlashOutput(output)
+    if (timeoutMs && timeoutMs > 0) {
+      slashOutputTimerRef.current = setTimeout(() => {
+        setSlashOutput(null)
+        slashOutputTimerRef.current = null
+      }, timeoutMs)
+    }
+  }
+
+  function dismissSlashOutput() {
+    clearSlashOutputTimer()
+    setSlashOutput(null)
+  }
+
+  useEffect(() => clearSlashOutputTimer, [])
 
   // Load slash command catalog once for Tab completion
   useEffect(() => {
@@ -61,8 +96,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
       setSessionPicker(result.sessions || [])
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      setSlashOutput(`Error loading sessions: ${msg}`)
-      setTimeout(() => setSlashOutput(null), 5000)
+      showSlashOutput(`Error loading sessions: ${msg}`, 5000)
     }
   }
 
@@ -75,13 +109,74 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
       setModelPicker(result.models || [])
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      setSlashOutput(`Error loading models: ${msg}`)
-      setTimeout(() => setSlashOutput(null), 5000)
+      showSlashOutput(`Error loading models: ${msg}`, 5000)
     }
   }
 
+  // Threshold above which a paste collapses to a placeholder token.
+  const LARGE_PASTE_CHARS = 1000
+  const LARGE_PASTE_LINES = 20
+
+  function maybeCollapsePaste(pasted: string): string | undefined {
+    const lineCount = pasted.split('\n').length
+    if (pasted.length < LARGE_PASTE_CHARS && lineCount < LARGE_PASTE_LINES) {
+      return undefined // small enough, fall back to literal insertion
+    }
+
+    pasteCounterRef.current += 1
+    const localId = pasteCounterRef.current
+    const head = pasted.slice(0, 24).replace(/\s+/g, ' ').trim() || 'text'
+    const fallbackLabel = `[[ Pasted #${localId}: ${head}… ${pasted.length} chars, ${lineCount} lines ]]`
+    pasteSnipsRef.current.push({ inputLabel: fallbackLabel, displayLabel: fallbackLabel, text: pasted })
+
+    // Best effort: ask backend to save a .txt copy and return a path-backed
+    // label. The callback must be synchronous, so the first render may show the
+    // fallback label; the final submitted transcript will use the path label if
+    // the RPC finishes before submit.
+    controller.gw
+      .request<{ placeholder?: string; path?: string }>('paste.collapse', { text: pasted })
+      .then(result => {
+        if (!result.placeholder && !result.path) return
+        const pathLabel = result.placeholder || `[[ Pasted #${localId}: ${pasted.length} chars, ${lineCount} lines → ${result.path} ]]`
+        pasteSnipsRef.current = pasteSnipsRef.current.map(s =>
+          s.inputLabel === fallbackLabel ? { ...s, displayLabel: pathLabel, path: result.path } : s,
+        )
+      })
+      .catch(() => {})
+
+    return fallbackLabel
+  }
+
+  function expandSnips(text: string): string {
+    if (pasteSnipsRef.current.length === 0) return text
+    let out = text
+    for (const snip of pasteSnipsRef.current) {
+      // Replace ONLY occurrences that survived editing — if the user deleted
+      // the token before submitting, the real text stays out too.
+      out = out.split(snip.inputLabel).join(snip.text)
+    }
+    return out
+  }
+
+  function displaySnips(text: string): string {
+    if (pasteSnipsRef.current.length === 0) return text
+    let out = text
+    for (const snip of pasteSnipsRef.current) {
+      out = out.split(snip.inputLabel).join(snip.displayLabel)
+    }
+    return out
+  }
+
+  function resetPasteSnips() {
+    pasteSnipsRef.current = []
+    pasteCounterRef.current = 0
+  }
+
   async function handleSubmit(text: string) {
-    const trimmed = text.trim()
+    const expanded = expandSnips(text)
+    const displayText = displaySnips(text)
+    resetPasteSnips()
+    const trimmed = expanded.trim()
 
     // Detect slash command
     if (trimmed.startsWith('/')) {
@@ -126,13 +221,11 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
               }>('session.create', {
                 name: result.name || undefined,
               })
-              setSlashOutput(`New session created: ${created.session.name} — switching…`)
+              showSlashOutput(`New session created: ${created.session.name} — switching…`, 3000)
               // Switch UI to the freshly created session.
               await switchSession(created.session_id)
-              setTimeout(() => setSlashOutput(null), 3000)
             } catch (err) {
-              setSlashOutput(`Failed to create session: ${err instanceof Error ? err.message : String(err)}`)
-              setTimeout(() => setSlashOutput(null), 5000)
+              showSlashOutput(`Failed to create session: ${err instanceof Error ? err.message : String(err)}`, 5000)
             }
             return
           }
@@ -142,11 +235,10 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
             if (result.target) {
               try {
                 await switchSession(result.target)
-                setSlashOutput(`Switched to: ${result.target}`)
+                showSlashOutput(`Switched to: ${result.target}`, 3000)
               } catch (err) {
-                setSlashOutput(`Switch failed: ${err instanceof Error ? err.message : String(err)}`)
+                showSlashOutput(`Switch failed: ${err instanceof Error ? err.message : String(err)}`, 5000)
               }
-              setTimeout(() => setSlashOutput(null), 3000)
               return
             }
             // Otherwise pop the picker
@@ -155,8 +247,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
           }
           case 'copy.reply': {
             // Future: read $transcript, emit OSC 52
-            setSlashOutput('Clipboard copy not yet wired (OSC 52 pending).')
-            setTimeout(() => setSlashOutput(null), 5000)
+            showSlashOutput('Clipboard copy not yet wired (OSC 52 pending).', 5000)
             return
           }
           case 'clear': {
@@ -166,19 +257,17 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
           }
         }
 
-        setSlashOutput(output)
-        // Clear after 5 seconds
-        setTimeout(() => setSlashOutput(null), 5000)
+        // Keep informational slash-command output visible until the user dismisses it.
+        showSlashOutput(output)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        setSlashOutput(`Error: ${msg}`)
-        setTimeout(() => setSlashOutput(null), 5000)
+        showSlashOutput(`Error: ${msg}`, 5000)
       }
       return
     }
 
     // Regular prompt
-    await controller.submit({ sessionId, text: trimmed })
+    await controller.submit({ sessionId, text: trimmed, displayText: displayText.trim() })
   }
 
   // Session picker overlay
@@ -191,12 +280,10 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
           setSessionPicker(null)
           try {
             await switchSession(sid)
-            setSlashOutput(`Switched to session ${sid.slice(0, 8)}`)
-            setTimeout(() => setSlashOutput(null), 3000)
+            showSlashOutput(`Switched to session ${sid.slice(0, 8)}`, 3000)
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
-            setSlashOutput(`Switch failed: ${msg}`)
-            setTimeout(() => setSlashOutput(null), 5000)
+            showSlashOutput(`Switch failed: ${msg}`, 5000)
           }
         }}
         onCancel={() => setSessionPicker(null)}
@@ -217,17 +304,19 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
               command: 'model',
               args: alias,
             })
-            setSlashOutput(`Switched to model: ${alias}`)
-            setTimeout(() => setSlashOutput(null), 3000)
+            showSlashOutput(`Switched to model: ${alias}`, 3000)
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
-            setSlashOutput(`Switch failed: ${msg}`)
-            setTimeout(() => setSlashOutput(null), 5000)
+            showSlashOutput(`Switch failed: ${msg}`, 5000)
           }
         }}
         onCancel={() => setModelPicker(null)}
       />
     )
+  }
+
+  if (slashOutput && !slashOutputTimerRef.current) {
+    return <SlashOutputOverlay output={slashOutput} onDismiss={dismissSlashOutput} />
   }
 
   return (
@@ -253,6 +342,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
           completions={completions}
           history={historyRef.current}
           onHistoryChange={savePromptHistory}
+          onPaste={maybeCollapsePaste}
         />
       )}
     </Box>

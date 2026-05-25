@@ -14,3 +14,4 @@ from . import prompt  # noqa: F401
 from . import tools  # noqa: F401
 from . import slash  # noqa: F401
 from . import setup  # noqa: F401
+from . import paste  # noqa: F401
