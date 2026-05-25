@@ -175,22 +175,34 @@ class HepAIWorkerAgent(DrSaiAgent):
         if not messages:
             return None
 
+        def _as_dict(data: Any) -> dict | None:
+            if isinstance(data, dict):
+                return data
+            if isinstance(data, str):
+                try:
+                    parsed = json.loads(data)
+                    return parsed if isinstance(parsed, dict) else None
+                except (json.JSONDecodeError, TypeError):
+                    return None
+            return None
+
         def _from_dict(data: Any) -> str | None:
-            if not isinstance(data, dict):
+            parsed = _as_dict(data)
+            if not parsed:
                 return None
-            alias = data.get("defult_config_name") or data.get("default_config_name")
+            alias = parsed.get("defult_config_name") or parsed.get("default_config_name")
             if alias:
                 return alias
-            settings_config = data.get("settings_config")
-            if isinstance(settings_config, dict):
+            settings_config = _as_dict(parsed.get("settings_config"))
+            if settings_config:
                 alias = (
                     settings_config.get("defult_config_name")
                     or settings_config.get("default_config_name")
                 )
                 if alias:
                     return alias
-            agent_mode_config = data.get("agent_mode_config")
-            if isinstance(agent_mode_config, dict):
+            agent_mode_config = _as_dict(parsed.get("agent_mode_config"))
+            if agent_mode_config:
                 return (
                     agent_mode_config.get("defult_config_name")
                     or agent_mode_config.get("default_config_name")
@@ -199,6 +211,11 @@ class HepAIWorkerAgent(DrSaiAgent):
 
         last_message = messages[-1]
         metadata_alias = _from_dict(getattr(last_message, "metadata", None))
+        if not metadata_alias and isinstance(getattr(last_message, "metadata", None), dict):
+            for key in ("settings_config", "agent_mode_config"):
+                metadata_alias = _from_dict(last_message.metadata.get(key))
+                if metadata_alias:
+                    break
         if metadata_alias:
             return metadata_alias
 
