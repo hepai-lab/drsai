@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
-/** Tabs in the app right rail (运行概览 / 历史会话 / 文件空间) */
-export type RightPanelLayoutTab = 'overview' | 'history' | 'files';
+/** Tabs in the app right rail (运行概览 / 历史会话 / 文件空间 / 模板库) */
+export type RightPanelLayoutTab = 'overview' | 'history' | 'files' | 'templates';
 
 interface RightPanelState {
   isOpen: boolean;

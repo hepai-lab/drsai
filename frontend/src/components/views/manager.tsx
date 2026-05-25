@@ -2,7 +2,7 @@ import { appContext } from "@/hooks/provider";
 import { Dropdown, message, Spin } from "antd";
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { MoreVertical, Search, Trash2 } from "lucide-react";
+import { MoreVertical, Search, Trash2, Library } from "lucide-react";
 import { parse } from "yaml";
 import { useConfigStore } from "../../hooks/store";
 import { useModeConfigStore } from "../../store/modeConfig";
@@ -12,7 +12,7 @@ import { useAgentInfo } from "../features/Agents/useAgentInfo";
 import PlanList from "../features/Plans/PlanList";
 import { GeneralConfig, useSettingsStore } from "../store";
 import type { Session, FilesEvent, MessageFileItem } from "../types/datamodel";
-import { settingsAPI } from "./api";
+import { settingsAPI, docmasterAPI, type DocMasterTemplateEntry } from "./api";
 import ChatView from "../../pages/chat/chat";
 import NewChatView from "../../pages/chat/NewChatView";
 import { useAgentManager } from "./hooks/useAgentManager";
@@ -534,6 +534,193 @@ export const SessionManager: React.FC = () => {
     );
   }, [session?.id, sessionFileEvents, buildDownloadHref, formatFileSize]);
 
+  // Templates tab (DocMaster only) ------------------------------------------------
+  const isDocMaster = useMemo(() => {
+    const name =
+      (agentInfo as { name?: string } | null | undefined)?.name ||
+      selectedAgent?.name ||
+      "";
+    return name === "DocMaster";
+  }, [agentInfo, selectedAgent]);
+
+  const [docmasterTemplates, setDocmasterTemplates] = useState<{
+    shared: DocMasterTemplateEntry[];
+    mine: DocMasterTemplateEntry[];
+  }>({ shared: [], mine: [] });
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+
+  const fetchTemplates = useCallback(async () => {
+    if (!isDocMaster) return;
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    try {
+      const data = await docmasterAPI.listTemplates({ userId: user?.email });
+      setDocmasterTemplates(data);
+    } catch (err) {
+      setTemplatesError(err instanceof Error ? err.message : "加载模板失败");
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, [isDocMaster, user?.email]);
+
+  useEffect(() => {
+    if (!isDocMaster) {
+      setDocmasterTemplates({ shared: [], mine: [] });
+      return;
+    }
+    void fetchTemplates();
+  }, [isDocMaster, fetchTemplates]);
+
+  // Allow chat-side template save/delete tool flows to refresh the catalog.
+  useEffect(() => {
+    if (!isDocMaster) return;
+    const handler = () => {
+      void fetchTemplates();
+    };
+    window.addEventListener("drsai:templateLibraryChanged", handler);
+    return () => {
+      window.removeEventListener("drsai:templateLibraryChanged", handler);
+    };
+  }, [isDocMaster, fetchTemplates]);
+
+  const handleUseTemplate = useCallback((entry: DocMasterTemplateEntry) => {
+    const alias =
+      (Array.isArray(entry.aliases) && entry.aliases.find((a) => a && a.trim())) ||
+      entry.name;
+    if (!alias) return;
+    const text = `请使用模板 ${alias}`;
+    window.dispatchEvent(
+      new CustomEvent("drsai:chatinput:setValue", { detail: { text } })
+    );
+    navigateToMenu(MENU_IDS.currentSession);
+    navigateToView("chat");
+  }, [navigateToMenu, navigateToView]);
+
+  const rightPanelTemplates = useMemo(() => {
+    if (!isDocMaster) return null;
+
+    const isDark = darkMode === "dark";
+    const cardBase = isDark
+      ? "rounded-lg border border-border-primary/30 bg-tertiary/10 p-3 hover:bg-tertiary/20"
+      : "rounded-lg border border-gray-200/70 bg-white/70 p-3 hover:bg-gray-100/60";
+    const chipBase = isDark
+      ? "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-white/[0.06] text-secondary"
+      : "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-600";
+    const aliasChip = isDark
+      ? "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-accent/15 text-accent"
+      : "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-violet-100 text-violet-700";
+
+    const renderEntry = (entry: DocMasterTemplateEntry, idx: number) => {
+      const aliases = Array.isArray(entry.aliases) ? entry.aliases.filter(Boolean) : [];
+      const tags = Array.isArray(entry.tags) ? entry.tags.filter(Boolean) : [];
+      return (
+        <button
+          key={`${entry.name || "tpl"}-${idx}`}
+          type="button"
+          onClick={() => handleUseTemplate(entry)}
+          className={`block w-full text-left transition-colors ${cardBase}`}
+          title="点击将该模板写入聊天输入框"
+        >
+          <div className="text-sm font-medium text-primary break-all">
+            {entry.name || `模板 ${idx + 1}`}
+          </div>
+          {entry.description && (
+            <div className="mt-1 text-xs text-secondary break-all line-clamp-2">
+              {entry.description}
+            </div>
+          )}
+          {(entry.category || tags.length > 0) && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {entry.category && (
+                <span className={chipBase}>{entry.category}</span>
+              )}
+              {tags.map((t) => (
+                <span key={t} className={chipBase}>#{t}</span>
+              ))}
+            </div>
+          )}
+          {aliases.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {aliases.map((a) => (
+                <span key={a} className={aliasChip}>{a}</span>
+              ))}
+            </div>
+          )}
+        </button>
+      );
+    };
+
+    const sectionHeader = (text: string, count: number) => (
+      <div className="flex items-center justify-between px-1 mb-2">
+        <span className="text-xs font-semibold text-secondary tracking-wide uppercase">
+          {text}
+        </span>
+        <span className="text-[11px] text-secondary opacity-70">{count}</span>
+      </div>
+    );
+
+    const { shared, mine } = docmasterTemplates;
+    const hasAny = shared.length > 0 || mine.length > 0;
+
+    return (
+      <div className="h-full flex flex-col min-h-0">
+        <div className="flex-shrink-0 flex items-center justify-between px-3 pt-3 pb-2">
+          <div className="text-[11px] text-secondary opacity-70">
+            点击条目可写入聊天输入框
+          </div>
+          <button
+            type="button"
+            onClick={() => void fetchTemplates()}
+            disabled={templatesLoading}
+            className={`text-[11px] rounded-md px-2 py-1 transition-colors ${
+              templatesLoading
+                ? "opacity-40 cursor-not-allowed"
+                : isDark
+                  ? "text-secondary hover:text-primary hover:bg-white/5"
+                  : "text-gray-500 hover:text-gray-800 hover:bg-gray-100/60"
+            }`}
+          >
+            {templatesLoading ? "加载中…" : "刷新"}
+          </button>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 space-y-4">
+          {templatesError && (
+            <div className="text-xs text-red-500/90 px-1">{templatesError}</div>
+          )}
+          {!templatesError && !templatesLoading && !hasAny && (
+            <div className="flex items-center justify-center h-full text-secondary">
+              <div className="text-center">
+                <Library className="w-8 h-8 mx-auto mb-3 opacity-30" />
+                <p className="text-sm opacity-50">暂无模板</p>
+              </div>
+            </div>
+          )}
+          {shared.length > 0 && (
+            <div>
+              {sectionHeader("共享模板", shared.length)}
+              <div className="space-y-2">{shared.map(renderEntry)}</div>
+            </div>
+          )}
+          {mine.length > 0 && (
+            <div>
+              {sectionHeader("我的模板", mine.length)}
+              <div className="space-y-2">{mine.map(renderEntry)}</div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }, [
+    isDocMaster,
+    docmasterTemplates,
+    templatesLoading,
+    templatesError,
+    darkMode,
+    handleUseTemplate,
+    fetchTemplates,
+  ]);
+
   const rightPanelHistory = useMemo(() => {
     const sortedSessions = Array.isArray(sessions)
       ? [...sessions].sort(
@@ -704,10 +891,11 @@ export const SessionManager: React.FC = () => {
         }} />}
         rightPanelHistory={rightPanelHistory}
         rightPanelFiles={rightPanelFiles}
+        rightPanelTemplates={isDocMaster ? rightPanelTemplates : undefined}
         onRightPanelTabChange={(tab) => {
-          if (tab === "files") {
-            // Keep the current canvas view when only switching to the file-space tab.
-            // The canvas should switch to file preview only after selecting a specific file.
+          if (tab === "files" || tab === "templates") {
+            // Keep the current canvas view when switching to a non-chat side tab.
+            // The canvas should switch only on explicit user action (e.g. file preview).
             return;
           }
           navigateToView("chat");
