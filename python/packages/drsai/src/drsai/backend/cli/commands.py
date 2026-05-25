@@ -26,6 +26,12 @@ class CommandDef:
     cli_only: bool = False             # only available in CLI REPL
     gateway_only: bool = False         # only available in gateway/messaging
     gateway_config_gate: Optional[str] = None  # config dotpath; when truthy, overrides cli_only for gateway
+    handler: str = "sync"              # "async" (needs asyncio loop), "sync" (local only), "special" (quit/etc)
+                                       # NOTE: This is a *hint* for dispatch. The GUI CommandDispatcher
+                                       # auto-detects the actual handler type via asyncio.iscoroutinefunction().
+                                       # The CLI uses asyncio.iscoroutine(result) for the same purpose.
+                                       # Keep this field accurate for documentation, but mismatch between
+                                       # registry and implementation will not crash either consumer.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -39,65 +45,76 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Create a new session",
         "Session",
         args_hint="[name]",
+        handler="async",
     ),
     CommandDef(
         "switch",
         "Switch to another session",
         "Session",
         args_hint="<id|name>",
+        handler="async",
     ),
     CommandDef(
         "list",
         "List all saved sessions",
         "Session",
         aliases=("ls",),
+        handler="async",
     ),
     CommandDef(
         "rename",
         "Rename the current session",
         "Session",
         args_hint="<name>",
+        handler="async",
     ),
     CommandDef(
         "clear",
         "Clear screen and start a new session",
         "Session",
         aliases=("cls",),
+        handler="sync",
     ),
     CommandDef(
         "history",
         "Show conversation history",
         "Session",
         cli_only=True,
+        handler="async",
     ),
     CommandDef(
         "save",
         "Save the current conversation",
         "Session",
         cli_only=True,
+        handler="sync",
     ),
     CommandDef(
         "retry",
         "Retry the last message",
         "Session",
+        handler="sync",
     ),
     CommandDef(
         "resume",
         "Resume a previous session (replays history into the agent)",
         "Session",
         args_hint="<id|name>",
+        handler="async",
     ),
     CommandDef(
         "search",
         "Search your past sessions (substring, case-insensitive)",
         "Session",
         args_hint="<query>",
+        handler="async",
     ),
     CommandDef(
         "copy",
         "Copy the n-th-to-last assistant reply to the clipboard",
         "Session",
         args_hint="[n]",
+        handler="async",
     ),
 
     # ── Display / runtime ────────────────────────────────────────────────────
@@ -106,23 +123,27 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Toggle or tune the reasoning box",
         "Display",
         args_hint="show|hide|off|low|medium|high",
+        handler="async",
     ),
     CommandDef(
         "verbose",
         "Toggle the per-turn stats footer",
         "Display",
+        handler="sync",
     ),
     CommandDef(
         "bell",
         "Ring the terminal bell when a response finishes",
         "Display",
         args_hint="on|off",
+        handler="sync",
     ),
     CommandDef(
         "fast",
         "Switch to the fastest alias in the llm_mode_config (session-local)",
         "Display",
         args_hint="on|off",
+        handler="async",
     ),
 
     # ── Configuration ─────────────────────────────────────────────────────────
@@ -131,6 +152,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Show current connection configuration",
         "Configuration",
         cli_only=True,
+        handler="sync",
+    ),
+    CommandDef(
+        "setup",
+        "Re-open setup wizard to change API key / configuration",
+        "Configuration",
+        aliases=("env",),
+        handler="sync",
     ),
     CommandDef(
         "model",
@@ -138,6 +167,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Configuration",
         args_hint="[name|info]",
         aliases=("m",),
+        handler="async",
     ),
     CommandDef(
         "model_global",
@@ -145,6 +175,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Configuration",
         args_hint="[name]",
         aliases=("mg",),
+        handler="async",
     ),
     CommandDef(
         "models",
@@ -152,17 +183,20 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Configuration",
         aliases=("listmodels",),
         cli_only=True,
+        handler="sync",
     ),
     CommandDef(
         "status",
         "Show agent and session status",
         "Info",
+        handler="async",
     ),
     CommandDef(
         "info",
         "Show session configuration, tools and skills",
         "Info",
         cli_only=True,
+        handler="sync",
     ),
 
     # ── Plan / Prompt ────────────────────────────────────────────────────────
@@ -172,6 +206,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Plan",
         aliases=("pm",),
         args_hint="on|off|status",
+        handler="async",
     ),
     CommandDef(
         "pm_global",
@@ -179,12 +214,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Plan",
         aliases=("pmg",),
         args_hint="on|off|status",
+        handler="async",
     ),
     CommandDef(
         "inject",
         "Inject custom prompts into system message",
         "Plan",
         args_hint="prefix|suffix|clear|status",
+        handler="async",
     ),
 
     # ── Project Instructions ──────────────────────────────────────────────
@@ -192,12 +229,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "init",
         "Create DRSAI.md project instructions file (Claude Code /init equivalent)",
         "Project",
+        handler="sync",
     ),
     CommandDef(
         "memory",
         "View/reload project-level instructions (DRSAI.md / CLAUDE.md)",
         "Project",
         args_hint="show|reload|status",
+        handler="async",
     ),
 
     # ── Workspace ──────────────────────────────────────────────────────
@@ -207,6 +246,15 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Workspace",
         aliases=("ws",),
         args_hint="on|off|status",
+        handler="async",
+    ),
+    CommandDef(
+        "ws_global",
+        "Toggle workspace restriction (session + global default)",
+        "Workspace",
+        aliases=("wsg",),
+        args_hint="on|off|status",
+        handler="async",
     ),
     CommandDef(
         "dangerous",
@@ -214,6 +262,85 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Workspace",
         aliases=("dg",),
         args_hint="on|off|status",
+        handler="async",
+    ),
+    CommandDef(
+        "dg_global",
+        "Toggle dangerous command permission (session + global default)",
+        "Workspace",
+        aliases=("dgg",),
+        args_hint="on|off|status",
+        handler="async",
+    ),
+    CommandDef(
+        "cd",
+        "Switch working directory (Tray GUI only; CLI uses cwd automatically)",
+        "Workspace",
+        aliases=("workdir",),
+        args_hint="<path>",
+        handler="sync",
+    ),
+
+    # ── Subagent ────────────────────────────────────────────────────────
+    CommandDef(
+        "agent",
+        "Set/clear default subagent or list available subagents",
+        "Subagent",
+        args_hint="<name>|list|clear",
+        handler="async",
+    ),
+    CommandDef(
+        "delegate",
+        "Manually delegate a task to a subagent",
+        "Subagent",
+        aliases=("sub",),
+        args_hint="<agent_type> <prompt>",
+        handler="async",
+    ),
+
+    # ── Desktop ────────────────────────────────────────────────────────────
+    CommandDef(
+        "install",
+        "Create desktop shortcut for DrSai tray app",
+        "Desktop",
+        args_hint="shortcut|icons|uninstall",
+        handler="sync",
+    ),
+    CommandDef(
+        "tray",
+        "Check/recreate tray icon (status|create|hide)",
+        "Desktop",
+        args_hint="status|create|hide",
+        handler="sync",
+    ),
+
+    # ── Window ────────────────────────────────────────────────────────────
+    CommandDef(
+        "win_new",
+        "Create a new chat window with fresh session",
+        "Window",
+        args_hint="[name]",
+        handler="async",
+    ),
+    CommandDef(
+        "win_close",
+        "Close current chat window (minimize last window to tray)",
+        "Window",
+        handler="sync",
+    ),
+    CommandDef(
+        "win_list",
+        "List all open windows and their sessions",
+        "Window",
+        handler="sync",
+    ),
+    CommandDef(
+        "win_switch",
+        "Switch focus to a different window by session ID or name",
+        "Window",
+        aliases=("winsw",),
+        args_hint="<id_or_name>",
+        handler="async",
     ),
 
     # ── Meta ─────────────────────────────────────────────────────────────────
@@ -222,12 +349,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "Show this help",
         "Info",
         aliases=("h", "?"),
+        handler="sync",
     ),
     CommandDef(
         "quit",
         "Save and exit",
         "Info",
         aliases=("exit", "q"),
+        handler="special",
     ),
 ]
 
@@ -254,7 +383,7 @@ def resolve_command(name: str) -> Optional[CommandDef]:
 
 def commands_by_category() -> dict[str, list[CommandDef]]:
     """Return commands grouped by category, in fixed category order."""
-    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Info"]
+    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Subagent", "Window", "Desktop", "Info"]
     groups: dict[str, list[CommandDef]] = {cat: [] for cat in order}
     for cmd in COMMAND_REGISTRY:
         if cmd.category in groups:

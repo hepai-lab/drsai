@@ -75,7 +75,6 @@ from drsai.modules.components.skills import SkillLoader
 from .managers.operater_funs import get_operator_funcs
 from .managers.todo_manager import TodoManager
 from drsai.configs.constant import RUNS_DIR
-from drsai.utils.tool_display import format_tools_usage_log_title
 
 class SkillAgentConfig(DrSaiAgentConfig):
     skills_dir: str
@@ -400,9 +399,9 @@ Agent types:
                     models_usage=model_result.usage,
                 )
                 logger.debug(tool_call_msg)
-                tools_name = [tool.name for tool in model_result.content]
+                tools_name = [tool.name for tool in model_result.content] 
                 yield AgentLogEvent(
-                    title=format_tools_usage_log_title(tools_name),
+                    title="I am using tools: " + " ".join(tools_name),
                     source=agent_name, 
                     content=str(tool_call_msg.content), 
                     content_type="tools")
@@ -711,21 +710,23 @@ Agent types:
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
         try:
             todo_list = self._todo_manager.update(argument["items"])
+            # Inject auto-correction warning prefix if present
+            warning_prefix = (self._todo_manager._last_warning + "\n\n") if self._todo_manager._last_warning else ""
             # send stream message
             yield ModelClientStreamingChunkEvent(
-                content=todo_list+"\n\n",
+                content=warning_prefix + todo_list+"\n\n",
                 source=self.name,
             )
             # add message to model_context with user source
             await model_context.add_message(
                 UserMessage(
-                    content=self._todo_manager.get_task_prompt(),
+                    content=warning_prefix + self._todo_manager.get_task_prompt(),
                     source="user",
                 )
             )
             # send text message to save to db in drsai ui
             yield TextMessage(
-                content=todo_list,
+                content=warning_prefix + todo_list,
                 source=agent_name,
             )
         except Exception as e:

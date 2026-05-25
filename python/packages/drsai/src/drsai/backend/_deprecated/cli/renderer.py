@@ -46,6 +46,7 @@ from autogen_agentchat.messages import (
     ToolCallRequestEvent,
     ToolCallSummaryMessage,
 )
+from drsai.modules.managers.messages.agent_messages import AgentLogEvent
 
 from .reasoning import ReasoningStreamState, split_reasoning
 from .stats import SessionStats, extract_usage, format_footer, play_bell
@@ -58,6 +59,7 @@ try:
     from .display import (
         build_tool_preview,
         get_cute_tool_message,
+        KawaiiSpinner,
         LocalEditSnapshot,
         capture_local_edit_snapshot,
         render_edit_diff_with_delta,
@@ -72,6 +74,11 @@ except ImportError:
         return None
     def get_cute_tool_message(tool_name, args, duration, result=None):  # type: ignore
         return f"⚡ {tool_name}"
+    class KawaiiSpinner:  # type: ignore
+        def __init__(self, *args, **kwargs): pass
+        def start(self): pass
+        def stop(self, final_message=None): pass
+        def update_text(self, new_message): pass
     class LocalEditSnapshot:  # type: ignore
         def __init__(self, paths=None, before=None):
             self.paths = paths or []
@@ -119,7 +126,15 @@ class DrSaiCLIRenderer:
         # Track whether the last byte written to stdout was a newline, so we
         # never emit consecutive blank lines (hermes-style tight spacing).
         self._last_ended_with_newline: bool = False
-        # Configure tool preview length
+        # ── Subagent context tracking ───────────────────────────────────────
+        # When True, streaming chunks / text messages are rendered with a
+        # distinct visual style (dim pipe prefix, cyan border) so the user
+        # can easily tell which output came from a subagent.
+        self._subagent_active: bool = False
+        self._subagent_name: str = ""
+        self._subagent_header_printed: bool = False
+        # Live spinner for tool execution (from display.py KawaiiSpinner)
+        self._spinner: Optional[KawaiiSpinner] = None
         if TUI_MODULE_AVAILABLE:
             set_tool_preview_max_len(tool_preview_max_len)
 
@@ -241,12 +256,23 @@ class DrSaiCLIRenderer:
         self._current_tool_snapshot = None
         self._tool_start_time = None
         self._last_ended_with_newline = False
+        self._subagent_active = False
+        self._subagent_name = ""
+        self._subagent_header_printed = False
+
+        # Start the spinner — renders at terminal bottom via ANSI save/restore
+        # cursor while patch_stdout proxies renderer output above it.
+        self._spinner = KawaiiSpinner(message="running…", spinner_type="dots")
+        self._spinner.start()
 
         async for message in stream:
             if isinstance(message, ModelClientStreamingChunkEvent):
                 src = getattr(message, "source", "") or ""
                 if src:
                     self._streaming_sources.add(src)
+                    # Detect subagent streaming chunks by source prefix
+                    if src.startswith("sub:"):
+                        self._ensure_subagent_header(src)
                 self._handle_chunk(message.content or "", state)
             elif isinstance(message, ToolCallRequestEvent):
                 self._close_stream()
@@ -256,21 +282,24 @@ class DrSaiCLIRenderer:
             elif isinstance(message, ToolCallExecutionEvent):
                 self._close_stream()
                 self._close_reasoning()
+                self._close_subagent()
                 self._render_tool_result(message)
                 self._just_after_tool_event = True
             elif isinstance(message, ToolCallSummaryMessage):
                 # DrSaiAgent sends ToolCallSummaryMessage instead of ToolCallExecutionEvent
                 self._close_stream()
                 self._close_reasoning()
+                self._close_subagent()
                 self._render_tool_summary(message)
                 self._just_after_tool_event = True
             elif isinstance(message, TextMessage):
                 # Capture usage metadata before any early return.
                 self._capture_usage(message)
+                # Detect subagent text messages by source prefix
+                src = getattr(message, "source", "") or ""
+                if src.startswith("sub:"):
+                    self._ensure_subagent_header(src)
                 if self._should_skip_text(message):
-                    # Do NOT close the stream — an interim TextMessage with the
-                    # same content we're already streaming would otherwise
-                    # inject a newline mid-sentence ("Hi th\nere!" bug).
                     continue
                 self._close_stream()
                 for chunk in state.flush():
@@ -282,6 +311,10 @@ class DrSaiCLIRenderer:
                 chat = getattr(message, "chat_message", None)
                 if isinstance(chat, TextMessage) and chat.source.lower() != "user":
                     self._capture_usage(chat)
+                    # Detect subagent responses by source prefix
+                    chat_src = getattr(chat, "source", "") or ""
+                    if chat_src.startswith("sub:"):
+                        self._ensure_subagent_header(chat_src)
                     if self._should_skip_text(chat):
                         continue
                     self._close_stream()
@@ -293,6 +326,14 @@ class DrSaiCLIRenderer:
                 # Sweep final messages for usage (the chunk events often lack it).
                 for m in getattr(message, "messages", []) or []:
                     self._capture_usage(m)
+            elif isinstance(message, AgentLogEvent):
+                self._close_stream()
+                self._close_reasoning()
+                # Detect subagent log events by source prefix
+                src = getattr(message, "source", "") or ""
+                if src.startswith("sub:"):
+                    self._ensure_subagent_header(src)
+                self._render_agent_log(message)
             elif isinstance(message, BaseAgentEvent):
                 # Unknown event kind — leave stream intact, don't print junk.
                 pass
@@ -318,6 +359,11 @@ class DrSaiCLIRenderer:
         # Draw a dim horizontal line so the user's next prompt is visually
         # isolated from the agent's output.
         self.print_turn_separator()
+
+        # Stop the spinner
+        if self._spinner is not None:
+            self._spinner.stop()
+            self._spinner = None
 
     # ── Streaming chunks ────────────────────────────────────────────────────
     def _handle_chunk(self, text: str, state: ReasoningStreamState) -> None:
@@ -367,11 +413,30 @@ class DrSaiCLIRenderer:
         else:  # visible
             if self._reason_open:
                 self._close_reasoning()
-            # ReasoningStreamState already quarantines partial reasoning tags;
-            # streaming chunks here are raw answer text. Do NOT call
-            # strip_reasoning — its ``.strip()`` eats legitimate whitespace.
-            sys.stdout.write(text)
-            sys.stdout.flush()
+            if self._subagent_active:
+                self._maybe_print_subagent_header()
+                # Prefix each NEW line with dim pipe to visually separate subagent
+                # output. Continuation chunks (mid-line) get no prefix — only the
+                # start of a logical line receives the │ marker.
+                lines = text.split('\n')
+                for i, line in enumerate(lines):
+                    if i > 0:
+                        sys.stdout.write('\n')
+                    at_line_start = (i > 0) or (not self._stream_open)
+                    if at_line_start:
+                        if line:
+                            sys.stdout.write(f"{ansi('dim')}│ {ansi_reset()}{line}")
+                        else:
+                            sys.stdout.write(f"{ansi('dim')}│{ansi_reset()}")
+                    else:
+                        sys.stdout.write(line)
+                sys.stdout.flush()
+            else:
+                # ReasoningStreamState already quarantines partial reasoning tags;
+                # streaming chunks here are raw answer text. Do NOT call
+                # strip_reasoning — its ``.strip()`` eats legitimate whitespace.
+                sys.stdout.write(text)
+                sys.stdout.flush()
             self._stream_open = not text.endswith("\n")
             self._streamed_visible_this_turn = True
             self._last_ended_with_newline = text.endswith("\n")
@@ -534,6 +599,56 @@ class DrSaiCLIRenderer:
                 text = text[:200] + "…"
             self._println(f"[dim]╎ {text}[/dim]")
 
+    # ── Subagent progress event ────────────────────────────────────────────
+    def _render_agent_log(self, message: AgentLogEvent) -> None:
+        """Render subagent progress event as a single dim line.
+
+        Subagent messages are tagged with source="sub:{name}" in the
+        SubagentRunner, making each line visually traceable to its origin.
+        """
+        title = message.title or ""
+        if not title:
+            return
+        source = message.source or ""
+        is_sub = source.startswith("sub:")
+        if source:
+            if is_sub:
+                self._println(f"  [cyan]{source}[/cyan] {title}")
+            else:
+                self._println(f"  [dim]{source}[/dim] {title}")
+        else:
+            self._println(f"  [dim]{title}[/dim]")
+
+    # ── Subagent visual framing ────────────────────────────────────────────
+    def _ensure_subagent_header(self, source: str) -> None:
+        """Print subagent header and activate subagent mode if not already.
+
+        Called when the renderer encounters a message whose ``source``
+        starts with ``"sub:"`` (e.g. ``"sub:explore"``).
+        """
+        if self._subagent_active:
+            return
+        self._subagent_active = True
+        self._subagent_name = source
+        self._subagent_header_printed = False
+        # Print header line
+        self._println(f"  {ansi('system_info')}┌─ {source} ─{ansi_reset()}")
+
+    def _maybe_print_subagent_header(self) -> None:
+        """Print the subagent prefix marker once per subagent section."""
+        if not self._subagent_active or self._subagent_header_printed:
+            return
+        self._subagent_header_printed = True
+
+    def _close_subagent(self) -> None:
+        """Close the subagent visual section if active."""
+        if not self._subagent_active:
+            return
+        self._subagent_active = False
+        self._subagent_name = ""
+        self._subagent_header_printed = False
+        self._println(f"  {ansi('system_info')}└─{ansi_reset()}")
+
     # ── Complete text messages ──────────────────────────────────────────────
     def _render_text_message(self, message: TextMessage) -> None:
         # ``_should_skip_text`` has already filtered dup / internal / user
@@ -549,7 +664,36 @@ class DrSaiCLIRenderer:
             self._close_reasoning()
         if not visible:
             return
-        if _looks_markdown(visible):
+
+        # Determine if this is a subagent message
+        is_sub = source.startswith("sub:")
+        meta = getattr(message, "metadata", None) or {}
+        is_subagent_result = bool(meta.get("subagent_result"))
+
+        if is_subagent_result:
+            # Final subagent result — use a distinct teal/cyan panel with
+            # bold border and clear label so it stands out from streamed output.
+            theme = get_theme()
+            panel = Panel(
+                visible,
+                title=f"[cyan bold]◆ {source}[/cyan bold]",
+                border_style="cyan",
+                box=ROUNDED,
+                expand=False,
+            )
+            self.console.print(panel)
+        elif is_sub:
+            # Subagent text — use cyan border to distinguish from main agent (gold)
+            theme = get_theme()
+            panel = Panel(
+                visible,
+                title=f"[cyan]{source}[/cyan]",
+                border_style="cyan",
+                box=ROUNDED,
+                expand=False,
+            )
+            self.console.print(panel)
+        elif _looks_markdown(visible):
             self.console.print(Markdown(visible))
         else:
             theme = get_theme()
@@ -592,3 +736,304 @@ def _has_rich_markup(text: str) -> bool:
 def is_tui_module_available() -> bool:
     """Check if the Hermes-style TUI module is available."""
     return TUI_MODULE_AVAILABLE
+
+
+# ── TUI-aware renderer (writes to DrSaiTUIState.message buffer) ─────────────
+# Re-uses DrSaiCLIRenderer logic but routes ALL output (streaming, tool
+# messages, panels) into state.messages for display in the HSplit message
+# Window. The HSplit top Window handles the spinner via state.spinner_*.
+# KawaiiSpinner is NOT used — spinner is driven by state._invalidate() from
+# the background spinner_loop thread.
+
+
+class DrSaiTUIRenderer(DrSaiCLIRenderer):
+    """TUI-aware renderer — routes all output to DrSaiTUIState.message buffer.
+
+    Subclass of DrSaiCLIRenderer that:
+    - Writes all output to ``state.messages`` instead of ``sys.stdout``
+    - Strips ANSI/Rich markup when storing (message Window uses FormattedText)
+    - Calls ``state._invalidate()`` after each render iteration
+    - Removes KawaiiSpinner (replaced by HSplit top Window via state.spinner_*)
+    - Removes ``patch_stdout`` dependency for output (App already handles that)
+    """
+
+    def __init__(
+        self,
+        state: "DrSaiTUIState",
+        console: Optional[Console] = None,
+        show_reasoning: bool = False,
+        tool_preview_max_len: int = 0,
+    ) -> None:
+        # Use a StringIO-backed Console to capture Rich output
+        from io import StringIO
+        self._string_capture = StringIO()
+        capture_console = Console(file=self._string_capture, force_terminal=False)
+        super().__init__(console=capture_console, show_reasoning=show_reasoning,
+                         tool_preview_max_len=tool_preview_max_len)
+        self.state = state
+        self._buffer: list[tuple[str, str]] = []  # (style, text) buffer
+
+    # ── Output routing: write to state.messages ─────────────────────────────
+
+    def _tui_append(self, text: str, style: str = "") -> None:
+        """Append styled text to the message buffer."""
+        if not text:
+            return
+        from loguru import logger
+        logger.debug(f"[TUI Renderer] Appending to state.messages: '{text[:100]}'")
+        self.state.append_message(text, style)
+        logger.debug(f"[TUI Renderer] state.messages now has {len(self.state.messages)} items")
+
+    def _tui_flush(self) -> None:
+        """Flush captured Rich StringIO content to message buffer."""
+        captured = self._string_capture.getvalue()
+        self._string_capture.seek(0)
+        self._string_capture.truncate()
+        if captured:
+            self._tui_append(captured, "")
+
+    def _println(self, text: str = "") -> None:
+        """Override: route to state.messages (strip markup)."""
+        if not text:
+            self._tui_append("\n", "")
+            return
+        # Strip Rich markup tags like [yellow]...[/yellow] → just text
+        import re
+        stripped = re.sub(r'\[/?[^]]+\]', '', text)
+        self._tui_append(stripped, "")
+        self._last_ended_with_newline = True
+
+    def _soft_newline(self) -> None:
+        """Override: route to state.messages."""
+        if not self._last_ended_with_newline:
+            self._tui_append("\n", "")
+
+    # ── Streaming output ────────────────────────────────────────────────────
+
+    def _handle_chunk(self, text: str, state) -> None:
+        """Override parent's _handle_chunk to route all output to state.messages."""
+        if not text:
+            return
+        # Collapse leading whitespace after tool events
+        if self._just_after_tool_event:
+            text = text.lstrip()
+            if not text:
+                return
+            self._just_after_tool_event = False
+
+        # Feed text through reasoning state parser (state is ReasoningStreamState instance)
+        for chunk in state.feed(text):
+            self._write_chunk_tui(chunk.kind, chunk.text)
+
+    def _write_chunk_tui(self, kind: str, text: str) -> None:
+        """Route streaming chunks to state.messages (replaces parent's _write_chunk)."""
+        if not text:
+            return
+        # Strip ANSI escapes for storage in message buffer
+        import re
+        stripped = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
+        if kind == "reasoning":
+            if not self.show_reasoning:
+                return
+            self._tui_append(stripped, "class:reasoning")
+        else:
+            self._tui_append(stripped, "")
+
+    def _close_stream(self) -> None:
+        if self._stream_open:
+            self._tui_append("\n", "")
+            self._stream_open = False
+            self._last_ended_with_newline = True
+
+    def _close_reasoning(self) -> None:
+        if self._reason_open:
+            if not self._reason_first_line:
+                self._tui_append("\n", "class:reasoning")
+            self._reason_open = False
+            self._reason_first_line = True
+
+    def _open_reasoning(self) -> None:
+        self._tui_append("┌─ Reasoning ─", "class:reasoning")
+        self._reason_open = True
+        self._reason_first_line = True
+
+    def _render_reasoning_text(self, text: str) -> None:
+        import re
+        stripped = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
+        self._tui_append(stripped, "class:reasoning")
+
+    # ── Tool events ─────────────────────────────────────────────────────────
+
+    def _render_tool_request(self, message: ToolCallRequestEvent) -> None:
+        calls = message.content or []
+        for call in calls:
+            if isinstance(call, FunctionCall):
+                tool_name = call.name
+                raw_args = getattr(call, "arguments", {}) or {}
+                if isinstance(raw_args, str):
+                    try:
+                        import json as _json
+                        args = _json.loads(raw_args)
+                    except (json.JSONDecodeError, ValueError):
+                        args = {}
+                else:
+                    args = raw_args if isinstance(raw_args, dict) else {}
+                self._pending_tool_call = (tool_name, args)
+                if TUI_MODULE_AVAILABLE:
+                    import re as _re
+                    preview = build_tool_preview(tool_name, args)
+                    if preview:
+                        self._tui_append(f"  🔧 {tool_name} {preview}", "class:tool-prefix")
+                    else:
+                        self._tui_append(f"  🔧 {tool_name}", "class:tool-prefix")
+                else:
+                    self._tui_append(f"  🔧 {tool_name}", "class:tool-prefix")
+        self._just_after_tool_event = True
+        self.state._invalidate()
+
+    def _render_tool_result(self, message: ToolCallExecutionEvent) -> None:
+        tool_name = getattr(message, "name", "?")
+        content = getattr(message, "content", None)
+        duration = None
+        if self._tool_start_time:
+            duration = time.time() - self._tool_start_time
+            self._tool_start_time = None
+
+        # Render diff if applicable
+        if TUI_MODULE_AVAILABLE and self._current_tool_snapshot:
+            render_edit_diff_with_delta(self._current_tool_snapshot, tool_name,
+                                         getattr(message, "arguments", None))
+            self._current_tool_snapshot = None
+
+        # Cute completion message
+        if TUI_MODULE_AVAILABLE:
+            if duration is not None:
+                msg = get_cute_tool_message(tool_name, None, duration)
+            else:
+                msg = f"  ✅ {tool_name}"
+        else:
+            msg = f"  ✅ {tool_name}"
+        self._tui_append(msg, "class:tool-result")
+        self._just_after_tool_event = True
+        self.state._invalidate()
+
+    def _render_tool_summary(self, message: ToolCallSummaryMessage) -> None:
+        content = getattr(message, "content", None)
+        if content:
+            self._tui_append(f"  ✅ {content}", "class:tool-result")
+        self.state._invalidate()
+
+    # ── Text message ────────────────────────────────────────────────────────
+
+    def _render_text_message(self, message: TextMessage) -> None:
+        source = (message.source or "")
+        content = (message.content or "").strip()
+        if not content:
+            return
+        reasoning, visible = split_reasoning(content)
+
+        if reasoning and self.show_reasoning:
+            self._tui_append("┌─ Reasoning ─", "class:reasoning")
+            import re
+            stripped = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', reasoning)
+            for line in stripped.split('\n'):
+                self._tui_append(f"│ {line}", "class:reasoning")
+            self._tui_append("└─", "class:reasoning")
+
+        if not visible:
+            return
+
+        import re
+        visible_stripped = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', visible)
+        self._tui_append(f"\n{visible_stripped}\n", "class:assistant-text")
+        self._last_ended_with_newline = True
+        self.state._invalidate()
+
+    # ── Main entry ──────────────────────────────────────────────────────────
+
+    async def render(
+        self,
+        stream: AsyncGenerator[Any, None],
+        stats: SessionStats,
+    ) -> None:
+        state = ReasoningStreamState()
+        self._stream_open = False
+        self._reason_open = False
+        self._reason_first_line = True
+        self._last_turn_model = ""
+        self._last_usage = (0, 0)
+        self._streamed_visible_this_turn = False
+        self._streaming_sources = set()
+        self._just_after_tool_event = False
+        self._current_tool_snapshot = None
+        self._tool_start_time = None
+        self._last_ended_with_newline = False
+        self._subagent_active = False
+        self._subagent_name = ""
+        self._subagent_header_printed = False
+
+        # Signal spinner start via TUIState (not KawaiiSpinner thread)
+        self.state.start_spinner("thinking…")
+
+        async for message in stream:
+            from loguru import logger
+            logger.debug(f"[TUI Renderer] Got event: {type(message).__name__}")
+            if isinstance(message, ModelClientStreamingChunkEvent):
+                src = getattr(message, "source", "") or ""
+                if src:
+                    self._streaming_sources.add(src)
+                content = message.content or ""
+                logger.debug(f"[TUI Renderer] Chunk content: '{content[:50]}'")
+                self._handle_chunk(content, state)
+            elif isinstance(message, ToolCallRequestEvent):
+                self._close_stream()
+                self._close_reasoning()
+                self._render_tool_request(message)
+                self._just_after_tool_event = True
+            elif isinstance(message, ToolCallExecutionEvent):
+                self._close_stream()
+                self._close_reasoning()
+                self._render_tool_summary(message)
+                self._just_after_tool_event = True
+            elif isinstance(message, ToolCallSummaryMessage):
+                self._close_stream()
+                self._close_reasoning()
+                self._render_tool_summary(message)
+                self._just_after_tool_event = True
+            elif isinstance(message, TextMessage):
+                self._capture_usage(message)
+                if self._should_skip_text(message):
+                    continue
+                self._close_stream()
+                for chunk in state.flush():
+                    self._write_chunk_tui(chunk.kind, chunk.text)
+                self._close_reasoning()
+                self._render_text_message(message)
+            elif isinstance(message, Response):
+                self._capture_usage(message)
+                chat = getattr(message, "chat_message", None)
+                if isinstance(chat, TextMessage):
+                    self._capture_usage(chat)
+                self._close_stream()
+                for chunk in state.flush():
+                    self._write_chunk_tui(chunk.kind, chunk.text)
+                self._close_reasoning()
+
+            # Refresh the App display after each event
+            self.state._invalidate()
+
+        self._close_stream()
+        self._close_reasoning()
+
+        # Signal spinner stop
+        self.state.stop_spinner()
+
+        # Footer stats
+        if stats and stats.show_footer:
+            footer_text = format_footer(stats)
+            if footer_text:
+                import re
+                stripped = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', footer_text)
+                self._tui_append(f"\n{stripped}\n", "class:status-dim")
+
+        self.state._invalidate()

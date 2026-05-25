@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union, Dict
 
 from loguru import logger
-from sqlalchemy import exc, inspect, text
+from sqlalchemy import event, exc, inspect, text
 from sqlmodel import Session, SQLModel, and_, create_engine, select
 
 from autogen_core import (
@@ -31,6 +31,7 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
     component_provider_override = "drsai.DatabaseManager"
 
     _init_lock = threading.Lock()
+    _delete_lock = threading.Lock()     # Serialize DELETE-heavy ops to prevent SQLite corruption
 
     def __init__(self, engine_uri: str, base_dir: Optional[Path] = None):
         """
@@ -41,7 +42,10 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
             engine_uri (str): Database connection URI (e.g. sqlite:///db.sqlite3)
             base_dir (Path, optional): Base directory for migration files. If None, uses current directory. Default: None.
         """
-        connection_args = {"check_same_thread": True} if "sqlite" in engine_uri else {}
+        # check_same_thread=False allows SQLite connections to be shared across
+        # threads (asyncio thread, tkinter main thread, pystray thread).
+        # SQLAlchemy's QueuePool handles connection reuse safely.
+        connection_args = {"check_same_thread": False} if "sqlite" in engine_uri else {}
 
         # check if base_dir is valid
         if base_dir is None:
@@ -56,6 +60,19 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
 
 
         self.engine = create_engine(engine_uri, connect_args=connection_args)
+
+        # Enable WAL mode and set busy_timeout for SQLite to prevent
+        # "database disk image is malformed" under concurrent writes
+        # from parallel sub-agents sharing the same DB file.
+        if "sqlite" in engine_uri:
+            @event.listens_for(self.engine, "connect")
+            def _set_sqlite_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA busy_timeout=5000")
+                cursor.execute("PRAGMA foreign_keys=ON")
+                cursor.close()
+
         self.schema_manager = SchemaManager(
             engine=self.engine,
             base_dir=base_dir,
@@ -453,44 +470,49 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
     def delete(
         self, model_class: type[SQLModel], filters: dict[str, Any] | None = None
     ) -> Response:
-        """Delete an entity"""
+        """Delete an entity
+
+        Serialised via ``_delete_lock`` so that concurrent sub-agent
+        cleanups do not contend on the same SQLite file.
+        """
         status_message = ""
         status = True
 
-        with Session(self.engine) as session:
-            try:
-                if "sqlite" in str(self.engine.url):
-                    session.connection().execute(text("PRAGMA foreign_keys=ON"))
-                statement = select(model_class)
-                if filters:
-                    conditions = [
-                        getattr(model_class, col) == value
-                        for col, value in filters.items()
-                    ]
-                    statement = statement.where(and_(*conditions))
+        with self._delete_lock:
+            with Session(self.engine) as session:
+                try:
+                    if "sqlite" in str(self.engine.url):
+                        session.connection().execute(text("PRAGMA foreign_keys=ON"))
+                    statement = select(model_class)
+                    if filters:
+                        conditions = [
+                            getattr(model_class, col) == value
+                            for col, value in filters.items()
+                        ]
+                        statement = statement.where(and_(*conditions))
 
-                rows = session.exec(statement).all()
+                    rows = session.exec(statement).all()
 
-                if rows:
-                    for row in rows:
-                        session.delete(row)
-                    session.commit()
-                    status_message = f"{model_class.__name__} Deleted Successfully"
-                else:
-                    status_message = "Row not found"
-                    logger.info(f"Row with filters {filters} not found")
+                    if rows:
+                        for row in rows:
+                            session.delete(row)
+                        session.commit()
+                        status_message = f"{model_class.__name__} Deleted Successfully"
+                    else:
+                        status_message = "Row not found"
+                        logger.info(f"Row with filters {filters} not found")
 
-            except exc.IntegrityError as e:
-                session.rollback()
-                status = False
-                status_message = f"Integrity error: The {model_class.__name__} is linked to another entity and cannot be deleted. {e}"
-                # Log the specific integrity error
-                logger.error(status_message)
-            except Exception as e:
-                session.rollback()
-                status = False
-                status_message = f"Error while deleting: {e}"
-                logger.error(status_message)
+                except exc.IntegrityError as e:
+                    session.rollback()
+                    status = False
+                    status_message = f"Integrity error: The {model_class.__name__} is linked to another entity and cannot be deleted. {e}"
+                    # Log the specific integrity error
+                    logger.error(status_message)
+                except Exception as e:
+                    session.rollback()
+                    status = False
+                    status_message = f"Error while deleting: {e}"
+                    logger.error(status_message)
 
         return Response(message=status_message, status=status, data=None)
     

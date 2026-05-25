@@ -15,6 +15,7 @@ from drsai.modules.managers.database import DatabaseManager
 from drsai.modules.managers.datamodel.db import Thread
 from drsai.modules.agents.skills_agent.drsai_cli_assistant import (
     SessionInfo,
+    _extract_messages_from_thread,
     _thread_to_info,
 )
 
@@ -46,11 +47,11 @@ class CLISessionStore:
         return [_thread_to_info(row) for row in resp.data[:limit]]
 
     def load(self, thread_id: str) -> list[dict[str, Any]]:
-        """Return the raw ``Thread.messages`` list (or empty)."""
+        """Return conversation messages from Thread (messages or state fallback)."""
         row = self._get(thread_id)
         if row is None:
             return []
-        return list(row.messages or [])
+        return _extract_messages_from_thread(row)
 
     def search(self, query: str, limit: int = 20) -> list[SessionInfo]:
         if not query:
@@ -74,7 +75,8 @@ class CLISessionStore:
             if row is None:
                 continue
             try:
-                blob = _json.dumps(row.messages or [], ensure_ascii=False).lower()
+                msgs = _extract_messages_from_thread(row)
+                blob = _json.dumps(msgs, ensure_ascii=False).lower()
             except Exception:
                 continue
             if needle in blob:

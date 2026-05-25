@@ -165,17 +165,6 @@ class RoundRobinGroupChatManager(DrSaiBaseGroupChatManager):
                     return name
             # If no user_proxy found, continue with round-robin
 
-        non_proxy = [n for n in self._participant_names if n != "user_proxy"]
-        if non_proxy and thread:
-            last = thread[-1]
-            last_src = getattr(last, "source", None)
-            if last_src in ("user", "user_proxy"):
-                has_assistant = any(
-                    getattr(m, "source", None) in non_proxy for m in thread
-                )
-                if not has_assistant:
-                    self._next_speaker_index = self._participant_names.index(non_proxy[0])
-
         current_speaker_index = self._next_speaker_index
         self._next_speaker_index = (current_speaker_index + 1) % len(
             self._participant_names
