@@ -1,5 +1,5 @@
 
-from typing import (List, Dict, Union, AsyncGenerator, Any, Optional, Mapping)
+from typing import (List, Dict, Union, AsyncGenerator, Any, Optional)
 import os
 import copy
 import json
@@ -86,60 +86,10 @@ from drsai.utils.oai_stream_event import (
 
 import uuid
 
-from dotenv import load_dotenv
-
 from drsai.modules.managers.user_profile import UserApiKeyManager
 
-load_dotenv(dotenv_path="drsai_test.env")
-
-
-def message_dict_to_base_chat_message(message: Mapping[str, Any]) -> BaseChatMessage:
-    """Normalize one chat item from OpenAI-style payloads or AgentChat ``model_dump`` JSON.
-
-    Remote ``HepAIWorkerAgent`` sends AgentChat messages (``TextMessage`` / ``MultiModalMessage``
-    dumps). ``a_start_chat_completions`` historically only parsed OpenAI ``role`` + ``content``
-    lists of ``{type: text|image_url}`` parts, which drops images serialized as ``{"data": ...}``.
-    """
-    msg_type = message.get("type")
-    if msg_type == "TextMessage":
-        return TextMessage.model_validate(message)
-    if msg_type == "MultiModalMessage":
-        return MultiModalMessage.model_validate(message)
-    if msg_type == "HandoffMessage":
-        return HandoffMessage.model_validate(message)
-    if msg_type == "StopMessage":
-        return StopMessage.model_validate(message)
-    if msg_type == "ToolCallSummaryMessage":
-        return ToolCallSummaryMessage.model_validate(message)
-
-    speaker = str(message.get("role") or message.get("source") or "user")
-    content = message.get("content", "")
-    if isinstance(content, list):
-        parts: List[Any] = []
-        for sub_message in content:
-            if isinstance(sub_message, str):
-                parts.append(sub_message)
-                continue
-            if not isinstance(sub_message, dict):
-                continue
-            st = sub_message.get("type")
-            if st == "text":
-                parts.append(sub_message.get("text", ""))
-            elif st == "image_url":
-                url = (sub_message.get("image_url") or {}).get("url")
-                if url:
-                    parts.append(Image.from_uri(url))
-        return MultiModalMessage(
-            content=parts,
-            source=speaker,
-            metadata={"internal": "no"},
-        )
-    return TextMessage(
-        content=content if isinstance(content, str) else str(content),
-        source=speaker,
-        metadata={"internal": "no"},
-    )
-
+from dotenv import load_dotenv
+load_dotenv(dotenv_path = "drsai_test.env")
 
 class DrSai:
     """
@@ -586,11 +536,20 @@ class DrSai:
                 )
             
             # 历史消息处理
-
-            ## 将前端消息整理为 autogen BaseChatMessage（支持 OpenAI 格式与 AgentChat model_dump JSON）
+            
+            ## 将前端消息整理为autogen BaseChatMessage格式
             task: list[BaseChatMessage] = []
             for message in messages[:-1]:
-                task.append(message_dict_to_base_chat_message(message))
+                if isinstance(message["content"], list):
+                    content = []
+                    for sub_message in message["content"]:
+                        if sub_message["type"] == "text":
+                            content.append(sub_message["text"])
+                        elif sub_message["type"] == "image_url":
+                            content.append(Image.from_uri(sub_message["image_url"]["url"]))
+                    task.append(MultiModalMessage(content=content, source=message["role"], metadata={"internal": "no"}))
+                else:
+                    task.append(TextMessage(content=message["content"], source=message["role"], metadata={"internal": "no"}))  
             ## 最后一条处理Handoff
             last_message = messages[-1]
             is_not_handoff = True
@@ -604,7 +563,16 @@ class DrSai:
                             metadata={"internal": "no"}))
                         is_not_handoff = False
             if is_not_handoff:
-                task.append(message_dict_to_base_chat_message(last_message))
+                if isinstance(last_message["content"], list):
+                    content = []
+                    for sub_message in last_message["content"]:
+                        if sub_message["type"] == "text":
+                            content.append(sub_message["text"])
+                        elif sub_message["type"] == "image_url":
+                            content.append(Image.from_uri(sub_message["image_url"]["url"]))
+                    task.append(MultiModalMessage(content=content, source=message["role"], metadata={"internal": "no"}))
+                else:
+                    task.append(TextMessage(content=last_message["content"], source=last_message["role"], metadata={"internal": "no"}))  
             
             if thread.messages:
                 thread.messages.append(task[-1].model_dump(mode="json"))

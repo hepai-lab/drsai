@@ -7,6 +7,7 @@ Sensitive values (API keys) are always masked when displayed.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -26,10 +27,29 @@ DEFAULT_CONFIG: dict = {
     "defult_config_name": None,
     # Plan mode: 启用后 AI 会先访谈用户确认计划再执行
     "plan_mode": False,
+    # Workspace restriction: 启用后文件/Shell 操作限制在工作目录内
+    "workspace_enabled": True,
+    # Dangerous command: 启用后允许 sudo/rm -rf/python/bash/sh 等危险命令
+    "dangerous_allowed": False,
+    # ── API Keys (persisted for packaged app convenience) ─────────────────
+    # In development mode, users typically set env vars:
+    #   HEPAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
+    # In packaged Windows app mode, env vars are harder to set,
+    # so keys are saved to config file.  _resolve() in
+    # run_drsai_agent_factory.py prioritizes env vars over config.
+    "api_key":               None,  # HepAI API key (legacy, also used as fallback)
+    "anthropic_api_key":     None,
+    "anthropic_base_url":    None,
+    "openai_api_key":        None,
+    "openai_base_url":       None,
 }
 
 # Config keys that hold sensitive values — always masked when displayed.
-_SENSITIVE_KEYS: tuple[str, ...] = ()
+_SENSITIVE_KEYS: tuple[str, ...] = (
+    "api_key",
+    "anthropic_api_key",
+    "openai_api_key",
+)
 
 # ── Config I/O ───────────────────────────────────────────────────────────────
 
@@ -112,18 +132,63 @@ def show_config(cfg: Optional[dict] = None, *, as_json: bool = False) -> None:
     print(f"  {'Model':<18} {str(cfg.get('defult_config_name') or '<not set>'):<34}  (default model)")
     plan_mode = cfg.get('plan_mode', False)
     print(f"  {'Plan Mode':<18} {'on' if plan_mode else 'off':<34}  (AI interviews before acting)")
+
+    # ── API Keys (masked) ────────────────────────────────────────────────
+    for key, label in [
+        ("api_key",             "HepAI Key"),
+        ("anthropic_api_key",   "Anthropic Key"),
+        ("openai_api_key",      "OpenAI Key"),
+    ]:
+        val = cfg.get(key) or ""
+        env_key = {
+            "api_key": "HEPAI_API_KEY",
+            "anthropic_api_key": "ANTHROPIC_API_KEY",
+            "openai_api_key": "OPENAI_API_KEY",
+        }[key]
+        # Check both config and env var
+        env_val = os.environ.get(env_key, "")
+        effective = val or env_val
+        if effective:
+            display = mask_key(effective)
+            source = "env" if env_val and not val else "config"
+            print(f"  {label:<18} {display:<34}  ({source})")
+        else:
+            print(f"  {label:<18} <not set>                            ")
+
+    # ── Base URLs ─────────────────────────────────────────────────────────
+    for key, label in [
+        ("anthropic_base_url",  "Anthropic URL"),
+        ("openai_base_url",     "OpenAI URL"),
+    ]:
+        val = cfg.get(key) or ""
+        if val:
+            print(f"  {label:<18} {val:<34}")
+        else:
+            print(f"  {label:<18} <default>                             ")
+
     print()
 
 
 def config_as_dict_for_export(cfg: Optional[dict] = None) -> dict:
-    """Return a safe-to-print config dict."""
+    """Return a safe-to-print config dict (API keys masked)."""
     if cfg is None:
         cfg = load_config()
-    return {
+    result = {
         "user_id": cfg.get("user_id", "anonymous"),
         "defult_config_name": cfg.get("defult_config_name"),
         "plan_mode": cfg.get("plan_mode", False),
     }
+    for key in _SENSITIVE_KEYS:
+        val = cfg.get(key) or ""
+        env_key_map = {
+            "api_key": "HEPAI_API_KEY",
+            "anthropic_api_key": "ANTHROPIC_API_KEY",
+            "openai_api_key": "OPENAI_API_KEY",
+        }
+        env_val = os.environ.get(env_key_map.get(key, ""), "")
+        effective = val or env_val
+        result[key] = mask_key(effective) if effective else "<not set>"
+    return result
 
 
 # ── Workdir Sessions I/O ─────────────────────────────────────────────────────

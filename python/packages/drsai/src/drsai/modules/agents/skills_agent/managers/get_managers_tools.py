@@ -79,23 +79,38 @@ def get_subagent_tools(sub_agents: list[str], description: str, strict: bool = F
         properties={
             "description": {
                 "type": "string",
-                "description":  "Short task description (3-5 words)"
+                "description": "Short task description (3-5 words)"
             },
             "prompt": {
                 "type": "string",
-                "description": "The specific tasks that need to be executed by the sub agent. If the tasks include code blocks, files, etc. that need to be executed, they must be filled in completely."
+                "description": "The specific task. Include all necessary code, file paths, constraints. If code blocks or files need to be executed, include them in full."
             },
             "agent_type": {
                 "type": "string",
-                "enum": sub_agents
+                "enum": sub_agents,
+                "description": "Which subagent type to use (explore=read-only search, plan=architecture design, general=full toolkit, or a custom type)."
             },
+            "context": {
+                "type": "string",
+                "description": "Optional background context for the subagent: relevant file paths, error messages, project structure, constraints. Not the parent conversation history."
+            },
+            # "mode": {
+            #     "type": "string",
+            #     "enum": ["single", "multi"],
+            #     "description": "Execution mode: 'single' = one LLM round (fast, for simple tasks), 'multi' = iterate until done (for complex multi-step tasks). Default: depends on subagent type."
+            # },
         },
         required=["description", "prompt", "agent_type"],
         additionalProperties=False,
     )
     tool_schema = ToolSchema(
         name="Delegate",
-        description=f"Delegate a subtask to a specialized subagent. Use this when you need focused work by an agent with specific capabilities or domain knowledge.\n\nAvailable agent types:\n{description}",
+        description=(
+            f"Delegate a subtask to a specialized subagent. Use this when you need focused work by an agent with specific capabilities.\n\n"
+            f"IMPORTANT: The subagent has its own isolated context. It CANNOT see the parent conversation history. "
+            f"Provide all necessary information in the 'prompt' and 'context' fields.\n\n"
+            f"Available agent types:\n{description}"
+        ),
         parameters=parameters,
         strict=strict,
     )
