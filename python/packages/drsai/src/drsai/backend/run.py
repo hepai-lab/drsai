@@ -507,6 +507,130 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         except Exception as e:
             return {"status": False, "message": f"load_state error: {e}"}
 
+    def _get_switchable_agents(self, agent: Team | ChatAgent) -> List[ChatAgent]:
+        """Return agents that can switch model client in a session/team."""
+        if hasattr(agent, "switch_model"):
+            return [agent]  # type: ignore[list-item]
+        participants = getattr(agent, "_participants", None) or []
+        return [p for p in participants if hasattr(p, "switch_model")]
+
+    @HRModel.remote_callable
+    async def get_current_model(self, chat_id: str) -> Dict[str, Any]:
+        """Get current session-local model alias and available aliases."""
+        try:
+            agent: Team | ChatAgent | None = self.drsai.agent_instance.get(chat_id)
+            if agent is None:
+                return {
+                    "status": False,
+                    "message": f"Agent session not found: {chat_id}",
+                    "defult_config_name": None,
+                    "available": [],
+                }
+
+            switchable_agents = self._get_switchable_agents(agent)
+            target = switchable_agents[0] if switchable_agents else agent
+            llm_mode_config = getattr(target, "_llm_mode_config", None) or {}
+            return {
+                "status": True,
+                "message": "",
+                "defult_config_name": getattr(target, "_defult_config_name", None),
+                "available": sorted(llm_mode_config.keys()),
+            }
+        except Exception as e:
+            logger.exception("get_current_model error")
+            return {
+                "status": False,
+                "message": f"get_current_model error: {e}",
+                "defult_config_name": None,
+                "available": [],
+            }
+
+    @HRModel.remote_callable
+    async def switch_model(
+        self,
+        chat_id: str,
+        defult_config_name: str | None = None,
+        default_config_name: str | None = None,
+    ) -> Dict[str, Any]:
+        """Switch the internal LLM model for an existing agent session.
+
+        `defult_config_name` keeps compatibility with the existing Dr.Sai API
+        typo. `default_config_name` is accepted as an alias for new clients.
+        The switch is session-local and does not update any global config file.
+        """
+        alias = defult_config_name or default_config_name
+        try:
+            if not alias:
+                return {
+                    "status": False,
+                    "message": "defult_config_name/default_config_name is required",
+                    "defult_config_name": None,
+                }
+
+            agent: Team | ChatAgent | None = self.drsai.agent_instance.get(chat_id)
+            if agent is None:
+                return {
+                    "status": False,
+                    "message": f"Agent session not found: {chat_id}. Please call lazy_init first.",
+                    "defult_config_name": None,
+                }
+
+            async def _switch_one(a: ChatAgent, model_alias: str) -> str:
+                set_fn = getattr(a, "_set_model_client", None)
+                if set_fn is None:
+                    raise RuntimeError(
+                        f"Agent {getattr(a, 'name', '<unknown>')} has no _set_model_client"
+                    )
+
+                llm_mode_config = getattr(a, "_llm_mode_config", None) or {}
+                if llm_mode_config and model_alias not in llm_mode_config:
+                    available = ", ".join(sorted(llm_mode_config.keys()))
+                    raise ValueError(
+                        f"Unknown defult_config_name: {model_alias}. Available aliases: {available}"
+                    )
+
+                new_client = set_fn(model_alias)
+                if not hasattr(a, "switch_model"):
+                    raise RuntimeError(
+                        f"Agent {getattr(a, 'name', '<unknown>')} does not support switch_model"
+                    )
+                await a.switch_model(new_client)  # type: ignore[attr-defined]
+                a._defult_config_name = model_alias  # type: ignore[attr-defined]
+                return model_alias
+
+            switchable_agents = self._get_switchable_agents(agent)
+            if not switchable_agents:
+                return {
+                    "status": False,
+                    "message": "Current agent does not support switch_model and has no switchable participants",
+                    "defult_config_name": None,
+                }
+
+            switched = []
+            for switchable_agent in switchable_agents:
+                await _switch_one(switchable_agent, alias)
+                switched.append(getattr(switchable_agent, "name", switchable_agent.__class__.__name__))
+
+            # Keep a team/session level marker for introspection when possible.
+            try:
+                agent._defult_config_name = alias  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+            return {
+                "status": True,
+                "message": f"Model switched to {alias}",
+                "defult_config_name": alias,
+                "switched": switched,
+            }
+        except Exception as e:
+            logger.exception("switch_model error")
+            return {
+                "status": False,
+                "message": f"switch_model error: {e}",
+                "defult_config_name": None,
+            }
+
     @HRModel.remote_callable
     async def a_chat_completions(self, *args, **kwargs) -> AsyncGenerator:
         return self.drsai.a_drsai_ui_completions(*args, **kwargs)

@@ -93,10 +93,23 @@ async def run_websocket(
                     # Handle start message
                     logger.info(f"Received start request for run {run_id}")
                     task: str = message.get("task")
-                    start_metadata: dict = message.get("metadata")
+                    start_metadata: dict = message.get("metadata") or {}
                     team_config = start_metadata.pop("team_config")
                     settings_config = start_metadata.pop("settings_config")
                     files = start_metadata.pop("files", [])
+
+                    # Allow the client to pass model alias either at the
+                    # websocket message top level or inside metadata.  Keep the
+                    # historical typo `defult_config_name` for compatibility,
+                    # while also accepting `default_config_name`.
+                    requested_model = (
+                        message.get("defult_config_name")
+                        or message.get("default_config_name")
+                        or start_metadata.pop("defult_config_name", None)
+                        or start_metadata.pop("default_config_name", None)
+                    )
+                    if requested_model:
+                        settings_config["defult_config_name"] = requested_model
                     task = construct_task(
                         query=task, 
                         files=files,
@@ -139,6 +152,16 @@ async def run_websocket(
                         metadata = dict(metadata)
                         _enrich_input_response_with_files(response, metadata)
                     if metadata:
+                        settings_config = metadata.get("settings_config")
+                        if isinstance(settings_config, dict):
+                            requested_model = (
+                                metadata.get("defult_config_name")
+                                or metadata.get("default_config_name")
+                                or settings_config.get("defult_config_name")
+                                or settings_config.get("default_config_name")
+                            )
+                            if requested_model:
+                                settings_config["defult_config_name"] = requested_model
                         response = {
                             "response": response,
                             "metadata": metadata,

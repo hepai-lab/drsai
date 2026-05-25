@@ -213,6 +213,40 @@ class TeamManager:
             await self.close()
             raise
 
+
+    async def _switch_remote_model_if_requested(self, settings_config: Dict[str, Any] | None) -> None:
+        """Switch remote Dr.Sai worker model for an already-created team.
+
+        The first start creates/lazy-inits the remote agent with the requested
+        alias. Subsequent continue/start calls reuse the same TeamManager/team,
+        so we need to explicitly forward the alias to the remote worker.
+        """
+        if not self.team or not settings_config:
+            return
+
+        alias = settings_config.get("defult_config_name") or settings_config.get("default_config_name")
+        if not alias:
+            agent_mode_config = settings_config.get("agent_mode_config") or {}
+            alias = (
+                agent_mode_config.get("defult_config_name")
+                or agent_mode_config.get("default_config_name")
+            )
+        if not alias:
+            return
+
+        candidates: list[Any] = []
+        if hasattr(self.team, "switch_remote_model"):
+            candidates.append(self.team)
+        for participant in getattr(self.team, "_participants", []) or []:
+            if hasattr(participant, "switch_remote_model"):
+                candidates.append(participant)
+
+        for agent in candidates:
+            try:
+                await agent.switch_remote_model(alias)
+            except Exception as e:
+                logger.warning(f"Failed to switch remote model for {getattr(agent, 'name', agent)}: {e}")
+
     async def run_stream(
         self,
         task: Optional[Union[ChatMessage, str, Sequence[ChatMessage]]],
@@ -248,6 +282,9 @@ class TeamManager:
             # TODO: This might cause problems later if we are not careful
         
             # mode = settings_config.get("Use_default_Agent_Groupchat_mode", None)
+
+            if self.team is not None:
+                await self._switch_remote_model_if_requested(settings_config or {})
 
             if self.team is None:
                 # TODO: if we start allowing load from config, we'll need to write the novnc and playwright ports back to the team config..
