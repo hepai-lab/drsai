@@ -1264,6 +1264,30 @@ def _slot_public_view(slot: Dict[str, Any]) -> Dict[str, Any]:
                 public["replaces"] = full[start:end]
             except Exception:
                 pass
+    # Asterisk fill markers: surface the exact 2 chars being replaced plus
+    # the marker's position within its paragraph, and a fill_policy so the
+    # agent doesn't echo surrounding template text.
+    if (slot.get("kind") == "angle_bracketed"
+            and meta.get("source") == "asterisk_marker"):
+        para = meta.get("paragraph")
+        start, end = meta.get("start"), meta.get("end")
+        if para is not None and start is not None and end is not None:
+            try:
+                full = "".join((r.text or "") for r in para.runs)
+                public["replaces"] = full[start:end]
+                public["paragraph_text"] = full
+            except Exception:
+                pass
+        public["asterisk_marker_index"] = meta.get("asterisk_marker_index")
+        public["asterisk_marker_total"] = meta.get("asterisk_marker_total")
+        public["fill_policy"] = (
+            "This slot is a `**` fill marker in a CN template. Each `**` is "
+            "ONE insertion point; the text around and between markers is "
+            "template content to preserve. The slot's value REPLACES the "
+            "2-char `**` marker only — do NOT include surrounding words "
+            "(e.g. for '**项目50台**设备运输', fill the first marker with "
+            "just '高能物理', NOT '高能物理项目50台' or '高能物理设备运输')."
+        )
     if meta.get("is_prefilled"):
         public["is_prefilled"] = True
         public["existing_text"] = meta.get("existing_text", "")
@@ -2104,24 +2128,36 @@ def _scan_paragraph_for_slots(paragraph, add: Callable[..., None]) -> None:
                 "end": m.end(),
             })
         return
-    # 2.5) `**` asterisk fill markers. Each `**` run is one slot replacing
-    #      just the marker — paired `**XX**` therefore becomes two adjacent
-    #      slots (so the sample `XX` between them stays as-is unless the
-    #      user explicitly overwrites it). Bare `**` infixes (e.g.
-    #      `上海**物流`) become a single slot.
+    # 2.5) `**` asterisk fill markers. Each `**` is ONE slot that replaces
+    #      just the marker; literal text around/between markers is
+    #      preserved content the template author wrote (e.g.
+    #      `**项目50台**设备运输` → 2 slots flanking the preserved sample
+    #      `项目50台`, plus `设备运输` left as static text). The agent must
+    #      treat each `**` as an independent insertion point and NOT echo
+    #      the surrounding text in its value.
     asterisk_matches = [
         m for m in _ASTERISK_MARK_RE.finditer(text)
         if not _overlaps_covered(m.start(), m.end())
     ]
     if asterisk_matches:
-        for m in asterisk_matches:
-            label = _guess_label_before(text, m.start()) or "*"
+        for idx, m in enumerate(asterisk_matches):
+            # Build a contextual label from the nearest non-asterisk text
+            # on the LEFT of this marker (within this paragraph). This
+            # gives the agent a hint like "项目名称" rather than the
+            # useless literal "*". For markers immediately following
+            # another `**` slot, fall back to the run after this marker.
+            left = text[:m.start()].replace("*", "").strip()
+            right = text[m.end():].replace("*", "").strip()
+            hint = _guess_label_before(text, m.start())
+            label = hint or (left[-20:] if left else right[:20]) or "*"
             ctx = _snippet(text, m.start(), m.end())
             add("angle_bracketed", label, ctx, {
                 "paragraph": paragraph,
                 "start": m.start(),
                 "end": m.end(),
                 "source": "asterisk_marker",
+                "asterisk_marker_index": idx,
+                "asterisk_marker_total": len(asterisk_matches),
             })
             covered.append((m.start(), m.end()))
         return
