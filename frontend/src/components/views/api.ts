@@ -1463,3 +1463,61 @@ export class SkillsAPI {
 }
 
 export const skillsAPI = new SkillsAPI();
+
+export interface DocMasterTemplateEntry {
+    name: string;
+    aliases?: string[];
+    category?: string | null;
+    tags?: string[];
+    description?: string | null;
+    path?: string;
+    [key: string]: unknown;
+}
+
+export interface DocMasterTemplatesResponse {
+    shared: DocMasterTemplateEntry[];
+    mine: DocMasterTemplateEntry[];
+}
+
+export class DocMasterAPI {
+    private getBaseUrl(): string {
+        return getServerUrl();
+    }
+
+    private getHeaders(): HeadersInit {
+        return {
+            "Content-Type": "application/json",
+        };
+    }
+
+    async listTemplates(params: {
+        userId?: string;
+        category?: string;
+        query?: string;
+    } = {}): Promise<DocMasterTemplatesResponse> {
+        const qs = new URLSearchParams();
+        if (params.userId) qs.set("user_id", params.userId);
+        if (params.category) qs.set("category", params.category);
+        if (params.query) qs.set("query", params.query);
+        const suffix = qs.toString() ? `?${qs.toString()}` : "";
+        const response = await fetch(
+            `${this.getBaseUrl()}/docmaster/templates${suffix}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "Failed to list templates"
+            );
+        }
+        if (!data.status) {
+            throw new Error(data.message || "Failed to list templates");
+        }
+        return {
+            shared: data.data?.shared || [],
+            mine: data.data?.mine || [],
+        };
+    }
+}
+
+export const docmasterAPI = new DocMasterAPI();

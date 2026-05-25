@@ -492,27 +492,43 @@ const ChatInput = React.forwardRef<
       }
     };
 
+    const applyValue = React.useCallback((value: string) => {
+      setText(value);
+      if (textAreaRef.current) {
+        textAreaRef.current.value = value;
+        const scrollHeight = textAreaRef.current.scrollHeight;
+        const newHeight = Math.min(scrollHeight, 120);
+        textAreaRef.current.style.height = `${newHeight}px`;
+        textAreaRef.current.focus();
+        textAreaRef.current.setSelectionRange(value.length, value.length);
+      }
+      if (onTextChange) {
+        onTextChange(value);
+      }
+    }, [onTextChange]);
+
     // Expose focus and setValue methods via ref
     React.useImperativeHandle(ref, () => ({
       focus: () => {
         textAreaRef.current?.focus();
       },
-      setValue: (value: string) => {
-        setText(value);
-        if (textAreaRef.current) {
-          textAreaRef.current.value = value;
-          const scrollHeight = textAreaRef.current.scrollHeight;
-          const newHeight = Math.min(scrollHeight, 120);
-          textAreaRef.current.style.height = `${newHeight}px`;
-          textAreaRef.current.focus();
-          textAreaRef.current.setSelectionRange(value.length, value.length);
-        }
-
-        if (onTextChange) {
-          onTextChange(value);
-        }
-      },
+      setValue: applyValue,
     }));
+
+    // Listen for cross-component requests to inject text into the chat input
+    // (e.g. RightPanel 模板库 "click-to-use" flow).
+    React.useEffect(() => {
+      const handler = (e: Event) => {
+        const detail = (e as CustomEvent<{ text?: string }>).detail;
+        if (typeof detail?.text === "string") {
+          applyValue(detail.text);
+        }
+      };
+      window.addEventListener("drsai:chatinput:setValue", handler as EventListener);
+      return () => {
+        window.removeEventListener("drsai:chatinput:setValue", handler as EventListener);
+      };
+    }, [applyValue]);
 
     const handleAttachFileInputChange = async (
       e: React.ChangeEvent<HTMLInputElement>
