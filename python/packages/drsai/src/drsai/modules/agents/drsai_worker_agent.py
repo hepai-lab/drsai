@@ -100,7 +100,10 @@ class HepAIWorkerAgent(DrSaiAgent):
         self.api_key = model_remote_configs.pop("api_key", "")
         self.url = model_remote_configs.pop("url", "https://aiapi.ihep.ac.cn/apiv2")
         self.model_name = model_remote_configs.pop("name", "hepai/drsai")
-        self.defult_config_name = model_remote_configs.pop("defult_config_name", None)
+        self.defult_config_name = (
+            model_remote_configs.pop("defult_config_name", None)
+            or model_remote_configs.pop("default_config_name", None)
+        )
 
         # worker函数
         self._funcs_map = {}
@@ -158,6 +161,118 @@ class HepAIWorkerAgent(DrSaiAgent):
         except Exception as e:
             logger.error(f"Failed to load worker functions: {e}")
         
+
+
+
+    def _extract_model_alias_from_messages(self, messages: Sequence[BaseChatMessage]) -> str | None:
+        """Best-effort extraction of model alias from UI user messages.
+
+        The drsai_ui websocket `input_response` path may encode the selected
+        LLM alias inside the user response JSON instead of rebuilding the team.
+        Supporting this here keeps remote model switching effective for both
+        `start/continue` and interactive input flows.
+        """
+        if not messages:
+            return None
+
+        def _from_dict(data: Any) -> str | None:
+            if not isinstance(data, dict):
+                return None
+            alias = data.get("defult_config_name") or data.get("default_config_name")
+            if alias:
+                return alias
+            settings_config = data.get("settings_config")
+            if isinstance(settings_config, dict):
+                alias = (
+                    settings_config.get("defult_config_name")
+                    or settings_config.get("default_config_name")
+                )
+                if alias:
+                    return alias
+            agent_mode_config = data.get("agent_mode_config")
+            if isinstance(agent_mode_config, dict):
+                return (
+                    agent_mode_config.get("defult_config_name")
+                    or agent_mode_config.get("default_config_name")
+                )
+            return None
+
+        last_message = messages[-1]
+        metadata_alias = _from_dict(getattr(last_message, "metadata", None))
+        if metadata_alias:
+            return metadata_alias
+
+        content = getattr(last_message, "content", None)
+        if isinstance(content, str):
+            try:
+                return _from_dict(json.loads(content))
+            except Exception:
+                return None
+        if isinstance(content, dict):
+            return _from_dict(content)
+        return None
+
+    async def switch_remote_model(self, defult_config_name: str | None = None, default_config_name: str | None = None) -> Dict[str, Any]:
+        """Switch the remote Dr.Sai worker session-local internal model."""
+        alias = defult_config_name or default_config_name
+        if not alias:
+            return {"status": False, "message": "defult_config_name/default_config_name is required"}
+
+        # Avoid a needless remote call when the local proxy already records the
+        # requested alias.  The remote session was initialized with this alias
+        # during lazy_init in this case.
+        if alias == self.defult_config_name:
+            return {
+                "status": True,
+                "message": f"Model already set to {alias}",
+                "defult_config_name": alias,
+            }
+
+        if not self._funcs_map:
+            return {"status": False, "message": "Worker functions are not initialized"}
+
+        switch_fn = self._funcs_map.get("switch_model")
+        if switch_fn is None:
+            return {"status": False, "message": "Remote worker does not expose switch_model"}
+
+        try:
+            result: Dict[str, Any] = await asyncio.wait_for(
+                asyncio.to_thread(
+                    switch_fn,
+                    chat_id=self._chat_id,
+                    defult_config_name=alias,
+                ),
+                timeout=60.0,
+            )
+            status = result.get("status", False)
+            message = result.get("message", "")
+            if status:
+                self.defult_config_name = result.get("defult_config_name") or alias
+                logger.info(f"Remote model switched to {self.defult_config_name} for {self.name}.")
+            else:
+                logger.warning(f"Remote model switch failed: {message}")
+            return result
+        except asyncio.TimeoutError:
+            logger.warning(f"Switch remote model timeout for {self.name}.")
+            return {"status": False, "message": "switch_model timeout"}
+        except Exception as e:
+            logger.warning(f"Error switching remote model: {e}")
+            return {"status": False, "message": f"switch_model error: {e}"}
+
+    async def get_remote_model(self) -> Dict[str, Any]:
+        """Query current remote model alias and available aliases."""
+        if not self._funcs_map:
+            return {"status": False, "message": "Worker functions are not initialized"}
+        get_fn = self._funcs_map.get("get_current_model")
+        if get_fn is None:
+            return {"status": False, "message": "Remote worker does not expose get_current_model"}
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(get_fn, chat_id=self._chat_id),
+                timeout=60.0,
+            )
+        except Exception as e:
+            return {"status": False, "message": f"get_current_model error: {e}"}
 
     async def pause(self) -> None:
         """Pause the agent by setting the paused state."""
@@ -434,17 +549,27 @@ class HepAIWorkerAgent(DrSaiAgent):
         
             # STEP 3: Run the first inference
             model_result = None
+
+            requested_model_alias = self._extract_model_alias_from_messages(messages)
+            if requested_model_alias and requested_model_alias != self.defult_config_name:
+                switch_result = await self.switch_remote_model(requested_model_alias)
+                if not switch_result.get("status", False):
+                    logger.warning(f"Requested remote model switch failed before completion: {switch_result.get('message')}")
             
             # NOTE: 请注意，这是一个同步的迭代器，会堵塞当前线程，直到模型返回结果
 
-            stream: Stream = self._funcs_map['a_chat_completions'](
-                messages = [message.model_dump(mode="json") for message in messages],
-                apikey = self.api_key,
-                stream=True,
-                model = agent_name,
-                chat_id = self._chat_id,
-                user = self._run_info,
-            )
+            completion_kwargs = {
+                "messages": [message.model_dump(mode="json") for message in messages],
+                "apikey": self.api_key,
+                "stream": True,
+                "model": agent_name,
+                "chat_id": self._chat_id,
+                "user": self._run_info,
+            }
+            if self.defult_config_name:
+                completion_kwargs["defult_config_name"] = self.defult_config_name
+
+            stream: Stream = self._funcs_map['a_chat_completions'](**completion_kwargs)
             
             final_message = None
             try:

@@ -212,8 +212,18 @@ class WebSocketManager:
                 #         state_dict_decompress = None
 
             agent_id = settings_config.get("agent_id")
+            requested_model_alias = (
+                settings_config.get("defult_config_name")
+                or settings_config.get("default_config_name")
+            )
             agent_mode_config = await self._get_agent_mode_config(user_id=run.user_id, agent_id = agent_id)
             if agent_mode_config:
+                # Runtime websocket settings override the saved agent default for
+                # this run only.  This lets the UI switch the remote Dr.Sai
+                # internal model without mutating UserAgents/global config.
+                if requested_model_alias:
+                    agent_mode_config = dict(agent_mode_config)
+                    agent_mode_config["defult_config_name"] = requested_model_alias
                 settings_config["agent_mode_config"] = agent_mode_config
             else:
                 raise ValueError(
