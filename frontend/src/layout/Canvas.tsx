@@ -50,6 +50,7 @@ const Canvas: React.FC<CanvasProps> = ({
   const agentInfo = useModeConfigStore((s) => s.agentInfo);
   const selectedAgent = useModeConfigStore((s) => s.selectedAgent);
   const agentOfflineSnapshot = useModeConfigStore((s) => s.agentOfflineSnapshot);
+  const hasActiveSession = Boolean(session?.id);
 
   const { agentDisplayName, defaultConfigLabel } = useMemo(() => {
     const sessionAgentModeConfig = (session?.agent_mode_config || null) as
@@ -64,17 +65,16 @@ const Canvas: React.FC<CanvasProps> = ({
       (typeof selectedAgent?.mode === "string" && selectedAgent.mode.trim()) ||
       "";
 
-    const cfgRaw =
-      sessionAgentModeConfig?.defult_config_name ??
-      agentInfo?.defult_config_name ??
-      (selectedAgent as any)?.defult_config_name ??
-      "";
+    const cfgRaw = hasActiveSession
+      ? sessionAgentModeConfig?.defult_config_name ?? ""
+      : sessionAgentModeConfig?.defult_config_name ??
+        agentInfo?.defult_config_name ??
+        (selectedAgent as { defult_config_name?: unknown } | null)?.defult_config_name ??
+        "";
     const cfg = typeof cfgRaw === "string" ? cfgRaw.trim() : String(cfgRaw || "").trim();
     const normalizedCfg = /^default$/i.test(cfg) ? "" : cfg;
     return { agentDisplayName: name, defaultConfigLabel: normalizedCfg };
-  }, [session?.id, session?.agent_mode_config, agentInfo, selectedAgent]);
-
-  const hasActiveSession = Boolean(session?.id);
+  }, [session?.id, session?.agent_mode_config, agentInfo, selectedAgent, hasActiveSession]);
 
   const showSessionAgentBar =
     activeMenuId === MENU_IDS.currentSession &&

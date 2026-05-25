@@ -50,7 +50,8 @@ const resolveSamePathTarget = (to: string): HistoryTarget | null => {
 export const LOCATION_CHANGE_EVENT = "drsai:locationchange";
 
 const notifyLocationChange = () => {
-    window.dispatchEvent(new PopStateEvent("popstate"));
+    // Do not dispatch PopStateEvent: Gatsby/@reach/router listens to it and will
+    // attempt a full client route transition (dev 404 on menu query changes).
     window.dispatchEvent(new Event(LOCATION_CHANGE_EVENT));
 };
 

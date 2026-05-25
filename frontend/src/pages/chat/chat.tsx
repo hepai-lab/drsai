@@ -391,6 +391,9 @@ export default function ChatView({
 
       if (latestRun) {
         applyExtractions(latestRun);
+        if (!latestRun.session_id && session.id) {
+          latestRun.session_id = session.id;
+        }
       }
 
       return latestRun;
@@ -640,6 +643,7 @@ export default function ChatView({
                 {currentRun && (
                   <RunView
                     run={currentRun}
+                    sessionId={session.id}
                     onSavePlan={handlePlanUpdate}
                     onPause={handlePause}
                     onRegeneratePlan={handleRegeneratePlan}

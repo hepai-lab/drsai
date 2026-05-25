@@ -57,6 +57,7 @@ def _build_runs_payload(db, session_id: int) -> List[Dict[str, Any]]:
                     "team_result": run.team_result,
                     "messages": messages.data or [],
                     "input_request": getattr(run, "input_request", None),
+                    "session_id": session_id,
                 }
             )
         except Exception as e:
@@ -71,6 +72,7 @@ def _build_runs_payload(db, session_id: int) -> List[Dict[str, Any]]:
                     "messages": [],
                     "error": f"Failed to process run: {str(e)}",
                     "input_request": getattr(run, "input_request", None),
+                    "session_id": session_id,
                 }
             )
     return run_data
