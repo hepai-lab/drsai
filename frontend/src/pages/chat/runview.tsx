@@ -75,6 +75,8 @@ function getNextSignificantMessageIndex(
 
 interface RunViewProps {
   run: Run;
+  /** Explicit session id for model binding (run.session_id may be absent from API) */
+  sessionId?: number;
   onSavePlan?: (plan: IPlanStep[]) => void;
   onPause?: () => void;
   onRegeneratePlan?: () => void;
@@ -132,6 +134,7 @@ interface RunViewProps {
 
 const RunView: React.FC<RunViewProps> = ({
   run,
+  sessionId: sessionIdProp,
   onSavePlan,
   onPause,
   onRegeneratePlan,
@@ -154,6 +157,12 @@ const RunView: React.FC<RunViewProps> = ({
   serverFilesPrefill,
   viewOnly = false,
 }) => {
+  const resolvedSessionId =
+    sessionIdProp && sessionIdProp > 0
+      ? sessionIdProp
+      : run.session_id && run.session_id > 0
+        ? run.session_id
+        : -1;
   const setIsRightPanelOpen = useRightPanelStore((s) => s.setIsOpen);
   const overviewSlot = useRightPanelStore((s) => s.overviewSlot);
   const threadContainerRef = useRef<HTMLDivElement | null>(null);
@@ -1349,7 +1358,7 @@ const RunView: React.FC<RunViewProps> = ({
               enable_upload={enable_upload}
               inputRequest={run.input_request}
               onExecutePlan={onExecutePlan}
-              sessionId={run.session_id}
+              sessionId={resolvedSessionId}
               serverFilesPrefill={serverFilesPrefill}
             />
           </div>

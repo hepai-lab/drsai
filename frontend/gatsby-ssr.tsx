@@ -28,6 +28,11 @@ export const replaceRenderer = ({
   replaceBodyHTMLString,
   setHeadComponents,
 }: any) => {
+  // Custom replaceRenderer breaks Gatsby develop client routing; keep it for production builds only.
+  if (process.env.NODE_ENV === "development") {
+    return;
+  }
+
   const cache = createCache();
   const bodyHTML = renderToString(
     <StyleProvider cache={cache} hashPriority="high">
