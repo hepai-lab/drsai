@@ -13,6 +13,7 @@
 import { useStore } from '@nanostores/react'
 import { Box, Text } from 'ink'
 
+import { stripTodoWriteArtifacts } from '../app/todoArtifacts.js'
 import { $current } from '../app/turnStore.js'
 import { $showReasoning } from '../app/uiStore.js'
 import { theme } from '../theme.js'
@@ -25,7 +26,7 @@ export function StreamingAssistant() {
   const showReasoning = useStore($showReasoning)
   if (!cur) return null
 
-  const cleanText = cur.text ? stripThinkBlocks(cur.text) : ''
+  const cleanText = cur.text ? stripTodoWriteArtifacts(stripThinkBlocks(cur.text)) : ''
 
   return (
     <Box flexDirection="column" marginTop={1}>

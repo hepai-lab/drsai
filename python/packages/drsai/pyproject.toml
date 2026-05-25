@@ -69,19 +69,10 @@ dependencies = [
 drsai = "drsai.backend.run_cli:run"
 drsai-tui = "drsai.backend.run_cli:run"
 drsai-gateway = "drsai.backend.tui_gateway.entry:main"
-# drsai-tray = "drsai.backend.gui.run_tray:main"
-
 # ── Optional dependency groups ───────────────────────────────────────────────
-# Install with: pip install drsai[tray]  /  pip install drsai[tray,pipeline]  etc.
-# Or all-in-one: pip install drsai[all]
+# Install with: pip install drsai[pipeline]  /  pip install drsai[all]
 
 [project.optional-dependencies]
-# Desktop tray app (drsai-tray command) — CLI already in core
-#tray = [
-#    "pystray>=0.19",
-#    "Pillow>=9.0",
-#]
-
 # OpenWebUI pipeline adapter — auth + session handling
 pipeline = [
     "passlib",

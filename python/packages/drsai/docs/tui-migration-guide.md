@@ -55,7 +55,7 @@ drsai-tui --attach ws://127.0.0.1:8765/attach
 | `/memory`, `/init`, `/agent`, `/delegate` | ✅ 完全兼容 |
 | `/reasoning`, `/verbose`, `/bell`, `/fast` | ✅ 完全兼容 |
 | `/cd`, `/workdir` | ⚠️ 桌面 GUI 专用，CLI 自动使用当前目录 |
-| `/setup`, `/install`, `/tray`, `/win_*` | ⏳ Phase 5 待补 |
+| 旧 Tk/Tray GUI 命令：`/install`, `/tray`, `/win_*` | 🗑️ 已移除，新的多平台 GUI 由 `desktop/` 项目承接 |
 
 ## 新功能
 
@@ -168,7 +168,7 @@ python -m drsai.backend.gateway
 - 暂无完整 fuzzy 命令补全 UI（基础 `complete.slash` RPC 已就绪）
 - WebSocket 客户端无自动重连
 - Markdown 代码块暂无语法高亮
-- `/setup`、`/install`、`/tray`、`/win_*` 等桌面 GUI 命令未迁移
+- 旧 Tk/Tray GUI 命令（`/install`、`/tray`、`/win_*`）已移除；新的多平台 GUI 由仓库根目录 `desktop/` 项目承接
 
 ## 反馈
 

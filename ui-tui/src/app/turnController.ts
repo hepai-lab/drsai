@@ -22,6 +22,8 @@ import { newAssistantTurn } from './types.js'
 export interface SubmitOptions {
   sessionId: string
   text: string
+  /** Optional compact text shown in transcript when submitted text is expanded from long-paste tokens. */
+  displayText?: string
 }
 
 export class TurnController {
@@ -36,7 +38,7 @@ export class TurnController {
     if ($isStreaming.get()) return
 
     // Lock in user turn + start a placeholder assistant turn.
-    appendTurn({ role: 'user', text: trimmed, ts: Date.now() })
+    appendTurn({ role: 'user', text: opts.displayText?.trim() || trimmed, ts: Date.now() })
     setCurrent(newAssistantTurn())
     $isStreaming.set(true)
 

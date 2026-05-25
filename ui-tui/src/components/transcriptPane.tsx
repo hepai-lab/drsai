@@ -12,6 +12,7 @@
 
 import { Box, Static, Text } from 'ink'
 
+import { stripTodoWriteArtifacts } from '../app/todoArtifacts.js'
 import type { AssistantTurn, Turn } from '../app/types.js'
 import { useVirtualHistory } from '../hooks/useVirtualHistory.js'
 import { theme } from '../theme.js'
@@ -36,9 +37,9 @@ function AssistantBlock({ turn }: { turn: AssistantTurn }) {
       {turn.tools.map(t => (
         <ToolCallLine key={t.id} tool={t} />
       ))}
-      {turn.text && (
+      {stripTodoWriteArtifacts(turn.text) && (
         <Box>
-          <MarkdownRenderer text={turn.text} color={theme.assistant} />
+          <MarkdownRenderer text={stripTodoWriteArtifacts(turn.text)} color={theme.assistant} />
         </Box>
       )}
       {turn.status === 'error' && (

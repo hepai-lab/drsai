@@ -402,9 +402,20 @@ class AgentSession:
         if key == "plan_mode":
             self.agent._injected_prefix = "Plan mode enabled" if value else ""
         elif key == "only_in_workspace":
+            # Keep both the agent attribute used by UI badges and the operator
+            # function closure used by filesystem/shell tools in sync.
             self.agent._only_in_workspace = value
+            toggle_funcs = getattr(self.agent, "_workspace_toggle_funcs", [])
+            set_ws_fn = next((f for f in toggle_funcs if f.__name__ == "set_workspace_restriction"), None)
+            if set_ws_fn:
+                set_ws_fn(value)
         elif key == "allow_dangerous_commands":
+            # Keep both the UI-facing attribute and the shell-tool closure in sync.
             self.agent._allow_dangerous_commands = value
+            toggle_funcs = getattr(self.agent, "_dangerous_toggle_funcs", [])
+            set_fn = next((f for f in toggle_funcs if f.__name__ == "set_dangerous_allowed"), None)
+            if set_fn:
+                set_fn(value)
         elif key == "reasoning_effort":
             if hasattr(self.agent, "_reasoning_effort"):
                 self.agent._reasoning_effort = value

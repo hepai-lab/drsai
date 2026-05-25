@@ -495,7 +495,10 @@ def cmd_workspace(ctx: SlashContext) -> dict:
     args = ctx.args.lower()
 
     if not args or args == "status":
-        ws = ctx.session.get_state_value("only_in_workspace", False)
+        ws = ctx.session.get_state_value(
+            "only_in_workspace",
+            ctx.session.info().get("workspace_enabled", False),
+        )
         return {"output": f"Workspace restriction: {'enabled' if ws else 'disabled'} (session-local)"}
 
     if args == "on":
@@ -516,19 +519,26 @@ def cmd_ws_global(ctx: SlashContext) -> dict:
     cfg = get_config_manager(ctx.user_id)
 
     if not args or args == "status":
-        ws = ctx.session.get_state_value("only_in_workspace", False)
-        global_ws = cfg.get("only_in_workspace", False)
+        ws = ctx.session.get_state_value(
+            "only_in_workspace",
+            ctx.session.info().get("workspace_enabled", False),
+        )
+        global_ws = cfg.get("workspace_enabled", cfg.get("only_in_workspace", False))
         return {"output": f"Workspace: {'enabled' if ws else 'disabled'} (session)\nGlobal: {'enabled' if global_ws else 'disabled'}"}
 
     if args == "on":
         ctx.session.set_state_value("only_in_workspace", True)
-        cfg["only_in_workspace"] = True
+        # run_drsai_agent_factory reads workspace_enabled when creating future sessions.
+        cfg["workspace_enabled"] = True
+        cfg.pop("only_in_workspace", None)  # remove legacy/mismatched key if present
         save_global_config(cfg)
         ctx.refresh_info()
         return {"output": "Workspace restriction enabled (session + global, saved)"}
     elif args == "off":
         ctx.session.set_state_value("only_in_workspace", False)
-        cfg["only_in_workspace"] = False
+        # run_drsai_agent_factory reads workspace_enabled when creating future sessions.
+        cfg["workspace_enabled"] = False
+        cfg.pop("only_in_workspace", None)  # remove legacy/mismatched key if present
         save_global_config(cfg)
         ctx.refresh_info()
         return {"output": "Workspace restriction disabled (session + global, saved)"}
@@ -754,12 +764,6 @@ def cmd_setup(ctx: SlashContext) -> str:
     )
 
 
-# ── Desktop / GUI-only commands (CLI stubs) ──────────────────────────────────
-
-def cmd_desktop_only(ctx: SlashContext) -> str:
-    """Stub for commands that only make sense in the desktop GUI."""
-    return "This command is available only in the DrSai desktop app."
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RPC method handlers
@@ -798,6 +802,10 @@ SLASH_HANDLERS: dict[str, Any] = {
     "ws": cmd_workspace,
     "ws_global": cmd_ws_global,
     "wsg": cmd_ws_global,
+    # Backward-compatible typo aliases that users have typed in the TUI.
+    "wg_groble": cmd_ws_global,
+    "wg_global": cmd_ws_global,
+    "wgg": cmd_ws_global,
     "dangerous": cmd_dangerous,
     "dg": cmd_dangerous,
     "dg_global": cmd_dg_global,
@@ -819,14 +827,6 @@ SLASH_HANDLERS: dict[str, Any] = {
     "status": cmd_status,
     "setup": cmd_setup,
     "env": cmd_setup,
-    # ── Desktop-only (stubs) ──────────────────────────────────────────────
-    "install": cmd_desktop_only,
-    "tray": cmd_desktop_only,
-    "win_new": cmd_desktop_only,
-    "win_close": cmd_desktop_only,
-    "win_list": cmd_desktop_only,
-    "win_switch": cmd_desktop_only,
-    "winsw": cmd_desktop_only,
 }
 
 

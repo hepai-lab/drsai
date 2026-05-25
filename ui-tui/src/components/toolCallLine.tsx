@@ -7,6 +7,8 @@ import { Box, Text } from 'ink'
 import type { ToolCall } from '../app/types.js'
 import { theme } from '../theme.js'
 
+import { isTodoWriteTool, TodoWriteLine } from './todoWriteLine.js'
+
 interface Props {
   tool: ToolCall
 }
@@ -27,6 +29,10 @@ function summariseResult(text?: string): string {
 }
 
 export function ToolCallLine({ tool }: Props) {
+  if (isTodoWriteTool(tool)) {
+    return <TodoWriteLine tool={tool} />
+  }
+
   const args = summariseArgs(tool.args)
   if (tool.status === 'running') {
     return (
