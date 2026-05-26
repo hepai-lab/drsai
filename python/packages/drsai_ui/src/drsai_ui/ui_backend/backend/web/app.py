@@ -33,6 +33,7 @@ from .routes import (
     local_login,
     users,
     skills,
+    docmaster,
 )
 import httpx
 from fastapi.responses import HTMLResponse
@@ -239,6 +240,13 @@ api.include_router(
     skills.router,
     prefix="/skills",
     tags=["skills"],
+    responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    docmaster.router,
+    prefix="/docmaster",
+    tags=["docmaster"],
     responses={404: {"description": "Not found"}},
 )
 

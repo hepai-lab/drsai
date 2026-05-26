@@ -157,12 +157,22 @@ def test_many_highlighted_cells_all_detected():
 
     skill = dts.DocxTemplateSkill(str(tmp))
     ins = skill.inspect_template(str(tpl))
-    biti_slots = [
+    # The author wrote '必填' in every value cell — a meaningless filler. The
+    # detector emits one highlighted slot per cell, and the meaningless-label
+    # enricher rewrites each label to the row label ("单位名称", "住所", ...)
+    # so the agent can tell the slots apart. The original "必填" is preserved
+    # in _meta.original_label for debugging.
+    highlighted_in_table = [
         s for s in ins["slots"]
-        if s["kind"] == "highlighted" and s.get("label") == "必填"
+        if s["kind"] == "highlighted" and s.get("original_label") == "必填"
     ]
-    assert len(biti_slots) == 8, (
-        f"expected one '必填' slot per row, got {len(biti_slots)}: {biti_slots}"
+    assert len(highlighted_in_table) == 8, (
+        f"expected one slot per row (originally '必填'), got "
+        f"{len(highlighted_in_table)}: {highlighted_in_table}"
+    )
+    enriched_labels = sorted(s["label"] for s in highlighted_in_table)
+    assert enriched_labels == sorted(labels), (
+        f"expected each slot to carry its row label, got {enriched_labels}"
     )
 
 

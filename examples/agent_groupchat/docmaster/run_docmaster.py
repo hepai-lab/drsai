@@ -225,6 +225,88 @@ class DocMasterAgent(DrSaiAssistant):
     def __init__(self, pending_files_events: list, **kwargs):
         super().__init__(**kwargs)
         self._pending_files_events = pending_files_events
+        self._install_filesystem_tool_guards()
+
+    # ---- filesystem-tool guards ------------------------------------------
+    # The framework auto-registers run_bash / run_glob / run_read as basic
+    # tools. Despite explicit prompt rules forbidding their use for template
+    # lookup, the agent regularly reaches for run_glob to "find" a template
+    # by name — bypassing the template library and sometimes picking up a
+    # stale duplicate. We can't drop the basic tools without forking the
+    # framework, so we wrap their underlying callables and intercept calls
+    # whose arguments look like template-hunting, returning a directive
+    # error that redirects to the right tool.
+
+    # Signals that an argument is about template/DOCX lookup. Keep these
+    # narrow on purpose — we do NOT want to break legitimate run_bash /
+    # run_glob uses (logs, code search, generic project files).
+    _TEMPLATE_HUNT_TOKENS = (
+        ".docx",
+        ".doc",
+        "template",
+        "模板",
+        "合同",
+        "contract",
+        "workspace/templates",
+        "/templates/",
+    )
+
+    @classmethod
+    def _looks_like_template_hunt(cls, *args: str) -> bool:
+        blob = " ".join(a for a in args if isinstance(a, str)).lower()
+        return any(tok.lower() in blob for tok in cls._TEMPLATE_HUNT_TOKENS)
+
+    @staticmethod
+    def _template_redirect_message(tool_name: str, args_blob: str) -> str:
+        return (
+            f"{tool_name} blocked: the arguments ({args_blob[:160]}) look like "
+            "a template / DOCX file lookup. Filesystem tools are NOT the "
+            "template entry point — they bypass the template library and "
+            "regularly pick up stale duplicates. Recover with: "
+            "(1) if the user named a template, call "
+            "get_template_path_tool(template_ref=<user's words>); "
+            "(2) to browse what's available, call "
+            "list_templates_tool(category=None, query=None); "
+            "(3) if the user just uploaded a file, re-read the upload event "
+            "for the absolute path. To inspect DOCX content, use "
+            "extract_docx_content_tool, NOT run_read."
+        )
+
+    def _install_filesystem_tool_guards(self) -> None:
+        import functools
+
+        def _wrap(orig_func, tool_name: str, arg_extractor):
+            @functools.wraps(orig_func)
+            async def guarded(*args, **kwargs):
+                hunt_args = arg_extractor(args, kwargs)
+                if self._looks_like_template_hunt(*hunt_args):
+                    return self._template_redirect_message(
+                        tool_name, " | ".join(str(a) for a in hunt_args)
+                    )
+                return await orig_func(*args, **kwargs)
+            return guarded
+
+        # Extract the user-visible arg(s) we want to sniff per tool.
+        extractors = {
+            "run_glob": lambda args, kwargs: (
+                kwargs.get("pattern") or (args[0] if args else ""),
+                kwargs.get("search_path") or (args[1] if len(args) > 1 else ""),
+            ),
+            "run_bash": lambda args, kwargs: (
+                kwargs.get("cmd") or kwargs.get("command")
+                or (args[0] if args else ""),
+            ),
+            "run_read": lambda args, kwargs: (
+                kwargs.get("path") or kwargs.get("file_path")
+                or (args[0] if args else ""),
+            ),
+        }
+
+        tools_list = getattr(self, "_tools", None) or []
+        for tool in tools_list:
+            name = getattr(tool, "name", None) or getattr(tool, "_name", None)
+            if name in extractors and hasattr(tool, "_func"):
+                tool._func = _wrap(tool._func, name, extractors[name])
 
     @staticmethod
     async def _execute_tool_call(tool_call, workbench, handoff_tools, agent_name, cancellation_token):
@@ -342,6 +424,75 @@ class DocMasterAgent(DrSaiAssistant):
                             source=self.name,
                         )
                         break  # Only emit once per fe_data
+
+
+_HALLUCINATED_PATH_HINTS = (
+    "/Users/",           # macOS home — agent invents this from training priors
+    "C:\\",              # Windows path — same
+    "C:/",
+    "/Desktop/",         # common desktop/downloads guess regardless of root
+    "/Downloads/",
+    "/Documents/",
+)
+
+
+def _guard_docx_file_path(file_path, *, tool_label: str) -> dict | None:
+    """Reject obviously-hallucinated DOCX paths before tool execution.
+
+    The LLM regularly invents paths like `/Users/jerry/Desktop/<filename>.docx`
+    when the user mentions a template by name. The generic "File not found"
+    response gives it no recovery target, so it falls back to `run_bash` /
+    `run_glob` to "find" the file — which either misses entirely or pulls a
+    stale duplicate. This guard returns a directive error that names the
+    exact recovery path (get_template_path_tool or the upload event).
+    """
+    import os
+    if not file_path or not isinstance(file_path, str):
+        return {
+            "success": False,
+            "error": "Missing file_path",
+            "message": (
+                f"{tool_label} requires an absolute file_path. If the user "
+                "referred to a template by name, call get_template_path_tool "
+                "first; if the user uploaded a file, use the absolute path "
+                "from the upload event. Do NOT guess paths, and do NOT use "
+                "run_bash / run_glob / run_read to search for the file."
+            ),
+        }
+    looks_hallucinated = any(hint in file_path for hint in _HALLUCINATED_PATH_HINTS)
+    if looks_hallucinated and not os.path.exists(file_path):
+        return {
+            "success": False,
+            "error": "Hallucinated file path",
+            "message": (
+                f"{tool_label}: the path {file_path!r} does not exist on this "
+                "system and looks invented (macOS/Windows-style or "
+                "Desktop/Downloads/Documents). This server is Linux and user "
+                "files live under the docmaster workspace. NEVER guess "
+                "filesystem paths. To recover: "
+                "(1) if the user named a template (e.g. \"用 X 模板\"), call "
+                "get_template_path_tool(template_ref=<user's words>) — it "
+                "returns the canonical absolute path; "
+                "(2) if the user just uploaded a file, re-read the upload "
+                "event in the conversation for the absolute path; "
+                "(3) if neither applies, ask the user — do NOT use "
+                "run_bash / run_glob / run_read to search the filesystem."
+            ),
+        }
+    if not os.path.exists(file_path):
+        return {
+            "success": False,
+            "error": "File not found",
+            "message": (
+                f"{tool_label}: no file at {file_path!r}. If you got this "
+                "path from get_template_path_tool the catalog may be stale — "
+                "call list_templates_tool then get_template_path_tool again. "
+                "If from an upload event, re-check the absolute path from "
+                "that event. Do NOT use run_bash / run_glob / run_read to "
+                "search for the file."
+            ),
+        }
+    return None
 
 
 def _guard_template_path(template_path) -> dict | None:
@@ -637,19 +788,34 @@ def create_word_editor_agent(
      · 如果只有 slots（模板没有显式占位符）：**逐个**用 slots 里的 label + context 向用户确认每个槽位应填什么。slot 的 kind 可能是 highlighted / underscores / label_blank / empty_cell / angle_bracketed / placeholder_phrase / hint_text / section_body_empty / option_choice——其中 **highlighted（带黄/绿/青等 Word 高亮的文字）是最强的"请修改我"信号**，用户上传带高亮的模板就是希望把高亮处替换并清除高亮；填充时工具会**自动清除高亮**，同时保留字体/字号/加粗/斜体/颜色等其他格式。即使如此也要**逐条向用户确认替换内容**——不要仅凭高亮就自动决定写什么进去。
      · **option_choice（二选一/三选一）槽位**：slot 自带一个 `options` 列表，每项有 `index`、`header`（如"第一种：…"）和 `preview`（该方案正文的开头一段）。把所有选项的 header 念给用户，问"请问选第几种？"。用户答完之后，把 **选项的索引**（1、2、3…）或对应的标签（如 "第一种"、"第二种"）传回 `slot_values[slot_id]`。填充工具会**自动**保留所选方案的正文、删除提示语（"以下两种选择适合的一种…请删除"）、删除未选方案的 header 和全部正文段落——**你不需要**再用 edit_docx_tool / replace_text 去手动删除任何"第N种"标记或未选方案的正文，**也不要**把提示语当成 removal 重复提交（inspect 已经故意不把它作为单独 removal 列出）。如果未选方案中有用户**特别想保留**的某一段话，建议先用 edit_docx_tool 把那段话挪到所选方案下，再让 option_choice 槽位执行删除。
      · 对 highlighted 槽位，确认内容时**必须把整段高亮文字原样念给用户**（用 slot 的 `span_text` 字段，里面是高亮区域的完整原文）。例如高亮文字是「15个工作日」，要问"高亮的『15个工作日』要改成什么？"而不是只问"工作日改几天"。
+     · **underscores 槽位的 `replaces` 字段**：inspect 会返回该字段，给出**精确**要被替换的字符（例如 `'     '` 5 个空格，或者 `'_______'` 7 个下划线）。slot 的 `context` 显示槽位前后的句子作为环境信息——但**填值时只替换 `replaces` 那一段**。**绝对不要**把 context 中前后已有的模板正文（比如紧跟在空白后面的括号说明 "（其中合同总额的20%作为定金）"、单位 "元/工作日/%" 等）复制进 slot_values 里——否则会出现 "90%（其中合同总额的20%作为定金）（其中合同总额的20%作为定金）" 这类括号被重复粘贴的 bug，因为模板里的原括号本来就还在。slot_values 里只放**真正要填进空白的值**（如 "90%" 或 "90"），其余 prose 让模板自己保留。
      · 如果 highlighted slot 带有 `scaffold` 字段（说明工具识别出了"变量 + 单位"形式，比如 15+个工作日、¥+850、50+%、2025年5月14日 等），**意味着填充时只换变量部分、保留前后的单位/币符/百分号**：用户回"20"，最终会写成"20个工作日"。即使如此，**你给 slot_values 时也最好直接传完整字符串**（"20个工作日"），不要只传"20"——只把数字作为兜底逻辑，避免歧义。绝对不要把"15个工作日"原样替换成"20"丢掉单位。
-     · **当章节标题（如"一、甲方委托乙方提供以下维修服务："）带有"以下/如下/下表/following/below"等字样、且后面紧跟一张表格时，要把每条维修服务/物品作为表格的一行来填，而不是把描述文字塞在标题和表格之间的空段落里。**inspect 已经默认不会在这种情况下emit section_body_empty 槽位；如果用户需要新增多条服务，请用 edit_docx_tool 的 set_cell_text 一行一行写进表格，或者用 add_table_row 之类增行；千万别把列表内容写成段落。
+     · **`**` 双星号占位符（kind=angle_bracketed, source=asterisk_marker）**：在中文合同模板里，**每一个** `**` 都是一个独立的填空位，**`**` 之间和周围的文字是模板里要保留的原文，不要碰**。例：`项 目 名 称 ：  **项目50台**设备运输`——这里有 **两个** `**` 标记，所以是 **两个独立 slot**；中间的 `项目50台` 是模板作者写的内容（要保留），后面的 `设备运输` 也是模板正文（要保留）。**正确填法**：在第一个 `**` 处填"高能物理"，第二个 `**` 处填"试探"——最终输出 `项 目 名 称 ：  高能物理项目50台试探设备运输`。**绝对不要**把 `项目50台`、`设备运输` 这些已有原文复制到你的 slot_values 里——那样会变成 `高能物理项目50台试探项目50台设备运输` 这种重复。同理 `乙方单位名称（承运人）：上海**物流有限公司` 是一个 `**` slot：在 `**` 处填"顺达"，输出 `上海顺达物流有限公司`，**不要**再写"物流有限公司"。问用户时按 slot 的位置语境提问，例如"项目名称这一行有两个填空位，第一个 `**` 前面是空，后面跟着『项目50台』；要填什么？"。
+     · **`is_prefilled: true` 槽位（关键，避免重复填写）**：inspect 返回的 slot 如果带 `is_prefilled: true` 字段，说明该槽位的段落（或 label_blank 下面的正文段落）**已经写好了实质内容**——`existing_text` 字段会显示当前的内容（最多 200/400 字）。这通常发生在：用户在上传模板前已经手动填了某个章节（如"1.5 合同文件的优先顺序"下已经列了 7 条文件清单），或者模板自带示例填充。**绝对不要**把这种槽位当成普通空白槽位往 `slot_values` 里塞值——填了也会被工具默认 skip 掉（防止 2026-05 "（1）变更洽商…（1）变更洽商…" 重复行 bug），返回里会出现 `skipped_prefilled_slot_ids`。正确流程：(1) 把 `existing_text` **原样读给用户**："我看到 1.5 节已经写了这些：……，要保留原样、修改、还是替换？"(2) 用户说**保留**——不用做任何事，槽位会维持原样；(3) 用户说**替换**——把新内容通过 `fill_docx_template_tool` 的 `replace_prefilled={slot_id: 新内容}` 参数（**不是 slot_values**）传入。工具会**清空整段原有内容并写入新值**，保留段落的对齐、缩进、编号样式以及第一个 run 的字体格式。`label_blank` 类槽位的 body 可能跨多个段落（比如"合同文件组成"下的 7 条），新值里用 `\\n` 分隔每一项，工具会按行写入既有段落（多余的清空，不够的克隆最后一段插入），保证编号列表的视觉结构不变。
+     · **当章节标题（如"一、甲方委托乙方提供以下维修服务："）带有"以下/如下/下表/following/below"等字样、且后面紧跟一张表格时，要把每条维修服务/物品作为表格的一行来填，而不是把描述文字塞在标题和表格之间的空段落里。**inspect 已经默认不会在这种情况下emit section_body_empty 槽位；如果用户需要新增多条服务/产品行：先调 `edit_docx_tool` 用 `add_table_row` 增行（`{'type': 'add_table_row', 'table_index': N, 'values': ['第一列', '第二列', ...], 'position': 'end'}`，工具会**自动克隆最后一行的格式**——列宽、边框、对齐都会跟着——所以新加的行视觉上和原有行一致），如果还要改原有行用 `set_cell_text` / `replace_in_cell`，一次 `edit_docx_tool` 调用可以把多个 `add_table_row` + 多个 `set_cell_text` 全部放进 `edits` 数组里。**绝对不要**因为某个操作"看似不支持"就回退到 `unpack_docx_tool` + 手动改 XML + `pack_docx_tool`——这条路几乎一定会破坏文档结构（曾经把样式表搞坏）。如果 `add_table_row` 真的失败了，先把错误信息念给用户，再讨论替代方案，不要静默地直接拆包改 XML。
      · 如果多个 slots 共享相同或近似的 label（比如表格里多个"总价"、"大写"、"小写"单元格），**逐个**问用户该填什么，**不要**把同一个数字往所有看似相同的格子里灌。"总价" = 单价×数量的合计；"大写" / "小写" 是同一个金额的中文大写 / 阿拉伯数字两种写法——三者**值不同**，要按语义分别计算/转换后再填。
+     · **中文数字的用法（关键，避免误用大写）**：大写数字 "壹/贰/叁/肆/伍/陆/柒/捌/玖/拾/佰/仟/万/亿/元/整" **只用于金额**——而且只在 slot 的 label 或上下文出现"大写"/"in words"/"capital amount"，或与一个"小写"金额槽位配对时才用。**所有其它中文数字填充**——年限（"保修期 一 年"）、月数、周数、天数（"3天内"）、工作日数、合同期限、产品数量、序号、百分比、版次、人数、份数、第几条等——一律用**阿拉伯数字**（"1"、"3"、"15"）或**小写中文数字**（"一/二/三/四/五/六/七/八/九/十/百/千"），**严禁**用"壹/贰/叁..."。错误示范："保修期或质量保证期 壹 年"（壹是大写）；正确："保修期或质量保证期 1 年" 或 "保修期或质量保证期 一 年"。如果用户没明确指定"用大写"，默认用阿拉伯数字；用户说"用中文"再用小写。
    - 第三步（removals 删除候选）：
      · 如果 inspect 返回的 removals 非空，**逐条**把 removal.text 朗读给用户，问"这一段需要从最终文档中删除吗？"
      · 把用户确认要删除的 id 收集进列表。**永远不要自动删除**——红色斜体的备注也可能是用户故意保留的注解。
    - 第四步：用 fill_docx_template_tool 生成新文档：
      · 显式占位符的值放入 context。
-     · 用户确认的 slot 值放入 slot_values={"slot_0": "...", "slot_1": "...", ...}。
+     · 用户确认的 slot 值放入 slot_values={"slot_003_签订时间": "...", "slot_005_签订地点": "...", ...}。slot id 形如 `slot_NNN_<标签>`（如 `slot_004_签订时间`），**必须**把 inspect_template 返回的 id **整段**作为 key，包括尾部的描述标签。**绝对禁止**自己改写成 `slot_4` / `slot_004` 这种**无标签**的旧短格式——填充工具会在保存前**直接拒绝**这种调用并返回 `rejected_legacy_slot_ids`，整次 fill 失败、不会写出文件。上次因为 LLM 用 `slot_0..slot_120` 这种裸编号给一个只有 79 个槽位的模板编号，结果值被错误地按数字前缀路由到语义完全不同的槽位（"甲方"被填进了"中华人民共和国合同法"），整份合同作废。**每个 key 都要原样复制 inspect 返回的 `id`**——一个字符都不要省。
      · 用户确认要删除的项放入 removal_ids=["rm_0", "rm_2", ...]。
      · **必须**输出一个**新文件**，文件名在模板原名后加 "_filled" 后缀（例如 contract.docx → contract_filled.docx），放在用户工作目录下。**绝对不要覆盖**用户上传的原模板——用户保留原始模板用于多次填写。fill_docx_template_tool 会以原模板为底直接复制并仅替换占位符所在 run，**保留原模板的全部其他内容、样式、页眉页脚、表格、图片、批注等不变**。
+     · **优先一次调用填完所有 slot**——把所有用户确认的 slot 值放进**同一个** fill_docx_template_tool 调用的 slot_values 里。这样模型的 token 预算、JSON 输出和 slot id 编号都在同一个 inspect 上下文里、最稳定。**不要**为了"分批确认"就分多次调用——每次调用都要重新 inspect、重新做编号映射，出错面变大。
+     · **如果实在因为槽位太多（>80个）需要分批 fill 才能避免 completion token 截断**：
+       1) **第二次及之后**的调用，必须把 `template_path` 设为**上一次的 output_path**（即正在累积的 _filled 文件），而不是用户原始模板。原模板每次都用、会**抹掉**前一次填好的所有 slot——只有最后一次填进去的少数几个 slot 会留下，前面全部丢失。
+       2) slot_values 的 key 用**第一次** inspect_template 返回的 canonical id（如 `slot_003_受托方乙方`）。工具检测到 output_path 已存在时会自动把 canonical id 翻译成当前 partial 文档的 id，**不要**自己用第二次 inspect 的新编号——后续 inspect 的编号是基于"还剩下的空槽"重新计数的，跟第一次不一样。
+       3) **绝对不要**两次调用都把 `template_path` 设为原模板而 `output_path` 设为同一个文件——这就是去年（2026-05-20）智能仓储合同那次大量空白的根因，前三次填的 slot 全部被第四次调用从原模板复制时覆盖掉。
+     · **填错了想从头再来怎么办（关键，避免死循环）**：如果 fill 的结果不对，**绝对不要**用 run_bash 去删除/移动 _filled 文件——workspace guard 会拒绝，并且每次重试都会让 tool 默默地把已有的 _filled 当成"上一次的部分填充"来续填，slot id 偏移越来越严重，agent 就会陷入"重新 inspect → 槽位变了 → 再填一次 → 又偏了"的循环（2026-05 真实发生过）。正确做法只有两条：（A）在 fill_docx_template_tool 上加 `force_fresh=True`，工具会忽略已有的 _filled、直接用原模板**覆盖**写新文件；（B）换一个新的 output_path（例如 `contract_filled_v2.docx`）。如果 fill 的返回里出现 `chunked_continuation: true` 或 `continuation_notice` 字段、而你又不是在做分块 continuation，就是这个陷阱——立刻用 force_fresh=True 重新调用。
    - **填写成功后（仅限新上传模板）**：如果这次填的模板是用户**新上传**的（不是从模板库通过 `get_template_path_tool` 取来的），主动问一句："要把这个模板保存进你的模板库吗？以后可以直接说'用 XX 模板'调用。要起什么名字 / 分类 / 别名？" 用户同意后调 `save_template_tool(template_path=<原模板路径>, name=..., description=..., category=..., tags=..., aliases=...)`。注意 template_path 传**原模板**，不是 _filled 文件。**模板已经在库里的不要重复问**——会重复保存。
    - 第五步（强制约束）：模板相关流程**只能**用以下工具：`list_templates_tool` / `get_template_path_tool` / `save_template_tool` / `delete_template_tool` / `inspect_docx_template_tool` / `fill_docx_template_tool` / `convert_doc_to_docx_tool`。**禁止**用 run_bash、run_glob、run_read、run_write、run_edit 去浏览模板库、定位模板文件、读取或填充模板——即便某个工具返回看起来为空、超时或慢，也要**重试同一个工具**或把情况告诉用户，**不要**回退到 bash/文件系统操作来"找文件""列目录"或"读 XML"。模板路径**只能**通过 `get_template_path_tool` / 用户上传事件取得，不要 glob 模板目录；DOCX 内部结构由 inspect/fill 工具内部处理，外部 bash 操作只会破坏格式或读不到正确字段。
+   - **填写后的修正流程（关键，避免胡乱回退到 run_bash）**：`fill_docx_template_tool` 成功之后，**这个 _filled 文件已经没有占位符了**——再次调用 `inspect_docx_template_tool` / `fill_docx_template_tool` 通常什么都不会做（slots 都已消费），**不要重复 fill**。如果检查后发现某些表格单元格仍为空或填错了位置，必须按以下顺序处理：
+     · **第一步：诊断**——调 `extract_docx_content_tool(file_path=<_filled 文件路径>)` 把 tables 读出来，记下错位/空白单元格的 `table_index` / `row` / `col` 和当前文本。
+     · **第二步：用 `edit_docx_tool` 修复**——把每个修复都写成 `{'type': 'set_cell_text', ...}` 或 `{'type': 'replace_in_cell', ...}`（见规则 14）放进一次 `edit_docx_tool` 调用的 edits 数组里。**绝对不要**用 run_bash / run_write / run_edit 去改 .docx 文件——任何把 .docx 当文本/二进制改的尝试都会**损坏文档结构**（出现重复段落、丢失格式、xml 报错），过去用户就因为这种回退导致 "（价格含税，单位：人民币元）" 被重复粘了一份还把总计行覆盖掉了。
+     · **第三步：验证**——再调一次 `extract_docx_content_tool` 把刚改过的那张表读出来，**核对**修复目标的单元格是不是符合预期（金额单元格非空、写对位置）。不要凭印象就说"已修复"。
+     · 标准名是 `edit_docx_tool`。`edit_docx_content_tool` / `edit_docx_content` 是兼容别名，参数完全一致，调用任意一个都行——但**绝对**不要因为"找不到工具"就回退到 `run_bash` / `run_write` / `run_edit`。如果某个名字真的报"未注册"，先把所有 `edit_*` 名字都试一遍（`edit_docx_tool`、`edit_docx_content_tool`、`edit_docx_content`），再来汇报"工具都找不到"——绝不直接拿 bash 去改 .docx。
 10. fill_docx_template_tool 默认 mode="auto"，会自动检测占位符风格——除非用户明确要求，否则不要强行指定 mode。若模板同时含 {{ }} 与 [TOKEN]，auto 模式会先按 Jinja 渲染再做一次方括号替换；slot_values 总是在最后一步应用，removal_ids 在保存输出文件后执行。
 11. 不要把 inspect_docx_template_tool 用在普通文档上——那应该使用 extract_docx_content_tool 来查看内容。但模板里**没有任何**占位符也属于合法用法：inspect 会返回 slots / removals 让你识别可填空和可删除的位置。
 12. fill_docx_template_tool 会保留整个文档的字体、颜色、加粗、斜体、对齐、段距等格式——只修改占位符所在的 run，周围的 run 和段落的样式都不动。对于 highlighted 类型的槽位，工具会**只清除该处的高亮**，但保留同一 run 的字体/字号/加粗/斜体/颜色等。因此**不要**在填模板之后再去"统一字体/格式"或调用 modify_docx_fonts_tool，那会覆盖用户模板的样式。
@@ -837,6 +1003,8 @@ XML编辑工作流（仅用于 tracked changes）：
                     - {'type': 'set_table_style', 'table_index': 0, 'table_style': 'Light Grid Accent 1'}
                     - {'type': 'set_cell_text', 'table_index': 0, 'row': 3, 'col': 5, 'value': '2550'}   # overwrite one cell; '\\n' splits paragraphs
                     - {'type': 'replace_in_cell', 'table_index': 0, 'row': 3, 'col': 5, 'old_text': '850', 'new_text': '2550'}   # scoped find/replace inside one cell (cross-paragraph aware)
+                    - {'type': 'add_table_row', 'table_index': 0, 'values': ['管理交换机', '型号X', '2', '12000', '24000'], 'position': 'end'}   # append a new row; auto-picks the row with the MOST cells as the format template (avoids merged 总计/header rows). 'position' may be an int (insert BEFORE that row index — use this to insert above a totals row). Optional 'template_row_index': N pins which existing row's formatting to clone.
+                    - {'type': 'delete_table_row', 'table_index': 0, 'row': 5}   # remove row 5 from table 0
                     - {'type': 'add_bullet_list', 'items': ['要点一', '要点二'], 'position': 'end'}
                     - {'type': 'add_numbered_list', 'items': ['第一步', '第二步'], 'position': 'end'}
                     - {'type': 'insert_image', 'image_path': '/abs/path/to/image.png', 'position': 0, 'width_inches': 5.0}
@@ -847,28 +1015,20 @@ XML编辑工作流（仅用于 tracked changes）：
                     - {'type': 'add_header', 'header_type': 'title'}         # document title from file properties
                     - {'type': 'add_header', 'header_type': 'filename', 'text': 'filename.docx'}  # filename header
             """
-            import os
             import json
-            
+
             # Log the incoming request for debugging
             print(f"🔧 edit_docx_tool called with:")
             print(f"   File: {file_path}")
             print(f"   Edits count: {len(edits)}")
             print(f"   First edit sample: {json.dumps(edits[0] if edits else {}, ensure_ascii=False, indent=2)[:200]}...")
             
-            # Check if file exists
-            if not os.path.exists(file_path):
-                error_msg = f"File not found: {file_path}"
-                print(f"❌ {error_msg}")
-                return {
-                    'success': False,
-                    'error': 'File not found',
-                    'message': error_msg,
-                    'debug_info': {
-                        'file_path': file_path,
-                        'file_exists': os.path.exists(file_path)
-                    }
-                }
+            # File-path sanity guard — rejects hallucinated paths with strong
+            # recovery guidance so the agent doesn't fall back to run_bash.
+            guard = _guard_docx_file_path(file_path, tool_label="edit_docx_tool")
+            if guard is not None:
+                print(f"❌ {guard.get('error')}: {guard.get('message')[:200]}")
+                return guard
             
             # Convert LLM format to standard format if needed
             standardized_edits = []
@@ -979,9 +1139,35 @@ XML编辑工作流（仅用于 tracked changes）：
 
             Not for editing by itself.
 
+            ⚠️ 表格里的合并单元格（merged cells）—— 读结果里 `tables[i].data` 是按
+            **grid 坐标**返回的二维数组，所以一个合并单元格只在它的**锚点位置**
+            出现一次，其它被合并进来的位置会显示为
+            `'⟨merged with r{R}c{C}⟩'` 哨兵字符串（指向锚点）。同时
+            `tables[i].merges` 会列出每一处合并区域：
+                {anchor:[r,c], colspan, rowspan, text}
+
+            合并单元格的使用规则：
+            - **绝对不要**对哨兵位置写值（set_cell_text / replace_in_cell 之类）。
+              那些位置和锚点共用同一个底层 <w:tc>，写过去会把整个合并块的文字
+              一次性覆盖成你写的短字符串——这是上次"甲方开票信息"被改成
+              "100049" 的根因。
+            - 要修改合并块的内容，**只对锚点 (r, c) 写**。例如 `merges` 里有
+              `{anchor:[6,1], colspan:3, ...}`，所有改动都用 row=6, col=1。
+            - 合并块里的文本本身就是原模板的固定内容（例如 "甲方开票信息如下…"
+              整段、印章占位 "合 同 章…年 月 日"、表头中"甲方/乙方"的标签）——
+              通常这些是模板里**有意要保留的整段固定信息**，**不要**当成
+              "重复 / 错位 / 需要清理"的脏数据去改。看到合并块里有连续多行
+              prose（公司名/纳税人识别号/地址/账号 等），默认保留，**除非用户
+              明确要求修改**。
+            - 真正空的可填单元格（不是合并）会显示成空字符串 ''，和哨兵
+              `'⟨merged with …⟩'` 是不同的；不要混淆。
+
             Args:
                 file_path: Path to the DOCX file.
             """
+            guard = _guard_docx_file_path(file_path, tool_label="extract_docx_content_tool")
+            if guard is not None:
+                return guard
             processor = DocumentProcessor(str(WORKSPACE))
             result = processor.extract_docx_content(file_path)
             return result
@@ -1174,7 +1360,34 @@ XML编辑工作流（仅用于 tracked changes）：
                       - 'underscores'         — run of 3+ underscores
                       - 'label_blank'         — paragraph ending in "Label:"
                       - 'empty_cell'          — empty table cell under a header
-                      - 'angle_bracketed'     — <token> or 《占位符》
+                      - 'angle_bracketed'     — <token> or 《占位符》, OR
+                                                **per-marker `**` asterisk
+                                                fill positions** common in
+                                                CN contract templates.
+                                                EACH `**` is one slot that
+                                                replaces just the 2-char
+                                                marker; the literal text
+                                                around and between markers
+                                                is template content to
+                                                preserve. So
+                                                `**项目50台**设备运输` has
+                                                TWO slots (flanking the
+                                                preserved sample
+                                                `项目50台`, with `设备运输`
+                                                kept as static text); fill
+                                                "高能物理" + "试探" → output
+                                                `高能物理项目50台试探设备运输`.
+                                                NEVER echo the surrounding
+                                                template text in the slot
+                                                value — only the words that
+                                                replace the `**` itself.
+                                                Each such slot carries
+                                                `source: "asterisk_marker"`
+                                                plus `asterisk_marker_index`
+                                                / `asterisk_marker_total`
+                                                so you can tell the user
+                                                which `**` in the paragraph
+                                                you're asking about.
                       - 'placeholder_phrase'  — "your text here", "请填写", "TBD"…
                       - 'hint_text'           — italic/grey instructional run
                       - 'section_body_empty'  — empty body under a Heading
@@ -1209,8 +1422,25 @@ XML编辑工作流（仅用于 tracked changes）：
                                                 as a separate removal.
                   label = best-guess field name (may be None for stray cases).
                   context = surrounding snippet for disambiguation.
+                  is_prefilled (optional bool) + existing_text: when present
+                  and true, the slot's paragraph (or its label_blank body)
+                  ALREADY contains substantive content — e.g. the user
+                  pre-typed values under a section heading before asking
+                  docmaster to fill the rest. By default fill_docx_template_tool
+                  SKIPS these slots when given via `slot_values` (passes them
+                  through unchanged) to avoid duplicate-content bugs. To
+                  overwrite, read `existing_text` to the user, ask whether
+                  to keep or replace, and if replace, pass the new value
+                  through fill_docx_template_tool's `replace_prefilled`
+                  argument (NOT slot_values). The tool wipes the existing
+                  paragraph(s) and writes the new value while preserving
+                  paragraph-level formatting.
                   Pass the slot ids back via fill_docx_template_tool's
-                  slot_values argument once the user confirms each.
+                  slot_values argument once the user confirms each. Each id
+                  has the form `slot_NNN_<label>` (e.g.
+                  `slot_004_PatientName`); copy it VERBATIM — the trailing
+                  label is part of the id, and fill_docx_template_tool
+                  REJECTS bare numeric forms like `slot_4` outright.
                 removals: list of {id, kind, text, reason} dicts of paragraphs/
                     runs that look like template instructions to be deleted
                     before publishing (e.g. "Delete this before submitting",
@@ -1236,6 +1466,8 @@ XML编辑工作流（仅用于 tracked changes）：
             mode: str = "auto",
             slot_values: dict = None,
             removal_ids: list = None,
+            force_fresh: bool = False,
+            replace_prefilled: dict = None,
         ):
             """
             Fill a DOCX template with values and save to a new DOCX file.
@@ -1250,8 +1482,40 @@ XML编辑工作流（仅用于 tracked changes）：
               tokens must be uppercase-leading (alnum, underscore, dash).
             - Heuristic slots: for templates without placeholder syntax. Call
               inspect_docx_template_tool first to discover slot ids, confirm
-              what each holds with the user, then pass
-              slot_values={"slot_0": "Alice", "slot_1": "2026-05-13", ...}.
+              what each holds with the user, then pass slot_values using the
+              ids returned VERBATIM — they look like
+              {"slot_000_PatientName": "Alice",
+               "slot_001_Diagnosis": "Mild hypertension", ...}.
+              The trailing label after the counter is PART OF the id. Bare
+              forms like "slot_0" or "slot_001" (no descriptive tail) are
+              REJECTED at the fill boundary — the tool refuses to save and
+              returns `slot_fill.rejected_legacy_slot_ids` plus a
+              `legacy_canonical_map` showing the correct id for each rejected
+              key. Past incident (2026-05): the LLM emitted `slot_0..slot_120`
+              for a 79-slot contract template, values were routed by numeric
+              prefix to semantically wrong slots, and the whole contract had
+              to be discarded. Copy each id character-for-character from
+              inspect's output.
+
+            Chunked fills (large templates with many slots): prefer ONE call
+            covering all slots. If you must split into multiple calls, the
+            2nd+ calls MUST set `template_path` to the PREVIOUS call's
+            `output_path` so prior fills are preserved. You may pass the
+            canonical slot ids from the FIRST inspect_docx_template_tool —
+            the tool auto-translates them to the partial document's current
+            ids.
+
+            Implicit continuation: if `output_path` already exists from a
+            previous call (and you didn't set `template_path` to that file),
+            the tool auto-switches the source to the partial doc so prior
+            fills survive — the response will carry `chunked_continuation:
+            True` and a `continuation_notice` field. If that was NOT what
+            you wanted (e.g. the previous fill went sideways and you want
+            to start over from the original template), re-call this tool
+            with `force_fresh=True`. **Do NOT use run_bash / rm / mv to
+            delete or move the output file** — the workspace guards reject
+            those, and it makes the loop worse. Either `force_fresh=True`
+            or a fresh `output_path` is the right recovery move.
 
             Run-level formatting (bold/italic/color/font) in the template is
             preserved — only the runs that span the matched placeholder text
@@ -1285,6 +1549,38 @@ XML编辑工作流（仅用于 tracked changes）：
                     notes, etc.). Removals run last, after all fill passes,
                     on the saved output file. Pass None or [] to keep all
                     template prose intact.
+                force_fresh: When True, skip the implicit chunked-continuation
+                    auto-detect: even if `output_path` already exists, write
+                    a fresh fill from `template_path` and overwrite the
+                    output. Use this to recover from a botched previous
+                    fill — NEVER use run_bash to delete the file. Default
+                    False (preserve prior partial fills when re-running).
+                replace_prefilled: Optional {slot_id: new_text} for slots
+                    inspect_docx_template_tool flagged with
+                    `is_prefilled: true`. A prefilled slot is one whose
+                    paragraph (or its body, for `label_blank` kind) already
+                    contains substantive content — e.g. the user pre-typed
+                    a numbered list under "1.5 合同文件的优先顺序" before
+                    asking docmaster to fill the rest of the contract.
+                    By default these slots are SKIPPED by the normal
+                    `slot_values` pass to avoid the duplication bug
+                    (2026-05) where the agent's value was appended next to
+                    the existing content. To OVERWRITE a prefilled slot,
+                    confirm the change with the user, then pass the new
+                    text here. The tool wipes the existing paragraph
+                    (or all consecutive body paragraphs for label_blank)
+                    and writes the new value, preserving paragraph-level
+                    formatting (alignment, style, numbering) and the
+                    first run's character formatting. For label_blank
+                    bodies with multiple lines, separate items with `\\n`
+                    — each line becomes a separate body paragraph (extra
+                    paragraphs are inserted by cloning the last existing
+                    body paragraph so list numbering / indents survive).
+                    Workflow: (1) inspect, (2) note slots with
+                    `is_prefilled: true` and their `existing_text`,
+                    (3) read `existing_text` to the user and ASK whether
+                    to keep / replace, (4) only if the user says replace,
+                    pass {slot_id: new_text} here.
             """
             guard = _guard_template_path(template_path)
             if guard is not None:
@@ -1297,6 +1593,8 @@ XML编辑工作流（仅用于 tracked changes）：
                 mode=mode,
                 slot_values=slot_values or {},
                 removal_ids=removal_ids or [],
+                force_fresh=force_fresh,
+                replace_prefilled=replace_prefilled or {},
             )
             if result.get('success', False):
                 fe_data = _build_files_event_data(
@@ -2515,9 +2813,26 @@ XML编辑工作流（仅用于 tracked changes）：
             finally:
                 _sys.path[:] = _saved
 
+        # Aliases for names the model frequently hallucinates. Each is a thin
+        # wrapper around `edit_docx_tool` so a wrong-name call still succeeds
+        # instead of triggering a multi-turn "tool not found" recovery loop
+        # (observed 2026-05 — agent typed `edit_docx_content_tool` and
+        # `edit_docx_content`, then fell back to forbidden run_bash).
+        def edit_docx_content_tool(file_path: str, edits: list):
+            """Alias for edit_docx_tool — accepts the same arguments. Prefer
+            calling edit_docx_tool directly; this alias exists only so that
+            calls written under the wrong name still work."""
+            return edit_docx_tool(file_path, edits)
+
+        def edit_docx_content(file_path: str, edits: list):
+            """Alias for edit_docx_tool — see edit_docx_content_tool."""
+            return edit_docx_tool(file_path, edits)
+
         tools = [
             process_document,
             edit_docx_tool,
+            edit_docx_content_tool,   # alias — DO NOT remove (anti-loop guard)
+            edit_docx_content,        # alias — DO NOT remove (anti-loop guard)
             extract_docx_content_tool,
             # New enhanced editing tools
             delete_docx_content_tool,
