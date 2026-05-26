@@ -43,7 +43,6 @@ from ...datamodel import (
 )
 from ...teammanager import TeamManager
 from ...utils.utils import compress_state, decompress_state
-from ..model_resolve import resolve_requested_model
 from autogen_agentchat.messages import ThoughtEvent
 
 logger = logging.getLogger(__name__)
@@ -213,8 +212,9 @@ class WebSocketManager:
                 #         state_dict_decompress = None
 
             agent_id = settings_config.get("agent_id")
-            requested_model_alias = resolve_requested_model(
-                settings_config=settings_config,
+            requested_model_alias = (
+                settings_config.get("defult_config_name")
+                or settings_config.get("default_config_name")
             )
             agent_mode_config = await self._get_agent_mode_config(user_id=run.user_id, agent_id = agent_id)
             if agent_mode_config:
@@ -516,44 +516,11 @@ class WebSocketManager:
             except asyncio.TimeoutError:
                 continue  # loop back to check closed state
 
-    async def _switch_run_remote_model(self, run_id: int, alias: str) -> None:
-        """Switch remote worker model for an active run (input_response / continue)."""
-        team_manager = self._team_managers.get(run_id)
-        if not team_manager:
-            return
-        try:
-            await team_manager._switch_remote_model_if_requested(
-                {
-                    "defult_config_name": alias,
-                    "agent_mode_config": {"defult_config_name": alias},
-                }
-            )
-            logger.info(f"Switched remote model to {alias} for run {run_id}")
-        except Exception as e:
-            logger.warning(f"Failed to switch remote model for run {run_id}: {e}")
-
-    async def handle_input_response(
-        self,
-        run_id: int,
-        response: str | dict,
-        *,
-        requested_model: str | None = None,
-    ) -> None:
+    async def handle_input_response(self, run_id: int, response: str|dict) -> None:
         """Handle input response from client"""
         if run_id in self._input_responses and run_id in self._connections:
-            alias = requested_model or resolve_requested_model(response=response)
-            if not alias and isinstance(response, dict):
-                alias = resolve_requested_model(
-                    metadata=response.get("metadata"),
-                    settings_config=(
-                        (response.get("metadata") or {}).get("settings_config")
-                        if isinstance(response.get("metadata"), dict)
-                        else None
-                    ),
-                    response=response.get("response"),
-                )
-            if alias:
-                await self._switch_run_remote_model(run_id, alias)
+            # TODO: 使用Session的配置进行metadata更新
+            # agent_mode_config = await self._get_agent_mode_config(user_id=run.user_id, agent_id = agent_id)
             await self._input_responses[run_id].put(response)
         else:
             logger.warning(f"Received input response for inactive run {run_id}")

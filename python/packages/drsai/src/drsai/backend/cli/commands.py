@@ -298,50 +298,6 @@ COMMAND_REGISTRY: list[CommandDef] = [
         handler="async",
     ),
 
-    # ── Desktop ────────────────────────────────────────────────────────────
-    CommandDef(
-        "install",
-        "Create desktop shortcut for DrSai tray app",
-        "Desktop",
-        args_hint="shortcut|icons|uninstall",
-        handler="sync",
-    ),
-    CommandDef(
-        "tray",
-        "Check/recreate tray icon (status|create|hide)",
-        "Desktop",
-        args_hint="status|create|hide",
-        handler="sync",
-    ),
-
-    # ── Window ────────────────────────────────────────────────────────────
-    CommandDef(
-        "win_new",
-        "Create a new chat window with fresh session",
-        "Window",
-        args_hint="[name]",
-        handler="async",
-    ),
-    CommandDef(
-        "win_close",
-        "Close current chat window (minimize last window to tray)",
-        "Window",
-        handler="sync",
-    ),
-    CommandDef(
-        "win_list",
-        "List all open windows and their sessions",
-        "Window",
-        handler="sync",
-    ),
-    CommandDef(
-        "win_switch",
-        "Switch focus to a different window by session ID or name",
-        "Window",
-        aliases=("winsw",),
-        args_hint="<id_or_name>",
-        handler="async",
-    ),
 
     # ── Meta ─────────────────────────────────────────────────────────────────
     CommandDef(
@@ -383,7 +339,7 @@ def resolve_command(name: str) -> Optional[CommandDef]:
 
 def commands_by_category() -> dict[str, list[CommandDef]]:
     """Return commands grouped by category, in fixed category order."""
-    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Subagent", "Window", "Desktop", "Info"]
+    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Subagent", "Info"]
     groups: dict[str, list[CommandDef]] = {cat: [] for cat in order}
     for cmd in COMMAND_REGISTRY:
         if cmd.category in groups:
