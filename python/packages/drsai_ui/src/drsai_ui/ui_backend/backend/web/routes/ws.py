@@ -10,7 +10,6 @@ from ...datamodel import Run
 from ..deps import get_db, get_websocket_manager
 from ..managers import WebSocketManager
 from ...utils.utils import construct_task
-from ..model_resolve import apply_requested_model, resolve_requested_model
 
 router = APIRouter()
 
@@ -99,14 +98,18 @@ async def run_websocket(
                     settings_config = start_metadata.pop("settings_config")
                     files = start_metadata.pop("files", [])
 
-                    # Model alias: prefer frontend agent_mode_config in settings_config.
-                    requested_model = resolve_requested_model(
-                        message=message,
-                        metadata=start_metadata,
-                        settings_config=settings_config,
+                    # Allow the client to pass model alias either at the
+                    # websocket message top level or inside metadata.  Keep the
+                    # historical typo `defult_config_name` for compatibility,
+                    # while also accepting `default_config_name`.
+                    requested_model = (
+                        message.get("defult_config_name")
+                        or message.get("default_config_name")
+                        or start_metadata.pop("defult_config_name", None)
+                        or start_metadata.pop("default_config_name", None)
                     )
                     if requested_model:
-                        apply_requested_model(settings_config, requested_model)
+                        settings_config["defult_config_name"] = requested_model
                     task = construct_task(
                         query=task, 
                         files=files,
@@ -148,28 +151,23 @@ async def run_websocket(
                     if isinstance(metadata, dict):
                         metadata = dict(metadata)
                         _enrich_input_response_with_files(response, metadata)
-                    requested_model = resolve_requested_model(
-                        message=message,
-                        metadata=metadata if isinstance(metadata, dict) else None,
-                        settings_config=(
-                            metadata.get("settings_config")
-                            if isinstance(metadata, dict)
-                            else None
-                        ),
-                        response=response,
-                    )
-                    if isinstance(metadata, dict):
+                    if metadata:
                         settings_config = metadata.get("settings_config")
-                        if isinstance(settings_config, dict) and requested_model:
-                            apply_requested_model(settings_config, requested_model)
+                        if isinstance(settings_config, dict):
+                            requested_model = (
+                                metadata.get("defult_config_name")
+                                or metadata.get("default_config_name")
+                                or settings_config.get("defult_config_name")
+                                or settings_config.get("default_config_name")
+                            )
+                            if requested_model:
+                                settings_config["defult_config_name"] = requested_model
                         response = {
                             "response": response,
                             "metadata": metadata,
                         }
                     if response is not None:
-                        await ws_manager.handle_input_response(
-                            run_id, response, requested_model=requested_model
-                        )
+                        await ws_manager.handle_input_response(run_id, response)
                     else:
                         logger.warning(
                             f"Invalid input response format for run {run_id}"
