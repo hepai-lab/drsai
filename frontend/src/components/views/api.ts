@@ -1490,6 +1490,80 @@ export class DocMasterAPI {
         };
     }
 
+    /** URL the browser can hit to download/stream a template's .docx. */
+    templateFileUrl(params: {
+        templateId: string;
+        source: "shared" | "mine";
+        userId?: string;
+    }): string {
+        const qs = new URLSearchParams();
+        qs.set("template_id", params.templateId);
+        qs.set("source", params.source);
+        if (params.source === "mine" && params.userId) qs.set("user_id", params.userId);
+        return `${this.getBaseUrl()}/docmaster/templates/file?${qs.toString()}`;
+    }
+
+    async saveTemplate(params: {
+        userId: string;
+        name: string;
+        description?: string;
+        category?: string;
+        tags?: string[];
+        aliases?: string[];
+        templateId?: string;
+        file: File;
+    }): Promise<{ template_id?: string; metadata?: DocMasterTemplateEntry }> {
+        const form = new FormData();
+        form.append("user_id", params.userId);
+        form.append("name", params.name);
+        if (params.description) form.append("description", params.description);
+        if (params.category) form.append("category", params.category);
+        if (params.tags && params.tags.length > 0) {
+            form.append("tags", JSON.stringify(params.tags));
+        }
+        if (params.aliases && params.aliases.length > 0) {
+            form.append("aliases", JSON.stringify(params.aliases));
+        }
+        if (params.templateId) form.append("template_id", params.templateId);
+        form.append("file", params.file);
+        const response = await fetch(`${this.getBaseUrl()}/docmaster/templates`, {
+            method: "POST",
+            body: form,
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "保存模板失败"
+            );
+        }
+        if (!data.status) {
+            throw new Error(data.message || "保存模板失败");
+        }
+        return data.data || {};
+    }
+
+    async deleteTemplate(params: {
+        templateId: string;
+        userId: string;
+    }): Promise<{ removed_id?: string }> {
+        const qs = new URLSearchParams();
+        qs.set("user_id", params.userId);
+        const response = await fetch(
+            `${this.getBaseUrl()}/docmaster/templates/${encodeURIComponent(params.templateId)}?${qs.toString()}`,
+            { method: "DELETE", headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "删除模板失败"
+            );
+        }
+        if (!data.status) {
+            throw new Error(data.message || "删除模板失败");
+        }
+        return data.data || {};
+    }
+
     async listTemplates(params: {
         userId?: string;
         category?: string;

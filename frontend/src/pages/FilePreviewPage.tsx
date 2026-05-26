@@ -15,6 +15,8 @@ interface FilePreviewPageProps {
   file?: MessageFileItem | null;
   sessionId?: number | null;
   onFileEvent?: (event: FilesEvent) => void;
+  /** Hide all edit/save affordances. Used by the DocMaster 模板库 preview flow. */
+  readOnly?: boolean;
 }
 
 /* ============================================================
@@ -470,7 +472,7 @@ const normalizeMarkdownForPreview = (raw: string): string => {
   return text.replace(/\n{3,}/g, "\n\n").trim();
 };
 
-const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionId, onFileEvent }) => {
+const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionId, onFileEvent, readOnly = false }) => {
   const { darkMode } = React.useContext(appContext);
   const isDark = darkMode === "dark";
   
@@ -617,7 +619,7 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionI
           <h2 className="text-base font-semibold text-primary truncate">{file.name}</h2>
           <p className="text-xs text-secondary mt-1 truncate">{file.description || "无描述"}</p>
         </div>
-        {textMode && (
+        {textMode && !readOnly && (
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -641,7 +643,7 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionI
             </button>
           </div>
         )}
-        {wordMode && (
+        {wordMode && !readOnly && (
           <button
             type="button"
             onClick={() => setShowWordEditor(true)}
@@ -658,7 +660,7 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionI
         {error && <div className="text-sm text-red-500">{error}</div>}
 
         {!loading && !error && textMode && (
-          isEditing ? (
+          isEditing && !readOnly ? (
             <textarea
               value={editedText}
               onChange={(e) => setEditedText(e.target.value)}
