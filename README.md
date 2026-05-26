@@ -17,6 +17,8 @@
 - 1.可基于[HepAI平台](https://aiapi.ihep.ac.cn/)进行智能体基座模型的灵活切换，以及工具、知识库等智能体组件的灵活配置。同时兼容OpenAI ChatCompletions，Ollama等模型格式接入。
 - 2.为智能体和多智能体系统设计了感知、思考、记忆、执行、状态管理等预定义组件，并进行了插件化设计，可灵活扩展，满足多种专业智能体设计应用场景。
 - 3.提供了一键启动的人机交互前后端，实现了开发即应用。并为智能体和多智能体协作系统交互提供了兼容OpenAI ChatCompletions、OpenWebui-Pipeline的标准后端接口，可将智能体和多智能体协作系统作为第三方的模型或智能体API服务。
+- 4.提供了基于React/Ink的全新**终端用户界面（TUI）**，支持直接在终端中与智能体进行交互。通过 `drsai` 或 `drsai chat` 一键启动，支持会话管理、模型切换、斜杠命令、推理过程可视化等功能，打造类似Claude Code的沉浸式开发体验。
+- 5.提供**桌面客户端（Desktop App）**，支持Electron桌面应用一键启动（`drsai desktop`），具备系统托盘驻留、远程网关连接等特性。
 
 ### &#x1F4E2; 功能比较
 
@@ -32,6 +34,8 @@
 | 长时间任务执行管理 | ✅支持超长时间科学任务监控与守护 | 暂无 | 暂无 | 暂无 | 暂无 | 暂无 |
 | 框架模块化和扩展性 | ✅模块化、扩展性强 | ✅模块化、扩展性强 | ✅模块化、扩展性强 | 具有较强的模块化、扩展性 | 扩展性较差 | 扩展性较差 |
 | 交互式应用开发 | ✅具有开发即应用的特性，构建的智能体可直接转化为人机交互的web应用 | 在AutoGen Studio中可进行拖拽构建多智能体系统 | 在CAMEL Web App进行前端应用 | 需要与其他开源界面集成 | 需要与其他开源界面集成 | 前端可拖拽构建智能体应用 |
+| 终端交互（TUI） | ✅基于React/Ink的全新TUI，支持斜杠命令、会话管理、模型切换、推理可视化 | 暂无 | 暂无 | 暂无 | 暂无 | 暂无 |
+| 桌面客户端 | ✅Electron桌面应用，支持系统托盘和远程连接 | 暂无 | 暂无 | 暂无 | 暂无 | 暂无 |
 
 > 截止时间：2025年11月25日
 
@@ -77,10 +81,32 @@ windows平台：
 
 ```shell
 setx "HEPAI_API_KEY" "your_api_key"
-# 注意 windows环境变量需要重启电脑才会生效
+# 注意 windows环境变量可能需要重启电脑才会生效
 ```
 
-### 2.2.快速启动一个大模型智能体
+### 2.2.快速启动 — 终端交互模式 (TUI) 🆕
+
+安装完成后，无需任何配置文件，直接在终端中一键启动智能体交互：
+
+```shell
+conda activate drsai
+drsai        # 启动全新的 Ink 终端用户界面 (TUI)
+# 或者
+drsai chat   # 等价于 drsai
+```
+
+首次启动将自动引导配置API密钥，之后即可直接在终端中与智能体对话。
+
+**TUI 核心特性：**
+- 🎨 基于 React/Ink 的现代化终端界面
+- 💬 支持多会话管理：创建、切换、重命名、搜索历史会话
+- 🔄 实时模型切换：`/model <name>` 切换模型，`/models` 查看可用模型
+- 🧠 推理过程可视化：`/reasoning show|hide` 控制推理框显示
+- 📋 项目指令注入：`/init` 创建 DRSAI.md 项目文件，`/memory` 查看/重载
+- 🔒 工作区隔离：`/workspace on|off` 限制文件访问范围
+- ⚡ 30+ 斜杠命令：输入 `/help` 查看完整命令列表
+
+### 2.3.快速启动智能体（代码方式）
 
 以[examples/agent_groupchat/assistant_base_R1_oai.py](examples/agent_groupchat/assistant_base_R1_oai.py)为例，展示了如何基于OpenDrSai快速启动一个智能体系统。
 
@@ -93,7 +119,7 @@ python examples/agent_groupchat/assistant_base_R1_oai.py
 
 **NOTE**: examples/agent_groupchat中还包括了其他智能体和多智能体系统的案例，包括MCP等工具接入、RAG接入、多智能体协作系统的设计、多任务执行的设计等。
 
-### 2.3.命令行启动OpenDrSai人机交互后端服务
+### 2.4.命令行启动OpenDrSai人机交互后端服务
 
 ```shell
 # 确保安装了drsai_ui
@@ -115,7 +141,7 @@ drsai ui # 启动Dr.Sai-UI人机交互后端和静态前端
 - DrSai-General 功能需要编译python执行沙盒和浏览器VNC的Docker镜像，请确保安装了docker环境。具体docker镜像及安装配置见[docker](docker/README.md)
 
 
-### 2.4.人机交互前端
+### 2.5.人机交互前端
 
 #### 配置npm环境
 
@@ -145,37 +171,50 @@ yarn install
 yarn run dev # 启动前端开发环境
 ```
 
-### 2.5.通过配置文件运行智能体/多智能体服务（可选的）
+### 2.6.桌面客户端 (Desktop App) 🆕
+
+OpenDrSai 提供了 Electron 桌面客户端，支持系统托盘驻留和远程连接：
 
 ```shell
-# pip install drsai_ui -U # 确保安装了drsai_ui
-drsai console --agent-config agent_config.yaml # 启动命令行模式的智能体/多智能体服务
-drsai backend --agent-config agent_config.yaml # 将智能体/多智能体部署为OpenAI格式的后端模型服务
+drsai desktop    # 启动 DrSai 桌面客户端 （正在开发中...）
+drsai gateway    # 启动 SSE 网关（供桌面客户端连接）
 ```
 
-**NOTE:**
+桌面客户端可连接本地或远程的 DrSai 后端服务，并通过系统托盘常驻后台。
 
-- agent_config.yaml文件展示了智能体和多智能体的配置信息，进行智能体尝鲜，或者前端用户自定义配置智能体时可以根据配置文件进行智能体/多智能体系统的快速创建，一个案例如下：
+### 2.7.TUI 斜杠命令速览 🆕
 
-```yaml
-# 定义你的智能体基座模型
-model_config: &client
-  provider: drsai.HepAIChatCompletionClient
-  config:
-    model: openai/gpt-4o
-    api_key: sk-****
-    base_url: "https://aiapi.ihep.ac.cn/apiv2"
-    max_retries: 10
-# 组装你的智能体
-myassistant:
-  type: AssistantAgent # 定义智能体类型，由OpenDrSai提供或者自己代码开发
-  name: myassistant
-  system_message: "You are a helpful assistant who responds to user requests based on your tools and knowledge."
-  description: "An agent that provides assistance with ability to use tools."
-  model_client: *client
-```
+在 TUI 终端交互模式下，输入 `/help` 可查看所有可用命令。以下是部分核心命令：
 
-具体的配置项说明见[配置文件说明文档](docs/agent_factory.md)。在我们[AI平台](https://drsai.ihep.ac.cn)上，提供了丰富的智能体的基座模型、MCP/HEPAI Worker工具、RAG记忆插件；多种逻辑的智能体和多智能体框架；一些预设的智能体/多智能体工作模式供你选择。你可以在前后端选择适合你的智能体/多智能体框架和工具、知识库等，快速搭建自己的智能体/多智能体协作系统。通过配置快速构建智能体/多智能体系统详细的说明见：```docs/agent_factory.md```.
+| 分类 | 命令 | 说明 |
+| :--- | :--- | :--- |
+| **会话管理** | `/new [name]` | 创建新会话 |
+| | `/switch <id\|name>` | 切换到指定会话 |
+| | `/list` (`/ls`) | 列出所有已保存会话 |
+| | `/resume <id\|name>` | 恢复历史会话 |
+| | `/search <query>` | 搜索历史会话 |
+| | `/rename <name>` | 重命名当前会话 |
+| | `/retry` | 重试上一条消息 |
+| | `/copy [n]` | 复制倒数第n条助手回复 |
+| **模型配置** | `/model [name]` (`/m`) | 查看/切换模型（会话级） |
+| | `/model_global [name]` (`/mg`) | 切换模型并设为全局默认 |
+| | `/models` (`/listmodels`) | 列出所有可用模型 |
+| **显示控制** | `/reasoning show\|hide\|low\|medium\|high` | 控制推理过程显示 |
+| | `/verbose` | 切换每轮统计信息显示 |
+| | `/bell on\|off` | 响应完成时终端响铃 |
+| | `/fast on\|off` | 切换至最快模型 |
+| **项目指令** | `/init` | 创建 DRSAI.md 项目指令文件 |
+| | `/memory show\|reload` | 查看/重载项目指令 |
+| **工作区** | `/workspace on\|off` (`/ws`) | 切换工作区限制 |
+| | `/dangerous on\|off` (`/dg`) | 切换危险命令执行权限 |
+| | `/cd <path>` (`/workdir`) | 切换工作目录 |
+| **子智能体** | `/agent <name\|list\|clear>` | 设置/列出子智能体 |
+| | `/delegate <type> <prompt>` (`/sub`) | 手动委托子智能体执行 |
+| **计划模式** | `/plan_mode on\|off` (`/pm`) | 切换计划模式 |
+| | `/inject prefix\|suffix\|clear` | 注入自定义提示词 |
+| **系统** | `/setup` (`/env`) | 重新打开配置向导 |
+| | `/status` | 显示智能体和会话状态 |
+| | `/quit` (`/exit`, `/q`) | 保存并退出 |
 
 
 ## 3.开发计划(TODO)
@@ -236,22 +275,18 @@ myassistant:
 
 ### 3.4.人机交互前后端开发
 
+- [x] ✅ 基于 React/Ink 的新一代 TUI 终端交互界面（已完成）
+- [x] ✅ Electron 桌面客户端（已完成）
+- [x] ✅ 30+ 斜杠命令系统，支持会话管理、模型切换、推理可视化（已完成）
+- [x] ✅ DrSai CLI 配置管理（`drsai config`）（已完成）
+- [x] ✅ 首次启动配置向导（已完成）
+- [x] ✅ 前端UI的任务管理系统展示交互（已完成）
+- [x] ✅ 前端UI的执行文件、log等信息的展示交互（已完成）
 - [ ] 后端数据库的自动生成id设计为UUID，以代替现在使用整数id进行自动排序的设计
-
 - [ ] drsai后端的智能体实例在长时间不运行时自动pop, 节约资源。
-
-~~- [x] 前端UI的任务管理系统展示交互~~
-
-~~- [x] 前端UI的执行文件、log等信息的展示交互~~
-
 - [ ] 前端UI的长任务的展示交互
-
 - [ ] 默认登录系统开发
-
-~~- [ ] drsai hub展示与缓存机制~~
-
 - [ ] 非文本文件和大文件的上传与智能体接收机制开发，计划通过文件系统进行前后端大文件交互， 支持传入HepAI文件系统的url
-
 - [ ] 开放可链接RAGFlow知识库/记忆知识库和MCP远程函数的智能体调用，数据格式符合python/packages/drsai_ui/src/drsai_ui/configs/agent_config.yaml（尽快）
 
 
