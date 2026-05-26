@@ -26,7 +26,8 @@ interface AppLayoutProps {
   rightPanelWidth?: number;
   rightPanelHistory?: React.ReactNode;
   rightPanelFiles?: React.ReactNode;
-  onRightPanelTabChange?: (tab: "overview" | "history" | "files") => void;
+  rightPanelTemplates?: React.ReactNode;
+  onRightPanelTabChange?: (tab: "overview" | "history" | "files" | "templates") => void;
 
   // Canvas
   children: React.ReactNode;
@@ -47,6 +48,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   rightPanelWidth = 380,
   rightPanelHistory,
   rightPanelFiles,
+  rightPanelTemplates,
   onRightPanelTabChange,
   children,
   canvasActiveView,
@@ -183,6 +185,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
       width={isCompact ? undefined : rightWidth}
       historyContent={rightPanelHistory}
       filesContent={rightPanelFiles}
+      templatesContent={rightPanelTemplates}
       onTabChange={onRightPanelTabChange}
     />
   );

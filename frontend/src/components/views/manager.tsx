@@ -1,8 +1,8 @@
 import { appContext } from "@/hooks/provider";
-import { Dropdown, message, Spin, Button } from "antd";
+import { Dropdown, Input, message, Modal, Popconfirm, Spin, Button } from "antd";
 import React, { Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { MoreVertical, Search, Share2, Trash2 } from "lucide-react";
+import { MoreVertical, Search, Share2, Trash2, Library, Plus, Upload, X } from "lucide-react";
 import { parse } from "yaml";
 import { useConfigStore } from "../../hooks/store";
 import { useModeConfigStore } from "../../store/modeConfig";
@@ -11,7 +11,7 @@ import { useAgentInfo } from "../features/Agents/useAgentInfo";
 import PlanList from "../features/Plans/PlanList";
 import { GeneralConfig, useSettingsStore } from "../store";
 import type { Session, FilesEvent, MessageFileItem } from "../types/datamodel";
-import { sessionAPI, settingsAPI, userAPI } from "./api";
+import { sessionAPI, settingsAPI, userAPI, docmasterAPI, type DocMasterTemplateEntry } from "./api";
 import ChatView from "../../pages/chat/chat";
 import NewChatView from "../../pages/chat/NewChatView";
 import { useAgentManager } from "./hooks/useAgentManager";
@@ -101,6 +101,7 @@ export const SessionManager: React.FC = () => {
   const [baseUrl, setBaseUrl] = useState<string | undefined>();
   const [sessionFileEvents, setSessionFileEvents] = useState<Record<number, FilesEvent[]>>({});
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<MessageFileItem | null>(null);
+  const [previewReadOnly, setPreviewReadOnly] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const [pendingMenuId, setPendingMenuId] = useState<MenuId | null>(null);
@@ -678,6 +679,7 @@ export const SessionManager: React.FC = () => {
                 type="button"
                 onClick={() => {
                   setSelectedPreviewFile(file);
+                  setPreviewReadOnly(false);
                   navigateToView("file_preview");
                 }}
                 className="text-sm font-medium text-primary break-all text-left hover:text-accent transition-colors"
@@ -711,6 +713,7 @@ export const SessionManager: React.FC = () => {
                   type="button"
                   onClick={() => {
                     setSelectedPreviewFile(file);
+                    setPreviewReadOnly(false);
                     navigateToView("file_preview");
                   }}
                   className="inline-flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium bg-tertiary/20 text-primary hover:bg-tertiary/30 transition-colors"
@@ -742,6 +745,400 @@ export const SessionManager: React.FC = () => {
     buildDownloadHref,
     formatFileSize,
     navigateToView,
+  ]);
+
+  // Templates tab (DocMaster only) ------------------------------------------------
+  const isDocMaster = useMemo(() => {
+    const name =
+      (agentInfo as { name?: string } | null | undefined)?.name ||
+      selectedAgent?.name ||
+      "";
+    return name === "DocMaster";
+  }, [agentInfo, selectedAgent]);
+
+  const [docmasterTemplates, setDocmasterTemplates] = useState<{
+    shared: DocMasterTemplateEntry[];
+    mine: DocMasterTemplateEntry[];
+  }>({ shared: [], mine: [] });
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+
+  const fetchTemplates = useCallback(async () => {
+    if (!isDocMaster) return;
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    try {
+      const data = await docmasterAPI.listTemplates({ userId: user?.email });
+      setDocmasterTemplates(data);
+    } catch (err) {
+      setTemplatesError(err instanceof Error ? err.message : "加载模板失败");
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, [isDocMaster, user?.email]);
+
+  useEffect(() => {
+    if (!isDocMaster) {
+      setDocmasterTemplates({ shared: [], mine: [] });
+      return;
+    }
+    void fetchTemplates();
+  }, [isDocMaster, fetchTemplates]);
+
+  // Allow chat-side template save/delete tool flows to refresh the catalog.
+  useEffect(() => {
+    if (!isDocMaster) return;
+    const handler = () => {
+      void fetchTemplates();
+    };
+    window.addEventListener("drsai:templateLibraryChanged", handler);
+    return () => {
+      window.removeEventListener("drsai:templateLibraryChanged", handler);
+    };
+  }, [isDocMaster, fetchTemplates]);
+
+  const handleUseTemplate = useCallback((entry: DocMasterTemplateEntry) => {
+    const alias =
+      (Array.isArray(entry.aliases) && entry.aliases.find((a) => a && a.trim())) ||
+      entry.name;
+    if (!alias) return;
+    const text = `请使用模板 ${alias}`;
+    window.dispatchEvent(
+      new CustomEvent("drsai:chatinput:setValue", { detail: { text } })
+    );
+    navigateToMenu(MENU_IDS.currentSession);
+    navigateToView("chat");
+  }, [navigateToMenu, navigateToView]);
+
+  const handlePreviewTemplate = useCallback((entry: DocMasterTemplateEntry) => {
+    const source = (entry.source as "shared" | "mine") || "shared";
+    const templateId = typeof entry.id === "string" ? entry.id : entry.name;
+    if (!templateId) return;
+    const url = docmasterAPI.templateFileUrl({
+      templateId,
+      source,
+      userId: source === "mine" ? user?.email : undefined,
+    });
+    const previewFile: MessageFileItem = {
+      name: `${entry.name || templateId}.docx`,
+      url,
+      base64_content: "",
+      size: 0,
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      description: entry.description || "模板预览（只读）",
+      download_method: "url",
+    };
+    setSelectedPreviewFile(previewFile);
+    setPreviewReadOnly(true);
+    navigateToView("file_preview");
+  }, [navigateToView, user?.email]);
+
+  // --- Add / delete template flows --------------------------------------------
+  const [addTemplateOpen, setAddTemplateOpen] = useState(false);
+  const [addTemplateName, setAddTemplateName] = useState("");
+  const [addTemplateDescription, setAddTemplateDescription] = useState("");
+  const [addTemplateCategory, setAddTemplateCategory] = useState("");
+  const [addTemplateTags, setAddTemplateTags] = useState("");
+  const [addTemplateAliases, setAddTemplateAliases] = useState("");
+  const [addTemplateFile, setAddTemplateFile] = useState<File | null>(null);
+  const [addTemplateSubmitting, setAddTemplateSubmitting] = useState(false);
+  const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
+
+  const resetAddTemplateForm = useCallback(() => {
+    setAddTemplateName("");
+    setAddTemplateDescription("");
+    setAddTemplateCategory("");
+    setAddTemplateTags("");
+    setAddTemplateAliases("");
+    setAddTemplateFile(null);
+  }, []);
+
+  const openAddTemplate = useCallback(() => {
+    resetAddTemplateForm();
+    setAddTemplateOpen(true);
+  }, [resetAddTemplateForm]);
+
+  const parseCsvList = (raw: string): string[] =>
+    raw
+      .split(/[,，]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+  const handleSubmitAddTemplate = useCallback(async () => {
+    if (!user?.email) {
+      messageApi.error("未登录或无法识别用户邮箱");
+      return;
+    }
+    if (!addTemplateFile) {
+      messageApi.error("请选择 .docx 模板文件");
+      return;
+    }
+    if (!addTemplateFile.name.toLowerCase().endsWith(".docx")) {
+      messageApi.error("模板必须是 .docx 文件");
+      return;
+    }
+    if (!addTemplateName.trim()) {
+      messageApi.error("请填写模板名称");
+      return;
+    }
+    setAddTemplateSubmitting(true);
+    try {
+      await docmasterAPI.saveTemplate({
+        userId: user.email,
+        name: addTemplateName.trim(),
+        description: addTemplateDescription.trim(),
+        category: addTemplateCategory.trim() || undefined,
+        tags: parseCsvList(addTemplateTags),
+        aliases: parseCsvList(addTemplateAliases),
+        file: addTemplateFile,
+      });
+      messageApi.success("模板已保存");
+      setAddTemplateOpen(false);
+      resetAddTemplateForm();
+      await fetchTemplates();
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "保存模板失败");
+    } finally {
+      setAddTemplateSubmitting(false);
+    }
+  }, [
+    user?.email,
+    addTemplateFile,
+    addTemplateName,
+    addTemplateDescription,
+    addTemplateCategory,
+    addTemplateTags,
+    addTemplateAliases,
+    messageApi,
+    fetchTemplates,
+    resetAddTemplateForm,
+  ]);
+
+  const handleDeleteTemplate = useCallback(async (entry: DocMasterTemplateEntry) => {
+    if (!user?.email) {
+      messageApi.error("未登录或无法识别用户邮箱");
+      return;
+    }
+    const templateId = typeof entry.id === "string" ? entry.id : "";
+    if (!templateId) return;
+    setDeletingTemplateId(templateId);
+    try {
+      await docmasterAPI.deleteTemplate({ templateId, userId: user.email });
+      messageApi.success(`已删除模板 ${entry.name || templateId}`);
+      await fetchTemplates();
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "删除模板失败");
+    } finally {
+      setDeletingTemplateId(null);
+    }
+  }, [user?.email, messageApi, fetchTemplates]);
+
+  const rightPanelTemplates = useMemo(() => {
+    if (!isDocMaster) return null;
+
+    const isDark = darkMode === "dark";
+    const cardBase = isDark
+      ? "rounded-lg border border-border-primary/30 bg-tertiary/10 p-3 hover:bg-tertiary/20"
+      : "rounded-lg border border-gray-200/70 bg-white/70 p-3 hover:bg-gray-100/60";
+    const chipBase = isDark
+      ? "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-white/[0.06] text-secondary"
+      : "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-600";
+    const aliasChip = isDark
+      ? "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-accent/15 text-accent"
+      : "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-violet-100 text-violet-700";
+
+    const actionBtn = isDark
+      ? "inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium bg-white/[0.06] text-primary hover:bg-white/[0.12]"
+      : "inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium bg-gray-100 text-gray-700 hover:bg-gray-200";
+    const actionBtnAccent = isDark
+      ? "inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium bg-accent/15 text-accent hover:bg-accent/25"
+      : "inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium bg-violet-100 text-violet-700 hover:bg-violet-200";
+
+    const renderEntry = (entry: DocMasterTemplateEntry, idx: number) => {
+      const aliases = Array.isArray(entry.aliases) ? entry.aliases.filter(Boolean) : [];
+      const tags = Array.isArray(entry.tags) ? entry.tags.filter(Boolean) : [];
+      return (
+        <div
+          key={`${entry.name || "tpl"}-${idx}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => handlePreviewTemplate(entry)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handlePreviewTemplate(entry);
+            }
+          }}
+          className={`block w-full text-left transition-colors cursor-pointer ${cardBase}`}
+          title="点击预览模板内容"
+        >
+          <div className="text-sm font-medium text-primary break-all">
+            {entry.name || `模板 ${idx + 1}`}
+          </div>
+          {entry.description && (
+            <div className="mt-1 text-xs text-secondary break-all line-clamp-2">
+              {entry.description}
+            </div>
+          )}
+          {(entry.category || tags.length > 0) && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {entry.category && (
+                <span className={chipBase}>{entry.category}</span>
+              )}
+              {tags.map((t) => (
+                <span key={t} className={chipBase}>#{t}</span>
+              ))}
+            </div>
+          )}
+          {aliases.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {aliases.map((a) => (
+                <span key={a} className={aliasChip}>{a}</span>
+              ))}
+            </div>
+          )}
+          <div className="mt-2 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePreviewTemplate(entry);
+              }}
+              className={actionBtn}
+            >
+              预览
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleUseTemplate(entry);
+              }}
+              className={actionBtnAccent}
+              title="把 “请使用模板 …” 写入聊天输入框"
+            >
+              使用
+            </button>
+            {entry.source === "mine" && (
+              <Popconfirm
+                title="删除该模板？"
+                description="只会从你的模板库移除，共享模板不受影响。"
+                okText="删除"
+                okButtonProps={{ danger: true, loading: deletingTemplateId === entry.id }}
+                cancelText="取消"
+                onConfirm={(e) => {
+                  e?.stopPropagation?.();
+                  void handleDeleteTemplate(entry);
+                }}
+                onCancel={(e) => e?.stopPropagation?.()}
+              >
+                <button
+                  type="button"
+                  onClick={(e) => e.stopPropagation()}
+                  className={`ml-auto inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+                    isDark
+                      ? "text-red-300/80 hover:text-red-300 hover:bg-red-500/10"
+                      : "text-red-500/80 hover:text-red-600 hover:bg-red-50"
+                  }`}
+                  title="删除该模板"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </Popconfirm>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const sectionHeader = (text: string, count: number) => (
+      <div className="flex items-center justify-between px-1 mb-2">
+        <span className="text-xs font-semibold text-secondary tracking-wide uppercase">
+          {text}
+        </span>
+        <span className="text-[11px] text-secondary opacity-70">{count}</span>
+      </div>
+    );
+
+    const { shared, mine } = docmasterTemplates;
+    const hasAny = shared.length > 0 || mine.length > 0;
+
+    return (
+      <div className="h-full flex flex-col min-h-0">
+        <div className="flex-shrink-0 flex items-center justify-between px-3 pt-3 pb-2">
+          <div className="text-[11px] text-secondary opacity-70">
+            点击条目预览 · “使用” 写入聊天输入框
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={openAddTemplate}
+              className={`text-[11px] rounded-md px-2 py-1 inline-flex items-center gap-1 transition-colors ${
+                isDark
+                  ? "text-accent hover:bg-accent/10"
+                  : "text-violet-700 hover:bg-violet-100"
+              }`}
+              title="上传新模板到我的模板库"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              添加
+            </button>
+            <button
+              type="button"
+              onClick={() => void fetchTemplates()}
+              disabled={templatesLoading}
+              className={`text-[11px] rounded-md px-2 py-1 transition-colors ${
+                templatesLoading
+                  ? "opacity-40 cursor-not-allowed"
+                  : isDark
+                    ? "text-secondary hover:text-primary hover:bg-white/5"
+                    : "text-gray-500 hover:text-gray-800 hover:bg-gray-100/60"
+              }`}
+            >
+              {templatesLoading ? "加载中…" : "刷新"}
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 space-y-4">
+          {templatesError && (
+            <div className="text-xs text-red-500/90 px-1">{templatesError}</div>
+          )}
+          {!templatesError && !templatesLoading && !hasAny && (
+            <div className="flex items-center justify-center h-full text-secondary">
+              <div className="text-center">
+                <Library className="w-8 h-8 mx-auto mb-3 opacity-30" />
+                <p className="text-sm opacity-50">暂无模板</p>
+              </div>
+            </div>
+          )}
+          {shared.length > 0 && (
+            <div>
+              {sectionHeader("共享模板", shared.length)}
+              <div className="space-y-2">{shared.map(renderEntry)}</div>
+            </div>
+          )}
+          {mine.length > 0 && (
+            <div>
+              {sectionHeader("我的模板", mine.length)}
+              <div className="space-y-2">{mine.map(renderEntry)}</div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }, [
+    isDocMaster,
+    docmasterTemplates,
+    templatesLoading,
+    templatesError,
+    darkMode,
+    handleUseTemplate,
+    handlePreviewTemplate,
+    handleDeleteTemplate,
+    deletingTemplateId,
+    openAddTemplate,
+    fetchTemplates,
   ]);
 
   const rightPanelHistory = useMemo(() => {
@@ -920,7 +1317,7 @@ export const SessionManager: React.FC = () => {
         showAdminNav={showAdminNav}
         canvasActiveView={activeCanvasView}
         onCanvasViewChange={navigateToView}
-        canvasFilePreviewContent={<FilePreviewPage file={selectedPreviewFile} sessionId={session?.id ?? null} onFileEvent={(evt) => {
+        canvasFilePreviewContent={<FilePreviewPage file={selectedPreviewFile} sessionId={session?.id ?? null} readOnly={previewReadOnly} onFileEvent={(evt) => {
           const sid = session?.id;
           if (!sid) return;
           setSessionFileEvents((prev) => ({
@@ -930,10 +1327,11 @@ export const SessionManager: React.FC = () => {
         }} />}
         rightPanelHistory={rightPanelHistory}
         rightPanelFiles={rightPanelFiles}
+        rightPanelTemplates={isDocMaster ? rightPanelTemplates : undefined}
         onRightPanelTabChange={(tab) => {
-          if (tab === "files") {
-            // Keep the current canvas view when only switching to the file-space tab.
-            // The canvas should switch to file preview only after selecting a specific file.
+          if (tab === "files" || tab === "templates") {
+            // Keep the current canvas view when switching to a non-chat side tab.
+            // The canvas should switch only on explicit user action (e.g. file preview).
             return;
           }
           navigateToView("chat");
@@ -1086,6 +1484,106 @@ export const SessionManager: React.FC = () => {
           }}
         />
       </AppLayout>
+
+      <Modal
+        title="添加模板"
+        open={addTemplateOpen}
+        onCancel={() => {
+          if (addTemplateSubmitting) return;
+          setAddTemplateOpen(false);
+        }}
+        onOk={() => void handleSubmitAddTemplate()}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={addTemplateSubmitting}
+        destroyOnClose
+        maskClosable={!addTemplateSubmitting}
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-secondary mb-1">
+              模板文件 <span className="text-red-500">*</span> <span className="opacity-60">(.docx)</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <label
+                className="inline-flex items-center gap-1.5 cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium bg-accent/15 text-accent hover:bg-accent/25"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                选择文件
+                <input
+                  type="file"
+                  accept=".docx"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    setAddTemplateFile(f);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {addTemplateFile && (
+                <div className="flex items-center gap-1 text-xs text-primary truncate max-w-[260px]">
+                  <span className="truncate">{addTemplateFile.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setAddTemplateFile(null)}
+                    className="text-secondary hover:text-primary"
+                    title="移除"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-secondary mb-1">
+              名称 <span className="text-red-500">*</span>
+            </label>
+            <Input
+              value={addTemplateName}
+              onChange={(e) => setAddTemplateName(e.target.value)}
+              placeholder="例如：技术开发合同 3-1"
+              maxLength={120}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-secondary mb-1">描述</label>
+            <Input.TextArea
+              value={addTemplateDescription}
+              onChange={(e) => setAddTemplateDescription(e.target.value)}
+              placeholder="可选，简短说明这个模板的用途"
+              rows={2}
+              maxLength={500}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-secondary mb-1">分类</label>
+            <Input
+              value={addTemplateCategory}
+              onChange={(e) => setAddTemplateCategory(e.target.value)}
+              placeholder="例如：合同/技术开发"
+              maxLength={80}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-secondary mb-1">标签</label>
+            <Input
+              value={addTemplateTags}
+              onChange={(e) => setAddTemplateTags(e.target.value)}
+              placeholder="逗号分隔，例如：合同, 技术开发"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-secondary mb-1">别名</label>
+            <Input
+              value={addTemplateAliases}
+              onChange={(e) => setAddTemplateAliases(e.target.value)}
+              placeholder="逗号分隔，便于 “请使用模板 …” 命中"
+            />
+          </div>
+        </div>
+      </Modal>
     </>
   );
 };

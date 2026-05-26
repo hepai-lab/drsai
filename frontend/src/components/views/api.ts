@@ -1444,70 +1444,134 @@ export class SkillsAPI {
 
 export const skillsAPI = new SkillsAPI();
 
-export type HepAIUploadedFile = {
-    id: string;
-    filename?: string;
-    bytes?: number;
-    purpose?: string;
-    created_at?: number;
-};
-
-/**
- * Upload a file to HepAI "files" endpoint and return its preview URL.
- * Mirrors Python usage: client.files.create(file=..., purpose="user_data").
- */
-export async function uploadToHepAI(
-    file: File,
-    apiKey: string,
-    baseUrl: string = "https://aiapi.ihep.ac.cn/apiv2",
-    purpose: string = "user_data"
-): Promise<{ file: HepAIUploadedFile; previewUrl: string }> {
-    const trimmedKey = apiKey.trim();
-    if (!trimmedKey) {
-        throw new Error("缺少 HepAI API Key");
-    }
-
-    const form = new FormData();
-    form.append("file", file);
-    form.append("purpose", purpose);
-
-    const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/files`, {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${trimmedKey}`,
-        },
-        body: form,
-    });
-
-    const text = await res.text();
-    let data: any;
-    try {
-        data = text ? JSON.parse(text) : null;
-    } catch {
-        data = text;
-    }
-
-    if (!res.ok) {
-        const msg =
-            typeof data === "object" && data
-                ? data.error?.message || data.detail || data.message || res.statusText
-                : res.statusText || "上传失败";
-        throw new Error(msg);
-    }
-
-    // OpenAI-style response: { id, ... }
-    const fileObj: HepAIUploadedFile | null =
-        data && typeof data === "object"
-            ? (data.data && typeof data.data === "object" ? data.data : data)
-            : null;
-    const id = fileObj?.id;
-    if (!id || typeof id !== "string") {
-        throw new Error("上传成功但未返回 file id");
-    }
-
-    const normalizedBase = baseUrl.replace(/\/+$/, "");
-    return {
-        file: fileObj,
-        previewUrl: `${normalizedBase}/files/${encodeURIComponent(id)}/preview`,
-    };
+export interface DocMasterTemplateEntry {
+    name: string;
+    aliases?: string[];
+    category?: string | null;
+    tags?: string[];
+    description?: string | null;
+    path?: string;
+    [key: string]: unknown;
 }
+
+export interface DocMasterTemplatesResponse {
+    shared: DocMasterTemplateEntry[];
+    mine: DocMasterTemplateEntry[];
+}
+
+export class DocMasterAPI {
+    private getBaseUrl(): string {
+        return getServerUrl();
+    }
+
+    private getHeaders(): HeadersInit {
+        return {
+            "Content-Type": "application/json",
+        };
+    }
+
+    /** URL the browser can hit to download/stream a template's .docx. */
+    templateFileUrl(params: {
+        templateId: string;
+        source: "shared" | "mine";
+        userId?: string;
+    }): string {
+        const qs = new URLSearchParams();
+        qs.set("template_id", params.templateId);
+        qs.set("source", params.source);
+        if (params.source === "mine" && params.userId) qs.set("user_id", params.userId);
+        return `${this.getBaseUrl()}/docmaster/templates/file?${qs.toString()}`;
+    }
+
+    async saveTemplate(params: {
+        userId: string;
+        name: string;
+        description?: string;
+        category?: string;
+        tags?: string[];
+        aliases?: string[];
+        templateId?: string;
+        file: File;
+    }): Promise<{ template_id?: string; metadata?: DocMasterTemplateEntry }> {
+        const form = new FormData();
+        form.append("user_id", params.userId);
+        form.append("name", params.name);
+        if (params.description) form.append("description", params.description);
+        if (params.category) form.append("category", params.category);
+        if (params.tags && params.tags.length > 0) {
+            form.append("tags", JSON.stringify(params.tags));
+        }
+        if (params.aliases && params.aliases.length > 0) {
+            form.append("aliases", JSON.stringify(params.aliases));
+        }
+        if (params.templateId) form.append("template_id", params.templateId);
+        form.append("file", params.file);
+        const response = await fetch(`${this.getBaseUrl()}/docmaster/templates`, {
+            method: "POST",
+            body: form,
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "保存模板失败"
+            );
+        }
+        if (!data.status) {
+            throw new Error(data.message || "保存模板失败");
+        }
+        return data.data || {};
+    }
+
+    async deleteTemplate(params: {
+        templateId: string;
+        userId: string;
+    }): Promise<{ removed_id?: string }> {
+        const qs = new URLSearchParams();
+        qs.set("user_id", params.userId);
+        const response = await fetch(
+            `${this.getBaseUrl()}/docmaster/templates/${encodeURIComponent(params.templateId)}?${qs.toString()}`,
+            { method: "DELETE", headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "删除模板失败"
+            );
+        }
+        if (!data.status) {
+            throw new Error(data.message || "删除模板失败");
+        }
+        return data.data || {};
+    }
+
+    async listTemplates(params: {
+        userId?: string;
+        category?: string;
+        query?: string;
+    } = {}): Promise<DocMasterTemplatesResponse> {
+        const qs = new URLSearchParams();
+        if (params.userId) qs.set("user_id", params.userId);
+        if (params.category) qs.set("category", params.category);
+        if (params.query) qs.set("query", params.query);
+        const suffix = qs.toString() ? `?${qs.toString()}` : "";
+        const response = await fetch(
+            `${this.getBaseUrl()}/docmaster/templates${suffix}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "Failed to list templates"
+            );
+        }
+        if (!data.status) {
+            throw new Error(data.message || "Failed to list templates");
+        }
+        return {
+            shared: data.data?.shared || [],
+            mine: data.data?.mine || [],
+        };
+    }
+}
+
+export const docmasterAPI = new DocMasterAPI();

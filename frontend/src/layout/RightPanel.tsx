@@ -1,15 +1,22 @@
-import React, { useCallback, useContext } from "react";
-import { Activity, Clock, FileText, ChevronLeft, ChevronRight } from "lucide-react";
+import React, { useCallback, useContext, useEffect } from "react";
+import { Activity, Clock, FileText, ChevronLeft, ChevronRight, Library } from "lucide-react";
 import { appContext } from "../hooks/provider";
 import { useRightPanelStore, type RightPanelLayoutTab } from "../store/rightPanel";
 
 type RightPanelTab = RightPanelLayoutTab;
+export type RightPanelTabSpec = { id: RightPanelTab; label: string; icon: React.ReactNode };
 
-const TABS: { id: RightPanelTab; label: string; icon: React.ReactNode }[] = [
+export const DEFAULT_RIGHT_PANEL_TABS: RightPanelTabSpec[] = [
   { id: "files", label: "文件空间", icon: <FileText className="w-3.5 h-3.5" /> },
   { id: "overview", label: "运行概览", icon: <Activity className="w-3.5 h-3.5" /> },
   { id: "history", label: "历史会话", icon: <Clock className="w-3.5 h-3.5" /> },
 ];
+
+export const TEMPLATES_TAB: RightPanelTabSpec = {
+  id: "templates",
+  label: "模板库",
+  icon: <Library className="w-3.5 h-3.5" />,
+};
 
 interface RightPanelProps {
   width?: number;
@@ -18,6 +25,10 @@ interface RightPanelProps {
   historyContent?: React.ReactNode;
   /** 文件 tab 的内容 */
   filesContent?: React.ReactNode;
+  /** 模板库 tab 的内容（仅在传入时显示该 tab） */
+  templatesContent?: React.ReactNode;
+  /** 可选：自定义 tab 列表。未传入时使用 DEFAULT_RIGHT_PANEL_TABS（如有 templatesContent 则自动追加 templates tab）。 */
+  tabs?: RightPanelTabSpec[];
   /** tab 切换回调 */
   onTabChange?: (tab: RightPanelTab) => void;
 }
@@ -27,6 +38,8 @@ const RightPanel: React.FC<RightPanelProps> = ({
   isCompact = false,
   historyContent,
   filesContent,
+  templatesContent,
+  tabs,
   onTabChange,
 }) => {
   const { darkMode } = useContext(appContext);
@@ -35,6 +48,20 @@ const RightPanel: React.FC<RightPanelProps> = ({
   const isOpen = useRightPanelStore((s) => s.isOpen);
   const setIsOpen = useRightPanelStore((s) => s.setIsOpen);
   const setOverviewSlot = useRightPanelStore((s) => s.setOverviewSlot);
+
+  const visibleTabs: RightPanelTabSpec[] = tabs ?? (
+    templatesContent !== undefined
+      ? [...DEFAULT_RIGHT_PANEL_TABS, TEMPLATES_TAB]
+      : DEFAULT_RIGHT_PANEL_TABS
+  );
+
+  // If the active tab is no longer visible (e.g. user switched away from
+  // DocMaster while on the templates tab), gracefully fall back to overview.
+  useEffect(() => {
+    if (!visibleTabs.some((t) => t.id === activeTab)) {
+      setActiveTab("overview");
+    }
+  }, [visibleTabs, activeTab, setActiveTab]);
 
   const overviewSlotRef = useCallback(
     (el: HTMLDivElement | null) => {
@@ -70,7 +97,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
               isDark ? "bg-white/[0.02]" : "border-b border-gray-200/80 bg-white/70"
             }`}
           >
-            {TABS.map((tab) => {
+            {visibleTabs.map((tab) => {
               const isActive = activeTab === tab.id;
               return (
                 <button
@@ -127,6 +154,11 @@ const RightPanel: React.FC<RightPanelProps> = ({
                 </div>
               )}
             </div>
+            {visibleTabs.some((t) => t.id === "templates") && (
+              <div className={activeTab === "templates" ? "h-full" : "hidden"}>
+                {templatesContent ?? <Empty icon={<Library />} text="暂无模板" />}
+              </div>
+            )}
           </div>
         </>
       ) : (
@@ -146,7 +178,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
           </button>
 
           <div className="flex flex-col items-center gap-1 mt-2">
-            {TABS.map((tab) => (
+            {visibleTabs.map((tab) => (
               <button
                 key={tab.id}
                 type="button"
