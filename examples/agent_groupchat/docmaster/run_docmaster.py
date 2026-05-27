@@ -45,6 +45,7 @@ try:
     from document_skills.docx_template_skill import DocxTemplateSkill
     from document_skills.template_library_skill import TemplateLibrarySkill
     from document_skills.doc_to_docx_skill import DocToDocxSkill
+    from document_skills.contract_review_skill import ContractReviewSkill
     DOCUMENT_PROCESSING_AVAILABLE = True
 except ImportError as e:
     DOCUMENT_PROCESSING_AVAILABLE = False
@@ -865,6 +866,7 @@ def create_word_editor_agent(
    - 删除文档内容
    - 添加批注和回复（使用 add_comment_tool，针对文档中的特定文本添加评论）
    - 删除批注（使用 remove_comment_tool，根据批注ID删除指定的批注）
+   - 合同审查（使用 review_contract_tool，对 .docx 合同做格式 / 填写 / 一致性 / 法律风险四方面体检，可同时输出带批注的副本）
 4. 对图片、超链接、页眉页脚、复杂版式重排等高级 Word 元素，不要假装已经可靠支持；如果用户提出这类需求，可以先说明当前能力更适合文本、标题、段落、表格、批注和字体层面的处理。
 5. 你支持以 DOCX 模板填充方式批量生成文档：用户上传一个带占位符的 .docx，你可以读取占位符并按其提供的值生成填充后的新文档。占位符支持两种风格：Jinja 风格（{{ name }}、{% for x in xs %}…{% endfor %}、{%tr for %} 表格行循环）以及方括号风格（[NAME]、[DATE]）。
 
@@ -1008,6 +1010,23 @@ replace_text 会替换文档中所有匹配的文本，如果相同内容出现�
 - 添加批注：使用 add_comment_tool（针对文档中的特定文本）
 - 绝对不要用 unpack_docx_tool 来手动编辑 comments.xml / commentsExtended.xml / commentsIds.xml
 - 不要使用 run_bash 来操作批注相关的 XML 文件
+
+【合同审查（review_contract_tool）】
+- 触发场景：用户说"审查这份合同"/"审核合同"/"帮我看看这份合同"/"检查格式问题"/
+  "看看有没有空着没填"/"合同有什么问题"等——文件类型是 .docx 且内容像合同。
+- 调用方式：`review_contract_tool(file_path=<合同路径>, annotate=True)`。
+  · 默认 annotate=True：除了返回结构化报告外，还会在 WORKDIR 下生成
+    `<原名>_审查.docx`，把每条问题作为 Word 批注挂到原文相应位置，让用户下载对照。
+  · annotate=False：只返回报告（适合用户只想要清单不要批注文件的情形）。
+- 工具会自动跑四类检查：格式 / 填写缺失 / 内容一致性 / 法律风险（含 LLM 红线扫描，
+  fail-soft——LLM 不可用时只返回前三类，summary 会注明）。**不要**自己再用
+  extract_docx_content_tool / inspect_docx_template_tool 重复跑一遍这些检查。
+- 收到返回后：把 summary 用作开场（如"共发现 10 处问题：…"），然后按 severity
+  分段把 issues 念给用户——高优先级先讲，每条给出 location、message、suggestion。
+  如果 annotated_path 非空，在末尾告诉用户"已生成带批注副本：<文件名>，可点击下载查看"。
+- **不要**把这个工具用在非合同文档上（论文、说明书、邮件等）——它对那些场景的
+  规则会误报。如果用户问的是普通文档校对，走 extract_docx_content_tool +
+  edit_docx_tool 的常规路径。
 
 【多步编辑任务的正确做法】
 当用户要求同时修改内容和批注时，分步完成：
@@ -2837,6 +2856,157 @@ XML编辑工作流（仅用于 tracked changes）：
                     'message': f'Failed to remove comment(s): {e}'
                 }
 
+        def review_contract_tool(file_path: str, annotate: bool = True):
+            """
+            合同审查工具：对一份 .docx 合同做四方面体检并（可选）输出带批注的副本。
+
+            审查维度：
+              1. 格式：字体/字号一致性、中英文混排、半角/全角标点、条款编号风格统一。
+              2. 填写缺失：未替换的 ____、{{...}}、**XX**、空白字段（甲方:）、空白日期。
+              3. 内容一致性：大写/小写金额对账、条款编号连续性、对『第X条』/『附件X』
+                 的悬空引用、甲乙方主体名称在全文中是否一致。
+              4. 法律风险：用模型做红线扫描（缺失条款、不公平条款、模糊措辞、合规问题）。
+                 fail-soft —— 若 LLM 30s 内未返回，仅返回前三类启发式结果，并在
+                 summary 中注明。
+
+            产物：
+              - 一份结构化的中文报告（issues 列表 + stats + summary）；
+              - 当 annotate=True 时，把 issues 转为 Word 批注，写到一份新文件
+                `<原名>_审查.docx`（不覆盖原文件），并发出 FilesEvent 让用户下载。
+
+            适用场景：
+              - "帮我审查这份合同 / 帮我看看这份合同"
+              - "检查格式问题"
+              - "合同里有没有空着的字段 / 大小写金额对不对"
+
+            Args:
+                file_path: 合同 .docx 路径（必须在工作区内）。
+                annotate:  是否同时输出带 Word 批注的副本，默认 True。
+            """
+            src = Path(file_path)
+            if not src.is_file():
+                return {"success": False, "message": f"文件不存在: {file_path}"}
+            if src.suffix.lower() != ".docx":
+                return {"success": False, "message": f"仅支持 .docx 文件（当前 {src.suffix}）。"}
+
+            # Build a sync llm_call around the agent's model_client. Fail-soft: any
+            # error in the wrapper (timeout, network, JSON, etc.) is caught inside
+            # the skill itself, which then returns the heuristic-only result with a
+            # note in summary.
+            def _llm_call(prompt: str) -> str:
+                import asyncio
+                from autogen_core.models import UserMessage
+
+                client = set_model_client(default_config_name)
+
+                async def _run():
+                    result = await client.create([UserMessage(content=prompt, source="docmaster")])
+                    content = getattr(result, "content", "") or ""
+                    if isinstance(content, list):
+                        # Some clients return a list of content blocks.
+                        parts = []
+                        for c in content:
+                            if isinstance(c, str):
+                                parts.append(c)
+                            elif isinstance(c, dict) and "text" in c:
+                                parts.append(c["text"])
+                        content = "".join(parts)
+                    return str(content or "")
+
+                try:
+                    return asyncio.run(asyncio.wait_for(_run(), timeout=30.0))
+                except RuntimeError:
+                    # We are already inside a running event loop — run the
+                    # coroutine in a separate thread with its own loop.
+                    import concurrent.futures
+                    def _bg():
+                        loop = asyncio.new_event_loop()
+                        try:
+                            return loop.run_until_complete(asyncio.wait_for(_run(), timeout=30.0))
+                        finally:
+                            loop.close()
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                        return ex.submit(_bg).result(timeout=35.0)
+
+            skill = ContractReviewSkill(str(WORKSPACE))
+            result = skill.review(str(src), llm_call=_llm_call)
+            if not result.get("success"):
+                return result
+
+            issues = result.get("issues") or []
+            annotated_path = None
+            annotate_note = ""
+
+            if annotate and issues:
+                # Copy source → <stem>_审查.docx in WORKDIR, then add comments.
+                import shutil
+                target = WORKDIR / f"{src.stem}_审查{src.suffix}"
+                try:
+                    shutil.copyfile(src, target)
+                except Exception as exc:
+                    annotate_note = f"复制副本失败，未生成带批注文档: {exc}"
+                    target = None
+
+                if target is not None:
+                    comments_payload = []
+                    cid = 0
+                    for it in issues:
+                        ct = (it.get("comment_target") or "").strip()
+                        if not ct:
+                            continue
+                        # Word can't anchor a comment on whitespace-only ranges;
+                        # skip those.
+                        if not ct.strip():
+                            continue
+                        sev_tag = {"high": "高", "medium": "中", "low": "低"}.get(
+                            it.get("severity", "medium"), "中"
+                        )
+                        body = f"[{sev_tag}/{it.get('category', '')}] {it.get('message', '')}"
+                        suggestion = (it.get("suggestion") or "").strip()
+                        if suggestion:
+                            body += f"\n建议：{suggestion}"
+                        comments_payload.append({
+                            "target_text": ct,
+                            "comment_text": body,
+                            "comment_id": cid,
+                            "author": "DocMaster",
+                            "initials": "DM",
+                        })
+                        cid += 1
+
+                    if comments_payload:
+                        ac_result = add_comment_tool(
+                            file_path=str(target),
+                            comments=comments_payload,
+                        )
+                        if ac_result.get("success"):
+                            annotated_path = str(target)
+                        else:
+                            annotate_note = (
+                                f"批注写入失败：{ac_result.get('message', '未知错误')}"
+                            )
+                    else:
+                        # No anchorable comments — still emit the copy so the user
+                        # can read/edit alongside the chat report.
+                        fe_data = _build_files_event_data(
+                            str(target), f"Contract review copy: {target.name}"
+                        )
+                        if fe_data:
+                            _pending_files_events.append(fe_data)
+                        annotated_path = str(target)
+
+            out = {
+                "success": True,
+                "summary": result.get("summary", ""),
+                "stats": result.get("stats", {}),
+                "issues": issues,
+                "annotated_path": annotated_path,
+                "source_path": str(src),
+            }
+            if annotate_note:
+                out["annotate_note"] = annotate_note
+            return out
+
         # ============ DOCX SKILL TOOLS (XML-level, formatting-safe) ============
         # These tools wrap the scripts in skills/docx/scripts/ and provide
         # a formatting-preserving workflow: unpack → edit XML → repack.
@@ -3074,6 +3244,8 @@ XML编辑工作流（仅用于 tracked changes）：
             add_numbered_list_tool,
             add_comment_tool,
             remove_comment_tool,
+            # Contract review (format + fill + consistency + LLM legal red-flags)
+            review_contract_tool,
             # XML-level formatting-safe tools (from docx skill)
             unpack_docx_tool,
             pack_docx_tool,
