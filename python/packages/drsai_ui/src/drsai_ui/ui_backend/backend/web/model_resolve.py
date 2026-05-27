@@ -70,3 +70,36 @@ def apply_requested_model(settings_config: dict, requested_model: str) -> None:
         }
     else:
         settings_config["agent_mode_config"] = {"defult_config_name": requested_model}
+
+
+def settings_config_from_input_response(response: str | dict | None) -> dict[str, Any] | None:
+    """Build a settings_config dict from a websocket input_response payload.
+
+    Returns None when no model alias or settings_config could be resolved.
+    """
+    if response is None:
+        return None
+
+    metadata: dict | None = None
+    response_body: str | dict | None = None
+    if isinstance(response, dict):
+        metadata = _as_dict(response.get("metadata"))
+        inner = response.get("response")
+        if isinstance(inner, str):
+            response_body = inner
+        else:
+            response_body = _as_dict(inner) or response
+    else:
+        response_body = response
+
+    settings_config = _as_dict((metadata or {}).get("settings_config")) or {}
+    alias = resolve_requested_model(
+        metadata=metadata,
+        settings_config=settings_config,
+        response=response_body,
+    )
+    if not alias:
+        return None
+
+    apply_requested_model(settings_config, alias)
+    return settings_config
