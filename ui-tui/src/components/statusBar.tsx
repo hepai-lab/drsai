@@ -67,9 +67,9 @@ export function StatusBar() {
         )}
         <Text color={theme.muted}> · </Text>
         {meta?.allow_dangerous_commands ? (
-          <Text color={theme.error} bold>safe-cmd</Text>
+          <Text color={theme.error} bold>any-cmd</Text>
         ) : (
-          <Text color={theme.good}>any-cmd</Text>
+          <Text color={theme.good}>safe-cmd</Text>
         )}
         {isStreaming && (
           <>

@@ -79,14 +79,12 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "history",
         "Show conversation history",
         "Session",
-        cli_only=True,
         handler="async",
     ),
     CommandDef(
         "save",
         "Save the current conversation",
         "Session",
-        cli_only=True,
         handler="sync",
     ),
     CommandDef(
@@ -151,7 +149,6 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "config",
         "Show current connection configuration",
         "Configuration",
-        cli_only=True,
         handler="sync",
     ),
     CommandDef(
@@ -163,10 +160,11 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         "model",
-        "Show/switch model (session-local) or show model details: /model [name|info]",
+        "Show/switch model (session-local) or show model details: /model [name|info|add|edit|rm]",
         "Configuration",
-        args_hint="[name|info]",
+        args_hint="[name|info|add|edit|rm]",
         aliases=("m",),
+        subcommands=("add", "edit", "rm", "info"),
         handler="async",
     ),
     CommandDef(
@@ -182,7 +180,6 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "List all available models with reasoning support",
         "Configuration",
         aliases=("listmodels",),
-        cli_only=True,
         handler="sync",
     ),
     CommandDef(
@@ -195,7 +192,6 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "info",
         "Show session configuration, tools and skills",
         "Info",
-        cli_only=True,
         handler="sync",
     ),
 

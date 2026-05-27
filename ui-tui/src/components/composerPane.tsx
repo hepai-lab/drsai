@@ -9,9 +9,11 @@ import { useEffect, useRef, useState } from 'react'
 import { loadPromptHistory, savePromptHistory } from '../app/promptHistory.js'
 import { $isStreaming } from '../app/turnStore.js'
 import type { TurnController } from '../app/turnController.js'
+import { $showReasoning } from '../app/uiStore.js'
 import type { SessionInfo, SessionListResult } from '../gatewayTypes.js'
 import { theme } from '../theme.js'
 
+import { ModelEditor, type ModelEditorValues } from './modelEditor.js'
 import { ModelPicker, type ModelEntry } from './modelPicker.js'
 import { SessionPicker } from './sessionPicker.js'
 import { SlashOutputOverlay } from './slashOutputOverlay.js'
@@ -29,7 +31,17 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   const [slashOutput, setSlashOutput] = useState<string | null>(null)
   const slashOutputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [sessionPicker, setSessionPicker] = useState<SessionInfo[] | null>(null)
-  const [modelPicker, setModelPicker] = useState<ModelEntry[] | null>(null)
+  const [modelPicker, setModelPicker] = useState<
+    { models: ModelEntry[]; currentAlias?: string } | null
+  >(null)
+  const [modelEditor, setModelEditor] = useState<
+    | {
+        isNew: boolean
+        originalAlias?: string
+        initial?: Partial<ModelEditorValues>
+      }
+    | null
+  >(null)
   const [completions, setCompletions] = useState<string[]>([])
   const [initialHistory] = useState(() => loadPromptHistory())
   const historyRef = useRef<string[]>(initialHistory)
@@ -106,10 +118,89 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
         'model.options',
         {},
       )
-      setModelPicker(result.models || [])
+      setModelPicker({ models: result.models || [], currentAlias: result.current })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       showSlashOutput(`Error loading models: ${msg}`, 5000)
+    }
+  }
+
+  async function openModelEditor(alias?: string) {
+    if (!alias) {
+      // No alias supplied → open an empty "add" form.
+      setModelEditor({ isNew: true })
+      return
+    }
+    // Fetch the current entry to pre-fill the form.
+    try {
+      const result = await controller.gw.request<{
+        alias: string
+        model: string
+        token_limit: number
+        max_tokens: number
+        client_type: 'auto' | 'openai' | 'anthropic'
+        reasoning: { supported: boolean; effort_levels: string[]; param_type: string }
+      }>('model.get', { alias })
+      setModelEditor({
+        isNew: false,
+        originalAlias: alias,
+        initial: {
+          alias: result.alias,
+          model: result.model,
+          token_limit: result.token_limit,
+          max_tokens: result.max_tokens,
+          client_type: result.client_type,
+          reasoning: {
+            supported: result.reasoning.supported,
+            effort_levels: result.reasoning.effort_levels,
+            // Cast: backend has already validated against the enum.
+            param_type: result.reasoning.param_type as ModelEditorValues['reasoning']['param_type'],
+          },
+        },
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      showSlashOutput(`Cannot edit ${alias}: ${msg}`, 5000)
+    }
+  }
+
+  async function pickModelToEdit() {
+    // Reuse the picker but route Enter to "edit this one" instead of switch.
+    try {
+      const result = await controller.gw.request<{ models: ModelEntry[]; current?: string }>(
+        'model.options',
+        {},
+      )
+      const list = result.models || []
+      if (list.length === 0) {
+        showSlashOutput('No models configured — try /model add', 4000)
+        return
+      }
+      // Show picker; the user presses `e` (or Enter) to choose what to edit.
+      // To keep this simple we just pop the picker; pressing `e` on the cursor
+      // line opens the editor for that alias.
+      setModelPicker({ models: list, currentAlias: result.current })
+      showSlashOutput('Press e to edit the highlighted alias, a to add', 4000)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      showSlashOutput(`Error loading models: ${msg}`, 5000)
+    }
+  }
+
+  async function deleteModelWithConfirm(alias: string) {
+    // Single-step delete with explicit confirm in the toast.
+    try {
+      const result = await controller.gw.request<{ ok: boolean; fell_back_to: string | null }>(
+        'model.delete',
+        { alias, session_id: sessionId },
+      )
+      if (result.ok) {
+        const tail = result.fell_back_to ? ` (now on ${result.fell_back_to})` : ''
+        showSlashOutput(`Deleted ${alias}${tail}`, 4000)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      showSlashOutput(`Delete failed: ${msg}`, 5000)
     }
   }
 
@@ -255,6 +346,37 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
             setSlashOutput(null)
             return
           }
+          case 'reasoning.show':
+            $showReasoning.set(true)
+            break
+          case 'reasoning.hide':
+          case 'reasoning.off':
+            $showReasoning.set(false)
+            break
+          case 'model.add': {
+            const presetAlias = (result as { alias?: string }).alias
+            setModelEditor({
+              isNew: true,
+              initial: presetAlias ? { alias: presetAlias } : undefined,
+            })
+            return
+          }
+          case 'model.edit': {
+            const presetAlias = (result as { alias?: string }).alias
+            if (presetAlias) {
+              await openModelEditor(presetAlias)
+            } else {
+              await pickModelToEdit()
+            }
+            return
+          }
+          case 'model.rm': {
+            const presetAlias = (result as { alias?: string }).alias
+            if (presetAlias) {
+              await deleteModelWithConfirm(presetAlias)
+            }
+            return
+          }
         }
 
         // Keep informational slash-command output visible until the user dismisses it.
@@ -291,11 +413,43 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     )
   }
 
+  // Model editor overlay (must come BEFORE the picker so a-from-picker
+  // transition shows the editor immediately without an interim render).
+  if (modelEditor) {
+    return (
+      <ModelEditor
+        isNew={modelEditor.isNew}
+        originalAlias={modelEditor.originalAlias}
+        initial={modelEditor.initial}
+        onCancel={() => setModelEditor(null)}
+        onSubmit={async values => {
+          try {
+            const result = await controller.gw.request<{
+              ok: boolean
+              alias: string
+              is_new: boolean
+              switched_to: string | null
+            }>('model.save', { ...values, session_id: sessionId })
+            setModelEditor(null)
+            const switched = result.switched_to ? ` (switched to ${result.switched_to})` : ''
+            const verb = result.is_new ? 'Saved' : 'Updated'
+            showSlashOutput(`${verb} model ${result.alias}${switched}`, 4000)
+            return { ok: true }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            return { ok: false, error: msg }
+          }
+        }}
+      />
+    )
+  }
+
   // Model picker overlay
   if (modelPicker) {
     return (
       <ModelPicker
-        models={modelPicker}
+        models={modelPicker.models}
+        currentAlias={modelPicker.currentAlias}
         onSelect={async alias => {
           setModelPicker(null)
           try {
@@ -309,6 +463,18 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
             const msg = err instanceof Error ? err.message : String(err)
             showSlashOutput(`Switch failed: ${msg}`, 5000)
           }
+        }}
+        onAdd={() => {
+          setModelPicker(null)
+          setModelEditor({ isNew: true })
+        }}
+        onEdit={async alias => {
+          setModelPicker(null)
+          await openModelEditor(alias)
+        }}
+        onDelete={async alias => {
+          setModelPicker(null)
+          await deleteModelWithConfirm(alias)
         }}
         onCancel={() => setModelPicker(null)}
       />
