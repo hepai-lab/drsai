@@ -247,12 +247,12 @@ def _setup_wizard(*, first_run: bool) -> dict:
     # ── API key ─────────────────────────────────────────────────────────────
     typer.echo("")
     typer.echo(typer.style("  ── API Key ──", fg=typer.colors.CYAN, bold=True))
-    typer.echo("    1. HepAI     (推荐 — 国内高速, https://hepai.ai)")
-    typer.echo("    2. Anthropic (Claude 系列)")
-    typer.echo("    3. OpenAI    (GPT 系列)")
-    typer.echo("    4. 跳过 — 我会通过环境变量设置")
+    typer.echo("    1. HepAI     (Recommended — high-speed, https://ai.ihep.ac.cn)")
+    typer.echo("    2. Anthropic (Claude style)")
+    typer.echo("    3. OpenAI    (GPT style)")
+    typer.echo("    4. Skip — I will set it through environment variables-`HEPAI_API_KEY`")
     typer.echo("")
-    choice = typer.prompt("  选择 (1-4)", default="1").strip()
+    choice = typer.prompt("  Please select (1-4)", default="1").strip()
 
     def _ask_key(label: str, cfg_key: str, env_key: str, base_url_label: Optional[str] = None,
                  base_url_cfg_key: Optional[str] = None, base_url_env_key: Optional[str] = None) -> None:

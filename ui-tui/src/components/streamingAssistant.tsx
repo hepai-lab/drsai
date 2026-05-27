@@ -18,7 +18,7 @@ import { $current } from '../app/turnStore.js'
 import { $showReasoning } from '../app/uiStore.js'
 import { theme } from '../theme.js'
 
-import { MarkdownRenderer, stripThinkBlocks } from './markdownRenderer.js'
+import { stripThinkBlocks } from './markdownRenderer.js'
 import { ToolCallLine } from './toolCallLine.js'
 
 export function StreamingAssistant() {
@@ -44,9 +44,21 @@ export function StreamingAssistant() {
         </Box>
       )}
 
+      {/*
+        Streaming text is rendered as plain <Text> (no Markdown parsing).
+        Reasons:
+          1. MarkdownRenderer re-parses the entire growing buffer on every
+             flush — O(n²) and the largest source of jank on slow terminals.
+          2. Plain text grows monotonically: Ink's diff is a single string
+             update on one node, so the terminal does not reflow earlier
+             lines. On legacy conhost (Win10 PowerShell 5.1), that means
+             the viewport stays put when the user scrolls up mid-stream.
+        The completed turn moves into TranscriptPane's <Static>, which
+        renders the full MarkdownRenderer exactly once and never repaints.
+      */}
       {cleanText && (
         <Box marginTop={1}>
-          <MarkdownRenderer text={cleanText} color={theme.assistant} />
+          <Text color={theme.assistant}>{cleanText}</Text>
         </Box>
       )}
 

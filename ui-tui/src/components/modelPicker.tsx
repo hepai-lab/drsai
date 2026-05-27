@@ -21,9 +21,23 @@ export interface ModelPickerProps {
   currentAlias?: string
   onSelect: (alias: string) => void
   onCancel: () => void
+  /** Pressed `a` — request the add-model editor. */
+  onAdd?: () => void
+  /** Pressed `e` on the highlighted entry — request the edit editor. */
+  onEdit?: (alias: string) => void
+  /** Pressed `d` on the highlighted entry — request deletion. */
+  onDelete?: (alias: string) => void
 }
 
-export function ModelPicker({ models, currentAlias, onSelect, onCancel }: ModelPickerProps) {
+export function ModelPicker({
+  models,
+  currentAlias,
+  onSelect,
+  onCancel,
+  onAdd,
+  onEdit,
+  onDelete,
+}: ModelPickerProps) {
   const [cursor, setCursor] = useState(() => {
     if (currentAlias) {
       const idx = models.findIndex(m => m.alias === currentAlias)
@@ -50,6 +64,19 @@ export function ModelPicker({ models, currentAlias, onSelect, onCancel }: ModelP
       setCursor(Math.min(models.length - 1, cursor + 1))
       return
     }
+    // Editor shortcuts (only when handlers wired in)
+    if (input === 'a' && onAdd) {
+      onAdd()
+      return
+    }
+    if (input === 'e' && onEdit && models[cursor]) {
+      onEdit(models[cursor].alias)
+      return
+    }
+    if (input === 'd' && onDelete && models[cursor]) {
+      onDelete(models[cursor].alias)
+      return
+    }
     if (input >= '1' && input <= '9') {
       const idx = parseInt(input, 10) - 1
       if (idx < models.length) {
@@ -58,8 +85,9 @@ export function ModelPicker({ models, currentAlias, onSelect, onCancel }: ModelP
       }
       return
     }
-    if (input.length === 1 && input >= 'a' && input <= 'z') {
-      const idx = 9 + (input.charCodeAt(0) - 97)
+    if (input.length === 1 && input >= 'f' && input <= 'z') {
+      // Letter shortcuts start at 'f' (so a/e/d are reserved for actions)
+      const idx = 9 + (input.charCodeAt(0) - 'f'.charCodeAt(0))
       if (idx < models.length) {
         setCursor(idx)
         onSelect(models[idx].alias)
@@ -71,7 +99,7 @@ export function ModelPicker({ models, currentAlias, onSelect, onCancel }: ModelP
     return (
       <Box borderStyle="round" borderColor={theme.border} paddingX={1} flexDirection="column">
         <Text color={theme.warn}>No models configured</Text>
-        <Text color={theme.muted} dimColor>Press Esc to dismiss</Text>
+        <Text color={theme.muted} dimColor>Press a to add one, Esc to dismiss</Text>
       </Box>
     )
   }
@@ -87,10 +115,10 @@ export function ModelPicker({ models, currentAlias, onSelect, onCancel }: ModelP
           const isCursor = i === cursor
           const prefix = isCursor ? '▶ ' : '  '
           const color = isCursor ? theme.accent : isCurrent ? theme.good : theme.text
-          // Numeric shortcut for first 9, letter shortcut a-z for next 26
+          // Numeric shortcut for first 9, letter shortcut f-z for next 21
           let idx: string
           if (i < 9) idx = `${i + 1}.`
-          else if (i < 9 + 26) idx = `${String.fromCharCode(97 + i - 9)}.`
+          else if (i < 9 + 21) idx = `${String.fromCharCode('f'.charCodeAt(0) + i - 9)}.`
           else idx = '  '
           const reasoning = m.reasoning && m.reasoning.length > 0
             ? ` [reasoning: ${m.reasoning.join(',')}]`
@@ -110,7 +138,7 @@ export function ModelPicker({ models, currentAlias, onSelect, onCancel }: ModelP
       </Box>
       <Box marginTop={1}>
         <Text color={theme.muted} dimColor>
-          ↑/↓ navigate · Enter select · 1-9/a-z jump · Esc cancel · {models.length} total
+          ↑/↓ navigate · Enter select · a add · e edit · d delete · Esc cancel · {models.length} total
         </Text>
       </Box>
     </Box>

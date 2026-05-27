@@ -31,10 +31,18 @@ export function createGatewayEventHandler(
   // visible symptom is text fragments getting scattered across columns and
   // wrap positions going wonky during interruption.
   //
-  // We coalesce text deltas into a small buffer and flush every ~50 ms so
+  // We coalesce text deltas into a small buffer and flush every ~80 ms so
   // Ink has time to fully reflow each frame. The user-visible streaming
-  // experience is unchanged (still "live"), just less wasteful.
-  const FLUSH_MS = 50
+  // experience is unchanged (still "live"), just less wasteful. 80 ms is
+  // below the ~100 ms perceptual-update threshold, and on legacy conhost
+  // (Win10 PowerShell 5.1) it noticeably cuts the column-drift / scrollbar
+  // bounce that the 50 ms cadence triggered.
+  //
+  // Override with DRSAI_TUI_FLUSH_MS for tuning. Clamped to [16, 500].
+  const envFlush = Number.parseInt(process.env.DRSAI_TUI_FLUSH_MS || '', 10)
+  const FLUSH_MS = Number.isFinite(envFlush)
+    ? Math.max(16, Math.min(500, envFlush))
+    : 80
   let textBuf = ''
   let reasoningBuf = ''
   let flushTimer: ReturnType<typeof setTimeout> | null = null

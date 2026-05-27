@@ -400,7 +400,16 @@ class AgentSession:
         state[key] = value
         # Apply certain keys directly to agent attributes
         if key == "plan_mode":
-            self.agent._injected_prefix = "Plan mode enabled" if value else ""
+            # Inject the real PLAN_MODE_SYSTEM_PROMPT (not a placeholder string).
+            # Import lazily to avoid a circular import at module load time.
+            from drsai.backend.run_drsai_agent_factory import PLAN_MODE_SYSTEM_PROMPT
+            self.agent._injected_prefix = PLAN_MODE_SYSTEM_PROMPT if value else ""
+            # Rebuild the system message so the prefix takes effect on the next turn.
+            try:
+                if hasattr(self.agent, "update_system_prompt"):
+                    self.agent.update_system_prompt()
+            except Exception:
+                logger.exception("update_system_prompt after plan_mode toggle failed")
         elif key == "only_in_workspace":
             # Keep both the agent attribute used by UI badges and the operator
             # function closure used by filesystem/shell tools in sync.
@@ -422,9 +431,19 @@ class AgentSession:
         elif key == "inject_prefix":
             if hasattr(self.agent, "_injected_prefix"):
                 self.agent._injected_prefix = value
+                if hasattr(self.agent, "update_system_prompt"):
+                    try:
+                        self.agent.update_system_prompt()
+                    except Exception:
+                        logger.exception("update_system_prompt after inject_prefix failed")
         elif key == "inject_suffix":
             if hasattr(self.agent, "_injected_suffix"):
                 self.agent._injected_suffix = value
+                if hasattr(self.agent, "update_system_prompt"):
+                    try:
+                        self.agent.update_system_prompt()
+                    except Exception:
+                        logger.exception("update_system_prompt after inject_suffix failed")
 
     # ── Shutdown ──────────────────────────────────────────────────
 

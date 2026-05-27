@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # 使用官方 Python 3.12 基础镜像
 FROM python:3.12-slim
 USER root
