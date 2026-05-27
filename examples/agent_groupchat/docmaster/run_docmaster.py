@@ -123,6 +123,141 @@ WORKSPACE.mkdir(parents=True, exist_ok=True)
 WORKDIR = WORKSPACE / "runs"
 WORKDIR.mkdir(parents=True, exist_ok=True)
 
+# Template library is served by the deployed UI backend so that DocMaster and
+# the 模板库 tab see the *same* catalog. Local disk under WORKSPACE/templates is
+# no longer used by these four tools — outputs (filled docs, edits) still go
+# to WORKDIR on this machine.
+TEMPLATE_API_URL = os.environ.get(
+    "DOCMASTER_TEMPLATE_API_URL",
+    "https://opendrsai.ihep.ac.cn/api",
+).rstrip("/")
+
+
+def _template_api_envelope(resp_json: dict, key: str, default):
+    """Server wraps skill output as {status, message, data:{...}}. Unwrap it
+    back into the {success, message, <skill-fields>} shape the four tools
+    used to return when they called TemplateLibrarySkill directly."""
+    data = resp_json.get("data") or {}
+    return data.get(key, default)
+
+
+def _template_api_list(user_id, category=None, query=None):
+    import urllib.parse, urllib.request, json as _json
+    params = {}
+    if user_id: params["user_id"] = user_id
+    if category: params["category"] = category
+    if query: params["query"] = query
+    url = f"{TEMPLATE_API_URL}/docmaster/templates"
+    if params:
+        url += "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            body = _json.loads(r.read().decode("utf-8"))
+    except Exception as exc:
+        return {"success": False, "shared": [], "mine": [], "message": f"模板库服务调用失败: {exc}"}
+    return {
+        "success": bool(body.get("status", True)),
+        "shared": _template_api_envelope(body, "shared", []),
+        "mine": _template_api_envelope(body, "mine", []),
+        "message": body.get("message", ""),
+    }
+
+
+def _template_api_download(template_id, source, user_id):
+    """GET /docmaster/templates/file → bytes + filename, written to a temp .docx."""
+    import urllib.parse, urllib.request, tempfile as _tf
+    params = {"template_id": template_id, "source": source}
+    if source == "mine" and user_id:
+        params["user_id"] = user_id
+    url = f"{TEMPLATE_API_URL}/docmaster/templates/file?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = r.read()
+    except Exception as exc:
+        return None, f"下载模板失败: {exc}"
+    tmp = _tf.NamedTemporaryFile(prefix="docmaster_tpl_", suffix=".docx", delete=False)
+    try:
+        tmp.write(data)
+    finally:
+        tmp.close()
+    return tmp.name, None
+
+
+def _template_api_save(source_path, user_id, name, description, category, tags, aliases, template_id):
+    import urllib.request, json as _json, uuid
+    # Hand-built multipart so we don't pull in `requests`.
+    boundary = f"----docmaster{uuid.uuid4().hex}"
+    crlf = b"\r\n"
+    parts = []
+    def _field(key, value):
+        if value is None: return
+        parts.append(f"--{boundary}".encode())
+        parts.append(f'Content-Disposition: form-data; name="{key}"'.encode())
+        parts.append(b"")
+        parts.append(str(value).encode("utf-8"))
+    _field("user_id", user_id)
+    _field("name", name)
+    _field("description", description or "")
+    if category: _field("category", category)
+    if tags: _field("tags", _json.dumps(list(tags), ensure_ascii=False))
+    if aliases: _field("aliases", _json.dumps(list(aliases), ensure_ascii=False))
+    if template_id: _field("template_id", template_id)
+    # The .docx file
+    try:
+        with open(source_path, "rb") as f:
+            file_bytes = f.read()
+    except Exception as exc:
+        return {"success": False, "message": f"读取模板文件失败: {exc}"}
+    fname = os.path.basename(source_path) or "template.docx"
+    parts.append(f"--{boundary}".encode())
+    parts.append(
+        f'Content-Disposition: form-data; name="file"; filename="{fname}"'.encode()
+    )
+    parts.append(b"Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    parts.append(b"")
+    parts.append(file_bytes)
+    parts.append(f"--{boundary}--".encode())
+    parts.append(b"")
+    body = crlf.join(parts)
+    req = urllib.request.Request(
+        f"{TEMPLATE_API_URL}/docmaster/templates",
+        data=body,
+        method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            resp = _json.loads(r.read().decode("utf-8"))
+    except Exception as exc:
+        return {"success": False, "message": f"保存模板失败: {exc}"}
+    return {
+        "success": bool(resp.get("status", True)),
+        "template_id": _template_api_envelope(resp, "template_id", None),
+        "metadata": _template_api_envelope(resp, "metadata", None),
+        "message": resp.get("message", ""),
+    }
+
+
+def _template_api_delete(template_id, user_id):
+    import urllib.parse, urllib.request, json as _json
+    url = (
+        f"{TEMPLATE_API_URL}/docmaster/templates/{urllib.parse.quote(template_id, safe='')}"
+        f"?{urllib.parse.urlencode({'user_id': user_id})}"
+    )
+    req = urllib.request.Request(url, method="DELETE")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            resp = _json.loads(r.read().decode("utf-8"))
+    except Exception as exc:
+        return {"success": False, "message": f"删除模板失败: {exc}"}
+    return {
+        "success": bool(resp.get("status", True)),
+        "removed_id": _template_api_envelope(resp, "removed_id", None),
+        "message": resp.get("message", ""),
+    }
+
 # 支持的模型配置
 llm_mode_config = {
     "deepseek-v4-flash(Fast)": "hepai/deepseek-v4-flash",
@@ -1636,8 +1771,7 @@ XML编辑工作流（仅用于 tracked changes）：
             id（或 alias / name）传给 get_template_path_tool 拿到具体路径，
             再用 inspect_docx_template_tool / fill_docx_template_tool。
             """
-            skill = TemplateLibrarySkill(str(WORKSPACE))
-            return skill.list(user_id=user_id, category=category, query=query)
+            return _template_api_list(user_id=user_id, category=category, query=query)
 
         def get_template_path_tool(template_ref: str):
             """
@@ -1673,8 +1807,97 @@ XML编辑工作流（仅用于 tracked changes）：
             如果 ambiguous=True，**不要**自己挑—— 把 candidates 念给用户，
             让用户确认是哪一个，再用确认后的 id 再调一次 get_template_path_tool。
             """
-            skill = TemplateLibrarySkill(str(WORKSPACE))
-            return skill.get_path(template_ref, user_id=user_id)
+            ref = (template_ref or "").strip()
+            if not ref:
+                return {"success": False, "ambiguous": False, "message": "template_ref 不能为空。"}
+            listing = _template_api_list(user_id=user_id)
+            if not listing.get("success"):
+                return {"success": False, "ambiguous": False, "message": listing.get("message") or "模板库服务调用失败"}
+            mine = listing.get("mine") or []
+            shared = listing.get("shared") or []
+            ref_lower = ref.lower()
+
+            def _by_id(entries, rid):
+                for e in entries:
+                    if e.get("id") == rid:
+                        return e
+                return None
+
+            hit_entry = None
+            hit_source = None
+            e = _by_id(mine, ref)
+            if e:
+                hit_entry, hit_source = e, "mine"
+            else:
+                e = _by_id(shared, ref)
+                if e:
+                    hit_entry, hit_source = e, "shared"
+
+            if hit_entry is None:
+                # Stage 3 — exact alias
+                alias_hits = []
+                for src_name, entries in (("mine", mine), ("shared", shared)):
+                    for e in entries:
+                        for a in (e.get("aliases") or []):
+                            sa = str(a)
+                            if sa == ref or sa.lower() == ref_lower:
+                                alias_hits.append((e, src_name))
+                                break
+                if len(alias_hits) == 1:
+                    hit_entry, hit_source = alias_hits[0]
+                elif len(alias_hits) > 1:
+                    return {
+                        "success": False, "ambiguous": True,
+                        "candidates": [
+                            {"id": e["id"], "name": e.get("name", ""), "source": s, "description": e.get("description", "")}
+                            for e, s in alias_hits
+                        ],
+                        "message": f"匹配到 {len(alias_hits)} 个模板，请让用户从候选中挑选一个。",
+                    }
+
+            if hit_entry is None:
+                # Stage 4 — substring match on name / id / aliases / tags
+                sub_hits = []
+                for src_name, entries in (("mine", mine), ("shared", shared)):
+                    for e in entries:
+                        haystack = " ".join(
+                            [str(e.get("name", "")), str(e.get("id", ""))]
+                            + [str(a) for a in (e.get("aliases") or [])]
+                            + [str(t) for t in (e.get("tags") or [])]
+                        ).lower()
+                        if ref_lower in haystack:
+                            sub_hits.append((e, src_name))
+                if len(sub_hits) == 1:
+                    hit_entry, hit_source = sub_hits[0]
+                elif len(sub_hits) > 1:
+                    return {
+                        "success": False, "ambiguous": True,
+                        "candidates": [
+                            {"id": e["id"], "name": e.get("name", ""), "source": s, "description": e.get("description", "")}
+                            for e, s in sub_hits
+                        ],
+                        "message": f"匹配到 {len(sub_hits)} 个模板，请让用户从候选中挑选一个。",
+                    }
+
+            if hit_entry is None:
+                return {
+                    "success": False, "ambiguous": False,
+                    "message": (
+                        f"模板库里没找到匹配 '{template_ref}' 的模板。"
+                        " 请用 list_templates_tool 看一下可用模板，或让用户上传新模板。"
+                    ),
+                }
+
+            local_path, err = _template_api_download(hit_entry["id"], hit_source, user_id)
+            if err:
+                return {"success": False, "ambiguous": False, "message": err}
+            return {
+                "success": True,
+                "template_path": local_path,
+                "source": hit_source,
+                "metadata": hit_entry,
+                "message": f"已定位模板 '{hit_entry.get('name', hit_entry['id'])}'。",
+            }
 
         def save_template_tool(
             template_path: str,
@@ -1710,8 +1933,7 @@ XML编辑工作流（仅用于 tracked changes）：
             Returns dict with success / template_id / template_path / metadata /
             message。文件会被复制到用户私有库里（不影响原始上传文件）。
             """
-            skill = TemplateLibrarySkill(str(WORKSPACE))
-            return skill.save(
+            return _template_api_save(
                 source_path=template_path,
                 user_id=user_id,
                 name=name,
@@ -1719,6 +1941,7 @@ XML编辑工作流（仅用于 tracked changes）：
                 category=category,
                 tags=tags,
                 aliases=aliases,
+                template_id=None,
             )
 
         def delete_template_tool(template_id: str):
@@ -1756,8 +1979,7 @@ XML编辑工作流（仅用于 tracked changes）：
             删除成功后，可以提示用户"已删除，要看看剩下的模板吗？"，
             如果用户想看再调 list_templates_tool。
             """
-            skill = TemplateLibrarySkill(str(WORKSPACE))
-            return skill.delete(template_id=template_id, user_id=user_id)
+            return _template_api_delete(template_id=template_id, user_id=user_id)
 
         def add_bullet_list_tool(file_path: str, items: list, position: int | str = "end", style: str = "List Bullet"):
             """
