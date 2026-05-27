@@ -495,11 +495,31 @@ async def create_magentic_round_team(
     elif agent_mode == "remote" or agent_mode == "ddf":
         # agent_config["api_key"] = agent_mode_config.get("api_key")
         # BUG: 字段错误，api_key应该为apiKey
+        nested_config = agent_mode_config.get("config")
+        if isinstance(nested_config, dict) and nested_config:
+            agent_config = dict(nested_config)
+        else:
+            agent_config = {}
+        # Flat agent_mode_config from DDF/UI: merge worker connection fields.
+        _mode_meta_keys = {
+            "id", "agent_id", "mode", "description", "logo", "owner",
+            "examples", "version", "author", "tags", "config",
+            "agent_config", "defult_config_name", "default_config_name",
+        }
+        for key, value in agent_mode_config.items():
+            if key in _mode_meta_keys or value is None:
+                continue
+            if key not in agent_config:
+                agent_config[key] = value
         ddf_api_key = agent_mode_config.get("api_key") or agent_mode_config.get("apiKey")
         if not ddf_api_key:
             ddf_api_key = api_key
         agent_config["api_key"] = ddf_api_key
         agent_config["url"] = agent_mode_config.get("url", "https://aiapi.ihep.ac.cn/apiv2")
+        if not agent_config.get("name"):
+            worker_name = agent_mode_config.get("model") or agent_mode_config.get("name")
+            if worker_name:
+                agent_config["name"] = worker_name
         requested_model_alias = (
             agent_mode_config.get("defult_config_name")
             or agent_mode_config.get("default_config_name")

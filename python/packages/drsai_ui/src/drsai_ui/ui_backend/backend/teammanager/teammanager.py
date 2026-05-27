@@ -214,25 +214,34 @@ class TeamManager:
             raise
 
 
-    async def _switch_remote_model_if_requested(self, settings_config: Dict[str, Any] | None) -> None:
+    async def _switch_remote_model_if_requested(
+        self, settings_config: Dict[str, Any] | None
+    ) -> list[Dict[str, Any]]:
         """Switch remote Dr.Sai worker model for an already-created team.
 
         The first start creates/lazy-inits the remote agent with the requested
         alias. Subsequent continue/start calls reuse the same TeamManager/team,
         so we need to explicitly forward the alias to the remote worker.
+
+        Returns a list of per-agent switch results (empty if nothing to switch).
         """
         if not self.team or not settings_config:
-            return
+            return []
 
         alias = settings_config.get("defult_config_name") or settings_config.get("default_config_name")
         if not alias:
             agent_mode_config = settings_config.get("agent_mode_config") or {}
+            if isinstance(agent_mode_config, str):
+                try:
+                    agent_mode_config = json.loads(agent_mode_config)
+                except (json.JSONDecodeError, TypeError):
+                    agent_mode_config = {}
             alias = (
                 agent_mode_config.get("defult_config_name")
                 or agent_mode_config.get("default_config_name")
             )
         if not alias:
-            return
+            return []
 
         candidates: list[Any] = []
         if hasattr(self.team, "switch_remote_model"):
@@ -241,11 +250,26 @@ class TeamManager:
             if hasattr(participant, "switch_remote_model"):
                 candidates.append(participant)
 
+        results: list[Dict[str, Any]] = []
         for agent in candidates:
+            agent_name = getattr(agent, "name", agent.__class__.__name__)
             try:
-                await agent.switch_remote_model(alias)
+                result = await agent.switch_remote_model(alias)
+                if isinstance(result, dict):
+                    result = {**result, "agent": agent_name}
+                else:
+                    result = {"status": False, "message": "invalid switch result", "agent": agent_name}
+                results.append(result)
+                if not result.get("status", False):
+                    logger.warning(
+                        f"Failed to switch remote model for {agent_name}: {result.get('message')}"
+                    )
             except Exception as e:
-                logger.warning(f"Failed to switch remote model for {getattr(agent, 'name', agent)}: {e}")
+                logger.warning(f"Failed to switch remote model for {agent_name}: {e}")
+                results.append(
+                    {"status": False, "message": str(e), "agent": agent_name, "defult_config_name": None}
+                )
+        return results
 
     async def run_stream(
         self,

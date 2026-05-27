@@ -43,6 +43,7 @@ from ...datamodel import (
 )
 from ...teammanager import TeamManager
 from ...utils.utils import compress_state, decompress_state
+from ..model_resolve import settings_config_from_input_response
 from autogen_agentchat.messages import ThoughtEvent
 
 logger = logging.getLogger(__name__)
@@ -140,7 +141,6 @@ class WebSocketManager:
         team_config: Dict[str, Any],
         settings_config: Dict[str, Any],
         files: List[Dict[str, Any]] | None = None,
-        user_settings: Settings | None = None,
     ) -> None:
         """
         Start streaming task execution with proper run management
@@ -150,7 +150,7 @@ class WebSocketManager:
             task (str | ChatMessage | Sequence[ChatMessage] | None): Task to execute
             team_config (Dict[str, Any]): Configuration for the team
             settings_config (Dict[str, Any]): Configuration for settings
-            user_settings (Settings, optional): User settings for the run
+            files (List[Dict[str, Any]] | None): Optional file metadata list
         """
         if run_id not in self._connections or run_id in self._closed_connections:
             raise ValueError(f"No active connection for run {run_id}")
@@ -174,8 +174,10 @@ class WebSocketManager:
         try:
             # Update run with task and status
             run = await self._get_run(run_id)
-            assert run is not None, f"Run {run_id} not found in database"
-            assert run.user_id is not None, f"Run {run_id} has no user ID"
+            if run is None:
+                raise ValueError(f"Run {run_id} not found in database")
+            if run.user_id is None:
+                raise ValueError(f"Run {run_id} has no user ID")
 
             # Get user Settings
             user_settings = await self._get_settings(run.user_id)
@@ -187,29 +189,23 @@ class WebSocketManager:
 
             settings_config["memory_controller_key"] = run.user_id
 
-            state = None
-            if run:
-                run.task = MessageConfig(content=task, source="user").model_dump()
-                run.status = RunStatus.ACTIVE
-                state = run.state
-                self.db_manager.upsert(run)
-                await self._update_run_status(run_id, RunStatus.ACTIVE)
+            run.task = MessageConfig(content=task, source="user").model_dump()
+            state = run.state
+            self.db_manager.upsert(run)
+            await self._update_run_status(run_id, RunStatus.ACTIVE)
 
-                # TODO: 让不同后端都能获取前端之前的记忆
-                if isinstance(state, str):
+            if isinstance(state, str):
+                try:
+                    state_dict_decompress = decompress_state(state)
+                except Exception:
                     try:
-                        # Try to decompress if it's compressed
-                        state_dict_decompress = decompress_state(state)
-                    except Exception:
-                        # If decompression fails, assume it's a regular JSON string
                         state_dict_decompress = json.loads(state)
-                else:
-                    state_dict_decompress = state
-                
-                # # TODO: 后面思考换掉
-                # if state_dict_decompress:
-                #     if 'RemoteAgent' in state_dict_decompress["agent_states"]:
-                #         state_dict_decompress = None
+                    except (json.JSONDecodeError, TypeError):
+                        state_dict_decompress = None
+            elif state is not None:
+                state_dict_decompress = state
+            else:
+                state_dict_decompress = None
 
             agent_id = settings_config.get("agent_id")
             requested_model_alias = (
@@ -282,23 +278,20 @@ class WebSocketManager:
                     break
 
                 if isinstance(message, CheckpointEvent):
-                    # Save state to run
                     run = await self._get_run(run_id)
                     if run:
-                        # Use compress_state utility to compress the state
-                        state_dict = json.loads(message.state)
+                        try:
+                            state_dict = json.loads(message.state)
+                        except (json.JSONDecodeError, TypeError):
+                            logger.warning(
+                                f"Failed to decode checkpoint state for run {run_id}"
+                            )
+                            continue
                         run.state = compress_state(state_dict)
                         self.db_manager.upsert(run)
                     continue
                 
-                # if isinstance(message, ToolCallSummaryMessage):
-                #     message = TextMessage(
-                #         content=message.content,
-                #         source=message.source,
-                #         metadata=message.metadata,
-                #     )
-                    
-                # do not show internal messages
+                # Skip internal messages not meant for client display
                 if (
                     hasattr(message, "metadata")
                     and message.metadata.get("internal") == "yes"  # type: ignore
@@ -330,10 +323,6 @@ class WebSocketManager:
                         await self._save_message(run_id, message)
                     elif isinstance(message, TeamResult):
                         final_result = message.model_dump()
-                    self._team_managers[run_id] = team_manager
-            # # Flush any remaining streaming content after the stream ends
-            # if run_id in self._streaming_buffers:
-            #     await self._flush_streaming_buffer(run_id)
             if (
                 not cancellation_token.is_cancelled()
                 and run_id not in self._closed_connections
@@ -519,8 +508,26 @@ class WebSocketManager:
     async def handle_input_response(self, run_id: int, response: str|dict) -> None:
         """Handle input response from client"""
         if run_id in self._input_responses and run_id in self._connections:
-            # TODO: 使用Session的配置进行metadata更新
-            # agent_mode_config = await self._get_agent_mode_config(user_id=run.user_id, agent_id = agent_id)
+            team_manager = self._team_managers.get(run_id)
+            settings_config = settings_config_from_input_response(response)
+            if team_manager is not None and settings_config is not None:
+                switch_results = await team_manager._switch_remote_model_if_requested(
+                    settings_config
+                )
+                for result in switch_results:
+                    if result.get("status", False):
+                        continue
+                    await self._send_message(
+                        run_id,
+                        {
+                            "type": "error",
+                            "error": (
+                                f"Model switch failed ({result.get('agent', 'agent')}): "
+                                f"{result.get('message', 'unknown error')}"
+                            ),
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
             await self._input_responses[run_id].put(response)
         else:
             logger.warning(f"Received input response for inactive run {run_id}")

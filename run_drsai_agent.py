@@ -35,21 +35,11 @@ MEMORY_DATASET_ID=os.getenv('MEMORY_DATASET_ID')
 SYSTEM_SKILLS_DIR=os.getenv('SYSTEM_SKILLS_DIR')
 
 llm_mode_config = {
-    "hepai/minimax-m2.7": ("hepai/minimax-m2.7", 204000),
-    "hepai/minimax-m2.7-highspeed": ("hepai/minimax-m2.7-highspeed", 204000),
-    "minimax-m2.5": ("minimax/minimax-m2.5", 204000),
-    "minimax-m2.5-highspeed": ("minimax/minimax-m2.5-highspeed", 204000),
-    "minimax-m2.7": ("minimax/minimax-m2.7", 204000),
-    "minimax-m2.7-highspeed": ("minimax/minimax-m2.7-highspeed", 204000),
-    "claude-sonnet-4-6": ("anthropic/claude-sonnet-4-6", 200000),
-    "claude-haiku-4-5": ("anthropic/claude-haiku-4-5", 200000),
-    "claude-opus-4-6": ("anthropic/claude-opus-4-6", 200000),
-    "gpt-4o": ("openai/gpt-4o", 128000),
-    "gpt-4.1": ("openai/gpt-4.1", 1000000),
-    "gpt-5.2": ("openai/gpt-5.2", 1000000),
-    "gpt-5.4": ("openai/gpt-5.4", 1000000),
-    "deepseek-r1(No image)": ("deepseek-ai/deepseek-r1", 128000),
-    "deepseek-v3.2(No image)": ("deepseek-ai/deepseek-v3.2", 128000),
+    "gpt-5.5":               ("openai/gpt-5.5",                    128000),
+    "deepseek-v4-pro":       ("deepseek-ai/deepseek-v4-pro",      128000),
+    "deepseek-v4-flash":     ("deepseek-ai/deepseek-v4-flash",    128000),
+    "minimax-m2.7-highspeed":     ("minimax-m2.7-highspeed",           200000),
+    "hepai/minimax-m2.7-highspeed": ("minimax-m2.7-highspeed",           200000),
 }
 
 def create_agent(
@@ -64,7 +54,10 @@ def create_agent(
     # the `ChatCompletionClient` interface.
     
     def set_model_client(defult_config_name: str|None = "hepai/minimax-m2.7-highspeed") -> HepAIAnthropicChatCompletionClient| HepAIChatCompletionClient:
-        llm_model, token_limit = llm_mode_config.get(defult_config_name, "minimax-m2.7-highspeed")
+        llm_model, token_limit = llm_mode_config.get(
+            defult_config_name,
+            llm_mode_config["minimax-m2.7-highspeed"],
+        )
         if ("claude" in llm_model) or ("minimax" in llm_model):
             model_info=_MODEL_INFO["claude-sonnet-4-5"]
             model_info["token_model"] = "claude-3-5-sonnet-20240620"
@@ -146,7 +139,10 @@ def create_agent(
         SYSTEM = f"{_ihep_internal_core}\n\n**本实例补充说明（运维配置）**\n{IHEP_AGENT_EXTRA_GUIDANCE}"
 
     defult_config_name = defult_config_name or "hepai/minimax-m2.7-highspeed"
-    _, token_limit = llm_mode_config.get(defult_config_name)
+    _, token_limit = llm_mode_config.get(
+        defult_config_name,
+        llm_mode_config["minimax-m2.7-highspeed"],
+    )
     return DrSaiAssistant(
         name="Assistant",
         model_client=set_model_client(defult_config_name),
@@ -203,7 +199,7 @@ if __name__ == "__main__":
                 "/help",
             ],
             agent_config = llm_mode_config,
-            defult_config_name="gpt-5.2",
+            defult_config_name="gpt-5.5",
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务配置
