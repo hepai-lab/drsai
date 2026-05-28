@@ -1,439 +1,532 @@
 """
-DrSai CLI - Connect to a running DrSai agent server and chat interactively.
+DrSai CLI — thin entry point (Phase 5 rewrite).
 
-Features:
-- Connect to a remote DrSai Worker via HepAIWorkerAgent
-- Continuous multi-turn conversation
-- Session switching (create, switch, list)
-- Config persistence in ~/.drsai/configs/cli_config.json
+The bulky REPL implementation has moved to the new dual-process TUI
+(``drsai.backend.tui_gateway`` + ``ui-tui/``). This module is now just a
+typer-based launcher that:
+
+- ``drsai`` / ``drsai chat`` → spawns the new Ink-based TUI
+- ``drsai gateway``          → starts the legacy SSE gateway (for desktop app)
+- ``drsai config``           → view/edit config file
+- ``drsai sessions``         → list/manage saved sessions
+- ``drsai version``          → print version
+
+The previous ~2,646-line REPL implementation is preserved at
+``run_cli_legacy.py`` for reference; it is **no longer wired up**.
+
+To use the legacy REPL, run ``python -m drsai.backend.run_cli_legacy``.
 """
 
+from __future__ import annotations
+
+import logging
 import os
+import shutil
+import subprocess
 import sys
-import json
-import asyncio
-import uuid
 from pathlib import Path
 from typing import Optional
 
 import typer
-from loguru import logger
 
-from drsai.configs.constant import FS_DIR, CONFIG_DIR, VERSION, APPNAME
+from drsai.configs.constant import APPNAME, VERSION
+from drsai.backend.cli import config as cli_config
 
-# ── Config ────────────────────────────────────────────────────────────────────
+logger = logging.getLogger(__name__)
 
-CLI_CONFIG_PATH = Path(CONFIG_DIR) / "cli_config.json"
-CLI_SESSIONS_PATH = Path(CONFIG_DIR) / "cli_sessions.json"
-
-DEFAULT_CONFIG = {
-    "url": "http://localhost:42858/apiv2",
-    "api_key": "",
-    "model_name": "My Dr.Sai",
-    "user_id": "anonymous",
-    "defult_config_name": None,
-}
-
-
-def load_config() -> dict:
-    if CLI_CONFIG_PATH.exists():
-        with open(CLI_CONFIG_PATH, "r", encoding="utf-8") as f:
-            saved = json.load(f)
-        cfg = {**DEFAULT_CONFIG, **saved}
-        return cfg
-    return dict(DEFAULT_CONFIG)
-
-
-def save_config(cfg: dict):
-    CLI_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(CLI_CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
-
-
-def load_sessions() -> dict:
-    """Load saved sessions: {session_id: {"name": ..., "last_used": ...}}"""
-    if CLI_SESSIONS_PATH.exists():
-        with open(CLI_SESSIONS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-
-def save_sessions(sessions: dict):
-    CLI_SESSIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(CLI_SESSIONS_PATH, "w", encoding="utf-8") as f:
-        json.dump(sessions, f, indent=2, ensure_ascii=False)
-
-
-# ── CLI REPL ──────────────────────────────────────────────────────────────────
-
-def _print_help():
-    print(
-        "\n"
-        "  /new [name]          Create a new session\n"
-        "  /switch <id|name>    Switch to another session\n"
-        "  /list                List all sessions\n"
-        "  /rename <name>       Rename current session\n"
-        "  /config              Show current connection config\n"
-        "  /help                Show this help\n"
-        "  /quit                Save and exit\n"
-    )
-
-
-async def _run_repl(cfg: dict):
-    """Core async REPL loop."""
-    from drsai.modules.agents.drsai_worker_agent import HepAIWorkerAgent
-    from autogen_agentchat.ui import Console
-    from autogen_agentchat.base import TaskResult
-    from drsai.modules.managers.messages import (
-        BaseChatMessage,
-        AgentLogEvent,
-        ModelClientStreamingChunkEvent,
-    )
-
-    url = cfg["url"]
-    api_key = cfg["api_key"]
-    model_name = cfg["model_name"]
-    user_id = cfg["user_id"]
-    defult_config_name = cfg.get("defult_config_name")
-
-    # Load persisted sessions
-    sessions = load_sessions()  # {id: {"name": str}}
-
-    # Pick or create initial session
-    current_session_id: str
-    if sessions:
-        # Resume the most recent session
-        current_session_id = list(sessions.keys())[-1]
-        print(f"Resuming session: {sessions[current_session_id]['name']} [{current_session_id[:8]}]")
-    else:
-        current_session_id = str(uuid.uuid4())
-        sessions[current_session_id] = {"name": "default"}
-        save_sessions(sessions)
-
-    agent: Optional[HepAIWorkerAgent] = None
-
-    def _create_agent(chat_id: str) -> HepAIWorkerAgent:
-        return HepAIWorkerAgent(
-            name="Assistant",
-            model_remote_configs={
-                "url": url,
-                "api_key": api_key,
-                "name": model_name,
-                "defult_config_name": defult_config_name,
-            },
-            chat_id=chat_id,
-            run_info={"email": user_id, "name": user_id},
-        )
-
-    async def _init_agent(chat_id: str) -> HepAIWorkerAgent:
-        a = _create_agent(chat_id)
-        await a.lazy_init()
-        return a
-
-    async def _close_agent():
-        nonlocal agent
-        if agent is not None:
-            try:
-                await agent.close()
-            except Exception:
-                pass
-            agent = None
-
-    # Connect
-    print(f"Connecting to {url} ({model_name})...")
-    try:
-        agent = await _init_agent(current_session_id)
-    except Exception as e:
-        print(f"Failed to connect: {e}")
-        print("Please check your config with: drsai-chat config")
-        return
-
-    if not agent._funcs_map:
-        print(f"Cannot connect to model '{model_name}' at {url}")
-        print("Make sure the agent server is running and the model name is correct.")
-        return
-
-    session_name = sessions[current_session_id]["name"]
-    print(f"\nConnected! Session: {session_name} [{current_session_id[:8]}]")
-    print("Type /help for commands.\n" + "-" * 60)
-
-    loop = asyncio.get_event_loop()
-
-    while True:
-        # Non-blocking input
-        try:
-            user_input = await loop.run_in_executor(
-                None,
-                lambda: input(f"[{sessions[current_session_id]['name']}] You> "),
-            )
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-        user_input = user_input.strip()
-        if not user_input:
-            continue
-
-        # ── Commands ──────────────────────────────────────────
-        if user_input.startswith("/"):
-            parts = user_input.split(maxsplit=1)
-            cmd = parts[0].lower()
-
-            if cmd == "/quit":
-                break
-
-            elif cmd == "/help":
-                _print_help()
-                continue
-
-            elif cmd == "/config":
-                print(json.dumps(cfg, indent=2, ensure_ascii=False))
-                continue
-
-            elif cmd == "/new":
-                await _close_agent()
-                new_id = str(uuid.uuid4())
-                name = parts[1] if len(parts) > 1 else f"session-{len(sessions) + 1}"
-                sessions[new_id] = {"name": name}
-                save_sessions(sessions)
-                current_session_id = new_id
-                try:
-                    agent = await _init_agent(current_session_id)
-                    print(f"New session: {name} [{new_id[:8]}]")
-                except Exception as e:
-                    print(f"Failed to initialize new session: {e}")
-                continue
-
-            elif cmd == "/switch":
-                if len(parts) < 2:
-                    print("Usage: /switch <session_id prefix or name>")
-                    continue
-                target = parts[1].strip()
-                # Match by id prefix or name
-                matched = [
-                    sid for sid, info in sessions.items()
-                    if sid.startswith(target) or info["name"] == target
-                ]
-                if not matched:
-                    print(f"No session found matching: {target}")
-                    continue
-                if len(matched) > 1:
-                    print("Multiple matches:")
-                    for sid in matched:
-                        print(f"  [{sid[:8]}] {sessions[sid]['name']}")
-                    continue
-                target_id = matched[0]
-                if target_id == current_session_id:
-                    print("Already in this session.")
-                    continue
-                await _close_agent()
-                current_session_id = target_id
-                try:
-                    agent = await _init_agent(current_session_id)
-                    print(f"Switched to: {sessions[current_session_id]['name']} [{current_session_id[:8]}]")
-                except Exception as e:
-                    print(f"Failed to switch: {e}")
-                continue
-
-            elif cmd == "/list":
-                if not sessions:
-                    print("No sessions.")
-                else:
-                    print("Sessions:")
-                    for sid, info in sessions.items():
-                        marker = " <-- current" if sid == current_session_id else ""
-                        print(f"  [{sid[:8]}] {info['name']}{marker}")
-                continue
-
-            elif cmd == "/rename":
-                if len(parts) < 2:
-                    print("Usage: /rename <new name>")
-                    continue
-                new_name = parts[1].strip()
-                sessions[current_session_id]["name"] = new_name
-                save_sessions(sessions)
-                print(f"Renamed to: {new_name}")
-                continue
-
-            else:
-                print(f"Unknown command: {cmd}. Type /help for help.")
-                continue
-
-        # ── Chat ──────────────────────────────────────────────
-        if agent is None:
-            try:
-                agent = await _init_agent(current_session_id)
-            except Exception as e:
-                print(f"Failed to reconnect: {e}")
-                continue
-
-        try:
-            await Console(agent.run_stream(task=user_input))
-        except asyncio.CancelledError:
-            print("\n[Cancelled]")
-        except Exception as e:
-            print(f"Error: {e}")
-            logger.debug(f"Chat error: {e}", exc_info=True)
-
-    # ── Cleanup ───────────────────────────────────────────────
-    await _close_agent()
-    save_sessions(sessions)
-    print("Bye!")
-
-
-# ── Typer App ─────────────────────────────────────────────────────────────────
 
 app = typer.Typer(
-    name="drsai-chat",
-    help="DrSai CLI - Connect to a running DrSai agent and chat interactively.",
+    name="drsai",
+    help="DrSai — local agent CLI (Ink TUI + Python gateway)",
+    no_args_is_help=False,
 )
 
 
-def _interactive_setup() -> dict:
-    """First-time interactive setup wizard. Returns the config dict."""
-    typer.echo(typer.style(
-        "\n  Welcome to DrSai CLI! Let's configure your connection.\n",
-        fg=typer.colors.GREEN, bold=True,
-    ))
-    typer.echo(f"  Config will be saved to: {CLI_CONFIG_PATH}\n")
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
-    cfg = dict(DEFAULT_CONFIG)
 
-    cfg["url"] = typer.prompt(
-        "  Agent server URL",
-        default=cfg["url"],
-    ).strip()
+def _find_ui_tui_dir() -> Optional[Path]:
+    """Locate the ui-tui package on disk.
 
-    env_key = os.environ.get("HEPAI_API_KEY", "")
-    if env_key:
-        typer.echo(f"  Found HEPAI_API_KEY in environment: {env_key[:8]}...{env_key[-4:]}")
-        use_env = typer.confirm("  Use this API key?", default=True)
-        if use_env:
-            cfg["api_key"] = env_key
-    if not cfg["api_key"]:
-        cfg["api_key"] = typer.prompt("  HepAI API key").strip()
+    Resolution order:
+    1. $DRSAI_UI_TUI_DIR environment variable
+    2. <repo_root>/ui-tui/ (walking up — dev mode)
+    3. <site-packages>/drsai/ui_tui/ (installed via PyPI — pre-built bundle)
+    4. ~/.drsai/ui-tui/ (manual install location)
+    """
+    explicit = os.environ.get("DRSAI_UI_TUI_DIR")
+    if explicit:
+        p = Path(explicit).expanduser().resolve()
+        if (p / "package.json").exists() or (p / "dist" / "entry.mjs").exists():
+            return p
 
-    cfg["model_name"] = typer.prompt(
-        "  Model/agent name on the server",
-        default=cfg["model_name"],
-    ).strip()
+    # Walk up from <this file>/python/packages/drsai/src/drsai/backend/
+    here = Path(__file__).resolve()
+    for ancestor in [here, *here.parents]:
+        candidate = ancestor / "ui-tui"
+        if candidate.is_dir() and (
+            (candidate / "package.json").exists()
+            or (candidate / "dist" / "entry.mjs").exists()
+        ):
+            return candidate
 
-    cfg["user_id"] = typer.prompt(
-        "  Your user id (email)",
-        default=cfg["user_id"],
-    ).strip()
+    # Installed-package location: drsai/ui_tui/dist/entry.mjs
+    pkg_bundled = Path(__file__).resolve().parent.parent / "ui_tui"
+    if (pkg_bundled / "dist" / "entry.mjs").exists():
+        return pkg_bundled
 
-    llm = typer.prompt(
-        "  Default LLM config name (leave empty to skip)",
-        default="",
-    ).strip()
-    cfg["defult_config_name"] = llm or None
+    fallback = Path.home() / ".drsai" / "ui-tui"
+    if (fallback / "package.json").exists() or (fallback / "dist" / "entry.mjs").exists():
+        return fallback
 
-    save_config(cfg)
-    typer.echo(typer.style("\n  Config saved!\n", fg=typer.colors.GREEN))
+    return None
+
+
+def _resolve_node_runner(ui_dir: Path) -> tuple[str, list[str]]:
+    """Return (command, base_args) for launching the Ink UI.
+
+    Resolution order:
+    1. ``$DRSAI_NODE``        — explicit user override
+    2. system ``node``        — fastest path when present
+    3. ``pnpm dev`` / ``npm run dev``  — dev mode with sources, no bundle needed
+    4. portable ``node``      — auto-download + cache under ~/.drsai/cache/node
+                                (Playwright/Puppeteer-style; ~25 MB one-time)
+
+    Steps 1, 2, 4 require the prebuilt bundle ``dist/entry.mjs`` to exist
+    (it ships inside the wheel for PyPI installs). Step 3 is for in-repo dev.
+    """
+    bundle = ui_dir / "dist" / "entry.mjs"
+
+    # 1. Honour an explicit DRSAI_NODE env var first — useful for nvm/fnm/scoop
+    # installs in non-standard locations or for offline air-gapped environments.
+    explicit_node = os.environ.get("DRSAI_NODE", "").strip()
+    if explicit_node and Path(explicit_node).exists() and bundle.exists():
+        return explicit_node, [str(bundle)]
+
+    # 2. System node on PATH (covers most dev machines + CI)
+    if bundle.exists():
+        node = _which_any("node")
+        if node:
+            return node, [str(bundle)]
+
+    # 3. Dev mode: launch via pnpm/npm so source changes hot-reload
+    if (ui_dir / "package.json").exists():
+        pnpm = _which_any("pnpm")
+        if pnpm:
+            return pnpm, ["dev"]
+        npm = _which_any("npm")
+        if npm:
+            return npm, ["run", "dev"]
+
+    # 4. Auto-download a portable Node runtime if the bundle is present.
+    # This is the "pip install drsai && drsai" path — no Node required on host.
+    if bundle.exists():
+        try:
+            from ._node_bootstrap import ensure_portable_node
+            node = ensure_portable_node()
+            return node, [str(bundle)]
+        except Exception as exc:
+            logger.warning("Portable Node bootstrap failed: %s", exc)
+
+    return "", []
+
+
+def _which_any(name: str) -> Optional[str]:
+    """``shutil.which`` plus a few Windows-specific fallbacks.
+
+    Windows installers sometimes register node under ``ProgramFiles\\nodejs``
+    without touching the user PATH; if a fresh PowerShell session is open
+    before the installer's PATH refresh propagates, ``shutil.which`` misses it.
+    Check the well-known install locations as a fallback before giving up.
+    """
+    found = shutil.which(name)
+    if found:
+        return found
+
+    if sys.platform != "win32":
+        return None
+
+    # Common Windows install locations
+    candidates = []
+    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    program_files_x86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    for base in [
+        Path(program_files) / "nodejs",
+        Path(program_files_x86) / "nodejs",
+        Path(local_appdata) / "Programs" / "nodejs" if local_appdata else None,
+        # Scoop default
+        Path(local_appdata) / "scoop" / "shims" if local_appdata else None,
+    ]:
+        if base is None:
+            continue
+        for ext in (".exe", ".cmd", ".bat", ""):
+            p = base / f"{name}{ext}"
+            if p.is_file():
+                candidates.append(str(p))
+                break
+
+    return candidates[0] if candidates else None
+
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+
+@app.callback(invoke_without_command=True)
+def cli_default(ctx: typer.Context) -> None:
+    """Default: launch the new TUI when no subcommand is given."""
+    if ctx.invoked_subcommand is not None:
+        return
+    _launch_tui()
+
+
+@app.command("chat")
+def chat(
+    attach: Optional[str] = typer.Option(
+        None,
+        "--attach",
+        help="Attach to an existing gateway via WebSocket URL (e.g. ws://127.0.0.1:8765/attach)",
+    ),
+) -> None:
+    """Start an interactive chat session (the new Ink-based TUI)."""
+    _launch_tui(attach_url=attach)
+
+
+def _has_any_api_key(cfg: dict) -> bool:
+    """Return True if any usable API key is reachable via config or env."""
+    return any([
+        cfg.get("api_key"),
+        cfg.get("anthropic_api_key"),
+        cfg.get("openai_api_key"),
+        os.environ.get("HEPAI_API_KEY"),
+        os.environ.get("ANTHROPIC_API_KEY"),
+        os.environ.get("OPENAI_API_KEY"),
+    ])
+
+
+def _setup_wizard(*, first_run: bool) -> dict:
+    """Interactive first-time setup — prompts for user_id + API key.
+
+    Called automatically before launching the TUI when:
+      - cli_config.json doesn't exist yet (first install), OR
+      - no usable API key is reachable (config + env are both empty).
+
+    Returns the (possibly updated) config dict, already saved to disk.
+    """
+    import getpass
+    from drsai.backend.cli.config import mask_key
+
+    cfg = cli_config.load_config()
+
+    if first_run:
+        typer.echo(typer.style(
+            "\n  Welcome to DrSai! Let's configure your profile.\n",
+            fg=typer.colors.GREEN, bold=True,
+        ))
+    else:
+        typer.echo(typer.style(
+            "\n  ⚠ No API key configured — set one up to continue.\n",
+            fg=typer.colors.YELLOW, bold=True,
+        ))
+    typer.echo(f"  Config will be saved to: {cli_config.CLI_CONFIG_PATH}\n")
+
+    # ── User identity (only on first run) ───────────────────────────────────
+    if first_run:
+        cfg["user_id"] = typer.prompt(
+            "  Your user id",
+            default=cfg.get("user_id") or "anonymous",
+        ).strip() or "anonymous"
+
+        default_model = typer.prompt(
+            "  Default model alias (e.g. hepai/deepseek-v4-pro, claude-sonnet-4-6) — Enter to skip",
+            default=cfg.get("defult_config_name") or "",
+            show_default=False,
+        ).strip()
+        cfg["defult_config_name"] = default_model or None
+
+    # ── API key ─────────────────────────────────────────────────────────────
+    typer.echo("")
+    typer.echo(typer.style("  ── API Key ──", fg=typer.colors.CYAN, bold=True))
+    typer.echo("    1. HepAI     (Recommended — high-speed, https://ai.ihep.ac.cn)")
+    typer.echo("    2. Anthropic (Claude style)")
+    typer.echo("    3. OpenAI    (GPT style)")
+    typer.echo("    4. Skip — I will set it through environment variables-`HEPAI_API_KEY`")
+    typer.echo("")
+    choice = typer.prompt("  Please select (1-4)", default="1").strip()
+
+    def _ask_key(label: str, cfg_key: str, env_key: str, base_url_label: Optional[str] = None,
+                 base_url_cfg_key: Optional[str] = None, base_url_env_key: Optional[str] = None) -> None:
+        typer.echo(typer.style(f"\n  {label}", fg=typer.colors.CYAN))
+        try:
+            key = getpass.getpass("  API Key (输入隐藏): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            typer.echo("\n  Cancelled.")
+            return
+        if key:
+            cfg[cfg_key] = key
+            os.environ[env_key] = key
+            typer.echo(typer.style(
+                f"  ✓ {label} Key saved: {mask_key(key)}", fg=typer.colors.GREEN,
+            ))
+        else:
+            typer.echo(typer.style("  ⚠ Empty key — skipped", fg=typer.colors.YELLOW))
+        if base_url_label and base_url_cfg_key:
+            try:
+                bu = typer.prompt(
+                    f"  {base_url_label} (可选, Enter 跳过)",
+                    default=cfg.get(base_url_cfg_key) or "",
+                    show_default=False,
+                ).strip()
+            except (KeyboardInterrupt, EOFError):
+                bu = ""
+            if bu:
+                cfg[base_url_cfg_key] = bu
+                if base_url_env_key:
+                    os.environ[base_url_env_key] = bu
+
+    if choice == "1":
+        _ask_key("HepAI", "api_key", "HEPAI_API_KEY",
+                 base_url_label="HepAI Base URL", base_url_cfg_key="openai_base_url",
+                 base_url_env_key="OPENAI_BASE_URL")
+    elif choice == "2":
+        _ask_key("Anthropic", "anthropic_api_key", "ANTHROPIC_API_KEY",
+                 base_url_label="Anthropic Base URL", base_url_cfg_key="anthropic_base_url",
+                 base_url_env_key="ANTHROPIC_BASE_URL")
+    elif choice == "3":
+        _ask_key("OpenAI", "openai_api_key", "OPENAI_API_KEY",
+                 base_url_label="OpenAI Base URL", base_url_cfg_key="openai_base_url",
+                 base_url_env_key="OPENAI_BASE_URL")
+    else:
+        typer.echo(
+            "\n  Skipped. Set one of HEPAI_API_KEY / ANTHROPIC_API_KEY / "
+            "OPENAI_API_KEY environment variables before next launch."
+        )
+
+    cli_config.save_config(cfg)
+    typer.echo(typer.style(f"\n  ✓ Saved to {cli_config.CLI_CONFIG_PATH}\n", fg=typer.colors.GREEN))
     return cfg
 
 
-@app.command()
-def chat(
-    url: Optional[str] = typer.Option(None, "--url", "-u", help="Agent server URL, e.g. http://localhost:42858/apiv2"),
-    api_key: Optional[str] = typer.Option(None, "--api-key", "-k", help="HepAI API key"),
-    model_name: Optional[str] = typer.Option(None, "--model", "-m", help="Model/agent name on the server"),
-    user_id: Optional[str] = typer.Option(None, "--user", help="Your user id (email)"),
-    defult_config_name: Optional[str] = typer.Option(None, "--llm-config", help="Default LLM config name"),
-):
-    """Start an interactive chat session with a running DrSai agent."""
-    # First-time setup: no config file exists and no CLI args provided
-    if not CLI_CONFIG_PATH.exists() and not any([url, api_key, model_name, user_id]):
-        cfg = _interactive_setup()
-    else:
-        cfg = load_config()
+def _launch_tui(*, attach_url: Optional[str] = None) -> None:
+    """Spawn the Ink TUI subprocess.
 
-    # CLI args override saved config
-    if url:
-        cfg["url"] = url
-    if api_key:
-        cfg["api_key"] = api_key
-    if model_name:
-        cfg["model_name"] = model_name
-    if user_id:
-        cfg["user_id"] = user_id
-    if defult_config_name:
-        cfg["defult_config_name"] = defult_config_name
-
-    if not cfg["api_key"]:
-        # Try env
-        cfg["api_key"] = os.environ.get("HEPAI_API_KEY", "")
-    if not cfg["api_key"]:
-        typer.echo("No API key provided. Use --api-key, set HEPAI_API_KEY, or run: drsai-chat config")
+    Before launching, run the setup wizard on first install or whenever no
+    API key is reachable. Skipped silently when attaching to a remote gateway
+    (the remote already has its own config).
+    """
+    ui_dir = _find_ui_tui_dir()
+    if ui_dir is None:
+        typer.echo(
+            typer.style(
+                "Error: ui-tui directory not found.\n"
+                "  Set DRSAI_UI_TUI_DIR=<path> or install the ui-tui package.",
+                fg=typer.colors.RED,
+            )
+        )
         raise typer.Exit(1)
 
-    asyncio.run(_run_repl(cfg))
+    # ── First-run / missing-API-key wizard ──────────────────────────────
+    # Skip when --attach is given (remote gateway has its own config) or when
+    # running headless (no TTY → can't prompt interactively).
+    if not attach_url and sys.stdin.isatty() and sys.stdout.isatty():
+        first_run = not cli_config.CLI_CONFIG_PATH.exists()
+        cfg = cli_config.load_config() if not first_run else dict(cli_config.DEFAULT_CONFIG)
+        if first_run or not _has_any_api_key(cfg):
+            try:
+                _setup_wizard(first_run=first_run)
+            except (KeyboardInterrupt, EOFError):
+                typer.echo("\n  Setup cancelled. You can re-run any time with: drsai config\n")
+                raise typer.Exit(130)
+
+    cmd, base_args = _resolve_node_runner(ui_dir)
+    if not cmd:
+        bundle = ui_dir / "dist" / "entry.mjs"
+        has_bundle = bundle.exists()
+        has_src = (ui_dir / "package.json").exists()
+        no_download = (os.environ.get("DRSAI_NODE_NO_DOWNLOAD") or "").strip() in {
+            "1", "true", "yes", "on",
+        }
+
+        msg = [
+            "Error: cannot launch TUI.",
+            "",
+            "The DrSai TUI is a React/Ink app and needs Node.js (≥ 20) to run.",
+            "",
+            f"Checked for: $DRSAI_NODE, node on PATH, pnpm, npm "
+            f"(bundle: {has_bundle}, source: {has_src})",
+        ]
+        if has_bundle and not no_download:
+            msg += [
+                "",
+                "An auto-download of portable Node.js was also attempted but failed.",
+                "Most likely cause: network unreachable / proxy / mirror blocked.",
+                "",
+                "Options:",
+                "  • Install Node.js system-wide:  https://nodejs.org/",
+                "  • Or set a closer mirror:",
+                "      DRSAI_NODE_MIRROR=https://npmmirror.com/mirrors/node  drsai",
+                "  • Or point at an existing node:",
+                "      DRSAI_NODE=/full/path/to/node  drsai",
+            ]
+        elif has_bundle and no_download:
+            msg += [
+                "",
+                "DRSAI_NODE_NO_DOWNLOAD=1 is set, so auto-download is disabled.",
+                "",
+                "Options:",
+                "  • Install Node.js system-wide:  https://nodejs.org/",
+                "  • Or point at an existing node:  DRSAI_NODE=/full/path/to/node",
+                "  • Or unset DRSAI_NODE_NO_DOWNLOAD to allow auto-download (~25 MB).",
+            ]
+        else:
+            msg += [
+                "",
+                "The ui-tui bundle is missing — your install looks incomplete.",
+                "Rebuild it from source:  cd ui-tui && pnpm install && pnpm build",
+            ]
+        typer.echo(typer.style("\n".join(msg), fg=typer.colors.RED))
+        raise typer.Exit(1)
+
+    env = os.environ.copy()
+    if attach_url:
+        env["DRSAI_TUI_ATTACH_URL"] = attach_url
+
+    # Capture the directory the *user* invoked ``drsai`` from. We have to
+    # ``cwd=ui_dir`` for the Node subprocess (so it can find package.json /
+    # node_modules / dist), but the gateway needs to treat the user's cwd as
+    # the workspace — sessions are bound to that, not to ui-tui/.
+    user_cwd = os.environ.get("DRSAI_USER_CWD") or str(Path.cwd().resolve())
+    env["DRSAI_USER_CWD"] = user_cwd
+
+    try:
+        # On Windows, pnpm/npm are .cmd/.ps1 shims — Python's CreateProcess
+        # can't execute them without shell=True. We pass an absolute path from
+        # _which_any when possible, but fall back to shell=True for safety.
+        use_shell = sys.platform == "win32" and not cmd.lower().endswith((".exe",))
+        if use_shell:
+            # Quote args containing spaces (e.g. bundle path may contain spaces)
+            cmd_line = " ".join(f'"{a}"' if " " in a else a for a in [cmd, *base_args])
+            result = subprocess.run(cmd_line, cwd=str(ui_dir), env=env, shell=True)
+        else:
+            result = subprocess.run([cmd, *base_args], cwd=str(ui_dir), env=env)
+        raise typer.Exit(result.returncode)
+    except KeyboardInterrupt:
+        raise typer.Exit(130)
+    except FileNotFoundError as exc:
+        typer.echo(typer.style(f"Error launching TUI: {exc}", fg=typer.colors.RED))
+        raise typer.Exit(1)
 
 
-@app.command()
-def config(
-    url: Optional[str] = typer.Option(None, "--url", "-u", help="Agent server URL"),
-    api_key: Optional[str] = typer.Option(None, "--api-key", "-k", help="HepAI API key"),
-    model_name: Optional[str] = typer.Option(None, "--model", "-m", help="Model/agent name"),
-    user_id: Optional[str] = typer.Option(None, "--user", help="Your user id (email)"),
-    defult_config_name: Optional[str] = typer.Option(None, "--llm-config", help="Default LLM config name"),
-    show: bool = typer.Option(False, "--show", "-s", help="Show current config"),
-):
-    """View or update CLI connection config (saved to ~/.drsai/configs/cli_config.json)."""
-    cfg = load_config()
+@app.command("gateway")
+def gateway(
+    port: int = typer.Option(8642, help="API server port"),
+    host: str = typer.Option("127.0.0.1", help="API server host"),
+) -> None:
+    """Start the legacy DrSai SSE gateway (for the Electron desktop app)."""
+    typer.echo(
+        typer.style(
+            "ℹ Note: the legacy SSE gateway (gateway.py) is preserved for desktop compatibility.\n"
+            "  For the new JSON-RPC TUI, use `drsai chat` (which auto-spawns its gateway).",
+            fg=typer.colors.CYAN,
+        )
+    )
+    os.environ.setdefault("DRSAI_API_PORT", str(port))
+    os.environ.setdefault("DRSAI_API_HOST", host)
+    from drsai.backend.gateway import main as legacy_gateway_main
+    legacy_gateway_main()
 
-    if show or (url is None and api_key is None and model_name is None and user_id is None and defult_config_name is None):
-        typer.echo(f"Config file: {CLI_CONFIG_PATH}")
-        display = dict(cfg)
-        if display.get("api_key"):
-            key = display["api_key"]
-            display["api_key"] = key[:8] + "..." + key[-4:] if len(key) > 12 else "***"
-        typer.echo(json.dumps(display, indent=2, ensure_ascii=False))
+
+@app.command("tui-gateway")
+def tui_gateway() -> None:
+    """Start the new JSON-RPC TUI gateway as a standalone process (for attach mode)."""
+    typer.echo(
+        typer.style(
+            f"Starting TUI gateway. Set DRSAI_TUI_ENABLE_WS=1 to expose WebSocket.",
+            fg=typer.colors.CYAN,
+        )
+    )
+    from drsai.backend.tui_gateway.entry import main as gw_main
+    gw_main()
+
+
+@app.command("config")
+def config_cmd(
+    url: Optional[str] = typer.Option(None, "--url", "-u"),
+    api_key: Optional[str] = typer.Option(None, "--api-key", "-k"),
+    user_id: Optional[str] = typer.Option(None, "--user"),
+    defult_config_name: Optional[str] = typer.Option(None, "--llm-config"),
+    llm_config_file: Optional[str] = typer.Option(None, "--llm-config-file"),
+    anthropic_api_key: Optional[str] = typer.Option(None, "--anthropic-api-key"),
+    anthropic_base_url: Optional[str] = typer.Option(None, "--anthropic-base-url"),
+    openai_api_key: Optional[str] = typer.Option(None, "--openai-api-key"),
+    openai_base_url: Optional[str] = typer.Option(None, "--openai-base-url"),
+    skills_dir: Optional[str] = typer.Option(None, "--skills-dir"),
+    plan_mode: Optional[bool] = typer.Option(None, "--plan-mode", "-p"),
+    show: bool = typer.Option(False, "--show", "-s", help="Show current config (masked)"),
+    json_fmt: bool = typer.Option(False, "--json", help="Show as JSON"),
+) -> None:
+    """View or update CLI config (api_key, llm_config_file, etc.)."""
+    cfg = cli_config.load_config()
+    updates = [
+        ("url", url), ("api_key", api_key), ("user_id", user_id),
+        ("defult_config_name", defult_config_name),
+        ("llm_config_file", llm_config_file),
+        ("anthropic_api_key", anthropic_api_key),
+        ("anthropic_base_url", anthropic_base_url),
+        ("openai_api_key", openai_api_key),
+        ("openai_base_url", openai_base_url),
+        ("skills_dir", skills_dir),
+        ("plan_mode", plan_mode),
+    ]
+    if show or not any(v is not None for _, v in updates):
+        cli_config.show_config(cfg, as_json=json_fmt)
         return
-
-    if url:
-        cfg["url"] = url
-    if api_key:
-        cfg["api_key"] = api_key
-    if model_name:
-        cfg["model_name"] = model_name
-    if user_id:
-        cfg["user_id"] = user_id
-    if defult_config_name:
-        cfg["defult_config_name"] = defult_config_name
-
-    save_config(cfg)
-    typer.echo(f"Config saved to {CLI_CONFIG_PATH}")
+    for key, val in updates:
+        if val is not None:
+            cfg[key] = val
+    cli_config.save_config(cfg)
+    typer.echo(f"Config saved to {cli_config.CLI_CONFIG_PATH}")
 
 
-@app.command()
-def sessions(
+@app.command("sessions")
+def sessions_cmd(
     clear: bool = typer.Option(False, "--clear", help="Clear all saved sessions"),
-):
+) -> None:
     """List or manage saved CLI sessions."""
     if clear:
-        save_sessions({})
+        cli_config.save_sessions({})
         typer.echo("All sessions cleared.")
         return
-
-    data = load_sessions()
+    data = cli_config.load_sessions()
     if not data:
         typer.echo("No saved sessions.")
         return
     typer.echo("Saved sessions:")
     for sid, info in data.items():
-        typer.echo(f"  [{sid[:8]}] {info['name']}")
+        name = info.get("name", "?") if isinstance(info, dict) else "?"
+        typer.echo(f"  [{sid[:8]}] {name}")
 
 
-@app.command()
-def version():
+@app.command("version")
+def version_cmd() -> None:
     """Print DrSai version."""
     typer.echo(f"{APPNAME} version: {VERSION}")
 
 
-def run():
-    app()
+# ── Entry point ──────────────────────────────────────────────────────────────
+
+
+def run() -> None:
+    """Main entry point used by the ``drsai`` console script."""
+    # `drsai` (no args) or `drsai -u http://...` → implicit `chat` subcommand
+    if len(sys.argv) == 1 or (len(sys.argv) >= 2 and sys.argv[1].startswith("-")):
+        sys.argv.insert(1, "chat")
+    try:
+        app()
+    except KeyboardInterrupt:
+        sys.stderr.write("\nInterrupted.\n")
+        sys.exit(130)
 
 
 if __name__ == "__main__":
-    app()
+    run()

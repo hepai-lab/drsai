@@ -14,7 +14,8 @@ interface UseSessionManagerProps {
 
 export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionManagerProps) => {
   const { session, setSession, sessions, setSessions } = useConfigStore();
-  const { selectedAgent, setSelectedAgent, setMode, setConfig } = useModeConfigStore();
+  const { selectedAgent, setSelectedAgent, setMode, setConfig, setAgentId, setAgentInfo } =
+    useModeConfigStore();
   const { saveSessionId, getSessionId } = useSessionStorage();
 
   const [isLoading, setIsLoading] = useState(false);
@@ -73,6 +74,12 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
               if (fullSessionData.agent_mode_config) {
                 setSelectedAgent(fullSessionData.agent_mode_config);
                 setMode(fullSessionData.agent_mode_config.mode);
+                const sid =
+                  (fullSessionData.agent_mode_config as any)?.agent_id ??
+                  (fullSessionData.agent_mode_config as any)?.id ??
+                  null;
+                if (sid) setAgentId(String(sid));
+                setAgentInfo(fullSessionData.agent_mode_config as any);
                 
                 try {
                   const agentConfig = await agentAPI.getAgentConfig(userEmail, fullSessionData.agent_mode_config.mode);
@@ -94,7 +101,15 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
           // This ensures we always show welcome page when opening the app fresh
           saveSessionId(null);
           setSession(null);
-          window.history.replaceState({}, '', window.location.pathname);
+          // Preserve other query params (e.g. menu/view), only remove sessionId
+          const params = new URLSearchParams(window.location.search);
+          params.delete("sessionId");
+          const nextSearch = params.toString();
+          window.history.replaceState(
+            {},
+            "",
+            `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`
+          );
         }
         // The selected agent will be restored from localStorage separately
       }
@@ -142,6 +157,12 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
       if (data.agent_mode_config) {
         setSelectedAgent(data.agent_mode_config);
         setMode(data.agent_mode_config.mode);
+        const sid =
+          (data.agent_mode_config as any)?.agent_id ??
+          (data.agent_mode_config as any)?.id ??
+          null;
+        if (sid) setAgentId(String(sid));
+        setAgentInfo(data.agent_mode_config as any);
         
         try {
           const agentConfig = await agentAPI.getAgentConfig(userEmail, data.agent_mode_config.mode);
@@ -240,8 +261,16 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
       const sessionData = {
         name: query.slice(0, 50) || `${agent.name} Chat`,
         agent_mode_config: {
+          // Persist agent identity to avoid "crossed agent" on later continues.
+          id: agent.id,
+          agent_id: agent.id,
           mode: agent.mode,
           name: agent.name,
+          // Ensure per-agent default config label is stored with the session.
+          defult_config_name:
+            (agent as any)?.defult_config_name ??
+            (agent as any)?.config?.defult_config_name ??
+            (agent as any)?.agent_config?.defult_config_name,
           ...agent.config,
         },
       };
@@ -291,7 +320,7 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
         // Create new session
         setSelectedAgent({
           mode: "magentic-one",
-          name: "Dr.Sai General",
+          name: "Dr.Sai WebSurfer",
         });
         
         const created = await sessionAPI.createSession(
@@ -306,7 +335,7 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
             })}`,
             agent_mode_config: {
               mode: "magentic-one",
-              name: "Dr.Sai General",
+              name: "Dr.Sai WebSurfer",
             },
           },
           userEmail
@@ -413,7 +442,15 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
     setIsIntentionalSessionClear(true);
     setSession(null);
     saveSessionId(null);
-    window.history.replaceState({}, '', window.location.pathname);
+    // Preserve other query params (e.g. menu/view), only remove sessionId
+    const params = new URLSearchParams(window.location.search);
+    params.delete("sessionId");
+    const nextSearch = params.toString();
+    window.history.replaceState(
+      {},
+      "",
+      `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`
+    );
   }, [setSession, saveSessionId]);
 
   // Update session run status

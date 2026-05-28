@@ -1,5 +1,6 @@
 from .assistant_skill import SkillAgent
 from .drsai_assistant import DrSaiAssistant
+from .drsai_cli_assistant import DrSaiCLIAssistant, SessionInfo, TokenStats
 from .managers.user_profile_manager import UserProfileManager
 from .managers.todo_manager import TodoManager
 from .managers.operater_funs import get_operator_funcs

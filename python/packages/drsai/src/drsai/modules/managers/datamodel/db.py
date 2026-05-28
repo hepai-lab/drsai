@@ -346,6 +346,76 @@ class InputType(str, Enum):
 
 
 
+class SessionMessage(SQLModel, table=True):
+    """存储 LLMMessage 的专用表，按 thread_id 隔离。
+    
+    每个 thread 的消息存储为独立的行，支持：
+    - 完整的 LLMMessage JSON 序列化
+    - 按 thread_id 高效查询
+    - FTS5 全文搜索（通过关联的 FTS 表）
+    """
+    __table_args__ = {"sqlite_autoincrement": True}
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )
+    
+    # 关联标识
+    thread_id: str = Field(index=True)  # 索引加速查询
+    user_id: Optional[str] = Field(default=None, index=True)
+    
+    # LLMMessage 序列化存储
+    message_type: str = Field(default="user")  # system/user/assistant/tool
+    source: Optional[str] = None  # 消息来源标识
+    
+    # 原始 LLMMessage JSON（完整保留）
+    raw_message: Dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSON)
+    )
+    
+    # 用于 FTS5 搜索的字段（冗余存储以便建立索引）
+    content: Optional[str] = Field(default=None)  # 消息内容文本
+    tool_name: Optional[str] = None  # 工具名（如果有）
+    tool_call_id: Optional[str] = None  # 工具调用 ID（如果有）
+    
+    # 额外元信息
+    version: Optional[str] = "1.0.0"
+    
+    @field_serializer("created_at", "updated_at")
+    def serialize_datetime(cls, value: datetime) -> str:
+        if isinstance(value, datetime):
+            return value.isoformat()
+
+class SessionSummary(SQLModel, table=True):
+    """存储会话摘要，用于长期记忆检索。"""
+    __table_args__ = {"sqlite_autoincrement": True}
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
+    )
+    updated_at: datetime = Field(
+        default_factory=datetime.now,
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
+    )
+    
+    # 关联标识
+    thread_id: str = Field(index=True)
+    user_id: Optional[str] = Field(default=None, index=True)
+    
+    # 摘要内容
+    summary: str = Field(default="")
+    keywords: Optional[str] = None  # 逗号分隔的关键词
+    
+    # 版本
+    version: Optional[str] = "1.0.0"
+
+
 ##
 
-DatabaseModel = AutoGenMessage | UserInput | SingleTask | Tasks | PlanCheck | Thread | AgentJson
+DatabaseModel = AutoGenMessage | UserInput | SingleTask | Tasks | PlanCheck | Thread | AgentJson | SessionMessage | SessionSummary

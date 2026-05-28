@@ -500,8 +500,12 @@ async def create_magentic_round_team(
             ddf_api_key = api_key
         agent_config["api_key"] = ddf_api_key
         agent_config["url"] = agent_mode_config.get("url", "https://aiapi.ihep.ac.cn/apiv2")
-        if agent_mode_config.get("defult_config_name"):
-            agent_config["defult_config_name"] = agent_mode_config.get("defult_config_name")
+        requested_model_alias = (
+            agent_mode_config.get("defult_config_name")
+            or agent_mode_config.get("default_config_name")
+        )
+        if requested_model_alias:
+            agent_config["defult_config_name"] = requested_model_alias
         agent = HepAIWorkerAgent(
             name="RemoteAgent",
             model_client=get_model_client(model_client_config = model_config),

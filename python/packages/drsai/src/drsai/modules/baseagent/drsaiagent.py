@@ -179,6 +179,9 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         self._metadata = metadata or {}
         self._model_client = model_client
         self._model_client_stream = model_client_stream
+        # Store llm_mode_config and defult_config_name for token limit access
+        self._llm_mode_config = llm_mode_config or {}
+        self._defult_config_name = defult_config_name or ""
         self._output_content_type: type[BaseModel] | None = output_content_type
         self._output_content_type_format = output_content_type_format
         self._structured_message_factory: StructuredMessageFactory | None = None
@@ -466,6 +469,10 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 inner_messages.append(event_msg)
                 yield event_msg
 
+            # STEP 2.5: Sanitize messages to handle orphaned tool results / missing stubs
+            # This prevents tool_call_id mismatches after model switches
+            await self._sanitize_api_messages()
+
             # STEP 3: Run the first inference
             model_result = None
             async for inference_output in self._call_llm(
@@ -719,7 +726,7 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             isinstance(item, FunctionCall) for item in model_result.content
         )
 
-        # STEP 4A: Yield ToolCallRequestEvent
+        # STEP 4A: Yield "I am using tools" first, then ToolCallRequestEvent
         tool_call_msg = ToolCallRequestEvent(
             content=model_result.content,
             source=agent_name,
@@ -727,13 +734,13 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         )
         inner_messages.append(tool_call_msg)
         logger.debug(tool_call_msg)
-        yield tool_call_msg
         tools_name = [tool.name for tool in model_result.content] 
         yield AgentLogEvent(
             title="I am using tools: " + " ".join(tools_name),
             source=agent_name, 
             content=str(tool_call_msg.content), 
             content_type="tools")
+        yield tool_call_msg
 
         # STEP 4B: Execute tool calls
         executed_calls_and_results = await asyncio.gather(
@@ -1101,7 +1108,242 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 name=tool_call.name,
             ),
         )
-    
+
+    async def switch_model(self, new_model_client: ChatCompletionClient) -> None:
+        """Switch the model client to a new one.
+
+        This replaces the current model client, invalidates cached system prompt,
+        and clears the model context to avoid tool_call_id mismatches between models.
+
+        Also synchronizes the model_client inside the model_context so that
+        token counting, compression, and summary operations use the new model.
+
+        Args:
+            new_model_client: The new ChatCompletionClient to use.
+        """
+        # logger.info(
+        #     f"Switching model from {self._model_client._create_args.get('model', 'unknown')} "
+        #     f"to {new_model_client._create_args.get('model', 'unknown')}"
+        # )
+
+        # Close the old client
+        await self._model_client.close()
+        # Update to new client
+        self._model_client = new_model_client
+
+        # Synchronize the model_client inside model_context so that token
+        # counting (count_prompt_tokens), Layer-2 compression
+        # (_incremental_compress) and summary generation
+        # (summry_conversation_to_memory) all use the new model client.
+        # 
+        # IMPORTANT: Create an independent copy for the context, similar to how
+        # DrSaiAssistant._create_context creates independent_model_client.
+        # This prevents the context from sharing the same client instance with
+        # the agent, which could cause issues when one is closed.
+        if hasattr(self._model_context, 'update_model_client'):
+            try:
+                model_config = new_model_client.dump_component()
+                independent_client = ChatCompletionClient.load_component(model_config)
+                # Preserve model_info from the new client
+                independent_client._model_info = new_model_client._model_info
+                await self._model_context.update_model_client(independent_client)
+            except Exception as e:
+                logger.warning(f"Failed to create independent model_client for context, using shared client: {e}")
+                await self._model_context.update_model_client(new_model_client)
+
+        # Sanitize immediately after model switch so that any orphaned tool
+        # results or unmatched tool_calls left over from the previous model are
+        # cleaned up before the next LLM call.  This is especially important
+        # when switching between providers with different strictness levels
+        # (e.g. GLM → Claude): Claude will return an empty response instead of
+        # an error when the conversation contains unmatched tool_use blocks.
+        await self._sanitize_api_messages()
+
+    async def _sanitize_api_messages(self) -> None:
+        """Repair the message list before each LLM call.
+
+        Fixes four classes of problems that cause Claude (and other strict
+        providers) to return an empty response or a 400 error while GLM / other
+        lenient providers silently accept the same conversation:
+
+        1. **Orphaned tool results** – FunctionExecutionResultMessage whose
+           ``call_id`` has no matching AssistantMessage tool_call anywhere in
+           the conversation.  These are removed.
+
+        2. **Missing tool results** – AssistantMessage tool_calls that have no
+           corresponding FunctionExecutionResultMessage.  A placeholder stub is
+           injected immediately after the offending AssistantMessage.
+
+        3. **Consecutive user-role messages** – Anthropic (Claude) requires
+           strict user/assistant alternation.  ``FunctionExecutionResultMessage``
+           is serialised as ``role=user`` by ``to_anthropic_type``, so a plain
+           ``UserMessage`` that immediately follows a tool-result block creates
+           two consecutive ``role=user`` turns.  The plain UserMessage's text is
+           merged into a new synthetic AssistantMessage + UserMessage pair so
+           that the turn order becomes: … tool_result | assistant(ack) | user.
+
+        4. **Empty AssistantMessage stubs** – AssistantMessages with
+           ``content=""`` that were stored by the "Your reply is empty" retry
+           loop are removed from the history.  Leaving them in causes Claude to
+           see its own empty turn and continue to produce empty responses.
+
+        The method always writes the (possibly unchanged) message list back into
+        the context so that the in-memory cache stays in sync with any edits
+        made to the ``messages`` list returned by ``get_messages()``.
+        """
+        from autogen_core.models import FunctionExecutionResult, FunctionExecutionResultMessage
+
+        messages = await self._model_context.get_messages()
+        if not messages:
+            return
+
+        dirty = False  # track whether we actually changed anything
+
+        # ── Pass 1: collect all tool_call ids declared by AssistantMessages ──
+        surviving_call_ids: set[str] = set()
+        for msg in messages:
+            if isinstance(msg, AssistantMessage) and isinstance(msg.content, list):
+                for call in msg.content:
+                    if isinstance(call, FunctionCall):
+                        surviving_call_ids.add(call.id)
+
+        # ── Pass 2: remove orphaned FunctionExecutionResultMessages ──────────
+        # A result is orphaned when its call_id has no matching AssistantMessage
+        # tool_call anywhere in the conversation.
+        result_call_ids: set[str] = set()
+        messages_to_remove: list[int] = []
+
+        for i, msg in enumerate(messages):
+            if isinstance(msg, FunctionExecutionResultMessage) and isinstance(msg.content, list):
+                for result in msg.content:
+                    if isinstance(result, FunctionExecutionResult):
+                        result_call_ids.add(result.call_id)
+                        if result.call_id not in surviving_call_ids:
+                            if i not in messages_to_remove:
+                                messages_to_remove.append(i)
+                            logger.debug(
+                                f"Removing orphaned tool result: {result.call_id} "
+                                f"(name={result.name})"
+                            )
+
+        if messages_to_remove:
+            for i in reversed(messages_to_remove):
+                messages.pop(i)
+            dirty = True
+
+        # ── Pass 3: inject stubs for tool_calls that have no result ──────────
+        missing_result_ids = surviving_call_ids - result_call_ids
+        if missing_result_ids:
+            for call_id in missing_result_ids:
+                for i, msg in enumerate(messages):
+                    if isinstance(msg, AssistantMessage) and isinstance(msg.content, list):
+                        for call in msg.content:
+                            if isinstance(call, FunctionCall) and call.id == call_id:
+                                stub = FunctionExecutionResultMessage(
+                                    content=[
+                                        FunctionExecutionResult(
+                                            call_id=call_id,
+                                            name=call.name,
+                                            content="[Result unavailable - tool result missing after model switch]",
+                                            is_error=True,
+                                        )
+                                    ]
+                                )
+                                messages.insert(i + 1, stub)
+                                dirty = True
+                                logger.debug(
+                                    f"Injected stub result for missing tool_call: {call_id} "
+                                    f"(name={call.name})"
+                                )
+                                break
+
+        # ── Pass 4: remove empty and synthetic assistant stubs + their paired
+        #    retry UserMessages ──────────────────────────────────────────────
+        # Two kinds of garbage assistant messages accumulate in the context:
+        #   a) Empty strings (content="") from the "Your reply is empty" retry
+        #      loop.  Claude sees its own empty turn and continues to produce
+        #      empty responses.
+        #   b) Synthetic "[Continuing]" acknowledgements inserted by Pass 5 to
+        #      fix consecutive user-role messages.  These are *ephemeral* and
+        #      should not persist: they are only needed for the Anthropic
+        #      message alternation constraint during a single LLM call.  On the
+        #      next call the whole context is re-serialised, and the original
+        #      consecutive-user-role problem is still present, so Pass 5 would
+        #      insert yet another "[Continuing]" on top of the old one →
+        #      unbounded accumulation.
+        # We strip both here, together with the paired "Your reply is empty"
+        # UserMessage that follows them (if present), so that each sanitize
+        # cycle starts from a clean slate.
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
+            if (
+                isinstance(msg, AssistantMessage)
+                and isinstance(msg.content, str)
+                and (not msg.content.strip() or msg.content.strip() == "[Continuing]")
+            ):
+                # Remove the empty/synthetic assistant turn
+                messages.pop(i)
+                dirty = True
+                logger.debug(
+                    f"Removed synthetic assistant stub: "
+                    f"content={repr(msg.content[:40])}"
+                )
+                # Also remove the immediately following "Your reply is empty"
+                # user message if present (it was injected as a retry prompt).
+                if i < len(messages):
+                    nxt = messages[i]
+                    if (
+                        isinstance(nxt, UserMessage)
+                        and "reply is empty" in nxt.content.lower()
+                    ):
+                        messages.pop(i)
+                        logger.debug("Removed 'reply is empty' retry UserMessage")
+                # Don't advance i — re-check the same index after removal
+                continue
+            i += 1
+
+        # ── Pass 5: merge consecutive user-role messages ──────────────────────
+        # Claude requires strict user/assistant alternation.
+        # FunctionExecutionResultMessage serialises to role=user, so a plain
+        # UserMessage immediately following a tool-result creates two consecutive
+        # role=user turns → Claude returns empty content or 400.
+        # Fix: insert a minimal assistant acknowledgement between them.
+        i = 0
+        while i < len(messages) - 1:
+            cur = messages[i]
+            nxt = messages[i + 1]
+            cur_is_user_role = isinstance(cur, (UserMessage, FunctionExecutionResultMessage))
+            nxt_is_user_role = isinstance(nxt, (UserMessage, FunctionExecutionResultMessage))
+            if cur_is_user_role and nxt_is_user_role:
+                # Insert a minimal assistant turn to restore alternation
+                ack = AssistantMessage(
+                    content="[Continuing]",
+                    source="assistant",
+                )
+                messages.insert(i + 1, ack)
+                dirty = True
+                logger.debug(
+                    f"Inserted assistant ack between consecutive user-role messages "
+                    f"at index {i} ({type(cur).__name__}) and {i+2} ({type(nxt).__name__})"
+                )
+                i += 2  # skip over the newly inserted message
+                continue
+            i += 1
+
+        # ── Always persist if anything changed ────────────────────────────────
+        # Use replace_messages() when available (DrSaiSQLiteChatCompletionContext)
+        # to avoid re-queuing every surviving message to the DB — which would
+        # create duplicate rows in SessionMessage table.  For other context
+        # types that lack replace_messages, fall back to clear+add_message.
+        if dirty:
+            if hasattr(self._model_context, 'replace_messages'):
+                self._model_context.replace_messages(messages)
+            else:
+                await self._model_context.clear()
+                for msg in messages:
+                    await self._model_context.add_message(msg)
+
     async def lazy_init(self, cancellation_token: CancellationToken|None = None, **kwargs) -> None:
         """Initialize the tools and models needed by the agent."""
         pass
@@ -1374,9 +1616,20 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
             #     else:
             #         raise RuntimeError(f"Invalid chunk type: {type(chunk)}")
                 assert isinstance(response, str)
+                # Calculate completion tokens for the response
+                # prompt_tokens is passed from _call_llm via kwargs
+                passed_prompt_tokens = kwargs.get('prompt_tokens', 0)
+                try:
+                    completion_tokens = model_client.count_tokens(
+                        [AssistantMessage(content=response, source=agent_name)]
+                    )
+                except Exception:
+                    completion_tokens = 0
+                # Use passed prompt_tokens if available, otherwise calculate
+                final_prompt_tokens = passed_prompt_tokens if passed_prompt_tokens > 0 else 0
                 model_result = CreateResult(
                     content=response, finish_reason="stop",
-                    usage = RequestUsage(prompt_tokens=0, completion_tokens=0),
+                    usage = RequestUsage(prompt_tokens=final_prompt_tokens, completion_tokens=completion_tokens),
                     cached=False)
         else:
             # 如果reply_function不是异步函数，或者是一个异步生成器，则会报错
@@ -1396,9 +1649,20 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 **self._user_params
                 )
             if isinstance(response, str):
+                # Calculate completion tokens for the response
+                # prompt_tokens is passed from _call_llm via kwargs
+                passed_prompt_tokens = kwargs.get('prompt_tokens', 0)
+                try:
+                    completion_tokens = model_client.count_tokens(
+                        [AssistantMessage(content=response, source=agent_name)]
+                    )
+                except Exception:
+                    completion_tokens = 0
+                # Use passed prompt_tokens if available, otherwise calculate
+                final_prompt_tokens = passed_prompt_tokens if passed_prompt_tokens > 0 else 0
                 model_result = CreateResult(
                     content=response, finish_reason="stop",
-                    usage = RequestUsage(prompt_tokens=0, completion_tokens=0),
+                    usage = RequestUsage(prompt_tokens=final_prompt_tokens, completion_tokens=completion_tokens),
                     cached=False)
             elif isinstance(response, CreateResult):
                 model_result = response
@@ -1421,12 +1685,13 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
         model_result: Optional[CreateResult] = None
 
         if model_client_stream:
-                
+            # Pass stream_options to include usage in the final chunk
             async for chunk in model_client.create_stream(
                 llm_messages, 
                 tools=tools,
                 json_output=output_content_type,
-                cancellation_token=cancellation_token
+                cancellation_token=cancellation_token,
+                extra_create_args={"stream_options": {"include_usage": True}}
             ):
                 if isinstance(chunk, CreateResult):
                     model_result = chunk

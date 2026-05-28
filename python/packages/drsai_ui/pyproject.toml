@@ -66,7 +66,7 @@ ollama = [
 
 
 [project.scripts]
-drsai = "drsai_ui.run_ui:run"
+drsai-ui = "drsai_ui.run_ui:run"
 
 [tool.uv]
 dev-dependencies = [

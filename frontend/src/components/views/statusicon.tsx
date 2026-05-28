@@ -18,6 +18,8 @@ export const getStatusIcon = (
 ) => {
   switch (status) {
     case "active":
+    case "created":
+    case "connected":
       return (
         <div className="inline-block mr-1">
           <Loader2
@@ -76,10 +78,7 @@ export const getStatusIcon = (
     case "pausing":
       return (
         <div className="text-sm mb-2">
-          <Loader2
-            size={20}
-            className="inline-block mr-2 text-accent animate-spin"
-          />
+          <PauseCircle size={20} className="inline-block mr-2 text-accent" />
           <span className="inline-block mr-2 ml-1">Pausing</span>
         </div>
       );
@@ -87,7 +86,7 @@ export const getStatusIcon = (
       return (
         <div className="text-sm mb-2">
           <PauseCircle size={20} className="inline-block mr-2 text-accent" />
-          <span className="inline-block mr-2 ml-1">Paused</span>
+          <span className="inline-block mr-2 ml-1">Pausing</span>
         </div>
       );
     case "resuming":

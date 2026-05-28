@@ -29,6 +29,9 @@ from .routes import (
     agent_worker,
     models,
     local_login,
+    users,
+    organizations,
+    skills,
 )
 import httpx
 from fastapi.responses import HTMLResponse
@@ -207,6 +210,27 @@ api.include_router(
     local_login.router,
     prefix="/umtlocal",
     tags=["umtlocal"],
+    responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    users.router,
+    prefix="/users",
+    tags=["users"],
+    responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    organizations.router,
+    prefix="/orgs",
+    tags=["organizations"],
+    responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    skills.router,
+    prefix="/skills",
+    tags=["skills"],
     responses={404: {"description": "Not found"}},
 )
 

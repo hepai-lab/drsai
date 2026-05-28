@@ -1,0 +1,16 @@
+export default {
+  title: "Sessions",
+  searchPlaceholder: "Search conversations...",
+  noResults: "No results found",
+  noResultsHint: "Try different search terms",
+  empty: "No sessions yet",
+  newConversation: "New conversation",
+  newChat: "New Chat",
+  today: "Today",
+  yesterday: "Yesterday",
+  thisWeek: "This Week",
+  earlier: "Earlier",
+  emptyHint: "Start chatting to create your first session",
+  messages: "msg",
+  messageSingular: "msg",
+} as const;

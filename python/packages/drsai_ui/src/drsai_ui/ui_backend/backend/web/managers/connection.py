@@ -24,7 +24,6 @@ from drsai.modules.managers.messages.agent_messages import (
     TaskEvent,
     FilesEvent,
 )
-from autogen_agentchat.messages import ThoughtEvent
 from ....input_func import InputFuncType, InputRequestType
 from autogen_core import CancellationToken
 from fastapi import WebSocket, WebSocketDisconnect
@@ -44,6 +43,7 @@ from ...datamodel import (
 )
 from ...teammanager import TeamManager
 from ...utils.utils import compress_state, decompress_state
+from autogen_agentchat.messages import ThoughtEvent
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,15 @@ class WebSocketManager:
         self._closed_connections: set[int] = set()
         self._input_responses: Dict[int, asyncio.Queue[str]] = {}
         self._team_managers: Dict[int, TeamManager] = {}
+        # self._streaming_buffers: Dict[int, Dict[str, Any]] = {}
+        # Track run states and state locks for atomic state transitions
+        self._run_states: Dict[int, RunStatus] = {}
+        self._state_locks: Dict[int, asyncio.Lock] = {}
+        # Serialize team-level pause/resume operations so they can't overlap.
+        # team.pause/resume make remote HTTP calls; if resume's HTTP call
+        # completes before pause's, the remote ends up in paused state
+        # while local state shows resumed.
+        self._team_op_locks: Dict[int, asyncio.Lock] = {}
         self._cancel_message = TeamResult(
             task_result=TaskResult(
                 messages=[TextMessage(source="user", content="Run cancelled by user")],
@@ -105,6 +114,10 @@ class WebSocketManager:
             self._closed_connections.discard(run_id)
             # Initialize input queue for this connection
             self._input_responses[run_id] = asyncio.Queue()
+            # Initialize state lock for this connection
+            self._state_locks[run_id] = asyncio.Lock()
+            self._team_op_locks[run_id] = asyncio.Lock()
+            self._run_states[run_id] = RunStatus.ACTIVE
 
             await self._send_message(
                 run_id,
@@ -199,11 +212,24 @@ class WebSocketManager:
                 #         state_dict_decompress = None
 
             agent_id = settings_config.get("agent_id")
+            requested_model_alias = (
+                settings_config.get("defult_config_name")
+                or settings_config.get("default_config_name")
+            )
             agent_mode_config = await self._get_agent_mode_config(user_id=run.user_id, agent_id = agent_id)
             if agent_mode_config:
+                # Runtime websocket settings override the saved agent default for
+                # this run only.  This lets the UI switch the remote Dr.Sai
+                # internal model without mutating UserAgents/global config.
+                if requested_model_alias:
+                    agent_mode_config = dict(agent_mode_config)
+                    agent_mode_config["defult_config_name"] = requested_model_alias
                 settings_config["agent_mode_config"] = agent_mode_config
             else:
-                raise ValueError(f"No agent mode config for agent_id {agent_id}")
+                raise ValueError(
+                    f"No agent config found for agent_id {agent_id} in UserAgents,"
+                    f"(user_id={run.user_id}). Please create a new session!"
+                )
 
             # add task as message
             if isinstance(task, str):
@@ -265,12 +291,12 @@ class WebSocketManager:
                         self.db_manager.upsert(run)
                     continue
                 
-                if isinstance(message, ToolCallSummaryMessage):
-                    message = TextMessage(
-                        content=message.content,
-                        source=message.source,
-                        metadata=message.metadata,
-                    )
+                # if isinstance(message, ToolCallSummaryMessage):
+                #     message = TextMessage(
+                #         content=message.content,
+                #         source=message.source,
+                #         metadata=message.metadata,
+                #     )
                     
                 # do not show internal messages
                 if (
@@ -282,15 +308,14 @@ class WebSocketManager:
                     continue
 
                 formatted_message = self._format_message(message)
-                # print(f"Send formatted_message to client: {formatted_message}" )
                 if formatted_message:
                     await self._send_message(run_id, formatted_message)
 
-                    # Save messages by concrete type
                     if isinstance(
                         message,
                         (
                             TextMessage,
+                            ToolCallSummaryMessage,
                             MultiModalMessage,
                             StopMessage,
                             HandoffMessage,
@@ -298,16 +323,17 @@ class WebSocketManager:
                             ToolCallExecutionEvent,
                             AgentLogEvent,
                             ThoughtEvent,
-                            # TaskEvent,
                             LLMCallEventMessage,
                             FilesEvent,
                         ),
                     ):
                         await self._save_message(run_id, message)
-                    # Capture final result if it's a TeamResult
                     elif isinstance(message, TeamResult):
                         final_result = message.model_dump()
-                    self._team_managers[run_id] = team_manager  # Track the team manager
+                    self._team_managers[run_id] = team_manager
+            # # Flush any remaining streaming content after the stream ends
+            # if run_id in self._streaming_buffers:
+            #     await self._flush_streaming_buffer(run_id)
             if (
                 not cancellation_token.is_cancelled()
                 and run_id not in self._closed_connections
@@ -408,12 +434,17 @@ class WebSocketManager:
             input_type: InputRequestType = "text_input",
         ) -> str:
             try:
-                # resume run if it is paused
-                await self.resume_run(run_id)
+                # If paused when agent needs input, auto-resume so the request
+                # can be delivered to the user (they will naturally respond).
+                # resume_run is a no-op if not paused.
+                if self._is_paused(run_id):
+                    logger.info(
+                        f"Run {run_id} paused but needs input, auto-resuming"
+                    )
+                    await self.resume_run(run_id)
 
-                # update run status to awaiting_input
+                # Transition to AWAITING_INPUT
                 await self._update_run_status(run_id, RunStatus.AWAITING_INPUT)
-                # Send input request to client
                 logger.info(
                     f"Sending input request for run {run_id}: ({input_type}) {prompt}"
                 )
@@ -434,50 +465,56 @@ class WebSocketManager:
                     run.input_request = {"prompt": prompt, "input_type": input_type}
                     self.db_manager.upsert(run)
 
-                # Wait for response with timeout
-                if run_id in self._input_responses:
-                    try:
-
-                        async def poll_for_response():
-                            while True:
-                                # Check if run was closed/cancelled
-                                if run_id in self._closed_connections:
-                                    raise ValueError("Run was closed")
-
-                                # Try to get response with short timeout
-                                try:
-                                    response = await asyncio.wait_for(
-                                        self._input_responses[run_id].get(),
-                                        timeout=min(timeout, 5),
-                                    )
-                                    await self._update_run_status(
-                                        run_id, RunStatus.ACTIVE
-                                    )
-                                    return response
-                                except asyncio.TimeoutError:
-                                    continue  # Keep checking for closed status
-
-                        response = await asyncio.wait_for(
-                            poll_for_response(), timeout=timeout
-                        )
-                        return response
-
-                    except asyncio.TimeoutError:
-                        # Stop the run if timeout occurs
-                        logger.warning(f"Input response timeout for run {run_id}")
-                        await self.stop_run(
-                            run_id,
-                            "Dr.Sai-UI timed out while waiting for your input. To resume, please enter a follow-up message in the input box or you can simply type 'continue'.",
-                        )
-                        raise
-                else:
+                if run_id not in self._input_responses:
                     raise ValueError(f"No input queue for run {run_id}")
+
+                # Wait for response with timeout
+                try:
+                    response = await asyncio.wait_for(
+                        self._poll_input_response(run_id, timeout),
+                        timeout=timeout,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"Input response timeout for run {run_id}")
+                    await self.stop_run(
+                        run_id,
+                        "Dr.Sai-UI timed out while waiting for your input. "
+                        "To resume, please enter a follow-up message in the input box "
+                        "or you can simply type 'continue'.",
+                    )
+                    raise
+
+                # If user paused while awaiting input, auto-resume so agent
+                # can actually process the input (team remote state needs
+                # to be resumed too). Otherwise just transition to ACTIVE.
+                if self._is_paused(run_id):
+                    logger.info(
+                        f"Run {run_id} paused during input wait, auto-resuming "
+                        f"after input received"
+                    )
+                    await self.resume_run(run_id)
+                else:
+                    await self._update_run_status(run_id, RunStatus.ACTIVE)
+                return response
 
             except Exception as e:
                 logger.error(f"Error handling input for run {run_id}: {e}")
                 raise
 
         return input_handler
+
+    async def _poll_input_response(self, run_id: int, timeout: int):
+        """Poll the input response queue, handling closed connections."""
+        while True:
+            if run_id in self._closed_connections:
+                raise ValueError("Run was closed")
+            try:
+                return await asyncio.wait_for(
+                    self._input_responses[run_id].get(),
+                    timeout=min(timeout, 5),
+                )
+            except asyncio.TimeoutError:
+                continue  # loop back to check closed state
 
     async def handle_input_response(self, run_id: int, response: str|dict) -> None:
         """Handle input response from client"""
@@ -545,6 +582,9 @@ class WebSocketManager:
         self._connections.pop(run_id, None)
         self._cancellation_tokens.pop(run_id, None)
         self._input_responses.pop(run_id, None)
+        self._run_states.pop(run_id, None)
+        self._state_locks.pop(run_id, None)
+        self._team_op_locks.pop(run_id, None)
 
     async def _send_message(self, run_id: int, message: Dict[str, Any]) -> None:
         """Send a message through the WebSocket with connection state checking
@@ -584,14 +624,20 @@ class WebSocketManager:
             error (Exception): Exception that occurred
         """
         if run_id not in self._closed_connections:
+            error_message = TextMessage(source="system", content=str(error))
             error_result = TeamResult(
                 task_result=TaskResult(
-                    messages=[TextMessage(source="system", content=str(error))],
+                    messages=[error_message],
                     stop_reason="An error occurred while processing this run",
                 ),
                 usage="",
                 duration=0,
             ).model_dump()
+
+            await self._send_message(
+                run_id,
+                {"type": "message", "data": error_message.model_dump()},
+            )
 
             await self._send_message(
                 run_id,
@@ -664,6 +710,11 @@ class WebSocketManager:
                 (TextMessage,),
             ):
                 return {"type": "message", "data": message.model_dump()}
+            elif isinstance(
+                message,
+                (ToolCallSummaryMessage,),
+            ):
+                return {"type": "tool_call_summary", "data": message.model_dump()}
             elif isinstance(message, str):
                 return {
                     "type": "message",
@@ -674,14 +725,9 @@ class WebSocketManager:
                     "type": "message_log",
                     "data": message.model_dump(),
                 }
-            # elif isinstance(message, TaskEvent):
-            #     return {
-            #         "type": "message_task",
-            #         "data": message.model_dump(),
-            #     }
             elif isinstance(message, ThoughtEvent):
                 return {
-                    "type": "message_thought",
+                    "type": "message_thinking",
                     "data": message.model_dump(),
                 }
             elif isinstance(message, FilesEvent):
@@ -708,25 +754,21 @@ class WebSocketManager:
         return response.data[0] if response.status and response.data else None
 
     async def _get_agent_mode_config(self, user_id: str, agent_id: str) -> Optional[Dict]:
-        """Get run from database
-
-        Args:
-            run_id (int): int of the run to retrieve
-
-        Returns:
-            Optional[Run]: Run object if found, None otherwise
-        """
+        """Resolve the selected agent config from UserAgents as single source of truth."""
         updated_agent = None
         response = self.db_manager.get(UserAgents, filters={"user_id": user_id}, return_json=False)
         if response.status and response.data:
-            # 用户已有配置，更新现有配置
+            # Use the user's agent list as the only runtime lookup source.
             user_agents: UserAgents = response.data[0]
             agents_list = user_agents.agents or []
             for agent in agents_list:
                 if agent["id"] == agent_id:
                     updated_agent = agent
                     break
+        if updated_agent is None:
+            logger.warning(f"Agent config not found in UserAgents for user_id={user_id}, agent_id={agent_id}")
         return updated_agent
+
     async def _get_settings(self, user_id: str) -> Optional[Settings]:
         """Get user settings from database
         Args:
@@ -740,29 +782,64 @@ class WebSocketManager:
         return response.data[0] if response.status and response.data else None
 
     async def _update_run_status(
-        self, run_id: int, status: RunStatus, error: Optional[str] = None
-    ) -> None:
-        """Update run status in database
+        self,
+        run_id: int,
+        status: RunStatus,
+        error: Optional[str] = None,
+        force: bool = False,
+    ) -> bool:
+        """Update run status in database atomically.
+
+        Deduplicates transitions: if the run is already in `status` and no
+        error is provided, this is a no-op and no system message is emitted.
+        Pass force=True to always send the status message (e.g. for terminal
+        states where a re-emit is meaningful).
 
         Args:
-            run_id (int): int of the run to update
-            status (RunStatus): New status to set
-            error (str, optional): Optional error message
+            run_id: Run identifier
+            status: New status to set
+            error: Optional error message
+            force: If True, always emit the status message even if unchanged
+
+        Returns:
+            True if the status actually changed (message sent), False otherwise.
         """
-        run = await self._get_run(run_id)
-        if run:
-            run.status = status
-            run.error_message = error
-            self.db_manager.upsert(run)
-        # send system message to client with status
-        await self._send_message(
-            run_id,
-            {
-                "type": "system",
-                "status": status,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            },
-        )
+        # Use lock to ensure atomic state transitions
+        if run_id not in self._state_locks:
+            self._state_locks[run_id] = asyncio.Lock()
+
+        async with self._state_locks[run_id]:
+            # Deduplicate: skip if state is already the requested value
+            if (
+                not force
+                and self._run_states.get(run_id) == status
+                and error is None
+            ):
+                return False
+
+            run = await self._get_run(run_id)
+            if run:
+                run.status = status
+                run.error_message = error
+                self.db_manager.upsert(run)
+
+            # Update in-memory state
+            self._run_states[run_id] = status
+
+            # send system message to client with status
+            await self._send_message(
+                run_id,
+                {
+                    "type": "system",
+                    "status": status,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            return True
+
+    def _is_paused(self, run_id: int) -> bool:
+        """Check if the run is currently in paused state."""
+        return self._run_states.get(run_id) == RunStatus.PAUSED
 
     async def cleanup(self) -> None:
         """Clean up all active connections and resources when server is shutting down"""
@@ -816,6 +893,9 @@ class WebSocketManager:
             self._cancellation_tokens.clear()
             self._closed_connections.clear()
             self._input_responses.clear()
+            self._run_states.clear()
+            self._state_locks.clear()
+            self._team_op_locks.clear()
 
     @property
     def active_connections(self) -> set[int]:
@@ -827,34 +907,68 @@ class WebSocketManager:
         """Get set of runs with active cancellation tokens"""
         return set(self._cancellation_tokens.keys())
 
-    async def pause_run(self, run_id: int) -> None:
-        """Pause the run"""
-        if (
+    def _is_run_manageable(self, run_id: int) -> bool:
+        """Check if run has an active connection and team manager for pause/resume ops."""
+        return (
             run_id in self._connections
             and run_id not in self._closed_connections
             and run_id in self._team_managers
-        ):
-            team_manager = self._team_managers.get(run_id)
-            if team_manager:
-                await team_manager.pause_run()
-                await self._send_message(
-                    run_id,
-                    {
-                        "type": "system",
-                        "status": "paused",
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    },
-                )
-                await self._update_run_status(run_id, RunStatus.PAUSED)
+        )
+
+    async def pause_run(self, run_id: int) -> None:
+        """Pause the run.
+
+        State transition: ACTIVE/AWAITING_INPUT → PAUSED
+        Calls team.pause() under team_op_lock so any concurrent resume()
+        waits until pause's remote HTTP call fully completes.
+        """
+        if not self._is_run_manageable(run_id):
+            return
+        team_manager = self._team_managers.get(run_id)
+        if not team_manager:
+            return
+
+        # Update state first (dedup inside) so clients see "paused" immediately
+        # and input_handler can detect PAUSED. If already paused, this is a no-op.
+        changed = await self._update_run_status(run_id, RunStatus.PAUSED)
+        if not changed:
+            logger.info(f"Run {run_id} already paused, skipping team.pause()")
+            return
+
+        # Ensure team op lock exists
+        if run_id not in self._team_op_locks:
+            self._team_op_locks[run_id] = asyncio.Lock()
+
+        # Pause team inside team_op_lock so remote HTTP calls don't race
+        # with concurrent resume()
+        async with self._team_op_locks[run_id]:
+            await team_manager.pause_run()
 
     async def resume_run(self, run_id: int) -> None:
-        """Resume the run"""
-        if (
-            run_id in self._connections
-            and run_id not in self._closed_connections
-            and run_id in self._team_managers
-        ):
-            team_manager = self._team_managers.get(run_id)
-            if team_manager:
-                await team_manager.resume_run()
-                await self._update_run_status(run_id, RunStatus.ACTIVE)
+        """Resume the run.
+
+        State transition: PAUSED → ACTIVE (no-op if not paused)
+        Waits for any pending pause() to fully complete before calling
+        team.resume() to avoid remote state divergence.
+        """
+        if not self._is_run_manageable(run_id):
+            return
+        team_manager = self._team_managers.get(run_id)
+        if not team_manager:
+            return
+
+        # Skip if not paused - avoids unnecessary team.resume() HTTP calls
+        if not self._is_paused(run_id):
+            return
+
+        # Ensure team op lock exists
+        if run_id not in self._team_op_locks:
+            self._team_op_locks[run_id] = asyncio.Lock()
+
+        # Serialize with any pending pause to prevent HTTP call overlap
+        async with self._team_op_locks[run_id]:
+            # Re-check under lock: state may have changed while waiting
+            if not self._is_paused(run_id):
+                return
+            await team_manager.resume_run()
+            await self._update_run_status(run_id, RunStatus.ACTIVE)

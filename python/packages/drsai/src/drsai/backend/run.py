@@ -30,7 +30,7 @@ from drsai.modules.managers.messages import (
     AgentLogEvent,
 )
 from drsai.modules.managers.database import DatabaseManager
-from drsai.modules.agents.skills_agent.managers import ScheduledTaskManager
+from drsai.modules.agents.skills_agent.managers import ScheduledTaskManager, TaskNotification
 from drsai.modules.managers.user_profile import UserApiKeyManager
 from autogen_agentchat.base import (
     ChatAgent,
@@ -183,10 +183,7 @@ async def run_backend(agent_factory: callable, **kwargs):
                 if thread_obj.state:
                     try:
                         if isinstance(thread_obj.state, str):
-                            try:
-                                state_dict = decompress_state(thread_obj.state)
-                            except Exception:
-                                state_dict = json.loads(thread_obj.state)
+                            state_dict = decompress_state(thread_obj.state)
                         else:
                             state_dict = thread_obj.state
                         await agent.load_state(state_dict)
@@ -283,10 +280,22 @@ async def run_backend(agent_factory: callable, **kwargs):
                     pass
             raise
 
+    # ✅ 多通道通知分发器（run_backend 模式暂无微信，预留扩展）
+    _backend_notification_channels: list = []
+
+    async def on_backend_task_notification(notification):
+        """多通道通知分发：遍历所有已注册的通道回调"""
+        for channel in _backend_notification_channels:
+            try:
+                await channel(notification)
+            except Exception as e:
+                logger.error(f"Notification channel error: {e}")
+
     # 创建 ScheduledTaskManager
     task_manager = ScheduledTaskManager(
         work_dir=task_work_dir,
-        agent_executor=agent_executor
+        agent_executor=agent_executor,
+        on_notification=on_backend_task_notification,
     )
     drsaiapp._task_manager = task_manager
 
@@ -498,6 +507,130 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         except Exception as e:
             return {"status": False, "message": f"load_state error: {e}"}
 
+    def _get_switchable_agents(self, agent: Team | ChatAgent) -> List[ChatAgent]:
+        """Return agents that can switch model client in a session/team."""
+        if hasattr(agent, "switch_model"):
+            return [agent]  # type: ignore[list-item]
+        participants = getattr(agent, "_participants", None) or []
+        return [p for p in participants if hasattr(p, "switch_model")]
+
+    @HRModel.remote_callable
+    async def get_current_model(self, chat_id: str) -> Dict[str, Any]:
+        """Get current session-local model alias and available aliases."""
+        try:
+            agent: Team | ChatAgent | None = self.drsai.agent_instance.get(chat_id)
+            if agent is None:
+                return {
+                    "status": False,
+                    "message": f"Agent session not found: {chat_id}",
+                    "defult_config_name": None,
+                    "available": [],
+                }
+
+            switchable_agents = self._get_switchable_agents(agent)
+            target = switchable_agents[0] if switchable_agents else agent
+            llm_mode_config = getattr(target, "_llm_mode_config", None) or {}
+            return {
+                "status": True,
+                "message": "",
+                "defult_config_name": getattr(target, "_defult_config_name", None),
+                "available": sorted(llm_mode_config.keys()),
+            }
+        except Exception as e:
+            logger.exception("get_current_model error")
+            return {
+                "status": False,
+                "message": f"get_current_model error: {e}",
+                "defult_config_name": None,
+                "available": [],
+            }
+
+    @HRModel.remote_callable
+    async def switch_model(
+        self,
+        chat_id: str,
+        defult_config_name: str | None = None,
+        default_config_name: str | None = None,
+    ) -> Dict[str, Any]:
+        """Switch the internal LLM model for an existing agent session.
+
+        `defult_config_name` keeps compatibility with the existing Dr.Sai API
+        typo. `default_config_name` is accepted as an alias for new clients.
+        The switch is session-local and does not update any global config file.
+        """
+        alias = defult_config_name or default_config_name
+        try:
+            if not alias:
+                return {
+                    "status": False,
+                    "message": "defult_config_name/default_config_name is required",
+                    "defult_config_name": None,
+                }
+
+            agent: Team | ChatAgent | None = self.drsai.agent_instance.get(chat_id)
+            if agent is None:
+                return {
+                    "status": False,
+                    "message": f"Agent session not found: {chat_id}. Please call lazy_init first.",
+                    "defult_config_name": None,
+                }
+
+            async def _switch_one(a: ChatAgent, model_alias: str) -> str:
+                set_fn = getattr(a, "_set_model_client", None)
+                if set_fn is None:
+                    raise RuntimeError(
+                        f"Agent {getattr(a, 'name', '<unknown>')} has no _set_model_client"
+                    )
+
+                llm_mode_config = getattr(a, "_llm_mode_config", None) or {}
+                if llm_mode_config and model_alias not in llm_mode_config:
+                    available = ", ".join(sorted(llm_mode_config.keys()))
+                    raise ValueError(
+                        f"Unknown defult_config_name: {model_alias}. Available aliases: {available}"
+                    )
+
+                new_client = set_fn(model_alias)
+                if not hasattr(a, "switch_model"):
+                    raise RuntimeError(
+                        f"Agent {getattr(a, 'name', '<unknown>')} does not support switch_model"
+                    )
+                await a.switch_model(new_client)  # type: ignore[attr-defined]
+                a._defult_config_name = model_alias  # type: ignore[attr-defined]
+                return model_alias
+
+            switchable_agents = self._get_switchable_agents(agent)
+            if not switchable_agents:
+                return {
+                    "status": False,
+                    "message": "Current agent does not support switch_model and has no switchable participants",
+                    "defult_config_name": None,
+                }
+
+            switched = []
+            for switchable_agent in switchable_agents:
+                await _switch_one(switchable_agent, alias)
+                switched.append(getattr(switchable_agent, "name", switchable_agent.__class__.__name__))
+
+            # Keep a team/session level marker for introspection when possible.
+            try:
+                agent._defult_config_name = alias  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+            return {
+                "status": True,
+                "message": f"Model switched to {alias}",
+                "defult_config_name": alias,
+                "switched": switched,
+            }
+        except Exception as e:
+            logger.exception("switch_model error")
+            return {
+                "status": False,
+                "message": f"switch_model error: {e}",
+                "defult_config_name": None,
+            }
+
     @HRModel.remote_callable
     async def a_chat_completions(self, *args, **kwargs) -> AsyncGenerator:
         return self.drsai.a_drsai_ui_completions(*args, **kwargs)
@@ -692,10 +825,7 @@ async def run_worker(agent_factory: callable, **kwargs):
                 if thread_obj.state:
                     try:
                         if isinstance(thread_obj.state, str):
-                            try:
-                                state_dict = decompress_state(thread_obj.state)
-                            except Exception:
-                                state_dict = json.loads(thread_obj.state)
+                            state_dict = decompress_state(thread_obj.state)
                         else:
                             state_dict = thread_obj.state
                         await agent.load_state(state_dict)
@@ -808,10 +938,44 @@ async def run_worker(agent_factory: callable, **kwargs):
                     pass
             raise
 
-    # 创建 ScheduledTaskManager 并传入 agent_executor
+    # ✅ 通知消息格式化函数（各推送通道共用）
+    def _format_notification_text(notification) -> str:
+        """将 TaskNotification 格式化为人类可读的推送文本"""
+        status_icon = {"success": "✅", "error": "❌", "timeout_partial": "⏱️"}.get(
+            notification.status, "❓"
+        )
+        status_text = {
+            "success": "成功",
+            "error": "失败",
+            "timeout_partial": "超时(部分结果已保存)",
+        }.get(notification.status, notification.status)
+
+        text = f"{status_icon} 定时任务通知\n\n"
+        text += f"任务：{notification.task_name}\n"
+        text += f"状态：{status_text}\n"
+        text += f"时间：{notification.timestamp}\n"
+        if notification.summary:
+            text += f"\n{notification.summary}\n"
+        if notification.output_file:
+            text += f"\n💡 可使用定时任务管理工具的 `read_output` 查看详细结果\n"
+        return text
+
+    # ✅ 多通道通知分发器（可变列表，支持延迟注册）
+    _notification_channels: list = []
+
+    async def on_task_notification(notification):
+        """多通道通知分发：遍历所有已注册的通道回调"""
+        for channel in _notification_channels:
+            try:
+                await channel(notification)
+            except Exception as e:
+                logger.error(f"Notification channel error: {e}")
+
+    # 创建 ScheduledTaskManager 并传入 agent_executor + on_notification
     task_manager = ScheduledTaskManager(
         work_dir=task_work_dir,
-        agent_executor=agent_executor
+        agent_executor=agent_executor,
+        on_notification=on_task_notification,
     )
     drsaiapp._task_manager = task_manager
 
@@ -860,6 +1024,14 @@ async def run_worker(agent_factory: callable, **kwargs):
         _wechat_tasks.append(asyncio.create_task(
             idle_monitor(model, session_mgr), name="wechat_idle_monitor"
         ))
+
+        # ✅ 4. 注册微信推送通道到通知分发器
+        async def wechat_push_channel(notification: TaskNotification):
+            """微信推送通道：将定时任务通知主动推送给微信用户"""
+            text = _format_notification_text(notification)
+            await bot.push_notification(notification.user_id, text)
+
+        _notification_channels.append(wechat_push_channel)
         print("微信 Bot 已启动，发送 /help 查看命令列表。")
 
     enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)

@@ -36,7 +36,7 @@ const ContentHeader = ({
         {/* Left side: Sidebar Toggle, Agent Selector and New Session */}
         <div className="flex items-center">
           {/* Sidebar Toggle - only show when sidebar is closed */}
-          {!isSidebarOpen && (
+          {/* {!isSidebarOpen && (
             <Tooltip title="Open Sidebar">
               <Button
                 variant="tertiary"
@@ -46,10 +46,10 @@ const ContentHeader = ({
                 className="!px-1 transition-colors hover:text-accent mr-3"
               />
             </Tooltip>
-          )}
+          )} */}
 
           {/* New Session Button */}
-          {!isSidebarOpen && (
+          {/* {!isSidebarOpen && (
             <Tooltip title="Create new session">
               <Button
                 variant="tertiary"
@@ -59,7 +59,7 @@ const ContentHeader = ({
                 className="transition-colors hover:text-accent mr-4"
               />
             </Tooltip>
-          )}
+          )} */}
 
           {/* Agent Selector */}
           {agentSelector && (

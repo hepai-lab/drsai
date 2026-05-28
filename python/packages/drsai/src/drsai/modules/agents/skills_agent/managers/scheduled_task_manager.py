@@ -107,11 +107,14 @@ class ScheduledTaskManager:
         self,
         work_dir: Path,
         agent_executor: Optional[Callable[[str, str, str, Path], Awaitable[str]]] = None,
+        on_notification: Optional[Callable[[TaskNotification], Awaitable[None]]] = None,
     ):
         """
         Args:
             work_dir: 工作目录 (通常是用户的work_dir根目录)
             agent_executor: Agent执行器函数 (user_id, session_id, prompt, output_file) -> result
+            on_notification: 任务完成后的通知回调 (TaskNotification) -> None，
+                可用于微信推送、CLI 通知等。回调在同一个 asyncio 事件循环中执行。
         """
         self.work_dir = Path(work_dir)
         self.tasks_dir = self.work_dir / "tasks"
@@ -138,6 +141,9 @@ class ScheduledTaskManager:
 
         # Agent执行器
         self.agent_executor = agent_executor
+        
+        # ✅ 任务完成后的通知回调（多通道分发）
+        self.on_notification = on_notification
 
         # 加载任务配置
         self._load_tasks()
@@ -172,7 +178,7 @@ class ScheduledTaskManager:
         except Exception as e:
             logger.error(f"Failed to save tasks config: {e}")
 
-    def add_task(self, task: ScheduledTask) -> str:
+    async def add_task(self, task: ScheduledTask) -> str:
         """
         添加新的定时任务
 
@@ -191,7 +197,7 @@ class ScheduledTaskManager:
         logger.info(f"Added scheduled task: {task.task_id} ({task.task_name})")
         return task.task_id
 
-    def remove_task(self, task_id: str) -> bool:
+    async def remove_task(self, task_id: str) -> bool:
         """
         删除定时任务
 
@@ -213,11 +219,11 @@ class ScheduledTaskManager:
             return True
         return False
 
-    def get_task(self, task_id: str) -> Optional[ScheduledTask]:
+    async def get_task(self, task_id: str) -> Optional[ScheduledTask]:
         """获取任务配置"""
         return self.tasks.get(task_id)
 
-    def list_tasks(
+    async def list_tasks(
         self,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -245,7 +251,7 @@ class ScheduledTaskManager:
 
         return tasks
 
-    def update_task_status(self, task_id: str, status: TaskStatus):
+    async def update_task_status(self, task_id: str, status: TaskStatus):
         """更新任务状态"""
         if task_id in self.tasks:
             self.tasks[task_id].status = status
@@ -527,6 +533,13 @@ class ScheduledTaskManager:
             )
             self._add_notification(notification)
 
+            # ✅ 调用通知回调（多通道分发：微信推送、CLI 通知等）
+            if self.on_notification:
+                try:
+                    await self.on_notification(notification)
+                except Exception as e:
+                    logger.error(f"Notification callback error: {e}")
+
             logger.info(f"Task {task_id} completed: {result_data.status}")
 
     def _get_task_output_file(self, task_id: str, start_time: datetime) -> Path:
@@ -564,7 +577,7 @@ class ScheduledTaskManager:
         except Exception as e:
             logger.error(f"Failed to save task result: {e}")
 
-    def get_task_results(
+    async def get_task_results(
         self,
         task_id: str,
         limit: int = 10,
@@ -653,7 +666,7 @@ class ScheduledTaskManager:
         results.sort(key=lambda x: x.start_time, reverse=True)
         return results
 
-    def get_task_outputs(
+    async def get_task_outputs(
         self,
         task_id: str,
         limit: int = 10
@@ -708,7 +721,7 @@ class ScheduledTaskManager:
         except Exception as e:
             logger.error(f"Failed to add notification: {e}")
 
-    def get_pending_notifications(self, user_id: str) -> List[TaskNotification]:
+    async def get_pending_notifications(self, user_id: str) -> List[TaskNotification]:
         """获取并清除用户的未读通知"""
         notifications = self._load_notifications(user_id)
         if notifications:

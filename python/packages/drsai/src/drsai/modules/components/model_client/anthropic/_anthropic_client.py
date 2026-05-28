@@ -68,6 +68,69 @@ from autogen_ext.models.anthropic._anthropic_client import (
 
 class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
 
+    component_provider_override = "drsai.modules.components.model_client.anthropic._anthropic_client.HepAIAnthropicChatCompletionClient"
+
+    def _sanitize_anthropic_message(self, message: MessageParam) -> MessageParam:
+        """Remove/repair empty Anthropic text blocks before sending.
+
+        Some non-Anthropic providers persist AssistantMessage(thought="") for
+        tool-call turns. autogen-ext serializes that as an empty Anthropic
+        TextBlock, but Anthropic rejects empty text content blocks. Preserve all
+        non-empty reasoning text and non-text blocks; only drop empty text blocks.
+        """
+        content = message.get("content")
+        if isinstance(content, str):
+            if not content.strip():
+                message["content"] = " "
+            return message
+
+        if not isinstance(content, list):
+            return message
+
+        cleaned: List[Any] = []
+        for block in content:
+            if isinstance(block, TextBlock):
+                if block.text and block.text.strip():
+                    cleaned.append({"type": "text", "text": block.text})
+                continue
+
+            if isinstance(block, BaseModel):
+                block = block.model_dump(exclude_none=True)
+
+            if isinstance(block, dict):
+                # Anthropic request params reject optional fields explicitly set
+                # to null, e.g. tool_use.caller=None. Omit them instead.
+                block = {k: v for k, v in block.items() if v is not None}
+                if block.get("type") == "text":
+                    text = str(block.get("text", ""))
+                    if not text.strip():
+                        continue
+
+            cleaned.append(block)
+
+        message["content"] = cleaned or [{"type": "text", "text": " "}]
+        return message
+
+    async def create_stream(
+        self,
+        messages: Sequence[LLMMessage],
+        *,
+        tools: Sequence[Tool | ToolSchema] = [],
+        json_output: Optional[bool | type[BaseModel]] = None,
+        extra_create_args: Mapping[str, Any] = {},
+        cancellation_token: Optional[CancellationToken] = None,
+        max_consecutive_empty_chunk_tolerance: int = 0,
+    ) -> AsyncGenerator[Union[str, CreateResult], None]:
+        async for chunk in self.create_stream_tmp(
+            messages,
+            tools=tools,
+            json_output=json_output,
+            extra_create_args=extra_create_args,
+            cancellation_token=cancellation_token,
+            max_consecutive_empty_chunk_tolerance=max_consecutive_empty_chunk_tolerance,
+        ):
+            yield chunk
+
     async def create_stream_tmp(
         self,
         messages: Sequence[LLMMessage],
@@ -111,7 +174,6 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         messages = self._merge_system_messages(messages)
         messages = self._rstrip_last_assistant_message(messages)
 
-        # NOTE：Not support ToolExecuteMessage
         for message in messages:
             if isinstance(message, SystemMessage):
                 if system_message is not None:
@@ -121,76 +183,16 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
             else:
                 anthropic_message = to_anthropic_type(message)
                 if isinstance(anthropic_message, list):
-                    anthropic_messages.extend(anthropic_message)
-                elif isinstance(anthropic_message["content"], list):
-                    anthropic_message_new = []
-                    for message_i in anthropic_message["content"]:
-                        if isinstance(message_i, TextBlock):
-                            anthropic_message_new.append({"type": "text", "text": message_i.text})
-                        elif isinstance(message_i, ToolUseBlock):
-                            anthropic_message_new.append({
-                                "type": "tool_use",
-                                "id": message_i.id,
-                                "name": message_i.name,
-                                "input": message_i.input,
-                            })
-                        elif isinstance(message_i, BaseModel):
-                            anthropic_message_new.append(message_i.model_dump())
-                        elif isinstance(message_i, dict):
-                            anthropic_message_new.append(message_i)
-                    anthropic_message["content"] = anthropic_message_new
-                    anthropic_messages.append(anthropic_message)
+                    anthropic_messages.extend(
+                        self._sanitize_anthropic_message(msg) for msg in anthropic_message
+                    )
                 elif isinstance(anthropic_message, str):
                     msg = MessageParam(
                         role="user" if isinstance(message, UserMessage) else "assistant", content=anthropic_message
                     )
-                    anthropic_messages.append(msg)
+                    anthropic_messages.append(self._sanitize_anthropic_message(msg))
                 else:
-                    anthropic_messages.append(anthropic_message)
-
-        # TODO: can't convert ToolCallMessage to text
-        # for message in messages:
-        #     if isinstance(message, SystemMessage):
-        #         if system_message is not None:
-        #             # if that case, system message is must only one
-        #             raise ValueError("Multiple system messages are not supported")
-        #         system_message = to_anthropic_type(message)
-        #     else:
-        #         anthropic_message = to_anthropic_type(message)
-
-        #         if isinstance(anthropic_message, list):
-        #             # anthropic_messages.extend(anthropic_message)
-        #             # For ToolExecuteMessage
-        #             for message_i in anthropic_message:
-        #                 if isinstance(message_i["content"], list):
-        #                     new_content = ""
-        #                     for content_i in message_i["content"]:
-        #                         if isinstance(content_i, dict):
-        #                             new_content += content_i["content"]+"\n"
-        #                     message_i["content"] = new_content
-        #                 anthropic_messages.append(message_i)
-        #         elif isinstance(anthropic_message, str):
-        #             msg = MessageParam(
-        #                 role="user" if isinstance(message, UserMessage) else "assistant", content=anthropic_message
-        #             )
-        #             anthropic_messages.append(msg)
-        #         elif isinstance(anthropic_message["content"], list):
-        #             new_content = ""
-        #             for item in anthropic_message["content"]:
-        #                 if isinstance(item, TextBlock):
-        #                     new_content += item.text+"\n"
-        #                 elif isinstance(item, ToolUseBlock):
-        #                     # new_content += f"tool_name: {item.name}, arguments: {str(item.input)}"
-        #                     new_content += item.model_dump_json()
-        #                 elif isinstance(item, dict):
-        #                     # new_content += item["content"]
-        #                     new_content += str(item)
-        #                 else:
-        #                     continue
-        #             anthropic_message["content"] = new_content
-        #             anthropic_messages.append(anthropic_message)
-        #         else:
-        #             anthropic_messages.append(anthropic_message)
+                    anthropic_messages.append(self._sanitize_anthropic_message(anthropic_message))
 
         # Check for function calling support
         if self.model_info["function_calling"] is False and len(tools) > 0:
@@ -207,6 +209,8 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
 
         # Add system message if present
         if system_message is not None:
+            if isinstance(system_message, str) and not system_message.strip():
+                system_message = " "
             request_args["system"] = system_message
 
         # Check if any message is a tool result
@@ -221,9 +225,14 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
             request_args["tools"] = self._last_used_tools
 
         # Optional parameters
-        for param in ["top_p", "top_k", "stop_sequences", "metadata"]:
+        for param in ["top_p", "top_k", "stop_sequences", "metadata", "cache_control"]:
             if param in create_args:
                 request_args[param] = create_args[param]
+
+        if "cache_control" not in request_args:
+            cache_control = self._model_info.get("anthropic_cache_control")
+            if cache_control:
+                request_args["cache_control"] = cache_control
 
         # Stream the response
         stream_future: asyncio.Task[AsyncStream[RawMessageStreamEvent]] = asyncio.ensure_future(
@@ -240,6 +249,8 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         current_tool_id: Optional[str] = None
         input_tokens: int = 0
         output_tokens: int = 0
+        cache_creation_input_tokens: int = 0
+        cache_read_input_tokens: int = 0
         stop_reason: Optional[str] = None
 
         first_chunk = True
@@ -289,15 +300,26 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
                     stop_reason = chunk.delta.stop_reason
 
                 # Get usage info if available
-                if hasattr(chunk, "usage") and hasattr(chunk.usage, "output_tokens"):
-                    output_tokens = chunk.usage.output_tokens
+                if hasattr(chunk, "usage"):
+                    usage_obj = chunk.usage
+                    if hasattr(usage_obj, "output_tokens"):
+                        output_tokens = usage_obj.output_tokens
+                    if getattr(usage_obj, "cache_creation_input_tokens", None) is not None:
+                        cache_creation_input_tokens = usage_obj.cache_creation_input_tokens or 0
+                    if getattr(usage_obj, "cache_read_input_tokens", None) is not None:
+                        cache_read_input_tokens = usage_obj.cache_read_input_tokens or 0
 
             elif chunk.type == "message_start":
                 if hasattr(chunk, "message") and hasattr(chunk.message, "usage"):
-                    if hasattr(chunk.message.usage, "input_tokens"):
-                        input_tokens = chunk.message.usage.input_tokens
-                    if hasattr(chunk.message.usage, "output_tokens"):
-                        output_tokens = chunk.message.usage.output_tokens
+                    usage_obj = chunk.message.usage
+                    if hasattr(usage_obj, "input_tokens"):
+                        input_tokens = usage_obj.input_tokens
+                    if hasattr(usage_obj, "output_tokens"):
+                        output_tokens = usage_obj.output_tokens
+                    if getattr(usage_obj, "cache_creation_input_tokens", None) is not None:
+                        cache_creation_input_tokens = usage_obj.cache_creation_input_tokens or 0
+                    if getattr(usage_obj, "cache_read_input_tokens", None) is not None:
+                        cache_read_input_tokens = usage_obj.cache_read_input_tokens or 0
 
         # Prepare the final response
         usage = RequestUsage(
@@ -347,6 +369,13 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
             usage=usage,
             cached=False,
             thought=thought,
+        )
+
+        logger.info(
+            "Anthropic prompt cache: creation=%s read=%s hit=%s",
+            cache_creation_input_tokens,
+            cache_read_input_tokens,
+            cache_read_input_tokens > 0,
         )
 
         # Emit the end event.

@@ -9,6 +9,7 @@ from drsai.modules.components.model_client.anthropic import (
 from drsai.modules.agents.skills_agent import DrSaiAssistant
 from drsai.modules.managers.database import DatabaseManager
 from drsai.configs.constant import FS_DIR
+from drsai.backend.run_drsai_agent_factory import ModelEntry, ReasoningConfig, DEFAULT_LLM_MODE_CONFIG
 
 # HERE = Path(__file__).parent
 # fs_dir = Path()
@@ -31,47 +32,64 @@ RAGFLOW_TOKEN=os.getenv('RAGFLOW_TOKEN')
 MEMORY_DATASET_ID=os.getenv('MEMORY_DATASET_ID')
 SYSTEM_SKILLS_DIR=os.getenv('SYSTEM_SKILLS_DIR')
 
-llm_mode_config = {
-    "hepai/minimax-m2.7": ("hepai/minimax-m2.7", 204000),
-    "hepai/minimax-m2.7-highspeed": ("hepai/minimax-m2.7-highspeed", 204000),
-    "minimax-m2.5": ("minimax/minimax-m2.5", 204000),
-    "minimax-m2.5-highspeed": ("minimax/minimax-m2.5-highspeed", 204000),
-    "minimax-m2.7": ("minimax/minimax-m2.7", 204000),
-    "minimax-m2.7-highspeed": ("minimax/minimax-m2.7-highspeed", 204000),
-    "claude-sonnet-4-6": ("anthropic/claude-sonnet-4-6", 200000),
-    "claude-haiku-4-5": ("anthropic/claude-haiku-4-5", 200000),
-    "claude-opus-4-6": ("anthropic/claude-opus-4-6", 200000),
-    "gpt-4o": ("openai/gpt-4o", 128000),
-    "gpt-4.1": ("openai/gpt-4.1", 1000000),
-    "gpt-5.2": ("openai/gpt-5.2", 1000000),
-    "gpt-5.4": ("openai/gpt-5.4", 1000000),
-    "deepseek-r1(No image)": ("deepseek-ai/deepseek-r1", 128000),
-    "deepseek-v3.2(No image)": ("deepseek-ai/deepseek-v3.2", 128000),
-}
+def _as_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on", "enable", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "disable", "disabled"}:
+        return False
+    return default
+
+llm_mode_config = DEFAULT_LLM_MODE_CONFIG
 
 def create_agent(
         api_key: str|None = None, 
         thread_id: str|None = None, 
         user_id: str|None = None, 
         db_manager: DatabaseManager|None = None,
-        defult_config_name: str|None = "hepai/minimax-m2.7-highspeed",
+        defult_config_name: str|None = "hepai/deepseek-v4-flash",
+        anthropic_cache_enabled: bool | None = None,
+        anthropic_cache_ttl: str | None = None,
 ) -> DrSaiAssistant:
+    if anthropic_cache_enabled is None:
+        anthropic_cache_enabled = _as_bool(os.getenv("DRSAI_ANTHROPIC_CACHE_ENABLED"), default=True)
+    if anthropic_cache_ttl is None:
+        anthropic_cache_ttl = os.getenv("DRSAI_ANTHROPIC_CACHE_TTL") or "1h"
+    anthropic_cache_ttl = str(anthropic_cache_ttl)
+    if anthropic_cache_ttl not in {"5m", "1h"}:
+        anthropic_cache_ttl = "1h"
+    anthropic_cache_control = (
+        {"type": "ephemeral", "ttl": anthropic_cache_ttl}
+        if anthropic_cache_enabled
+        else None
+    )
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
     
-    def set_model_client(defult_config_name: str|None = "hepai/minimax-m2.7-highspeed") -> HepAIAnthropicChatCompletionClient| HepAIChatCompletionClient:
-        llm_model, token_limit = llm_mode_config.get(defult_config_name, "minimax-m2.7-highspeed")
+    def set_model_client(defult_config_name: str|None = "hepai/deepseek-v4-flash") -> HepAIAnthropicChatCompletionClient| HepAIChatCompletionClient:
+        entry = llm_mode_config.get(defult_config_name, llm_mode_config["hepai/deepseek-v4-flash"])
+        llm_model = entry.model
+        token_limit = entry.token_limit
+        max_tokens = entry.max_tokens
         if ("claude" in llm_model) or ("minimax" in llm_model):
-            model_info=_MODEL_INFO["claude-sonnet-4-5"]
+            model_info = dict(_MODEL_INFO["claude-sonnet-4-5"])
             model_info["token_model"] = "claude-3-5-sonnet-20240620"
+            if anthropic_cache_control is not None:
+                model_info["anthropic_cache_control"] = anthropic_cache_control
             model_client = HepAIAnthropicChatCompletionClient(
                 model=llm_model,
                 base_url="https://aiapi.ihep.ac.cn/apiv2/anthropic",
                 api_key=api_key,
                 model_info=model_info,
                 # temperature=0.5,
-                max_tokens=int(token_limit*0.25),
+                max_tokens=max_tokens if max_tokens > 0 else int(token_limit*0.25),
             )
         else:
             is_vision = True
@@ -125,8 +143,9 @@ def create_agent(
     # SYSTEM = f"""You are a personal assistant."""
     SYSTEM = None
 
-    defult_config_name = defult_config_name or "hepai/minimax-m2.7-highspeed"
-    _, token_limit = llm_mode_config.get(defult_config_name)
+    defult_config_name = defult_config_name or "hepai/deepseek-v4-flash"
+    entry = llm_mode_config.get(defult_config_name)
+    token_limit = entry.token_limit if entry else 196608
     return DrSaiAssistant(
         name="Assistant",
         model_client=set_model_client(defult_config_name),
@@ -142,7 +161,7 @@ def create_agent(
         set_model_client=set_model_client,
         llm_mode_config=llm_mode_config,
         defult_config_name=defult_config_name,
-        is_powershell=False,
+        # is_powershell=False,
         # skills and executor
         skills_dir=SYSTEM_SKILLS_DIR,
         # executor=local_executor,
@@ -186,7 +205,7 @@ if __name__ == "__main__":
                 "如何设置定时任务？"
             ],
             agent_config = llm_mode_config,
-            defult_config_name="hepai/minimax-m2.7-highspeed",
+            defult_config_name="hepai/deepseek-v4-flash",
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务配置
@@ -199,6 +218,6 @@ if __name__ == "__main__":
             # use_api_key_mode = "backend",
             # join_topics = ["drsai-agent"],
             # metadata={"others": "drsai-agent"},
-            link_wechat = True,
+            link_wechat = False,
         )
     )
