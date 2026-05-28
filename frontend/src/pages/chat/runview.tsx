@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import ReactDOM from "react-dom";
 import { Run, Message, RunLogEntry } from "../../components/types/datamodel";
 import { RenderMessage, messageUtils } from "./rendermessage";
+import QuestionNavRail from "./QuestionNavRail";
 import { getStatusIcon } from "../../components/views/statusicon";
 import { IPlanStep, IPlan } from "../../components/types/plan";
 import ApprovalButtons from "./approval_buttons";
@@ -181,6 +182,8 @@ const RunView: React.FC<RunViewProps> = ({
   });
   /** True while we are scrolling programmatically — ignore scroll-lock so streaming doesn't falsely lock. */
   const programmaticScrollRef = useRef(false);
+  /** True while jumping to a user question — blocks auto scroll-to-bottom. */
+  const userNavScrollRef = useRef(false);
   const programmaticScrollClearTimerRef = useRef<ReturnType<
     typeof setTimeout
   > | null>(null);
@@ -212,8 +215,19 @@ const RunView: React.FC<RunViewProps> = ({
     new Set()
   );
 
-  // Add ref for the latest user message
-  const latestUserMessageRef = useRef<HTMLDivElement | null>(null);
+  // Refs for user messages — used by question nav and scroll-to-message
+  const userMessageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+  const setUserMessageRef = useCallback(
+    (messageIndex: number, element: HTMLDivElement | null) => {
+      if (element) {
+        userMessageRefs.current.set(messageIndex, element);
+      } else {
+        userMessageRefs.current.delete(messageIndex);
+      }
+    },
+    []
+  );
 
   // Add state to track the last plan message index
   const [lastPlanIndex, setLastPlanIndex] = useState<number>(-1);
@@ -246,9 +260,13 @@ const RunView: React.FC<RunViewProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  const scrollToBottom = useCallback((behavior: "auto" | "smooth" = "auto") => {
+  const scrollToBottom = useCallback((behavior: "auto" | "smooth" = "auto", force = false) => {
     const container = threadContainerRef.current;
     if (!container) return;
+
+    if (!force && autoScrollLockedRef.current) {
+      return;
+    }
 
     if (programmaticScrollClearTimerRef.current != null) {
       clearTimeout(programmaticScrollClearTimerRef.current);
@@ -442,12 +460,11 @@ const RunView: React.FC<RunViewProps> = ({
 
     const handleScroll = () => {
       if (programmaticScrollRef.current) {
-        // During programmatic scroll, record the target (bottom) position rather than the
-        // intermediate animated position. This keeps wasAtBottom=true in the ResizeObserver
-        // so it keeps following new content even while the scroll animation plays.
         scrollMetricsRef.current = {
           scrollHeight: container.scrollHeight,
-          scrollTop: container.scrollHeight - container.clientHeight,
+          scrollTop: userNavScrollRef.current
+            ? container.scrollTop
+            : container.scrollHeight - container.clientHeight,
           clientHeight: container.clientHeight,
         };
         return;
@@ -492,7 +509,7 @@ const RunView: React.FC<RunViewProps> = ({
         prev.scrollHeight > 0 &&
         prev.scrollTop >= prev.scrollHeight - prev.clientHeight - 48;
 
-      if (wasAtBottom && el.scrollHeight > prev.scrollHeight) {
+      if (wasAtBottom && el.scrollHeight > prev.scrollHeight && !autoScrollLockedRef.current) {
         scrollToBottom("auto");
         return;
       }
@@ -557,11 +574,74 @@ const RunView: React.FC<RunViewProps> = ({
     setAutoScrollLocked(false);
 
     const timeout = setTimeout(() => {
-      scrollToBottom("auto");
+      scrollToBottom("auto", true);
     }, 100);
 
     return () => clearTimeout(timeout);
   }, [run.id, scrollToBottom]);
+
+  const scrollToUserMessage = useCallback((messageIndex: number) => {
+    const container = threadContainerRef.current;
+    const element = userMessageRefs.current.get(messageIndex);
+    if (!container || !element) return;
+
+    autoScrollLockedRef.current = true;
+    setAutoScrollLocked(true);
+    programmaticScrollRef.current = true;
+    userNavScrollRef.current = true;
+
+    const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+    const targetScroll = Math.min(
+      maxScroll,
+      Math.max(0, element.offsetTop - 12)
+    );
+
+    container.scrollTo({
+      top: targetScroll,
+      behavior: "smooth",
+    });
+
+    scrollMetricsRef.current = {
+      scrollHeight: container.scrollHeight,
+      scrollTop: targetScroll,
+      clientHeight: container.clientHeight,
+    };
+
+    if (programmaticScrollClearTimerRef.current != null) {
+      clearTimeout(programmaticScrollClearTimerRef.current);
+    }
+    programmaticScrollClearTimerRef.current = setTimeout(() => {
+      programmaticScrollRef.current = false;
+      userNavScrollRef.current = false;
+      programmaticScrollClearTimerRef.current = null;
+      if (threadContainerRef.current) {
+        const el = threadContainerRef.current;
+        scrollMetricsRef.current = {
+          scrollHeight: el.scrollHeight,
+          scrollTop: el.scrollTop,
+          clientHeight: el.clientHeight,
+        };
+      }
+    }, 800);
+  }, []);
+
+  const userQuestions = useMemo(() => {
+    let questionNumber = 0;
+    return localMessages.reduce<
+      Array<{ messageIndex: number; preview: string; questionNumber: number }>
+    >((acc, msg, idx) => {
+      if (!messageUtils.isUser(msg.config.source)) {
+        return acc;
+      }
+      questionNumber += 1;
+      acc.push({
+        messageIndex: idx,
+        preview: messageUtils.getUserMessagePreview(msg.config),
+        questionNumber,
+      });
+      return acc;
+    }, []);
+  }, [localMessages]);
 
   useEffect(() => {
     userPinnedExpandedStepIndicesRef.current = new Set();
@@ -1164,9 +1244,11 @@ const RunView: React.FC<RunViewProps> = ({
       {/* Messages section — always full width, panel is in the right sidebar */}
       <div className="items-start relative flex flex-col h-full w-full transition-all duration-300">
         {/* Thread Section */}
+        <div className="relative flex-1 min-h-0 w-full">
+        <div className="relative w-full max-w-4xl mx-auto h-full question-nav-scroll-wrap">
         <div
           ref={threadContainerRef}
-          className="w-full max-w-4xl mx-auto flex-1 min-h-0 overflow-y-auto scroll px-3 sm:px-6 lg:px-8 pt-4 pb-4"
+          className="question-nav-scroll w-full h-full overflow-y-auto scroll px-3 sm:px-6 lg:pl-8 pt-4 pb-4"
         >
           {/* Inner wrapper observed by ResizeObserver — grows with streaming content */}
           <div ref={messagesContentRef}>
@@ -1204,13 +1286,16 @@ const RunView: React.FC<RunViewProps> = ({
                   nextMessage.config.metadata?.type !== "AgentLogEvent")
               );
 
+              const isUserMessage = messageUtils.isUser(msg.config.source);
+
               return (
                 <div
                   key={`message-${idx}-${run.id}`}
                   className="w-full"
+                  data-user-message-index={isUserMessage ? idx : undefined}
                   ref={
-                    messageUtils.isUser(msg.config.source)
-                      ? latestUserMessageRef
+                    isUserMessage
+                      ? (el) => setUserMessageRef(idx, el)
                       : null
                   }
                 >
@@ -1306,6 +1391,15 @@ const RunView: React.FC<RunViewProps> = ({
           </div>{/* end messagesContentRef wrapper */}
         </div>
 
+        <QuestionNavRail
+          scrollContainerRef={threadContainerRef}
+          userMessageRefs={userMessageRefs}
+          questions={userQuestions}
+          onNavigate={scrollToUserMessage}
+        />
+        </div>
+        </div>
+
         {!viewOnly && (
         <div
           ref={buttonsContainerRef}
@@ -1331,7 +1425,7 @@ const RunView: React.FC<RunViewProps> = ({
                 plan?: IPlan,
                 llm?: { label: string; value: string }
               ) => {
-                scrollToBottom("auto");
+                scrollToBottom("auto", true);
                 if (run.status === "awaiting_input") {
                   onInputResponse?.(
                     query,

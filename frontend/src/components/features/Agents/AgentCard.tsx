@@ -37,7 +37,7 @@ const ICON_BOX =
 const ACTION_SHELL =
   "mt-auto flex items-center justify-start border-t border-[#ebe7f1] pt-1.5 dark:border-[#2f2a41]";
 
-const START_BUTTON_CLASS =
+export const START_BUTTON_CLASS =
   "inline-flex h-8 items-center rounded-[10px] bg-[rgba(167,139,250,0.18)] px-2.5 text-[11px] font-medium tracking-[-0.01em] text-[#5f5a73] ring-1 ring-inset ring-[rgba(167,139,250,0.18)] transition-colors hover:bg-[rgba(167,139,250,0.24)] hover:text-[#535069] focus:outline-none focus:ring-2 focus:ring-[#cbb8ff]/40 dark:bg-[rgba(167,139,250,0.16)] dark:text-[#e7e2f3] dark:ring-[rgba(167,139,250,0.14)] dark:hover:bg-[rgba(167,139,250,0.22)]";
 
 const TOP_ICON_BUTTON_BASE =
