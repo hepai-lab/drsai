@@ -5,3 +5,11 @@ pandas>=2.0.0
 openpyxl>=3.1.0
 docxtpl>=0.16.7
 jinja2>=3.1.0
+# PPT skill (ppt-polished-deck-collab) dependencies
+PyYAML>=6.0
+Pillow>=10.0.0
+PyMuPDF>=1.23.0
+matplotlib>=3.7.0
+seaborn>=0.13.0
+numpy>=1.24.0
+json-repair>=0.30.0

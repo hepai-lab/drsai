@@ -123,6 +123,16 @@ WORKSPACE.mkdir(parents=True, exist_ok=True)
 WORKDIR = WORKSPACE / "runs"
 WORKDIR.mkdir(parents=True, exist_ok=True)
 
+# ── PPT skill paths ───────────────────────────────────────────────────────
+# All `ppt_*_tool` functions resolve scripts / references through these
+# constants so the LLM never needs to guess the on-disk layout. The directory
+# uses kebab-case to match the SKILL.md frontmatter `name: ppt-polished-deck-collab`.
+PPT_SKILL_ROOT = (
+    HERE / "skills" / "presentation-skills" / "ppt-polished-deck-collab-traditional"
+)
+PPT_SCRIPTS_DIR = PPT_SKILL_ROOT / "scripts"
+PPT_REFERENCES_DIR = PPT_SKILL_ROOT / "references"
+
 # 支持的模型配置
 llm_mode_config = {
     "deepseek-v4-flash(Fast)": "hepai/deepseek-v4-flash",
@@ -254,6 +264,17 @@ class DocMasterAgent(DrSaiAssistant):
     @classmethod
     def _looks_like_template_hunt(cls, *args: str) -> bool:
         blob = " ".join(a for a in args if isinstance(a, str)).lower()
+        # Explicit allowlist: reads under the PPT skill directory or any deck
+        # workspace are legitimate. The template-hunt heuristic exists to stop
+        # DOCX template lookups via run_glob, not to block PPT artifacts that
+        # happen to live in a path named "template_audit" or "templates/".
+        if (
+            "skills/presentation-skills" in blob
+            or "ppt-polished-deck-collab" in blob
+            or "/decks/" in blob              # per-user deck workspaces
+            or "validation/template_audit" in blob  # audit reports under decks
+        ):
+            return False
         return any(tok.lower() in blob for tok in cls._TEMPLATE_HUNT_TOKENS)
 
     @staticmethod
@@ -690,9 +711,10 @@ def create_word_editor_agent(
     }
 
     # 系统提示词 - 专注于Word文档处理
-    SYSTEM = """你是 DocMaster，一个以 DOCX 为核心的文档分析与编辑助手。
+    SYSTEM = """你是 DocMaster，一个以 DOCX 和 PPTX 为核心的文档分析与编辑助手。
 
 你的目标不是夸大能力，而是稳定、准确地理解用户意图，并选择最合适的工具完成任务。
+
 
 【关键行为准则】
 ⚠️ 重要：当用户要求对文档进行多项修改（如"扩写"、"重写"、"添加多个章节"等）时，你必须：
@@ -732,6 +754,7 @@ def create_word_editor_agent(
    - 删除批注（使用 remove_comment_tool，根据批注ID删除指定的批注）
 4. 对图片、超链接、页眉页脚、复杂版式重排等高级 Word 元素，不要假装已经可靠支持；如果用户提出这类需求，可以先说明当前能力更适合文本、标题、段落、表格、批注和字体层面的处理。
 5. 你支持以 DOCX 模板填充方式批量生成文档：用户上传一个带占位符的 .docx，你可以读取占位符并按其提供的值生成填充后的新文档。占位符支持两种风格：Jinja 风格（{{ name }}、{% for x in xs %}…{% endfor %}、{%tr for %} 表格行循环）以及方括号风格（[NAME]、[DATE]）。
+6. 你支持以 PPTX 模板填充的方式生成演示文稿：用户上传一个带文字占位符的.pptx文件，你可以读取文字占位符，删除原值后按照提供的值填充内容，形成新的演示文档。
 
 【核心工作原则】
 1. 先判断任务类型，再选择工具。
@@ -752,12 +775,16 @@ def create_word_editor_agent(
 - 字体调整
 - 清空文档内容
 - 仅提供建议或说明
+- 生成演示文档
+- 修改现有演示文档
+- 根据用户上传的演示文档模板生成新的演示文档
 
 第二步：判断是否具备执行条件：
 - 如果用户提到“这个文档/这份文件”，但没有给出文件路径或可识别文件，就先询问文件。
 - 如果用户要求修改现有 DOCX，但没有说明改哪里，先询问目标段落、目标文本，或先读取文档内容。
 - 如果用户要求“润色/改写/更专业/更简洁”这类语义编辑，不要直接盲改；应先查看相关内容，再生成修改方案或执行编辑。
 - 如果用户要求新建文档但没有给出内容，也要先确认要写入什么。
+- 如果用户提到演示文档 / PPT / 汇报 deck，按下方【PPT / 演示文档任务的标准流程】走，**绝不要**自己拼 skills 目录路径。
 
 第三步：选择工具：
 - 分析上传或给定文件：使用 process_document
@@ -766,6 +793,217 @@ def create_word_editor_agent(
 - 修改现有 DOCX：使用 edit_docx_tool
 - 修改字体：使用 modify_docx_fonts_tool
 - 删除全部内容：使用 delete_docx_content_tool
+- 生成 / 修改 / 验证演示文档（pptx）：使用下方列出的 `ppt_*_tool` 系列工具。
+
+【PPT / 演示文档任务的标准流程】
+所有 PPT 相关任务都遵循 `ppt-polished-deck-collab` 这个 skill 的主链路。**所有
+skill 内容（references / scripts）都通过 `ppt_*_tool` 工具访问，绝不要用
+run_bash / run_read / run_glob / run_write 去执行 `skills/presentation-skills/...`
+下任何 .py 脚本或读 .md 文档。**
+
+标准顺序（按这个顺序走，每步停下来确认上一步真的成功）：
+
+0. **澄清** — 如果用户的请求很模糊（没说目标读者、页数、是否有参考 pptx），
+   先简短澄清一两个最关键的问题，再开始建 workspace。
+1. **环境探测** — `ppt_check_environment_tool(deck_workspace=None)`。
+   查 routes 数组：若缺 `editable_pptx`，直接如实告诉用户当前环境不支持，
+   不要硬上；缺 `preview_powerpoint` / `preview_libreoffice` 时告知预览会受限。
+2. **建 workspace** — `ppt_init_workspace_tool(deck_slug, deck_title)`。
+   · deck_slug 用 kebab-case（a-z 0-9 -，例如 "ihep-2026-safety"）。
+   · 工具返回 `deck_workspace`、`brief_path`、`narrative_path`。
+   · **后续所有 PPT 工具的 deck_workspace 参数都必须用工具返回的这个绝对路径**，
+     不允许自己拼字符串。
+3. **填两份主文档** — `brief.md` 与 `deck_narrative.md`。这是 .md 不是 .docx，
+   直接用 run_write 落盘（run_write 在 skills/presentation-skills 路径下是
+   白名单放行的；写到 deck_workspace 下也没事）。
+   · 先写 brief.md：目标读者、主使用场景、目标动作、模板/品牌约束、验证要求、
+     免责声明 / 风险边界。
+   · 再写 deck_narrative.md：保留工具产生的 YAML frontmatter（theme_tokens 已
+     按 zh_formal 中文宋体 / 英文 Times New Roman 默认值填好），主体按
+     `### S01 | <title>` 分页，每页含一个 ```yaml slide_spec``` 代码块，
+     代码块必须包含 8 个字段：title / reader_question / page_task /
+     reading_mode / archetype / asset_mode / validation_mode / key_message。
+
+【slide_spec 字段契约（build 工具要用到的字段）】
+derive 工具只校验 8 个必填字段；其余字段是 build 工具的"画页所需输入"，
+agent 在写 deck_narrative.md 时要按页面类型决定要不要附加，不要漏掉：
+
+  - `archetype` 必须是这 8 个之一：
+      hero-statement / decision-logic / board-memo /
+      chart-spotlight / comparison-matrix / process-flow /
+      research-note / appendix-dense
+    （未知值会 fallback 到 hero-statement 并标 warning。）
+
+  - `asset_mode` 决定 chart-spotlight 等页里资产走哪条路：
+      office-chart-native / python-figure-image / table-native /
+      diagram-connector / diagram-visual / text-layout-native /
+      icon-accent / image-hero / mixed
+
+  - `bullets: [str]` — 决策点 / 解释要点 / 步骤名 / takeaway 句。
+    · decision-logic 用作判断要点；board-memo 用前 4 项填入 2x2 panel；
+      chart-spotlight 用作右侧 Takeaways；process-flow 在没有 diagram
+      字段时被当作步骤名直接生成节点链；research-note 用作注释。
+
+  - `chart` （chart-spotlight 且 asset_mode=office-chart-native 时必填）：
+    ```yaml
+    chart:
+      title: "Coverage by phase"
+      chart_type: bar           # bar|column|line|stacked_bar|stacked_column
+      categories: ["Phase 1", "Phase 2", "Phase 3"]
+      series:
+        - {name: "Coverage", values: [92, 88, 73]}
+      number_format: "0"        # 可选
+      show_legend: false        # 可选
+    ```
+
+  - `image_path` （chart-spotlight + python-figure-image，或 research-note）：
+    绝对路径，或相对于 deck_workspace 的路径（推荐放 assets/charts/ 或
+    build/rendered/python_figures/）。build 会自动解析。
+
+  - `table` （comparison-matrix 或 appendix-dense 时填一个就行；
+              也可在 comparison-matrix 用 `matrix` 替代，见下）：
+    ```yaml
+    table:
+      headers: ["项", "Q1", "Q2", "Q3"]
+      rows:
+        - ["营收", 120, 138, 142]
+      numeric_columns: [1, 2, 3]   # 0-indexed；这些列右对齐
+    ```
+    表格自动套用 theme_tokens 中的 table policy（10.5pt、单倍行距、
+    上下居中、表头居中、文本列居左、数值列右对齐）。
+
+  - `matrix` （仅 comparison-matrix 的另一种写法，更口语化）：
+    ```yaml
+    matrix:
+      - label: "方案 A"
+        attributes: {成本: "低", 速度: "中", 可维护性: "高"}
+      - label: "方案 B"
+        attributes: {成本: "中", 速度: "高", 可维护性: "中"}
+    ```
+    build 会把 matrix 折叠成 table，attribute 的 key 合并为列头。
+
+  - `diagram` （process-flow 想精确控制节点位置时填；否则用 bullets）：
+    ```yaml
+    diagram:
+      nodes:
+        - {key: "n1", text: "采集", left: 0.7, top: 4.0, width: 2.4, height: 1.2}
+        - {key: "n2", text: "清洗", left: 4.0, top: 4.0, width: 2.4, height: 1.2}
+      edges:
+        - {from: "n1", to: "n2", from_site: "right", to_site: "left"}
+    ```
+    from_site / to_site 限定在 top / left / bottom / right。
+    用 diagram 时配 `validation_mode: diagram_connector`，build 后再跑
+    ppt_connectors_check_tool 校验真绑定。
+
+  - `caption: str` — 页脚 caption（可选）。
+  - `notes` 或 `narrative_markdown` — research-note / decision-logic
+    右侧或左侧的说明文字（可选，超过 1200 字会截断）。
+
+字段缺失时 build 会画占位 panel 并在 per_slide 里返回 warning/error，不会
+默默编内容——这是故意的，agent 看到 warning 要么补字段，要么向用户确认。
+
+【在 deck_narrative.md 里写 YAML 时的安全规则（必须遵守，否则 derive 会失败）】
+agent 用 run_write 给 deck_narrative.md 写内容时，frontmatter 之外还会有大量
+```yaml slide_spec``` 代码块。**避开下面这些 YAML 解析地雷**：
+
+  · **字符串内嵌双引号不要再用双引号包**：`title: "Q2 \"Safety\" Report"`
+    会触发 ParserError——内嵌的 `"` 直接关闭了外层 quote。
+    正确写法：`title: 'Q2 "Safety" Report'`（外层用单引号），或者
+    `title: Q2 "Safety" Report`（不用引号，YAML 会把整行 trim 后当字符串）。
+
+  · **字符串带反斜杠 `\\` 一律用单引号或不用引号**：`title: "Report\\path"`
+    会让 PyYAML 报 "unknown escape character 'p'"。
+    正确：`title: 'Report\\path'` 或 `title: Report\\path`。
+    单引号 scalar 里 `\\` 是普通字符，不当转义；双引号 scalar 里 `\\` 是
+    转义引导符（只有 `\\n`、`\\t`、`\\\\`、`\\"` 等有限几种合法）。
+
+  · **字符串带真实换行**直接换成 `|` 或 `>` 块标量，或者把换行替成空格：
+    ```yaml
+    notes: |
+      第一行内容
+      第二行内容
+    ```
+    不要把多行内容塞进单行双引号里。
+
+  · **冒号 `:` 在双引号字符串中没问题，但在不加引号的 scalar 中放在词中间会被当 mapping 起点**：
+    `title: Q2: Safety` → 解析成 mapping，会失败。
+    `title: 'Q2: Safety'` 或 `title: "Q2: Safety"` 都安全。
+
+  · **`---` 出现在字符串值的开头**（如 `summary: --- placeholder`）会被当成
+    新一段文档的开始。要么改用引号，要么避开行首的 `---`。
+
+  · **保守起见：字符串值统一用单引号**。除非你 100% 确认值里不含 `'`，
+    遇到 `'` 时改用双引号（同时保证值里没有 `"` 和 `\\`），或退而用块标量 `|`。
+    数字 / bool / 列表 / 嵌套 mapping 保持原样。
+
+  · derive 工具失败时 stderr 通常会指出哪一行 YAML 解析失败——把这行文本
+    念给用户，问他们是想改 title 文案、还是确认要用块标量。**不要**在没看
+    懂错误前盲目重写整段 YAML。
+
+4. **（仅当有参考 pptx）模板取证** — `ppt_audit_template_tool(pptx_path,
+   deck_workspace)`。审计结果写入 validation/template_audit/，把字号梯度、
+   layout 家族、共享母版元素结论回填到 brief.md。
+5. **派生 slide_specs** — `ppt_derive_slide_specs_tool(deck_workspace)`。默认
+   读 deck_narrative.md，写 build/generated/slide_specs.yaml。若返回 "missing
+   field" 类错误，把 stderr_tail 念给用户，他们的 narrative 缺字段，先修再跑。
+6. **workspace 体检** — `ppt_lint_workspace_tool(deck_workspace)`。确认目录、
+   两份主文档、派生 specs 都齐了，缺什么补什么。
+7. **构建可编辑 pptx** — `ppt_build_pptx_tool(slide_specs_path, output_pptx,
+   deck_workspace)`。默认 `output_pptx` 用 `<deck_workspace>/build/pptx/deck_v1.pptx`。
+   工具会按每页的 `archetype` 路由到对应 renderer，自动注入 narrative 中的
+   `theme_tokens`（中文宋体 / 英文 Times、字号梯度、行距），并把生成的 pptx 通过
+   FilesEvent 推给前端。
+   · **必须先跑 `ppt_derive_slide_specs_tool`**，不能拿手写的 slide_specs.yaml
+     直接喂给 build——derive 会校验 8 个必填字段，build 不再重做。
+   · 工具返回里有 `per_slide` 数组。任何 `status != "ok"` 的页要把 `error` 念给
+     用户并问"是修 narrative 再 rebuild，还是接受当前结果跑质量 gate？"
+   · build 完之后**立刻**继续走第 8-10 步的质量 gate / 预览，不要在这里停下来
+     向用户征求 build 是否成功的确认——`success` 字段已经告诉你了。
+8. **三道 deck 级质量 gate**（build 出 pptx 之后立刻按顺序跑）：
+   a) `ppt_package_preflight_tool(pptx_path, deck_workspace)` — 文件级。
+   b) `ppt_structure_precheck_tool(pptx_path, deck_workspace)` — 结构层。
+   c) 如有 diagram 页，再跑 `ppt_connectors_check_tool(pptx_path,
+      deck_workspace, slides=[...], min_connectors=N)`。
+   每道 gate 的报告都自动归档到 validation/<gate>/history/<gate>_<timestamp>.{json,md}，
+   并随结果返回 `summary` 让你判断是否要继续。
+9. **导出预览** — `ppt_export_previews_tool(pptx_path, deck_workspace,
+   backend='auto')`。PNG 落到 build/rendered/ppt_preview/slide_NNN.png。
+   页数不一致会直接 failure（不静默降级）；失败时换 backend 重试。
+10. **成图层 gate** — `ppt_render_review_tool(pptx_path, deck_workspace)`。
+    检查边界触墨与扁平化图像内部文字风险，必须在 export_previews 成功之后跑。
+11. **first-draft checkpoint** — 主动停一次。把 validation 报告摘要 + 预览图
+    路径给用户，问"要进入详细修订吗？如果不需要就交付当前初稿"。**不要**无限
+    自我打磨。
+
+【icon 资产（可选）】
+- 用 `ppt_icon_search_tool(query, pack=None)` 查 icon。pack 可选
+  "general-layout" 或 "llm-research"。
+- 用 `ppt_icon_render_tool(deck_workspace, pack=..., color_mode='auto',
+  background_color=..., accent_color=...)` 把 SVG 渲染成 deck-aware 的 PNG，
+  落到 deck_workspace/assets/icons/<pack>/<theme>/。
+- icon 是补充资产，永远不是主信息载体；当页面核心是趋势 / 比较 / 流程 /
+  机制 / 架构 / 证据时不要用 icon 替代图表或语言本体。
+
+【需要查 PPT 方法论时】
+调 `ppt_read_skill_reference_tool(name=...)`，name 限定为以下 11 个：
+  principles / deck_workflow / technical_support / design_support /
+  slide_design_system / quality_gates / build_routes /
+  diagram_support / office_chart_support / python_figure_support / icon_system
+**不要**用 run_read 去读 references/*.md 文件。
+
+【PPT 任务的 don't】
+- 不要 run_bash 跑 `scripts/*.py` 里的任何脚本——一律走 `ppt_*` 工具。
+- 不要绕过 init_workspace，自己在 user workdir 下手建 brief.md / deck_narrative.md。
+- 不要凭印象拼接 `skills/presentation-skills/...` 路径——全部经由 `ppt_*` 工具。
+- 不要在 slide_specs 派生失败时硬继续——先告诉用户 narrative 哪里缺字段。
+- 不要在质量 gate 报 error 时直接进 preview——先看 summary 决定是否回头修。
+- **不要在 ppt_build_pptx_tool 之后自己写 python-pptx 代码"微调"页面**——
+  改 narrative + slide_specs 字段然后 rebuild，比手改 .pptx 更稳。如果某一页
+  真的需要 build 工具不支持的版式，告诉用户当前 build 工具的能力边界，让
+  用户决定是否手工编辑导出的 pptx。
+- 不要无限自我打磨；初稿就绪后停一次，让用户决定是否进入详细修订。
+
+
 
 【工具选择规则】
 1. 如果用户只是想“了解文档是什么”，优先用 process_document。
@@ -2828,6 +3066,2229 @@ XML编辑工作流（仅用于 tracked changes）：
             """Alias for edit_docx_tool — see edit_docx_content_tool."""
             return edit_docx_tool(file_path, edits)
 
+        # ============ PPT SKILL TOOLS (Phase 1) ============
+        # These wrap the `ppt-polished-deck-collab` skill at
+        # `skills/presentation-skills/ppt-polished-deck-collab-traditional/`.
+        # The agent MUST NOT run scripts/*.py via run_bash — use these tools so
+        # script paths, JSON report locations and workspace structure stay
+        # consistent.
+
+        _PPT_REFERENCE_NAMES = {
+            "principles",
+            "deck_workflow",
+            "technical_support",
+            "design_support",
+            "slide_design_system",
+            "quality_gates",
+            "build_routes",
+            "diagram_support",
+            "office_chart_support",
+            "python_figure_support",
+            "icon_system",
+        }
+
+        def _ppt_user_workdir() -> Path:
+            """Return the current user's workdir (matches DocMasterAgent)."""
+            sub = user_id or "_default"
+            wd = WORKDIR / sub
+            wd.mkdir(parents=True, exist_ok=True)
+            return wd
+
+        def _run_ppt_script(
+            script_name: str,
+            args: list,
+            *,
+            timeout: int = 300,
+            capture_json: Path | None = None,
+        ) -> dict:
+            """Run a script from PPT_SCRIPTS_DIR with cwd set to that dir.
+
+            cwd is fixed so the scripts' internal sibling imports (e.g.
+            `from ppt_quality_helpers import ...`) resolve. stdout/stderr are
+            tail-trimmed to 2000 chars each to keep the model's context window
+            sane; full reports live on disk (see `capture_json`).
+            """
+            import subprocess
+            import sys as _sys
+
+            script_path = PPT_SCRIPTS_DIR / script_name
+            if not script_path.exists():
+                return {
+                    "success": False,
+                    "error": "Script not found",
+                    "message": (
+                        f"{script_name} does not exist under {PPT_SCRIPTS_DIR}. "
+                        "The PPT skill may be missing or named differently."
+                    ),
+                }
+            try:
+                proc = subprocess.run(
+                    [_sys.executable, str(script_path), *map(str, args)],
+                    cwd=str(PPT_SCRIPTS_DIR),
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired as exc:
+                return {
+                    "success": False,
+                    "error": "Timeout",
+                    "message": f"{script_name} did not finish within {timeout}s",
+                    "stderr_tail": (exc.stderr or "")[-2000:] if exc.stderr else "",
+                }
+            except Exception as exc:
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "message": f"Failed to invoke {script_name}: {exc}",
+                }
+
+            result = {
+                "success": proc.returncode == 0,
+                "returncode": proc.returncode,
+                "stdout_tail": (proc.stdout or "")[-2000:],
+                "stderr_tail": (proc.stderr or "")[-2000:],
+            }
+            if capture_json is not None and capture_json.exists():
+                try:
+                    import json as _json
+                    result["report"] = _json.loads(
+                        capture_json.read_text(encoding="utf-8")
+                    )
+                    result["report_path"] = str(capture_json)
+                except Exception as exc:
+                    result["report_read_error"] = str(exc)
+            return result
+
+        def ppt_read_skill_reference_tool(name: str) -> dict:
+            """
+            Read one of the PPT skill's reference documents and return its text.
+
+            Use this BEFORE planning a deck whenever you need methodology:
+            page archetypes, slide design system, quality gate semantics, build
+            routes, diagram / chart / icon / python figure rules.
+
+            Args:
+                name: One of:
+                    - "principles"
+                    - "deck_workflow"
+                    - "technical_support"
+                    - "design_support"
+                    - "slide_design_system"
+                    - "quality_gates"
+                    - "build_routes"
+                    - "diagram_support"
+                    - "office_chart_support"
+                    - "python_figure_support"
+                    - "icon_system"
+
+            Returns dict with:
+                success / name / path / content (full markdown) / message.
+            """
+            if name not in _PPT_REFERENCE_NAMES:
+                return {
+                    "success": False,
+                    "error": "Unknown reference",
+                    "message": (
+                        f"name={name!r} is not a valid PPT skill reference. "
+                        f"Valid names: {sorted(_PPT_REFERENCE_NAMES)}"
+                    ),
+                }
+            ref_path = PPT_REFERENCES_DIR / f"{name}.md"
+            if not ref_path.exists():
+                return {
+                    "success": False,
+                    "error": "Reference file missing",
+                    "message": (
+                        f"{ref_path} does not exist. The PPT skill may be "
+                        "incomplete; check that "
+                        "skills/presentation-skills/ppt-polished-deck-collab-traditional/references/ "
+                        "is intact."
+                    ),
+                }
+            try:
+                content = ref_path.read_text(encoding="utf-8")
+            except Exception as exc:
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "message": f"Failed to read {ref_path}: {exc}",
+                }
+            return {
+                "success": True,
+                "name": name,
+                "path": str(ref_path),
+                "content": content,
+                "message": f"Loaded reference {name} ({len(content)} chars)",
+            }
+
+        def ppt_check_environment_tool(deck_workspace: str | None = None) -> dict:
+            """
+            Probe the local environment for the PPT skill's required tooling
+            and return the set of available build / preview routes.
+
+            Use this as the FIRST step of every PPT task — it tells you which
+            preview backend (PowerPoint vs LibreOffice) you can actually use,
+            and which optional capabilities (Python figure, Mermaid) are
+            present. The agent should branch on the returned `routes` list
+            instead of assuming a backend is available.
+
+            Args:
+                deck_workspace: Optional. When provided, the JSON env report is
+                    written to <deck_workspace>/validation/env_check.json so the
+                    deck has a durable record of which routes were available
+                    when it was built.
+
+            Returns dict with:
+                success / routes (list) / report (parsed JSON) / stdout_tail /
+                stderr_tail / message.
+            """
+            json_out: Path
+            if deck_workspace:
+                ws = Path(deck_workspace).resolve()
+                target_dir = ws / "validation"
+                target_dir.mkdir(parents=True, exist_ok=True)
+                json_out = target_dir / "env_check.json"
+            else:
+                # Fall back to a per-user scratch path so we can still read the
+                # structured report even when the agent has not picked a deck
+                # workspace yet.
+                scratch = _ppt_user_workdir() / "_ppt_env_check.json"
+                json_out = scratch
+
+            result = _run_ppt_script(
+                "check_environment.py",
+                ["--json-out", str(json_out)],
+                timeout=120,
+                capture_json=json_out,
+            )
+            routes = []
+            report = result.get("report") or {}
+            if isinstance(report, dict):
+                routes = list(report.get("routes") or [])
+            result["routes"] = routes
+            result["message"] = (
+                f"Detected {len(routes)} available route(s): "
+                + (", ".join(routes) if routes else "(none)")
+            )
+            return result
+
+        _PPT_SLUG_RE = __import__("re").compile(r"^[a-z0-9][a-z0-9\-]{0,62}$")
+
+        def _ppt_brief_md(deck_title: str) -> str:
+            """Return a filled-in brief.md template (matches deck_workflow.md)."""
+            return (
+                f"# {deck_title}\n\n"
+                "## 任务定义\n"
+                "- 目标读者：\n"
+                "- 主使用场景：\n"
+                "- 目标动作：\n"
+                "- 参考模板文件：\n"
+                "- 模板 / 品牌约束：\n"
+                "- 交付物要求：\n"
+                "- 验证要求：\n\n"
+                "## 模板取证\n"
+                "- 页面系统判断：\n"
+                "- 关键母版 / layout 元素：\n"
+                "- 字号系统：\n"
+                "- 计划采用的构建路线：\n"
+                "- 最小 PoC 结论：\n\n"
+                "## 风格与边界\n"
+                "- 风格参考：\n"
+                "- typography_profile：zh_formal\n"
+                "- domain_profile：\n"
+                "- 允许使用的素材：\n"
+                "- 禁止使用的品牌元素：\n"
+                "- 免责声明 / 风险边界：\n"
+                "- 不允许发生的错误：\n"
+            )
+
+        def _ppt_narrative_md(deck_title: str) -> str:
+            """Return a starter deck_narrative.md (zh_formal theme tokens).
+
+            The YAML frontmatter is built via ``yaml.safe_dump`` rather than
+            string concatenation: hand-rolled f-string injection broke on
+            titles containing ``"`` (which closed the double-quoted scalar
+            prematurely) or ``\\`` (PyYAML treats it as an escape lead-in
+            and raises ``ScannerError`` on ``\\p`` / ``\\n`` etc.). Routing
+            through ``safe_dump`` lets PyYAML pick the right quoting style.
+            """
+            import yaml as _yaml
+
+            frontmatter = {
+                "deck": {
+                    "title": deck_title,
+                    "audience": "<target audience>",
+                    "scenario": "<primary scenario>",
+                    "objective": "<primary decision or action>",
+                    "theme_tokens": {
+                        "typography_profile": "zh_formal",
+                        "domain_profile": None,
+                        "hero_title_font_pt": 24,
+                        "section_title_font_pt": 20,
+                        "page_title_font_pt": 24,
+                        "subtitle_font_pt": 16,
+                        "minor_title_font_pt": 14,
+                        "body_font_pt": 12,
+                        "label_font_pt": 10.5,
+                        "caption_font_pt": 9,
+                        "title_line_spacing_multiple": 1.0,
+                        "body_line_spacing_multiple": 1.5,
+                        "title_paragraph_space_lines": 0.5,
+                        "body_first_line_indent_chars": 2,
+                        "body_paragraph_space_lines": 0.5,
+                        "latin_font_name": "Times New Roman",
+                        "east_asia_font_name": "宋体",
+                        "table_font_pt": 10.5,
+                        "table_line_spacing_multiple": 1.0,
+                        "table_paragraph_space_lines": 0,
+                        "table_first_line_indent_chars": 0,
+                        "table_vertical_anchor": "middle",
+                        "table_header_alignment": "center",
+                        "table_index_alignment": "left",
+                        "table_text_alignment": "left",
+                        "table_numeric_alignment": "right",
+                    },
+                }
+            }
+            yaml_body = _yaml.safe_dump(
+                frontmatter,
+                allow_unicode=True,
+                sort_keys=False,
+                default_flow_style=False,
+            )
+            # Also defang the H1 line: a deck_title containing a real
+            # newline would split the heading into two lines and confuse
+            # tools that treat the first line as the H1.
+            h1_safe = " ".join((deck_title or "").splitlines()).strip() or "Deck"
+            return (
+                "---\n"
+                f"{yaml_body}"
+                "---\n\n"
+                f"# {h1_safe}\n\n"
+                "## Global Narrative\n"
+                "- 这套 deck 的主判断：\n"
+                "- 这套 deck 的论证主线：\n"
+                "- 这套 deck 的主题词和禁区：\n\n"
+                "### S01 | <slide title>\n"
+                "```yaml slide_spec\n"
+                "title: '<slide title>'\n"
+                "reader_question: '<what this page should answer>'\n"
+                "page_task: 'persuade'\n"
+                "reading_mode: 'decision'\n"
+                "archetype: 'hero-statement'\n"
+                "asset_mode: 'text-layout-native'\n"
+                "validation_mode: 'preview_only'\n"
+                "key_message: '<single core message>'\n"
+                "required_assets: []\n"
+                "```\n\n"
+                "**Narrative Role.** 这页为什么存在、要帮助读者完成什么判断。\n\n"
+                "**Content Notes.** 这页准备放什么内容、什么判断句、什么证据。\n\n"
+                "**Layout Notes.** 这页倾向使用什么版式、什么 icon 或图表策略。\n"
+            )
+
+        def ppt_init_workspace_tool(deck_slug: str, deck_title: str) -> dict:
+            """
+            Create a deck workspace under the current user's work dir, with
+            `brief.md` + `deck_narrative.md` (zh_formal theme_tokens already
+            filled in) and the six standard sub-directories required by the
+            `ppt-polished-deck-collab` skill.
+
+            Call this as the FIRST PPT tool of every deck task. All subsequent
+            PPT tools should pass the returned `deck_workspace` value as their
+            `--workspace-dir` — never assemble the path yourself.
+
+            Args:
+                deck_slug: kebab-case identifier for this deck (a–z, 0–9, '-';
+                    max 63 chars). Used as the directory name. Example:
+                    "ihep-2026-q2-safety".
+                deck_title: Human-readable deck title — appears in brief.md
+                    and the narrative document's YAML frontmatter `deck.title`.
+
+            Returns dict with:
+                success / deck_workspace (abs path) / brief_path /
+                narrative_path / created (list of created paths) /
+                already_exists (bool) / message.
+            """
+            slug = (deck_slug or "").strip().lower()
+            if not _PPT_SLUG_RE.match(slug):
+                return {
+                    "success": False,
+                    "error": "Invalid deck_slug",
+                    "message": (
+                        f"deck_slug={deck_slug!r} must be kebab-case "
+                        "(a-z, 0-9, '-', start with alnum, max 63 chars). "
+                        "Examples: 'ihep-2026-safety', 'q2-product-review'."
+                    ),
+                }
+            if not deck_title or not deck_title.strip():
+                return {
+                    "success": False,
+                    "error": "Missing deck_title",
+                    "message": "deck_title is required and must be non-empty.",
+                }
+
+            base = _ppt_user_workdir() / "decks" / slug
+            already_exists = base.exists()
+            base.mkdir(parents=True, exist_ok=True)
+
+            sub_dirs = [
+                "data",
+                "assets/diagrams",
+                "assets/charts",
+                "assets/icons",
+                "assets/images",
+                "assets/tables",
+                "build/generated",
+                "build/pptx",
+                "build/rendered/ppt_preview",
+                "build/rendered/python_figures",
+                "validation/template_audit",
+                "validation/package_preflight/history",
+                "validation/structure_precheck/history",
+                "validation/render_review/history",
+                "validation/visual",
+                "final",
+            ]
+            created: list[str] = []
+            for rel in sub_dirs:
+                target = base / rel
+                if not target.exists():
+                    target.mkdir(parents=True, exist_ok=True)
+                    created.append(str(target))
+
+            brief_path = base / "brief.md"
+            narrative_path = base / "deck_narrative.md"
+            if not brief_path.exists():
+                brief_path.write_text(
+                    _ppt_brief_md(deck_title.strip()), encoding="utf-8"
+                )
+                created.append(str(brief_path))
+            if not narrative_path.exists():
+                narrative_path.write_text(
+                    _ppt_narrative_md(deck_title.strip()), encoding="utf-8"
+                )
+                created.append(str(narrative_path))
+
+            return {
+                "success": True,
+                "deck_workspace": str(base),
+                "brief_path": str(brief_path),
+                "narrative_path": str(narrative_path),
+                "created": created,
+                "already_exists": already_exists,
+                "message": (
+                    f"Deck workspace ready at {base}. "
+                    f"{'Re-used existing structure.' if already_exists else 'Created fresh.'} "
+                    "Next: edit brief.md and deck_narrative.md, then call "
+                    "ppt_derive_slide_specs_tool."
+                ),
+            }
+
+        # ============ PPT SKILL TOOLS (Phase 2) ============
+        # Audit / derive / lint / 3 quality gates / preview export /
+        # connector check / icon search & render. All Phase 2 tools share the
+        # same conventions:
+        #   - deck_workspace MUST come from ppt_init_workspace_tool; the agent
+        #     never invents the path.
+        #   - Reports auto-archive under <deck_workspace>/validation/<gate>/
+        #     history/<gate>_<timestamp>.{json,md}.
+        #   - Result dicts include `report` (parsed JSON when available) so
+        #     the agent can branch without re-reading files.
+
+        def _resolve_deck_workspace(deck_workspace: str) -> tuple[Path | None, dict | None]:
+            """Validate a deck_workspace string.
+
+            Returns (path, None) on success or (None, error_dict) when the
+            input is missing, not absolute, or does not exist. Phase 2 tools
+            short-circuit on the error dict so the agent gets a directive
+            recovery hint instead of a generic OS error.
+            """
+            if not deck_workspace or not isinstance(deck_workspace, str):
+                return None, {
+                    "success": False,
+                    "error": "Missing deck_workspace",
+                    "message": (
+                        "deck_workspace is required. Call ppt_init_workspace_tool "
+                        "first and pass the returned `deck_workspace` value here."
+                    ),
+                }
+            p = Path(deck_workspace)
+            if not p.is_absolute():
+                return None, {
+                    "success": False,
+                    "error": "Relative deck_workspace not accepted",
+                    "message": (
+                        f"deck_workspace={deck_workspace!r} is a relative path. "
+                        "Use the absolute path returned by ppt_init_workspace_tool."
+                    ),
+                }
+            if not p.exists() or not p.is_dir():
+                return None, {
+                    "success": False,
+                    "error": "deck_workspace not found",
+                    "message": (
+                        f"No directory at {deck_workspace}. Re-run "
+                        "ppt_init_workspace_tool to create it, or check the "
+                        "value you received from that tool earlier in the "
+                        "conversation."
+                    ),
+                }
+            return p, None
+
+        def _resolve_pptx_path(pptx_path: str, label: str = "pptx_path") -> tuple[Path | None, dict | None]:
+            """Validate a .pptx path argument."""
+            if not pptx_path or not isinstance(pptx_path, str):
+                return None, {
+                    "success": False,
+                    "error": f"Missing {label}",
+                    "message": f"{label} is required.",
+                }
+            p = Path(pptx_path)
+            if not p.is_absolute():
+                return None, {
+                    "success": False,
+                    "error": f"Relative {label} not accepted",
+                    "message": (
+                        f"{label}={pptx_path!r} is relative. Use the absolute "
+                        "path returned by your previous build step."
+                    ),
+                }
+            if not p.exists():
+                return None, {
+                    "success": False,
+                    "error": "File not found",
+                    "message": f"{label}: no file at {pptx_path}.",
+                }
+            if p.suffix.lower() != ".pptx":
+                return None, {
+                    "success": False,
+                    "error": "Not a .pptx file",
+                    "message": f"{label}={pptx_path!r} is not a .pptx file.",
+                }
+            return p, None
+
+        def ppt_audit_template_tool(
+            pptx_path: str,
+            deck_workspace: str,
+            sample_limit: int = 3,
+            text_preview_limit: int = 90,
+        ) -> dict:
+            """
+            Audit a reference .pptx template — discover its layout family,
+            master/layout/slide text inventory and font-size distribution.
+
+            Use this when the user provides an existing .pptx and wants the
+            new deck to inherit its page system. Run BEFORE writing
+            deck_narrative.md so the narrative can be anchored to the
+            template's real font sizes and layout names, not a guess.
+
+            Outputs are written to:
+              <deck_workspace>/validation/template_audit/template_audit.json
+              <deck_workspace>/validation/template_audit/template_audit.md
+
+            After running, fold the key findings (font-size ladder, layout
+            family, shared master elements, build-route choice) back into
+            brief.md so subsequent steps treat them as deck-level facts.
+
+            Args:
+                pptx_path: Absolute path to the reference .pptx.
+                deck_workspace: Value returned by ppt_init_workspace_tool.
+                sample_limit: How many sample text strings to retain per
+                    font-size bucket (default 3).
+                text_preview_limit: Max characters per retained sample
+                    (default 90).
+
+            Returns dict with success, json_path, md_path, report (parsed
+            JSON), stdout_tail, stderr_tail, message.
+            """
+            pptx, err = _resolve_pptx_path(pptx_path)
+            if err is not None:
+                return err
+            ws, err = _resolve_deck_workspace(deck_workspace)
+            if err is not None:
+                return err
+
+            target_dir = ws / "validation" / "template_audit"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            json_out = target_dir / "template_audit.json"
+            md_out = target_dir / "template_audit.md"
+
+            result = _run_ppt_script(
+                "audit_pptx_template.py",
+                [
+                    "--pptx", str(pptx),
+                    "--json-out", str(json_out),
+                    "--md-out", str(md_out),
+                    "--sample-limit", str(sample_limit),
+                    "--text-preview-limit", str(text_preview_limit),
+                ],
+                timeout=180,
+                capture_json=json_out,
+            )
+            result["json_path"] = str(json_out) if json_out.exists() else None
+            result["md_path"] = str(md_out) if md_out.exists() else None
+            if result.get("success"):
+                summary = (result.get("report") or {}).get("summary") or {}
+                result["message"] = (
+                    f"Template audit OK. slides={summary.get('slide_count', '?')}, "
+                    f"masters={summary.get('master_count', '?')}, "
+                    f"layouts={summary.get('default_slide_layout_count', '?')}. "
+                    f"Findings written to {target_dir}."
+                )
+            else:
+                result["message"] = (
+                    "Template audit failed. Check stderr_tail for details; "
+                    "if soffice / pptx parsing complains, confirm the file is "
+                    "a real .pptx (not .ppt — convert via Office or LibreOffice first)."
+                )
+            return result
+
+        def ppt_derive_slide_specs_tool(
+            deck_workspace: str,
+            narrative_path: str | None = None,
+            out_yaml: str | None = None,
+        ) -> dict:
+            """
+            Parse deck_narrative.md and write a structured slide_specs.yaml
+            ready for the build step.
+
+            What the script does:
+              - Reads YAML frontmatter as deck-level metadata.
+              - Splits the body by `### Sxx | <title>` headings.
+              - Pulls the first ```yaml slide_spec``` block from each section.
+              - Validates the eight required fields per slide: title,
+                reader_question, page_task, reading_mode, archetype,
+                asset_mode, validation_mode, key_message.
+              - Carries the remaining markdown as narrative_markdown.
+
+            Defaults:
+              narrative_path = <deck_workspace>/deck_narrative.md
+              out_yaml       = <deck_workspace>/build/generated/slide_specs.yaml
+
+            If the script fails with "missing field" errors, read the stderr
+            tail to the user — those are authoring problems in
+            deck_narrative.md (a slide section forgot its yaml block, the
+            yaml block lacks a required field, etc.). Fix in the narrative,
+            then re-run this tool.
+
+            Args:
+                deck_workspace: Value returned by ppt_init_workspace_tool.
+                narrative_path: Optional override; defaults to deck_workspace/deck_narrative.md.
+                out_yaml: Optional override; defaults to
+                    deck_workspace/build/generated/slide_specs.yaml.
+
+            Returns dict with success / slide_specs_path / slide_count /
+            stdout_tail / stderr_tail / message.
+            """
+            ws, err = _resolve_deck_workspace(deck_workspace)
+            if err is not None:
+                return err
+
+            narr = Path(narrative_path) if narrative_path else (ws / "deck_narrative.md")
+            if not narr.exists():
+                return {
+                    "success": False,
+                    "error": "Narrative not found",
+                    "message": (
+                        f"deck_narrative.md not found at {narr}. Edit the "
+                        "narrative file produced by ppt_init_workspace_tool "
+                        "before deriving slide_specs."
+                    ),
+                }
+            out = Path(out_yaml) if out_yaml else (ws / "build" / "generated" / "slide_specs.yaml")
+            out.parent.mkdir(parents=True, exist_ok=True)
+
+            # The derive script doesn't take --json-out for the structured
+            # result, but we can scrape the slide count from stdout.
+            result = _run_ppt_script(
+                "derive_slide_specs_from_narrative.py",
+                ["--narrative", str(narr), "--out-yaml", str(out)],
+                timeout=60,
+            )
+            slide_count = None
+            if result.get("success"):
+                import re as _re
+                m = _re.search(r"slides=(\d+)", result.get("stdout_tail") or "")
+                if m:
+                    slide_count = int(m.group(1))
+                result["slide_specs_path"] = str(out)
+                result["slide_count"] = slide_count
+                result["message"] = (
+                    f"Derived {slide_count if slide_count is not None else '?'} "
+                    f"slide spec(s) → {out}."
+                )
+            else:
+                result["message"] = (
+                    "Derive failed. Common causes: deck_narrative.md is "
+                    "missing YAML frontmatter, a `### Sxx | <title>` heading, "
+                    "a ```yaml slide_spec``` block, or one of the required "
+                    "slide fields (title, reader_question, page_task, "
+                    "reading_mode, archetype, asset_mode, validation_mode, "
+                    "key_message). Read stderr_tail and fix the narrative, "
+                    "then call again."
+                )
+            return result
+
+        def ppt_lint_workspace_tool(deck_workspace: str) -> dict:
+            """
+            Check that a deck workspace has the required directories, the two
+            human-authored markdown files, and a derived slide_specs.yaml.
+
+            Use this as a pre-flight before build to catch missing inputs
+            without trying to compile a half-finished deck. The script also
+            reports asset-folder occupancy (diagrams / charts / icons /
+            images / tables) so the agent can spot under-supplied assets.
+
+            Args:
+                deck_workspace: Value returned by ppt_init_workspace_tool.
+
+            Returns dict with success, report (parsed JSON), errors,
+            warnings, message.
+            """
+            ws, err = _resolve_deck_workspace(deck_workspace)
+            if err is not None:
+                return err
+
+            json_out = ws / "validation" / "workspace_lint.json"
+            result = _run_ppt_script(
+                "lint_deck_assets.py",
+                ["--workspace-dir", str(ws), "--json-out", str(json_out)],
+                timeout=30,
+                capture_json=json_out,
+            )
+            report = result.get("report") or {}
+            result["errors"] = list(report.get("errors") or [])
+            result["warnings"] = list(report.get("warnings") or [])
+            if result.get("success"):
+                result["message"] = (
+                    "Workspace lint passed."
+                    + (f" Warnings: {len(result['warnings'])}."
+                       if result["warnings"] else "")
+                )
+            else:
+                result["message"] = (
+                    f"Workspace lint failed with {len(result['errors'])} "
+                    "error(s). Fix the missing directories/files, then re-run."
+                )
+            return result
+
+        def ppt_package_preflight_tool(
+            pptx_path: str,
+            deck_workspace: str,
+            fail_on: str = "error",
+        ) -> dict:
+            """
+            File-level quality gate: zip integrity, slide-count consistency
+            (presentation.xml vs docProps/app.xml vs actual slide files),
+            stale section_lst references, missing slide relationships, and
+            embedded-object mobile-compatibility risk.
+
+            This is the FIRST gate after build. Run BEFORE structure_precheck
+            and BEFORE preview export — if the deck can't be opened by a
+            fragile parser (WeChat / mobile WPS), there is no point checking
+            its layout.
+
+            Output is auto-archived to:
+              <deck_workspace>/validation/package_preflight/history/
+                package_preflight_<YYYYMMDD_HHMMSS>.{json,md}
+
+            Args:
+                pptx_path: Absolute path to the deck .pptx.
+                deck_workspace: Value returned by ppt_init_workspace_tool.
+                fail_on: 'error' (default), 'warning', or 'never'. Controls
+                    the script's exit code, NOT what is reported — issues are
+                    always returned in the result dict.
+
+            Returns dict with success, returncode, report (parsed JSON
+            including `summary` counts and `issues` list), stdout_tail,
+            stderr_tail, message.
+            """
+            pptx, err = _resolve_pptx_path(pptx_path)
+            if err is not None:
+                return err
+            ws, err = _resolve_deck_workspace(deck_workspace)
+            if err is not None:
+                return err
+            if fail_on not in {"error", "warning", "never"}:
+                return {
+                    "success": False,
+                    "error": "Invalid fail_on",
+                    "message": "fail_on must be one of: error, warning, never.",
+                }
+
+            result = _run_ppt_script(
+                "check_pptx_package_preflight.py",
+                [
+                    "--pptx", str(pptx),
+                    "--workspace-dir", str(ws),
+                    "--fail-on", fail_on,
+                ],
+                timeout=120,
+            )
+            report = result.get("report") or {}
+            summary = report.get("summary") or {}
+            # The script writes its own timestamped report — locate the
+            # newest one so the agent can point the user at it.
+            hist = ws / "validation" / "package_preflight" / "history"
+            newest = None
+            if hist.exists():
+                jsons = sorted(hist.glob("package_preflight_*.json"))
+                if jsons:
+                    newest = jsons[-1]
+                    try:
+                        import json as _json
+                        report = _json.loads(newest.read_text(encoding="utf-8"))
+                        result["report"] = report
+                        summary = report.get("summary") or {}
+                    except Exception:
+                        pass
+            result["report_path"] = str(newest) if newest else None
+            result["summary"] = summary
+            result["message"] = (
+                f"package_preflight: errors={summary.get('error', 0)}, "
+                f"warnings={summary.get('warning', 0)}, "
+                f"not_checked={summary.get('not_checked', 0)}. "
+                + (f"Report: {newest.name}." if newest else "(no report on disk)")
+            )
+            return result
+
+        def ppt_structure_precheck_tool(
+            pptx_path: str,
+            deck_workspace: str,
+            fail_on: str = "error",
+        ) -> dict:
+            """
+            Structure-layer quality gate: textbox fit / near-overflow,
+            compact-width pressure on short labels, text occluded by higher
+            z-order shapes, critical content (table/chart/picture) covered
+            by overlay shapes, and explicit `not_checked` records for
+            structured chart labels and flattened pictures.
+
+            Run AFTER package_preflight and BEFORE preview export. The
+            issues here have shape/slide-level locations so they are easy
+            to drive into targeted fixes.
+
+            Output is auto-archived to:
+              <deck_workspace>/validation/structure_precheck/history/
+                structure_precheck_<YYYYMMDD_HHMMSS>.{json,md}
+              <deck_workspace>/validation/structure_precheck/shape_inventory.json
+
+            Args:
+                pptx_path: Absolute path to the deck .pptx.
+                deck_workspace: Value returned by ppt_init_workspace_tool.
+                fail_on: 'error' (default), 'warning', or 'never'.
+
+            Returns dict with success, returncode, report (parsed JSON),
+            summary, inventory_path, report_path, stdout_tail, stderr_tail,
+            message.
+            """
+            pptx, err = _resolve_pptx_path(pptx_path)
+            if err is not None:
+                return err
+            ws, err = _resolve_deck_workspace(deck_workspace)
+            if err is not None:
+                return err
+            if fail_on not in {"error", "warning", "never"}:
+                return {
+                    "success": False,
+                    "error": "Invalid fail_on",
+                    "message": "fail_on must be one of: error, warning, never.",
+                }
+
+            inventory_out = ws / "validation" / "structure_precheck" / "shape_inventory.json"
+            inventory_out.parent.mkdir(parents=True, exist_ok=True)
+            result = _run_ppt_script(
+                "check_pptx_structure_precheck.py",
+                [
+                    "--pptx", str(pptx),
+                    "--workspace-dir", str(ws),
+                    "--inventory-out", str(inventory_out),
+                    "--fail-on", fail_on,
+                ],
+                timeout=180,
+            )
+            hist = ws / "validation" / "structure_precheck" / "history"
+            newest = None
+            summary = {}
+            if hist.exists():
+                jsons = sorted(hist.glob("structure_precheck_*.json"))
+                if jsons:
+                    newest = jsons[-1]
+                    try:
+                        import json as _json
+                        report = _json.loads(newest.read_text(encoding="utf-8"))
+                        result["report"] = report
+                        summary = report.get("summary") or {}
+                    except Exception:
+                        pass
+            result["report_path"] = str(newest) if newest else None
+            result["inventory_path"] = str(inventory_out) if inventory_out.exists() else None
+            result["summary"] = summary
+            result["message"] = (
+                f"structure_precheck: errors={summary.get('error', 0)}, "
+                f"warnings={summary.get('warning', 0)}, "
+                f"not_checked={summary.get('not_checked', 0)}. "
+                + (f"Report: {newest.name}." if newest else "(no report on disk)")
+            )
+            return result
+
+        def ppt_export_previews_tool(
+            pptx_path: str,
+            deck_workspace: str,
+            backend: str = "auto",
+            render_backend: str = "auto",
+            prefix: str = "slide_",
+            keep_pdf: bool = False,
+        ) -> dict:
+            """
+            Render the deck as per-slide PNG previews via PowerPoint or
+            LibreOffice, then pdftoppm or PyMuPDF for PDF→PNG.
+
+            Output directory defaults to:
+              <deck_workspace>/build/rendered/ppt_preview/slide_001.png ...
+
+            Manifest written to:
+              <deck_workspace>/validation/preview_manifest.json
+
+            Page-count mismatch (e.g. LibreOffice silently dropping a slide)
+            is treated as failure, not a warning — re-export with the other
+            backend if it happens.
+
+            Args:
+                pptx_path: Absolute path to the deck .pptx.
+                deck_workspace: Value returned by ppt_init_workspace_tool.
+                backend: 'auto' (default), 'powerpoint', or 'libreoffice'.
+                render_backend: 'auto' (default), 'pdftoppm', or 'fitz'.
+                prefix: Output PNG filename prefix (default 'slide_').
+                keep_pdf: When true, the intermediate PDF is moved into the
+                    preview directory; default false.
+
+            Returns dict with success, preview_dir, manifest_path,
+            generated_pages, pdf_backend, render_backend, stdout_tail,
+            stderr_tail, message.
+            """
+            pptx, err = _resolve_pptx_path(pptx_path)
+            if err is not None:
+                return err
+            ws, err = _resolve_deck_workspace(deck_workspace)
+            if err is not None:
+                return err
+            if backend not in {"auto", "powerpoint", "libreoffice"}:
+                return {
+                    "success": False,
+                    "error": "Invalid backend",
+                    "message": "backend must be one of: auto, powerpoint, libreoffice.",
+                }
+            if render_backend not in {"auto", "pdftoppm", "fitz"}:
+                return {
+                    "success": False,
+                    "error": "Invalid render_backend",
+                    "message": "render_backend must be one of: auto, pdftoppm, fitz.",
+                }
+
+            out_dir = ws / "build" / "rendered" / "ppt_preview"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            manifest = ws / "validation" / "preview_manifest.json"
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+
+            args = [
+                "--pptx", str(pptx),
+                "--out-dir", str(out_dir),
+                "--backend", backend,
+                "--render-backend", render_backend,
+                "--prefix", prefix,
+                "--json-out", str(manifest),
+            ]
+            if keep_pdf:
+                args.append("--keep-pdf")
+            result = _run_ppt_script(
+                "export_pptx_previews.py",
+                args,
+                timeout=300,
+                capture_json=manifest,
+            )
+            report = result.get("report") or {}
+            result["preview_dir"] = str(out_dir)
+            result["manifest_path"] = str(manifest) if manifest.exists() else None
+            result["generated_pages"] = report.get("generated_pages")
+            result["pdf_backend"] = report.get("pdf_backend")
+            result["render_backend"] = report.get("render_backend")
+            if result.get("success"):
+                result["message"] = (
+                    f"Exported {result['generated_pages']} preview(s) via "
+                    f"{result['pdf_backend']} → {result['render_backend']}. "
+                    f"PNGs in {out_dir}."
+                )
+            else:
+                result["message"] = (
+                    "Preview export failed. If the error mentions PowerPoint "
+                    "automation, check macOS Privacy & Security → Automation. "
+                    "If LibreOffice converted but pages count is off, retry "
+                    "with backend='powerpoint' or vice versa."
+                )
+            return result
+
+        def ppt_render_review_tool(
+            pptx_path: str,
+            deck_workspace: str,
+            preview_dir: str | None = None,
+            fail_on: str = "error",
+        ) -> dict:
+            """
+            Render-layer quality gate: boundary-touch-ink at bottom/right of
+            text frames (font strokes within ~3px of the inner edge in the
+            PNG) and flattened-graphic internal-text `not_checked` entries.
+
+            Run AFTER ppt_export_previews_tool — this gate consumes the
+            preview PNGs. It complements structure_precheck by catching
+            issues only visible after rasterization (e.g. last-line clipped
+            by 1-2 px when the structure-level math says it just barely
+            fits).
+
+            Output auto-archived to:
+              <deck_workspace>/validation/render_review/history/
+                render_review_<YYYYMMDD_HHMMSS>.{json,md}
+
+            Args:
+                pptx_path: Absolute path to the deck .pptx.
+                deck_workspace: Value returned by ppt_init_workspace_tool.
+                preview_dir: Optional override; defaults to
+                    deck_workspace/build/rendered/ppt_preview.
+                fail_on: 'error' (default), 'warning', or 'never'.
+
+            Returns dict with success, summary, report, report_path,
+            stdout_tail, stderr_tail, message.
+            """
+            pptx, err = _resolve_pptx_path(pptx_path)
+            if err is not None:
+                return err
+            ws, err = _resolve_deck_workspace(deck_workspace)
+            if err is not None:
+                return err
+            if fail_on not in {"error", "warning", "never"}:
+                return {
+                    "success": False,
+                    "error": "Invalid fail_on",
+                    "message": "fail_on must be one of: error, warning, never.",
+                }
+
+            pv = Path(preview_dir) if preview_dir else (ws / "build" / "rendered" / "ppt_preview")
+            if not pv.exists():
+                return {
+                    "success": False,
+                    "error": "Preview directory not found",
+                    "message": (
+                        f"No preview directory at {pv}. Run "
+                        "ppt_export_previews_tool first."
+                    ),
+                }
+
+            result = _run_ppt_script(
+                "check_pptx_render_review.py",
+                [
+                    "--pptx", str(pptx),
+                    "--preview-dir", str(pv),
+                    "--workspace-dir", str(ws),
+                    "--fail-on", fail_on,
+                ],
+                timeout=180,
+            )
+            hist = ws / "validation" / "render_review" / "history"
+            newest = None
+            summary = {}
+            if hist.exists():
+                jsons = sorted(hist.glob("render_review_*.json"))
+                if jsons:
+                    newest = jsons[-1]
+                    try:
+                        import json as _json
+                        report = _json.loads(newest.read_text(encoding="utf-8"))
+                        result["report"] = report
+                        summary = report.get("summary") or {}
+                    except Exception:
+                        pass
+            result["report_path"] = str(newest) if newest else None
+            result["summary"] = summary
+            result["message"] = (
+                f"render_review: errors={summary.get('error', 0)}, "
+                f"warnings={summary.get('warning', 0)}, "
+                f"not_checked={summary.get('not_checked', 0)}. "
+                + (f"Report: {newest.name}." if newest else "(no report on disk)")
+            )
+            return result
+
+        def ppt_connectors_check_tool(
+            pptx_path: str,
+            deck_workspace: str,
+            slides: list | None = None,
+            min_connectors: int = 0,
+            forbid_prefixes: list | None = None,
+        ) -> dict:
+            """
+            Module-level gate for diagram pages: verify each connector is
+            REALLY glued to two shapes (stCxn + endCxn present, target shape
+            ids resolve, no connections to forbidden parent shapes such as
+            lane / cluster outer frames).
+
+            Run after a diagram page with asset_mode=diagram-connector is
+            built. A passing report is the evidence the user can rely on
+            that dragging a node will not break the diagram.
+
+            Output:
+              <deck_workspace>/validation/connectors/connector_report.json
+
+            Args:
+                pptx_path: Absolute path to the deck .pptx.
+                deck_workspace: Value returned by ppt_init_workspace_tool.
+                slides: Optional list of slide numbers (1-based) to limit
+                    the check. Defaults to all slides.
+                min_connectors: Optional. Total connector count must reach
+                    this value or the check fails. Use it on dedicated
+                    diagram pages where you know connectors must exist.
+                forbid_prefixes: Optional list of forbidden prefixes for
+                    connector endpoints. Default is `["Lane "]` — connector
+                    endpoints starting with these strings are flagged as
+                    illegal (they typically mean the line is glued to a
+                    swimlane outer frame instead of a business node).
+
+            Returns dict with success, total_connectors, report (parsed
+            JSON, mapping slide → records), report_path, stdout_tail,
+            stderr_tail, message.
+            """
+            pptx, err = _resolve_pptx_path(pptx_path)
+            if err is not None:
+                return err
+            ws, err = _resolve_deck_workspace(deck_workspace)
+            if err is not None:
+                return err
+
+            json_out = ws / "validation" / "connectors" / "connector_report.json"
+            json_out.parent.mkdir(parents=True, exist_ok=True)
+            args = ["--pptx", str(pptx), "--json-out", str(json_out)]
+            if isinstance(slides, list):
+                for s in slides:
+                    args.extend(["--slide", str(int(s))])
+            if min_connectors and min_connectors > 0:
+                args.extend(["--min-connectors", str(int(min_connectors))])
+            for prefix in (forbid_prefixes or []):
+                args.extend(["--forbid-prefix", str(prefix)])
+
+            result = _run_ppt_script(
+                "check_pptx_connectors.py",
+                args,
+                timeout=60,
+                capture_json=json_out,
+            )
+            report = result.get("report") or {}
+            # report maps slide_num -> list of connector records
+            total = 0
+            if isinstance(report, dict):
+                for v in report.values():
+                    if isinstance(v, list):
+                        total += len(v)
+            result["report_path"] = str(json_out) if json_out.exists() else None
+            result["total_connectors"] = total
+            if result.get("success"):
+                result["message"] = (
+                    f"connector check passed: {total} connector(s) verified."
+                )
+            else:
+                result["message"] = (
+                    f"connector check FAILED. {total} connector(s) seen. "
+                    "Read stdout_tail for the specific issues — usually one "
+                    "of: stCxn/endCxn missing (line drawn but not glued), "
+                    "endpoint id unresolved (target shape deleted), or "
+                    "connector glued to a lane/cluster outer frame instead "
+                    "of a business node."
+                )
+            return result
+
+        def ppt_icon_search_tool(query: str, pack: str | None = None) -> dict:
+            """
+            Search the PPT skill's Tabler-Outline icon registry.
+
+            Use this when planning an icon-accent page (asset_mode=icon-accent)
+            or when looking for a section header icon. Icons are SUPPORTING
+            assets — they never carry primary information.
+
+            Args:
+                query: Space-separated keywords (English or Chinese aliases
+                    both work). Example: "risk safety" or "趋势 增长".
+                pack: Optional pack id. One of:
+                    - "general-layout" (default scope — titles, cards, sections)
+                    - "llm-research" (ACL/EMNLP/LLM/Agent/RAG topics)
+                    Omit to search across all packs.
+
+            Returns dict with success, matches (list of {score, id,
+            source_name, packs, aliases, usage_note}), stdout_tail, message.
+            """
+            if not query or not isinstance(query, str) or not query.strip():
+                return {
+                    "success": False,
+                    "error": "Missing query",
+                    "message": "query is required (space-separated keywords).",
+                }
+            args = ["search", "--query", query]
+            if pack:
+                args.extend(["--pack", str(pack)])
+            result = _run_ppt_script("icon_registry.py", args, timeout=30)
+            # Parse stdout's [MATCH ...] lines into a structured list.
+            matches = []
+            current = None
+            for line in (result.get("stdout_tail") or "").splitlines():
+                line = line.rstrip()
+                if line.startswith("[MATCH]"):
+                    if current:
+                        matches.append(current)
+                    parts = line[len("[MATCH]"):].strip().split()
+                    rec = {"score": None, "id": None, "source_name": None, "packs": []}
+                    for p in parts:
+                        if "=" in p:
+                            k, v = p.split("=", 1)
+                            if k == "score":
+                                try:
+                                    rec["score"] = int(v)
+                                except ValueError:
+                                    rec["score"] = v
+                            elif k == "packs":
+                                rec["packs"] = [x for x in v.split(",") if x]
+                            elif k in {"id", "source"}:
+                                rec["id" if k == "id" else "source_name"] = v
+                    current = rec
+                elif current and "aliases=" in line:
+                    current["aliases"] = [
+                        x for x in line.split("aliases=", 1)[1].split(",") if x
+                    ]
+                elif current and "usage=" in line:
+                    current["usage_note"] = line.split("usage=", 1)[1]
+            if current:
+                matches.append(current)
+            result["matches"] = matches
+            result["message"] = (
+                f"Found {len(matches)} icon match(es) for query={query!r}."
+            )
+            return result
+
+        def ppt_icon_render_tool(
+            deck_workspace: str,
+            pack: str | None = None,
+            size: int = 128,
+            color_mode: str = "auto",
+            background_color: str = "#F8FAFC",
+            accent_color: str = "#2563EB",
+            theme_name: str = "default",
+            icon_color: str | None = None,
+        ) -> dict:
+            """
+            Render icon PNGs into the deck workspace, with deck-aware
+            recoloring (auto mode picks colors from the icon's role + the
+            slide background + the accent color, then enforces WCAG ≥3.0
+            contrast).
+
+            Output goes to:
+              <deck_workspace>/assets/icons/<pack or 'all'>/<theme_name>/
+
+            so a build can later reference these PNGs by relative path
+            without polluting the skill directory.
+
+            Args:
+                deck_workspace: Value returned by ppt_init_workspace_tool.
+                pack: Optional. 'general-layout' / 'llm-research'. Omit to
+                    render every pack.
+                size: Square PNG side in pixels (default 128).
+                color_mode: 'auto' (default — recommend per icon), 'original'
+                    (keep SVG default colors), or 'fixed' (use icon_color).
+                background_color: Slide background hex, used by 'auto' mode.
+                    Default '#F8FAFC'.
+                accent_color: Deck accent hex, used by 'auto' mode. Default
+                    '#2563EB'.
+                theme_name: Sub-directory name under assets/icons/<pack>/
+                    (so multiple light/dark variants can coexist).
+                icon_color: Required when color_mode='fixed'; ignored
+                    otherwise.
+
+            Returns dict with success, out_dir, stdout_tail, stderr_tail,
+            message.
+            """
+            ws, err = _resolve_deck_workspace(deck_workspace)
+            if err is not None:
+                return err
+            if color_mode not in {"auto", "original", "fixed"}:
+                return {
+                    "success": False,
+                    "error": "Invalid color_mode",
+                    "message": "color_mode must be one of: auto, original, fixed.",
+                }
+            if color_mode == "fixed" and not icon_color:
+                return {
+                    "success": False,
+                    "error": "Missing icon_color",
+                    "message": "icon_color is required when color_mode='fixed'.",
+                }
+
+            scope = pack or "all"
+            out_dir = ws / "assets" / "icons" / scope / theme_name
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            args = [
+                "render",
+                "--size", str(int(size)),
+                "--color-mode", color_mode,
+                "--background-color", background_color,
+                "--accent-color", accent_color,
+                "--theme-name", theme_name,
+                "--out-dir", str(out_dir),
+            ]
+            if pack:
+                args.extend(["--pack", pack])
+            if icon_color:
+                args.extend(["--icon-color", icon_color])
+
+            result = _run_ppt_script("icon_registry.py", args, timeout=120)
+            result["out_dir"] = str(out_dir)
+            # The script may exit non-zero if a single SVG is missing — be
+            # explicit so the agent can advise running `icon_registry.py sync`
+            # (the agent can't run sync directly; this is a skill-maintenance
+            # operation handled out-of-band).
+            if result.get("success"):
+                pngs = sorted(out_dir.glob("*.png"))
+                result["icon_count"] = len(pngs)
+                result["message"] = (
+                    f"Rendered {len(pngs)} icon(s) under {out_dir}."
+                )
+            else:
+                result["message"] = (
+                    "Icon render failed. If stderr mentions a missing .svg, "
+                    "the icon registry needs `icon_registry.py sync` first — "
+                    "this is a one-off skill-maintenance task (it downloads "
+                    "SVGs from the Tabler GitHub repo). Tell the user; this "
+                    "tool does not auto-sync."
+                )
+            return result
+
+        # ============ PPT SKILL TOOLS (Phase 3 — build) ============
+        # `ppt_build_pptx_tool` reads a derived slide_specs.yaml and produces
+        # a real editable pptx by routing each slide through an archetype
+        # renderer. The renderers call into skills/.../scripts/ppt_asset_helpers
+        # so theme tokens (fonts, panels, palette) stay consistent with the
+        # rest of the PPT skill.
+        #
+        # Field contract per slide (in addition to the 8 fields derive enforces):
+        #   - archetype: one of {hero-statement, decision-logic, board-memo,
+        #     chart-spotlight, comparison-matrix, process-flow, research-note,
+        #     appendix-dense}; unknown values fall back to hero-statement.
+        #   - asset_mode: one of {text-layout-native, office-chart-native,
+        #     python-figure-image, table-native, diagram-connector,
+        #     diagram-visual, icon-accent, image-hero, mixed}. Drives which
+        #     renderer block is used inside the archetype.
+        #   - key_message: short conclusion sentence shown as subtitle/answer.
+        #   - bullets: list[str] of supporting points (optional).
+        #   - chart: optional dict
+        #       {chart_type: bar|column|line|stacked_bar, categories: [...],
+        #        series: [{name: str, values: [num]}], number_format?: str,
+        #        show_legend?: bool}
+        #   - image_path: optional absolute or workspace-relative image path
+        #     (used by asset_mode in {python-figure-image, image-hero}).
+        #   - table: optional dict {headers: [...], rows: [[...], ...],
+        #            numeric_columns?: [int]}
+        #   - matrix: optional list of {label, attributes: {col: val}} for
+        #     comparison-matrix.
+        #   - diagram: optional dict
+        #       {nodes: [{key, text, left, top, width, height, fill?, line?}],
+        #        edges: [{from, to, from_site: top|left|bottom|right,
+        #                 to_site: ..., line_rgb?}]}
+        #   - caption: optional footer text per slide.
+
+        _ARCHETYPES = {
+            "hero-statement",
+            "decision-logic",
+            "board-memo",
+            "chart-spotlight",
+            "comparison-matrix",
+            "process-flow",
+            "research-note",
+            "appendix-dense",
+        }
+
+        _ASSET_MODES = {
+            "text-layout-native",
+            "office-chart-native",
+            "python-figure-image",
+            "table-native",
+            "diagram-connector",
+            "diagram-visual",
+            "icon-accent",
+            "image-hero",
+            "mixed",
+        }
+
+        def _ppt_load_yaml(path: Path) -> tuple[dict | None, str | None]:
+            try:
+                import yaml  # python-pptx already pulls it in transitively
+            except ImportError as exc:
+                return None, f"PyYAML not installed: {exc}"
+            try:
+                data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                return None, f"YAML parse error: {exc}"
+            if not isinstance(data, dict):
+                return None, "slide_specs.yaml top-level must be a mapping"
+            return data, None
+
+        def _ppt_chart_type(name: str):
+            """Map a friendly name to pptx XL_CHART_TYPE."""
+            from pptx.enum.chart import XL_CHART_TYPE
+            return {
+                "bar": XL_CHART_TYPE.BAR_CLUSTERED,
+                "bar_clustered": XL_CHART_TYPE.BAR_CLUSTERED,
+                "column": XL_CHART_TYPE.COLUMN_CLUSTERED,
+                "column_clustered": XL_CHART_TYPE.COLUMN_CLUSTERED,
+                "line": XL_CHART_TYPE.LINE,
+                "stacked_bar": XL_CHART_TYPE.BAR_STACKED,
+                "stacked_column": XL_CHART_TYPE.COLUMN_STACKED,
+            }.get((name or "bar").lower(), XL_CHART_TYPE.BAR_CLUSTERED)
+
+        def ppt_build_pptx_tool(
+            slide_specs_path: str,
+            output_pptx: str,
+            deck_workspace: str,
+        ) -> dict:
+            """
+            Build an editable .pptx from a derived slide_specs.yaml.
+
+            Each slide is routed to an archetype renderer (hero-statement /
+            decision-logic / board-memo / chart-spotlight / comparison-matrix
+            / process-flow / research-note / appendix-dense). Theme tokens
+            from deck.theme_tokens are injected into the underlying
+            ppt_asset_helpers module so fonts, sizes, panel colors and CJK
+            (东亚) font slots match the rest of the skill.
+
+            **Do NOT call this tool with hand-crafted YAML.** Always run
+            ppt_derive_slide_specs_tool first so the structural fields are
+            validated against deck_narrative.md.
+
+            What the tool does NOT do:
+              - It does not invent content. Bullets, chart data, table data
+                and diagram structure must come from the slide_spec itself.
+              - It does not run quality gates. After build, call
+                ppt_package_preflight_tool → ppt_structure_precheck_tool →
+                ppt_export_previews_tool → ppt_render_review_tool.
+
+            Args:
+                slide_specs_path: Absolute path, typically
+                    <deck_workspace>/build/generated/slide_specs.yaml.
+                output_pptx: Absolute path to write, typically
+                    <deck_workspace>/build/pptx/deck_v1.pptx.
+                deck_workspace: Value returned by ppt_init_workspace_tool.
+                    Used to resolve relative image / chart paths inside the
+                    spec.
+
+            Returns dict with:
+                success / output_pptx / slide_count / per_slide (list of
+                {slide_id, archetype, status, error?}) / message.
+            """
+            ws, err = _resolve_deck_workspace(deck_workspace)
+            if err is not None:
+                return err
+
+            specs_path = Path(slide_specs_path)
+            if not specs_path.is_absolute():
+                return {
+                    "success": False,
+                    "error": "Relative slide_specs_path",
+                    "message": (
+                        f"slide_specs_path={slide_specs_path!r} must be absolute. "
+                        "Use the slide_specs_path returned by "
+                        "ppt_derive_slide_specs_tool."
+                    ),
+                }
+            if not specs_path.exists():
+                return {
+                    "success": False,
+                    "error": "slide_specs not found",
+                    "message": (
+                        f"No file at {specs_path}. Run "
+                        "ppt_derive_slide_specs_tool first."
+                    ),
+                }
+
+            out_path = Path(output_pptx)
+            if not out_path.is_absolute():
+                return {
+                    "success": False,
+                    "error": "Relative output_pptx",
+                    "message": "output_pptx must be absolute.",
+                }
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+
+            data, parse_err = _ppt_load_yaml(specs_path)
+            if parse_err:
+                return {
+                    "success": False,
+                    "error": "Spec parse failed",
+                    "message": parse_err,
+                }
+            deck = data.get("deck") or {}
+            slides = data.get("slides") or []
+            if not isinstance(slides, list) or not slides:
+                return {
+                    "success": False,
+                    "error": "No slides",
+                    "message": (
+                        "slide_specs.yaml has no `slides` list. Re-run "
+                        "ppt_derive_slide_specs_tool after editing the "
+                        "narrative."
+                    ),
+                }
+
+            # Make scripts dir importable for ppt_asset_helpers.
+            import sys as _sys
+            _saved_path = _sys.path[:]
+            _sys.path.insert(0, str(PPT_SCRIPTS_DIR))
+            try:
+                import ppt_asset_helpers as pah  # type: ignore
+                from pptx.enum.text import MSO_VERTICAL_ANCHOR, PP_ALIGN
+                from pptx.dml.color import RGBColor
+                from pptx.util import Inches, Pt
+            except Exception as exc:
+                _sys.path[:] = _saved_path
+                return {
+                    "success": False,
+                    "error": "Helper import failed",
+                    "message": (
+                        f"Could not import ppt_asset_helpers: {exc}. "
+                        "Confirm python-pptx is installed and the PPT skill "
+                        "scripts directory is intact."
+                    ),
+                }
+
+            # ---- theme tokens injection (restored in finally) ----
+            theme_tokens = (deck.get("theme_tokens") or {}) if isinstance(deck, dict) else {}
+            saved_tokens = dict(pah.DEFAULT_TYPOGRAPHY_TOKENS)
+            saved_latin = pah.DEFAULT_LATIN_FONT_NAME
+            saved_ea = pah.DEFAULT_EAST_ASIA_FONT_NAME
+            saved_font = pah.DEFAULT_FONT_NAME
+            saved_line = pah.DEFAULT_LINE_SPACING_MULTIPLE
+            try:
+                for token_key in (
+                    "hero_title_font_pt", "section_title_font_pt",
+                    "page_title_font_pt", "subtitle_font_pt",
+                    "minor_title_font_pt", "body_font_pt",
+                    "label_font_pt", "caption_font_pt",
+                    "title_line_spacing_multiple",
+                    "body_line_spacing_multiple",
+                    "title_paragraph_space_lines",
+                ):
+                    if token_key in theme_tokens:
+                        try:
+                            pah.DEFAULT_TYPOGRAPHY_TOKENS[token_key] = float(theme_tokens[token_key])
+                        except (TypeError, ValueError):
+                            pass
+                latin_font = theme_tokens.get("latin_font_name") or saved_latin
+                ea_font = theme_tokens.get("east_asia_font_name") or saved_ea
+                pah.DEFAULT_LATIN_FONT_NAME = latin_font
+                pah.DEFAULT_EAST_ASIA_FONT_NAME = ea_font
+                pah.DEFAULT_FONT_NAME = latin_font
+                body_lsm = theme_tokens.get("body_line_spacing_multiple")
+                if isinstance(body_lsm, (int, float)):
+                    pah.DEFAULT_LINE_SPACING_MULTIPLE = float(body_lsm)
+
+                # CJK font helper: walk every run on a shape and ensure the
+                # east-asia font slot is set. python-pptx by default only
+                # sets the latin slot, so Chinese characters fall back to a
+                # system default in PowerPoint.
+                from docx.oxml.ns import qn  # python-docx ships with python-pptx envs
+                from docx.oxml import OxmlElement  # noqa: F401
+
+                def _set_ea_font(run, ea_name: str):
+                    try:
+                        rPr = run._r.get_or_add_rPr()
+                        rFonts = rPr.find(qn("w:rFonts"))
+                        # pptx uses the drawingml namespace, not w:; fall back
+                        # to direct latin attribute writes.
+                        from pptx.oxml.ns import qn as pqn
+                        rPr2 = run._r.get_or_add_rPr()
+                        # Try drawingml-style east-asia slot.
+                        ea_elem = rPr2.find(pqn("a:ea"))
+                        if ea_elem is None:
+                            ea_elem = OxmlElement("a:ea")
+                            rPr2.append(ea_elem)
+                        ea_elem.set("typeface", ea_name)
+                    except Exception:
+                        pass
+
+                def _apply_fonts(shape, latin: str = latin_font, ea: str = ea_font):
+                    if not getattr(shape, "has_text_frame", False):
+                        return
+                    for para in shape.text_frame.paragraphs:
+                        for run in para.runs:
+                            try:
+                                run.font.name = latin
+                            except Exception:
+                                pass
+                            _set_ea_font(run, ea)
+
+                palette = pah.default_palette()
+                tokens = pah.default_typography_tokens()
+
+                def _resolve_asset_path(maybe_path: str | None) -> Path | None:
+                    if not maybe_path:
+                        return None
+                    p = Path(maybe_path)
+                    if not p.is_absolute():
+                        p = ws / maybe_path
+                    return p if p.exists() else None
+
+                # ====== Internal helpers ======================================
+
+                def _add_native_table(
+                    slide,
+                    *,
+                    headers: list,
+                    rows: list,
+                    left: float,
+                    top: float,
+                    width: float,
+                    height: float,
+                    accent_rgb: tuple,
+                    numeric_columns: set,
+                    table_tokens: dict,
+                ):
+                    """Add a python-pptx native table that follows the deck's table policy."""
+                    rows_count = len(rows) + 1
+                    cols_count = max(len(headers), max((len(r) for r in rows), default=0))
+                    if cols_count == 0:
+                        return
+                    table_shape = slide.shapes.add_table(
+                        rows_count, cols_count,
+                        Inches(left), Inches(top),
+                        Inches(width), Inches(height),
+                    ).table
+
+                    # Header row.
+                    for col_idx in range(cols_count):
+                        cell = table_shape.cell(0, col_idx)
+                        cell.text = str(headers[col_idx] if col_idx < len(headers) else "")
+                        cell.vertical_anchor = MSO_VERTICAL_ANCHOR.MIDDLE
+                        cell.fill.solid()
+                        cell.fill.fore_color.rgb = RGBColor(*pah.tint(accent_rgb, 0.18))
+                        for para in cell.text_frame.paragraphs:
+                            para.alignment = PP_ALIGN.CENTER
+                            for run in para.runs:
+                                run.font.bold = True
+                                run.font.size = Pt(float(table_tokens.get("table_font_pt", 10.5)))
+                                run.font.color.rgb = RGBColor(*palette["title"])
+                        _apply_fonts(cell)
+
+                    # Body rows.
+                    text_align = table_tokens.get("table_text_alignment", "left")
+                    numeric_align = table_tokens.get("table_numeric_alignment", "right")
+                    index_align = table_tokens.get("table_index_alignment", "left")
+                    for r_idx, row in enumerate(rows, start=1):
+                        for c_idx in range(cols_count):
+                            cell = table_shape.cell(r_idx, c_idx)
+                            value = row[c_idx] if c_idx < len(row) else ""
+                            cell.text = str(value)
+                            cell.vertical_anchor = MSO_VERTICAL_ANCHOR.MIDDLE
+                            if c_idx == 0:
+                                align = index_align
+                            elif c_idx in numeric_columns:
+                                align = numeric_align
+                            else:
+                                align = text_align
+                            pp_align = {
+                                "left": PP_ALIGN.LEFT,
+                                "right": PP_ALIGN.RIGHT,
+                                "center": PP_ALIGN.CENTER,
+                            }.get(align, PP_ALIGN.LEFT)
+                            for para in cell.text_frame.paragraphs:
+                                para.alignment = pp_align
+                                for run in para.runs:
+                                    run.font.size = Pt(float(table_tokens.get("table_font_pt", 10.5)))
+                                    run.font.color.rgb = RGBColor(*palette["subtitle"])
+                            _apply_fonts(cell)
+
+                def _add_bullets(
+                    slide,
+                    bullets: list,
+                    *,
+                    left: float,
+                    top: float,
+                    width: float,
+                    height: float,
+                ):
+                    if not bullets:
+                        return None
+                    box = slide.shapes.add_textbox(
+                        Inches(left), Inches(top), Inches(width), Inches(height),
+                    )
+                    tf = box.text_frame
+                    tf.word_wrap = True
+                    body_size = float(tokens["body_font_pt"])
+                    body_lsm = float(tokens["body_line_spacing_multiple"])
+                    for i, item in enumerate(bullets):
+                        para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+                        para.text = f"• {item}"
+                        para.font.size = Pt(body_size)
+                        para.line_spacing = body_lsm
+                        para.font.color.rgb = RGBColor(*palette["subtitle"])
+                    _apply_fonts(box)
+                    return box
+
+                def _add_slide_caption(slide, text: str):
+                    """Footer caption with enough height for the configured
+                    caption font (pah.add_caption's default 0.22-inch box
+                    triggers a textbox_fit_failure in structure_precheck).
+                    Also leaves the bottom-right 1.1 inch clear so the page
+                    figure_tag set by add_slide_header is not occluded."""
+                    if not text:
+                        return None
+                    caption_pt = float(tokens["caption_font_pt"])
+                    # Box height: at least 2x font size in inches (72 pt = 1 in).
+                    box_h = max(0.32, caption_pt * 2.4 / 72.0)
+                    box_top = 9.0 - box_h - 0.32
+                    # Stop before the figure_tag (added at left=14.85 by
+                    # add_slide_header) so structure_precheck does not flag
+                    # an occlusion between caption and tag.
+                    box = slide.shapes.add_textbox(
+                        Inches(0.7), Inches(box_top),
+                        Inches(13.7), Inches(box_h),
+                    )
+                    box.text_frame.word_wrap = True
+                    box.text_frame.margin_left = Inches(0.05)
+                    box.text_frame.margin_right = Inches(0.05)
+                    box.text_frame.margin_top = Inches(0.02)
+                    box.text_frame.margin_bottom = Inches(0.02)
+                    para = box.text_frame.paragraphs[0]
+                    para.text = text
+                    para.font.size = Pt(caption_pt)
+                    para.line_spacing = 1.0
+                    para.font.color.rgb = RGBColor(*palette["subtitle"])
+                    _apply_fonts(box)
+                    return box
+
+                # ====== Archetype renderers ===================================
+
+                def _render_hero_statement(slide, spec: dict):
+                    title = spec.get("title") or "Untitled"
+                    key_message = spec.get("key_message") or ""
+                    slide.background.fill.solid()
+                    slide.background.fill.fore_color.rgb = RGBColor(*palette["bg"])
+
+                    title_box = slide.shapes.add_textbox(
+                        Inches(0.9), Inches(2.6), Inches(14.2), Inches(1.6),
+                    )
+                    p = title_box.text_frame.paragraphs[0]
+                    p.text = title
+                    p.font.bold = True
+                    p.font.size = Pt(float(tokens["hero_title_font_pt"]) * 1.4)
+                    p.font.color.rgb = RGBColor(*palette["title"])
+                    p.line_spacing = float(tokens["title_line_spacing_multiple"])
+                    _apply_fonts(title_box)
+
+                    if key_message:
+                        sub = slide.shapes.add_textbox(
+                            Inches(0.9), Inches(4.6), Inches(14.2), Inches(1.6),
+                        )
+                        sp = sub.text_frame.paragraphs[0]
+                        sp.text = key_message
+                        sp.font.size = Pt(float(tokens["subtitle_font_pt"]) * 1.2)
+                        sp.font.color.rgb = RGBColor(*palette["subtitle"])
+                        sp.line_spacing = float(tokens["body_line_spacing_multiple"])
+                        _apply_fonts(sub)
+
+                    return ["hero_layout"]
+
+                def _render_standard_header(slide, spec: dict, figure_tag: str):
+                    pah.add_slide_header(
+                        slide,
+                        figure_tag=figure_tag,
+                        title=spec.get("title") or "",
+                        subtitle=spec.get("key_message") or "",
+                    )
+                    # Re-apply CJK font on the freshly added header shapes.
+                    for shape in slide.shapes:
+                        _apply_fonts(shape)
+
+                def _render_decision_logic(slide, spec: dict, idx: int):
+                    _render_standard_header(slide, spec, f"S{idx:02d}")
+                    bullets = spec.get("bullets") or []
+                    accent = palette["blue"]
+                    pah.add_panel(
+                        slide, title="Key judgement",
+                        left=0.7, top=1.5, width=8.4, height=6.4,
+                        accent_rgb=accent,
+                    )
+                    box = _add_bullets(slide, bullets, left=1.0, top=2.1,
+                                       width=7.8, height=5.5)
+                    pah.add_panel(
+                        slide, title="Why this matters",
+                        left=9.4, top=1.5, width=5.9, height=6.4,
+                        accent_rgb=palette["emerald"],
+                    )
+                    notes = spec.get("notes") or spec.get("narrative_markdown") or ""
+                    if notes:
+                        nb = slide.shapes.add_textbox(
+                            Inches(9.7), Inches(2.1), Inches(5.3), Inches(5.5),
+                        )
+                        np_para = nb.text_frame.paragraphs[0]
+                        np_para.text = str(notes)[:600]
+                        np_para.font.size = Pt(float(tokens["body_font_pt"]))
+                        np_para.font.color.rgb = RGBColor(*palette["subtitle"])
+                        np_para.line_spacing = float(tokens["body_line_spacing_multiple"])
+                        _apply_fonts(nb)
+                    if spec.get("caption"):
+                        _add_slide_caption(slide, spec["caption"])
+                    return ["panel_left", "panel_right"]
+
+                def _render_board_memo(slide, spec: dict, idx: int):
+                    _render_standard_header(slide, spec, f"S{idx:02d}")
+                    bullets = spec.get("bullets") or []
+                    panels = ["Summary", "Progress", "Risks", "Next steps"]
+                    # 2x2 grid of panels.
+                    positions = [
+                        (0.7, 1.5, 7.3, 3.0),
+                        (8.3, 1.5, 7.0, 3.0),
+                        (0.7, 4.7, 7.3, 3.2),
+                        (8.3, 4.7, 7.0, 3.2),
+                    ]
+                    palette_colors = [palette["blue"], palette["emerald"],
+                                      palette["amber"], palette["violet"]]
+                    for i, ((l, t, w, h), color, label) in enumerate(
+                        zip(positions, palette_colors, panels)
+                    ):
+                        pah.add_panel(slide, label, l, t, w, h, color)
+                        text = ""
+                        if i < len(bullets):
+                            text = str(bullets[i])
+                        if text:
+                            tb = slide.shapes.add_textbox(
+                                Inches(l + 0.15), Inches(t + 0.6),
+                                Inches(w - 0.3), Inches(h - 0.8),
+                            )
+                            para = tb.text_frame.paragraphs[0]
+                            para.text = text
+                            para.font.size = Pt(float(tokens["body_font_pt"]))
+                            para.font.color.rgb = RGBColor(*palette["subtitle"])
+                            para.line_spacing = float(tokens["body_line_spacing_multiple"])
+                            tb.text_frame.word_wrap = True
+                            _apply_fonts(tb)
+                    if spec.get("caption"):
+                        _add_slide_caption(slide, spec["caption"])
+                    return ["2x2_panels"]
+
+                def _render_chart_spotlight(slide, spec: dict, idx: int):
+                    _render_standard_header(slide, spec, f"S{idx:02d}")
+                    asset_mode = spec.get("asset_mode") or "office-chart-native"
+                    chart = spec.get("chart") or {}
+                    image_path = _resolve_asset_path(spec.get("image_path"))
+                    accent = palette["blue"]
+
+                    if asset_mode == "office-chart-native" and chart.get("categories") and chart.get("series"):
+                        series_list = [
+                            (s.get("name", "Series"), list(s.get("values") or []))
+                            for s in (chart.get("series") or [])
+                            if isinstance(s, dict)
+                        ]
+                        pah.add_native_chart_card(
+                            slide,
+                            title=chart.get("title") or "Chart",
+                            left=0.7, top=1.5, width=9.6, height=6.4,
+                            accent_rgb=accent,
+                            categories=list(chart["categories"]),
+                            series_list=series_list,
+                            chart_type=_ppt_chart_type(chart.get("chart_type")),
+                            number_format=chart.get("number_format") or "0",
+                            show_legend=bool(chart.get("show_legend", False)),
+                        )
+                    elif asset_mode == "python-figure-image" and image_path:
+                        pah.add_picture_card(
+                            slide,
+                            title=chart.get("title") or spec.get("title") or "Figure",
+                            image_path=image_path,
+                            left=0.7, top=1.5, width=9.6, height=6.4,
+                            accent_rgb=accent,
+                            caption=chart.get("caption"),
+                        )
+                    else:
+                        # Fallback: panel + note that chart data is missing.
+                        pah.add_panel(slide, "Chart pending", 0.7, 1.5, 9.6, 6.4, accent)
+                        nb = slide.shapes.add_textbox(
+                            Inches(1.0), Inches(2.0), Inches(8.8), Inches(5.0),
+                        )
+                        nb_para = nb.text_frame.paragraphs[0]
+                        nb_para.text = (
+                            "Chart data not provided in slide_spec. Add a "
+                            "`chart:` block with categories + series, or an "
+                            "`image_path:` for python-figure-image."
+                        )
+                        nb_para.font.size = Pt(float(tokens["body_font_pt"]))
+                        nb_para.font.color.rgb = RGBColor(*palette["muted"])
+                        _apply_fonts(nb)
+
+                    # Right column: takeaways.
+                    pah.add_panel(
+                        slide, "Takeaways",
+                        left=10.5, top=1.5, width=4.8, height=6.4,
+                        accent_rgb=palette["emerald"],
+                    )
+                    _add_bullets(slide, spec.get("bullets") or [],
+                                 left=10.8, top=2.1, width=4.3, height=5.5)
+                    if spec.get("caption"):
+                        _add_slide_caption(slide, spec["caption"])
+                    return ["chart_or_image", "takeaways_panel"]
+
+                def _render_comparison_matrix(slide, spec: dict, idx: int):
+                    _render_standard_header(slide, spec, f"S{idx:02d}")
+                    table_spec = spec.get("table") or {}
+                    matrix = spec.get("matrix") or []
+                    table_tokens = {
+                        k: theme_tokens.get(k)
+                        for k in (
+                            "table_font_pt", "table_text_alignment",
+                            "table_numeric_alignment", "table_index_alignment",
+                        )
+                        if theme_tokens.get(k) is not None
+                    }
+                    numeric_columns = set(table_spec.get("numeric_columns") or [])
+
+                    if table_spec.get("headers") and table_spec.get("rows"):
+                        _add_native_table(
+                            slide,
+                            headers=list(table_spec["headers"]),
+                            rows=[list(r) for r in table_spec["rows"]],
+                            left=0.7, top=1.5, width=14.6, height=6.4,
+                            accent_rgb=palette["blue"],
+                            numeric_columns=numeric_columns,
+                            table_tokens=table_tokens,
+                        )
+                    elif matrix:
+                        # Convert matrix list-of-dicts into a table.
+                        all_attrs: list = []
+                        for row in matrix:
+                            for k in (row.get("attributes") or {}).keys():
+                                if k not in all_attrs:
+                                    all_attrs.append(k)
+                        headers = ["选项"] + all_attrs
+                        rows = []
+                        for row in matrix:
+                            line = [row.get("label", "")]
+                            attrs = row.get("attributes") or {}
+                            for k in all_attrs:
+                                line.append(str(attrs.get(k, "")))
+                            rows.append(line)
+                        _add_native_table(
+                            slide,
+                            headers=headers,
+                            rows=rows,
+                            left=0.7, top=1.5, width=14.6, height=6.4,
+                            accent_rgb=palette["blue"],
+                            numeric_columns=numeric_columns,
+                            table_tokens=table_tokens,
+                        )
+                    else:
+                        pah.add_panel(slide, "Comparison data missing",
+                                      0.7, 1.5, 14.6, 6.4, palette["amber"])
+                    if spec.get("caption"):
+                        _add_slide_caption(slide, spec["caption"])
+                    return ["matrix_table"]
+
+                def _render_process_flow(slide, spec: dict, idx: int):
+                    _render_standard_header(slide, spec, f"S{idx:02d}")
+                    diagram = spec.get("diagram") or {}
+                    nodes_spec = diagram.get("nodes") or []
+                    edges_spec = diagram.get("edges") or []
+                    bullets = spec.get("bullets") or []
+
+                    if nodes_spec:
+                        # Draw user-provided nodes.
+                        node_objs = {}
+                        for nd in nodes_spec:
+                            key = nd.get("key") or f"n{len(node_objs)}"
+                            style = pah.NodeStyle(
+                                fill_rgb=tuple(nd.get("fill") or palette["blue"]),
+                                line_rgb=tuple(nd.get("line") or palette["line"]),
+                            )
+                            shape = pah.add_node(
+                                slide, key=key, text=str(nd.get("text") or key),
+                                left=float(nd.get("left", 1.0)),
+                                top=float(nd.get("top", 4.0)),
+                                width=float(nd.get("width", 2.4)),
+                                height=float(nd.get("height", 1.2)),
+                                style=style,
+                            )
+                            _apply_fonts(shape)
+                            node_objs[key] = shape
+                        for ed in edges_spec:
+                            src = node_objs.get(ed.get("from"))
+                            dst = node_objs.get(ed.get("to"))
+                            if src is None or dst is None:
+                                continue
+                            pah.add_glued_connector(
+                                slide,
+                                from_shape=src, to_shape=dst,
+                                from_site=ed.get("from_site") or "right",
+                                to_site=ed.get("to_site") or "left",
+                                line_rgb=tuple(ed.get("line_rgb") or palette["line"]),
+                            )
+                    elif bullets:
+                        # Visual fallback: evenly-spaced node row from bullets.
+                        n = min(len(bullets), 6)
+                        margin = 0.7
+                        width = 2.2
+                        gap = (16 - 2 * margin - n * width) / max(1, n - 1) if n > 1 else 0
+                        accents = [palette["blue"], palette["emerald"],
+                                   palette["amber"], palette["violet"],
+                                   palette["teal"], palette["rose"]]
+                        prev_shape = None
+                        for i in range(n):
+                            left = margin + i * (width + gap)
+                            style = pah.NodeStyle(
+                                fill_rgb=accents[i % len(accents)],
+                                line_rgb=palette["line"],
+                            )
+                            shape = pah.add_node(
+                                slide, key=f"step_{i}", text=str(bullets[i]),
+                                left=left, top=4.0, width=width, height=1.4,
+                                style=style,
+                            )
+                            _apply_fonts(shape)
+                            if prev_shape is not None:
+                                pah.add_glued_connector(
+                                    slide,
+                                    from_shape=prev_shape, to_shape=shape,
+                                    from_site="right", to_site="left",
+                                    line_rgb=palette["line"],
+                                )
+                            prev_shape = shape
+                    else:
+                        pah.add_panel(slide, "Process steps missing",
+                                      0.7, 1.5, 14.6, 6.4, palette["amber"])
+                    if spec.get("caption"):
+                        _add_slide_caption(slide, spec["caption"])
+                    return ["process_nodes"]
+
+                def _render_research_note(slide, spec: dict, idx: int):
+                    _render_standard_header(slide, spec, f"S{idx:02d}")
+                    image_path = _resolve_asset_path(spec.get("image_path"))
+                    pah.add_panel(slide, "Mechanism / structure",
+                                  0.7, 1.5, 10.2, 6.4, palette["blue"])
+                    if image_path:
+                        pah.add_picture_card(
+                            slide,
+                            title=spec.get("image_title") or "Figure",
+                            image_path=image_path,
+                            left=0.85, top=1.85, width=9.9, height=5.7,
+                            accent_rgb=palette["blue"],
+                            caption=spec.get("image_caption"),
+                        )
+                    else:
+                        nb = slide.shapes.add_textbox(
+                            Inches(1.0), Inches(2.1), Inches(9.7), Inches(5.5),
+                        )
+                        para = nb.text_frame.paragraphs[0]
+                        para.text = str(spec.get("notes") or spec.get("narrative_markdown") or "")[:1200]
+                        para.font.size = Pt(float(tokens["body_font_pt"]))
+                        para.font.color.rgb = RGBColor(*palette["subtitle"])
+                        para.line_spacing = float(tokens["body_line_spacing_multiple"])
+                        nb.text_frame.word_wrap = True
+                        _apply_fonts(nb)
+                    pah.add_panel(slide, "Annotations",
+                                  11.1, 1.5, 4.2, 6.4, palette["emerald"])
+                    _add_bullets(slide, spec.get("bullets") or [],
+                                 left=11.35, top=2.1, width=3.85, height=5.5)
+                    if spec.get("caption"):
+                        _add_slide_caption(slide, spec["caption"])
+                    return ["panel_left", "panel_right"]
+
+                def _render_appendix_dense(slide, spec: dict, idx: int):
+                    _render_standard_header(slide, spec, f"S{idx:02d}")
+                    table_spec = spec.get("table") or {}
+                    table_tokens = {
+                        k: theme_tokens.get(k)
+                        for k in (
+                            "table_font_pt", "table_text_alignment",
+                            "table_numeric_alignment", "table_index_alignment",
+                        )
+                        if theme_tokens.get(k) is not None
+                    }
+                    if table_spec.get("headers") and table_spec.get("rows"):
+                        _add_native_table(
+                            slide,
+                            headers=list(table_spec["headers"]),
+                            rows=[list(r) for r in table_spec["rows"]],
+                            left=0.7, top=1.5, width=14.6, height=6.4,
+                            accent_rgb=palette["slate"],
+                            numeric_columns=set(table_spec.get("numeric_columns") or []),
+                            table_tokens=table_tokens,
+                        )
+                    else:
+                        pah.add_panel(slide, "Appendix data",
+                                      0.7, 1.5, 14.6, 6.4, palette["slate"])
+                    if spec.get("caption"):
+                        _add_slide_caption(slide, spec["caption"])
+                    return ["appendix_table"]
+
+                # Dispatcher.
+                renderers = {
+                    "hero-statement":
+                        lambda slide, spec, idx: _render_hero_statement(slide, spec),
+                    "decision-logic": _render_decision_logic,
+                    "board-memo": _render_board_memo,
+                    "chart-spotlight": _render_chart_spotlight,
+                    "comparison-matrix": _render_comparison_matrix,
+                    "process-flow": _render_process_flow,
+                    "research-note": _render_research_note,
+                    "appendix-dense": _render_appendix_dense,
+                }
+
+                # ====== Build loop ===========================================
+                prs = pah.new_presentation()
+                blank_layout = prs.slide_layouts[6]  # 'Blank'
+                per_slide = []
+
+                for idx, spec in enumerate(slides, start=1):
+                    if not isinstance(spec, dict):
+                        per_slide.append({
+                            "slide_id": f"S{idx:02d}",
+                            "archetype": None,
+                            "status": "error",
+                            "error": "spec is not a mapping",
+                        })
+                        continue
+                    archetype = spec.get("archetype") or "hero-statement"
+                    if archetype not in _ARCHETYPES:
+                        # Unknown archetype → fall back, but record it.
+                        per_slide.append({
+                            "slide_id": spec.get("slide_id") or f"S{idx:02d}",
+                            "archetype": archetype,
+                            "status": "warning",
+                            "error": (
+                                f"unknown archetype {archetype!r}, "
+                                "falling back to hero-statement"
+                            ),
+                        })
+                        archetype = "hero-statement"
+
+                    slide = prs.slides.add_slide(blank_layout)
+                    renderer = renderers.get(archetype, renderers["hero-statement"])
+                    try:
+                        if archetype == "hero-statement":
+                            renderer(slide, spec, idx)
+                        else:
+                            renderer(slide, spec, idx)
+                    except Exception as exc:
+                        import traceback
+                        per_slide.append({
+                            "slide_id": spec.get("slide_id") or f"S{idx:02d}",
+                            "archetype": archetype,
+                            "status": "error",
+                            "error": f"{type(exc).__name__}: {exc}",
+                            "traceback_tail": traceback.format_exc()[-1500:],
+                        })
+                        continue
+
+                    per_slide.append({
+                        "slide_id": spec.get("slide_id") or f"S{idx:02d}",
+                        "archetype": archetype,
+                        "status": "ok",
+                    })
+
+                pah.save_presentation(prs, out_path)
+
+                # Post-process: python-pptx does not update docProps/app.xml's
+                # <Slides> counter on save. ppt_package_preflight_tool flags
+                # this as a hard error (`docprops_slide_count_mismatch`) since
+                # mobile parsers reject it. Patch the counter in-place so a
+                # freshly built deck always passes preflight on its first run.
+                try:
+                    import zipfile as _zipfile
+                    import re as _re
+
+                    actual_pages = len(prs.slides)
+                    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+                    with _zipfile.ZipFile(str(out_path), "r") as zin:
+                        names = zin.namelist()
+                        with _zipfile.ZipFile(
+                            str(tmp_path), "w", _zipfile.ZIP_DEFLATED
+                        ) as zout:
+                            for name in names:
+                                data = zin.read(name)
+                                if name == "docProps/app.xml":
+                                    text = data.decode("utf-8", "ignore")
+                                    if "<Slides>" in text:
+                                        text = _re.sub(
+                                            r"<Slides>\s*\d+\s*</Slides>",
+                                            f"<Slides>{actual_pages}</Slides>",
+                                            text,
+                                            count=1,
+                                        )
+                                    else:
+                                        # Insert a <Slides> element just before
+                                        # the closing </Properties> tag.
+                                        text = text.replace(
+                                            "</Properties>",
+                                            f"<Slides>{actual_pages}</Slides></Properties>",
+                                            1,
+                                        )
+                                    data = text.encode("utf-8")
+                                zout.writestr(name, data)
+                    out_path.unlink()
+                    tmp_path.rename(out_path)
+                except Exception as _exc:  # noqa: BLE001
+                    # The build itself succeeded; surface the post-process
+                    # issue but do not fail the tool — preflight will pick it
+                    # up if the counter is still wrong.
+                    print(f"⚠️ docProps post-process skipped: {_exc}")
+
+                fe_data = _build_files_event_data(
+                    str(out_path), f"Built PPTX: {out_path.name}"
+                )
+                if fe_data:
+                    _pending_files_events.append(fe_data)
+
+                ok_count = sum(1 for s in per_slide if s["status"] == "ok")
+                err_count = sum(1 for s in per_slide if s["status"] == "error")
+                warn_count = sum(1 for s in per_slide if s["status"] == "warning")
+                return {
+                    "success": err_count == 0,
+                    "output_pptx": str(out_path),
+                    "slide_count": len(per_slide),
+                    "ok_count": ok_count,
+                    "warning_count": warn_count,
+                    "error_count": err_count,
+                    "per_slide": per_slide,
+                    "message": (
+                        f"Built {ok_count}/{len(per_slide)} slide(s) into {out_path.name}. "
+                        + (f"{warn_count} warning(s). " if warn_count else "")
+                        + (f"{err_count} error(s) — check per_slide. " if err_count else "")
+                        + "Next: run ppt_package_preflight_tool → "
+                        "ppt_structure_precheck_tool → ppt_export_previews_tool "
+                        "→ ppt_render_review_tool."
+                    ),
+                }
+            except Exception as exc:
+                import traceback
+                return {
+                    "success": False,
+                    "error": f"Build aborted: {type(exc).__name__}: {exc}",
+                    "traceback_tail": traceback.format_exc()[-2000:],
+                    "message": (
+                        "ppt_build_pptx_tool crashed before finishing. "
+                        "Check traceback_tail; the most common cause is a "
+                        "malformed chart/table/diagram block in slide_specs.yaml."
+                    ),
+                }
+            finally:
+                pah.DEFAULT_TYPOGRAPHY_TOKENS.clear()
+                pah.DEFAULT_TYPOGRAPHY_TOKENS.update(saved_tokens)
+                pah.DEFAULT_LATIN_FONT_NAME = saved_latin
+                pah.DEFAULT_EAST_ASIA_FONT_NAME = saved_ea
+                pah.DEFAULT_FONT_NAME = saved_font
+                pah.DEFAULT_LINE_SPACING_MULTIPLE = saved_line
+                _sys.path[:] = _saved_path
+
         tools = [
             process_document,
             edit_docx_tool,
@@ -2858,6 +5319,27 @@ XML编辑工作流（仅用于 tracked changes）：
             validate_docx_tool,
             accept_tracked_changes_tool,
             add_xml_comment_tool,
+            # PPT skill tools (Phase 1 — environment probe, reference loader,
+            # workspace initializer).
+            ppt_read_skill_reference_tool,
+            ppt_check_environment_tool,
+            ppt_init_workspace_tool,
+            # PPT skill tools (Phase 2 — template audit, derive specs,
+            # workspace lint, 3 quality gates, preview export, connector
+            # check, icon search/render).
+            ppt_audit_template_tool,
+            ppt_derive_slide_specs_tool,
+            ppt_lint_workspace_tool,
+            ppt_package_preflight_tool,
+            ppt_structure_precheck_tool,
+            ppt_export_previews_tool,
+            ppt_render_review_tool,
+            ppt_connectors_check_tool,
+            ppt_icon_search_tool,
+            ppt_icon_render_tool,
+            # PPT skill tools (Phase 3 — build editable pptx from
+            # derived slide_specs.yaml via 8 archetype renderers).
+            ppt_build_pptx_tool,
         ]
     
     return DocMasterAgent(
@@ -2927,6 +5409,9 @@ def main():
                 "把这份 DOCX 的中文设为宋体、英文设为 Times New Roman",
                 "这是一份合同模板，请按以下信息填充并生成新文档：甲方=张三，乙方=李四，日期=2026-05-13",
                 "我上传了一份带 {{ name }}、{{ date }} 占位符的模板，请帮我填充",
+                "帮我做一份 6 页的 PPT，主题是『2026 Q2 安全合规季报』，目标读者是所领导",
+                "做一份 4 页的产品周报 deck，包含一页趋势图、一页方案对比矩阵、一页结论页",
+                "我有一份参考 pptx 模板，请按它的页面系统做一份汇报",
             ],
             
             # 模型配置
