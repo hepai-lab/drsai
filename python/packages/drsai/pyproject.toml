@@ -21,54 +21,91 @@ classifiers = [
 ]
 
 dependencies = [
-    # drsai-core
+    # ── autogen core ──────────────────────────────────────────────────────
     "autogen-agentchat==0.5.7",
     "autogen-core==0.5.7",
-    "autogen-ext[openai, mcp, docker, chromadb]==0.5.7",
+    "autogen-ext[openai, anthropic, mcp]==0.5.7",
+    # , docker
+    
+    # ── HepAI platform (pulls in: openai, damei, fastapi, uvicorn, etc.) ─
+    "hepai>=1.4.1",
+    "fastapi[standard]",
+
+    # ── data model & validation ──────────────────────────────────────────
     "pydantic",
     "pydantic-settings",
-    "schedule",
-    "fastapi[standard]",
-    "loguru",
-    "python-dotenv",
 
-    # open_webui_pipeline
-    "openai",
-    "tiktoken",
-    "passlib",
-    "jwt",
-    "aiohttp",
-    "python-multipart",
-    "json_schema_to_pydantic",
-
-    # hepai
-    "damei",
-    "hepai>=1.3.9",
-    "qrcode[pil]",
-    "croniter",
-
-    # sql
+    # ── database ──────────────────────────────────────────────────────────
     "sqlmodel",
     "alembic",
 
+    # ── LLM client extras (hepai brings openai, but tiktoken is needed) ──
+    "tiktoken",
+
+    # ── logging & config ──────────────────────────────────────────────────
+    "loguru",
+    "python-dotenv",
+
+    # ── async networking ──────────────────────────────────────────────────
+    "aiohttp",
+
+    # ── scheduling & tasks ────────────────────────────────────────────────
+    "schedule",
+    "croniter",
+
+    # ── CLI REPL ──────────────────────────────────────────────────────────
+    "prompt_toolkit>=3.0",
+    "pyperclip>=1.8",
+
+    # ── WeChat integration ───────────────────────────────────────────────
+    "qrcode[pil]",
+
+    # 
+    # "pystray>=0.19",
+    # "Pillow>=9.0"
 ]
 
 [project.scripts]
-drsai-chat = "drsai.backend.run_cli:run"
+drsai = "drsai.backend.run_cli:run"
+drsai-tui = "drsai.backend.run_cli:run"
+drsai-gateway = "drsai.backend.tui_gateway.entry:main"
+# ── Optional dependency groups ───────────────────────────────────────────────
+# Install with: pip install drsai[pipeline]  /  pip install drsai[all]
 
 [project.optional-dependencies]
+# OpenWebUI pipeline adapter — auth + session handling
+pipeline = [
+    "passlib",
+    "jwt",
+    "python-multipart",
+    "json_schema_to_pydantic",
+]
+
+# ChromaDB vector store (alternative memory backend)
+chromadb = [
+    "chromadb",
+]
+
+# Azure model provider
+azure = [
+    "autogen-ext[azure]==0.5.7",
+]
+
+# Ollama local model provider
+ollama = [
+    "autogen-ext[ollama]==0.5.7",
+]
+
+# Evaluation & benchmarking
 eval = [
     "huggingface_hub",
     "pandas",
     "scipy",
 ]
 
-azure = [
-    "autogen-ext[azure]==0.5.7"
-]
-
-ollama = [
-    "autogen-ext[ollama]==0.5.7"
+# Convenience: install everything (worker deps already in core)
+all = [
+    "drsai[pipeline,chromadb,azure,ollama,eval]",
 ]
 
 
@@ -136,6 +173,13 @@ packages = [
     "src/drsai",
     ]
 
+[tool.hatch.build.targets.wheel.force-include]
+# Include the pre-built ui-tui bundle inside the wheel so PyPI users get a
+# self-contained install (only Node.js runtime required, no pnpm/npm/node_modules).
+# Build the bundle FIRST: cd ui-tui && pnpm install && pnpm build
+"../../../ui-tui/dist/entry.mjs" = "drsai/ui_tui/dist/entry.mjs"
+"../../../ui-tui/package.json"   = "drsai/ui_tui/package.json"
+
 [tool.hatch.version]
 path = "src/drsai/version.py"
 
@@ -145,9 +189,11 @@ include = [
   "src/drsai/**/*.yaml",
   "src/drsai/**/*.json",
   "src/drsai/**/*.js",
+  "src/drsai/**/*.mjs",
 ]
 exclude = [
   "src/drsai/tests/**",
+  "src/drsai/backend/_deprecated/**",
   "**/__pycache__",
   "**/.*.swp",
 ]

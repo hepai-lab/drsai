@@ -12,7 +12,7 @@ from typing import (
     Self,
     Mapping,
     )
-import os, json, sys, uuid, shutil
+import os, json, sys, uuid, shutil, copy
 import asyncio, traceback
 from pydantic import BaseModel
 from pathlib import Path
@@ -40,9 +40,12 @@ from drsai.modules.components import (
 )
 from drsai.modules.components.model_client import ChatCompletionClient, HepAIChatCompletionClient
 from drsai.modules.components.model_context import (
+    BufferedChatCompletionContext,
     ChatCompletionContext,
     DrSaiChatCompletionContext,
+    DrSaiSQLiteChatCompletionContext
 )
+
 from drsai.modules.components.memory import Memory
 from drsai.modules.components.tool import (
     BaseTool, 
@@ -96,11 +99,83 @@ from .managers.scheduled_task_manager import (
     TaskNotification,
 )
 from .utils.utils import HELP_TEXT
+from .managers import ScheduledTask, ScheduleType, TaskStatus
+
+# ── Built-in subagent definitions ──────────────────────────────────────────
+BUILTIN_SUBAGENTS: Dict[str, Dict[str, Any]] = {
+    "explore": {
+        "name": "explore",
+        "type": "DrSaiAgent",
+        "description": "Read-only code explorer. Search, read, and analyze code without modifying anything.",
+        "prompt": (
+            "You are a read-only code explorer. "
+            "Use Glob, Grep, and Read tools to find and analyze code. "
+            "NEVER use Write, Edit, Bash, or any tool that modifies files or executes commands. "
+            "Return a clear, structured summary of your findings."
+        ),
+        "tools": ["run_read", "run_glob", "run_grep"],
+        "disallowed_tools": ["Delegate", "ScheduledTaskManager", "UpdateUserConfig"],
+        "max_turns": 200,
+        "timeout": 3600,
+        "role": "leaf",
+    },
+    # "plan": {
+    #     "name": "plan",
+    #     "type": "DrSaiAgent",
+    #     "description": "Planning agent for software architecture and design. Read-only, no file modifications.",
+    #     "prompt": (
+    #         "You are a software architect and planning specialist. "
+    #         "Analyze requirements, codebases, and produce detailed, actionable plans. "
+    #         "You can READ files but NEVER modify them. "
+    #         "Structure your output with clear, numbered steps."
+    #     ),
+    #     "tools": ["run_read", "run_glob", "run_grep"],
+    #     "disallowed_tools": ["Delegate", "ScheduledTaskManager", "UpdateUserConfig"],
+    #     "mode": "multi",
+    #     "max_turns": 10,
+    #     "timeout": 600,
+    #     "role": "leaf",
+    # },
+    "general": {
+        "name": "general",
+        "type": "DrSaiAgent",
+        "description": "General-purpose subagent for complex tasks requiring full tool access.",
+        "prompt": (
+            "You are a capable subagent. Complete the assigned task thoroughly. "
+            "Use available tools as needed. Return a clear, concise summary when done."
+        ),
+        "tools": "*",
+        "disallowed_tools": ["Delegate", "ScheduledTaskManager", "UpdateUserConfig"],
+        "max_turns": 200,
+        "timeout": 3600,
+        "role": "leaf",
+    },
+}
+
+# ── Default tool blocklist for all subagents ───────────────────────────────
+_DEFAULT_DISALLOWED_FOR_SUBAGENTS: set = {
+    "Delegate",
+    "ScheduledTaskManager",
+    "UpdateUserConfig",
+}
+
+_READONLY_DISALLOWED_TOOLS: set = _DEFAULT_DISALLOWED_FOR_SUBAGENTS | {
+    "run_write",
+    "run_edit",
+    "run_bash",
+    "run_bash_background",
+}
+
+
+class DelegateDepthExceededError(Exception):
+    """Raised when subagent delegation depth exceeds the maximum."""
+    pass
 
 
 class DrSaiAssistantConfig(DrSaiAgentConfig):
     skills_dir: Optional[str | List[str]]
     work_dir: str | None
+    storage_dir: str | None  # Internal storage dir (overrides work_dir/user_id computation)
     only_in_workspace: bool
     extra_work_dirs: List[str]
     executor: ComponentModel
@@ -111,6 +186,7 @@ class DrSaiAssistantConfig(DrSaiAgentConfig):
     rag_flow_token: str
     memory_dataset_id: str
     learning_dataset_id: str
+    context_type: str  # "ragflow" | "sqlite"
     
 
 class DrSaiAssistant(DrSaiAgent):
@@ -132,39 +208,40 @@ class DrSaiAssistant(DrSaiAgent):
         name: str,
         *,
         model_client: ChatCompletionClient = None,
-        tools: List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]] | None = None,
-        workbench: Workbench | None = None,
+        tools: Optional[List[BaseTool[Any, Any] | Callable[..., Any] | Callable[..., Awaitable[Any]]]] = None,
+        workbench: Optional[Workbench] = None,
         handoffs: List[HandoffBase | str] | None = None,
-        model_context: ChatCompletionContext | None = None,
+        model_context: Optional[ChatCompletionContext] = None,
         description: str = "An agent that provides assistance with ability to use tools.",
         system_message: (
             str | None
         ) = "You are a helpful AI assistant. Solve tasks using your tools. Reply with TERMINATE when the task has been completed.",
         model_client_stream: bool = True,
-        reflect_on_tool_use: bool | None = None,
+        reflect_on_tool_use: Optional[bool] = None,
         tool_call_summary_format: str = "{result}",
-        tool_call_summary_prompt: str| None = None,
-        output_content_type: type[BaseModel] | None = None,
-        output_content_type_format: str | None = None,
-        memory: Sequence[Memory] | None = None,
-        metadata: Dict[str, str] | None = None,
+        tool_call_summary_prompt: Optional[bool] = None,
+        output_content_type: Optional[type[BaseModel]] = None,
+        output_content_type_format: Optional[str] = None,
+        memory: Optional[Sequence[Memory]]= None,
+        metadata:Optional[ Dict[str, str]] = None,
         # drsaiAgent specific
-        memory_function: Callable | None = None,
-        reply_function: Callable | None = None,
-        db_manager: DatabaseManager | None = None,
-        thread_id: str | None = None,
-        user_id: str | None = None,
-        set_model_client: Callable | None = None,
+        memory_function: Optional[Callable] = None,
+        reply_function: Optional[Callable] = None,
+        db_manager: Optional[DatabaseManager] = None,
+        thread_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        set_model_client: Optional[Callable] = None,
         llm_mode_config: Dict = {},
-        defult_config_name: str | None = None,
+        defult_config_name: Optional[str] = None,
         # basic tools and userprofile config
-        work_dir: str | None = None,
+        work_dir: Optional[str] = None,
+        storage_dir: Optional[str] = None,
         only_system_message: bool = False,
-        is_powershell: bool = False,
+        is_powershell: Optional[bool] = None,
         allolow_dangrous_cmd: bool = False,
         allolow_basic_tools: Optional[List[str]] = None,
         only_in_workspace: bool = True,
-        extra_work_dirs: List[str] | None = None,
+        extra_work_dirs: Optional[List[str]] = None,
         # skills, executor, sub_agents
         skills_dir: Optional[str | List[str]] = [],
         executor: CodeExecutor | None = None,
@@ -172,10 +249,12 @@ class DrSaiAssistant(DrSaiAgent):
         # task loop and memory
         max_turn_count: int = 200,
         token_limit: int = 50000,
-        rag_flow_url: str | None = None,
-        rag_flow_token: str | None = None,
-        memory_dataset_id: str | None = None,
-        learning_dataset_id: str| None = None,
+        rag_flow_url: Optional[str] = None,
+        rag_flow_token: Optional[str] = None,
+        memory_dataset_id: Optional[str] = None,
+        learning_dataset_id: Optional[str] = None,
+        # context type selection
+        context_type: str = "sqlite",  # "ragflow" or "sqlite"
     ):
         super().__init__(
             name=name,
@@ -206,8 +285,18 @@ class DrSaiAssistant(DrSaiAgent):
 
         self._developer_system_message = system_message or ""
 
+        # Injected prompt slots (set by inject_system_prompt or /inject command)
+        self._injected_prefix: str = ""
+        self._injected_suffix: str = ""
+        self._project_instructions: str = ""  # 项目级指令 (DRSAI.md/CLAUDE.md)
+
         # === workspace for assistant ===
-        if not work_dir:
+        # storage_dir: explicit internal storage path (used by CLI where work_dir=cwd but configs stored elsewhere)
+        # When storage_dir is provided, _work_dir = storage_dir (no user_id appending)
+        # Otherwise, _work_dir = work_dir / user_id (or RUNS_DIR / user_id if work_dir not set)
+        if storage_dir:
+            self._work_dir = Path(storage_dir)
+        elif not work_dir:
             if self._db_manager:
                 DEFAULT_RUN_DIR: Path = self._db_manager.schema_manager.base_dir / "runs"
                 self._work_dir = DEFAULT_RUN_DIR / self._user_id
@@ -226,12 +315,27 @@ class DrSaiAssistant(DrSaiAgent):
             thread_id=self._thread_id,
         )
         self._update_user_config_tools = [self._user_profile_manager.get_user_config_tool()]
+
+        # === curated memory (hermes-style MEMORY.md / USER.md entries) ===
+        from drsai.modules.components.memory import CuratedMemoryStore
+        self._curated_memory = CuratedMemoryStore(
+            memory_path=self._user_profile_manager.memorie_path,
+            user_path=self._user_profile_manager.user_md,
+        )
+        try:
+            self._curated_memory.load_from_disk()
+        except Exception as e:
+            logger.warning(f"Failed to load curated memory: {e}")
+
         # combine system messages
         self._only_system_message = only_system_message
         if not self._only_system_message:
             user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
+            memory_block = self._curated_memory.system_prompt_block()
             enhanced_system_message = f"""{self._developer_system_message}\n{user_sys_prompt}\n
 Current Session_ID is {self._thread_id}"""
+            if memory_block:
+                enhanced_system_message += f"\n\n{memory_block}"
         else:
             enhanced_system_message = self._developer_system_message
         self._system_messages = [SystemMessage(content=enhanced_system_message)]
@@ -239,22 +343,31 @@ Current Session_ID is {self._thread_id}"""
         # === basic tools ===
         self._only_in_workspace = only_in_workspace
         self._extra_work_dirs = extra_work_dirs
-        # self._is_powershell = is_powershell
-        # if _detect_powershell() is not None:
-        #     self._is_powershell = True
+        if is_powershell is None:
+            self._is_powershell = bool(_detect_powershell())
+        else:
+            self._is_powershell = is_powershell
         self._basic_funcs: List[Callable] = get_operator_funcs(
             work_dir, 
             thread_id=self._thread_id,
             only_in_workspace=self._only_in_workspace,
             extra_dirs = self._extra_work_dirs,
-            is_powershell=is_powershell,
-            allolow_dangrous_cmd=allolow_dangrous_cmd
+            is_powershell=self._is_powershell,
+            allolow_dangrous_cmd=allolow_dangrous_cmd,
+            storage_dir=storage_dir,
             )
         if allolow_basic_tools is not None:
             self._basic_funcs = [func for func in self._basic_funcs if func.__name__ in allolow_basic_tools]
         # self._basic_funcs_names = [func.__name__ for func in self._basic_funcs]
+        # Names of toggle helper functions that should NOT be registered as LLM tools
+        _TOGGLE_FUNC_NAMES = {"set_workspace_restriction", "get_workspace_status", "set_dangerous_allowed", "get_dangerous_status"}
+        # Store toggle helpers separately for CLI access (not registered as LLM tools)
+        self._workspace_toggle_funcs = [
+            func for func in self._basic_funcs if func.__name__ in _TOGGLE_FUNC_NAMES
+        ]
         for func in self._basic_funcs:
-            self._tools.append(FunctionTool(func, description=func.__doc__))
+            if func.__name__ not in _TOGGLE_FUNC_NAMES:
+                self._tools.append(FunctionTool(func, description=func.__doc__))
 
         # === model context ===
         self._token_limit = token_limit
@@ -264,36 +377,27 @@ Current Session_ID is {self._thread_id}"""
         self._learning_dataset_id = learning_dataset_id or memory_dataset_id
         self._memory_document_id = self._user_profile_manager.get_document_ids(self._thread_id)
         self._learning_document_id = self._user_profile_manager.get_document_ids(self._user_id)
+        
         # memory manager
         model_config = model_client.dump_component()
         independent_model_client = ChatCompletionClient.load_component(model_config)
-        independent_model_client._model_info = model_client._model_info
-        self._model_context = DrSaiChatCompletionContext(
-            agent_name=self._user_profile_manager.agent_name,
-            model_client=independent_model_client,
-            user_id=self._user_id,
-            thread_id=self._thread_id,
-            work_dir=self._work_dir,
-            token_limit=self._token_limit,
-            rag_flow_url=self._rag_flow_url,
-            rag_flow_token=self._rag_flow_token,
-            dataset_id=self._memory_dataset_id,
-            document_id=self._memory_document_id,
-            learning_dataset_id=self._learning_dataset_id,
-            learning_document_id=self._learning_document_id,
+        independent_model_client._model_info = copy.deepcopy(model_client._model_info)
+        self._model_context = self._create_context(
+            model_context=model_context,
+            context_type=context_type,
+            independent_model_client=independent_model_client,
+            db_manager=db_manager,
         )
-        if not self._model_context._rag_flow_manager:
-            raise ValueError("RAGFlowManager is not initialized in DrSaiChatCompletionContext")
-        funcs = [
-            self._model_context.retrieve_from_memory,
-            self._model_context.summry_conversation_to_memory,
-            self._user_profile_manager.read_session_memory_by_index, # TODO: 后面进行测试修正
-        ]
-        for func in funcs:
-            self._tools.append(FunctionTool(func, description=func.__doc__))
+        self._register_context_tools()
                 
         # === skills ===
-        self._skills_dir = skills_dir if isinstance(skills_dir, list) else [skills_dir]
+        # 将 skills_dir 规范化为非空字符串列表，过滤掉 None/空字符串
+        if isinstance(skills_dir, list):
+            self._skills_dir = [d for d in skills_dir if d]
+        elif skills_dir:
+            self._skills_dir = [skills_dir]
+        else:
+            self._skills_dir = []
         if self._user_profile_manager.first_time_setup and self._skills_dir:
             dst_root = self._user_profile_manager.skills_dir
             for src_dir in self._skills_dir:
@@ -311,8 +415,16 @@ Current Session_ID is {self._thread_id}"""
         # === sub_agent_config ===
         self._sub_agent_config = sub_agent_config
         self._user_sub_agents = {}
+        # Merge builtins first, then user config (user overrides builtins)
+        self._user_sub_agents.update(BUILTIN_SUBAGENTS)
         self._user_sub_agents.update(sub_agent_config)
         self._subagent_tools = []
+
+        # === delegation control ===
+        self._delegate_depth: int = 0
+        self._max_delegate_depth: int = 1
+        self._subagent_timeout: int = 600
+        self._cleanup_subagent_messages: bool = True
 
         # === todo manager ===
         self._todo_manager = TodoManager()
@@ -337,11 +449,168 @@ Current Session_ID is {self._thread_id}"""
         self._config_mtimes: Dict[str, float] = {}
         self._cached_tools_prompt: str = ""
         self._cached_skills_loader = None
+        self._skip_startup_checks: bool = False
+
+    def _create_context(
+        self,
+        model_context: Optional[ChatCompletionContext],
+        context_type: str,
+        independent_model_client: ChatCompletionClient,
+        db_manager: Optional[Any] = None,
+    ) -> ChatCompletionContext:
+        """
+        创建或返回 ChatCompletionContext 实例。
+        
+        优先级：
+        1. 如果已传入 model_context，直接使用
+        2. 根据 context_type 创建对应类型的 Context
+        """
+        # 1. 如果已传入 model_context，直接使用
+        if model_context is not None:
+            self._context_type = "custom"
+            return model_context
+        
+        # 2. 根据 context_type 创建
+        if context_type == "sqlite":
+            self._context_type = "sqlite"
+            return DrSaiSQLiteChatCompletionContext(
+                agent_name=self._user_profile_manager.agent_name,
+                model_client=independent_model_client,
+                db_manager=db_manager,
+                thread_id=self._thread_id,
+                user_id=self._user_id,
+                token_limit=self._token_limit,
+            )
+        elif context_type == "buffered":
+            # Pure in-memory context (e.g., for single-round subagents)
+            self._context_type = "buffered"
+            return BufferedChatCompletionContext(buffer_size=50)
+        else:
+            # 默认使用 RAGFlow 上下文
+            self._context_type = "ragflow"
+            return self._create_ragflow_context(independent_model_client)
+
+    def _create_ragflow_context(self, model_client: ChatCompletionClient) -> "DrSaiChatCompletionContext":
+        """创建 RAGFlow ChatCompletionContext"""
+        ctx = DrSaiChatCompletionContext(
+            agent_name=self._user_profile_manager.agent_name,
+            model_client=model_client,
+            user_id=self._user_id,
+            thread_id=self._thread_id,
+            work_dir=self._work_dir,
+            token_limit=self._token_limit,
+            rag_flow_url=self._rag_flow_url,
+            rag_flow_token=self._rag_flow_token,
+            dataset_id=self._memory_dataset_id,
+            document_id=self._memory_document_id,
+            learning_dataset_id=self._learning_dataset_id,
+            learning_document_id=self._learning_document_id,
+        )
+        if not ctx._rag_flow_manager:
+            raise ValueError("RAGFlowManager is not initialized in DrSaiChatCompletionContext")
+        return ctx
+
+    def _register_context_tools(self) -> None:
+        """根据 context 类型注册相应的工具
+
+        对子智能体场景安全：如果工具名已存在于 ``self._tools`` 中则跳过,
+        避免从父智能体继承工具后又重复添加（DrSaiAgent.__init__ 的唯一性
+        检查只能覆盖传入 tools 参数，检测不到此处的追加）。
+        """
+        existing_names = {t.name for t in self._tools}
+
+        funcs = [
+            self._user_profile_manager.read_session_memory_by_index,  # TODO: 后面进行测试修正
+        ]
+
+        if hasattr(self._model_context, 'retrieve_from_memory'):
+            funcs.append(self._model_context.retrieve_from_memory)
+        if hasattr(self._model_context, 'summry_conversation_to_memory'):
+            funcs.append(self._model_context.summry_conversation_to_memory)
+
+        for func in funcs:
+            if func and callable(func):
+                tool_name = getattr(func, '__name__', '')
+                if tool_name not in existing_names:
+                    self._tools.append(FunctionTool(func, description=func.__doc__ or str(func)))
+                    existing_names.add(tool_name)
+
+        # === curated memory tool (hermes-style add/replace/remove/read) ===
+        if "memory" not in existing_names and getattr(self, "_curated_memory", None):
+            store = self._curated_memory
+            import json as _json
+
+            def memory(
+                action: str,
+                target: str = "memory",
+                content: str = "",
+                old_text: str = "",
+            ) -> str:
+                """Persistent curated memory across sessions. Two stores: ``memory`` (your agent notes — environment facts, conventions, things learned about the project) and ``user`` (the user profile — preferences, habits, what they care about).
+
+                ``action`` selects the operation:
+                  - ``add``: append a new entry to MEMORY.md. ``content`` required.
+                  - ``replace``: find an entry containing ``old_text`` and replace it with ``content``. Both required.
+                  - ``remove``: delete the entry containing ``old_text``. ``old_text`` required.
+                  - ``read``: list current entries (or USER.md text when ``target=user``).
+                  - ``write_user``: overwrite USER.md with ``content``. Only valid when ``target=user``.
+
+                Stores are bounded (MEMORY.md ≤ 2200 chars, USER.md ≤ 1375 chars). Failed mutations return an error JSON with the current usage. Entries injected into the system prompt at session start — mid-session writes update the file but NOT the live prompt (preserves prefix cache).
+
+                Returns a JSON string with the result.
+                """
+                target = (target or "memory").lower()
+                if target not in ("memory", "user"):
+                    return _json.dumps({"success": False, "error": "target must be 'memory' or 'user'"})
+
+                if action == "add":
+                    if target == "user":
+                        return _json.dumps({"success": False, "error": "USER.md does not support add — use action=write_user."})
+                    return _json.dumps(store.add_entry(content))
+
+                if action == "replace":
+                    if target == "user":
+                        return _json.dumps(store.write_user(content))
+                    return _json.dumps(store.replace_by_text(old_text, content))
+
+                if action == "remove":
+                    if target == "user":
+                        return _json.dumps({"success": False, "error": "USER.md does not support remove — use write_user with empty content to clear."})
+                    return _json.dumps(store.remove_by_text(old_text))
+
+                if action == "read":
+                    if target == "user":
+                        return _json.dumps({"success": True, "content": store.read_user(), "charCount": len(store.read_user()), "charLimit": store.user_char_limit})
+                    entries = store.list_entries()
+                    return _json.dumps({
+                        "success": True,
+                        "entries": entries,
+                        "charCount": store.char_counts()["memory"],
+                        "charLimit": store.memory_char_limit,
+                    })
+
+                if action == "write_user":
+                    return _json.dumps(store.write_user(content))
+
+                return _json.dumps({"success": False, "error": f"Unknown action '{action}'. Use add/replace/remove/read/write_user."})
+
+            self._tools.append(FunctionTool(memory, description=memory.__doc__ or "memory tool"))
+            existing_names.add("memory")
 
     def set_task_manager(self, task_manager):
-        """设置定时任务管理器实例"""
+        """设置定时任务管理器实例
+        
+        支持两种类型：
+        - ScheduledTaskManager (本地): 任务在当前进程执行
+        - RemoteScheduledTaskManager (远程): 任务委托给 worker 进程执行
+        """
         self._task_manager = task_manager
         self._scheduled_task_tools = [get_scheduled_task_tool()]
+    
+    def _is_remote_task_manager(self) -> bool:
+        """判断当前 task_manager 是否为远程代理"""
+        from .managers import RemoteScheduledTaskManager
+        return isinstance(self._task_manager, RemoteScheduledTaskManager)
 
     def _format_task_notifications(self, notifications: List[TaskNotification]) -> str:
         """格式化定时任务完成通知"""
@@ -380,7 +649,15 @@ Current Session_ID is {self._thread_id}"""
         )
 
     async def _init_memory_documents(self) -> None:
-        """Initialize learning memory and session documents on first use."""
+        """Initialize learning memory and session documents on first use.
+
+        Only applicable when using RAGFlow-based context (DrSaiChatCompletionContext).
+        SQLite-based context (DrSaiSQLiteChatCompletionContext) doesn't need document initialization.
+        """
+        # Skip document initialization for SQLite context (no RAGFlow)
+        if not hasattr(self._model_context, '_rag_flow_manager') or self._model_context._rag_flow_manager is None:
+            return
+
         if self._user_profile_manager.first_time_setup:
             self._learning_document_id = await self._model_context.create_new_session_document(
                 dataset_id=self._learning_dataset_id, create_type="learning_memory"
@@ -479,13 +756,97 @@ Current Session_ID is {self._thread_id}"""
         return warnings
 
     def update_system_prompt(self, additional_prompt: str = "") -> str:
-        """获取agent描述、用户画像并更新系统消息"""
+        """获取agent描述、用户画像并更新系统消息
+        
+        保持与 inject_system_prompt() 的层级一致：
+            ① prefix          — session级覆盖
+            ② developer_msg   — 硬编码基础提示词
+            ③ user_sys_prompt — 全局用户级 (AGENTS.md)
+            ④ project_instr   — 项目级 (DRSAI.md/CLAUDE.md)
+            ⑤ Session_ID      — 固定标识行
+            ⑥ suffix          — session级覆盖
+            additional_prompt  — 工具提示词（在 ⑥ 之后追加）
+        """
         user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
-        enhanced_system_message = f"""{self._developer_system_message}\n\n{user_sys_prompt}\n
-Current Session_ID is {self._thread_id}"""
-        enhanced_system_message += additional_prompt
+        memory_block = (
+            self._curated_memory.system_prompt_block()
+            if getattr(self, "_curated_memory", None)
+            else ""
+        )
+        parts = []
+        if self._injected_prefix:
+            parts.extend([self._injected_prefix, ""])
+        if self._developer_system_message:
+            parts.extend([self._developer_system_message, ""])
+        if user_sys_prompt:
+            parts.extend([user_sys_prompt, ""])
+        if memory_block:
+            parts.extend([memory_block, ""])
+        if self._project_instructions:
+            parts.extend([self._project_instructions, ""])
+        parts.append(f"Current Session_ID is {self._thread_id}")
+        if self._injected_suffix:
+            parts.extend(["", self._injected_suffix])
+        if additional_prompt:
+            parts.extend(["", additional_prompt])
+        enhanced_system_message = "\n".join(parts).strip()
         self._system_messages = [SystemMessage(content=enhanced_system_message)]
-    
+
+    def inject_system_prompt(
+        self,
+        prefix: str = "",
+        suffix: str = "",
+        project_instructions: Optional[str] = None,
+    ) -> None:
+        """动态注入额外提示词到 system message。
+
+        系统提示词层级（从上到下，越靠后 LLM 越重视）:
+            ① prefix          — session级覆盖 (plan_mode 等)
+            ② developer_msg   — 硬编码基础提示词
+            ③ user_sys_prompt — 全局用户级 (AGENTS.md，来自 workspace)
+            ④ project_instr   — 🆕 项目级 (DRSAI.md/CLAUDE.md，来自 cwd 向上遍历)
+            ⑤ Session_ID      — 固定标识行
+            ⑥ suffix          — session级覆盖 (/inject suffix)
+
+        Args:
+            prefix: 要添加到 system message 开头的前缀提示词
+            suffix: 要添加到 system message 结尾的后缀提示词
+            project_instructions: 项目级指令内容。
+                None 表示保持当前的 _project_instructions 不变（推荐用于
+                只更新 prefix/suffix 的场景，如 /plan_mode、/inject 命令）。
+                空字符串 "" 表示清除项目级指令。
+                非空字符串表示设置新的项目级指令。
+        """
+        self._injected_prefix = prefix
+        self._injected_suffix = suffix
+        # None → 保持不变；"" → 清除；非空 → 设置新值
+        if project_instructions is not None:
+            self._project_instructions = project_instructions
+
+        user_sys_prompt = self._user_profile_manager.get_agent_system_prompt()
+        memory_block = (
+            self._curated_memory.system_prompt_block()
+            if getattr(self, "_curated_memory", None)
+            else ""
+        )
+
+        parts = []
+        if prefix:
+            parts.extend([prefix, ""])
+        if self._developer_system_message:
+            parts.extend([self._developer_system_message, ""])
+        if user_sys_prompt:
+            parts.extend([user_sys_prompt, ""])
+        if memory_block:
+            parts.extend([memory_block, ""])
+        if self._project_instructions:
+            parts.extend([self._project_instructions, ""])
+        parts.append(f"Current Session_ID is {self._thread_id}")
+        if suffix:
+            parts.extend(["", suffix])
+
+        self._system_messages = [SystemMessage(content="\n".join(parts).strip())]
+
     def update_user_skills(self) -> Tuple[Optional[SkillLoader], Optional[str]]:
         """加载/更新用户技能
 
@@ -622,8 +983,14 @@ Current Session_ID is {self._thread_id}"""
         )
     
     def update_user_subagents(self):
-        """Update user subagents."""
+        """Update user subagents (merge builtins with user config).
+
+        User config overrides builtin definitions with the same name.
+        """
         subagents_config = self._user_profile_manager.load_subagents_config()
+        # Reset to builtins, then apply user overrides
+        self._user_sub_agents.clear()
+        self._user_sub_agents.update(BUILTIN_SUBAGENTS)
         self._user_sub_agents.update(subagents_config)
 
         if self._user_sub_agents:
@@ -729,7 +1096,7 @@ Current Session_ID is {self._thread_id}"""
         try:
             # task completion notifications
             if self._task_manager:
-                notifications:List[TaskNotification] = self._task_manager.get_pending_notifications(self._user_id)
+                notifications: List[TaskNotification] = await self._task_manager.get_pending_notifications(self._user_id)
                 if notifications:
                     yield await self._emit_notification(self._format_task_notifications(notifications))
 
@@ -737,15 +1104,16 @@ Current Session_ID is {self._thread_id}"""
             await self._init_memory_documents()
 
             # config reload checks — warnings injected into context and yielded to user
-            for warning in await self._run_startup_checks():
-                yield await self._emit_notification(warning)
+            if not getattr(self, '_skip_startup_checks', False):
+                for warning in await self._run_startup_checks():
+                    yield await self._emit_notification(warning)
             skills_loader = self._cached_skills_loader
 
             # manager ToolSchema
             manager_tools = self._update_user_config_tools+self._agent_skills_tools+self._subagent_tools+self._todo_tools+self._scheduled_task_tools
 
-            # count the number of tools
-            if isinstance(self._model_context, DrSaiChatCompletionContext):
+            # count the number of tools (only for DrSaiChatCompletionContext which has _tool_schema)
+            if hasattr(self._model_context, '_tool_schema'):
                 self._model_context._tool_schema = await self._workbench.list_tools()
                 self._model_context._tool_schema += manager_tools
 
@@ -800,10 +1168,14 @@ Current Session_ID is {self._thread_id}"""
             # TODO: Update model context with any relevant memory -> When? How?
 
             turn_count = 0
-            max_empty_turn = 3 
+            max_empty_turn = 3
             empty_turn_count = 0
             while turn_count < self._max_turn_count:
-                
+
+                # Sanitize messages to handle orphaned tool results / missing stubs
+                # This prevents tool_call_id mismatches after model switches
+                await self._sanitize_api_messages()
+
                 model_result = None
                 async for inference_output in self._call_llm(
                     model_client=model_client,
@@ -834,7 +1206,8 @@ Current Session_ID is {self._thread_id}"""
                     yield thought_event
                     inner_messages.append(thought_event)
 
-                # Add the assistant message to the model context (including thought if present)  
+                # Add the assistant message to the model context (including thought if present)
+                # For DeepSeek V4: thought contains the reasoning_content that will be used for API replay
                 await model_context.add_message(
                     AssistantMessage(
                         content=model_result.content,
@@ -966,37 +1339,57 @@ Current Session_ID is {self._thread_id}"""
                         ])
                     )
 
-            # save/update the conversation to {worker_dir}/memories
-            if isinstance(self._model_context, DrSaiChatCompletionContext):
-                if self._model_context._rag_flow_manager:
-                    await self._model_context.upload_conversation_to_ragflow()
+            # Save conversation on response completion
+            if self._context_type == "ragflow" and hasattr(self._model_context, '_current_messages'):
+                # RAGFlow: background upload + file save
+                current_messages = self._model_context._current_messages
+                history_messages = getattr(self._model_context, '_history_messages', [])
+                rag_manager = getattr(self._model_context, '_rag_flow_manager', None)
+                user_profile_manager = self._user_profile_manager
+
                 self._model_context._current_messages = []
-                current_session_memory = self._model_context._history_messages
-                # TODO: 周期性总结用户的对话，形成一个总结
-                self._user_profile_manager.save_session_memory(current_session_memory)
+
+                async def background_save():
+                    if rag_manager:
+                        try:
+                            await self._model_context.upload_conversation_to_ragflow(current_messages=current_messages)
+                        except Exception as e:
+                            logger.warning(f"RAGFlow upload failed: {e}")
+
+                    if history_messages:
+                        try:
+                            await asyncio.to_thread(user_profile_manager.save_session_memory, history_messages)
+                        except Exception as e:
+                            logger.warning(f"Session save failed: {e}")
+
+                asyncio.create_task(background_save())
+
+            elif self._context_type == "sqlite":
+                # SQLite: flush pending messages to ensure persistence
+                if hasattr(self._model_context, '_flush_to_db'):
+                    self._model_context._flush_to_db()
                 
 
     async def _get_messages_with_compression_notification(
         self,
         model_context: ChatCompletionContext,
         cancellation_token: CancellationToken = None,
-    ) -> AsyncGenerator[Union[List[LLMMessage], AgentLogEvent], None]:
+    ) -> AsyncGenerator[Union[List[LLMMessage], AgentLogEvent, int], None]:
         """
         Get messages from context with compression notification support.
 
         Yields:
             AgentLogEvent: Notification events during compression
             List[LLMMessage]: Final list of messages
+            int: Prompt token count (for usage tracking)
         """
-        if isinstance(model_context, DrSaiChatCompletionContext):
-            # Check if compression is needed
-            messages = list(model_context._messages)
-            token_count = model_context._model_client.count_tokens(
-                messages,
-                tools=model_context._tool_schema
-            )
-
-            if model_context._token_limit and token_count > model_context._token_limit:
+        prompt_tokens = 0
+        
+        # 只有支持 token 计数和压缩的 context 类型才进行压缩检查
+        if hasattr(model_context, '_token_count') and hasattr(model_context, '_token_limit'):
+            prompt_tokens = model_context._token_count
+            
+            if model_context._token_limit and prompt_tokens > model_context._token_limit:
                 # Notify frontend that compression is starting
                 yield AgentLogEvent(
                     source="system",
@@ -1010,7 +1403,7 @@ Current Session_ID is {self._thread_id}"""
                 cancellation_token=cancellation_token
             )
 
-            if model_context._token_limit and token_count > model_context._token_limit:
+            if model_context._token_limit and prompt_tokens > model_context._token_limit:
                 # Notify completion
                 yield AgentLogEvent(
                     source="system",
@@ -1020,9 +1413,11 @@ Current Session_ID is {self._thread_id}"""
                 )
 
             yield all_messages
+            yield prompt_tokens
         else:
             all_messages = await model_context.get_messages()
             yield all_messages
+            yield prompt_tokens
 
     async def _call_llm(
         self,
@@ -1043,11 +1438,15 @@ Current Session_ID is {self._thread_id}"""
 
         # Get messages with compression notification
         all_messages = None
+        prompt_tokens = 0
         async for item in self._get_messages_with_compression_notification(
             model_context, cancellation_token
         ):
             if isinstance(item, list):
                 all_messages = item
+            elif isinstance(item, int):
+                # Get prompt token count from message compression
+                prompt_tokens = item
             else:
                 # Yield notification events
                 yield item
@@ -1074,12 +1473,13 @@ Current Session_ID is {self._thread_id}"""
                 agent_name=agent_name, 
                 cancellation_token=cancellation_token,
                 db_manager=self._db_manager,
+                prompt_tokens=prompt_tokens,  # Pass calculated prompt tokens
             ):
                 # if isinstance(chunk, CreateResult):
                 #     model_result = chunk
                 yield chunk
         else:
-           async for chunk in self.call_llm(
+            async for chunk in self.call_llm(
                 agent_name = agent_name,
                 model_client = model_client,
                 llm_messages = llm_messages, 
@@ -1088,7 +1488,10 @@ Current Session_ID is {self._thread_id}"""
                 cancellation_token = cancellation_token,
                 output_content_type = output_content_type,
            ):
-               yield chunk
+                # Fix CreateResult.usage if prompt_tokens is 0 (API may return 0)
+                if isinstance(chunk, CreateResult) and chunk.usage and chunk.usage.prompt_tokens == 0 and prompt_tokens > 0:
+                    chunk.usage.prompt_tokens = prompt_tokens
+                yield chunk
     
     async def _handle_default_subagent_mode(
         self,
@@ -1101,74 +1504,30 @@ Current Session_ID is {self._thread_id}"""
         cancellation_token: CancellationToken,
         output_content_type: type[BaseModel] | None,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
+        """Handle default subagent mode — route all messages to the configured subagent.
+
+        Now uses the unified _execute_subagent for consistent isolation,
+        timeout, depth check, and context management.
         """
-        Handle default subagent mode for the current thread.
-        Routes all messages to the configured default subagent.
-        """
-        subagent = None
-        try:
-            # Get sub agent system prompt
-            sub_system = f"""You are a {default_subagent_name} subagent at {self._work_dir}.
+        # Extract user prompt from messages
+        prompt = messages[-1].content if messages else ""
 
-{self._user_sub_agents[default_subagent_name].get("prompt", "")}
-
-Complete the task and return a clear, concise summary."""
-
-            # Get subagent instance
-            subagent = await self.get_sub_agent_instance(
-                sub_agent_name=default_subagent_name,
-                model_client=model_client,
-                model_client_stream=model_client_stream,
-                sub_system=sub_system,
-                output_content_type=output_content_type,
-            )
-
-            # # Construct task messages with background context
-            # task_messages: List[BaseChatMessage] = []
-            # llm_messages = await model_context.get_messages()
-
-            # # Add background context (limited to recent messages to avoid too much context)
-            # background_message = "Below are the recent chat records for context:\n\n"
-            # for llm_message in llm_messages[-10:]:  # Only last 10 messages
-            #     if isinstance(llm_message, (UserMessage, AssistantMessage)):
-            #         background_message += f"{llm_message.source}: {llm_message.content}\n\n"
-
-            # task_messages.append(TextMessage(content=background_message, source="user"))
-
-            # Process with subagent
-            async for message in subagent.on_messages_stream(
-                messages=messages,
-                cancellation_token=cancellation_token
-            ):
-                if isinstance(message, Response):
-                    # Add subagent response to model context
-                    await model_context.add_message(
-                        AssistantMessage(
-                            content=str(message.chat_message.content),
-                            source=default_subagent_name,
-                        )
+        async for message in self._execute_subagent(
+            sub_agent_name=default_subagent_name,
+            prompt=prompt,
+            cancellation_token=cancellation_token,
+        ):
+            if isinstance(message, Response):
+                # Add subagent response to model context
+                await model_context.add_message(
+                    AssistantMessage(
+                        content=str(message.chat_message.content),
+                        source=default_subagent_name,
                     )
-                    yield message
-                yield message
-
-        except Exception as e:
-            logger.error(f"Error routing to default subagent {default_subagent_name}: {e}")
-            logger.error(traceback.format_exc())
-            yield Response(
-                chat_message=TextMessage(
-                    content=f"⚠️ 使用默认子智能体 **{default_subagent_name}** 时出错:\n\n```\n{str(e)}\n```\n\n💡 使用 `/agent clear` 清除默认子智能体设置。\n\n---\n\n⚠️ Error using default subagent **{default_subagent_name}**:\n\n```\n{str(e)}\n```\n\n💡 Use `/agent clear` to clear default subagent setting.",
-                    source=agent_name,
-                    metadata={"internal": "no"},
                 )
-            )
-        finally:
-            # 确保无论如何都要关闭 subagent，防止资源泄漏
-            if subagent:
-                try:
-                    await subagent.close()
-                    logger.debug(f"Successfully closed subagent: {default_subagent_name}")
-                except Exception as close_error:
-                    logger.warning(f"Error closing subagent {default_subagent_name}: {close_error}")
+                yield message
+                return
+            yield message
 
     def is_commands_mode(self, text: str) -> bool:
         """Check if the message is a command."""
@@ -1385,7 +1744,71 @@ Complete the task and return a clear, concise summary."""
         # STEP 4B: Execute tool calls with special tool handling
         exec_results: List[FunctionExecutionResult] = []
 
+        # ── Pre-scan: collect Delegate calls for potential parallel execution ──
+        delegate_indices: Dict[int, Dict[str, Any]] = {}
         for idx, tool_call in enumerate(model_result.content):
+            if tool_call.name == "Delegate":
+                try:
+                    args = fix_and_parse_json(tool_call.arguments)
+                    if not isinstance(args, str):
+                        delegate_indices[idx] = args
+                except Exception:
+                    pass  # parse error → handled in normal loop below
+
+        # ── Parallel path: >=2 Delegates in same turn → run concurrently ──
+        if len(delegate_indices) >= 2:
+            yield AgentLogEvent(
+                title=f"Running {len(delegate_indices)} subagents in parallel...",
+                source=agent_name,
+                content="",
+                content_type="tools",
+            )
+
+            # Build parallel task list
+            parallel_tasks = []
+            for idx, args in delegate_indices.items():
+                tool_call = model_result.content[idx]
+                parallel_tasks.append((
+                    tool_call.id,
+                    args["agent_type"],
+                    args["prompt"],
+                    args.get("context"),
+                    None,  # mode removed; placeholder for backward compat
+                ))
+
+            # Execute in parallel; capture subagent_result messages for exec_results
+            parallel_results: Dict[str, str] = {}
+            async for message in self._execute_subagents_parallel(
+                delegate_calls=parallel_tasks,
+                cancellation_token=cancellation_token,
+                max_concurrent=3,
+            ):
+                # Collect final results from metadata-tagged messages
+                if isinstance(message, TextMessage):
+                    meta = getattr(message, "metadata", None) or {}
+                    if meta.get("subagent_result"):
+                        parallel_results[meta["subagent_result"]] = message.content or ""
+                yield message
+
+            # Build exec_results with actual subagent outputs
+            for idx, args in delegate_indices.items():
+                tool_call = model_result.content[idx]
+                result_content = parallel_results.get(
+                    args["agent_type"],
+                    f"Subagent '{args['agent_type']}' completed (no output captured).",
+                )
+                exec_results.append(FunctionExecutionResult(
+                    content=result_content,
+                    name="Delegate",
+                    call_id=tool_call.id,
+                    is_error=False,
+                ))
+
+        # ── Main loop: process remaining tools (incl. single Delegate) ──
+        for idx, tool_call in enumerate(model_result.content):
+            # Skip Delegates already handled by parallel batch
+            if len(delegate_indices) >= 2 and idx in delegate_indices:
+                continue
             tool_name = tool_call.name
             call_id = tool_call.id
 
@@ -1443,7 +1866,7 @@ Complete the task and return a clear, concise summary."""
                         content_type="tools"
                     )
                     yield ToolCallSummaryMessage(
-                        content=f"<think>Skill for {arguments['skill']}:\n\n {skill_content}</think>\n",
+                        content=f"Skill for {arguments['skill']}:\n\n {skill_content}\n",
                         source=agent_name,
                     )
                 except Exception as e:
@@ -1459,15 +1882,17 @@ Complete the task and return a clear, concise summary."""
                 # TodoWrite tool handling
                 try:
                     todo_list = self._todo_manager.update(arguments["items"])
+                    # Inject auto-correction warning prefix if present
+                    warning_prefix = (self._todo_manager._last_warning + "\n\n") if self._todo_manager._last_warning else ""
                     exec_results.append(FunctionExecutionResult(
-                        content=self._todo_manager.get_task_prompt(),
+                        content=warning_prefix + self._todo_manager.get_task_prompt(),
                         name=tool_name,
                         call_id=call_id,
                         is_error=False,
                     ))
                     # Yield text message immediately for user visibility
                     yield TextMessage(
-                        content=todo_list,
+                        content=warning_prefix + todo_list,
                         source=agent_name,
                         metadata={"interal": "no"},
                     )
@@ -1491,47 +1916,26 @@ Complete the task and return a clear, concise summary."""
                     # Early return on critical error
                     return
 
-            elif tool_name == "Task":
-                # Subagent Task tool handling
+            elif tool_name == "Delegate":
+                # Subagent delegation — unified via _execute_subagent
                 try:
-                    description, prompt, sub_agent_name = arguments["description"], arguments["prompt"], arguments["agent_type"]
-
-                    # Get sub agent system prompt
-                    sub_system = f"""You are a {sub_agent_name} subagent at {self._work_dir}.
-
-    {self._user_sub_agents[sub_agent_name].get("prompt", "")}
-
-    Complete the task and return a clear, concise summary."""
-
-                    # Construct task messages
-                    task_messages: Sequence[BaseChatMessage] = []
-                    llm_messages = await model_context.get_messages()
-                    backgroud_message = "Below are the historical chat records between the user and various intelligent assistants, which can be referenced when executing the current task.\n\n"
-                    for llm_message in llm_messages:
-                        if isinstance(llm_message, UserMessage) or isinstance(llm_message, AssistantMessage):
-                            backgroud_message += f"{llm_message.source}: {llm_message.content}\n\n"
-                    task_messages.append(TextMessage(content=backgroud_message, source="user"))
-                    task_messages.append(TextMessage(content=f"Current task: \n\n{prompt}", source="user"))
-
-                    # Execute subagent
-                    subagent = await self.get_sub_agent_instance(
-                        sub_agent_name=sub_agent_name,
-                        model_client=model_client,
-                        model_client_stream=model_client_stream,
-                        sub_system=sub_system,
-                        output_content_type=output_content_type,
-                    )
+                    sub_agent_name = arguments["agent_type"]
+                    prompt = arguments["prompt"]
+                    context = arguments.get("context")
 
                     task_result_content = ""
-                    # Stream subagent messages immediately for real-time feedback
-                    async for message in subagent.on_messages_stream(messages=task_messages, cancellation_token=cancellation_token):
+                    async for message in self._execute_subagent(
+                        sub_agent_name=sub_agent_name,
+                        prompt=prompt,
+                        context=context,
+                        cancellation_token=cancellation_token,
+                    ):
                         if isinstance(message, Response):
                             task_result_content = str(message.chat_message.content)
                             yield message.chat_message
                             break
-                        yield message  # Yield immediately for streaming experience
+                        yield message
 
-                    # Add result
                     exec_results.append(FunctionExecutionResult(
                         content=task_result_content,
                         name=tool_name,
@@ -1539,14 +1943,8 @@ Complete the task and return a clear, concise summary."""
                         is_error=False,
                     ))
 
-                    # Close subagent
-                    try:
-                        await subagent.close()
-                    except Exception as close_error:
-                        logger.warning(f"Error closing subagent {sub_agent_name}: {close_error}")
-
                 except Exception as e:
-                    logger.exception(f"Error executing Task tool: {e}")
+                    logger.exception(f"Error executing Delegate tool: {e}")
                     exec_results.append(FunctionExecutionResult(
                         content=f"Error: {str(e)}",
                         name=tool_name,
@@ -1562,7 +1960,7 @@ Complete the task and return a clear, concise summary."""
                         content=str(e),
                         source=agent_name,
                     )
-                    # Early return on critical error
+                    return
                     return
 
             elif tool_name == "UpdateUserConfig":
@@ -1611,6 +2009,8 @@ Complete the task and return a clear, concise summary."""
                         )
                         continue
 
+                    is_remote = self._is_remote_task_manager()
+                    tm = self._task_manager
                     operation = arguments.get("operation")
                     result_content = ""
 
@@ -1630,18 +2030,20 @@ Complete the task and return a clear, concise summary."""
                             save_history=arguments.get("save_history", True),
                             execution_context=execution_context,
                         )
-                        task_id = self._task_manager.add_task(task)
+                        task_id = await tm.add_task(task)
                         result_content = f"✅ 定时任务创建成功！\n\n"
                         result_content += f"**任务ID:** `{task_id}`\n"
                         result_content += f"**任务名称:** {task.task_name}\n"
                         result_content += f"**调度类型:** {task.schedule_type}\n"
                         result_content += f"**调度配置:** {task.schedule_config}\n"
                         result_content += f"**下次执行:** {task.next_run}\n"
+                        if is_remote:
+                            result_content += "\n💡 任务在后台 worker 进程中执行，CLI 关闭不影响任务运行。\n"
 
                     elif operation == "list":
                         session_id = arguments.get("session_id")
                         status = TaskStatus(arguments["status"]) if arguments.get("status") else None
-                        tasks = self._task_manager.list_tasks(
+                        tasks = await tm.list_tasks(
                             user_id=self._user_id,
                             session_id=session_id,
                             status=status
@@ -1659,7 +2061,7 @@ Complete the task and return a clear, concise summary."""
 
                     elif operation == "get":
                         task_id = arguments["task_id"]
-                        task = self._task_manager.get_task(task_id)
+                        task = await tm.get_task(task_id)
                         if task is None:
                             result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
                         else:
@@ -1681,7 +2083,7 @@ Complete the task and return a clear, concise summary."""
 
                     elif operation == "delete":
                         task_id = arguments["task_id"]
-                        success = self._task_manager.remove_task(task_id)
+                        success = await tm.remove_task(task_id)
                         if success:
                             result_content = f"✅ 任务已删除(Task deleted successfully): `{task_id}`。\n\n"
                         else:
@@ -1690,19 +2092,19 @@ Complete the task and return a clear, concise summary."""
                     elif operation == "toggle":
                         task_id = arguments["task_id"]
                         enabled = arguments["enabled"]
-                        task = self._task_manager.get_task(task_id)
+                        task = await tm.get_task(task_id)
                         if task is None:
                             result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
                         else:
                             new_status = TaskStatus.ENABLED if enabled else TaskStatus.DISABLED
-                            self._task_manager.update_task_status(task_id, new_status)
+                            await tm.update_task_status(task_id, new_status)
                             result_content = f"✅ 任务已{'启用' if enabled else '禁用'}: `{task_id}`"
                             result_content += f"Task {'enabled' if enabled else 'disabled'} successfully\n\n."
 
                     elif operation == "get_results":
                         task_id = arguments["task_id"]
                         limit = arguments.get("limit", 10)
-                        results = self._task_manager.get_task_results(task_id, limit=limit)
+                        results = await tm.get_task_results(task_id, limit=limit)
                         if not results:
                             result_content = f"任务 `{task_id}` 没有执行历史(No execution history)。\n\n"
                         else:
@@ -1718,9 +2120,20 @@ Complete the task and return a clear, concise summary."""
                     elif operation == "get_outputs":
                         task_id = arguments["task_id"]
                         limit = arguments.get("limit", 10)
-                        outputs = self._task_manager.get_task_outputs(task_id, limit=limit)
+                        outputs = await tm.get_task_outputs(task_id, limit=limit)
                         if not outputs:
                             result_content = f"任务 `{task_id}` 没有输出文件(No output files)。\n\n"
+                        elif is_remote and outputs and outputs[0].get("error"):
+                            # 远程模式下输出文件在 worker 服务器上，无法直接读取
+                            result_content = f"💡 远程模式下，输出文件保存在 worker 服务器上。\n\n"
+                            result_content += f"请通过 worker 的 Web UI 查看，或使用 `get_results` 查看执行摘要。\n\n"
+                            results = await tm.get_task_results(task_id, limit=limit)
+                            if results:
+                                result_content += f"最近执行摘要：\n\n"
+                                for i, res in enumerate(results, 1):
+                                    result_content += f"{i}. **{res.start_time}** — {res.status}\n"
+                                    if res.result_content:
+                                        result_content += f"   结果: {res.result_content[:200]}...\n"
                         else:
                             result_content = f"任务 `{task_id}` 的输出文件（最近 {len(outputs)} 个）：\n\n"
                             for i, output in enumerate(outputs, 1):
@@ -1732,14 +2145,18 @@ Complete the task and return a clear, concise summary."""
 
                     elif operation == "read_output":
                         file_path = arguments["file_path"]
-                        try:
-                            with open(file_path, 'r', encoding='utf-8') as f:
-                                content = f.read()
-                            result_content = f"## 输出文件内容\n\n**文件:** `{file_path}`\n\n---\n\n{content}"
-                        except FileNotFoundError:
-                            result_content = f"❌ 文件不存在(File not found): `{file_path}`\n\n."
-                        except Exception as e:
-                            result_content = f"❌ 读取文件失败(Failed to read file): {str(e)}\n\n."
+                        if is_remote:
+                            result_content = f"❌ 远程模式下不支持直接读取输出文件。\n\n"
+                            result_content += f"输出文件保存在 worker 服务器上，请通过 worker 的 Web UI 查看。\n\n."
+                        else:
+                            try:
+                                with open(file_path, 'r', encoding='utf-8') as f:
+                                    content = f.read()
+                                result_content = f"## 输出文件内容\n\n**文件:** `{file_path}`\n\n---\n\n{content}"
+                            except FileNotFoundError:
+                                result_content = f"❌ 文件不存在(File not found): `{file_path}`\n\n."
+                            except Exception as e:
+                                result_content = f"❌ 读取文件失败(Failed to read file): {str(e)}\n\n."
 
                     else:
                         result_content = f"❌ 未知操作(Unknown operation): {operation}\n\n."
@@ -1811,7 +2228,7 @@ Complete the task and return a clear, concise summary."""
         tool_call_summary = "\n".join(tool_call_summaries)
         yield Response(
                 chat_message=ToolCallSummaryMessage(
-                    content="<think>The results of execution:\n " + tool_call_summary + "</think>\n",
+                    content="The results of execution:\n "+tool_call_summary+"\n",
                     source=agent_name,
                 ),
                 inner_messages=inner_messages,
@@ -1847,6 +2264,446 @@ Complete the task and return a clear, concise summary."""
                 inner_messages=inner_messages,
             )
     
+    # ── Subagent Infrastructure ─────────────────────────────────────────────
+
+    def _make_subagent_thread_id(self, sub_agent_name: str) -> str:
+        """Generate a unique thread_id for a subagent.
+
+        Format: {parent_thread_id}/sub/{agent_name}/{6-char uuid}
+        Example: a1b2c3d4/sub/explore/x7k9p2
+        """
+        short_id = uuid.uuid4().hex[:6]
+        return f"{self._thread_id}/sub/{sub_agent_name}/{short_id}"
+
+    def _check_delegate_depth(self) -> None:
+        """Raise DelegateDepthExceededError if max depth exceeded."""
+        if self._delegate_depth >= self._max_delegate_depth:
+            raise DelegateDepthExceededError(
+                f"⚠️ Cannot delegate further: max depth ({self._max_delegate_depth}) "
+                f"exceeded (current: {self._delegate_depth}). "
+                f"This subagent is at the deepest allowed level."
+            )
+
+    def _get_tools_for_subagent(self, sub_agent_name: str) -> list:
+        """Filter tools for subagent using allowlist + blocklist.
+
+        Default blocklist prevents recursive delegation, config mutation,
+        and scheduled task side effects. explore/plan types additionally
+        block all write/edit/exec tools.
+        """
+        cfg = self._user_sub_agents.get(sub_agent_name, {})
+        agent_type = cfg.get("type", "DrSaiAgent")
+
+        # Determine blocklist by agent type
+        if agent_type in ("explore", "plan"):
+            disallowed = _READONLY_DISALLOWED_TOOLS
+        else:
+            disallowed = _DEFAULT_DISALLOWED_FOR_SUBAGENTS.copy()
+
+        # Merge user-defined disallowed tools
+        disallowed |= set(cfg.get("disallowed_tools", []))
+
+        # Leaf role always blocks Delegate
+        if cfg.get("role", "leaf") == "leaf":
+            disallowed.add("Delegate")
+
+        # Apply allowlist
+        allowed = cfg.get("tools", "*")
+        if allowed == "*":
+            tools = list(self._tools) if hasattr(self, '_tools') else []
+        else:
+            tools = [
+                t for t in (getattr(self, '_workbench', None) and self._workbench._tools or [])
+                if t.name in allowed
+            ]
+
+        return [t for t in tools if t.name not in disallowed]
+
+    async def _create_independent_model_client(self) -> ChatCompletionClient:
+        """Create an independent model_client copy for subagent use.
+
+        Creates a new instance with its own underlying httpx.AsyncClient so that
+        subagent.close() does not affect the parent's HTTP connections.
+
+        Uses raw config for HepAIChatCompletionClient to avoid
+        ``dump_component``/``load_component`` losing the HepAI type
+        (HepAIChatCompletionClient inherits ``component_provider_override`` from
+        OpenAIChatCompletionClient, so ``load_component`` would instantiate an
+        OpenAIChatCompletionClient instead).
+        """
+        if self._model_client is None:
+            raise ValueError("Parent model_client is not initialized")
+
+        # HepAI client: preserve the subclass type via raw config
+        try:
+            from hepai.agents.modules.components.LLMClient import (
+                HepAIChatCompletionClient,
+            )
+            if isinstance(self._model_client, HepAIChatCompletionClient):
+                raw = getattr(self._model_client, '_raw_config', {}).copy()
+                independent = HepAIChatCompletionClient(**raw)
+                independent._model_info = copy.deepcopy(self._model_client._model_info)
+                return independent
+        except ImportError:
+            pass
+
+        # Default path (works for all Component-based clients)
+        model_config = self._model_client.dump_component()
+        independent = ChatCompletionClient.load_component(model_config)
+        independent._model_info = copy.deepcopy(self._model_client._model_info)
+        return independent
+
+    async def _create_local_subagent(
+        self,
+        sub_agent_name: str,
+    ) -> "DrSaiAssistant":
+        """Create a local DrSaiAssistant subagent instance.
+
+        Key isolation guarantees:
+        - thread_id = {parent}/sub/{name}/{uuid}  (independent)
+        - SQLite context with isolated thread_id
+        - only_system_message=True skips UserProfileManager
+        - Reuses db_manager connection but writes to different thread_id
+        """
+        cfg = self._user_sub_agents.get(sub_agent_name, {})
+        max_turns = cfg.get("max_turns", 10)
+
+        # Build isolated thread_id
+        sub_thread_id = self._make_subagent_thread_id(sub_agent_name)
+
+        # Build temporary system prompt
+        sub_prompt = cfg.get("prompt", "")
+        sub_system = (
+            f"You are a {sub_agent_name} subagent at {self._work_dir}.\n\n"
+            f"{sub_prompt}\n\n"
+            f"Complete the task and return a clear, concise summary."
+        )
+
+        # Get filtered tools for subagent
+        tools = self._get_tools_for_subagent(sub_agent_name)
+
+        # Independent model_client
+        independent_model_client = await self._create_independent_model_client()
+
+        # Always use SQLite context (isolated thread_id in shared DB)
+        model_context_arg = None
+        context_type_arg = "sqlite"
+
+        subagent = DrSaiAssistant(
+            name=sub_agent_name,
+            model_client=independent_model_client,
+            model_client_stream=True,
+            tools=tools,
+            system_message=sub_system,
+            only_system_message=True,            # skip UserProfileManager
+            max_turn_count=max_turns,
+            model_context=model_context_arg,
+            # Identity
+            thread_id=sub_thread_id,
+            user_id=self._user_id,
+            # Workspace
+            work_dir=str(self._work_dir),
+            storage_dir=str(self._work_dir),
+            only_in_workspace=False,
+            # Database (shared connection, isolated thread_id)
+            db_manager=self._db_manager,
+            context_type=context_type_arg,
+            # Safety
+            allolow_dangrous_cmd=True,
+            allolow_basic_tools=[],              # ← prevent get_operator_funcs tools
+            sub_agent_config={},                 # no nested subagents
+            skills_dir=[],
+        )
+
+        # Inject depth
+        subagent._delegate_depth = self._delegate_depth + 1
+
+        # Subagent isolation: prevent _run_startup_checks from reloading
+        # configs and injecting unwanted tools (MCP, Delegate, skills).
+        subagent._skip_startup_checks = True
+        # Clear manager tools to prevent TodoWrite, UpdateUserConfig,
+        # Delegate etc. from leaking into API calls.
+        subagent._todo_tools = []
+        subagent._update_user_config_tools = []
+        subagent._scheduled_task_tools = []
+        subagent._subagent_tools = []
+        subagent._agent_skills_tools = []
+        subagent._user_sub_agents = {}
+
+        await subagent.lazy_init()
+        return subagent
+
+    async def _create_remote_subagent(
+        self,
+        sub_agent_name: str,
+    ) -> "HepAIWorkerAgent":
+        """Create a remote HepAIWorkerAgent subagent instance.
+
+        Remote subagents manage their own thread/session on the server side.
+        We pass chat_id (parent thread_id) for correlation.
+        """
+        cfg = self._user_sub_agents.get(sub_agent_name, {})
+        remote_configs = cfg.get("model_remote_configs", {})
+
+        subagent = HepAIWorkerAgent(
+            name=sub_agent_name,
+            description=cfg.get("description", ""),
+            model_remote_configs={
+                "url": remote_configs.get("url", "https://aiapi.ihep.ac.cn/apiv2"),
+                "api_key": self._model_client._client.api_key if self._model_client else None,
+                "name": remote_configs.get("name", sub_agent_name),
+            },
+            chat_id=self._thread_id,
+            run_info={
+                "name": getattr(self._user_profile_manager, 'user_id', ''),
+                "email": self._user_id,
+            },
+        )
+
+        await subagent.lazy_init()
+        return subagent
+
+    @staticmethod
+    def _build_subagent_messages(
+        prompt: str,
+        work_dir: str,
+        context: str | None = None,
+    ) -> List[TextMessage]:
+        """Build minimal task messages for subagent (Hermes-style).
+
+        Only passes task + optional context + work directory.
+        Does NOT pass parent conversation history.
+
+        Args:
+            prompt: The task description.
+            work_dir: Work directory path.
+            context: Optional background information.
+        """
+        content = f"Your task:\n\n{prompt}"
+        if context:
+            content = f"Background context:\n{context}\n\n{content}"
+        content += f"\n\nWork directory: {work_dir}"
+
+        return [TextMessage(content=content, source="user")]
+
+    @staticmethod
+    def _tag_message(
+        message: "BaseAgentEvent | BaseChatMessage",
+        sub_agent_name: str,
+    ) -> "BaseAgentEvent | BaseChatMessage":
+        """Tag a message with subagent source for display differentiation."""
+        if hasattr(message, 'source'):
+            src = message.source or ""
+            if not src:
+                message.source = f"sub:{sub_agent_name}"
+            elif not src.startswith("sub:"):
+                message.source = f"sub:{sub_agent_name}/{src}"
+        return message
+
+    async def _safe_close_subagent(self, subagent, sub_agent_name: str) -> None:
+        """Safely close a subagent and optionally clean up its DB messages."""
+        try:
+            await subagent.close()
+        except Exception as e:
+            logger.warning(f"Error closing subagent {sub_agent_name}: {e}")
+
+        # Optionally clean up SQLite messages for multi-mode subagents
+        if self._cleanup_subagent_messages and hasattr(subagent, '_context_type'):
+            if getattr(subagent, '_context_type', None) == "sqlite":
+                try:
+                    await self._delete_subagent_messages(subagent._thread_id)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to clean up subagent messages "
+                        f"{subagent._thread_id}: {e}"
+                    )
+
+    async def _delete_subagent_messages(self, thread_id: str) -> None:
+        """Delete all SessionMessage rows for a subagent thread_id."""
+        from drsai.modules.managers.datamodel.db import SessionMessage
+        if not self._db_manager:
+            return
+        try:
+            self._db_manager.delete(
+                model_class=SessionMessage,
+                filters={"thread_id": thread_id},
+            )
+        except Exception as e:
+            logger.warning(f"Failed to clean up messages for {thread_id}: {e}")
+
+    async def _execute_subagent(
+        self,
+        sub_agent_name: str,
+        prompt: str,
+        context: str | None = None,
+        cancellation_token: CancellationToken | None = None,
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
+        """Unified subagent execution entry point.
+
+        Called by both _process_model_result (Delegate tool)
+        and _handle_default_subagent_mode.
+
+        Args:
+            sub_agent_name: Subagent type name (explore, plan, general, ...).
+            prompt: Task description.
+            context: Optional background information.
+            cancellation_token: Cancellation token for early termination.
+        """
+        # 1. Depth check
+        self._check_delegate_depth()
+
+        # 2. Create subagent (remote if config type indicates it)
+        cfg = self._user_sub_agents.get(sub_agent_name, {})
+        agent_type = cfg.get("type", "DrSaiAgent")
+        if agent_type in ("HepAIWorkerAgent", "RemoteAgent"):
+            subagent = await self._create_remote_subagent(sub_agent_name)
+        else:
+            subagent = await self._create_local_subagent(sub_agent_name)
+
+        # 3. Build task messages (Hermes-style: no parent history)
+        task_messages = self._build_subagent_messages(
+            prompt=prompt,
+            work_dir=str(self._work_dir),
+            context=context,
+        )
+
+        # 4. Execute with timeout — IMPORTANT: give each subagent its OWN
+        #    CancellationToken to prevent close() from cancelling the parent's
+        #    shared token (which would kill sibling parallel subagents).
+        timeout = cfg.get("timeout", self._subagent_timeout)
+        parent_ct = cancellation_token or CancellationToken()
+        ct = CancellationToken()  # subagent-own token
+
+        try:
+            # Propagate cancellation from parent to subagent via a watcher.
+            async def _watch_parent_cancel(parent: CancellationToken, child: CancellationToken):
+                try:
+                    while not parent.is_cancelled():
+                        await asyncio.sleep(0.1)
+                finally:
+                    child.cancel()
+
+            watcher = asyncio.create_task(_watch_parent_cancel(parent_ct, ct))
+
+            try:
+                async with asyncio.timeout(timeout):
+                    async for message in subagent.on_messages_stream(
+                        messages=task_messages,
+                        cancellation_token=ct,
+                    ):
+                        # Tag for display
+                        yield self._tag_message(message, sub_agent_name)
+
+                        if isinstance(message, Response):
+                            break  # subagent done
+
+                        # Check pause/cancel
+                        if getattr(self, 'is_paused', False) or ct.is_cancelled():
+                            break
+            finally:
+                watcher.cancel()
+                try:
+                    await watcher
+                except asyncio.CancelledError:
+                    pass
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Subagent '{sub_agent_name}' timed out after {timeout}s")
+            yield TextMessage(
+                content=(
+                    f"⚠️ Subagent '{sub_agent_name}' timed out after {timeout}s.\n"
+                    f"Try breaking the task into smaller steps or using multi mode."
+                ),
+                source="system",
+            )
+        except DelegateDepthExceededError as e:
+            yield TextMessage(content=str(e), source="system")
+        finally:
+            await self._safe_close_subagent(subagent, sub_agent_name)
+
+    async def _execute_subagents_parallel(
+        self,
+        delegate_calls: List[tuple],
+        cancellation_token: CancellationToken,
+        max_concurrent: int = 3,
+        **common_kwargs,
+    ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
+        """Execute multiple Delegate calls in parallel via asyncio.Queue merge.
+
+        Each subagent runs in its own Task; outputs are merged through a shared
+        Queue and yielded in arrival order.  A Semaphore caps concurrency.
+
+        After all subagents complete, their final results are yielded as
+        SubagentResult messages keyed by agent name, so the caller can
+        populate exec_results with real content.
+        """
+        queue: asyncio.Queue = asyncio.Queue()
+        semaphore = asyncio.Semaphore(max_concurrent)
+        total = len(delegate_calls)
+        done_count = 0
+        _DONE = object()
+
+        # Collect per-subagent final results
+        subagent_results: Dict[str, str] = {}
+
+        async def run_one(call_id, sub_agent_name, prompt, context):
+            async with semaphore:
+                last_content = ""
+                try:
+                    async for msg in self._execute_subagent(
+                        sub_agent_name=sub_agent_name,
+                        prompt=prompt,
+                        context=context,
+                        cancellation_token=cancellation_token,
+                        **common_kwargs,
+                    ):
+                        # Track last text content for result collection
+                        if isinstance(msg, TextMessage):
+                            last_content = msg.content or ""
+                        elif isinstance(msg, Response):
+                            last_content = str(getattr(msg, 'chat_message', msg).content) if hasattr(msg, 'chat_message') else ""
+                        await queue.put((sub_agent_name, msg))
+                except Exception as e:
+                    last_content = f"Error: {e}"
+                    await queue.put((sub_agent_name, TextMessage(
+                        content=f"⚠️ [{sub_agent_name}] {e}",
+                        source="system",
+                    )))
+                finally:
+                    # Store final result before signaling done
+                    subagent_results[sub_agent_name] = last_content
+                    await queue.put((None, _DONE))
+
+        # Launch all tasks
+        tasks = []
+        for call_id, sub_agent_name, prompt, context, mode in delegate_calls:
+            tasks.append(
+                asyncio.create_task(
+                    run_one(call_id, sub_agent_name, prompt, context)
+                )
+            )
+
+        # Consume merged stream
+        while done_count < total:
+            name, message = await queue.get()
+            if message is _DONE:
+                done_count += 1
+                continue
+            yield self._tag_message(message, name) if name else message
+
+        # Ensure all tasks complete
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Yield collected results for the caller
+        for sub_agent_name, content in subagent_results.items():
+            yield TextMessage(
+                content=f"[{sub_agent_name}] {content}",
+                source=f"sub:{sub_agent_name}",
+                metadata={"subagent_result": sub_agent_name},
+            )
+
+    # ── End Subagent Infrastructure ─────────────────────────────────────────
+
     def get_tools_for_agent(self, agent_type: str) -> list:
         """Filter tools based on agent type."""
         allowed = self._user_sub_agents.get(agent_type, {}).get("tools", "*")
@@ -1872,14 +2729,9 @@ Complete the task and return a clear, concise summary."""
         # 使用 dump_component 和 load_component 来创建深拷贝
         independent_model_client = None
         if model_client is not None:
-            try:
-                model_config = model_client.dump_component()
-                independent_model_client = ChatCompletionClient.load_component(model_config)
-                independent_model_client._model_info = model_client._model_info
-            except Exception as e:
-                logger.warning(f"Failed to create independent model_client for subagent {sub_agent_name}: {e}")
-                logger.warning("Falling back to shared model_client (may cause issues when subagent is closed)")
-                independent_model_client = model_client
+            model_config = model_client.dump_component()
+            independent_model_client = ChatCompletionClient.load_component(model_config)
+            independent_model_client._model_info = copy.deepcopy(model_client._model_info)
 
         # Get agent
         if sub_agent_name in self._user_sub_agents:
@@ -1949,100 +2801,32 @@ Complete the task and return a clear, concise summary."""
         cancellation_token: CancellationToken,
         output_content_type: type[BaseModel] | None,
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
+        """Handle subagent execution — now delegates to unified _execute_subagent.
+
+        Maintained for backward compatibility with assistant_skill.py.
         """
-        Sub agent can actuate the sub task.
+        prompt = argument["prompt"]
+        sub_agent_name = argument["agent_type"]
+        context = argument.get("context")
 
-        The types of sub agent:
-        1. code_executor
-        2. normal drsai agent
-        3. worker agent
-        """
-        subagent = None
-        try:
-            description, prompt, sub_agent_name = argument["description"], argument["prompt"], argument["agent_type"]
-
-            # get sub agent system prompt
-            sub_system = f"""You are a {sub_agent_name} subagent at {self._work_dir}.
-
-    {self._user_sub_agents[sub_agent_name].get("prompt", "")}
-
-    Complete the task and return a clear, concise summary."""
-
-            # construct task messages
-            task_messages: Sequence[BaseChatMessage] = []
-            llm_messages = await model_context.get_messages()
-            # TODO: compress the background messages using  LLM
-            backgroud_message = "Below are the historical chat records between the user and various intelligent assistants, which can be referenced when executing the current task.\n\n"
-            for llm_message in llm_messages:
-                if isinstance(llm_message, UserMessage) or isinstance(llm_message, AssistantMessage):
-                    backgroud_message += f"{llm_message.source}: {llm_message.content}\n\n"
-            task_messages.append(TextMessage(content=backgroud_message, source="user"))
-            task_messages.append(TextMessage(content=f"Current task: \n\n{prompt}", source="user"))
-
-            # Process task
-            #  TODO: handle turn count fro multi-turn task.
-            # turn_count = 0
-            # while turn_count < self._max_turn_count:
-            #     turn_count += 1
-            subagent = await self.get_sub_agent_instance(
-                sub_agent_name = sub_agent_name,
-                model_client = model_client,
-                model_client_stream = model_client_stream,
-                sub_system = sub_system,
-                output_content_type = output_content_type,
-            )
-            async for message in subagent.on_messages_stream(messages=task_messages, cancellation_token=cancellation_token):
-                if isinstance(message, Response):
-                    yield message.chat_message
-                    # await model_context.add_message(
-                    #     UserMessage(
-                    #         content=str(message.chat_message.content),
-                    #         source="user",
-                    #     )
-                    # )
-                    await model_context.add_message(FunctionExecutionResultMessage(
-                        content=[FunctionExecutionResult(
-                            content = str(message.chat_message.content),
-                            name = tool_name,
-                            call_id = call_id,
-                            is_error = False,
-                        ),]
-                    ))
-                    return
-                yield message
-
-        except Exception as e:
-            logger.exception(f"Error in {self.name}")
-            yield ModelClientStreamingChunkEvent(
-                content=str(e)+"\n\n",
-                source=self.name,
-            )
-            # await model_context.add_message(
-            #     UserMessage(
-            #         content=str(e),
-            #         source="user",
-            #     )
-            # )
-            await model_context.add_message(FunctionExecutionResultMessage(
-                content=[FunctionExecutionResult(
-                    content = str(e),
-                    name = tool_name,
-                    call_id = call_id,
-                    is_error = True,
-                ),]
-            ))
-            yield StopMessage(
-                content=str(e),
-                source=agent_name,
-            )
-        finally:
-            # 确保无论如何都要关闭 subagent，防止资源泄漏
-            if subagent:
-                try:
-                    await subagent.close()
-                    logger.debug(f"Successfully closed subagent: {sub_agent_name}")
-                except Exception as close_error:
-                    logger.warning(f"Error closing subagent {sub_agent_name}: {close_error}")
+        async for message in self._execute_subagent(
+            sub_agent_name=sub_agent_name,
+            prompt=prompt,
+            context=context,
+            cancellation_token=cancellation_token,
+        ):
+            if isinstance(message, Response):
+                yield message.chat_message
+                await model_context.add_message(FunctionExecutionResultMessage(
+                    content=[FunctionExecutionResult(
+                        content=str(message.chat_message.content),
+                        name=tool_name,
+                        call_id=call_id,
+                        is_error=False,
+                    )]
+                ))
+                return
+            yield message
 
     async def handle_todo_write(
         self,
@@ -2054,29 +2838,20 @@ Complete the task and return a clear, concise summary."""
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage, None]:
         try:
             todo_list = self._todo_manager.update(argument["items"])
-            # send stream message
-            # yield ModelClientStreamingChunkEvent(
-            #     content=todo_list+"\n\n",
-            #     source=self._user_profile_manager.agent_name,
-            # )
+            # Inject auto-correction warning prefix if present
+            warning_prefix = (self._todo_manager._last_warning + "\n\n") if self._todo_manager._last_warning else ""
             # add message to model_context with user source
             await model_context.add_message(FunctionExecutionResultMessage(
                 content=[FunctionExecutionResult(
-                    content = self._todo_manager.get_task_prompt(),
+                    content = warning_prefix + self._todo_manager.get_task_prompt(),
                     name = tool_name,
                     call_id = call_id,
                     is_error = False,
                 ),]
             ))
-            # await model_context.add_message(
-            #     UserMessage(
-            #         content=self._todo_manager.get_task_prompt(),
-            #         source="user",
-            #     )
-            # )
             # send text message to save to db in drsai ui
             yield TextMessage(
-                content=todo_list,
+                content=warning_prefix + todo_list,
                 source=self._user_profile_manager.agent_name,
                 metadata={"interal": "no"},
             )
@@ -2118,8 +2893,7 @@ Complete the task and return a clear, concise summary."""
         处理定时任务管理操作
         """
         try:
-            from .managers import ScheduledTask, ScheduleType, TaskStatus
-
+            
             if self._task_manager is None:
                 error_msg = "定时任务管理器未初始化。请联系管理员(ScheduledTaskManager not initialized.)。\n\n"
                 await model_context.add_message(FunctionExecutionResultMessage(
@@ -2137,6 +2911,8 @@ Complete the task and return a clear, concise summary."""
                 )
                 return
 
+            is_remote = self._is_remote_task_manager()
+            tm = self._task_manager
             operation = argument.get("operation")
             result_content = ""
 
@@ -2157,19 +2933,21 @@ Complete the task and return a clear, concise summary."""
                     save_history=argument.get("save_history", True),
                     execution_context=execution_context,
                 )
-                task_id = self._task_manager.add_task(task)
+                task_id = await tm.add_task(task)
                 result_content = f"✅ 定时任务创建成功！\n\n"
                 result_content += f"**任务ID:** `{task_id}`\n"
                 result_content += f"**任务名称:** {task.task_name}\n"
                 result_content += f"**调度类型:** {task.schedule_type}\n"
                 result_content += f"**调度配置:** {task.schedule_config}\n"
                 result_content += f"**下次执行:** {task.next_run}\n"
+                if is_remote:
+                    result_content += "\n💡 任务在后台 worker 进程中执行，CLI 关闭不影响任务运行。\n"
 
             elif operation == "list":
                 # 列出任务
                 session_id = argument.get("session_id")
                 status = TaskStatus(argument["status"]) if argument.get("status") else None
-                tasks = self._task_manager.list_tasks(
+                tasks = await tm.list_tasks(
                     user_id=self._user_id,
                     session_id=session_id,
                     status=status
@@ -2188,7 +2966,7 @@ Complete the task and return a clear, concise summary."""
             elif operation == "get":
                 # 查询任务详情
                 task_id = argument["task_id"]
-                task = self._task_manager.get_task(task_id)
+                task = await tm.get_task(task_id)
                 if task is None:
                     result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
                 else:
@@ -2211,7 +2989,7 @@ Complete the task and return a clear, concise summary."""
             elif operation == "delete":
                 # 删除任务
                 task_id = argument["task_id"]
-                success = self._task_manager.remove_task(task_id)
+                success = await tm.remove_task(task_id)
                 if success:
                     result_content = f"✅ 任务已删除(Task deleted successfully): `{task_id}`。\n\n"
                 else:
@@ -2221,12 +2999,12 @@ Complete the task and return a clear, concise summary."""
                 # 启用/禁用任务
                 task_id = argument["task_id"]
                 enabled = argument["enabled"]
-                task = self._task_manager.get_task(task_id)
+                task = await tm.get_task(task_id)
                 if task is None:
                     result_content = f"❌ 任务不存在(Task not found): `{task_id}`。\n\n"
                 else:
                     new_status = TaskStatus.ENABLED if enabled else TaskStatus.DISABLED
-                    self._task_manager.update_task_status(task_id, new_status)
+                    await tm.update_task_status(task_id, new_status)
                     result_content = f"✅ 任务已{'启用' if enabled else '禁用'}: `{task_id}`"
                     result_content += f"Task {'enabled' if enabled else 'disabled'} successfully\n\n."
 
@@ -2234,7 +3012,7 @@ Complete the task and return a clear, concise summary."""
                 # 查询执行历史
                 task_id = argument["task_id"]
                 limit = argument.get("limit", 10)
-                results = self._task_manager.get_task_results(task_id, limit=limit)
+                results = await tm.get_task_results(task_id, limit=limit)
                 if not results:
                     result_content = f"任务 `{task_id}` 没有执行历史(No execution history)。\n\n"
                 else:
@@ -2251,9 +3029,20 @@ Complete the task and return a clear, concise summary."""
                 # 获取输出文件列表
                 task_id = argument["task_id"]
                 limit = argument.get("limit", 10)
-                outputs = self._task_manager.get_task_outputs(task_id, limit=limit)
+                outputs = await tm.get_task_outputs(task_id, limit=limit)
                 if not outputs:
                     result_content = f"任务 `{task_id}` 没有输出文件(No output files)。\n\n"
+                elif is_remote and outputs and outputs[0].get("error"):
+                    # 远程模式下输出文件在 worker 服务器上，无法直接读取
+                    result_content = f"💡 远程模式下，输出文件保存在 worker 服务器上。\n\n"
+                    result_content += f"请通过 worker 的 Web UI 查看，或使用 `get_results` 查看执行摘要。\n\n"
+                    results = await tm.get_task_results(task_id, limit=limit)
+                    if results:
+                        result_content += f"最近执行摘要：\n\n"
+                        for i, res in enumerate(results, 1):
+                            result_content += f"{i}. **{res.start_time}** — {res.status}\n"
+                            if res.result_content:
+                                result_content += f"   结果: {res.result_content[:200]}...\n"
                 else:
                     result_content = f"任务 `{task_id}` 的输出文件（最近 {len(outputs)} 个）：\n\n"
                     for i, output in enumerate(outputs, 1):
@@ -2266,14 +3055,18 @@ Complete the task and return a clear, concise summary."""
             elif operation == "read_output":
                 # 读取输出文件
                 file_path = argument["file_path"]
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    result_content = f"## 输出文件内容\n\n**文件:** `{file_path}`\n\n---\n\n{content}"
-                except FileNotFoundError:
-                    result_content = f"❌ 文件不存在(File not found): `{file_path}`\n\n."
-                except Exception as e:
-                    result_content = f"❌ 读取文件失败(Failed to read file): {str(e)}\n\n."
+                if is_remote:
+                    result_content = f"❌ 远程模式下不支持直接读取输出文件。\n\n"
+                    result_content += f"输出文件保存在 worker 服务器上，请通过 worker 的 Web UI 查看。\n\n."
+                else:
+                    try:
+                        with open(file_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        result_content = f"## 输出文件内容\n\n**文件:** `{file_path}`\n\n---\n\n{content}"
+                    except FileNotFoundError:
+                        result_content = f"❌ 文件不存在(File not found): `{file_path}`\n\n."
+                    except Exception as e:
+                        result_content = f"❌ 读取文件失败(Failed to read file): {str(e)}\n\n."
 
             else:
                 result_content = f"❌ 未知操作(Unknown operation): {operation}\n\n."
@@ -2351,6 +3144,7 @@ Complete the task and return a clear, concise summary."""
             # skills and executor
             skills_dir=self._skills_dir,
             work_dir=self._work_dir,
+            storage_dir=str(self._work_dir),  # storage_dir = _work_dir (already includes user_id)
             only_in_workspace=self._only_in_workspace,
             extra_work_dirs=self._extra_work_dirs,
             executor=self._local_executor.dump_component(),
@@ -2407,6 +3201,7 @@ Complete the task and return a clear, concise summary."""
             # skills and executor
             skills_dir=config.skills_dir,
             work_dir=config.work_dir,
+            storage_dir=config.storage_dir,
             only_in_workspace=config.only_in_workspace,
             extra_work_dirs=config.extra_work_dirs,
             executor=CodeExecutor.load_component(config.executor),

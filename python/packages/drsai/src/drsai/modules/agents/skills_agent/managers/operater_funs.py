@@ -10,6 +10,7 @@ import os
 import signal
 import uuid
 import asyncio
+import base64
 from typing import Union, List, Dict, Any, Optional
 from datetime import datetime
 
@@ -61,11 +62,53 @@ _DANGEROUS_PATTERNS = [
 ]
 _DANGEROUS_RE = re.compile('|'.join(_DANGEROUS_PATTERNS), re.IGNORECASE)
 
-# Regex to extract absolute paths from shell commands
+# Script execution patterns (regex) — commands that execute script files
+_SCRIPT_EXEC_PATTERNS = [
+    r'\bpython[3]?\s+(?!-)[^\s;|&><]+\.py\b',   # python script.py (must end with .py, excludes -c/-m flags)
+    r'\bbash\s+(?!-)\S+',                        # bash script.sh (excludes bash -c '...')
+    r'\bsh\s+(?!-)\S+',                          # sh script.sh (excludes sh -c '...')
+    r'\bsource\s+\S+',                           # source script.sh
+    r'\.\s+\./\S+',                              # . ./script (shell source shorthand)
+]
+_SCRIPT_EXEC_RE = re.compile('|'.join(_SCRIPT_EXEC_PATTERNS), re.IGNORECASE)
+
+# Regex to extract Unix absolute paths from shell commands
 _ABS_PATH_RE = re.compile(r'(?:^|[\s=\'",;|&<>(){}])(/(?:[^\s;|&><\'"\\{}()]+))')
+# Regex to extract Windows absolute paths from commands (C:\, D:\, etc.)
+_WIN_ABS_PATH_RE = re.compile(r'([A-Za-z]:\\[^\s;|&><\'"]+)')
 
 # Cache for PowerShell path detection
 _POWERSHELL_PATH_CACHE = None
+
+
+def _win_subprocess_hide_kwargs() -> dict:
+    """Return Windows-specific subprocess kwargs to prevent console window flash.
+
+    On Windows, when a console subprocess (powershell.exe, cmd.exe, etc.)
+    is launched from a windowed (no-console) parent process, Windows will
+    allocate a new console window for it.  This function returns kwargs
+    that suppress that behavior:
+
+    - STARTUPINFO with STARTF_USESHOWWINDOW + SW_HIDE: tells CreateProcess
+      to hide any allocated console window
+    - CREATE_NO_WINDOW (0x08000000): tells CreateProcess not to allocate
+      a console at all
+
+    Both are applied for maximum reliability across all Windows configs.
+
+    Returns an empty dict on non-Windows platforms.
+    """
+    if platform.system() != "Windows":
+        return {}
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0  # SW_HIDE
+    return {
+        "startupinfo": startupinfo,
+        "creationflags": subprocess.CREATE_NO_WINDOW,
+    }
+
 
 def _detect_powershell() -> Optional[str]:
     """Detect available PowerShell executable (pwsh or powershell)."""
@@ -86,10 +129,59 @@ def _detect_powershell() -> Optional[str]:
         if ps_path:
             _POWERSHELL_PATH_CACHE = ps_path
             return ps_path
+        # Also try just "powershell" (without .exe extension)
+        ps_path = shutil.which("powershell")
+        if ps_path:
+            _POWERSHELL_PATH_CACHE = ps_path
+            return ps_path
 
     # No PowerShell found
     _POWERSHELL_PATH_CACHE = False
     return None
+
+
+def _kill_process_tree(pid: int) -> bool:
+    """Kill a process and its children, cross-platform.
+
+    On Windows: uses ``taskkill /F /T /PID`` for tree kill.
+    On Unix: uses ``os.killpg`` for process group kill, falls back to ``os.kill``.
+
+    Returns True if the kill was successful (or process already gone).
+    """
+    try:
+        if platform.system() == "Windows":
+            result = subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True, timeout=5,
+                **_win_subprocess_hide_kwargs(),
+            )
+            return result.returncode == 0 or "not found" in (result.stderr or "").lower()
+        else:
+            # Unix: try process group kill first
+            try:
+                pgid = os.getpgid(pid)
+                os.killpg(pgid, signal.SIGTERM)
+                time.sleep(2)
+                try:
+                    os.killpg(pgid, 0)  # Check if still alive
+                    os.killpg(pgid, signal.SIGKILL)  # Force kill
+                except ProcessLookupError:
+                    pass  # Already dead
+                return True
+            except ProcessLookupError:
+                # Process group not found, try direct kill
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    time.sleep(2)
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    return True
+                except ProcessLookupError:
+                    return True  # Already dead
+    except Exception as e:
+        return False
 
 
 # TODO: 增加前台运行
@@ -100,30 +192,47 @@ def get_operator_funcs(
         only_in_workspace: bool = True,
         is_powershell: bool = False,
         allolow_dangrous_cmd: bool = False,
+        storage_dir: str|Path = None,
         )->list[callable]:
 
     WORKDIR = Path(worker_dir).resolve()
     ALLOWED_DIRS = [WORKDIR] + [Path(d).resolve() for d in (extra_dirs or [])]
 
-    # Initialize persistence manager
-    task_persistence = BashTaskPersistence(worker_dir=WORKDIR, thread_id=thread_id)
+    # Mutable workspace-restriction flag (list wrapper so closures can read/write)
+    # Toggle from CLI via /workspace on|off  — all tool functions consult this list.
+    _only_in_workspace = [only_in_workspace]
+
+    # Mutable dangerous-command flag (list wrapper so closures can read/write)
+    # When _dangerous_allowed[0] = True: _DANGEROUS_PATTERNS check is skipped
+    # When _dangerous_allowed[0] = False: both _DANGEROUS_PATTERNS and _SCRIPT_EXEC_PATTERNS are enforced
+    # Toggle from CLI via /dangerous on|off
+    _dangerous_allowed = [allolow_dangrous_cmd]
+
+    # Initialize persistence manager — use storage_dir for internal files if provided,
+    # otherwise fall back to WORKDIR (the tool workspace).
+    _persistence_dir = Path(storage_dir).resolve() if storage_dir else WORKDIR
+    task_persistence = BashTaskPersistence(worker_dir=_persistence_dir, thread_id=thread_id)
 
     def safe_path(p: str) -> Path:
         """Ensure path stays within workspace or allowed directories."""
         resolved = Path(p).resolve()
         # If path is absolute, check directly against allowed dirs
         if Path(p).is_absolute():
-            if only_in_workspace and not any(resolved.is_relative_to(d) for d in ALLOWED_DIRS):
+            if _only_in_workspace[0] and not any(resolved.is_relative_to(d) for d in ALLOWED_DIRS):
                 raise ValueError(f"Path escapes workspace: {p}")
             return resolved
         # Relative path: resolve against WORKDIR
         path = (WORKDIR / p).resolve()
-        if only_in_workspace and not any(path.is_relative_to(d) for d in ALLOWED_DIRS):
+        if _only_in_workspace[0] and not any(path.is_relative_to(d) for d in ALLOWED_DIRS):
             raise ValueError(f"Path escapes workspace: {p}")
         return path
 
     def _check_cmd_paths(cmd: str) -> str | None:
-        """Return an error string if any absolute path in cmd escapes allowed dirs, else None."""
+        """Return an error string if any absolute path in cmd escapes allowed dirs, else None.
+        
+        Checks both Unix-style paths (/foo/bar) and Windows-style paths (C:\\foo\\bar).
+        """
+        # Check Unix-style absolute paths
         for match in _ABS_PATH_RE.finditer(cmd):
             raw = match.group(1).rstrip('/')
             if not raw:
@@ -134,6 +243,17 @@ def get_operator_funcs(
                 continue
             if not any(resolved.is_relative_to(d) for d in ALLOWED_DIRS):
                 return f"Error: Path '{raw}' is outside the allowed workspace"
+
+        # Check Windows-style absolute paths (C:\, D:\, etc.)
+        for match in _WIN_ABS_PATH_RE.finditer(cmd):
+            raw = match.group(1)
+            try:
+                resolved = Path(raw).resolve()
+            except Exception:
+                continue
+            if not any(resolved.is_relative_to(d) for d in ALLOWED_DIRS):
+                return f"Error: Path '{raw}' is outside the allowed workspace"
+
         return None
 
     # Mutable current directory state (persists across run_bash calls)
@@ -157,7 +277,7 @@ def get_operator_funcs(
                     lines = text.splitlines()
                     if minilimit:
                         lines = lines[minilimit:maxlimit]
-                    return "\n".join(lines)[:50000]
+                    return "\n".join(lines)[:5000]
         except asyncio.TimeoutError:
             return f"Error: Read operation timed out after {timeout}s"
         except Exception as e:
@@ -247,14 +367,31 @@ def get_operator_funcs(
             Search results as string
         """
         try:
-            # Use ripgrep if available, fallback to grep
-            proc = await asyncio.create_subprocess_exec(
-                "which", "rg",
+            # Use ripgrep if available, fallback to grep, then Python re fallback
+            rg_available = False
+            grep_available = False
+
+            # Check for ripgrep
+            _hide_kwargs = _win_subprocess_hide_kwargs()
+            rg_check = await asyncio.create_subprocess_exec(
+                shutil.which("rg") or "rg",
+                "--version",
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                **_hide_kwargs,
             )
-            await proc.communicate()
-            rg_available = proc.returncode == 0
+            await rg_check.communicate()
+            rg_available = rg_check.returncode == 0
+
+            # Check for grep (only on non-Windows platforms)
+            if not rg_available and platform.system() != "Windows":
+                grep_check = await asyncio.create_subprocess_exec(
+                    "grep", "--version",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await grep_check.communicate()
+                grep_available = grep_check.returncode == 0
 
             search_path = str(safe_path(path)) if path else str(WORKDIR)
 
@@ -295,15 +432,16 @@ def get_operator_funcs(
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
+                    stderr=asyncio.subprocess.PIPE,
+                    **_hide_kwargs,
                 )
 
                 async with asyncio.timeout(30):
                     stdout, stderr = await proc.communicate()
                     output = stdout.decode('utf-8')
 
-            else:
-                # Fallback to grep
+            elif grep_available:
+                # Fallback to grep (Unix only)
                 cmd = ["grep", "-r"]
                 if case_insensitive:
                     cmd.append("-i")
@@ -335,6 +473,72 @@ def get_operator_funcs(
                     stdout, stderr = await proc.communicate()
                     output = stdout.decode('utf-8')
 
+            else:
+                # Python re fallback (cross-platform, no external tools needed)
+                # Run in executor to avoid blocking the asyncio event loop
+                def _pygrep_sync():
+                    import re as re_lib
+                    import fnmatch
+                    base = Path(search_path)
+                    flags = re_lib.IGNORECASE if case_insensitive else 0
+                    try:
+                        compiled = re_lib.compile(pattern, flags)
+                    except re_lib.error as e:
+                        return f"Error: Invalid regex pattern: {e}"
+
+                    results = []
+
+                    for fpath in base.rglob("*"):
+                        if not fpath.is_file():
+                            continue
+                        if file_type and fpath.suffix.lstrip(".") != file_type:
+                            continue
+                        if glob:
+                            # fnmatch matches shell-style globs against filenames only
+                            matched = False
+                            for pattern_item in glob.split(","):
+                                if fnmatch.fnmatch(fpath.name, pattern_item.strip()):
+                                    matched = True
+                                    break
+                            if not matched:
+                                continue
+
+                        try:
+                            with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                                lines = f.readlines()
+                        except Exception:
+                            continue
+
+                        file_matches = []
+                        for i, line in enumerate(lines, 1):
+                            if compiled.search(line):
+                                file_matches.append((i, line.rstrip()))
+
+                        if not file_matches:
+                            continue
+
+                        rel = str(fpath.relative_to(base)) if fpath.is_relative_to(base) else str(fpath)
+
+                        if output_mode == "files_with_matches":
+                            results.append(rel)
+                        elif output_mode == "count":
+                            results.append(f"{rel}:{len(file_matches)}")
+                        else:  # content mode
+                            for line_no, line_text in file_matches[:max_results]:
+                                if show_line_numbers:
+                                    results.append(f"{rel}:{line_no}:{line_text}")
+                                else:
+                                    results.append(f"{rel}:{line_text}")
+
+                        if len(results) >= max_results:
+                            break
+
+                    return "\n".join(results) if results else ""
+
+                output = await asyncio.get_event_loop().run_in_executor(None, _pygrep_sync)
+                if not output:
+                    return "No matches found"
+
             if not output:
                 return "No matches found"
 
@@ -344,7 +548,7 @@ def get_operator_funcs(
                 limited = "\n".join(lines[:max_results])
                 return f"{limited}\n\n[Showing first {max_results} of {len(lines)} results]"
 
-            return output.strip()[:50000]
+            return output.strip()[:5000]
 
         except asyncio.TimeoutError:
             return "Error: Search timeout"
@@ -364,6 +568,20 @@ def get_operator_funcs(
             1. Try: run_bash("npm test")  # Try synchronous first
             2. If timeout → Use: run_bash_background("npm test", timeout=300)
         """
+
+        # Check dangerous patterns (unless explicitly allowed via /dangerous on)
+        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(cmd):
+            return "Error: Dangerous command detected. Use /dangerous on to authorize."
+
+        # Check script execution patterns (unless explicitly allowed via /dangerous on)
+        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(cmd):
+            return "Error: Script execution command detected. Use /dangerous on to authorize."
+
+        # Check absolute paths referenced in command
+        if _only_in_workspace[0]:
+            path_err = _check_cmd_paths(cmd)
+            if path_err:
+                return path_err
 
         task_info = {
             "process": None,
@@ -404,8 +622,8 @@ def get_operator_funcs(
                             new_dir_str = line[len("__DRSAI_CWD__:"):].strip()
                             try:
                                 new_dir = Path(new_dir_str).resolve()
-                                # Update cwd based on only_in_workspace setting
-                                if only_in_workspace:
+                                # Update cwd based on workspace restriction setting
+                                if _only_in_workspace[0]:
                                     # Only update if within allowed directories
                                     if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
                                         _cwd[0] = new_dir
@@ -465,12 +683,16 @@ def get_operator_funcs(
             - Don't use sleep commands after launching background tasks
             - Use get_bash_task(task_id) to check status and retrieve output
         """
-        # Check dangerous patterns
-        if not allolow_dangrous_cmd and _DANGEROUS_RE.search(cmd):
-            return "Error: Dangerous command detected"
+        # Check dangerous patterns (unless explicitly allowed via /dangerous on)
+        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(cmd):
+            return "Error: Dangerous command detected. Use /dangerous on to authorize."
+
+        # Check script execution patterns (unless explicitly allowed via /dangerous on)
+        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(cmd):
+            return "Error: Script execution command detected. Use /dangerous on to authorize."
 
         # Check absolute paths referenced in command
-        if only_in_workspace:
+        if _only_in_workspace[0]:
             path_err = _check_cmd_paths(cmd)
             if path_err:
                 return path_err
@@ -529,8 +751,8 @@ def get_operator_funcs(
                                 new_dir_str = line[len("__DRSAI_CWD__:"):].strip()
                                 try:
                                     new_dir = Path(new_dir_str).resolve()
-                                    # Update cwd based on only_in_workspace setting
-                                    if only_in_workspace:
+                                    # Update cwd based on workspace restriction setting
+                                    if _only_in_workspace[0]:
                                         # Only update if within allowed directories
                                         if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
                                             _cwd[0] = new_dir
@@ -795,11 +1017,119 @@ def get_operator_funcs(
     # Background tasks storage
     _ps_background_tasks = {}
 
+    # ── Helper: build PowerShell command with cwd tracking ──────────────
+    def _build_ps_command(command: str) -> str:
+        """Build a PowerShell script string with cwd tracking and error handling.
+
+        Escapes single quotes in the cwd path (PowerShell: '' inside single-quoted strings).
+        Wraps Set-Location in try/catch so a bad cwd doesn't silently fail.
+
+        UTF-8 preamble: forces the child process's stdout encoding to UTF-8 so
+        Python/Node output on Win10 zh-CN PowerShell 5.1 (default OEM/CP936)
+        doesn't garble or hang when emitting multi-byte sequences. PYTHONUTF8
+        and PYTHONIOENCODING also nudge any Python child to emit UTF-8 directly.
+        """
+        escaped_cwd = str(_ps_cwd[0]).replace("'", "''")
+        return f"""
+$ErrorActionPreference = 'Continue'
+try {{ [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() }} catch {{}}
+try {{ $OutputEncoding = [System.Text.UTF8Encoding]::new() }} catch {{}}
+$env:PYTHONIOENCODING = 'utf-8'
+$env:PYTHONUTF8 = '1'
+try {{
+    Set-Location '{escaped_cwd}'
+}} catch {{
+    Write-Error "Set-Location failed: $_"
+}}
+{command}
+Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
+"""
+
+    def _ps_args(ps_path: str, script: str) -> list:
+        """Return the argument list for invoking PowerShell with ``script``.
+
+        Legacy ``powershell.exe`` (PS 5.x) is faster and parses more reliably
+        with ``-EncodedCommand <base64-UTF16LE>``. It also bypasses quoting
+        issues that intermittently hang multi-line ``-Command`` strings on
+        Windows 10's conhost. Modern ``pwsh`` already handles UTF-8 and
+        complex quoted scripts well, so we keep readable ``-Command`` args
+        there for easier debugging.
+        """
+        base = ["-NoLogo", "-NoProfile", "-NonInteractive"]
+        low = ps_path.lower()
+        is_legacy_ps = (
+            platform.system() == "Windows"
+            and (low.endswith("\\powershell.exe") or low.endswith("/powershell.exe")
+                 or low == "powershell.exe" or low == "powershell")
+        )
+        if is_legacy_ps:
+            encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+            return base + ["-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded]
+        return base + ["-Command", script]
+
+    def _ps_subprocess_kwargs() -> dict:
+        """Return asyncio.create_subprocess_exec kwargs for PowerShell.
+        
+        Only includes ``cwd`` if the current _ps_cwd exists on this platform,
+        so Unix-style paths on Windows don't cause subprocess startup failure.
+        
+        On Windows: adds STARTUPINFO + CREATE_NO_WINDOW to prevent a console
+        window from flashing when PowerShell is launched from a windowed
+        (no-console) parent process (e.g. PyInstaller --windowed exe,
+        pythonw.exe, or tkinter GUI app).
+        """
+        kwargs = dict(
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            if _ps_cwd[0].exists():
+                kwargs["cwd"] = str(_ps_cwd[0])
+        except Exception:
+            pass  # Skip cwd if path validation fails (e.g. Unix path on Windows)
+
+        # ── Windows: hide console window (see _win_subprocess_hide_kwargs) ──
+        kwargs.update(_win_subprocess_hide_kwargs())
+
+        return kwargs
+
+    def _parse_ps_output(raw_output: str) -> tuple[str, str]:
+        """Parse PowerShell output: extract cwd sentinel and return (clean_output, new_cwd_str).
+        
+        Returns:
+            (clean_output, new_cwd_str) — new_cwd_str is empty if no sentinel found.
+        """
+        output_lines = []
+        new_cwd_str = ""
+        for line in raw_output.splitlines():
+            if line.startswith("__DRSAI_PS_CWD__:"):
+                new_cwd_str = line[len("__DRSAI_PS_CWD__:"):].strip()
+            else:
+                output_lines.append(line)
+        clean_output = "\n".join(output_lines).strip() or "(no output)"
+        return clean_output, new_cwd_str
+
+    def _update_ps_cwd(new_cwd_str: str, output_lines: list[str]) -> None:
+        """Try to update _ps_cwd from the sentinel value, respecting workspace restriction."""
+        if not new_cwd_str:
+            return
+        try:
+            new_dir = Path(new_cwd_str).resolve()
+            if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
+                _ps_cwd[0] = new_dir
+            elif _only_in_workspace[0]:
+                output_lines.append(
+                    f"Warning: cd target '{new_dir}' is outside workspace; cwd not updated"
+                )
+            else:
+                _ps_cwd[0] = new_dir
+        except Exception:
+            pass
+
     async def run_powershell(
         command: str,
         timeout: int = 200,
         run_in_background: bool = False,
-        # dangerous_allowed: bool = False # dangerous_allowed: Allow dangerous commands (default False)
     ) -> Union[str, Dict[str, Any]]:
         """
         Execute PowerShell command in workspace directory.
@@ -809,9 +1139,8 @@ def get_operator_funcs(
 
         Args:
             command: PowerShell command to execute
-            timeout: Timeout in seconds (default 300, max 600)
+            timeout: Timeout in seconds (default 200, max 600)
             run_in_background: Run command in background (returns task info)
-
 
         Returns:
             If run_in_background=False: Command output as string
@@ -830,25 +1159,16 @@ def get_operator_funcs(
         if not ps_path:
             return "Error: PowerShell not found. Please install PowerShell Core (pwsh) or use run_bash for Unix commands."
 
-        # Check dangerous patterns (unless explicitly allowed)
-        if not allolow_dangrous_cmd and _DANGEROUS_RE.search(command):
-            return "Error: Dangerous command detected"
+        # Check dangerous patterns (unless explicitly allowed via /dangerous on)
+        if not _dangerous_allowed[0] and _DANGEROUS_RE.search(command):
+            return "Error: Dangerous command detected. Use /dangerous on to authorize."
 
-        # Check absolute paths referenced in command
-        if only_in_workspace:
-            # Also check Windows-style paths (C:\, D:\, etc.)
-            win_path_re = re.compile(r'[A-Za-z]:\\')
-            if win_path_re.search(command):
-                # Extract Windows paths and validate
-                for match in re.finditer(r'([A-Za-z]:\\[^\s;|&><\'"]+)', command):
-                    path_str = match.group(1)
-                    try:
-                        resolved = Path(path_str).resolve()
-                        if not any(resolved.is_relative_to(d) for d in ALLOWED_DIRS):
-                            return f"Error: Path '{path_str}' is outside the allowed workspace"
-                    except Exception:
-                        pass
+        # Check script execution patterns (unless explicitly allowed via /dangerous on)
+        if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(command):
+            return "Error: Script execution command detected. Use /dangerous on to authorize."
 
+        # Check absolute paths referenced in command (both Unix and Windows style)
+        if _only_in_workspace[0]:
             path_err = _check_cmd_paths(command)
             if path_err:
                 return path_err
@@ -856,116 +1176,113 @@ def get_operator_funcs(
         # Clamp timeout
         timeout = min(max(1, timeout), 600)
 
+        ps_command = _build_ps_command(command)
+        subproc_kwargs = _ps_subprocess_kwargs()
+
         # Background execution
         if run_in_background:
-            # Create task ID with short UUID (first 8 characters)
             task_id = f"ps_task_{uuid.uuid4().hex[:8]}"
 
             task_info = {
                 "task_id": task_id,
+                "command": command,
                 "status": "running",
                 "output": None,
                 "error": None,
-                "process": None
+                "pid": None,
+                "start_time": datetime.now().isoformat(),
+                "timeout": timeout,
             }
             _ps_background_tasks[task_id] = task_info
 
             async def run_bg_task():
+                proc = None
                 try:
-                    # Build PowerShell command with cwd tracking
-                    ps_command = f"""
-$ErrorActionPreference = 'Continue'
-Set-Location '{_ps_cwd[0]}'
-{command}
-Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
-"""
                     proc = await asyncio.create_subprocess_exec(
-                        ps_path, "-NoProfile", "-NonInteractive", "-Command", ps_command,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        cwd=str(_ps_cwd[0])
+                        ps_path, *_ps_args(ps_path, ps_command),
+                        **subproc_kwargs,
                     )
+                    task_info["pid"] = proc.pid
 
                     async with asyncio.timeout(timeout):
                         stdout, stderr = await proc.communicate()
-                        raw_output = (stdout.decode('utf-8') if stdout else '') + (stderr.decode('utf-8') if stderr else '')
-                        output_lines = []
-                        lines = raw_output.splitlines()
+                        raw_output = (
+                            (stdout.decode('utf-8', errors='replace') if stdout else '')
+                            + (stderr.decode('utf-8', errors='replace') if stderr else '')
+                        )
+                        clean_output, new_cwd_str = _parse_ps_output(raw_output)
+                        
+                        # Update cwd
+                        extra_lines = []
+                        _update_ps_cwd(new_cwd_str, extra_lines)
+                        if extra_lines:
+                            clean_output = "\n".join(extra_lines + [clean_output])
 
-                        for line in lines:
-                            if line.startswith("__DRSAI_PS_CWD__:"):
-                                new_dir_str = line[len("__DRSAI_PS_CWD__:"):].strip()
-                                try:
-                                    new_dir = Path(new_dir_str).resolve()
-                                    if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
-                                        _ps_cwd[0] = new_dir
-                                except Exception:
-                                    pass
-                            else:
-                                output_lines.append(line)
+                        # Append exit code for non-zero exits
+                        if proc.returncode != 0:
+                            clean_output += f"\n[exit code: {proc.returncode}]"
 
-                        output = "\n".join(output_lines).strip() or "(no output)"
-                        task_info["output"] = output[:50000]
+                        task_info["output"] = clean_output[:50000]
                         task_info["status"] = "completed"
+                        task_info["exit_code"] = proc.returncode
 
                 except asyncio.TimeoutError:
-                    task_info["error"] = f"Command timeout after {timeout}s"
-                    task_info["status"] = "failed"
+                    # Kill process on timeout (cross-platform)
+                    if proc and proc.pid:
+                        _kill_process_tree(proc.pid)
+                    task_info["error"] = f"Command timeout after {timeout}s (process terminated)"
+                    task_info["status"] = "timeout"
                 except Exception as e:
+                    if proc and proc.pid:
+                        _kill_process_tree(proc.pid)
                     task_info["error"] = f"Error: {e}"
                     task_info["status"] = "failed"
+                finally:
+                    task_info["end_time"] = datetime.now().isoformat()
 
             asyncio.create_task(run_bg_task())
 
+            cmd_preview = command[:50] + "..." if len(command) > 50 else command
             return {
                 "task_id": task_id,
                 "status": "running",
-                "message": f"Task {task_id} started in background"
+                "command": cmd_preview,
+                "timeout": timeout,
+                "message": f"Task '{task_id}' is running.\nUse get_powershell_task('{task_id}') to check status and retrieve output.",
             }
 
         # Foreground execution
+        proc = None
         try:
-            # Build PowerShell command with cwd tracking
-            ps_command = f"""
-$ErrorActionPreference = 'Continue'
-Set-Location '{_ps_cwd[0]}'
-{command}
-Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
-"""
-
             proc = await asyncio.create_subprocess_exec(
-                ps_path, "-NoProfile", "-NonInteractive", "-Command", ps_command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(_ps_cwd[0])
+                ps_path, *_ps_args(ps_path, ps_command),
+                **subproc_kwargs,
             )
 
             async with asyncio.timeout(timeout):
                 stdout, stderr = await proc.communicate()
-                raw_output = (stdout.decode('utf-8') if stdout else '') + (stderr.decode('utf-8') if stderr else '')
-                output_lines = []
-                lines = raw_output.splitlines()
+                raw_output = (
+                    (stdout.decode('utf-8', errors='replace') if stdout else '')
+                    + (stderr.decode('utf-8', errors='replace') if stderr else '')
+                )
+                extra_lines = []
+                clean_output, new_cwd_str = _parse_ps_output(raw_output)
+                _update_ps_cwd(new_cwd_str, extra_lines)
 
-                for line in lines:
-                    if line.startswith("__DRSAI_PS_CWD__:"):
-                        new_dir_str = line[len("__DRSAI_PS_CWD__:"):].strip()
-                        try:
-                            new_dir = Path(new_dir_str).resolve()
-                            if any(new_dir.is_relative_to(d) for d in ALLOWED_DIRS):
-                                _ps_cwd[0] = new_dir
-                            elif only_in_workspace:
-                                output_lines.append(
-                                    f"Warning: cd target '{new_dir}' is outside workspace; cwd not updated"
-                                )
-                        except Exception:
-                            pass
-                    else:
-                        output_lines.append(line)
+                if extra_lines:
+                    clean_output = "\n".join(extra_lines + [clean_output])
 
-                return ("\n".join(output_lines).strip() or "(no output)")[:50000]
+                # Append exit code for non-zero exits so LLM knows the command failed
+                if proc.returncode != 0:
+                    clean_output += f"\n[exit code: {proc.returncode}]"
+
+                return clean_output[:50000]
 
         except asyncio.TimeoutError:
-            return f"Error: Command timeout after {timeout}s"
+            # Kill process on timeout (cross-platform)
+            if proc and proc.pid:
+                _kill_process_tree(proc.pid)
+            return f"Error: Command timeout after {timeout}s (process terminated)"
         except Exception as e:
             return f"Error: {e}"
 
@@ -977,14 +1294,8 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         Args:
             task_id: Task ID returned by run_powershell with run_in_background=True
 
-        Returns:
-            Dict with task status and output:
-            {
-                "task_id": str,
-                "status": "running"|"completed"|"failed",
-                "output": str (if completed),
-                "error": str (if failed)
-            }
+        Note:
+            If a query is still running after being executed once, it should not be executed again. Instead, users should be prompted to actively query again later, or a scheduled task can be set.
         """
         if task_id not in _ps_background_tasks:
             return {
@@ -996,12 +1307,21 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         task_info = _ps_background_tasks[task_id]
         result = {
             "task_id": task_id,
-            "status": task_info["status"]
+            "command": task_info.get("command", ""),
+            "status": task_info["status"],
+            "start_time": task_info.get("start_time", ""),
         }
 
-        if task_info["status"] == "completed" and task_info["output"]:
+        if task_info.get("pid"):
+            result["pid"] = task_info["pid"]
+        if task_info.get("end_time"):
+            result["end_time"] = task_info["end_time"]
+        if task_info.get("exit_code") is not None:
+            result["exit_code"] = task_info["exit_code"]
+
+        if task_info["status"] == "completed" and task_info.get("output"):
             result["output"] = task_info["output"]
-        elif task_info["status"] == "failed" and task_info["error"]:
+        elif task_info.get("error"):
             result["error"] = task_info["error"]
 
         return result
@@ -1020,10 +1340,81 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         lines = ["PowerShell Background Tasks:"]
         for task_id, info in _ps_background_tasks.items():
             status = info["status"]
-            lines.append(f"  {task_id}: {status}")
+            cmd_preview = info.get("command", "")[:50] + "..." if len(info.get("command", "")) > 50 else info.get("command", "")
+            lines.append(f"  {task_id}: {status} - {cmd_preview}")
+            if info.get("pid"):
+                lines.append(f"    PID: {info['pid']}")
 
         return "\n".join(lines)
 
+
+    async def kill_powershell_task(task_id: str) -> str:
+        """
+        Kill a running background PowerShell task and its process tree.
+
+        Uses cross-platform process termination:
+        - On Windows: taskkill /F /T /PID (force tree kill)
+        - On Unix: SIGTERM → SIGKILL fallback
+
+        Args:
+            task_id: Task ID to kill
+
+        Returns:
+            Status message
+        """
+        if task_id not in _ps_background_tasks:
+            return f"Error: Task {task_id} not found"
+
+        task_info = _ps_background_tasks[task_id]
+
+        if task_info["status"] not in ["running"]:
+            return f"Task {task_id} is not running (status: {task_info['status']})"
+
+        pid = task_info.get("pid")
+        if not pid:
+            return f"Error: No PID found for task {task_id}"
+
+        success = _kill_process_tree(pid)
+        if success:
+            task_info["status"] = "killed"
+            task_info["error"] = "Killed by user"
+            task_info["end_time"] = datetime.now().isoformat()
+            return f"Task {task_id} (PID: {pid}) has been terminated"
+        else:
+            return f"Error: Failed to kill task {task_id} (PID: {pid})"
+
+
+    # ── Workspace-restriction toggle helpers ───────────────────────────────
+    # These are NOT registered as agent tools — they're called from CLI slash
+    # commands (/workspace on|off|status) to dynamically toggle the restriction.
+
+    def set_workspace_restriction(enabled: bool) -> str:
+        """Toggle only_in_workspace for all tool functions (called by /workspace command)."""
+        _only_in_workspace[0] = enabled
+        return f"workspace restriction {'enabled' if enabled else 'disabled'}"
+
+    def get_workspace_status() -> Dict[str, Any]:
+        """Return current workspace restriction info (called by /workspace status)."""
+        return {
+            "only_in_workspace": _only_in_workspace[0],
+            "work_dir": str(WORKDIR),
+            "allowed_dirs": [str(d) for d in ALLOWED_DIRS],
+        }
+
+    # ── Dangerous-command toggle helpers ───────────────────────────────────
+    # These are NOT registered as agent tools — they're called from CLI slash
+    # commands (/dangerous on|off|status) to dynamically toggle the restriction.
+
+    def set_dangerous_allowed(enabled: bool) -> str:
+        """Toggle dangerous_command_allowed for all tool functions (called by /dangerous command)."""
+        _dangerous_allowed[0] = enabled
+        return f"dangerous command execution {'allowed' if enabled else 'blocked'}"
+
+    def get_dangerous_status() -> Dict[str, Any]:
+        """Return current dangerous command restriction info (called by /dangerous status)."""
+        return {
+            "dangerous_allowed": _dangerous_allowed[0],
+        }
 
     if is_powershell:
         return [
@@ -1034,7 +1425,13 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
             run_glob,
             run_powershell,
             get_powershell_task,
-            list_powershell_tasks
+            list_powershell_tasks,
+            kill_powershell_task,
+            # toggles (not agent tools — for CLI use only)
+            set_workspace_restriction,
+            get_workspace_status,
+            set_dangerous_allowed,
+            get_dangerous_status,
             ]
     else:
         return [
@@ -1048,4 +1445,9 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
             get_bash_task,
             list_bash_tasks,
             kill_bash_task,
-        ]
+            # toggles (not agent tools — for CLI use only)
+            set_workspace_restriction,
+            get_workspace_status,
+            set_dangerous_allowed,
+            get_dangerous_status,
+            ]

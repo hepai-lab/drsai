@@ -1,10 +1,12 @@
 ########################
 # 项目特定文件
 ########################
+examples/requests/zulip_python/.zuliprc
 examples/docker/browser/docker_test_dir*
 drsai/backend/owebui_pipeline/pipelines/pipelines/drsai_pipeline/*.json
 drsai/backend/owebui_pipeline/pipelines/pipelines/failed/
 drsai/backend/owebui_pipeline/pipelines/pipelines/__init__/
+
 
 # DrSai 相关
 DrSai/repos/*
@@ -12,12 +14,15 @@ DrSai/repos/*
 DrSai.egg-info/
 drsai.egg-info/
 
+
 # 项目配置和状态文件
 model_status.yaml
 .webui_secret_key
 config.yaml
 structure.md
 overleaf_project_points_en.md
+.playwright-cli
+.drsai
 
 # 工作目录
 /workspace
@@ -68,6 +73,8 @@ MANIFEST
 # PyInstaller
 *.manifest
 *.spec
+# Hand-maintained build configs — keep tracked
+!python/packages/drsai/drsai-tray.spec
 
 # Installer logs
 pip-log.txt

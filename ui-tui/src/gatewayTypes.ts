@@ -1,0 +1,197 @@
+/**
+ * JSON-RPC types for the DrSai TUI gateway.
+ *
+ * Source of truth for event shapes is the Python side
+ * (`python/packages/drsai/src/drsai/backend/tui_gateway/adapter/event_translator.py`).
+ * This file mirrors that contract for the TS UI.
+ */
+
+// ── Frame envelopes ───────────────────────────────────────────────────
+
+export interface JsonRpcRequest {
+  jsonrpc: '2.0'
+  id: string
+  method: string
+  params?: Record<string, unknown>
+}
+
+export interface JsonRpcResponseOk<T = unknown> {
+  jsonrpc: '2.0'
+  id: string
+  result: T
+}
+
+export interface JsonRpcResponseErr {
+  jsonrpc: '2.0'
+  id: string | null
+  error: { code: number; message: string }
+}
+
+export type JsonRpcResponse<T = unknown> = JsonRpcResponseOk<T> | JsonRpcResponseErr
+
+export interface JsonRpcEvent<P = unknown> {
+  jsonrpc: '2.0'
+  method: 'event'
+  params: {
+    type: string
+    session_id?: string
+    payload?: P
+  }
+}
+
+// ── Skin / branding ──────────────────────────────────────────────────
+
+export interface GatewaySkin {
+  branding?: Record<string, string>
+  colors?: Record<string, string>
+  banner_hero?: string
+  banner_logo?: string
+  ws_attach_url?: string
+}
+
+export interface SetupStatus {
+  config_exists: boolean
+  has_api_key: boolean
+  setup_required: boolean
+}
+
+// ── Session info ─────────────────────────────────────────────────────
+
+export interface SessionInfo {
+  session_id: string
+  name: string
+  updated_at: string
+  message_count: number
+  preview: string
+  workdir: string
+}
+
+export interface SessionListResult {
+  sessions: SessionInfo[]
+  user_id: string
+}
+
+export interface SessionResumeResult {
+  session: SessionInfo
+  history: Array<Record<string, unknown>>
+  info: SessionMetadata
+  user_id?: string
+}
+
+export interface SessionMetadata {
+  session_id: string
+  user_id: string
+  workdir: string
+  model: string
+  plan_mode: boolean
+  workspace_enabled: boolean
+  allow_dangerous_commands?: boolean
+  tools: string[]
+}
+
+export interface SessionCreateResult {
+  session_id: string
+  session: SessionInfo
+  user_id: string
+}
+
+// ── Usage / token stats ──────────────────────────────────────────────
+
+export interface UsagePayload {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  model: string
+  status: 'complete' | 'interrupted' | 'error' | string
+}
+
+// ── Tool payloads ────────────────────────────────────────────────────
+
+export interface ToolStartPayload {
+  tool_id: string
+  name: string
+  args: Record<string, unknown>
+  preview?: string
+}
+
+export interface ToolCompletePayload {
+  tool_id: string
+  name: string
+  args: Record<string, unknown>
+  result: string
+  duration_ms: number
+}
+
+// ── Approval / clarify / secret ──────────────────────────────────────
+
+export interface ApprovalRequestPayload {
+  request_id: string
+  command: string
+  description: string
+  choices: string[]
+}
+
+export interface ClarifyRequestPayload {
+  request_id: string
+  question: string
+  choices: string[]
+  is_freetext: boolean
+}
+
+export interface SecretRequestPayload {
+  request_id: string
+  env_var: string
+  prompt: string
+}
+
+export interface SudoRequestPayload {
+  request_id: string
+}
+
+// ── Event union ──────────────────────────────────────────────────────
+
+interface BaseEvent {
+  session_id?: string
+}
+
+export type GatewayEvent =
+  // Lifecycle
+  | (BaseEvent & { type: 'gateway.ready'; payload?: { skin?: GatewaySkin; setup?: SetupStatus } })
+  | (BaseEvent & { type: 'gateway.stderr'; payload: { line: string } })
+  | (BaseEvent & { type: 'gateway.protocol_error'; payload?: { preview?: string } })
+  | (BaseEvent & { type: 'gateway.exit'; payload?: { code?: number | null; reason?: string } })
+  | (BaseEvent & { type: 'session.info'; payload: SessionMetadata })
+  | (BaseEvent & { type: 'session.started' })
+  | (BaseEvent & { type: 'session.restored' })
+  // Message stream
+  | (BaseEvent & { type: 'message.start'; payload?: { role?: 'assistant' } })
+  | (BaseEvent & { type: 'message.delta'; payload: { text: string; rendered?: string } })
+  | (BaseEvent & { type: 'message.complete'; payload: { text: string; usage: UsagePayload; status: string; reasoning?: string } })
+  | (BaseEvent & { type: 'thinking.delta'; payload: { text: string } })
+  | (BaseEvent & { type: 'reasoning.delta'; payload: { text: string } })
+  | (BaseEvent & { type: 'reasoning.available'; payload: { text: string } })
+  // Tools
+  | (BaseEvent & { type: 'tool.start'; payload: ToolStartPayload })
+  | (BaseEvent & { type: 'tool.progress'; payload: { tool_id?: string; name?: string; preview?: string } })
+  | (BaseEvent & { type: 'tool.complete'; payload: ToolCompletePayload })
+  // Subagent
+  | (BaseEvent & { type: 'subagent.spawn_requested'; payload: { source?: string; goal?: string } })
+  | (BaseEvent & { type: 'subagent.start'; payload: { source?: string; goal?: string } })
+  | (BaseEvent & { type: 'subagent.thinking'; payload: { source?: string; text: string } })
+  | (BaseEvent & { type: 'subagent.tool'; payload: { source?: string; name?: string } })
+  | (BaseEvent & { type: 'subagent.progress'; payload: { source?: string; text?: string } })
+  | (BaseEvent & { type: 'subagent.complete'; payload: { source?: string; text?: string } })
+  // Interactive prompts
+  | (BaseEvent & { type: 'approval.request'; payload: ApprovalRequestPayload })
+  | (BaseEvent & { type: 'clarify.request'; payload: ClarifyRequestPayload })
+  | (BaseEvent & { type: 'secret.request'; payload: SecretRequestPayload })
+  | (BaseEvent & { type: 'sudo.request'; payload: SudoRequestPayload })
+  // Status
+  | (BaseEvent & { type: 'status.update'; payload: { kind: string; text: string } })
+  | (BaseEvent & { type: 'background.complete'; payload: { task_id: string; text: string } })
+  | (BaseEvent & { type: 'error'; payload: { message: string } })
+  // Catch-all so forward-compatible event types don't break the union.
+  | (BaseEvent & { type: string; payload?: unknown })
+
+// Discriminator helper
+export type EventByType<T extends string> = Extract<GatewayEvent, { type: T }>

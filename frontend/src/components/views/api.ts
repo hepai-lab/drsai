@@ -766,6 +766,68 @@ export class AgentWorkerAPI {
             throw new Error(data.message || "Failed to fetch user default agents");
         return data;
     }
+
+    async recordUserAgentUsage(userId: string, agentId: string): Promise<any> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/agentworker/user_agent/usage`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    user_id: userId,
+                    agent_id: agentId,
+                }),
+            }
+        );
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || "Failed to record agent usage");
+        }
+        return data.data;
+    }
+
+    async getRecentUserAgents(userId: string, limit = 12): Promise<{ agent_id: string }[]> {
+        const url = `${this.getBaseUrl()}/agentworker/user_agent/recent?user_id=${encodeURIComponent(userId)}&limit=${encodeURIComponent(String(limit))}`;
+        const response = await fetch(url, {
+            headers: {
+                "Content-Type": "application/json",
+            },
+        });
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || "Failed to fetch recent agents");
+        }
+        return data.data || [];
+    }
+
+    async getUserDefaultAgent(userId: string): Promise<{ default_agent_id: string | null; stored_default_agent_id: string | null }> {
+        const url = `${this.getBaseUrl()}/agentworker/user_default_agent?user_id=${encodeURIComponent(userId)}`;
+        const response = await fetch(url, {
+            headers: { "Content-Type": "application/json" },
+        });
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || "Failed to fetch user default agent");
+        }
+        return data.data;
+    }
+
+    async setUserDefaultAgent(userId: string, agentId: string): Promise<void> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/agentworker/user_default_agent`,
+            {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id: userId, agent_id: agentId }),
+            },
+        );
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || "Failed to set default agent");
+        }
+    }
 }
 
 export const agentWorkerAPI = new AgentWorkerAPI();
@@ -827,7 +889,68 @@ export class FileAPI {
         if (!data.status) {
             throw new Error(data.message || data.detail || "Failed to upload files");
         }
-        return data.data;
+        const raw = data.data;
+        if (raw == null) {
+            return [];
+        }
+        if (Array.isArray(raw)) {
+            return raw;
+        }
+        // 兼容单对象或意外包装格式
+        if (typeof raw === "object" && raw.name && raw.path) {
+            return [raw];
+        }
+        return [];
+    }
+
+    async listUserFiles(userId: string, _sessionId: number = 0): Promise<
+        Array<{
+            name: string;
+            type: string;
+            path: string;
+            suffix: string;
+            size: number;
+            uuid: string;
+            url?: string;
+        }>
+    > {
+        const url = `${this.getBaseUrl()}/files/${_sessionId}?user_id=${encodeURIComponent(userId)}`;
+        const response = await fetch(url, { method: "GET" });
+        if (!response.ok) {
+            throw new Error(`Failed to list files: ${response.status}`);
+        }
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || data.detail || "Failed to list files");
+        }
+        const raw = data.data;
+        if (raw == null) {
+            return [];
+        }
+        return Array.isArray(raw) ? raw : [];
+    }
+
+    async deleteUserFile(userId: string, fileUuid: string): Promise<void> {
+        const url = `${this.getBaseUrl()}/files/item/${encodeURIComponent(
+            fileUuid
+        )}?user_id=${encodeURIComponent(userId)}`;
+        const response = await fetch(url, { method: "DELETE" });
+        if (!response.ok) {
+            let errorMessage = `HTTP error! status: ${response.status}`;
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.detail || errorData.message || errorMessage;
+            } catch {
+                errorMessage = response.statusText || errorMessage;
+            }
+            throw new Error(errorMessage);
+        }
+    }
+
+    getDownloadUrl(userId: string, fileUuid: string): string {
+        return `${this.getBaseUrl()}/files/download/${encodeURIComponent(
+            fileUuid
+        )}?user_id=${encodeURIComponent(userId)}`;
     }
 }
 
@@ -852,6 +975,13 @@ export class AuthAPI {
             headers: this.getHeaders(),
         });
         const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                (data as { detail?: string; message?: string }).detail ||
+                    (data as { message?: string }).message ||
+                    `注册失败 (${response.status})`
+            );
+        }
         if (!data.status) {
             throw new Error(data.message || "注册失败");
         }
@@ -877,3 +1007,400 @@ export class AuthAPI {
 
 export const authAPI = new AuthAPI();
 export const fileAPI = new FileAPI();
+
+export type ManagedUser = {
+    user_id: string;
+    auth_source: "local" | "sso";
+    is_admin: boolean;
+    org_id?: number | null;
+    org_slug?: string | null;
+    org_display_name?: string | null;
+    org_role?: string | null;
+};
+
+export type OrgAccess = {
+    is_platform_admin: boolean;
+    org: { org_id: number; role: string; is_org_admin: boolean } | null;
+};
+
+export type PlazaAgentRow = {
+    org_id: number;
+    org_slug: string;
+    org_display_name: string;
+    agent_id: string;
+    snapshot: Record<string, unknown>;
+};
+
+export class OrganizationsAPI {
+    private getBaseUrl(): string {
+        return getServerUrl();
+    }
+
+    private getHeaders(): HeadersInit {
+        return { "Content-Type": "application/json" };
+    }
+
+    async getAccess(userId: string): Promise<OrgAccess> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/access?user_id=${encodeURIComponent(userId)}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "access");
+        return data.data;
+    }
+
+    async getMyOrg(userId: string): Promise<Record<string, unknown> | null> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/me?user_id=${encodeURIComponent(userId)}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "me");
+        return data.data ?? null;
+    }
+
+    async listCatalog(): Promise<{ id: number; slug: string; display_name: string }[]> {
+        const response = await fetch(`${this.getBaseUrl()}/orgs/catalog`, { headers: this.getHeaders() });
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "catalog");
+        return data.data || [];
+    }
+
+    async listOrgs(operatorUserId: string): Promise<any[]> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/?operator_user_id=${encodeURIComponent(operatorUserId)}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "orgs");
+        return data.data || [];
+    }
+
+    async createOrg(
+        operatorUserId: string,
+        body: { slug: string; display_name?: string; default_agent_id?: string | null }
+    ): Promise<any> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/?operator_user_id=${encodeURIComponent(operatorUserId)}`,
+            {
+                method: "POST",
+                headers: this.getHeaders(),
+                body: JSON.stringify(body),
+            }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "create org");
+        return data.data;
+    }
+
+    async deleteOrg(operatorUserId: string, orgId: number): Promise<void> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/${orgId}?operator_user_id=${encodeURIComponent(operatorUserId)}`,
+            { method: "DELETE", headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "delete org");
+    }
+
+    async listMembers(operatorUserId: string, orgId: number): Promise<any[]> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/${orgId}/members?operator_user_id=${encodeURIComponent(operatorUserId)}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "members");
+        return data.data || [];
+    }
+
+    async addMember(operatorUserId: string, orgId: number, userId: string, role: string): Promise<any> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/${orgId}/members?operator_user_id=${encodeURIComponent(operatorUserId)}`,
+            {
+                method: "POST",
+                headers: this.getHeaders(),
+                body: JSON.stringify({ user_id: userId, role }),
+            }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "add member");
+        return data.data;
+    }
+
+    async removeMember(operatorUserId: string, orgId: number, userId: string): Promise<void> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/${orgId}/members/${encodeURIComponent(
+                userId
+            )}?operator_user_id=${encodeURIComponent(operatorUserId)}`,
+            { method: "DELETE", headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "remove member");
+    }
+
+    async listOrgAgents(orgId: number): Promise<any[]> {
+        const response = await fetch(`${this.getBaseUrl()}/orgs/${orgId}/agents`, {
+            headers: this.getHeaders(),
+        });
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "org agents");
+        return data.data || [];
+    }
+
+    async upsertOrgAgent(
+        operatorUserId: string,
+        orgId: number,
+        agentId: string,
+        snapshot: Record<string, unknown>
+    ): Promise<any> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/${orgId}/agents?operator_user_id=${encodeURIComponent(operatorUserId)}`,
+            {
+                method: "POST",
+                headers: this.getHeaders(),
+                body: JSON.stringify({ agent_id: agentId, snapshot }),
+            }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "save org agent");
+        return data.data;
+    }
+
+    async deleteOrgAgent(operatorUserId: string, orgId: number, agentId: string): Promise<void> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/${orgId}/agents/${encodeURIComponent(
+                agentId
+            )}?operator_user_id=${encodeURIComponent(operatorUserId)}`,
+            { method: "DELETE", headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "delete org agent");
+    }
+
+    async plazaList(userId: string): Promise<PlazaAgentRow[]> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/plaza/agents?user_id=${encodeURIComponent(userId)}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "plaza");
+        return data.data || [];
+    }
+
+    async plazaApply(applicantUserId: string, targetOrgId: number, requestedAgentId: string): Promise<any> {
+        const response = await fetch(`${this.getBaseUrl()}/orgs/plaza/requests`, {
+            method: "POST",
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                applicant_user_id: applicantUserId,
+                target_org_id: targetOrgId,
+                requested_agent_id: requestedAgentId,
+            }),
+        });
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "apply");
+        return data.data;
+    }
+
+    async plazaMyRequests(applicantUserId: string): Promise<any[]> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/plaza/requests/mine?applicant_user_id=${encodeURIComponent(
+                applicantUserId
+            )}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "mine");
+        return data.data || [];
+    }
+
+    async plazaPending(operatorUserId: string): Promise<any[]> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/plaza/requests/pending?operator_user_id=${encodeURIComponent(
+                operatorUserId
+            )}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "pending");
+        return data.data || [];
+    }
+
+    async plazaApprove(operatorUserId: string, requestUuid: string, message?: string): Promise<any> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/plaza/requests/${encodeURIComponent(requestUuid)}/approve`,
+            {
+                method: "PUT",
+                headers: this.getHeaders(),
+                body: JSON.stringify({ operator_user_id: operatorUserId, message: message || null }),
+            }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "approve");
+        return data.data;
+    }
+
+    async plazaReject(operatorUserId: string, requestUuid: string, message?: string): Promise<any> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/orgs/plaza/requests/${encodeURIComponent(requestUuid)}/reject`,
+            {
+                method: "PUT",
+                headers: this.getHeaders(),
+                body: JSON.stringify({ operator_user_id: operatorUserId, message: message || null }),
+            }
+        );
+        const data = await response.json();
+        if (!data.status) throw new Error(data.detail || data.message || "reject");
+        return data.data;
+    }
+}
+
+export const organizationsAPI = new OrganizationsAPI();
+
+export class UserAPI {
+    private getBaseUrl(): string {
+        return getServerUrl();
+    }
+
+    private getHeaders(): HeadersInit {
+        return {
+            "Content-Type": "application/json",
+        };
+    }
+
+    async listUsers(operatorUserId: string): Promise<ManagedUser[]> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/users/?operator_user_id=${encodeURIComponent(operatorUserId)}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || data.detail || "Failed to fetch users");
+        }
+        return data.data || [];
+    }
+
+    async setAdmin(operatorUserId: string, userId: string, isAdmin: boolean): Promise<void> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/users/${encodeURIComponent(userId)}/admin?operator_user_id=${encodeURIComponent(operatorUserId)}&is_admin=${String(isAdmin)}`,
+            {
+                method: "PUT",
+                headers: this.getHeaders(),
+            }
+        );
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || data.detail || "Failed to update user role");
+        }
+    }
+}
+
+export const userAPI = new UserAPI();
+
+export type SkillsCatalogItem = {
+    slug: string;
+    name: string;
+    description: string;
+    compatibility?: string | null;
+};
+
+export type SkillsCatalogDetail = SkillsCatalogItem & {
+    body: string;
+};
+
+export type SkillsCatalogUploadResult = SkillsCatalogItem;
+
+export class SkillsAPI {
+    private getBaseUrl(): string {
+        return getServerUrl();
+    }
+
+    private getHeaders(): HeadersInit {
+        return {
+            "Content-Type": "application/json",
+        };
+    }
+
+    async listCatalog(): Promise<SkillsCatalogItem[]> {
+        const response = await fetch(`${this.getBaseUrl()}/skills/catalog`, {
+            headers: this.getHeaders(),
+        });
+        const data = await response.json();
+        if (!data.status) {
+            throw new Error(data.message || "Failed to list skills");
+        }
+        return data.data || [];
+    }
+
+    async getCatalogEntry(slug: string): Promise<SkillsCatalogDetail> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/skills/catalog/${encodeURIComponent(slug)}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "Failed to load skill"
+            );
+        }
+        if (!data.status) {
+            throw new Error(data.message || "Failed to load skill");
+        }
+        return data.data;
+    }
+
+    /** Download skill folder as a .zip (browser save). */
+    async downloadCatalogArchive(slug: string): Promise<void> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/skills/catalog/${encodeURIComponent(slug)}/download`,
+            { headers: this.getHeaders() }
+        );
+        if (!response.ok) {
+            let msg = "下载失败";
+            try {
+                const err = await response.json();
+                msg =
+                    typeof err.detail === "string"
+                        ? err.detail
+                        : err.message || msg;
+            } catch {
+                msg = response.statusText || msg;
+            }
+            throw new Error(msg);
+        }
+        const blob = await response.blob();
+        const filename = `${slug}.zip`;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    /** Upload a .zip skill pack (single folder with SKILL.md, or flat SKILL.md + slug). */
+    async uploadCatalogZip(file: File, slug?: string): Promise<SkillsCatalogUploadResult> {
+        const form = new FormData();
+        form.append("file", file);
+        const s = slug?.trim();
+        if (s) {
+            form.append("slug", s);
+        }
+        const response = await fetch(`${this.getBaseUrl()}/skills/catalog/upload`, {
+            method: "POST",
+            body: form,
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "上传失败"
+            );
+        }
+        if (!data.status) {
+            throw new Error(data.message || "上传失败");
+        }
+        return data.data;
+    }
+}
+
+export const skillsAPI = new SkillsAPI();

@@ -8,7 +8,7 @@ import { message } from "antd";
 interface RemoteAgentConfig {
   name: string;
   url: string;
-  apiKey: string;
+  api_key: string;
 }
 
 interface RemoteAgentModalProps {
@@ -27,7 +27,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
   const [formData, setFormData] = useState<RemoteAgentConfig>({
     name: "R1_test",
     url: "https://aiapi.ihep.ac.cn/apiv2",
-    apiKey: "",
+    api_key: "",
   });
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [connectionTestPassed, setConnectionTestPassed] = useState(false);
@@ -52,7 +52,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
   };
 
   const testConnection = async () => {
-    if (!formData.name || !formData.url || !formData.apiKey) {
+    if (!formData.name || !formData.url || !formData.api_key) {
       message.error("请填写所有必填字段");
       return;
     }
@@ -71,7 +71,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
         user.email,
         formData.url,
         formData.name,
-        formData.apiKey // 使用用户输入的远程智能体API key
+        formData.api_key // 使用用户输入的远程智能体API key
       );
 
       setAgentInfo(testResult);
@@ -98,7 +98,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
     onClose();
 
     // Reset form
-    setFormData({ name: "", url: "", apiKey: "" });
+    setFormData({ name: "", url: "", api_key: "" });
     setConnectionTestPassed(false);
     setTestError("");
     setAgentInfo(null);
@@ -107,7 +107,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
   const handleClose = () => {
     onClose();
     // Reset form
-    setFormData({ name: "", url: "", apiKey: "" });
+    setFormData({ name: "", url: "", api_key: "" });
     setConnectionTestPassed(false);
     setTestError("");
     setAgentInfo(null);
@@ -145,7 +145,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
       style={{ zIndex: 1000 }}
     >
       <div
-        className={`rounded-2xl shadow-2xl border ${darkMode === "dark" ? "bg-[#2a2a2a] border-gray-700" : "bg-white border-gray-200"} w-[520px] max-w-[92vw] max-h-[90vh] overflow-auto`}
+        className={`rounded-2xl shadow-2xl ${darkMode === "dark" ? "bg-[#171a21]" : "bg-white border border-gray-200"} w-[520px] max-w-[92vw] max-h-[90vh] overflow-auto`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -177,7 +177,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
           <form onSubmit={(e) => e.preventDefault()}>
             {renderInputField("智能体名称", "name", "例如: My Remote Agent")}
             {renderInputField("服务器URL", "url", "例如: http://localhost:42806/apiv2")}
-            {renderInputField("API密钥", "apiKey", "例如: sk-xxxxxxxxxxxxxxxx", "password")}
+            {renderInputField("API密钥", "api_key", "例如: sk-xxxxxxxxxxxxxxxx", "password")}
 
             {/* Inline Status Messages - minimal */}
             {testError && (
@@ -208,8 +208,8 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
           </button>
           <button
             onClick={testConnection}
-            disabled={!formData.name || !formData.url || !formData.apiKey || isTestingConnection}
-            className={`px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors inline-flex items-center gap-2 border ${!formData.name || !formData.url || !formData.apiKey || isTestingConnection
+            disabled={!formData.name || !formData.url || !formData.api_key || isTestingConnection}
+            className={`px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors inline-flex items-center gap-2 border ${!formData.name || !formData.url || !formData.api_key || isTestingConnection
               ? darkMode === "dark"
                 ? "border-gray-700 text-gray-500 cursor-not-allowed"
                 : "border-gray-200 text-gray-400 cursor-not-allowed"

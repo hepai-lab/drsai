@@ -19,6 +19,8 @@ It is highly compatible with mainstream MCP and A2A protocols, the [HepAI](https
 - 1. Supports flexible switching of agent foundation models via the [HepAI platform](https://aiapi.ihep.ac.cn/), along with flexible configuration of tools, knowledge bases, and other agent components. Also compatible with OpenAI ChatCompletions, Ollama, and other model formats.
 - 2. Provides predefined modular components for perception, reasoning, memory, execution, and state management for agents and multi-agent systems. These are plugin-based and highly extensible, supporting a wide range of professional agent applications.
 - 3. Includes a one-click startup frontend and backend for human-computer interaction, enabling "development-as-application". It also provides backend interfaces compatible with OpenAI ChatCompletions and OpenWebui-Pipeline, allowing agents and multi-agent systems to be used as third-party API services.
+- 4. Features a brand-new **Terminal User Interface (TUI)** based on React/Ink, enabling direct interaction with agents in the terminal. Launch with `drsai` or `drsai chat`. Supports session management, model switching, slash commands, reasoning visualization, and more — delivering a Claude Code-like immersive development experience.
+- 5. Includes a **Desktop App** (Electron) launchable via `drsai desktop`, with system tray support and remote gateway connectivity.
 
 ### 📢 Feature Comparison
 
@@ -34,6 +36,8 @@ It is highly compatible with mainstream MCP and A2A protocols, the [HepAI](https
 | Long Task Management | ✅ Supports long-running scientific task monitoring | Not available | Not available | Not available | Not available | Not available |
 | Modularity & Extensibility | ✅ Highly modular and extensible | ✅ Modular | ✅ Modular | Strong modularity | Limited | Limited |
 | Interactive App Development | ✅ Build agents directly into web apps | AutoGen Studio drag-and-drop | CAMEL Web App | Requires external UI | Requires external UI | Drag-and-drop frontend |
+| Terminal UI (TUI) | ✅ React/Ink TUI with slash commands, session mgmt, model switching, reasoning viz | Not available | Not available | Not available | Not available | Not available |
+| Desktop Client | ✅ Electron desktop app with system tray and remote connectivity | Not available | Not available | Not available | Not available | Not available |
 
 > As of: November 25, 2025
 
@@ -82,7 +86,29 @@ setx "HEPAI_API_KEY" "your_api_key"
 # Note: restart required
 ```
 
-### 2.2 Launch a Basic Agent
+### 2.2 Quick Start — Terminal Mode (TUI) 🆕
+
+After installation, launch agent interaction directly in your terminal with zero configuration:
+
+```shell
+conda activate drsai
+drsai        # Launch the new Ink terminal UI (TUI)
+# or
+drsai chat   # Equivalent to drsai
+```
+
+A first-run setup wizard will guide you through API key configuration.
+
+**TUI Highlights:**
+- 🎨 Modern React/Ink terminal interface
+- 💬 Multi-session management: create, switch, rename, search history
+- 🔄 Live model switching: `/model <name>`, list models: `/models`
+- 🧠 Reasoning visualization: `/reasoning show|hide`
+- 📋 Project instructions: `/init` creates DRSAI.md, `/memory` view/reload
+- 🔒 Workspace isolation: `/workspace on|off`
+- ⚡ 30+ slash commands: type `/help` for the full list
+
+### 2.3 Launch a Basic Agent (Code Mode)
 
 Example: [examples/agent_groupchat/assistant_base_R1_oai.py](examples/agent_groupchat/assistant_base_R1_oai.py)
 
@@ -95,7 +121,7 @@ python examples/agent_groupchat/assistant_base_R1_oai.py
 
 **NOTE**: Additional examples include MCP tools, RAG, multi-agent collaboration, and multi-task execution.
 
-### 2.3 Start Backend Service
+### 2.4 Start Backend Service
 
 ```shell
 cp .env.example .env
@@ -114,12 +140,19 @@ Default port: 8081. Use `drsai --help` for more options.
 
 * DrSai-General requires Docker (Python sandbox + browser VNC). See [docker](docker/README.md)
 
-### 2.4 Frontend Setup
+### 2.5 Frontend Setup
+
+#### Configure npm Environment
+
+Install node:
 
 ```shell
+# install nvm to install node
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-nvm install node
+nvm install node # recommended node version ~ 22
 ```
+
+Install frontend dependencies:
 
 ```shell
 cd your/path/to/drsai/frontend
@@ -127,82 +160,142 @@ npm install -g gatsby-cli
 npm install --global yarn
 yarn install
 
+# *********NOTE：*********
 # cp .env.default .env.development or .env.production
+# Development: frontend/.env.development
+# Production: frontend/.env.production
+# ************************
 
-yarn run dev
+# yarn build # build static assets
+yarn run dev # start dev server
 ```
 
-### 2.5 Run via Config (Optional)
+### 2.6 Desktop App 🆕
+
+OpenDrSai includes an Electron desktop client with system tray support and remote connectivity:
 
 ```shell
-drsai console --agent-config agent_config.yaml
-drsai backend --agent-config agent_config.yaml
+drsai desktop    # Launch DrSai desktop client (under development...)
+drsai gateway    # Start SSE gateway (for desktop client connection)
 ```
 
-Example:
+The desktop client can connect to local or remote DrSai backend services and stays resident in the system tray.
 
-```yaml
-model_config: &client
-  provider: drsai.HepAIChatCompletionClient
-  config:
-    model: openai/gpt-4o
-    api_key: sk-****
-    base_url: "https://aiapi.ihep.ac.cn/apiv2"
-    max_retries: 10
+### 2.7 TUI Slash Commands Overview 🆕
 
-myassistant:
-  type: AssistantAgent
-  name: myassistant
-  system_message: "You are a helpful assistant who responds to user requests based on your tools and knowledge."
-  description: "An agent that provides assistance with ability to use tools."
-  model_client: *client
-```
+In the TUI terminal mode, type `/help` to see all available commands. Key commands:
 
-See: [Configuration Docs](docs/agent_factory.md)
+| Category | Command | Description |
+| :--- | :--- | :--- |
+| **Session** | `/new [name]` | Create a new session |
+| | `/switch <id\|name>` | Switch to another session |
+| | `/list` (`/ls`) | List all saved sessions |
+| | `/resume <id\|name>` | Resume a previous session |
+| | `/search <query>` | Search past sessions |
+| | `/rename <name>` | Rename current session |
+| | `/retry` | Retry the last message |
+| | `/copy [n]` | Copy the n-th-to-last assistant reply |
+| **Model** | `/model [name]` (`/m`) | Show/switch model (session-local) |
+| | `/model_global [name]` (`/mg`) | Switch model and save as global default |
+| | `/models` (`/listmodels`) | List all available models |
+| **Display** | `/reasoning show\|hide\|low\|medium\|high` | Toggle or tune reasoning box |
+| | `/verbose` | Toggle per-turn stats footer |
+| | `/bell on\|off` | Ring terminal bell on response |
+| | `/fast on\|off` | Switch to fastest model alias |
+| **Project** | `/init` | Create DRSAI.md project instructions file |
+| | `/memory show\|reload` | View/reload project instructions |
+| **Workspace** | `/workspace on\|off` (`/ws`) | Toggle workspace restriction |
+| | `/dangerous on\|off` (`/dg`) | Toggle dangerous command permission |
+| | `/cd <path>` (`/workdir`) | Switch working directory |
+| **Subagent** | `/agent <name\|list\|clear>` | Set/list subagents |
+| | `/delegate <type> <prompt>` (`/sub`) | Delegate task to subagent |
+| **Plan** | `/plan_mode on\|off` (`/pm`) | Toggle plan mode |
+| | `/inject prefix\|suffix\|clear` | Inject custom prompts |
+| **System** | `/setup` (`/env`) | Re-open setup wizard |
+| | `/status` | Show agent and session status |
+| | `/quit` (`/exit`, `/q`) | Save and exit |
+
 
 ## 3. Roadmap (TODO)
 
 ### 3.1 Agent Components
 
-* Model layer: support special-format data models
-* Perception: UTF-8 attachment parsing
-* Memory: integration with RAGFlow
-* Knowledge base: LlamaIndex compatibility
-* Execution: streaming MCP tools, concurrency
-* File system: caching and injection
-* Learning system: async knowledge accumulation
+- [ ] Model layer: developing support for small models with special-format data, custom message types and events
+
+~~-HepAI platform model integration, see examples/components/model_client01.py~~
+
+- [ ] Perception layer: developing UTF-8 encoded text attachment parsing and chat context injection
+
+- [ ] Memory layer: developing DrSaiChatCompletionContext long-term memory integration with RAGFlow, with automatic document_id creation
+
+~~-Prompt-based long memory compression ChatCompletionContext, see examples/components/model_context01.py~~
+
+- [ ] Knowledge base layer: developing LlamaIndex-compatible knowledge base components
+
+~~-Component-based HepAI RAGFlow knowledge base integration, see examples/components/memory_ragflow01.py~~-
+
+- [ ] Execution layer: 1. streaming output for MCP tool calls with frontend integration; 2. local function long task execution; 3. MCP long task concurrency and queuing
+
+- [ ] State management: no further development planned, suggestions welcome
+
+~~Extended long task state management; see _process_long_task_query in drsaiagent.py~~
+
+- [ ] File management: developing file caching and injection system
+
+- [x] Agent configuration management: no further development planned, suggestions welcome
+
+~~Enhanced agent config with component-based snapshot recovery; see _to_config, _from_config, save_state, load_state in drsaiagent.py~~
+
+- [ ] Agent learning system: async recording of agent responses and strategies into the agent knowledge base
+
+- [x] Agent events & notifications: no further development planned, suggestions welcome
+
+~~Frontend-backend message sync: ModelClientStreamingChunkEvent, AgentLogEvent, TaskEvent; see examples/agent_groupchat/assistant_custom_log_event-interaction.py~~
 
 ### 3.2 Professional Agents
 
-* Long-task planning agents
-* Deep retrieval agents
-* Multi-agent long-task systems
+- [ ] Long-task processing agent & tutorial: self-planning multi-tool component scheduler
+- [ ] Deep retrieval agent & tutorial: long-memory + self-planning deep retrieval
+- [ ] Multi-agent long-task system & tutorial
 
 ### 3.3 Multi-Agent Systems
 
-* Long-task coordination
-* Reflection systems
-* Task schedulers
+- [ ] Long-task coordination architecture with background execution and real-time HCI
+
+~~Long-task query multi-agent coordination system; see examples/agent_groupchat/groupchat_task_LongTask~~
+
+- [ ] Multi-agent reflection and learning system
+- [ ] Task-distribution-based multi-agent scheduler
+- [ ] Remote multi-agent collaboration cases
 
 ### 3.4 Frontend & Backend
 
-* UUID database IDs
-* Auto cleanup inactive agents
-* Large file support
-* Login system
+- [x] ✅ React/Ink TUI terminal interface (completed)
+- [x] ✅ Electron desktop client (completed)
+- [x] ✅ 30+ slash command system: session mgmt, model switching, reasoning viz (completed)
+- [x] ✅ CLI config management (`drsai config`) (completed)
+- [x] ✅ First-run setup wizard (completed)
+- [x] ✅ Frontend task management display & interaction (completed)
+- [x] ✅ Frontend execution file and log display (completed)
+- [ ] UUID-based database IDs to replace auto-increment integers
+- [ ] Auto cleanup of inactive agent instances to save resources
+- [ ] Long task display & interaction in frontend
+- [ ] Default login system
+- [ ] Non-text/large file upload and agent ingestion via file system, supporting HepAI file system URLs
+- [ ] RAGFlow knowledge base / memory + MCP remote function linking for agents (format per agent_config.yaml)
 
 ## 4. Contributing
 
-We welcome contributions:
+We welcome contributions to OpenDrSai, including but not limited to:
 
-* Code (agents, systems, UI)
-* Documentation
-* Bug reports & suggestions
-* Community events
+- Code: agent/multi-agent component development, system examples, frontend UI development
+- Documentation: agent/multi-agent docs, tutorials, FAQs
+- Bug reports: bugs, feature requests, usage issues
+- Community events: offline meetups, online seminars, knowledge sharing
 
 ## 5. Contact
 
-* Email: [hepai@ihep.ac.cn](mailto:hepai@ihep.ac.cn) / [zdzhang@ihep.ac.cn](mailto:zdzhang@ihep.ac.cn) / [xiongdb@ihep.ac.cn](mailto:xiongdb@ihep.ac.cn)
-* WeChat: xiongdongbo_12138
+- Email: <hepai@ihep.ac.cn> / <zdzhang@ihep.ac.cn> / <xiongdb@ihep.ac.cn>
+- WeChat: xiongdongbo_12138
 
 

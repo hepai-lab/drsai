@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Card, Modal, Tooltip, Input, Button } from "antd";
 import { PlayCircle, Edit2, Clock, Trash2, Download } from "lucide-react";
 import { planAPI } from "../../views/api";
-import PlanView from "../../views/chat/plan";
+import PlanView from "../../../pages/chat/plan";
 import { getRelativeTimeString } from "../../views/atoms";
 import { IPlan, IPlanStep } from "../../types/plan";
 interface PlanCardProps {
