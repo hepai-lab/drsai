@@ -3137,6 +3137,7 @@ XML编辑工作流（仅用于 tracked changes）：
                 from autogen_core.models import UserMessage
 
                 client = set_model_client(default_config_name)
+                LLM_TIMEOUT = 90.0
 
                 async def _run():
                     result = await client.create([UserMessage(content=prompt, source="docmaster")])
@@ -3152,20 +3153,33 @@ XML编辑工作流（仅用于 tracked changes）：
                         content = "".join(parts)
                     return str(content or "")
 
+                def _invoke_sync():
+                    try:
+                        return asyncio.run(asyncio.wait_for(_run(), timeout=LLM_TIMEOUT))
+                    except RuntimeError:
+                        # We are already inside a running event loop — run the
+                        # coroutine in a separate thread with its own loop.
+                        import concurrent.futures
+                        def _bg():
+                            loop = asyncio.new_event_loop()
+                            try:
+                                return loop.run_until_complete(
+                                    asyncio.wait_for(_run(), timeout=LLM_TIMEOUT)
+                                )
+                            finally:
+                                loop.close()
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                            return ex.submit(_bg).result(timeout=LLM_TIMEOUT + 5.0)
+
                 try:
-                    return asyncio.run(asyncio.wait_for(_run(), timeout=30.0))
-                except RuntimeError:
-                    # We are already inside a running event loop — run the
-                    # coroutine in a separate thread with its own loop.
-                    import concurrent.futures
-                    def _bg():
-                        loop = asyncio.new_event_loop()
-                        try:
-                            return loop.run_until_complete(asyncio.wait_for(_run(), timeout=30.0))
-                        finally:
-                            loop.close()
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                        return ex.submit(_bg).result(timeout=35.0)
+                    return _invoke_sync()
+                except asyncio.TimeoutError:
+                    raise RuntimeError(f"timeout after {LLM_TIMEOUT}s")
+                except Exception as exc:
+                    # Re-raise with type prefix so empty-message errors still
+                    # surface something useful in the report.
+                    msg = str(exc) or type(exc).__name__
+                    raise RuntimeError(f"{type(exc).__name__}: {msg}") from exc
 
             skill = ContractReviewSkill(str(WORKSPACE))
             result = skill.review(str(src), llm_call=_llm_call)
@@ -3177,9 +3191,14 @@ XML编辑工作流（仅用于 tracked changes）：
             annotate_note = ""
 
             if annotate and issues:
-                # Copy source → <stem>_审查.docx in WORKDIR, then add comments.
+                # Copy source → <stem>_审查.docx in the SAME directory as the
+                # source. WORKDIR is the shared parent (`workspace/runs/`), but
+                # the user's profile dir is a subfolder like
+                # `workspace/runs/<email>/downloads/`. The 文件空间 tab only
+                # picks up files under the per-user dir; if we drop the copy
+                # in the shared parent it never shows up.
                 import shutil
-                target = WORKDIR / f"{src.stem}_审查{src.suffix}"
+                target = src.parent / f"{src.stem}_审查{src.suffix}"
                 try:
                     shutil.copyfile(src, target)
                 except Exception as exc:
@@ -3218,8 +3237,30 @@ XML编辑工作流（仅用于 tracked changes）：
                             file_path=str(target),
                             comments=comments_payload,
                         )
-                        if ac_result.get("success"):
+                        added = ac_result.get("comments_added", 0) or 0
+                        # add_comment_tool flips success=False when ANY anchor
+                        # is missing, even if it successfully wrote all the
+                        # other comments AND already emitted its own FilesEvent.
+                        # So: if the target file exists on disk, treat the
+                        # annotated copy as available.
+                        if target.exists():
                             annotated_path = str(target)
+                            # add_comment_tool emits the FilesEvent only when
+                            # success=True. Backstop here so the file shows up
+                            # in 文件空间 even on partial-anchor failures.
+                            if not ac_result.get("success"):
+                                fe_data = _build_files_event_data(
+                                    str(target),
+                                    f"Contract review (annotated): {target.name}",
+                                )
+                                if fe_data:
+                                    _pending_files_events.append(fe_data)
+                            total = len(comments_payload)
+                            if added < total:
+                                annotate_note = (
+                                    f"已写入 {added}/{total} 条批注，剩余 "
+                                    f"{total - added} 条因原文未匹配到对应文本而跳过。"
+                                )
                         else:
                             annotate_note = (
                                 f"批注写入失败：{ac_result.get('message', '未知错误')}"
