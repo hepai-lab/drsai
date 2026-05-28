@@ -689,6 +689,29 @@ export const messageUtils = {
   isUser(source: string): boolean {
     return source === "user" || source === "user_proxy";
   },
+
+  getUserMessagePreview(config: AgentMessageConfig, maxLength = 48): string {
+    const parsed = parseUserContent(config);
+    let text = "";
+
+    if (Array.isArray(parsed.text)) {
+      text = parsed.text
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => parseContent(item))
+        .join(" ");
+    } else {
+      text = parseContent(parsed.text);
+    }
+
+    text = text.replace(/\s+/g, " ").trim();
+    if (!text) {
+      text = "附件消息";
+    }
+    if (text.length > maxLength) {
+      return `${text.slice(0, maxLength)}…`;
+    }
+    return text;
+  },
 };
 
 /** Backend may send action_buttons as JSON string or as an array */
