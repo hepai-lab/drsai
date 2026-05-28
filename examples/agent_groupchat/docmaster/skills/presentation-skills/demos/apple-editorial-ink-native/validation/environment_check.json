@@ -1,0 +1,75 @@
+{
+  "system": {
+    "platform": "macOS-15.4.1-arm64-arm-64bit",
+    "python": "3.11.11"
+  },
+  "python_modules": {
+    "python-pptx": {
+      "ok": true,
+      "detail": "1.0.0"
+    },
+    "fitz": {
+      "ok": false,
+      "detail": "No module named 'fitz'"
+    },
+    "pandas": {
+      "ok": true,
+      "detail": "2.2.3"
+    },
+    "matplotlib": {
+      "ok": true,
+      "detail": "3.10.1"
+    },
+    "seaborn": {
+      "ok": true,
+      "detail": "0.13.2"
+    },
+    "numpy": {
+      "ok": true,
+      "detail": "1.26.4"
+    }
+  },
+  "tools": {
+    "pdftoppm": {
+      "ok": true,
+      "detail": "pdftoppm version 26.04.0"
+    },
+    "pdftotext": {
+      "ok": true,
+      "detail": "pdftotext version 26.04.0"
+    },
+    "libreoffice": {
+      "ok": true,
+      "detail": "LibreOffice 26.2.3.2 70e089b17412e4cb7773e41413306b17a2328c34"
+    },
+    "node": {
+      "ok": true,
+      "detail": "v23.11.0"
+    },
+    "npm": {
+      "ok": true,
+      "detail": "10.9.2"
+    },
+    "mmdc": {
+      "ok": false,
+      "detail": "not found"
+    },
+    "powerpoint_app": {
+      "ok": true,
+      "detail": "/Applications/Microsoft PowerPoint.app"
+    },
+    "office_temp_dir": {
+      "ok": true,
+      "detail": "/Users/svenli/Library/Group Containers/UBF8T346G9.Office/TemporaryItems"
+    }
+  },
+  "routes": [
+    "editable_pptx",
+    "office_chart_native",
+    "python_figure_image",
+    "preview_powerpoint",
+    "preview_libreoffice",
+    "diagram_connector_check",
+    "diagram_visual"
+  ]
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "XHS Markdown Card Copilot"
+  short_description: "Build publishable Xiaohongshu image cards from Markdown."
+  default_prompt: "Use $xhs-markdown-card-collab to turn Markdown into publishable Xiaohongshu image cards with explicit cover metadata, stable typography, visual QA, and controlled style variation."

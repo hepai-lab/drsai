@@ -1,0 +1,16 @@
+{
+  "pptx": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/pptx/ai_market_intelligence_demo.pptx",
+  "out_dir": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/rendered/ppt_preview",
+  "pdf_backend": "libreoffice",
+  "render_backend": "pdftoppm",
+  "expected_pages": 6,
+  "generated_pages": 6,
+  "files": [
+    "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/rendered/ppt_preview/slide_001.png",
+    "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/rendered/ppt_preview/slide_002.png",
+    "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/rendered/ppt_preview/slide_003.png",
+    "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/rendered/ppt_preview/slide_004.png",
+    "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/rendered/ppt_preview/slide_005.png",
+    "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/rendered/ppt_preview/slide_006.png"
+  ]
+}

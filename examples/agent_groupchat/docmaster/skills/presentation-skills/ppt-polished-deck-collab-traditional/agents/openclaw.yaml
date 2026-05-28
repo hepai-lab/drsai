@@ -1,0 +1,4 @@
+interface:
+  display_name: "PPT Polished Deck Copilot"
+  short_description: "Build polished editable PPT decks"
+  default_prompt: "Use $ppt-polished-deck-collab to plan, build, validate, and review a polished editable PPT deck."

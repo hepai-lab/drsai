@@ -1,0 +1,60 @@
+{
+  "input": "/Users/svenli/FilesOnNut/0ProjectsOnNut/ForProfYuan/FrameBasedInvestment/Slides/杂项/temp/presentation-skills/demos/xhs-fictional-grid-storage-research-note/post.md",
+  "output_dir": "/Users/svenli/FilesOnNut/0ProjectsOnNut/ForProfYuan/FrameBasedInvestment/Slides/杂项/temp/presentation-skills/demos/xhs-fictional-grid-storage-research-note/out",
+  "title": "为什么储能项目复盘不能只看峰谷价差",
+  "config": {
+    "input_path": "/Users/svenli/FilesOnNut/0ProjectsOnNut/ForProfYuan/FrameBasedInvestment/Slides/杂项/temp/presentation-skills/demos/xhs-fictional-grid-storage-research-note/post.md",
+    "output_dir": "/Users/svenli/FilesOnNut/0ProjectsOnNut/ForProfYuan/FrameBasedInvestment/Slides/杂项/temp/presentation-skills/demos/xhs-fictional-grid-storage-research-note/out",
+    "width": 1080,
+    "height": 1440,
+    "export_scale": 2,
+    "output_dpi": 350,
+    "theme": "ink",
+    "title": null,
+    "kicker": "",
+    "footer": "Fictional Research Note",
+    "cover": true,
+    "auto_headings": true,
+    "save_html": true,
+    "max_cards": null,
+    "filename_prefix": null
+  },
+  "exported_pixel_size": {
+    "width": 2160,
+    "height": 2880
+  },
+  "output_dpi": 350,
+  "images": [
+    "/Users/svenli/FilesOnNut/0ProjectsOnNut/ForProfYuan/FrameBasedInvestment/Slides/杂项/temp/presentation-skills/demos/xhs-fictional-grid-storage-research-note/out/post_01.png",
+    "/Users/svenli/FilesOnNut/0ProjectsOnNut/ForProfYuan/FrameBasedInvestment/Slides/杂项/temp/presentation-skills/demos/xhs-fictional-grid-storage-research-note/out/post_02.png",
+    "/Users/svenli/FilesOnNut/0ProjectsOnNut/ForProfYuan/FrameBasedInvestment/Slides/杂项/temp/presentation-skills/demos/xhs-fictional-grid-storage-research-note/out/post_03.png",
+    "/Users/svenli/FilesOnNut/0ProjectsOnNut/ForProfYuan/FrameBasedInvestment/Slides/杂项/temp/presentation-skills/demos/xhs-fictional-grid-storage-research-note/out/post_04.png"
+  ],
+  "html": "/Users/svenli/FilesOnNut/0ProjectsOnNut/ForProfYuan/FrameBasedInvestment/Slides/杂项/temp/presentation-skills/demos/xhs-fictional-grid-storage-research-note/out/post_preview.html",
+  "cards": [
+    {
+      "index": 1,
+      "kind": "cover",
+      "title": "为什么储能项目复盘不能只看峰谷价差",
+      "block_count": 1
+    },
+    {
+      "index": 2,
+      "kind": "content",
+      "title": "为什么储能项目复盘不能只看峰谷价差",
+      "block_count": 12
+    },
+    {
+      "index": 3,
+      "kind": "content",
+      "title": "为什么储能项目复盘不能只看峰谷价差",
+      "block_count": 7
+    },
+    {
+      "index": 4,
+      "kind": "content",
+      "title": "为什么储能项目复盘不能只看峰谷价差",
+      "block_count": 12
+    }
+  ]
+}
