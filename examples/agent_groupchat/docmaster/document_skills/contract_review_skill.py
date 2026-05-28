@@ -512,8 +512,9 @@ class ContractReviewSkill:
         try:
             reply = llm_call(prompt)
         except Exception as exc:
-            logger.warning("legal review LLM call failed: %s", exc)
-            return [], f"LLM 审查未完成（{exc}），仅返回启发式检查结果。"
+            logger.warning("legal review LLM call failed: %r", exc)
+            detail = str(exc) or type(exc).__name__
+            return [], f"LLM 审查未完成（{detail}），仅返回启发式检查结果。"
 
         if not reply:
             return [], "LLM 审查未返回内容，仅返回启发式检查结果。"
