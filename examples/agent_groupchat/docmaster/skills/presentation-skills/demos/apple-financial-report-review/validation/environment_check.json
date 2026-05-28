@@ -1,0 +1,74 @@
+{
+  "system": {
+    "platform": "Linux-5.15.0-139-generic-x86_64-with-glibc2.31",
+    "python": "3.13.5"
+  },
+  "python_modules": {
+    "python-pptx": {
+      "ok": true,
+      "detail": "1.0.2"
+    },
+    "fitz": {
+      "ok": true,
+      "detail": "PyMuPDF 1.26.4: Python bindings for the MuPDF 1.26.7 library (rebased implementation)."
+    },
+    "pandas": {
+      "ok": true,
+      "detail": "2.3.3"
+    },
+    "matplotlib": {
+      "ok": true,
+      "detail": "3.10.6"
+    },
+    "seaborn": {
+      "ok": true,
+      "detail": "0.13.2"
+    },
+    "numpy": {
+      "ok": true,
+      "detail": "2.3.4"
+    }
+  },
+  "tools": {
+    "pdftoppm": {
+      "ok": true,
+      "detail": "pdftoppm version 0.86.1"
+    },
+    "pdftotext": {
+      "ok": true,
+      "detail": "pdftotext version 0.86.1"
+    },
+    "libreoffice": {
+      "ok": true,
+      "detail": "LibreOffice 6.4.7.2 40(Build:2)"
+    },
+    "node": {
+      "ok": true,
+      "detail": "v22.19.0"
+    },
+    "npm": {
+      "ok": true,
+      "detail": "10.9.3"
+    },
+    "mmdc": {
+      "ok": false,
+      "detail": "not found"
+    },
+    "powerpoint_app": {
+      "ok": false,
+      "detail": "/Applications/Microsoft PowerPoint.app"
+    },
+    "office_temp_dir": {
+      "ok": false,
+      "detail": "/home/lisiyuan/Library/Group Containers/UBF8T346G9.Office/TemporaryItems"
+    }
+  },
+  "routes": [
+    "editable_pptx",
+    "office_chart_native",
+    "python_figure_image",
+    "preview_libreoffice",
+    "diagram_connector_check",
+    "diagram_visual"
+  ]
+}

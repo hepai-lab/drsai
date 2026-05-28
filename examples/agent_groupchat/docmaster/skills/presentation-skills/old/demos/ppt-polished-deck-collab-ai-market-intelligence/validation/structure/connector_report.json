@@ -1,0 +1,103 @@
+{
+  "4": [
+    {
+      "connector_id": "24",
+      "from_shape_id": "15",
+      "to_shape_id": "16",
+      "from_idx": "3",
+      "to_idx": "1",
+      "from_text": "ComputeFabric",
+      "to_text": "FoundationModels"
+    },
+    {
+      "connector_id": "25",
+      "from_shape_id": "16",
+      "to_shape_id": "17",
+      "from_idx": "3",
+      "to_idx": "1",
+      "from_text": "FoundationModels",
+      "to_text": "Agent ControlLayer"
+    },
+    {
+      "connector_id": "26",
+      "from_shape_id": "17",
+      "to_shape_id": "18",
+      "from_idx": "3",
+      "to_idx": "1",
+      "from_text": "Agent ControlLayer",
+      "to_text": "Vertical WorkflowApps"
+    },
+    {
+      "connector_id": "27",
+      "from_shape_id": "18",
+      "to_shape_id": "19",
+      "from_idx": "3",
+      "to_idx": "1",
+      "from_text": "Vertical WorkflowApps",
+      "to_text": "EnterpriseDistribution"
+    },
+    {
+      "connector_id": "28",
+      "from_shape_id": "20",
+      "to_shape_id": "17",
+      "from_idx": "0",
+      "to_idx": "2",
+      "from_text": "Proprietary Data",
+      "to_text": "Agent ControlLayer"
+    },
+    {
+      "connector_id": "29",
+      "from_shape_id": "20",
+      "to_shape_id": "18",
+      "from_idx": "3",
+      "to_idx": "2",
+      "from_text": "Proprietary Data",
+      "to_text": "Vertical WorkflowApps"
+    },
+    {
+      "connector_id": "30",
+      "from_shape_id": "21",
+      "to_shape_id": "17",
+      "from_idx": "1",
+      "to_idx": "2",
+      "from_text": "Safety & Governance",
+      "to_text": "Agent ControlLayer"
+    },
+    {
+      "connector_id": "31",
+      "from_shape_id": "21",
+      "to_shape_id": "19",
+      "from_idx": "0",
+      "to_idx": "2",
+      "from_text": "Safety & Governance",
+      "to_text": "EnterpriseDistribution"
+    },
+    {
+      "connector_id": "32",
+      "from_shape_id": "22",
+      "to_shape_id": "18",
+      "from_idx": "0",
+      "to_idx": "2",
+      "from_text": "Implementation Services",
+      "to_text": "Vertical WorkflowApps"
+    },
+    {
+      "connector_id": "33",
+      "from_shape_id": "23",
+      "to_shape_id": "16",
+      "from_idx": "0",
+      "to_idx": "2",
+      "from_text": "User FeedbackTelemetry",
+      "to_text": "FoundationModels"
+    },
+    {
+      "connector_id": "34",
+      "from_shape_id": "19",
+      "to_shape_id": "23",
+      "from_idx": "2",
+      "to_idx": "0",
+      "from_text": "EnterpriseDistribution",
+      "to_text": "User FeedbackTelemetry"
+    }
+  ]
+}
