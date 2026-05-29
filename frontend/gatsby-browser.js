@@ -11,6 +11,7 @@ import "./src/styles/global.css";
 
 import AuthProvider from "./src/hooks/provider";
 import { RouteGuard } from "./src/auth/RouteGuard";
+import { startAuthRefreshLoop } from "./src/utils/authSession";
 import { StyleProvider, createCache } from "@ant-design/cssinjs";
 
 const antdStyleCache = createCache();
@@ -25,4 +26,8 @@ export const wrapRootElement = ({ element }) => {
 
 export const wrapPageElement = ({ element }) => {
   return <RouteGuard>{element}</RouteGuard>;
+};
+
+export const onInitialClientRender = () => {
+  startAuthRefreshLoop();
 };

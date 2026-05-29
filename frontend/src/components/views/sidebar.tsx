@@ -24,6 +24,7 @@ import React, { useEffect, useMemo, useRef } from "react";
 import magneticOneIcon from "../../assets/magentic-one.png";
 import magneticTwoIcon from "../../assets/magentic-two.svg";
 import { appContext } from "../../hooks/provider";
+import { clearAuthSession } from "../../utils/authSession";
 import { Agent } from "../../types/common";
 import { Button } from "../common/Button";
 import SubMenu from "../common/SubMenu";
@@ -84,10 +85,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isAgentsExpanded, setIsAgentsExpanded] = React.useState(true);
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("username");
-    localStorage.removeItem("user_email");
-    localStorage.removeItem("user_name");
+    clearAuthSession();
     // 根据GATSBY_SSO环境变量决定跳转目标
     if (process.env.GATSBY_SERVICE_MODE === "DEV") {
       window.location.href = "/login";

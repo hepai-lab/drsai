@@ -34,6 +34,7 @@ from .routes import (
     users,
     skills,
     docmaster,
+    auth,
 )
 import httpx
 from fastapi.responses import HTMLResponse
@@ -213,6 +214,13 @@ api.include_router(
     prefix="/umtlocal",
     tags=["umtlocal"],
     responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    auth.router,
+    prefix="/auth",
+    tags=["auth"],
+    responses={401: {"description": "Unauthorized"}},
 )
 
 api.include_router(

@@ -15,10 +15,15 @@ from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
 import httpx
 import json
-from .jwt import create_jwt_token, AccessToken, AccessTokenData
+from .jwt import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    REFRESH_TOKEN_EXPIRE_DAYS,
+    create_jwt_token,
+)
 from datetime import timedelta
 
 from  drsai_ui.ui_backend.backend.web.deps import get_db
+from drsai_ui.ui_backend.backend.web.auth_cookies import clear_refresh_cookie, set_refresh_cookie
 from drsai_ui.ui_backend.backend.web.auth_source import record_auth_source
 from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, AgentModeConfig, UserAgents
 from drsai_ui.agent_factory.agent_mode_cofigs import (
@@ -33,8 +38,6 @@ load_dotenv()
 from loguru import logger
 
 
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 30
 SECONDS_OF_ONE_DAY = 24 * 60 * 60
 logger = logger.bind(name="SSO")
 
@@ -139,8 +142,8 @@ async def logout(request: Request):
     
     # TODO: 清除cookie中的token
     response = RedirectResponse(url='/')
-    response.delete_cookie("refresh-token")  # 删除refresh token cookie
-    response.delete_cookie("api-key")  # 删除api key cookie
+    clear_refresh_cookie(response)
+    response.delete_cookie("api-key", path="/")
     logger.info("User logged out successfully.")
 
     # return RedirectResponse(url='/')
@@ -181,26 +184,18 @@ async def auth(request: Request, db=Depends(get_db)):
     
     logger.info(f'SSO authed user: {user}')
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_jwt_token(data={"sub": user.username}, expires_delta=access_token_expires)
+    user_id = user.email
+    access_token = create_jwt_token(data={"sub": user_id}, expires_delta=access_token_expires)
 
-    
-    # redirect_url = f"{request.base_url}auth?token={access_token.access_token}&username={user.username}"
-    redirect_url = f"{request.base_url}auth?token={access_token.access_token}&username={user.email}"
-    # redirect_url = 'https://drsai.ihep.ac.cn/auth?token=xxx&username=xxx'
+    redirect_url = f"{request.base_url}auth?token={access_token.access_token}&username={user_id}"
     response = RedirectResponse(url=redirect_url)
 
     refresh_token = create_jwt_token(
-        data={"sub": user.username},
+        data={"sub": user_id},
         expires_delta=timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
     )
 
-    response.set_cookie(
-        key="refresh-token",
-        value=refresh_token.access_token,
-        httponly=True,
-        max_age=REFRESH_TOKEN_EXPIRE_DAYS * SECONDS_OF_ONE_DAY,
-        expires=REFRESH_TOKEN_EXPIRE_DAYS * SECONDS_OF_ONE_DAY,
-    )
+    set_refresh_cookie(response, refresh_token.access_token)
     
     response.set_cookie(
         key="api-key",
@@ -208,8 +203,6 @@ async def auth(request: Request, db=Depends(get_db)):
         httponly=True,
     )
 
-    # 更新用户的默认智能体配置
-    user_id = userdata['cstnetId']
     record_auth_source(db, user_id, "sso")
     response_agent = db.get(AgentModeSettings, filters={"user_id": user_id})
     if not response_agent.status or not response_agent.data:

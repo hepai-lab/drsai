@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { HelpCircle, Sun, Moon, Globe } from "lucide-react";
 import { appContext } from "../hooks/provider";
 import { authAPI } from "../components/views/api";
+import { saveAuthSession } from "../utils/authSession";
 
 type LoginTab = "sso" | "login" | "register";
 
@@ -80,12 +81,10 @@ const LoginPage: React.FC = () => {
         setLoginLoading(true);
         try {
             const response = await authAPI.login(loginUsername, loginPassword);
-            if (response.status) {
-                localStorage.setItem("token", `local_${Date.now()}`);
-                localStorage.setItem("username", loginUsername);
-                localStorage.setItem("user_email", loginUsername);
-                localStorage.setItem("user_name", loginUsername);
-                setUser({ name: loginUsername, email: loginUsername, username: loginUsername });
+            if (response.status && response.data?.access_token) {
+                const userId = response.data.user_id || loginUsername;
+                saveAuthSession(response.data.access_token, userId);
+                setUser({ name: userId, email: userId });
                 localStorage.removeItem("drsai-mode-config");
                 window.location.href = "/?menu=current_session&view=chat";
             }

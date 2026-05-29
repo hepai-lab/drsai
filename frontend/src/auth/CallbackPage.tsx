@@ -1,8 +1,9 @@
-// 接收 SSO 回调，保存 token 和 username，跳转主页
+// 接收 SSO 回调，保存 token 和 user_email，跳转主页
 
 import * as React from "react";
 import { navigate } from "gatsby";
 import { appContext } from "../hooks/provider";
+import { saveAuthSession } from "../utils/authSession";
 
 const CallbackPage = () => {
     const { setUser } = React.useContext(appContext);
@@ -11,20 +12,17 @@ const CallbackPage = () => {
     React.useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         const token = params.get("token");
-        const username = params.get("username");
+        const userEmail = params.get("username");
 
-        if (!token || !username) {
+        if (!token || !userEmail) {
             setError("未收到有效的登录凭证");
             return;
         }
 
-        localStorage.setItem("token", token);
-        localStorage.setItem("username", username);
-        localStorage.setItem("user_email", username);
-        localStorage.setItem("user_name", username);
+        saveAuthSession(token, userEmail);
         localStorage.removeItem("drsai-mode-config");
 
-        setUser({ name: username, email: username, username });
+        setUser({ name: userEmail, email: userEmail });
         navigate("/?menu=current_session&view=chat", { replace: true });
     }, [setUser]);
 

@@ -1,5 +1,7 @@
-import React, { useEffect } from "react";
+import React, { useContext, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "../hooks/useRouter";
+import { appContext } from "../hooks/provider";
+import { verifyAuthSession } from "../utils/authSession";
 
 const PUBLIC_ROUTES = ["/login", "/auth", "/share"];
 
@@ -12,24 +14,61 @@ interface RouteGuardProps {
 export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
     const location = useLocation();
     const navigate = useNavigate();
+    const { setUser } = useContext(appContext);
+    const [checked, setChecked] = useState(false);
 
     useEffect(() => {
-        const user_email = localStorage.getItem("user_email");
-        const isAuthenticated = !!user_email;
-        const normalizedPath = normalizePath(location.pathname);
-        const isPublicRoute = PUBLIC_ROUTES.some((r) => normalizePath(r) === normalizedPath);
+        let cancelled = false;
 
-        if (isAuthenticated) {
-            if (normalizedPath === "/login") {
-                navigate("/", { replace: true });
+        const guard = async () => {
+            const normalizedPath = normalizePath(location.pathname);
+            const isPublicRoute = PUBLIC_ROUTES.some(
+                (route) => normalizePath(route) === normalizedPath
+            );
+
+            if (isPublicRoute) {
+                if (normalizedPath === "/login") {
+                    const session = await verifyAuthSession();
+                    if (!cancelled && session.ok) {
+                        setUser({ email: session.userEmail, name: session.userEmail });
+                        navigate("/", { replace: true });
+                        return;
+                    }
+                }
+                if (!cancelled) {
+                    setChecked(true);
+                }
+                return;
             }
-        } else {
-            if (!isPublicRoute && normalizedPath !== normalizePath("/login")) {
+
+            const session = await verifyAuthSession();
+            if (cancelled) {
+                return;
+            }
+
+            if (session.ok) {
+                setUser({ email: session.userEmail, name: session.userEmail });
+                setChecked(true);
+                return;
+            }
+
+            if (normalizedPath !== normalizePath("/login")) {
                 navigate("/login", { replace: true });
             }
-        }
+        };
+
+        setChecked(false);
+        void guard();
+
+        return () => {
+            cancelled = true;
+        };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location.pathname]);
+
+    if (!checked) {
+        return null;
+    }
 
     return <>{children}</>;
 };
