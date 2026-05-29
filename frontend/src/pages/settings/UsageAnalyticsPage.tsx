@@ -876,7 +876,7 @@ const TodayLivePanel: React.FC<{ loading: boolean; stats: TodayStats | null }> =
                                     <span className="usage-analytics-today-feed-time">{item.time}</span>
                                     <span className="usage-analytics-today-feed-agent">{item.agentName}</span>
                                     <span className="usage-analytics-today-feed-user">{item.userId}</span>
-                                        <span className="usage-analytics-today-feed-count">×{item.useCount}</span>
+                                    <span className="usage-analytics-today-feed-count">×{item.useCount}</span>
                                 </li>
                             ))}
                         </ul>
@@ -948,11 +948,6 @@ const UsageAnalyticsPage: React.FC = () => {
         [overview]
     );
 
-    const sampleLimitHint =
-        overview?.limits?.usage_events != null
-            ? `usage_events 样本上限 ${overview.limits.usage_events} 条`
-            : null;
-
     if (isPlatformAdmin === null && uid) {
         return (
             <AnalyticsShell>
@@ -1000,7 +995,6 @@ const UsageAnalyticsPage: React.FC = () => {
                     {lastRefreshedAt ? (
                         <p className="mt-1 text-[10px] text-purple-400/45">
                             数据更新于 {formatAnalyticsDateTime(lastRefreshedAt.toISOString())}
-                            {sampleLimitHint ? ` · ${sampleLimitHint}` : ""}
                         </p>
                     ) : null}
                 </div>

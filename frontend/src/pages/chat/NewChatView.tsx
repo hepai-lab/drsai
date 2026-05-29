@@ -70,7 +70,7 @@ interface NewChatViewProps {
         size: number;
         uuid: string;
         url?: string;
-    }>, plan?: IPlan) => Promise<void>;
+    }>, plan?: IPlan, llm?: { label: string; value: string }) => Promise<void>;
 }
 
 /**
@@ -114,7 +114,8 @@ export default function NewChatView({
             url?: string;
         }>,
         accepted: boolean = false,
-        plan?: IPlan
+        plan?: IPlan,
+        llm?: { label: string; value: string }
     ) => {
         if (isSubmitting || (!query.trim() && (Array.isArray(files) ? files.length === 0 : false))) return;
 
@@ -127,7 +128,7 @@ export default function NewChatView({
         setHideSampleTasks(true);
         setIsSubmitting(true);
         try {
-            await onSubmit((agentInfo ?? agent) as Agent, finalQuery, files, plan);
+            await onSubmit((agentInfo ?? agent) as Agent, finalQuery, files, plan, llm);
         } finally {
             setIsSubmitting(false);
         }
