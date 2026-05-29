@@ -1184,6 +1184,13 @@ export class AuthAPI {
             headers: this.getHeaders(),
         });
         const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                (data as { detail?: string; message?: string }).detail ||
+                    (data as { message?: string }).message ||
+                    `登录失败 (${response.status})`
+            );
+        }
         if (!data.status) {
             throw new Error(data.message || "登录失败");
         }

@@ -5,7 +5,6 @@ import { message } from "antd";
 export interface IUser {
   name: string;
   email?: string;
-  username?: string;
   avatar_url?: string;
   metadata?: any;
 }
@@ -31,8 +30,6 @@ const Provider = ({ children }: any) => {
   );
 
   const logout = () => {
-    // setUser(null);
-    // eraseCookie(cookie_name);
     message.info("Please implement your own logout logic");
   };
 
@@ -48,18 +45,15 @@ const Provider = ({ children }: any) => {
     setUserState(user);
   };
 
-  // const [userState, setUserState] = useState<IUser | null>(initUser);
-  // 不初始化用户
   const [userState, setUserState] = useState<IUser | null>(null);
 
   React.useEffect(() => {
-    const storedEmail = getLocalStorage("user_email", false);
+    const storedEmail = getLocalStorage("user_email", false) as string | null;
     if (storedEmail) {
-      setUserState((prevUser) => ({
-        ...prevUser,
+      setUserState({
         email: storedEmail,
         name: storedEmail,
-      }));
+      });
     }
   }, []);
 

@@ -1,5 +1,7 @@
 # api/routes/local_login.py
 from typing import Dict
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
 import hashlib
 
@@ -15,6 +17,7 @@ from .....agent_factory.agent_mode_cofigs import (
     get_user_agents,
     get_agents_mode,
     )
+from .....drsai_adapter.sso.jwt import ACCESS_TOKEN_EXPIRE_MINUTES, create_jwt_token
 
 router = APIRouter()
 
@@ -121,8 +124,20 @@ async def local_login(user_id: str, password: str, db=Depends(get_db)) -> Dict:
             agents_list = get_default_agent_mode_config(user_id)
             db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
             db.upsert(UserAgents(user_id=user_id, agents=agents_list))
+
+        access_token = create_jwt_token(
+            data={"sub": user_id},
+            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        )
             
-        return {"status": True, "message": "Login successful", "data": {"user_id": user_id}}
+        return {
+            "status": True,
+            "message": "Login successful",
+            "data": {
+                "user_id": user_id,
+                "access_token": access_token.access_token,
+            },
+        }
 
     except HTTPException:
         raise

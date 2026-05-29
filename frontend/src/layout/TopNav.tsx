@@ -11,6 +11,7 @@ import {
 import React, { useContext, useEffect, useState } from "react";
 import { appContext } from "../hooks/provider";
 import UserProfileModal from "../components/userProfile";
+import { clearAuthSession } from "../utils/authSession";
 
 interface TopNavProps {
   isSidebarOpen: boolean;
@@ -29,10 +30,7 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
   }, [user]);
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("username");
-    localStorage.removeItem("user_email");
-    localStorage.removeItem("user_name");
+    clearAuthSession();
     if (process.env.GATSBY_SERVICE_MODE === "DEV") {
       window.location.href = "/login";
     } else {
