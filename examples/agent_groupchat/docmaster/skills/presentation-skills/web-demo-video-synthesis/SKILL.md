@@ -1,0 +1,407 @@
+---
+name: web-demo-video-synthesis
+description: 用于“网页 demo 分段配音 + timeline 驱动录屏 + 后期合成”的 workspace 协作流程：先搭建一个可审计工作目录（cues/timeline/segment_audio/video/subtitles/final），再由人类 + Codex 迭代维护这些文件，按需只重跑局部步骤，最终合成高质量 MP4。适用于强调可复盘、可编辑、清晰度与字幕安全区可控的场景。
+---
+
+# Web Demo Video Synthesis
+
+## 核心原则
+
+1. 先锁定文案，再执行技术流水线。
+2. 语音必须按段生成（每段独立可重试，可定位失败）。
+3. `timeline.json` 是全链路主键：录屏、音频编排、字幕都基于它。
+4. 录屏阶段输出“无字幕母带”，字幕在最终合成阶段统一烧录。
+5. 禁止静默降级：缺参数、schema 错误、时序冲突必须直接报错。
+
+## 网页演示设计偏好（默认建议）
+
+- 结构优先“每页一主题”：一段旁白对应一个完整页面/板块，讲完再翻页，避免“一屏塞满全部信息”。
+- 默认视觉方向：白色/米色背景 + 轻松活泼但有科技感的点缀色（青绿/天蓝/暖橙），减少沉重暗色与“AI 味”紫色方案。
+- 保持高信息密度与可读性平衡：标题醒目、正文简洁、层次清晰、每页有明确视觉重心。
+- **尽量做成“多媒体网页 demo”而不是纯文字卡片**：图表（折线/柱状/环形/热力）、指标卡、动效（数字跳动/进度条/光扫）、图片/插画、轻量交互（hover/选项切换）都会让录屏成片更像“真实产品演示”，显著降低“AI 味”。
+- 对外发布前至少做一次“竖屏真机视角”复核：确认翻页节奏、字幕安全区、关键视觉元素不被裁切。
+
+## 文案与读音（中文 TTS 经验）
+
+中文配音（例如阿里云 ISI `zhida`）时，如果旁白里出现大量英文/缩写/口语拼接，容易出现“读不对/怪口音”，建议做如下处理（这是**内容层面**的修复，优先于换 TTS 引擎）：
+
+- 把关键术语改成中文：例如把 `workspace` 写成“工作空间”，把 `retry` 写成“重试”。
+- 避免容易读错的短词组合：例如把“重配音”写成“重新配音”（更自然，也更不容易误读）。
+- 对必须保留的英文缩写，尽量在第一次出现时给出中文解释：例如 “TTS（text-to-speech，文本转语音）”。
+
+## 依赖与安装（独立发布必需）
+
+该 skill 可单独拷贝发布，但需要安装运行依赖：
+
+- `python3`（建议 3.10+）
+  - 需要的 Python 包：`requests`
+  - 录屏与后期合成不依赖 Python 的 GUI
+- `node`（建议 18+）+ `npm`
+  - 需要 Node 包：`playwright`
+  - 需要安装浏览器：`npx playwright install chromium`
+- `ffmpeg`
+  - 需要完整构建，至少支持：`libass`（字幕烧录）与 `libx264`（H.264 编码）
+
+最小安装示例（仅供参考，具体按你的环境调整）：
+
+```bash
+pip install requests
+npm install playwright
+npx playwright install chromium
+```
+
+执行目录约定：
+- 以下命令默认在 `web-demo-video-synthesis/` 目录内执行（即本 `SKILL.md` 同级目录）。
+- 若你从其他目录执行，请自行加上前缀路径。
+
+## 向人类索要的密钥/Token（必须明确）
+
+该流程可能需要人类提供以下敏感信息（不应提交到代码仓库）：
+
+- 阿里云 ISI（Intelligent Speech Interaction）TTS：
+  - `Appkey`（项目级 Appkey）
+  - `AccessToken`（短期 token）
+  - 保存为 `key.json`，字段名兼容：`appkey/app_key/api_key` 与 `token/access_token/AccessToken/accessToken`
+- 给人类的参考链接（建议在索要秘钥时一并发给对方；链接可能会变化，若失效请在阿里云文档站内搜索关键词）：
+  - 控制台（NLS Portal / 智能语音交互）：`https://nls-portal.console.aliyun.com/overview`
+  - RESTful API 文档（语音合成）：`https://help.aliyun.com/zh/isi/developer-reference/restful-api-3`
+    - 备注：我在 2026-03-06（Asia/Shanghai）验证过该链接可访问，但页面内部锚点（`#topic-...`）可能不稳定。
+  - ISI 文档入口（用于查“Token 获取方式/鉴权说明/参数表”等）：`https://help.aliyun.com/zh/isi/`
+
+推荐优先级（明确，不做静默降级）：
+
+1. **先进的 TTS API（推荐，优先级最高）**：例如阿里云 ISI（本 skill 默认实现），或你们自行接入其他更先进的 TTS。
+2. **本地替代（仅用于无秘钥快速验证）**：例如 macOS `say`（无需密钥，但音色/自然度通常弱于先进 TTS）。
+
+也可以替换其他 TTS 服务商，但需要你们自行研究对应 API，并保证输出满足：
+- 分段音频可落盘（每段一个文件）
+- 可拿到每段时长（用于 timeline）
+
+## Workspace 风格（推荐）
+
+目标不是“每次从头跑一个专门的 run”，而是搭建一个可协作的工作目录，然后按顺序维护关键文件：
+
+建议 workspace 目录结构（示例：`temp/web_demo_video_ws/demo01/`）：
+
+- `inputs/cues.json`：旁白分段文案（锁版本）
+- `secrets/key.json`：TTS 鉴权（不入库）
+- `segment_audio/`：每段音频缓存（可复用）
+- `timeline/timeline.json`：主键时间轴（可编辑）
+- `audio/timeline_audio.mp3`：按 timeline 混出的总音轨（可重建）
+- `video/video_nocap.webm`：按 timeline 录制的无字幕母带（可重录）
+- `subtitles/captions.srt`：由 timeline 导出的字幕（可重建）
+- `final/final.mp4`：最终成片（可重建）
+
+这种布局支持你们迭代：
+- 改文案：只重跑 TTS + 生成 timeline
+- 改 timeline：只重混音 + 重录屏 + 重合成
+- 改字幕样式：只重合成（烧录字幕）
+
+## 推荐操作顺序（手动可控，便于协作）
+
+1. 初始化 workspace（第一次）
+- 准备 `inputs/cues.json`（锁版本）
+- 准备 `secrets/key.json`（人类提供，不入库）
+- 跑一次分段 TTS + timeline（生成器会产出 run 历史）
+- 把该次 run 的产物 promote 到 workspace（后续迭代用 workspace 文件为准）
+
+2. 迭代调 timeline（常见）
+- 人类/Codex 编辑 `timeline/timeline.json`
+- 用 `mix_audio_from_timeline.py` 重建 `audio/timeline_audio.mp3`
+
+3. 迭代录屏（常见）
+- 用 `record_demo_from_timeline.mjs --no-captions true` 生成 `video/video_nocap.webm`
+ - 前提：你的 demo 前端服务必须已启动且 `record_url` 可访问，否则 Playwright 会失败并退出（正确失败）。
+ - `record_url` 对应端口必须可控且唯一，避免被其他本地服务占用后录到错误页面。
+ - 若出现“滚动就位慢于开声”，优先调大 `scripts/tts_build_workspace.py` 的 `--scroll-lag-sec` 或 `--inter-gap-sec`（让开声更晚），其次再考虑提高录屏脚本的 `--scroll-settle-ms`（仅影响录屏等待，不改变音轨时间）。
+
+4. 迭代字幕与合成（常见）
+- 用 `build_srt_from_timeline.py` 生成 `subtitles/captions.srt`
+- 用完整 ffmpeg 合成最终 `final/final.mp4`
+
+## 输入约定（最小集）
+
+- `cues.json`：最终旁白文案（只含可播报文本，不含导演提示）。
+- `record_url`：demo 页 URL（例如 `http://127.0.0.1:6150/demo`）。
+- `key.json`：TTS 鉴权（阿里云 Appkey + AccessToken）。
+- `seed_video`：任意可读取视频（用于时间预算与流水线基准输入）。
+
+输入 schema：
+- 旁白 cues：见 [references/subtitle_schema.md](references/subtitle_schema.md)
+- timeline 结构：见 [references/steps_schema.md](references/steps_schema.md)
+
+## 标准流程（workspace 迭代版）
+
+1. 固化文案（锁版本）
+- 文案先冻结，再录制与合成，避免“视频一半后字幕改稿”。
+
+2. 分段 TTS
+- 调用 `scripts/tts_build_workspace.py`，逐段生成音频并生成 `timeline/timeline.json`。
+- 产物：`segment_audio/*.wav`、`timeline/timeline.json`、可选 `audio/timeline_audio.mp3`。
+
+### 可选：无秘钥的本地 TTS（macOS say）
+
+当你暂时拿不到任何 TTS API 的秘钥/Token，但仍希望先把“网页录屏/字幕/合成”跑通，可以显式改用 macOS `say`：
+
+```bash
+python3 scripts/tts_build_workspace_macos_say.py \
+  --workspace-dir temp/web_demo_video_ws/demo01 \
+  --cues-json temp/web_demo_video_ws/demo01/inputs/cues.json \
+  --voice Tingting \
+  --sample-rate 48000 \
+  --inter-gap-sec 2.5 \
+  --scroll-lag-sec 1.2 \
+  --mix-audio
+```
+
+注意：
+- 这是 **显式选择** 的替代方案，不会在 `tts_build_workspace.py` 里自动 fallback（避免“看起来成功”的静默降级）。
+- `voice` 的取值与服务商强相关：
+  - ISI 的 voice（例如 `emily`/`zhida`）以服务商文档为准；
+  - macOS `say` 的 voice（例如 `Tingting`/`Samantha`）用 `say -v '?'` 查询。
+
+3. 基于 timeline 二次录屏（无字幕）
+- 使用 `scripts/record_demo_from_timeline.mjs --no-captions true`。
+- 产物：`video_from_timeline_nocap.webm`。
+
+4. timeline -> 字幕文件
+- 从 `timeline.json` 的 `segments` 生成 `.srt`（逐段 `start_sec/end_sec/text`）。
+
+5. 最终合成（视频 + 语音 + 字幕）
+- 使用完整构建的 ffmpeg（系统安装版本即可）。
+- 输出高质量 MP4。
+
+## 一键执行（模板化参数，不建议写死）
+
+```bash
+WORKSPACE_DIR="temp/web_demo_video_ws/demo01"
+RECORD_URL="http://127.0.0.1:6150/demo"
+CUES_JSON="$WORKSPACE_DIR/inputs/cues.json"
+KEY_JSON="$WORKSPACE_DIR/secrets/key.json"
+
+bash scripts/make_demo_video.sh \
+  --workspace-dir "$WORKSPACE_DIR" \
+  --cues-json "$CUES_JSON" \
+  --key-json "$KEY_JSON" \
+  --record-url "$RECORD_URL" \
+  --voice auto \
+  --record-lang zh \
+  --record-viewport 1920x1080 \
+  --record-size 3840x2160 \
+  --record-device-scale-factor 2 \
+  --record-scroll-behavior auto \
+  --record-scroll-settle-ms 420 \
+  --subtitle-font-name "Arial" \
+  --subtitle-font-size 13 \
+  --subtitle-margin-v 24 \
+  --subtitle-margin-l 48 \
+  --subtitle-margin-r 48 \
+  --subtitle-auto-wrap true \
+  --subtitle-wrap-max-units 42
+```
+
+`--voice auto` 规则：
+- `--record-lang en*` -> `emily`
+- `--record-lang zh*` -> `zhida`
+- 其他语言默认回退到 `emily`
+
+## 竖屏短视频推荐参数（如小红书）
+
+- 版式建议：关键视觉内容放在“中间偏上”，字幕放在“中间偏下”（避免画面与字幕重叠；也避免顶部/底部 UI 安全区遮挡）。
+- 录制：`--record-viewport 1080x1920 --record-size 1080x1920 --record-device-scale-factor 1`
+- 字幕安全区（两种常用思路，二选一并迭代调参）：
+  - **更大字**：`--subtitle-font-size 13~15 --subtitle-margin-v 72~108 --subtitle-margin-l 72~120 --subtitle-margin-r 72~120`
+  - **更小字（推荐默认；信息密度更高，且更不遮画面）**：`--subtitle-font-size 10 --subtitle-margin-v 28 --subtitle-margin-l 96 --subtitle-margin-r 96`
+- 自动换行（推荐默认）：`--subtitle-auto-wrap true --subtitle-wrap-max-units 38`（竖屏通常需要更积极的换行与更大的左右安全区）
+- 字幕仍越界时，优先顺序：
+  1) 增大 `subtitle-margin-l/r`
+  2) 降低 `subtitle-font-size`
+  3) 调小 `subtitle-wrap-max-units`
+  4) 仍不够再拆分过长文案（`cues.json`）
+
+字幕与画面仍重叠时的经验优先级（重要）：
+1. **优先把网页“当 PPT 读”的主体上移**：在网页里给底部留白（例如每页增加 `padding-bottom`），为字幕留出固定安全区。
+2. 其次再调字幕（例如降低 `MarginV` 让字幕更靠底部），但不要把字幕压到平台底部 UI 区域里。
+
+竖屏一键参数示例（推荐从这个起步再微调）：
+
+```bash
+WORKSPACE_DIR="temp/web_demo_video_ws/demo01"
+RECORD_URL="http://127.0.0.1:6150/demo"
+
+bash scripts/make_demo_video.sh \
+  --workspace-dir "$WORKSPACE_DIR" \
+  --record-url "$RECORD_URL" \
+  --record-lang zh \
+  --voice auto \
+  --record-viewport 1080x1920 \
+  --record-size 1080x1920 \
+  --record-device-scale-factor 1 \
+  --record-wait-until domcontentloaded \
+  --record-expect-selector "#step-hero" \
+  --record-scroll-settle-ms 600 \
+  --subtitle-font-name "PingFangSC-Regular" \
+  --subtitle-font-size 10 \
+  --subtitle-margin-v 28 \
+  --subtitle-margin-l 96 \
+  --subtitle-margin-r 96 \
+  --subtitle-auto-wrap true \
+  --subtitle-wrap-max-units 38
+```
+
+备注：
+- `--subtitle-font-name` 与系统字体有关：macOS 常用 `PingFangSC-Regular`；Linux 可用 `Noto Sans CJK SC`（按你系统已安装字体为准）。
+
+## 横屏（16:9）推荐参数（如 X / YouTube）
+
+横屏的字幕与竖屏不同点：
+- 画面横向空间更大：**每行可更长**，不需要太激进的换行。
+- 常见输出分辨率有 1080p 与 4K：**FontSize/Margins 需要跟分辨率成比例调整**。
+
+### 横屏字幕专项经验（这次反复调参后的关键结论）
+
+1. **先区分“硬换行”与“软换行”**：
+   - 硬换行：SRT 里已经写入 `\n`（例如 `build_srt_from_timeline.py` 的 `--wrap-max-lines 2` 或偏小的 `--wrap-max-units` 导致）。
+   - 软换行：SRT 一行文本，最终由渲染器按可用宽度自动断行。
+2. 如果已经“硬换行”过早，后续只改 `MarginL/MarginR` 常常看不出提升，因为可显示宽度已经在 SRT 阶段被锁死。
+3. 横屏想“减少频繁换行”，优先使用：
+   - `--wrap-max-lines 0`（不强制二行上限）
+   - 更大的 `--subtitle-wrap-max-units`（例如 `140~180`）
+   - 更小的 `MarginL/MarginR`（例如 `8~40`）
+4. 推荐调参顺序（避免反复返工）：
+   1) 固定 `FontSize` 到“听感/可读性满意”的值  
+   2) 逐步减小 `MarginL/R` 扩大显示区  
+   3) 再增大 `wrap-max-units` 减少预断行  
+   4) 仍频繁换行时再考虑拆分文案或微降字号
+5. 经验上，`--subtitle-wrap-max-lines 2` 仅适合你**明确需要强制两行美观**的场景；对长句讲解视频，它更容易制造“没必要的换行”。
+
+推荐起步（1080p，1920×1080）：
+- 录制：`--record-viewport 1920x1080 --record-size 1920x1080 --record-device-scale-factor 1`
+- 字幕：`--subtitle-font-size 14~20 --subtitle-margin-v 24~56 --subtitle-margin-l 24~80 --subtitle-margin-r 24~80`
+- 换行：`--subtitle-wrap-max-lines 0 --subtitle-wrap-max-units 110~160`（先让每行吃满，再看是否需要更强约束）
+
+推荐起步（4K，3840×2160；更清晰，适合桌面观看）：
+- 录制：`--record-viewport 1920x1080 --record-size 3840x2160 --record-device-scale-factor 2`
+- 字幕：`--subtitle-font-size 13~16 --subtitle-margin-v 18~36 --subtitle-margin-l 8~40 --subtitle-margin-r 8~40`
+- 换行：建议 `--subtitle-wrap-max-lines 0 --subtitle-wrap-max-units 140~180`（横屏优先少换行，避免句子被切碎）
+
+横屏一键参数示例（4K）：
+
+```bash
+WORKSPACE_DIR="temp/web_demo_video_ws/demo01"
+RECORD_URL="http://127.0.0.1:6150/demo"
+
+bash scripts/make_demo_video.sh \
+  --workspace-dir "$WORKSPACE_DIR" \
+  --record-url "$RECORD_URL" \
+  --record-lang en \
+  --voice auto \
+  --record-viewport 1920x1080 \
+  --record-size 3840x2160 \
+  --record-device-scale-factor 2 \
+  --record-wait-until domcontentloaded \
+  --record-expect-selector "#step-hero" \
+  --record-scroll-settle-ms 520 \
+  --subtitle-font-name "Arial" \
+  --subtitle-font-size 14 \
+  --subtitle-margin-v 24 \
+  --subtitle-margin-l 8 \
+  --subtitle-margin-r 8 \
+  --subtitle-auto-wrap true \
+  --subtitle-wrap-max-units 170 \
+  --subtitle-wrap-max-lines 0
+```
+
+备注：
+- `--record-lang` 主要用于录屏脚本的语言设置与 `--voice auto` 的默认音色映射；请按你的视频语言选择（例如中文 `zh`，英文 `en`）。
+
+## 常用局部命令（只重跑某一步）
+
+分段TTS + timeline（直接写 workspace，可迭代；默认防止静默复用旧音频）：
+
+```bash
+python3 scripts/tts_build_workspace.py \
+  --workspace-dir temp/web_demo_video_ws/demo01 \
+  --cues-json temp/web_demo_video_ws/demo01/inputs/cues.json \
+  --key-json temp/web_demo_video_ws/demo01/secrets/key.json \
+  --voice emily \
+  --sample-rate 48000 \
+  --inter-gap-sec 2.5 \
+  --scroll-lag-sec 1.2
+```
+
+改了 timeline 后重混音：
+
+```bash
+python3 scripts/mix_audio_from_timeline.py \
+  --timeline temp/web_demo_video_ws/demo01/timeline/timeline.json \
+  --output temp/web_demo_video_ws/demo01/audio/timeline_audio.mp3
+```
+
+按 timeline 录无字幕母带：
+
+```bash
+node scripts/record_demo_from_timeline.mjs \
+  --url http://127.0.0.1:6150/demo \
+  --timeline-json temp/web_demo_video_ws/demo01/timeline/timeline.json \
+  --out temp/web_demo_video_ws/demo01/video/video_nocap.webm \
+  --viewport 1920x1080 \
+  --record-size 3840x2160 \
+  --device-scale-factor 2 \
+  --lang en \
+  --wait-until networkidle \
+  --fail-on-json true \
+  --expect-selector "#step-hero" \
+  --expect-timeout-ms 12000 \
+  --no-captions true
+```
+
+录屏阶段的“正确失败”防护（强烈建议）：
+
+- `--fail-on-json true`（默认 true）：如果 `record_url` 返回 `application/json`，会直接失败。
+  - 典型原因：端口被占用导致访问到了别的服务，或录到了 API/404 JSON 而不是网页。
+- `--expect-selector` / `--expect-title-includes`：对目标页面做最小的存在性校验，避免把错误页面录成“看起来成功”的视频。
+- `--wait-until domcontentloaded`：对 SPA/持续请求的页面更稳（否则 `networkidle` 可能等不到）。
+
+timeline -> SRT：
+
+```bash
+python3 scripts/build_srt_from_timeline.py \
+  --timeline temp/web_demo_video_ws/demo01/timeline/timeline.json \
+  --output temp/web_demo_video_ws/demo01/subtitles/captions.srt
+```
+
+最终合成（视频+音轨+字幕）：
+
+```bash
+ffmpeg -y \
+  -i temp/web_demo_video_ws/demo01/video/video_nocap.webm \
+  -i temp/web_demo_video_ws/demo01/audio/timeline_audio.mp3 \
+  -vf "subtitles=temp/web_demo_video_ws/demo01/subtitles/captions.srt:force_style='Alignment=2,MarginV=24,MarginL=48,MarginR=48,FontName=Arial,FontSize=13,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=1,Shadow=0'" \
+  -c:v libx264 -preset medium -crf 18 \
+  -c:a aac -b:a 192k \
+  -shortest \
+  temp/web_demo_video_ws/demo01/final/final.mp4
+```
+
+## 关键产物
+
+- workspace 内产物（推荐）：`inputs/ segment_audio/ timeline/ audio/ video/ subtitles/ final/`
+ 
+
+## 必读参考
+
+- [references/subtitle_schema.md](references/subtitle_schema.md)：文案分段输入规范
+- [references/steps_schema.md](references/steps_schema.md)：timeline 结构与约束
+- [references/quality_tuning.md](references/quality_tuning.md)：清晰度和字幕安全区调优
+- [references/troubleshooting.md](references/troubleshooting.md)：踩坑与排障清单
+
+## Legacy（不推荐）
+
+本 skill 目录里保留了旧的“steps 驱动录屏 + subtitles.json”脚本（用于历史兼容与对照）：
+- `scripts/record_web_demo_with_playwright.mjs`
+- `scripts/build_subtitles_from_json.py`
+- `scripts/transcode_burn_subtitles.sh`
+- `scripts/inspect_video.sh`
+
+建议优先使用 workspace + timeline 路线，避免字幕层在录屏阶段受页面重绘/语言切换影响。

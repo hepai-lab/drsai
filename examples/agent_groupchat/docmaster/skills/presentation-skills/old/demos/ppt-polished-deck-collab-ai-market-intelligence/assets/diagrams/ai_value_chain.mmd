@@ -1,0 +1,13 @@
+flowchart LR
+  A[Compute Fabric] --> B[Foundation Models]
+  B --> C[Agent Control Layer]
+  C --> D[Vertical Workflow Apps]
+  D --> E[Enterprise Distribution]
+  F[Proprietary Data] --> C
+  F --> D
+  G[Safety & Governance] --> C
+  G --> E
+  E --> H[User Feedback Telemetry]
+  H --> B
+  I[Implementation Services] --> D
+  I --> E

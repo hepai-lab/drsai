@@ -1,0 +1,15 @@
+{
+  "pptx": "/project/lisiyuan/Projects/AutoCausePanel/references/temp/apple_financial_report_review/build/pptx/apple_fy2025_financial_report_review.pptx",
+  "generated_at": "20260510_174714",
+  "summary": {
+    "error": 0,
+    "warning": 0,
+    "not_checked": 0
+  },
+  "issues": [],
+  "preview_dir": "/project/lisiyuan/Projects/AutoCausePanel/references/temp/apple_financial_report_review/build/rendered/ppt_preview",
+  "counts": {
+    "shape_count": 205,
+    "text_item_count": 315
+  }
+}

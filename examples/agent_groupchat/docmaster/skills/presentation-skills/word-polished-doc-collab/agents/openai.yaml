@@ -1,0 +1,4 @@
+interface:
+  display_name: "Word Polished Doc Copilot"
+  short_description: "Build polished DOCX deliverables from Markdown, DOCX, and Python assets with controlled Chinese-English typography."
+  default_prompt: "Use $word-polished-doc-collab to route between lightweight and refined Word workflows, keep Markdown maintainable, define an explicit style_profile and caption_policy, route assets through office_native_chart or office_native_illustration or python_figure when needed, and validate the final DOCX against the active profile."

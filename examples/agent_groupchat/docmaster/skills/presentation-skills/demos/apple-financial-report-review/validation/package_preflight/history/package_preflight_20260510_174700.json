@@ -1,0 +1,39 @@
+{
+  "pptx": "/project/lisiyuan/Projects/AutoCausePanel/references/temp/apple_financial_report_review/build/pptx/apple_fy2025_financial_report_review.pptx",
+  "generated_at": "20260510_174700",
+  "summary": {
+    "error": 0,
+    "warning": 1,
+    "not_checked": 0
+  },
+  "issues": [
+    {
+      "severity": "warning",
+      "issue_type": "mobile_compatibility_embedded_object",
+      "message": "deck 中存在嵌入对象，这类对象在微信预览与移动端 WPS 中兼容性更脆弱。",
+      "slide_number": null,
+      "shape_id": null,
+      "source_kind": null,
+      "details": {
+        "embedded_objects": [
+          "ppt/embeddings/Microsoft_Excel_Sheet1.xlsx",
+          "ppt/embeddings/Microsoft_Excel_Sheet2.xlsx",
+          "ppt/embeddings/Microsoft_Excel_Sheet3.xlsx",
+          "ppt/embeddings/Microsoft_Excel_Sheet4.xlsx",
+          "ppt/embeddings/Microsoft_Excel_Sheet5.xlsx",
+          "ppt/embeddings/Microsoft_Excel_Sheet6.xlsx"
+        ]
+      },
+      "suggested_fix": "如果外发目标包含微信或移动端 WPS，优先改为图片化 chart 或移除 workbook embedding。"
+    }
+  ],
+  "checks": {
+    "actual_slide_count": 11,
+    "presentation_slide_count": 11,
+    "docprops_slide_count": 11,
+    "section_slide_id_count": 0,
+    "slide_relationship_count": 11,
+    "slide_xml_count": 11,
+    "embedded_object_count": 6
+  }
+}
