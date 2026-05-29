@@ -142,7 +142,16 @@ def cmd_config(ctx: SlashContext) -> str:
 
 
 def cmd_model(ctx: SlashContext) -> dict:
-    """Show/switch model (session-local)."""
+    """Show/switch model (session-local), or open the model editor.
+
+    Subcommands:
+        /model                  → show current
+        /model <alias>          → switch to alias
+        /model info <alias>     → show model details
+        /model add [alias]      → open editor for a NEW model
+        /model edit [alias]     → open editor; if alias omitted, picker first
+        /model rm <alias>       → delete an alias (UI confirms)
+    """
     args = ctx.args
     info = ctx.session.info()
     current_model = info.get("model", "?")
@@ -158,12 +167,39 @@ def cmd_model(ctx: SlashContext) -> dict:
         else:
             return {"output": f"Current model: {current_model} (default)"}
 
+    # ── Editor subcommands ────────────────────────────────────────────────
+    lower = args.lower()
+    first, _, rest = args.partition(" ")
+    first_lc = first.lower()
+    rest = rest.strip()
+
+    if first_lc == "add":
+        return {
+            "output": "Opening model editor (new)…",
+            "ui_action": "model.add",
+            "alias": rest or None,
+        }
+    if first_lc == "edit":
+        return {
+            "output": "Opening model editor…",
+            "ui_action": "model.edit",
+            "alias": rest or None,
+        }
+    if first_lc in ("rm", "remove", "delete", "del"):
+        if not rest:
+            return {"output": "Usage: /model rm <alias>"}
+        return {
+            "output": f"Delete model alias '{rest}'?",
+            "ui_action": "model.rm",
+            "alias": rest,
+        }
+
     # Handle "info" subcommand
-    if args.lower().startswith("info "):
+    if lower.startswith("info "):
         model_name = args[5:].strip()
         return _model_info(ctx.user_id, model_name)
 
-    if args.lower() == "info":
+    if lower == "info":
         return {"output": "Usage: /model info <alias>"}
 
     # Validate model alias
@@ -446,13 +482,23 @@ def cmd_inject(ctx: SlashContext) -> dict:
 
 def cmd_init(ctx: SlashContext) -> str:
     """Create DRSAI.md project instructions file (Claude Code /init equivalent)."""
-    from drsai.backend.cli.drsaimd_loader import init_drsaimd
+    from drsai.backend.cli.drsaimd_loader import init_project_instructions
     try:
-        path, is_new = init_drsaimd(Path.cwd())
-        if is_new:
-            return f"Created {path}"
-        else:
-            return f"Already exists: {path}"
+        path, is_new = init_project_instructions(str(Path.cwd()))
+        header = "Created" if is_new else "Already exists"
+        lines = [f"{header}: {path}", ""]
+        try:
+            content = Path(path).read_text(encoding="utf-8")
+            preview = "\n".join(content.splitlines()[:15])
+            lines.append("Preview (first 15 lines):")
+            lines.append("─" * 60)
+            lines.append(preview)
+            lines.append("─" * 60)
+            if not is_new:
+                lines.append("Edit it manually, then run /memory reload to apply.")
+        except Exception as exc:
+            lines.append(f"(could not read back: {exc})")
+        return "\n".join(lines)
     except Exception as e:
         logger.exception("init failed")
         return f"Error: {e}"
@@ -464,26 +510,69 @@ def cmd_memory(ctx: SlashContext) -> dict:
 
     if not args or args == "status":
         from drsai.backend.cli.drsaimd_loader import get_memory_status
-        status = get_memory_status(Path.cwd())
-        lines = [
-            f"Project files: {len(status['project_files'])}",
-            f"Total lines: {status['total_lines']}",
-        ]
-        if status.get("warnings"):
-            lines.append(f"Warnings: {', '.join(status['warnings'])}")
+        status = get_memory_status(str(Path.cwd()))
+        lines = ["Project instruction files:"]
+        org = status.get("org_file")
+        if org:
+            lines.append(f"  [org]     {org['path']}  ({org['lines']} lines)")
+        files = status.get("project_files") or []
+        if not files and not org:
+            lines.append("  (none found — run /init to create one)")
+        else:
+            for f in files:
+                scope = f.get("scope", "?")
+                lines.append(
+                    f"  [{scope:<7}] {f['path']}  "
+                    f"({f['lines']} lines, {f['size_kb']:.1f} KB)"
+                )
+        lines.append("")
+        lines.append(
+            f"Total: {len(files)} project file(s), "
+            f"{status.get('total_lines', 0)} lines, "
+            f"{status.get('total_size_kb', 0.0):.1f} KB"
+        )
         return {"output": "\n".join(lines)}
 
     if args == "reload":
-        # Trigger agent to reload memory
-        _emit("memory.reload", ctx.session_id, {})
-        return {"output": "Reloading project instructions…"}
+        from drsai.backend.cli.drsaimd_loader import load_project_instructions
+        try:
+            content, loaded_paths, warnings = load_project_instructions(str(Path.cwd()))
+        except Exception as exc:
+            logger.exception("memory reload: load failed")
+            return {"output": f"Reload failed: {exc}"}
+        if ctx.session is None or ctx.session.agent is None:
+            return {"output": "No active session; nothing to reload into."}
+        try:
+            ctx.session.agent.inject_system_prompt(project_instructions=content)
+            ctx.refresh_info()
+        except Exception as exc:
+            logger.exception("memory reload: inject_system_prompt failed")
+            return {"output": f"Reloaded files but agent update failed: {exc}"}
+        lines = [f"Reloaded {len(loaded_paths)} project file(s):"]
+        for p in loaded_paths:
+            lines.append(f"  • {p}")
+        for w in warnings:
+            lines.append(f"  ⚠ {w}")
+        return {"output": "\n".join(lines)}
 
     if args == "show":
         from drsai.backend.cli.drsaimd_loader import load_project_instructions
-        content = load_project_instructions(Path.cwd())
+        try:
+            content, loaded_paths, warnings = load_project_instructions(str(Path.cwd()))
+        except Exception as exc:
+            return {"output": f"Error: {exc}"}
         if not content:
-            return {"output": "No project instructions found (DRSAI.md / CLAUDE.md)"}
-        return {"output": f"Project instructions:\n{content[:500]}..."}
+            return {"output": "No project instructions found (DRSAI.md / CLAUDE.md). Run /init to create one."}
+        lines = ["Loaded files:"]
+        for p in loaded_paths:
+            lines.append(f"  • {p}")
+        for w in warnings:
+            lines.append(f"  ⚠ {w}")
+        lines.append("")
+        lines.append("─" * 60)
+        lines.append(content)
+        lines.append("─" * 60)
+        return {"output": "\n".join(lines)}
 
     return {"output": "Usage: /memory show|reload|status"}
 
@@ -907,6 +996,7 @@ def _model_options(rid, params: dict) -> dict:
                 "alias": alias,
                 "model_name": model_name,
                 "reasoning": reasoning_levels,
+                "vision": getattr(entry, "vision", True),
             })
 
         return _ok(rid, {
@@ -1032,3 +1122,284 @@ def _complete_path(rid, params: dict) -> dict:
     except Exception as exc:
         logger.exception("complete.path failed")
         return _ok(rid, {"items": []})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model catalog mutation
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Whitelisted enum values; mirrors the dataclasses in run_drsai_agent_factory.
+_VALID_CLIENT_TYPES = frozenset({"auto", "openai", "anthropic"})
+_VALID_PARAM_TYPES = frozenset({
+    "none", "adaptive", "enabled", "is_r1_model",
+    "reasoning_effort", "minimax_format", "zhipu_format",
+})
+
+
+def _validate_alias(alias: str, *, allow_existing: bool, current_aliases) -> str | None:
+    """Return an error string if alias is invalid, else None."""
+    if not alias or not isinstance(alias, str):
+        return "alias is required"
+    if any(c.isspace() for c in alias):
+        return "alias must not contain whitespace"
+    if alias.startswith("_"):
+        return "alias must not start with underscore (reserved for YAML metadata)"
+    if not (alias[0].isalnum()):
+        return "alias must start with a letter or digit"
+    if not allow_existing and alias in current_aliases:
+        return f"alias '{alias}' already exists; use /model edit instead"
+    return None
+
+
+@method("model.save")
+def _model_save(rid, params: dict) -> dict:
+    """Create or update a model entry, persisting to the configured YAML.
+
+    Args:
+        params: {
+            alias: str,
+            model: str,                # full model id (e.g. "anthropic/claude-sonnet-4-6")
+            token_limit: int,
+            max_tokens: int,
+            client_type: "auto"|"openai"|"anthropic",
+            reasoning: {supported: bool, effort_levels: [str], param_type: str},
+            original_alias: str | None,  # set when renaming an existing alias
+            is_new: bool,                # true when adding; false when editing
+        }
+
+    Returns:
+        {ok: true, alias: str, switched_to: str|None}
+        or {ok: false, error: str}  (with HTTP-style 4xx code on validation)
+    """
+    from drsai.backend.run_drsai_agent_factory import (
+        load_llm_mode_config,
+        save_llm_mode_config,
+        ModelEntry,
+        ReasoningConfig,
+    )
+
+    try:
+        alias = str(params.get("alias", "")).strip()
+        model_id = str(params.get("model", "")).strip()
+        token_limit = int(params.get("token_limit", 128000))
+        max_tokens = int(params.get("max_tokens", 0))
+        client_type = str(params.get("client_type", "auto")).strip().lower()
+        reasoning_raw = params.get("reasoning") or {}
+        original_alias = (params.get("original_alias") or "").strip() or None
+        is_new = bool(params.get("is_new", False))
+    except (TypeError, ValueError) as exc:
+        return _err(rid, 4001, f"invalid payload: {exc}")
+
+    cfg = load_config()
+    llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+    try:
+        catalog = load_llm_mode_config(llm_config_path)
+    except Exception as exc:
+        logger.exception("model.save: load failed")
+        return _err(rid, 5001, f"failed to load model catalog: {exc}")
+
+    # ── Validation ────────────────────────────────────────────────────────
+    if not model_id:
+        return _err(rid, 4002, "model is required")
+    if client_type not in _VALID_CLIENT_TYPES:
+        return _err(rid, 4003, f"client_type must be one of: {sorted(_VALID_CLIENT_TYPES)}")
+    if token_limit < 0 or max_tokens < 0:
+        return _err(rid, 4004, "token_limit and max_tokens must be non-negative")
+
+    supported = bool(reasoning_raw.get("supported", False))
+    effort_levels_raw = reasoning_raw.get("effort_levels") or []
+    if isinstance(effort_levels_raw, str):
+        effort_levels = [s.strip() for s in effort_levels_raw.split(",") if s.strip()]
+    else:
+        effort_levels = [str(s).strip() for s in effort_levels_raw if str(s).strip()]
+    param_type = str(reasoning_raw.get("param_type", "none")).strip().lower() or "none"
+    if supported and param_type not in _VALID_PARAM_TYPES:
+        return _err(rid, 4005, f"reasoning.param_type must be one of: {sorted(_VALID_PARAM_TYPES)}")
+    if not supported:
+        # Normalise the disabled state for clean YAML output.
+        effort_levels = []
+        param_type = "none"
+
+    # When renaming, treat the new alias as "new" relative to the catalog
+    # MINUS the old alias.
+    existing_aliases = set(catalog.keys())
+    if original_alias and original_alias != alias:
+        existing_aliases.discard(original_alias)
+        is_new_for_validation = True
+    else:
+        is_new_for_validation = is_new
+
+    err = _validate_alias(alias, allow_existing=not is_new_for_validation,
+                          current_aliases=existing_aliases)
+    if err:
+        return _err(rid, 4006, err)
+
+    if not is_new and alias not in catalog and not original_alias:
+        return _err(rid, 4007, f"alias '{alias}' not found; pass is_new=true to create")
+
+    vision = bool(params.get("vision", True))
+
+    entry = ModelEntry(
+        model=model_id,
+        token_limit=token_limit,
+        max_tokens=max_tokens,
+        client_type=client_type,
+        reasoning=ReasoningConfig(
+            supported=supported,
+            effort_levels=effort_levels,
+            param_type=param_type,
+        ),
+        vision=vision,
+    )
+
+    # Drop the old alias on rename.
+    if original_alias and original_alias != alias and original_alias in catalog:
+        catalog.pop(original_alias, None)
+
+    catalog[alias] = entry
+
+    default_alias = cfg.get("defult_config_name") or alias
+    if default_alias not in catalog:
+        # If we just renamed the default away, fall back to the new alias.
+        default_alias = alias
+        cfg["defult_config_name"] = alias
+        save_global_config(cfg)
+
+    try:
+        save_llm_mode_config(catalog, default_alias)
+    except Exception as exc:
+        logger.exception("model.save: write failed")
+        return _err(rid, 5002, f"failed to write catalog: {exc}")
+
+    # ── Auto-switch the active session to the new alias ──────────────────
+    switched_to = None
+    session_id = params.get("session_id")
+    if is_new and session_id:
+        try:
+            user_id = session_module._resolve_user_id()
+            session = session_module._ensure_agent_session(session_id, user_id)
+            if session is not None:
+                session.switch_model(alias)
+                _emit("session.info", session_id, session.info())
+                switched_to = alias
+        except Exception:
+            logger.exception("model.save: auto-switch failed")
+
+    return _ok(rid, {
+        "ok": True,
+        "alias": alias,
+        "is_new": is_new or bool(original_alias and original_alias != alias),
+        "switched_to": switched_to,
+    })
+
+
+@method("model.delete")
+def _model_delete(rid, params: dict) -> dict:
+    """Delete a model alias from the catalog.
+
+    Args:
+        params: {alias: str, session_id?: str}
+
+    Returns:
+        {ok: true, fell_back_to: str|None}
+        or {ok: false, error: str}
+    """
+    from drsai.backend.run_drsai_agent_factory import (
+        load_llm_mode_config,
+        save_llm_mode_config,
+    )
+
+    alias = str(params.get("alias", "")).strip()
+    if not alias:
+        return _err(rid, 4002, "alias is required")
+
+    cfg = load_config()
+    llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+    try:
+        catalog = load_llm_mode_config(llm_config_path)
+    except Exception as exc:
+        logger.exception("model.delete: load failed")
+        return _err(rid, 5001, f"failed to load model catalog: {exc}")
+
+    if alias not in catalog:
+        return _err(rid, 4040, f"alias '{alias}' not found")
+    if len(catalog) <= 1:
+        return _err(rid, 4009, "cannot delete the last remaining model alias")
+
+    catalog.pop(alias, None)
+    default_alias = cfg.get("defult_config_name") or next(iter(catalog))
+    fell_back_to = None
+    if default_alias not in catalog:
+        # The deleted alias was the global default — fall back to first.
+        fell_back_to = next(iter(catalog))
+        cfg["defult_config_name"] = fell_back_to
+        save_global_config(cfg)
+        default_alias = fell_back_to
+
+    try:
+        save_llm_mode_config(catalog, default_alias)
+    except Exception as exc:
+        logger.exception("model.delete: write failed")
+        return _err(rid, 5002, f"failed to write catalog: {exc}")
+
+    # If the deleted alias was the active session's model, switch to fallback.
+    session_id = params.get("session_id")
+    if session_id:
+        try:
+            user_id = session_module._resolve_user_id()
+            session = session_module._ensure_agent_session(session_id, user_id)
+            if session is not None:
+                info = session.info()
+                current_alias = info.get("model")
+                if current_alias == alias:
+                    target = fell_back_to or next(iter(catalog))
+                    session.switch_model(target)
+                    _emit("session.info", session_id, session.info())
+                    fell_back_to = target
+        except Exception:
+            logger.exception("model.delete: post-delete switch failed")
+
+    return _ok(rid, {"ok": True, "fell_back_to": fell_back_to})
+
+
+@method("model.get")
+def _model_get(rid, params: dict) -> dict:
+    """Return the full ModelEntry for an alias (used to pre-fill the editor).
+
+    Args:
+        params: {alias: str}
+
+    Returns:
+        {alias, model, token_limit, max_tokens, client_type,
+         reasoning: {supported, effort_levels, param_type}}
+    """
+    from drsai.backend.run_drsai_agent_factory import load_llm_mode_config
+
+    alias = str(params.get("alias", "")).strip()
+    if not alias:
+        return _err(rid, 4002, "alias is required")
+
+    cfg = load_config()
+    llm_config_path = os.environ.get("LLM_CONFIG_FILE") or cfg.get("llm_config_file")
+    try:
+        catalog = load_llm_mode_config(llm_config_path)
+    except Exception as exc:
+        logger.exception("model.get: load failed")
+        return _err(rid, 5001, f"failed to load model catalog: {exc}")
+
+    entry = catalog.get(alias)
+    if entry is None:
+        return _err(rid, 4040, f"alias '{alias}' not found")
+
+    return _ok(rid, {
+        "alias": alias,
+        "model": entry.model,
+        "token_limit": entry.token_limit,
+        "max_tokens": entry.max_tokens,
+        "client_type": entry.client_type,
+        "reasoning": {
+            "supported": entry.reasoning.supported,
+            "effort_levels": list(entry.reasoning.effort_levels),
+            "param_type": entry.reasoning.param_type,
+        },
+    })

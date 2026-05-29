@@ -237,8 +237,17 @@ class AgentSession:
         self,
         text: str,
         on_event: Callable[[str, dict], None],
+        *,
+        images: Optional[list[dict]] = None,
     ) -> str:
         """Run one prompt turn, calling *on_event(event_type, payload)* for each event.
+
+        Args:
+            text: The user's text prompt.
+            on_event: Callback for streaming events.
+            images: Optional list of image dicts ``[{path, base64, mime_type}]``.
+                    When provided, a ``MultiModalMessage`` is constructed instead
+                    of a plain ``TextMessage`` so the model receives image data.
 
         Blocks the calling thread until the turn finishes (or is interrupted).
         Returns the final status: ``complete`` / ``interrupted`` / ``error``.
@@ -250,14 +259,36 @@ class AgentSession:
 
         return _run_coro(
             self._loop,
-            self._async_run_turn(text, on_event),
+            self._async_run_turn(text, on_event, images=images),
             timeout=None,  # Conversation duration is unbounded.
         )
+
+    @staticmethod
+    def _build_multimodal_task(text: str, images: list[dict]) -> Any:
+        """Build a ``MultiModalMessage`` from text + image dicts.
+
+        Each image dict must contain ``base64`` (raw base64 string, no
+        data-URI prefix) and ``mime_type`` (e.g. ``"image/png"``).
+        """
+        from autogen_core import Image
+        from autogen_agentchat.messages import MultiModalMessage
+
+        content: list[str | Image] = [text]
+        for img in images:
+            try:
+                data_uri = f"data:{img['mime_type']};base64,{img['base64']}"
+                image_obj = Image.from_uri(data_uri)
+                content.append(image_obj)
+            except Exception:
+                logger.exception("Failed to decode image from %s", img.get("path", "?"))
+        return MultiModalMessage(content=content, source="user")
 
     async def _async_run_turn(
         self,
         text: str,
         on_event: Callable[[str, dict], None],
+        *,
+        images: Optional[list[dict]] = None,
     ) -> str:
         from .event_translator import TurnState, finalize, translate
 
@@ -266,7 +297,48 @@ class AgentSession:
 
         try:
             on_event("message.start", {"role": "assistant"})
-            stream = self.agent.run_stream(task=text)
+
+            # ── Vision capability check ────────────────────────────────
+            # If images are attached but the current model does not support
+            # vision, warn the user and fall back to text-only.  Without this
+            # check, the Agent's _get_compatible_context would silently strip
+            # the images via remove_images(), leaving the user confused.
+            if images:
+                model_vision = True
+                try:
+                    model_client = getattr(self.agent, "_model_client", None)
+                    if model_client is not None:
+                        model_vision = bool(model_client.model_info.get("vision", True))
+                except Exception:
+                    pass  # If we can't check, assume vision is supported
+
+                if not model_vision:
+                    model_name = ""
+                    try:
+                        model_name = getattr(
+                            getattr(self.agent, "_model_client", None),
+                            "_create_args", {},
+                        ).get("model", "")
+                    except Exception:
+                        pass
+                    filenames = [img.get("path", "") for img in images]
+                    warning = (
+                        f"⚠ 当前模型 {model_name!r} 不支持图像输入 (vision=false)，"
+                        f"已忽略 {len(images)} 张图片："
+                        + "、".join(f"「{f}」" for f in filenames if f)
+                        + "。请在 llm_mode_config 中将 vision 设为 true 或切换到支持多模态的模型。"
+                    )
+                    on_event("message.delta", {"text": warning + "\n\n"})
+                    logger.warning("Images dropped: model %r does not support vision", model_name)
+                    images = None  # Fall back to text-only
+
+            # Construct the task: MultiModalMessage if images are attached,
+            # otherwise plain text string.
+            if images:
+                task = self._build_multimodal_task(text, images)
+            else:
+                task = text
+            stream = self.agent.run_stream(task=task)
             async for message in stream:
                 events = translate(message, state)
                 for ev_type, payload in events:
@@ -400,7 +472,16 @@ class AgentSession:
         state[key] = value
         # Apply certain keys directly to agent attributes
         if key == "plan_mode":
-            self.agent._injected_prefix = "Plan mode enabled" if value else ""
+            # Inject the real PLAN_MODE_SYSTEM_PROMPT (not a placeholder string).
+            # Import lazily to avoid a circular import at module load time.
+            from drsai.backend.run_drsai_agent_factory import PLAN_MODE_SYSTEM_PROMPT
+            self.agent._injected_prefix = PLAN_MODE_SYSTEM_PROMPT if value else ""
+            # Rebuild the system message so the prefix takes effect on the next turn.
+            try:
+                if hasattr(self.agent, "update_system_prompt"):
+                    self.agent.update_system_prompt()
+            except Exception:
+                logger.exception("update_system_prompt after plan_mode toggle failed")
         elif key == "only_in_workspace":
             # Keep both the agent attribute used by UI badges and the operator
             # function closure used by filesystem/shell tools in sync.
@@ -422,9 +503,19 @@ class AgentSession:
         elif key == "inject_prefix":
             if hasattr(self.agent, "_injected_prefix"):
                 self.agent._injected_prefix = value
+                if hasattr(self.agent, "update_system_prompt"):
+                    try:
+                        self.agent.update_system_prompt()
+                    except Exception:
+                        logger.exception("update_system_prompt after inject_prefix failed")
         elif key == "inject_suffix":
             if hasattr(self.agent, "_injected_suffix"):
                 self.agent._injected_suffix = value
+                if hasattr(self.agent, "update_system_prompt"):
+                    try:
+                        self.agent.update_system_prompt()
+                    except Exception:
+                        logger.exception("update_system_prompt after inject_suffix failed")
 
     # ── Shutdown ──────────────────────────────────────────────────
 

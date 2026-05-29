@@ -27,21 +27,26 @@ load_dotenv()
 # ENV
 ##########
 
-# 高能所内部助手：附加说明可从环境变量追加（多行文本）
-IHEP_AGENT_EXTRA_GUIDANCE = (os.getenv("IHEP_AGENT_EXTRA_GUIDANCE") or "").strip()
-
 RAGFLOW_URL=os.getenv('RAGFLOW_URL') or "https://ragflow.ihep.ac.cn"
 RAGFLOW_TOKEN=os.getenv('RAGFLOW_TOKEN')
 MEMORY_DATASET_ID=os.getenv('MEMORY_DATASET_ID')
 SYSTEM_SKILLS_DIR=os.getenv('SYSTEM_SKILLS_DIR')
 
-llm_mode_config = {
-    "gpt-5.5":               ("openai/gpt-5.5",                    128000),
-    "deepseek-v4-pro":       ("deepseek-ai/deepseek-v4-pro",      128000),
-    "deepseek-v4-flash":     ("deepseek-ai/deepseek-v4-flash",    128000),
-    "minimax-m2.7-highspeed":     ("minimax-m2.7-highspeed",           200000),
-    "hepai/minimax-m2.7-highspeed": ("minimax-m2.7-highspeed",           200000),
-}
+def _as_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on", "enable", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", "disable", "disabled"}:
+        return False
+    return default
+
+llm_mode_config = DEFAULT_LLM_MODE_CONFIG
 
 def create_agent(
         api_key: str|None = None, 
@@ -68,11 +73,11 @@ def create_agent(
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
     
-    def set_model_client(defult_config_name: str|None = "hepai/minimax-m2.7-highspeed") -> HepAIAnthropicChatCompletionClient| HepAIChatCompletionClient:
-        llm_model, token_limit = llm_mode_config.get(
-            defult_config_name,
-            llm_mode_config["minimax-m2.7-highspeed"],
-        )
+    def set_model_client(defult_config_name: str|None = "hepai/deepseek-v4-flash") -> HepAIAnthropicChatCompletionClient| HepAIChatCompletionClient:
+        entry = llm_mode_config.get(defult_config_name, llm_mode_config["hepai/deepseek-v4-flash"])
+        llm_model = entry.model
+        token_limit = entry.token_limit
+        max_tokens = entry.max_tokens
         if ("claude" in llm_model) or ("minimax" in llm_model):
             model_info = dict(_MODEL_INFO["claude-sonnet-4-5"])
             model_info["token_model"] = "claude-3-5-sonnet-20240620"
@@ -135,31 +140,12 @@ def create_agent(
 
     SUB_AGENTS = {}
 
-    _ihep_internal_core = """你是中国科学院高能物理研究所（高能所/IHEP）的内部办公助手，服务对象主要是所内职工与学生。
+    # SYSTEM = f"""You are a personal assistant."""
+    SYSTEM = None
 
-**所内事务（务必引导查阅权威渠道，勿编造规章流程）**
-当用户询问人事、考勤薪酬、课题经费与报销、采购资产、安全保密、网络账号与信息化、会议室访客班车、研究生培养、图书馆文献、行政办事流程等所内专项问题时：
-1. 先简要说明你无法代替官方口径，具体以职能部门与现行文件为准。
-2. 给出清晰的可行动指引：应登录哪个系统或访问哪个栏目、联系哪个职能处室（办公室）、工单或咨询电话类型（若你不知道具体分机或网址，不要捏造；说明「请在所内门户搜索关键词或询问本部门综合办」）。
-3. 常用查阅方向（按主题举例，实际入口以所内门户/OA 为准）：
-   - 规章制度与通知公告：高能所官网公开栏目 + **所内信息门户/协同办公（OA）**
-   - ARP、科研项目与经费相关：**ARP / 科研管理系统**（名称以所内为准）
-   - 报销与财务制度：**财务处**通知及 OA 指引
-   - 人事人才与考勤：**人事处 / 人才办公室**相关栏目
-   - IT、邮箱、VPN、软件：**信息化或用户服务**渠道（工单/帮助文档）
-   - 文献与文献传递：**图书馆**
-   - 本助手挂载的知识检索（若已配置）：**RAGFlow / 知识库** `https://ragflow.ihep.ac.cn` — 适合检索所内文档类材料；仍应与 OA 发布的最新版核对。
-
-回答风格：简洁、条理分明；优先列出「去哪里看 / 找谁办 / 用什么系统」，再用一两句话补充注意事项即可。"""
-    SYSTEM = _ihep_internal_core
-    if IHEP_AGENT_EXTRA_GUIDANCE:
-        SYSTEM = f"{_ihep_internal_core}\n\n**本实例补充说明（运维配置）**\n{IHEP_AGENT_EXTRA_GUIDANCE}"
-
-    defult_config_name = defult_config_name or "hepai/minimax-m2.7-highspeed"
-    _, token_limit = llm_mode_config.get(
-        defult_config_name,
-        llm_mode_config["minimax-m2.7-highspeed"],
-    )
+    defult_config_name = defult_config_name or "hepai/deepseek-v4-flash"
+    entry = llm_mode_config.get(defult_config_name)
+    token_limit = entry.token_limit if entry else 196608
     return DrSaiAssistant(
         name="Assistant",
         model_client=set_model_client(defult_config_name),
@@ -201,27 +187,30 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册信息
-            agent_name="Your Explorer",
-            author = "ihep@ihep.ac.cn",
-            permission='groups: "drsai, payg"; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
+            agent_name="My Dr.Sai",
+            author = "xiongdb@ihep.ac.cn",
+            # permission='groups: "drsai, payg"; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             # permission={
             #     "groups": "drsai, payg", 
             #     "users": [], 
             #     "owner": "admin"
             #     },
-            description = "A personal assistant for you to explore the world.",
+            description = "专属于您的AI智能体❤",
             version = "0.1.0",
-            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-a510f20c6c9d4443a582ad5b1dcc8f51/preview",
+            logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
             examples=[
                 "/help",
+                "你有哪些技能？",
+                "我应该如何将openclaw作为我的子智能体？",
+                "如何设置定时任务？"
             ],
             agent_config = llm_mode_config,
-            defult_config_name="gpt-5.5",
+            defult_config_name="hepai/deepseek-v4-flash",
             # 智能体实体
             agent_factory=create_agent, 
             # 后端服务配置
             # controller_address = "http://127.0.0.1:42501",
-            port = 42810, 
+            port = 42858, 
             no_register=False,
             drsai_dir = DATASET,
             enable_openwebui_pipeline=False, 
