@@ -853,6 +853,42 @@ def cmd_setup(ctx: SlashContext) -> str:
     )
 
 
+def cmd_image(ctx: SlashContext) -> str:
+    """Fallback handler for /image when not intercepted by TUI frontend.
+
+    The TUI (composerPane.tsx) normally intercepts /image and /img before
+    they reach slash.exec.  This handler serves as a safety net when:
+      - the user types /image with no image paths
+      - the command is invoked from a non-TUI client (CLI REPL, external RPC)
+    """
+    if ctx.args:
+        return (
+            "⚠  Could not find any image paths in your input.\n"
+            "\n"
+            "Usage: /image <path1> [path2...] [description]\n"
+            "       /img  <path1> [path2...] [description]\n"
+            "\n"
+            "Each path must have a supported image extension\n"
+            "(.png, .jpg, .jpeg, .gif, .webp, .bmp, .svg).\n"
+            "\n"
+            "Examples:\n"
+            "  /image /tmp/photo.png\n"
+            "  /image ./a.png ./b.jpg describe these\n"
+            "  /img ~/photo.png what is this?"
+        )
+    return (
+        "Attach one or more images to your prompt.\n"
+        "\n"
+        "Usage: /image <path1> [path2...] [description]\n"
+        "       /img  <path1> [path2...] [description]\n"
+        "\n"
+        "Examples:\n"
+        "  /image /tmp/photo.png\n"
+        "  /image ./a.png ./b.jpg describe these\n"
+        "  /img ~/photo.png what is this?"
+    )
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RPC method handlers
@@ -916,6 +952,9 @@ SLASH_HANDLERS: dict[str, Any] = {
     "status": cmd_status,
     "setup": cmd_setup,
     "env": cmd_setup,
+    # ── Image (fallback — normally intercepted by TUI frontend) ──────────
+    "image": cmd_image,
+    "img": cmd_image,
 }
 
 
