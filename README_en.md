@@ -57,7 +57,36 @@ git clone https://code.ihep.ac.cn/hepai/drsai drsai # or From IHEP
 
 cd your/path/to/drsai/python/packages/drsai && pip install -e . # backend and agent components
 cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # frontend UI
-````
+```
+
+#### Install with venv (No Conda Required)
+
+If conda is not installed, use Python's built-in venv:
+
+```shell
+# Create a virtual environment
+python3 -m venv drsai_env
+
+# Activate the environment
+source drsai_env/bin/activate        # Linux/macOS
+# or
+drsai_env\Scripts\activate           # Windows
+
+# Clone the repository
+git clone https://github.com/hepai-lab/drsai.git drsai # From Github
+git clone https://code.ihep.ac.cn/hepai/drsai drsai    # or From IHEP
+
+# Install OpenDrSai
+cd drsai
+cd python/packages/drsai && pip install -e .
+cd python/packages/drsai_ui && pip install -e .
+```
+
+Deactivate when done:
+
+```shell
+deactivate
+```
 
 #### Install via pip (May be outdated)
 

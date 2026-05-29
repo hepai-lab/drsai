@@ -57,6 +57,35 @@ cd python/packages/drsai && pip install -e . # for OpenDrSai backend and agent c
 cd python/packages/drsai_ui && pip install -e . # for DrSai-UI  human-computer interaction frontend
 ```
 
+#### venv 安装（无需 conda）
+
+如果未安装 conda，可使用 Python 内置的 venv 创建虚拟环境：
+
+```shell
+# 创建 venv 虚拟环境
+python3 -m venv drsai_env
+
+# 激活虚拟环境
+source drsai_env/bin/activate       # Linux/macOS
+# 或
+drsai_env\Scripts\activate          # Windows
+
+# 克隆仓库
+git clone https://github.com/hepai-lab/drsai.git drsai # From Github
+git clone https://code.ihep.ac.cn/hepai/drsai drsai    # or From IHEP
+
+# 安装 OpenDrSai
+cd drsai
+cd python/packages/drsai && pip install -e .
+cd python/packages/drsai_ui && pip install -e .
+```
+
+退出虚拟环境：
+
+```shell
+deactivate
+```
+
 #### pip 安装(版本可能落后)
 
 ```shell

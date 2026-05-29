@@ -58,6 +58,7 @@ export interface ModelEditorValues {
     effort_levels: string[]
     param_type: ParamType
   }
+  vision: boolean
   /** Original alias if this is an edit; used by the backend to rename. */
   original_alias?: string
   is_new: boolean
@@ -83,6 +84,7 @@ interface FieldDef {
     | 'reasoning_supported'
     | 'param_type'
     | 'effort_levels'
+    | 'vision'
   label: string
   kind: 'text' | 'number' | 'enum' | 'toggle'
   /** When non-null and false, the field is rendered dim and skipped on Tab. */
@@ -98,6 +100,7 @@ interface State {
   reasoning_supported: boolean
   param_type: ParamType
   effort_levels: string
+  vision: boolean
 }
 
 const FIELDS: FieldDef[] = [
@@ -106,6 +109,7 @@ const FIELDS: FieldDef[] = [
   { key: 'token_limit', label: 'token_limit', kind: 'number' },
   { key: 'max_tokens', label: 'max_tokens', kind: 'number' },
   { key: 'client_type', label: 'client_type', kind: 'enum' },
+  { key: 'vision', label: 'vision (image input)', kind: 'toggle' },
   { key: 'reasoning_supported', label: 'reasoning supported', kind: 'toggle' },
   {
     key: 'param_type',
@@ -132,6 +136,7 @@ function buildInitial(props: ModelEditorProps): State {
     reasoning_supported: init.reasoning?.supported ?? false,
     param_type: (init.reasoning?.param_type as ParamType) ?? 'none',
     effort_levels: (init.reasoning?.effort_levels || []).join(','),
+    vision: init.vision ?? true,
   }
 }
 
@@ -207,6 +212,7 @@ export function ModelEditor(props: ModelEditorProps) {
           ? state.effort_levels.split(',').map(s => s.trim()).filter(Boolean)
           : [],
       },
+      vision: state.vision,
       original_alias: props.originalAlias,
       is_new: props.isNew,
     }
@@ -251,7 +257,11 @@ export function ModelEditor(props: ModelEditorProps) {
     // Field-specific handling
     if (field.kind === 'toggle') {
       if (input === ' ' || key.leftArrow || key.rightArrow) {
-        toggleReasoning()
+        if (field.key === 'vision') {
+          setState({ ...state, vision: !state.vision })
+        } else {
+          toggleReasoning()
+        }
       }
       return
     }
@@ -291,8 +301,10 @@ export function ModelEditor(props: ModelEditorProps) {
 
           let valueNode
           if (f.kind === 'toggle') {
-            const v = state.reasoning_supported ? '[x]' : '[ ]'
-            valueNode = <Text color={enabled ? theme.text : theme.muted} inverse={focused}>{v} supported</Text>
+            const toggleState = f.key === 'vision' ? state.vision : state.reasoning_supported
+            const v = toggleState ? '[x]' : '[ ]'
+            const suffix = f.key === 'vision' ? (toggleState ? ' image input' : ' text only') : ' supported'
+            valueNode = <Text color={enabled ? theme.text : theme.muted} inverse={focused}>{v}{suffix}</Text>
           } else if (f.kind === 'enum') {
             const v = (state as any)[f.key]
             valueNode = (
