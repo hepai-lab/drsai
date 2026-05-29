@@ -164,6 +164,15 @@ function extractInlineImages(text: string): {
  * All tokens that look like file paths (contain a dot + image extension)
  * are collected as image paths; the remaining tokens become the description.
  */
+function _looksLikePath(token: string): boolean {
+  // POSIX
+  if (token.startsWith('/') || token.startsWith('~') || token.startsWith('./')) return true
+  // Windows: .\relative  D:\absolute  \\UNC
+  if (token.startsWith('.\\') || token.startsWith('\\\\')) return true
+  if (/^[A-Za-z]:[\\\/]/.test(token)) return true
+  return false
+}
+
 function parseImageCommand(text: string): { paths: string[]; description: string } | null {
   const m = text.match(/^\/(?:image|img)\s+(.+)$/s)
   if (!m) return null
@@ -174,8 +183,8 @@ function parseImageCommand(text: string): { paths: string[]; description: string
 
   for (const token of tokens) {
     const ext = extname(token).toLowerCase()
-    if (IMAGE_EXTENSIONS.has(ext) || token.startsWith('/') || token.startsWith('~') || token.startsWith('./')) {
-      // Heuristic: if it has an image extension OR starts with a path prefix,
+    if (IMAGE_EXTENSIONS.has(ext) || _looksLikePath(token)) {
+      // Heuristic: if it has an image extension OR looks like a path,
       // treat it as an image path.
       if (IMAGE_EXTENSIONS.has(ext)) {
         paths.push(token)
@@ -465,6 +474,26 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
         text: desc,
         images,
       })
+      return
+    }
+
+    // ── /image or /img without valid paths ──────────────────────────
+    // parseImageCommand() returns null when the regex matches but no image
+    // paths were found, OR when the input is just "/image" with no args.
+    // Intercept here so we show a friendly message instead of falling
+    // through to slash.exec (which would return a 4040 error).
+    if (/^\/(?:image|img)(?:\s|$)/i.test(trimmed)) {
+      showSlashOutput(
+        '⚠  Usage: /image <path1> [path2...] [description]\n' +
+        '       /img  <path1> [path2...] [description]\n\n' +
+        'Each path must have a supported image extension\n' +
+        '(.png, .jpg, .jpeg, .gif, .webp, .bmp, .svg).\n\n' +
+        'Examples:\n' +
+        '  /image /tmp/photo.png\n' +
+        '  /image ./a.png ./b.jpg describe these\n' +
+        '  /img ~/photo.png what is this?',
+        6000,
+      )
       return
     }
 
