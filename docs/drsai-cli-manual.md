@@ -1,7 +1,9 @@
 # DrSai CLI 使用手册
 
-> 版本: 对应 `run_cli.py` (1871 行) + `cli/commands.py` 命令注册表
+> 版本: 对应 Ink TUI (`ui-tui/`) + `backend/tui_gateway/` + `cli/commands.py` 命令注册表
 > 最后更新: 2026-05
+>
+> **架构提示**：从本次更新起，`drsai` / `drsai chat` 启动的是基于 React/Ink 的双进程 TUI（前端 = Node.js，后端 = Python JSON-RPC gateway）。旧的单进程 `run_cli.py` 已被保留为 `_deprecated/run_cli_legacy.py`，不再接入。下文记录的所有命令都通过 JSON-RPC 的 `slash.exec` 在 gateway 端执行；命令注册表 (`cli/commands.py`) 仍是单一真相源。
 
 ---
 
@@ -17,10 +19,12 @@
 8. [Plan Mode 与 Prompt 注入](#8-plan-mode-与-prompt-注入)
 9. [状态与信息查看](#9-状态与信息查看)
 10. [安全控制](#10-安全控制)
-11. [显示与交互控制](#11-显示与交互控制)
-12. [中断与退出](#12-中断与退出)
-13. [定时任务与通知推送](#13-定时任务与通知推送)
-14. [完整命令速查表](#14-完整命令速查表)
+11. [图像多模态输入](#11-图像多模态输入-)
+12. [显示与交互控制](#12-显示与交互控制)
+13. [中断与退出](#13-中断与退出)
+14. [定时任务与通知推送](#14-定时任务与通知推送)
+15. [完整命令速查表](#15-完整命令速查表)
+16. [TUI 行为与调优](#16-tui-行为与调优)
 
 ---
 
@@ -28,7 +32,12 @@
 
 ### 1.1 DrSai CLI 是什么？
 
-DrSai CLI 是 DrSai 智能体框架的**本地交互式终端客户端**。它直接在本地创建 `DrSaiCLIAssistant` 实例（无需远程 Worker），通过 REPL (Read-Eval-Print Loop) 提供连续多轮对话体验。
+DrSai CLI 是 DrSai 智能体框架的**本地交互式终端客户端**。它由两个进程协作组成：
+
+- **前端 (Node.js / Ink)**：`ui-tui/` 下的 React + Ink TUI，负责渲染、输入捕获、Tab 补全、覆盖层（pickers / model editor / setup screen）。
+- **后端 (Python / tui_gateway)**：`backend/tui_gateway/` 提供基于 stdin/stdout 的 JSON-RPC 服务，承载 `DrSaiCLIAssistant` 实例和所有工具。前端用 RPC（`session.*`、`prompt.*`、`slash.exec`、`model.*` 等）调用后端，后端用事件流（`message.delta`、`tool.start`、`session.info`、`approval.request` 等）反推 UI。
+
+也支持远程附加模式：`drsai chat --attach ws://host:8765/attach` 可以让本地 TUI 接到一台远程 gateway。
 
 **核心能力**：
 
@@ -90,25 +99,37 @@ DrSai CLI 的 Session 系统与**工作目录**绑定：
 事先配置好环境变量：
 
 ```env
-SYSTEM_SKILLS_DIR="/path/to/skills"
-LLM_CONFIG_FILE="/path/to/llm_config.json"
-HEPAI_API_KEY="<enter your key here>"
+SYSTEM_SKILLS_DIR="/path/to/skills" # 可以使用项目中的agent_skills/skills
+LLM_CONFIG_FILE="/path/to/llm_config.json" # 可以使用项目中的llm_mode_config.example.json
+HEPAI_API_KEY="<enter your key here>" # 任何hepai/openai/ahthropic
 ```
 
 ### 2.1 启动方式
 
 ```bash
-# 默认启动（进入 REPL）
+# 默认启动（启动 Ink TUI + 自动 spawn gateway）
 drsai
 
 # 显式 chat 子命令
 drsai chat
 
-# 带参数启动
-drsai --api-key <KEY> --model <MODEL> --user <EMAIL>
-drsai --plan-mode    # 启用 Plan Mode
-drsai --llm-config-file path/to/catalog.yaml
+# 附加到远程 gateway（替代本地 spawn）
+drsai chat --attach ws://remote-host:8765/attach
+
+# 仅启动 gateway（不弹 UI，作为远程会话被附加）
+drsai tui-gateway       # 设置 DRSAI_TUI_ENABLE_WS=1 开放 WebSocket
+
+# 旧版 SSE gateway（仅供 Electron 桌面端兼容）
+drsai gateway --port 8642
 ```
+
+**Node.js 依赖说明**：TUI 需要 Node.js ≥ 20。`drsai` 启动时按以下顺序解析：
+1. `$DRSAI_NODE`（显式指定）
+2. 系统 `node`（PATH 上）
+3. `pnpm dev` / `npm run dev`（开发模式，源文件热加载）
+4. 自动下载便携 Node 到 `~/.drsai/cache/node`（约 25 MB，仅在 wheel 内带 `dist/entry.mjs` 时启用）
+
+设置 `DRSAI_NODE_NO_DOWNLOAD=1` 可禁用自动下载。设置 `DRSAI_NODE_MIRROR=https://npmmirror.com/mirrors/node` 可换镜像。
 
 ### 2.2 CLI 参数
 
@@ -257,11 +278,80 @@ DrSai CLI 支持在会话内即时切换模型，有两种模式：
 **其他用法**：
 
 ```
-/model                # 查看当前模型（标注 session-local 或 default）
+/model                # 无参 → 弹出 ModelPicker 覆盖层
 /model info <alias>   # 查看模型详细信息（model ID、token limit、推理支持）
 ```
 
-### 5.2 模型列表
+**ModelPicker 快捷键**（在覆盖层内）：
+
+| 按键 | 行为 |
+|------|------|
+| `↑/↓` | 移动光标 |
+| `Enter` | 切换到光标行 |
+| `1-9` | 跳到第 N 项并切换 |
+| `f-z` | 跳到第 10+ 项并切换 |
+| `a` | 新增模型（打开 ModelEditor） |
+| `e` | 编辑光标行（打开 ModelEditor） |
+| `d` | 删除光标行 |
+| `Esc` | 关闭 |
+
+### 5.2 模型库管理（add / edit / rm）
+
+模型目录持久化到 `cli_config.json` 中 `llm_config_file` 指向的 YAML 文件。修改后**无需重启**，新别名立即可用。
+
+```
+/model add                      # 弹出空白表单
+/model add <alias>              # 弹出表单，alias 预填
+/model edit <alias>             # 直接编辑指定 alias
+/model edit                     # 先弹 ModelPicker，按 e 选要编辑的
+/model rm <alias>               # 删除别名
+```
+
+**ModelEditor 表单字段**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `alias` * | 文本 | 必填；不能含空格、不能以 `_` 开头 |
+| `model_id` * | 文本 | 必填；如 `openai/gpt-5.5`、`anthropic/claude-sonnet-4-6` |
+| `token_limit` | 整数 | 上下文窗口大小（输入 + 输出共享或独立，按模型而定） |
+| `max_tokens` | 整数 | 单次最大输出 token；`0` = 自动（≈ token_limit × 25%） |
+| `client_type` | 枚举 | `auto` / `openai` / `anthropic` |
+| `reasoning supported` | 复选框 | 是否启用推理；关闭时下面两行禁用 |
+| `param_type` | 枚举 | `none` / `adaptive` / `enabled` / `is_r1_model` / `reasoning_effort` / `minimax_format` / `zhipu_format` |
+| `effort_levels` | 文本 | 逗号分隔，例如 `low,medium,high`；空 = 任意强度 |
+
+**ModelEditor 快捷键**：
+
+| 按键 | 行为 |
+|------|------|
+| `Tab` / `Shift+Tab` | 切换字段焦点（自动跳过禁用项） |
+| `↑/↓` | 同上 |
+| `←/→` | 切换枚举值（`client_type` / `param_type`） |
+| `Space` | 切换复选框 / 推进枚举 |
+| 任意可见字符 | 文本字段编辑；number 字段只接受数字 |
+| `Backspace` | 删除一字符 |
+| `Enter` | 提交（前端最低校验 + 后端权威校验） |
+| `Esc` | 取消（不写盘） |
+
+**提交语义**：
+- 新增 alias：保存成功后**自动切到该模型**（session-local）。
+- 编辑 alias 且不改名：当前会话不会自动重新加载该 alias 的 client，下次 `/model <alias>` 会拿到新配置。
+- 编辑时改名（`alias` 改成了新值）：旧 alias 从目录中删除；新 alias 自动切到当前会话；如果旧 alias 是全局默认，自动改写默认指针。
+- 校验失败：错误信息红字显示在表单底部，表单不关闭，用户改完再 Enter。
+
+**后端校验规则**（所有规则在 `model.save` RPC 中强制执行）：
+- `alias`：非空、不含空格、首字符字母数字、不以 `_` 开头、不与现有 alias 冲突（编辑时排除自己）
+- `model_id`：非空
+- `client_type` ∈ `{auto, openai, anthropic}`
+- 若 `reasoning.supported = true`，`param_type` 必须在白名单内
+- `token_limit` 和 `max_tokens` 必须为非负整数
+
+**删除规则**：
+- 不能删除最后一个剩余 alias（避免目录为空）
+- 删除的若是当前会话使用的模型，自动切到第一个剩余 alias
+- 删除的若是全局默认，自动改写默认指针到第一个剩余 alias
+
+### 5.3 模型列表
 
 ```
 /models               # 列出所有可用模型，显示推理支持信息
@@ -275,19 +365,19 @@ DrSai CLI 支持在会话内即时切换模型，有两种模式：
   Alias                              Reasoning       Effort Levels
   ──────────────────────────────────────────────────────────────────────
   → minimax-m2.7-highspeed           ❌ none          -
-    claude-sonnet-4-20250514          ✅ extended      low, medium, high
-    deepseek-r1                       ✅ R1 model      unlimited
+    claude-sonnet-4-6                 ✅ extended      adaptive
+    deepseek-v4-pro                   ✅ R1 model      unlimited
   ──────────────────────────────────────────────────────────────────────
 ```
 
-### 5.3 快速模式
+### 5.4 快速模式
 
 ```
 /fast                 # 切换到最快的模型别名（自动识别 highspeed/flash/haiku）
 /fast off             # 切换回默认模型
 ```
 
-### 5.4 推理控制
+### 5.5 推理控制
 
 ```
 /reasoning            # 切换推理框显示 (on/off)
@@ -374,14 +464,15 @@ def hello():
 
 | 命令 | 说明 |
 |------|------|
-| `/init` | 在当前项目目录生成初始 `DRSAI.md` 文件 |
-| `/memory` | 显示当前加载的项目指令文件列表 |
-| `/memory reload` | 从磁盘重新加载项目指令（编辑 DRSAI.md 后使用） |
-| `/memory status` | 显示所有 system prompt 层的注入状态 |
+| `/init` | 在当前项目目录生成初始 `DRSAI.md` 文件，并显示前 15 行预览 |
+| `/memory` | 等同于 `/memory status` |
+| `/memory show` | 显示完整项目指令内容（无截断） |
+| `/memory reload` | 从磁盘重新加载项目指令并注入到当前会话（编辑 DRSAI.md 后立即生效） |
+| `/memory status` | 列出所有发现的项目指令文件（路径、scope、行数、KB） |
 
 ### 6.6 /init 命令详解
 
-`/init` 会分析项目目录结构，自动生成智能的初始 DRSAI.md：
+`/init` 调用 `init_project_instructions(cwd)` 完成：
 
 ```
 /init
@@ -389,26 +480,35 @@ def hello():
 # → 自动检测: git、pyproject.toml、Makefile、Dockerfile、package.json 等
 # → 生成: 项目名称、构建命令、编码标准、架构说明等模板
 # → 自动将 DRSAI.local.md 加入 .gitignore
+# → 在 TUI 覆盖层显示文件路径 + 前 15 行预览
 ```
 
-如果 DRSAI.md 已存在，`/init` 不会覆盖，提示用户手动编辑。
+如果 DRSAI.md 已存在，`/init` 不会覆盖，提示"Already exists" 并附加 reload 指引。
 
 ### 6.7 /memory status 输出示例
 
 ```
-  System prompt layers:
-  ───────────────────────────────────────────────────────────
-  ① Prefix (session):          0 chars
-  ② Developer msg (hardcoded): 512 chars
-  ③ AGENTS.md (global):         1024 chars
-  ④ Project instructions:       2048 chars
-     Source: .drsai/DRSAI.md (45 lines, project (myproject/.drsai))
-  ⑤ Session_ID:                 fixed
-  ⑥ Suffix (session):           0 chars
-  ───────────────────────────────────────────────────────────
+  Project instruction files:
+    [org]     /etc/drsai/DRSAI.md             (32 lines)
+    [project] /data/myproject/.drsai/DRSAI.md (45 lines, 1.8 KB)
+    [local]   /data/myproject/DRSAI.local.md  (12 lines, 0.4 KB)
+
+  Total: 2 project file(s), 57 lines, 2.2 KB
 ```
 
-### 6.8 项目指令的持久化
+### 6.8 /memory reload 详解
+
+```
+/memory reload
+# 1. load_project_instructions(cwd) 重新发现 + 拼接 + 展开 @imports
+# 2. agent.inject_system_prompt(project_instructions=content)
+# 3. 触发 session.info 刷新（让 status bar / badges 更新）
+# 4. 显示已加载文件清单 + 任何警告
+```
+
+注意：reload 后**当前会话立即生效**，下一轮提问就会带上新指令。无需 `/clear` 或重启。
+
+### 6.9 项目指令的持久化
 
 项目指令在首次加载后通过 `save_state()` 持久化到 Session 状态中。下次恢复同一 Session 时，项目指令从状态中恢复而非重新从磁盘加载，除非用户显式使用 `/memory reload`。
 
@@ -469,11 +569,13 @@ Plan Mode 让 AI 在执行复杂任务前先访谈用户，逐个确认设计决
 /pmg off              # 禁用并保存为全局默认
 ```
 
-启用后，AI 的 system prompt 会被注入一段 Plan Mode 前缀：
+启用后，AI 的 system prompt 第 ① 层会被注入 `PLAN_MODE_SYSTEM_PROMPT` 常量（定义在 `backend/run_drsai_agent_factory.py:37`）：
 
-> *"Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer. Ask the questions one at a time."*
+> *"Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer. Ask the questions one at a time. If a question can be answered by exploring the codebase, explore the codebase instead."*
 
 **启动时自动启用**：如果配置中 `plan_mode: true` 或使用了 `--plan-mode` 参数，CLI 会在启动时自动注入 Plan Mode 前缀。
+
+**运行时切换**：`/plan_mode on` 不仅会写 `agent._injected_prefix = PLAN_MODE_SYSTEM_PROMPT`，还会立刻调用 `agent.update_system_prompt()` 重建 system message，下一轮提问立即带上前缀。`off` 会清空 prefix 并重建。
 
 ### 8.2 /inject 命令
 
@@ -648,7 +750,87 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 
 ---
 
-## 11 显示与交互控制
+## 11 图像多模态输入 🆕
+
+新版 TUI 支持在 CLI 中向视觉模型（如 Claude Sonnet、GPT-4o 等）传入图像。提供两种方式，可自由组合使用。
+
+### 11.1 `/image` 命令
+
+直接发送一张或多张图像作为一轮对话：
+
+```
+# 单张图像 + 描述
+/image /tmp/photo.png 描述一下这张图片
+
+# 多张图像 + 描述
+/image /tmp/a.png ./b.jpg ~/pics/c.webp 比较这三张图
+
+# 仅图像（无描述时自动用文件名）
+/image ~/Desktop/screenshot.png
+
+# /img 是 /image 的别名
+/img ./diagram.png 解释这个流程图
+```
+
+**路径规则**：
+
+| 写法 | 解析方式 |
+|------|----------|
+| `/abs/path.png` | 绝对路径 |
+| `~/path.png` | 相对于用户主目录 |
+| `./path.png` 或 `photos/img.png` | 相对于用户工作目录（即启动 `drsai` 时所在的目录） |
+
+**限制**：
+- 单张图像 ≤ 20 MB
+- 单次最多 10 张图像
+- 支持格式：`.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` `.svg`
+
+### 11.2 `@/path` 内联引用
+
+在普通对话文本中嵌入图像路径，用 `@` 标记：
+
+```
+请分析一下 @/tmp/chart.png 中的数据趋势
+
+对比 @./before.png 和 @./after.png 的差异
+
+看看 @~/Desktop/error.jpg 这个报错截图
+```
+
+`@` 引用会在提交时被替换为 `[image: filename]` 标记，图像数据作为 `MultiModalMessage` 传给模型。两种方式可以混用：
+
+```
+/image /tmp/a.png 然后再看 @./b.jpg 的细节
+```
+
+> ⚠️ 注意：`@` 引用只匹配带图像扩展名的路径。`@/tmp/readme.txt` 不会被识别为图像。
+
+### 11.3 工作原理
+
+```
+用户输入 → TUI 解析 @/path 或 /image → 读取文件 → base64 编码
+  → JSON-RPC prompt.submit {text, images: [{base64, mime_type}]}
+  → Gateway 构造 MultiModalMessage(content=[text, Image, ...])
+  → Agent.run_stream(task=MultiModalMessage)
+  → 视觉模型接收图像 + 文本
+```
+
+**注意事项**：
+- 非视觉模型（不支持 vision）时，Agent 内部的 `_get_compatible_context` 会自动调用 `remove_images()` 去除图像，不会报错。
+- 文件读取在 TUI（Node.js）端完成，因此 **attach 模式也能正常工作**——即使 gateway 在远程机器上，本地图像仍可传入。
+
+### 11.4 错误提示
+
+| 场景 | 提示 |
+|------|------|
+| 文件不存在 | `⚠ File not found: ./photo.png (resolved: /home/user/project/photo.png)` |
+| 格式不支持 | `⚠ Unsupported image format: .txt (./readme.txt)` |
+| 文件过大 | `⚠ Image too large: 25.0 MB > 20 MB limit (./big.png)` |
+| 图像过多 | `⚠ Too many images (max 10)` |
+
+---
+
+## 12 显示与交互控制
 
 | 命令 | 说明 |
 |------|------|
@@ -672,36 +854,58 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 
 ---
 
-## 12 中断与退出
+## 13 中断与退出
 
-### 12.1 Ctrl+C 中断
+### 13.1 Ctrl+C 中断
 
-- **第一次 Ctrl+C**: 中断当前命令/LLM 调用，agent 进入 pause → resume 状态重置，可继续对话
-- **第二次 Ctrl+C**: 退出 REPL
+新版 TUI 的 Ctrl+C 行为与旧版单进程 REPL **不同**，具体取决于当前状态：
 
-中断流程：
+| 状态 | Ctrl+C 行为 | 说明 |
+|------|------------|------|
+| **streaming（LLM 流式输出中）** | 发送 `prompt.cancel` RPC，中断当前流 | TUI 前端 `useInput` 拦截 Ctrl+C，调用 `controller.cancel()` → gateway 收到 RPC → 调用 `agent.interrupt()` |
+| **空闲（等待用户输入）** | 进程收到 SIGINT → **直接退出** | 无 `useInput` 拦截，`entry.tsx` 的 `process.once('SIGINT')` 触发 `process.exit(130)` |
+
+> ⚠️ **注意**：空闲状态下按 Ctrl+C 会**立即退出进程**，不会保存对话状态。如需优雅退出，请使用 `/quit` 或 Ctrl+D。
+
+中断流程（streaming 期间）：
 ```
-Ctrl+C → agent.pause() → await 0.1s → agent.resume() → "已中断，状态已重置"
+Ctrl+C (streaming)
+  → TUI useInput 捕获 → controller.cancel(sessionId)
+  → JSON-RPC prompt.cancel {session_id}
+  → Gateway sess.interrupt()
+  → Agent 停止当前 LLM 调用，状态标记为 interrupted
+  → 用户可继续输入下一条消息
 ```
 
-### 12.2 退出命令
+**Gateway 进程免疫 SIGINT**：Python gateway 子进程启动时执行 `signal.signal(SIGINT, SIG_IGN)`，完全忽略终端的 Ctrl+C 信号，取消只能通过 RPC `prompt.cancel` 发起。
+
+### 13.2 退出命令
 
 | 命令 | 别名 | 说明 |
 |------|------|------|
-| `/quit` | `/exit`, `/q` | 保存状态并退出 |
+| `/quit` | `/exit`, `/q` | 优雅退出：通知 gateway 保存状态后退出 |
+| Ctrl+D | — | 强制退出：任何状态均有效（UI 卡死时可用） |
 
-退出流程：
+退出流程（`/quit`）：
 ```
-/quit → 停止通知轮询器 → 关闭远程 task_manager → _close_agent() → _hard_exit(0)
+/quit → TUI 捕获命令 → controller.gw.kill() → useApp().exit()
+  → entry.tsx restoreTerminal() → gateway 子进程终止
+  → inkInstance.waitUntilExit() → process.exit(0)
 ```
 
-`_hard_exit` 使用 `os._exit()` 强制退出，避免等待后台线程 join（否则用户需要再按一次 Ctrl+C）。
+退出流程（Ctrl+D）：
+```
+Ctrl+D → App useInput 捕获 → gw.kill() → exit()
+  → 与 /quit 路径相同，但跳过 gateway 状态保存
+```
+
+> 💡 **提示**：`/quit` 是推荐的退出方式，它会在退出前让 gateway 保存当前会话状态。Ctrl+D 适用于 UI 无响应时的紧急退出。
 
 ---
 
-## 13 定时任务与通知推送
+## 14 定时任务与通知推送
 
-### 13.1 远程 Worker 模式
+### 14.1 远程 Worker 模式
 
 配置了 Worker URL (`--url` 或 `cfg.url`) 时，CLI 启动远程定时任务管理：
 
@@ -720,7 +924,7 @@ drsai --url http://localhost:42858/apiv2
     构建完成，所有测试通过
 ```
 
-### 13.2 本地模式
+### 14.2 本地模式
 
 无 Worker URL 时，定时任务推送不可用，终端提示：
 
@@ -730,7 +934,7 @@ drsai --url http://localhost:42858/apiv2
 
 ---
 
-## 14 完整命令速查表
+## 15 完整命令速查表
 
 ### Session 管理
 
@@ -752,11 +956,14 @@ drsai --url http://localhost:42858/apiv2
 
 | 命令 | 别名 | 参数 | 说明 |
 |------|------|------|------|
-| `/model` | `/m` | `[name|info]` | 查看/切换模型 (session-local) |
+| `/model` | `/m` | `[name|info|add|edit|rm]` | 查看/切换模型 / 打开 ModelPicker / 管理模型库 |
+| `/model add` | | `[alias]` | 弹出表单创建新模型；保存后自动切到新别名 |
+| `/model edit` | | `[alias]` | 编辑已有模型；省略 alias 时先弹 picker |
+| `/model rm` | | `<alias>` | 删除别名；当前会话/全局默认若被删自动 fallback |
 | `/model_global` | `/mg` | `[name]` | 切换模型 (session + global) |
-| `/models` | | `[reasoning]` | 列出所有可用模型 |
+| `/models` | `/listmodels` | | 列出所有可用模型 |
 | `/fast` | | `[on|off]` | 快速切换到最快模型 |
-| `/reasoning` | | `show|hide|off|low|medium|high` | 推理控制 |
+| `/reasoning` | | `show|hide|off|low|medium|high` | 推理控制（show/hide 通过 UI action 同步前端） |
 
 ### Plan Mode 与 Prompt 注入
 
@@ -788,6 +995,14 @@ drsai --url http://localhost:42858/apiv2
 | `/workspace` | `/ws` | `on|off|status` | Workspace 路径限制（默认 on） |
 | `/dangerous` | `/dg` | `on|off|status` | 危险命令执行权限（默认 off，即拦截） |
 
+### 图像多模态输入 🆕
+
+| 命令 | 别名 | 参数 | 说明 |
+|------|------|------|------|
+| `/image` | `/img` | `<path> [path...] [描述]` | 发送一张或多张图像（可附带文字描述） |
+
+> 也可在普通对话中用 `@/path/to/image.png` 内联引用图像。
+
 ### 显示控制
 
 | 命令 | 参数 | 说明 |
@@ -800,7 +1015,60 @@ drsai --url http://localhost:42858/apiv2
 | 命令 | 别名 | 说明 |
 |------|------|------|
 | `/help` | `/h`, `/?` | 显示帮助 |
-| `/quit` | `/exit`, `/q` | 保存并退出 |
+| `/quit` | `/exit`, `/q` | 优雅退出（保存状态） |
+| Ctrl+D | — | 强制退出（任何状态均有效） |
+
+---
+
+## 16 TUI 行为与调优
+
+### 16.1 流式渲染策略
+
+为了在 Windows PowerShell（特别是 Win10 的 PS 5.1 + 旧 `conhost.exe`）下保持流畅，TUI 采用了"流式期间纯文本、完成后再 Markdown"的渲染策略：
+
+- **流式中**：[streamingAssistant.tsx](../ui-tui/src/components/streamingAssistant.tsx) 把增量文本直接渲染为单个 `<Text>`，不做 Markdown 解析。这避免了 `MarkdownRenderer` 在每次 `message.delta` 时 O(n²) 重新解析整个 buffer，并且让 Ink 的 diff 只是单节点字符串更新，旧文本不会被重排——**滚动条也不会因重绘被弹回页面顶部**。
+- **完成后**：turn 进入 `TranscriptPane` 的 `<Static>`，由 `MarkdownRenderer` 完整渲染**一次**，之后永不重绘，自然滚入终端的 scrollback 缓冲区。
+
+事件合并节流由 [createGatewayEventHandler.ts](../ui-tui/src/app/createGatewayEventHandler.ts) 完成：默认每 **80 ms** 把缓冲的文本批量 flush 到 store。可通过环境变量调节：
+
+```bash
+DRSAI_TUI_FLUSH_MS=120 drsai chat      # 慢终端调宽
+DRSAI_TUI_FLUSH_MS=32  drsai chat      # 快终端调紧（最低 16，最高 500）
+```
+
+### 16.2 PowerShell 兼容性 (run_powershell 工具)
+
+`run_powershell` 工具（在 `is_powershell=True` 时取代 `run_bash`）做了以下处理保证兼容旧版 PowerShell：
+
+- **统一 UTF-8 输出**：wrapper 脚本在执行用户命令前设置 `[Console]::OutputEncoding`、`$OutputEncoding`、`$env:PYTHONIOENCODING=utf-8`、`$env:PYTHONUTF8=1`，防止 Win10 zh-CN 默认 OEM 编码（CP936）和 Python/Node 的 UTF-8 输出冲突导致解码挂起。
+- **legacy PowerShell 用 EncodedCommand**：检测到 `powershell.exe`（PS 5.x）时改用 `-EncodedCommand <base64-UTF16LE>`，绕开 `-Command` 的内联 tokenizer，启动速度和稳定性都显著提升。`pwsh` 仍保持 `-Command` 便于排查。
+- **解码容错**：`stdout.decode('utf-8', errors='replace')`，单字节坏数据不再导致整段输出消失。
+
+详见 [operater_funs.py](../python/packages/drsai/src/drsai/modules/agents/skills_agent/managers/operater_funs.py) 的 `_build_ps_command` 和 `_ps_args`。
+
+### 16.3 前后端 RPC 映射
+
+| RPC | 触发 | 用途 |
+|------|------|------|
+| `session.list` / `session.create` / `session.resume` / `session.history` | `/list` `/new` `/resume` `/history` | 会话管理 |
+| `prompt.submit` / `prompt.cancel` | 用户提交 / Ctrl+C | 提交与中断 |
+| `slash.exec` | 任何 `/foo` 命令 | 槽位命令分发；返回 `output` 或 `ui_action` |
+| `complete.slash` / `complete.path` | TUI Tab 补全 | 自动补全后端 |
+| `commands.catalog` | 启动时一次 | 提供给前端的命令注册表（用于补全） |
+| `model.options` | `/model` 无参 | 列出可切模型（含 reasoning levels） |
+| `model.save` | `ModelEditor` 提交 | 写入 / 改名 / 改字段；新增时自动切换 |
+| `model.delete` | `/model rm` 或 picker `d` | 删除别名（带 fallback 保护） |
+| `model.get` | `/model edit <alias>` | 取完整字段预填表单 |
+| `approval.respond` / `clarify.respond` / `secret.respond` / `sudo.respond` | 交互覆盖层提交 | 工具调用授权回复 |
+| `paste.collapse` | 长粘贴 | 折叠为 `[[ Pasted #N ... → /path.txt ]]` 占位符 |
+| `memory.reload` (event) | `/memory reload` | gateway → UI 通知刷新 |
+| `session.info` (event) | 状态变化 | 更新 StatusBar / badges |
+
+### 16.4 命令注册表与 `cli_only` 标记
+
+`backend/cli/commands.py` 中的 `COMMAND_REGISTRY` 是单一真相源，TUI 通过 `commands.catalog` RPC 拉取后用于 `/help` 和 Tab 补全。
+
+从本次更新起，`cli_only=True` 标记已从 `/history` / `/save` / `/config` / `/info` / `/models` 上移除——它们的 gateway 处理器（`slash.py:cmd_history` 等）已经实现并可用，因此应该出现在 TUI 的补全列表与 `/help` 中。
 
 ---
 

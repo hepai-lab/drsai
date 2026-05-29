@@ -1,0 +1,16 @@
+export default {
+  title: "会话",
+  searchPlaceholder: "搜索会话...",
+  noResults: "未找到结果",
+  noResultsHint: "试试其他搜索词",
+  empty: "还没有会话",
+  newConversation: "新对话",
+  newChat: "新建聊天",
+  today: "今天",
+  yesterday: "昨天",
+  thisWeek: "本周",
+  earlier: "更早",
+  emptyHint: "开始聊天以创建第一条会话",
+  messages: "条消息",
+  messageSingular: "条消息",
+} as const;

@@ -10,6 +10,7 @@ import os
 import signal
 import uuid
 import asyncio
+import base64
 from typing import Union, List, Dict, Any, Optional
 from datetime import datetime
 

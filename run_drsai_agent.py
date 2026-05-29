@@ -9,6 +9,7 @@ from drsai.modules.components.model_client.anthropic import (
 from drsai.modules.agents.skills_agent import DrSaiAssistant
 from drsai.modules.managers.database import DatabaseManager
 from drsai.configs.constant import FS_DIR
+from drsai.backend.run_drsai_agent_factory import ModelEntry, ReasoningConfig, DEFAULT_LLM_MODE_CONFIG
 
 # HERE = Path(__file__).parent
 # fs_dir = Path()
@@ -47,8 +48,22 @@ def create_agent(
         thread_id: str|None = None, 
         user_id: str|None = None, 
         db_manager: DatabaseManager|None = None,
-        defult_config_name: str|None = "hepai/minimax-m2.7-highspeed",
+        defult_config_name: str|None = "hepai/deepseek-v4-flash",
+        anthropic_cache_enabled: bool | None = None,
+        anthropic_cache_ttl: str | None = None,
 ) -> DrSaiAssistant:
+    if anthropic_cache_enabled is None:
+        anthropic_cache_enabled = _as_bool(os.getenv("DRSAI_ANTHROPIC_CACHE_ENABLED"), default=True)
+    if anthropic_cache_ttl is None:
+        anthropic_cache_ttl = os.getenv("DRSAI_ANTHROPIC_CACHE_TTL") or "1h"
+    anthropic_cache_ttl = str(anthropic_cache_ttl)
+    if anthropic_cache_ttl not in {"5m", "1h"}:
+        anthropic_cache_ttl = "1h"
+    anthropic_cache_control = (
+        {"type": "ephemeral", "ttl": anthropic_cache_ttl}
+        if anthropic_cache_enabled
+        else None
+    )
     
     # Define a model client. You can use other model client that implements
     # the `ChatCompletionClient` interface.
@@ -59,15 +74,17 @@ def create_agent(
             llm_mode_config["minimax-m2.7-highspeed"],
         )
         if ("claude" in llm_model) or ("minimax" in llm_model):
-            model_info=_MODEL_INFO["claude-sonnet-4-5"]
+            model_info = dict(_MODEL_INFO["claude-sonnet-4-5"])
             model_info["token_model"] = "claude-3-5-sonnet-20240620"
+            if anthropic_cache_control is not None:
+                model_info["anthropic_cache_control"] = anthropic_cache_control
             model_client = HepAIAnthropicChatCompletionClient(
                 model=llm_model,
                 base_url="https://aiapi.ihep.ac.cn/apiv2/anthropic",
                 api_key=api_key,
                 model_info=model_info,
                 # temperature=0.5,
-                max_tokens=int(token_limit*0.25),
+                max_tokens=max_tokens if max_tokens > 0 else int(token_limit*0.25),
             )
         else:
             is_vision = True

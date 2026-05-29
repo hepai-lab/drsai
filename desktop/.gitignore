@@ -1,0 +1,23 @@
+# DrSai Desktop — gitignore
+
+# Python
+__pycache__/
+*.pyc
+
+# Node (drsai-desktop)
+drsai-desktop/node_modules/
+drsai-desktop/out/
+drsai-desktop/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

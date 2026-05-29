@@ -1,0 +1,1410 @@
+import {
+  app,
+  shell,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  Notification,
+  dialog,
+} from "electron";
+import { join } from "path";
+import { electronApp, optimizer, is } from "@electron-toolkit/utils";
+import type { AppUpdater } from "electron-updater";
+import icon from "../../resources/icon.png?asset";
+import {
+  checkInstallStatus,
+  verifyInstall,
+  runInstall,
+  getDrsaiVersion,
+  clearVersionCache,
+  runDrsaiDoctor,
+  runDrsaiUpdate,
+  checkOpenClawExists,
+  runClawMigrate,
+  runDrsaiBackup,
+  runDrsaiImport,
+  runDrsaiDump,
+  listMcpServers,
+  discoverMemoryProviders,
+  readLogs,
+  InstallProgress,
+} from "./installer";
+import {
+  getModelCatalog,
+  getModelDetail,
+  createModelConfig,
+  updateModelConfig,
+  deleteModelConfig,
+  setDefaultModelConfig,
+} from "./model-catalog";
+import {
+  isRemoteMode,
+  isRemoteOnlyMode,
+  sendMessage,
+  startGateway,
+  stopGateway,
+  isGatewayRunning,
+  testRemoteConnection,
+  stopHealthPolling,
+  restartGateway,
+  ensureSshTunnelIfNeeded,
+  setSshRemoteApiKey,
+  pauseThread,
+  resumeThread,
+  stopThread,
+} from "./drsai";
+import {
+  startSshTunnel,
+  stopSshTunnel,
+  testSshConnection,
+  isSshTunnelActive,
+  isSshTunnelHealthy,
+} from "./ssh-tunnel";
+import {
+  getClaw3dStatus,
+  setupClaw3d,
+  startDevServer,
+  stopDevServer,
+  startAdapter,
+  stopAdapter,
+  startAll as startClaw3dAll,
+  stopAll as stopClaw3d,
+  getClaw3dLogs,
+  setClaw3dPort,
+  getClaw3dPort,
+  setClaw3dWsUrl,
+  getClaw3dWsUrl,
+  Claw3dSetupProgress,
+} from "./claw3d";
+import {
+  readEnv,
+  setEnvValue,
+  getConfigValue,
+  setConfigValue,
+  getDrsaiHome,
+  getModelConfig,
+  setModelConfig,
+  getCredentialPool,
+  setCredentialPool,
+  getConnectionConfig,
+  setConnectionConfig,
+  getPlatformEnabled,
+  setPlatformEnabled,
+  getUserName,
+  setUserName,
+} from "./config";
+import { listSessions, listSessionsAsync, getSessionMessages, getSessionMessagesAsync, searchSessions, searchSessionsAsync } from "./sessions";
+import {
+  syncSessionCache,
+  listCachedSessions,
+  updateSessionTitle,
+  updateSessionTitleAsync,
+} from "./session-cache";
+
+import {
+  listProfiles,
+  createProfile,
+  deleteProfile,
+  setActiveProfile,
+} from "./profiles";
+import {
+  readMemory,
+  readMemoryAsync,
+  addMemoryEntry,
+  updateMemoryEntry,
+  removeMemoryEntry,
+  writeUserProfile,
+} from "./memory";
+import { readSoul, writeSoul, resetSoul } from "./soul";
+import { listTools, createTool, updateTool, deleteTool, type ToolEntry } from "./tools";
+import {
+  listInstalledSkills,
+  listInstalledSkillsAsync,
+  listBundledSkills,
+  listBundledSkillsAsync,
+  getSkillContent,
+  getSkillContentAsync,
+  installSkillAsync,
+  uninstallSkillAsync,
+} from "./skills";
+import {
+  listCronJobs,
+  createCronJob,
+  removeCronJob,
+  pauseCronJob,
+  resumeCronJob,
+  triggerCronJob,
+} from "./cronjobs";
+import {
+  listBoards as kanbanListBoards,
+  currentBoard as kanbanCurrentBoard,
+  switchBoard as kanbanSwitchBoard,
+  createBoard as kanbanCreateBoard,
+  removeBoard as kanbanRemoveBoard,
+  listTasks as kanbanListTasks,
+  getTask as kanbanGetTask,
+  createTask as kanbanCreateTask,
+  assignTask as kanbanAssignTask,
+  completeTask as kanbanCompleteTask,
+  blockTask as kanbanBlockTask,
+  unblockTask as kanbanUnblockTask,
+  archiveTask as kanbanArchiveTask,
+  specifyTask as kanbanSpecifyTask,
+  reclaimTask as kanbanReclaimTask,
+  commentTask as kanbanCommentTask,
+  dispatchOnce as kanbanDispatchOnce,
+  CreateTaskInput,
+} from "./kanban";
+import { getAppLocale, setAppLocale } from "./locale";
+import {
+  hardenAttachedWebContents,
+  hardenWebviewPreferences,
+  isAllowedAppNavigationUrl,
+  isAllowedExternalUrl,
+  isAllowedWebviewUrl,
+} from "./security";
+import type { AppLocale } from "../shared/i18n/types";
+import {
+  sshListInstalledSkills,
+  sshGetSkillContent,
+  sshInstallSkill,
+  sshUninstallSkill,
+  sshListBundledSkills,
+  sshReadMemory,
+  sshAddMemoryEntry,
+  sshUpdateMemoryEntry,
+  sshRemoveMemoryEntry,
+  sshWriteUserProfile,
+  sshReadSoul,
+  sshWriteSoul,
+  sshResetSoul,
+  sshReadEnv,
+  sshSetEnvValue,
+  sshGetConfigValue,
+  sshSetConfigValue,
+  sshGetDrSaiHome,
+  sshGetModelConfig,
+  sshSetModelConfig,
+  sshListSessions,
+  sshGetSessionMessages,
+  sshSearchSessions,
+  sshListProfiles,
+  sshCreateProfile,
+  sshDeleteProfile,
+  sshGatewayStatus,
+  sshStartGateway,
+  sshStopGateway,
+  sshReadRemoteApiKey,
+  sshGetDrSaiVersion,
+  sshReadLogs,
+  sshGetPlatformEnabled,
+  sshSetPlatformEnabled,
+  sshListCachedSessions,
+  sshRunDoctor,
+  sshRunUpdate,
+  sshRunDump,
+  sshDiscoverMemoryProviders,
+} from "./ssh-remote";
+
+process.on("uncaughtException", (err) => {
+  console.error("[MAIN UNCAUGHT]", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[MAIN UNHANDLED REJECTION]", reason);
+});
+
+let mainWindow: BrowserWindow | null = null;
+let currentChatAbort: (() => void) | null = null;
+
+function openExternalUrl(rawUrl: unknown): void {
+  if (!isAllowedExternalUrl(rawUrl)) {
+    console.warn("[SECURITY] Blocked unsafe external URL");
+    return;
+  }
+
+  shell.openExternal(rawUrl).catch((err) => {
+    console.error("[SECURITY] Failed to open external URL:", err);
+  });
+}
+
+function autoStartLocalGateway(): void {
+  const conn = getConnectionConfig();
+  if (conn.mode !== "local") return;
+  const status = checkInstallStatus();
+  if (status.installed && !isGatewayRunning()) {
+    startGateway();
+  }
+}
+
+function createWindow(): void {
+  const rendererHtmlPath = join(__dirname, "../renderer/index.html");
+
+  mainWindow = new BrowserWindow({
+    width: 1100,
+    height: 850,
+    minWidth: 900,
+    minHeight: 820,
+    show: false,
+    autoHideMenuBar: true,
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : undefined,
+    ...(process.platform === "darwin"
+      ? { trafficLightPosition: { x: 16, y: 16 } }
+      : {}),
+    ...(process.platform === "linux" ? { icon } : {}),
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.js"),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: true,
+    },
+  });
+
+  mainWindow.on("ready-to-show", () => {
+    mainWindow!.show();
+  });
+
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    console.error(
+      "[CRASH] Renderer process gone:",
+      details.reason,
+      details.exitCode,
+    );
+  });
+
+  mainWindow.webContents.on(
+    "console-message",
+    (_event, level, message, line, sourceId) => {
+      if (level >= 2) {
+        console.error(`[RENDERER ERROR] ${message} (${sourceId}:${line})`);
+      }
+    },
+  );
+
+  mainWindow.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription) => {
+      console.error("[LOAD FAIL]", errorCode, errorDescription);
+    },
+  );
+
+  mainWindow.webContents.setWindowOpenHandler((details) => {
+    openExternalUrl(details.url);
+    return { action: "deny" };
+  });
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (
+      isAllowedAppNavigationUrl(
+        url,
+        rendererHtmlPath,
+        is.dev ? process.env["ELECTRON_RENDERER_URL"] : undefined,
+      )
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    openExternalUrl(url);
+  });
+
+  mainWindow.webContents.on(
+    "will-attach-webview",
+    (event, webPreferences, params) => {
+      if (!isAllowedWebviewUrl(params.src)) {
+        event.preventDefault();
+        console.warn("[SECURITY] Blocked webview attachment for untrusted URL");
+        return;
+      }
+
+      hardenWebviewPreferences(webPreferences);
+    },
+  );
+
+  if (is.dev && process.env["ELECTRON_RENDERER_URL"]) {
+    mainWindow.loadURL(process.env["ELECTRON_RENDERER_URL"]);
+  } else {
+    mainWindow.loadFile(rendererHtmlPath);
+  }
+}
+
+function setupIPC(): void {
+  // Installation
+  ipcMain.handle("check-install", () => {
+    return checkInstallStatus();
+  });
+
+  ipcMain.handle("verify-install", () => verifyInstall());
+
+  ipcMain.handle("start-install", async (event) => {
+    try {
+      await runInstall((progress: InstallProgress) => {
+        event.sender.send("install-progress", progress);
+      }, mainWindow);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  // DrSai engine info
+  ipcMain.handle("get-drsai-version", async () => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshGetDrSaiVersion(conn.ssh);
+    return getDrsaiVersion();
+  });
+  ipcMain.handle("refresh-drsai-version", async () => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshGetDrSaiVersion(conn.ssh);
+    clearVersionCache();
+    return getDrsaiVersion();
+  });
+  ipcMain.handle("run-drsai-doctor", () => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshRunDoctor(conn.ssh);
+    return runDrsaiDoctor();
+  });
+  ipcMain.handle("run-drsai-update", async (event) => {
+    try {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) {
+        event.sender.send("install-progress", {
+          step: 1,
+          totalSteps: 1,
+          title: "Updating remote DrSai",
+          detail: "Running drsai update over SSH...",
+          log: "Running drsai update over SSH...\n",
+        });
+        await sshRunUpdate(conn.ssh);
+        await sshStartGateway(conn.ssh);
+        await startSshTunnel(conn.ssh);
+        const key = await sshReadRemoteApiKey(conn.ssh);
+        setSshRemoteApiKey(key);
+        return { success: true };
+      }
+      await runDrsaiUpdate((progress: InstallProgress) => {
+        event.sender.send("install-progress", progress);
+      });
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  // OpenClaw migration
+  ipcMain.handle("check-openclaw", () => checkOpenClawExists());
+  ipcMain.handle("run-claw-migrate", async (event) => {
+    try {
+      await runClawMigrate((progress: InstallProgress) => {
+        event.sender.send("install-progress", progress);
+      });
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  // Configuration (profile-aware)
+  ipcMain.handle("get-locale", () => getAppLocale());
+  ipcMain.handle("set-locale", (_event, locale: AppLocale) =>
+    setAppLocale(locale),
+  );
+
+  ipcMain.handle("get-env", (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshReadEnv(conn.ssh, profile);
+    return readEnv(profile);
+  });
+
+  ipcMain.handle(
+    "set-env",
+    async (_event, key: string, value: string, profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) {
+        await sshSetEnvValue(conn.ssh, key, value, profile);
+        return true;
+      }
+      // gateway PUT /v1/config/env evicts cached agents so the next chat
+      // turn picks up the new value via load_dotenv — no restart needed.
+      await setEnvValue(key, value, profile);
+      return true;
+    },
+  );
+
+  ipcMain.handle("get-config", (_event, key: string, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshGetConfigValue(conn.ssh, key, profile);
+    return getConfigValue(key, profile);
+  });
+
+  ipcMain.handle(
+    "set-config",
+    async (_event, key: string, value: string, profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) {
+        await sshSetConfigValue(conn.ssh, key, value, profile);
+        return true;
+      }
+      await setConfigValue(key, value, profile);
+      return true;
+    },
+  );
+
+  ipcMain.handle("get-drsai-home", (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshGetDrSaiHome(conn.ssh, profile);
+    return getDrsaiHome(profile);
+  });
+
+  ipcMain.handle("get-model-config", (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshGetModelConfig(conn.ssh, profile);
+    return getModelConfig(profile);
+  });
+
+  ipcMain.handle("get-model-catalog", async () => {
+    return getModelCatalog();
+  });
+
+  ipcMain.handle(
+    "set-model-config",
+    async (
+      _event,
+      provider: string,
+      model: string,
+      baseUrl: string,
+      profile?: string,
+    ) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) {
+        const prev = await sshGetModelConfig(conn.ssh, profile);
+        await sshSetModelConfig(conn.ssh, provider, model, baseUrl, profile);
+        if (
+          await sshGatewayStatus(conn.ssh) &&
+          (prev.provider !== provider ||
+            prev.model !== model ||
+            prev.baseUrl !== baseUrl)
+        ) {
+          await sshStopGateway(conn.ssh);
+          await sshStartGateway(conn.ssh);
+        }
+        return true;
+      }
+      const prev = getModelConfig(profile);
+      setModelConfig(provider, model, baseUrl, profile);
+
+      // Restart gateway when provider, model, or endpoint changes so it picks up new config
+      if (
+        isGatewayRunning() &&
+        (prev.provider !== provider ||
+          prev.model !== model ||
+          prev.baseUrl !== baseUrl)
+      ) {
+        restartGateway(profile);
+      }
+
+      return true;
+    },
+  );
+
+  // Connection mode (local / remote / ssh)
+  ipcMain.handle("is-remote-mode", () => isRemoteMode());
+  ipcMain.handle("is-remote-only-mode", () => isRemoteOnlyMode());
+  ipcMain.handle("get-connection-config", () => getConnectionConfig());
+  ipcMain.handle("is-ssh-tunnel-active", () => isSshTunnelActive());
+
+  ipcMain.handle(
+    "set-connection-config",
+    (_event, mode: "local" | "remote" | "ssh", remoteUrl: string, apiKey?: string) => {
+      setConnectionConfig({
+        mode,
+        remoteUrl,
+        apiKey: apiKey || "",
+        ssh: getConnectionConfig().ssh, // preserve existing ssh config
+      });
+      return true;
+    },
+  );
+
+  ipcMain.handle(
+    "set-ssh-config",
+    (
+      _event,
+      host: string,
+      port: number,
+      username: string,
+      keyPath: string,
+      remotePort: number,
+      localPort: number,
+    ) => {
+      const current = getConnectionConfig();
+      setConnectionConfig({
+        ...current,
+        mode: "ssh",
+        ssh: { host, port, username, keyPath, remotePort, localPort },
+      });
+      return true;
+    },
+  );
+
+  ipcMain.handle(
+    "test-remote-connection",
+    (_event, url: string, apiKey?: string) => testRemoteConnection(url, apiKey),
+  );
+
+  ipcMain.handle(
+    "test-ssh-connection",
+    (_event, host: string, port: number, username: string, keyPath: string, remotePort: number) =>
+      testSshConnection({ host, port, username, keyPath, remotePort, localPort: 19642 }),
+  );
+
+  ipcMain.handle("start-ssh-tunnel", async () => {
+    const conn = getConnectionConfig();
+    if (conn.mode !== "ssh") return false;
+    if (conn.ssh && !await sshGatewayStatus(conn.ssh)) {
+      await sshStartGateway(conn.ssh);
+    }
+    await startSshTunnel(conn.ssh);
+    // Cache the remote API key so chat auth works through the tunnel
+    if (conn.ssh) {
+      const key = await sshReadRemoteApiKey(conn.ssh);
+      setSshRemoteApiKey(key);
+    }
+    return true;
+  });
+
+  ipcMain.handle("stop-ssh-tunnel", () => {
+    stopSshTunnel();
+    return true;
+  });
+
+  // ── User identity ──────────────────────────────────────
+  ipcMain.handle("get-user-name", () => getUserName());
+
+  ipcMain.handle("set-user-name", (_event, name: string) => {
+    setUserName(name);
+    return getUserName();
+  });
+
+  // Chat — lazy-start gateway on first message
+  ipcMain.handle(
+    "send-message",
+    async (
+      event,
+      message: string,
+      profile?: string,
+      resumeSessionId?: string,
+      history?: Array<{ role: string; content: string }>,
+    ) => {
+      if (!isRemoteMode() && !isGatewayRunning()) {
+        startGateway(profile);
+      }
+
+      await ensureSshTunnelIfNeeded();
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) {
+        const gatewayRunning = await sshGatewayStatus(conn.ssh);
+        const tunnelHealthy = await isSshTunnelHealthy();
+        if (!gatewayRunning || !tunnelHealthy) {
+          await sshStartGateway(conn.ssh);
+          await startSshTunnel(conn.ssh);
+          const key = await sshReadRemoteApiKey(conn.ssh);
+          setSshRemoteApiKey(key);
+        }
+      }
+
+      if (currentChatAbort) {
+        currentChatAbort();
+      }
+
+      let fullResponse = "";
+      const chatStartTime = Date.now();
+      let resolveChat: (v: { response: string; sessionId?: string }) => void;
+      let rejectChat: (reason?: unknown) => void;
+      const promise = new Promise<{ response: string; sessionId?: string }>(
+        (res, rej) => {
+          resolveChat = res;
+          rejectChat = rej;
+        },
+      );
+
+      const handle = await sendMessage(
+        message,
+        {
+          onChunk: (chunk) => {
+            fullResponse += chunk;
+            event.sender.send("chat-chunk", chunk);
+          },
+          onDone: (sessionId) => {
+            currentChatAbort = null;
+            event.sender.send("chat-done", sessionId || "");
+            resolveChat({ response: fullResponse, sessionId });
+            // Desktop notification when window is not focused and response took >10s
+            if (
+              mainWindow &&
+              !mainWindow.isFocused() &&
+              Date.now() - chatStartTime > 10000
+            ) {
+              const preview = fullResponse
+                .replace(/[#*_`~\n]+/g, " ")
+                .trim()
+                .slice(0, 80);
+              new Notification({
+                title: "DrSai",
+                body: preview || "Response ready",
+              }).show();
+            }
+          },
+          onError: (error) => {
+            currentChatAbort = null;
+            event.sender.send("chat-error", error);
+            rejectChat(new Error(error));
+            // Notify on error too if window not focused
+            if (mainWindow && !mainWindow.isFocused()) {
+              new Notification({
+                title: "DrSai — Error",
+                body: error.slice(0, 100),
+              }).show();
+            }
+          },
+          onToolProgress: (tool) => {
+            event.sender.send("chat-tool-progress", tool);
+          },
+          onUsage: (usage) => {
+            event.sender.send("chat-usage", usage);
+          },
+        },
+        profile,
+        resumeSessionId,
+        history,
+      );
+
+      currentChatAbort = handle.abort;
+      return promise;
+    },
+  );
+
+  ipcMain.handle("abort-chat", () => {
+    if (currentChatAbort) {
+      currentChatAbort();
+      currentChatAbort = null;
+    }
+  });
+
+  // Thread control — gateway-side pause/resume/stop with state persistence
+  ipcMain.handle(
+    "pause-thread",
+    async (_event, threadId: string, userId?: string) =>
+      pauseThread(threadId, userId),
+  );
+  ipcMain.handle(
+    "resume-thread",
+    async (_event, threadId: string, userId?: string) =>
+      resumeThread(threadId, userId),
+  );
+  ipcMain.handle(
+    "stop-thread",
+    async (_event, threadId: string, userId?: string) =>
+      stopThread(threadId, userId),
+  );
+
+  // Gateway
+  ipcMain.handle("start-gateway", async () => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) { await sshStartGateway(conn.ssh); return true; }
+    return startGateway();
+  });
+  ipcMain.handle("stop-gateway", async () => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) { await sshStopGateway(conn.ssh); return true; }
+    stopGateway(true);
+    return true;
+  });
+  ipcMain.handle("gateway-status", () => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshGatewayStatus(conn.ssh);
+    return isGatewayRunning();
+  });
+
+  // Platform toggles (config.yaml platforms section)
+  ipcMain.handle("get-platform-enabled", (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshGetPlatformEnabled(conn.ssh, profile);
+    return getPlatformEnabled(profile);
+  });
+  ipcMain.handle(
+    "set-platform-enabled",
+    async (_event, platform: string, enabled: boolean, profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) {
+        await sshSetPlatformEnabled(conn.ssh, platform, enabled, profile);
+        return true;
+      }
+      // gateway persists the flag in cli_config.json[platforms]. drsai has
+      // no messaging-platform runtime yet, so no agent restart is required.
+      await setPlatformEnabled(platform, enabled, profile);
+      return true;
+    },
+  );
+
+  // Sessions
+  ipcMain.handle("list-sessions", async (_event, limit?: number, offset?: number) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshListSessions(conn.ssh, limit, offset);
+    return listSessionsAsync(limit, offset);
+  });
+
+  ipcMain.handle("get-session-messages", async (_event, sessionId: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshGetSessionMessages(conn.ssh, sessionId);
+    return getSessionMessagesAsync(sessionId);
+  });
+
+  // Profiles
+  ipcMain.handle("list-profiles", async () => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshListProfiles(conn.ssh);
+    return listProfiles();
+  });
+  ipcMain.handle("create-profile", (_event, name: string, clone: boolean) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshCreateProfile(conn.ssh, name, clone);
+    return createProfile(name, clone);
+  });
+  ipcMain.handle("delete-profile", (_event, name: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshDeleteProfile(conn.ssh, name);
+    return deleteProfile(name);
+  });
+  ipcMain.handle("set-active-profile", (_event, name: string) => {
+    if (getConnectionConfig().mode !== "ssh") setActiveProfile(name);
+    return true;
+  });
+
+  // Memory
+  ipcMain.handle("read-memory", async (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshReadMemory(conn.ssh, profile);
+    return readMemoryAsync(profile);
+  });
+  ipcMain.handle(
+    "add-memory-entry",
+    (_event, content: string, profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) return sshAddMemoryEntry(conn.ssh, content, profile);
+      return addMemoryEntry(content, profile);
+    },
+  );
+  ipcMain.handle(
+    "update-memory-entry",
+    (_event, index: number, content: string, profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) return sshUpdateMemoryEntry(conn.ssh, index, content, profile);
+      return updateMemoryEntry(index, content, profile);
+    },
+  );
+  ipcMain.handle(
+    "remove-memory-entry",
+    (_event, index: number, profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) return sshRemoveMemoryEntry(conn.ssh, index, profile);
+      return removeMemoryEntry(index, profile);
+    },
+  );
+  ipcMain.handle(
+    "write-user-profile",
+    (_event, content: string, profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) return sshWriteUserProfile(conn.ssh, content, profile);
+      return writeUserProfile(content, profile);
+    },
+  );
+
+  // Soul
+  ipcMain.handle("read-soul", (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshReadSoul(conn.ssh, profile);
+    return readSoul(profile);
+  });
+  ipcMain.handle("write-soul", (_event, content: string, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshWriteSoul(conn.ssh, content, profile);
+    return writeSoul(content, profile);
+  });
+  ipcMain.handle("reset-soul", (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshResetSoul(conn.ssh, profile);
+    return resetSoul(profile);
+  });
+
+  // Tools (MCP servers + local-tool descriptions in TOOLS_CONFIG.json)
+  ipcMain.handle("list-tools", async () => listTools());
+  ipcMain.handle("create-tool", async (_event, entry: ToolEntry) =>
+    createTool(entry),
+  );
+  ipcMain.handle(
+    "update-tool",
+    async (_event, index: number, entry: ToolEntry) => updateTool(index, entry),
+  );
+  ipcMain.handle("delete-tool", async (_event, index: number) =>
+    deleteTool(index),
+  );
+
+  // Skills
+  ipcMain.handle("list-installed-skills", async (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshListInstalledSkills(conn.ssh, profile);
+    return listInstalledSkillsAsync(profile);
+  });
+  ipcMain.handle("list-bundled-skills", async () => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshListBundledSkills(conn.ssh);
+    return listBundledSkillsAsync();
+  });
+  ipcMain.handle("get-skill-content", async (_event, skillPath: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshGetSkillContent(conn.ssh, skillPath);
+    return getSkillContentAsync(skillPath);
+  });
+  ipcMain.handle(
+    "install-skill",
+    async (_event, identifier: string, source?: string, _profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) return sshInstallSkill(conn.ssh, identifier);
+      const ok = await installSkillAsync(identifier, "", source);
+      return { success: ok, error: ok ? undefined : "Install failed" };
+    },
+  );
+  ipcMain.handle("uninstall-skill", async (_event, name: string, _profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshUninstallSkill(conn.ssh, name);
+    const ok = await uninstallSkillAsync(name);
+    return { success: ok, error: ok ? undefined : "Uninstall failed" };
+  });
+
+  // Session cache (fast local cache with generated titles)
+  ipcMain.handle(
+    "list-cached-sessions",
+    (_event, limit?: number, offset?: number) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) return sshListCachedSessions(conn.ssh, limit, offset);
+      return listCachedSessions(limit, offset);
+    },
+  );
+  ipcMain.handle("sync-session-cache", () => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshListCachedSessions(conn.ssh, 50);
+    return syncSessionCache();
+  });
+  ipcMain.handle(
+    "update-session-title",
+    (_event, sessionId: string, title: string) =>
+      updateSessionTitle(sessionId, title),
+  );
+  ipcMain.handle("update-session-title-async", (_event, sessionId: string, title: string) =>
+    updateSessionTitleAsync(sessionId, title),
+  );
+
+  // Session search
+  ipcMain.handle("search-sessions", async (_event, query: string, limit?: number) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshSearchSessions(conn.ssh, query, limit);
+    return searchSessionsAsync(query, limit);
+  });
+
+  // Credential Pool
+  ipcMain.handle("get-credential-pool", () => getCredentialPool());
+  ipcMain.handle(
+    "set-credential-pool",
+    (
+      _event,
+      provider: string,
+      entries: Array<{ key: string; label: string }>,
+    ) => {
+      setCredentialPool(provider, entries);
+      return true;
+    },
+  );
+
+  // Models (new unified backend API)
+  ipcMain.handle("list-models", async () => {
+    return getModelCatalog();
+  });
+  ipcMain.handle("get-model-detail", async (_event, alias: string) => {
+    return getModelDetail(alias);
+  });
+  ipcMain.handle("add-model", async (_event, body: {
+    alias: string; model: string; token_limit?: number;
+    max_tokens?: number; client_type?: string; reasoning?: Record<string, unknown>;
+  }) => {
+    return createModelConfig(body);
+  });
+  ipcMain.handle("update-model", async (_event, alias: string, body: Record<string, unknown>) => {
+    return updateModelConfig(alias, body);
+  });
+  ipcMain.handle("remove-model", async (_event, alias: string) => {
+    return deleteModelConfig(alias);
+  });
+  ipcMain.handle("set-default-model", async (_event, alias: string) => {
+    return setDefaultModelConfig(alias);
+  });
+
+  // Claw3D
+  ipcMain.handle("claw3d-status", () => getClaw3dStatus());
+
+  ipcMain.handle("claw3d-setup", async (event) => {
+    try {
+      await setupClaw3d((progress: Claw3dSetupProgress) => {
+        event.sender.send("claw3d-setup-progress", progress);
+      });
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle("claw3d-get-port", () => getClaw3dPort());
+  ipcMain.handle("claw3d-set-port", (_event, port: number) => {
+    setClaw3dPort(port);
+    return true;
+  });
+  ipcMain.handle("claw3d-get-ws-url", () => getClaw3dWsUrl());
+  ipcMain.handle("claw3d-set-ws-url", (_event, url: string) => {
+    setClaw3dWsUrl(url);
+    return true;
+  });
+
+  ipcMain.handle("claw3d-start-all", () => startClaw3dAll());
+  ipcMain.handle("claw3d-stop-all", () => {
+    stopClaw3d();
+    return true;
+  });
+  ipcMain.handle("claw3d-get-logs", () => getClaw3dLogs());
+
+  ipcMain.handle("claw3d-start-dev", () => startDevServer());
+  ipcMain.handle("claw3d-stop-dev", () => {
+    stopDevServer();
+    return true;
+  });
+  ipcMain.handle("claw3d-start-adapter", () => startAdapter());
+  ipcMain.handle("claw3d-stop-adapter", () => {
+    stopAdapter();
+    return true;
+  });
+
+  // Cron Jobs
+  ipcMain.handle(
+    "list-cron-jobs",
+    (_event, includeDisabled?: boolean, profile?: string) =>
+      listCronJobs(includeDisabled, profile),
+  );
+  ipcMain.handle(
+    "create-cron-job",
+    (
+      _event,
+      schedule: string,
+      prompt?: string,
+      name?: string,
+      deliver?: string,
+      profile?: string,
+    ) => createCronJob(schedule, prompt, name, deliver, profile),
+  );
+  ipcMain.handle("remove-cron-job", (_event, jobId: string, profile?: string) =>
+    removeCronJob(jobId, profile),
+  );
+  ipcMain.handle("pause-cron-job", (_event, jobId: string, profile?: string) =>
+    pauseCronJob(jobId, profile),
+  );
+  ipcMain.handle("resume-cron-job", (_event, jobId: string, profile?: string) =>
+    resumeCronJob(jobId, profile),
+  );
+  ipcMain.handle(
+    "trigger-cron-job",
+    (_event, jobId: string, profile?: string) => triggerCronJob(jobId, profile),
+  );
+
+  // Kanban
+  ipcMain.handle(
+    "kanban-list-boards",
+    (_event, includeArchived?: boolean, profile?: string) =>
+      kanbanListBoards(includeArchived, profile),
+  );
+  ipcMain.handle("kanban-current-board", (_event, profile?: string) =>
+    kanbanCurrentBoard(profile),
+  );
+  ipcMain.handle(
+    "kanban-switch-board",
+    (_event, slug: string, profile?: string) =>
+      kanbanSwitchBoard(slug, profile),
+  );
+  ipcMain.handle(
+    "kanban-create-board",
+    (
+      _event,
+      slug: string,
+      name?: string,
+      switchAfter?: boolean,
+      profile?: string,
+    ) => kanbanCreateBoard(slug, name, switchAfter, profile),
+  );
+  ipcMain.handle(
+    "kanban-remove-board",
+    (_event, slug: string, hardDelete?: boolean, profile?: string) =>
+      kanbanRemoveBoard(slug, hardDelete, profile),
+  );
+  ipcMain.handle(
+    "kanban-list-tasks",
+    (
+      _event,
+      filters?: {
+        status?: string;
+        assignee?: string;
+        tenant?: string;
+        includeArchived?: boolean;
+        profile?: string;
+      },
+    ) => kanbanListTasks(filters || {}),
+  );
+  ipcMain.handle(
+    "kanban-get-task",
+    (_event, taskId: string, profile?: string) =>
+      kanbanGetTask(taskId, profile),
+  );
+  ipcMain.handle(
+    "kanban-create-task",
+    (_event, input: CreateTaskInput, profile?: string) =>
+      kanbanCreateTask(input, profile),
+  );
+  ipcMain.handle("select-folder", async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const result = win
+      ? await dialog.showOpenDialog(win, { properties: ["openDirectory"] })
+      : await dialog.showOpenDialog({ properties: ["openDirectory"] });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+  ipcMain.handle(
+    "kanban-assign-task",
+    (_event, taskId: string, assignee: string | null, profile?: string) =>
+      kanbanAssignTask(taskId, assignee, profile),
+  );
+  ipcMain.handle(
+    "kanban-complete-task",
+    (_event, taskId: string, result?: string, profile?: string) =>
+      kanbanCompleteTask(taskId, result, profile),
+  );
+  ipcMain.handle(
+    "kanban-block-task",
+    (_event, taskId: string, reason?: string, profile?: string) =>
+      kanbanBlockTask(taskId, reason, profile),
+  );
+  ipcMain.handle(
+    "kanban-unblock-task",
+    (_event, taskId: string, profile?: string) =>
+      kanbanUnblockTask(taskId, profile),
+  );
+  ipcMain.handle(
+    "kanban-archive-task",
+    (_event, taskId: string, profile?: string) =>
+      kanbanArchiveTask(taskId, profile),
+  );
+  ipcMain.handle(
+    "kanban-specify-task",
+    (_event, taskId: string, profile?: string) =>
+      kanbanSpecifyTask(taskId, profile),
+  );
+  ipcMain.handle(
+    "kanban-reclaim-task",
+    (_event, taskId: string, reason?: string, profile?: string) =>
+      kanbanReclaimTask(taskId, reason, profile),
+  );
+  ipcMain.handle(
+    "kanban-comment-task",
+    (_event, taskId: string, body: string, profile?: string) =>
+      kanbanCommentTask(taskId, body, profile),
+  );
+  ipcMain.handle(
+    "kanban-dispatch-once",
+    (_event, dryRun?: boolean, profile?: string) =>
+      kanbanDispatchOnce(dryRun, profile),
+  );
+
+  // Shell
+  ipcMain.handle("open-external", (_event, url: string) => {
+    openExternalUrl(url);
+  });
+
+  // Backup / Import
+  ipcMain.handle("run-drsai-backup", (_event, profile?: string) =>
+    runDrsaiBackup(profile),
+  );
+  ipcMain.handle(
+    "run-drsai-import",
+    (_event, archivePath: string, profile?: string) =>
+      runDrsaiImport(archivePath, profile),
+  );
+
+  // Debug dump
+  ipcMain.handle("run-drsai-dump", () => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshRunDump(conn.ssh);
+    return runDrsaiDump();
+  });
+
+  // MCP servers
+  ipcMain.handle("list-mcp-servers", (_event, profile?: string) =>
+    listMcpServers(profile),
+  );
+
+  // Memory providers
+  ipcMain.handle("discover-memory-providers", (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshDiscoverMemoryProviders(conn.ssh, profile);
+    return discoverMemoryProviders(profile);
+  });
+
+  // Log viewer
+  ipcMain.handle("read-logs", (_event, logFile?: string, lines?: number) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshReadLogs(conn.ssh, logFile, lines);
+    return readLogs(logFile, lines);
+  });
+}
+
+function buildMenu(): void {
+  const isMac = process.platform === "darwin";
+
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: "about" as const },
+              { type: "separator" as const },
+              { role: "services" as const },
+              { type: "separator" as const },
+              { role: "hide" as const },
+              { role: "hideOthers" as const },
+              { role: "unhide" as const },
+              { type: "separator" as const },
+              { role: "quit" as const },
+            ],
+          },
+        ]
+      : []),
+    {
+      label: "Chat",
+      submenu: [
+        {
+          label: "New Chat",
+          accelerator: "CmdOrCtrl+N",
+          click: (): void => {
+            mainWindow?.webContents.send("menu-new-chat");
+          },
+        },
+        { type: "separator" },
+        {
+          label: "Search Sessions",
+          accelerator: "CmdOrCtrl+K",
+          click: (): void => {
+            mainWindow?.webContents.send("menu-search-sessions");
+          },
+        },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+        ...(is.dev
+          ? [
+              { type: "separator" as const },
+              { role: "reload" as const },
+              { role: "toggleDevTools" as const },
+            ]
+          : []),
+      ],
+    },
+    {
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "zoom" },
+        ...(isMac
+          ? [{ type: "separator" as const }, { role: "front" as const }]
+          : [{ role: "close" as const }]),
+      ],
+    },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "DrSai on GitHub",
+          click: (): void => {
+            openExternalUrl("https://github.com/drsai/drsai-agent/");
+          },
+        },
+        {
+          label: "Report an Issue",
+          click: (): void => {
+            openExternalUrl("https://github.com/drsai/drsai-desktop/issues");
+          },
+        },
+      ],
+    },
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+
+function setupUpdater(): void {
+  // IPC handlers must always be registered to avoid invoke errors
+  ipcMain.handle("get-app-version", () => app.getVersion());
+
+  if (!app.isPackaged) {
+    // Skip auto-update in dev mode
+    ipcMain.handle("check-for-updates", async () => null);
+    ipcMain.handle("download-update", () => true);
+    ipcMain.handle("install-update", () => {});
+    return;
+  }
+
+  // Dynamic import to avoid electron-updater issues in dev mode
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { autoUpdater } = require("electron-updater") as {
+    autoUpdater: AppUpdater;
+  };
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("update-available", (info) => {
+    mainWindow?.webContents.send("update-available", {
+      version: info.version,
+      releaseNotes: info.releaseNotes,
+    });
+  });
+
+  autoUpdater.on("download-progress", (progress) => {
+    mainWindow?.webContents.send("update-download-progress", {
+      percent: Math.round(progress.percent),
+    });
+  });
+
+  autoUpdater.on("update-downloaded", () => {
+    mainWindow?.webContents.send("update-downloaded");
+  });
+
+  autoUpdater.on("error", (err) => {
+    mainWindow?.webContents.send("update-error", err.message);
+  });
+
+  ipcMain.handle("check-for-updates", async () => {
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      return result?.updateInfo?.version || null;
+    } catch {
+      return null;
+    }
+  });
+
+  ipcMain.handle("download-update", async () => {
+    try {
+      await autoUpdater.downloadUpdate();
+      return true;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      mainWindow?.webContents.send("update-error", message);
+      return false;
+    }
+  });
+
+  ipcMain.handle("install-update", () => {
+    autoUpdater.quitAndInstall(false, true);
+  });
+
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch(() => {});
+  }, 5000);
+}
+
+app.whenReady().then(() => {
+  app.name = "DrSai";
+  electronApp.setAppUserModelId("com.drsai.drsai-desktop");
+
+  app.on("browser-window-created", (_, window) => {
+    optimizer.watchWindowShortcuts(window);
+  });
+
+  app.on("web-contents-created", (_event, contents) => {
+    if (contents.getType() === "webview") {
+      hardenAttachedWebContents(contents);
+    }
+  });
+
+  buildMenu();
+  setupIPC();
+  createWindow();
+  autoStartLocalGateway();
+  setupUpdater();
+
+  // Auto-start SSH tunnel if configured
+  const conn = getConnectionConfig();
+  if (conn.mode === "ssh" && conn.ssh.host) {
+    (async () => {
+      if (!await sshGatewayStatus(conn.ssh)) {
+        await sshStartGateway(conn.ssh);
+      }
+      await startSshTunnel(conn.ssh);
+      const key = await sshReadRemoteApiKey(conn.ssh);
+      setSshRemoteApiKey(key);
+    })().catch((err) => {
+      console.error("[SSH TUNNEL] Failed to start on launch:", err);
+    });
+  }
+
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    stopGateway();
+    stopSshTunnel();
+    stopClaw3d();
+    app.quit();
+  }
+});
+
+app.on("before-quit", () => {
+  stopHealthPolling();
+  if (currentChatAbort) {
+    currentChatAbort();
+    currentChatAbort = null;
+  }
+  stopGateway();
+  stopSshTunnel();
+  stopClaw3d();
+});
