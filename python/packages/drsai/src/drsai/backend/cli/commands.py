@@ -295,6 +295,16 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
 
 
+    # ── Multimedia ──────────────────────────────────────────────────────
+    CommandDef(
+        "image",
+        "Attach one or more images to the prompt (CLI TUI): /image <path1> [path2...] [description]",
+        "Multimedia",
+        aliases=("img",),
+        args_hint="<path> [path2 ...] [description]",
+        handler="special",  # handled in composerPane, not by slash.exec RPC
+    ),
+
     # ── Meta ─────────────────────────────────────────────────────────────────
     CommandDef(
         "help",
@@ -335,7 +345,7 @@ def resolve_command(name: str) -> Optional[CommandDef]:
 
 def commands_by_category() -> dict[str, list[CommandDef]]:
     """Return commands grouped by category, in fixed category order."""
-    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Subagent", "Info"]
+    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Subagent", "Multimedia", "Info"]
     groups: dict[str, list[CommandDef]] = {cat: [] for cat in order}
     for cmd in COMMAND_REGISTRY:
         if cmd.category in groups:

@@ -19,11 +19,22 @@ import type { GatewayClient } from '../gatewayClient.js'
 import { $isStreaming, $current, appendTurn, setCurrent } from './turnStore.js'
 import { newAssistantTurn } from './types.js'
 
+export interface ImageAttachment {
+  /** Original file path (for display / debugging). */
+  path: string
+  /** Base64-encoded image data (no data-URI prefix). */
+  base64: string
+  /** MIME type, e.g. "image/png". */
+  mime_type: string
+}
+
 export interface SubmitOptions {
   sessionId: string
   text: string
   /** Optional compact text shown in transcript when submitted text is expanded from long-paste tokens. */
   displayText?: string
+  /** Optional image attachments to send as a MultiModalMessage. */
+  images?: ImageAttachment[]
 }
 
 export class TurnController {
@@ -47,10 +58,14 @@ export class TurnController {
     // of the turn is signalled by a `message.complete` (or `error`) event,
     // which the GatewayEventHandler routes to `controller.finalize()`.
     try {
-      await this.gw.request('prompt.submit', {
+      const rpcParams: Record<string, unknown> = {
         session_id: opts.sessionId,
         text: trimmed,
-      })
+      }
+      if (opts.images && opts.images.length > 0) {
+        rpcParams.images = opts.images
+      }
+      await this.gw.request('prompt.submit', rpcParams)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       const cur = $current.get()

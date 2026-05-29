@@ -996,6 +996,7 @@ def _model_options(rid, params: dict) -> dict:
                 "alias": alias,
                 "model_name": model_name,
                 "reasoning": reasoning_levels,
+                "vision": getattr(entry, "vision", True),
             })
 
         return _ok(rid, {
@@ -1236,6 +1237,8 @@ def _model_save(rid, params: dict) -> dict:
     if not is_new and alias not in catalog and not original_alias:
         return _err(rid, 4007, f"alias '{alias}' not found; pass is_new=true to create")
 
+    vision = bool(params.get("vision", True))
+
     entry = ModelEntry(
         model=model_id,
         token_limit=token_limit,
@@ -1246,6 +1249,7 @@ def _model_save(rid, params: dict) -> dict:
             effort_levels=effort_levels,
             param_type=param_type,
         ),
+        vision=vision,
     )
 
     # Drop the old alias on rename.
