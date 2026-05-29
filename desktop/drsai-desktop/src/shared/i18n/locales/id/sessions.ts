@@ -1,0 +1,16 @@
+export default {
+  title: "Sesi",
+  searchPlaceholder: "Cari percakapan...",
+  noResults: "Tidak ada hasil",
+  noResultsHint: "Coba kata pencarian lain",
+  empty: "Belum ada sesi",
+  newConversation: "Percakapan baru",
+  newChat: "Chat Baru",
+  today: "Hari Ini",
+  yesterday: "Kemarin",
+  thisWeek: "Minggu Ini",
+  earlier: "Sebelumnya",
+  emptyHint: "Mulai chat untuk membuat sesi pertama Anda",
+  messages: "pesan",
+  messageSingular: "pesan",
+} as const;

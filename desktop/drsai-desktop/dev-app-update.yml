@@ -1,0 +1,4 @@
+provider: github
+owner: fathah
+repo: hermes-desktop
+updaterCacheDirName: hermes-desktop-updater

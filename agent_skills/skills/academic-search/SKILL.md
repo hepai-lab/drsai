@@ -1,7 +1,7 @@
 ---
 name: academic-search
 description: |
-  学术论文搜索、引用分析与元数据提取专用 Skill。
+  学术论文搜索、引用分析、开放获取 PDF 判定与结构化元数据提取专用 Skill。Use when the user asks to search/find papers, do literature review/survey/systematic review/PRISMA work, get citation counts, export BibTeX/RIS-style references, find papers by author, inspect PDF/open-access availability, or work with arXiv, Semantic Scholar, OpenAlex, Crossref, Unpaywall, PubMed, Google Scholar, ACM DL, IEEE Xplore, Papers with Code, CNKI, ScienceDirect, Wiley, Springer, ACS, MeSH, JEL, MSC, or ACM CCS.
 
   【自动触发条件——出现以下任一信号时立即加载本 Skill，无需用户显式说明】
 
@@ -33,9 +33,9 @@ description: |
   - paperswithcode.com
   - cnki.net / kns.cnki.net
 
-  覆盖平台：arXiv、Semantic Scholar、Google Scholar、ACM DL、IEEE Xplore、PubMed、Papers with Code、CNKI（中国知网）
+  覆盖平台：arXiv、Semantic Scholar、OpenAlex、Crossref、Unpaywall、Google Scholar、ACM DL、IEEE Xplore、PubMed、Papers with Code、CNKI（中国知网）、ScienceDirect、Wiley、Springer、ACS
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
 ---
 
 # academic-search Skill
@@ -65,6 +65,8 @@ arXiv、Semantic Scholar、PubMed、Papers with Code 等 API 平台无需 Chrome
 **① 明确检索目标，定义成功标准**：执行前先明确什么算完成了。
 
 - 关键词搜索？精确论文？某作者的全部论文？某 venue 的论文列表？
+- 学科是什么？是否需要使用 MeSH、JEL、MSC、ACM CCS 等受控词表？
+- 文献类型是什么：期刊论文、会议论文、预印本、系统综述、临床试验、工作论文、专著/章节？
 - 需要什么字段：仅标题和引用数 / 完整元数据 / PDF / BibTeX / 代码链接？
 - 年份范围？领域限定？返回几篇？
 - **成功标准**：用户要的是摘要表（第一遍）还是完整元数据（第二遍）？数量够了吗？字段都有了吗？这是后续所有决策的锚点。
@@ -100,6 +102,9 @@ arXiv、Semantic Scholar、PubMed、Papers with Code 等 API 平台无需 Chrome
 | 引用数、引用/被引关系 | **Semantic Scholar** | REST API | 免费 Key 可提升速率 |
 | 作者主页、全部论文 | **Semantic Scholar** | REST API | /author/{id}/papers |
 | 生物医学、生命科学 | **PubMed** | NCBI E-utilities | 完全开放 |
+| 跨学科 DOI / 元数据核对 | **Crossref** | REST API | DOI、期刊、出版商、ISSN、参考文献基础信息 |
+| 跨学科作者/机构/概念/引用 | **OpenAlex** | REST API | 适合作为 Semantic Scholar 的跨学科补充 |
+| 开放获取状态 / OA PDF | **Unpaywall** | REST API | 判断 gold/green/hybrid/closed OA 与合法开放全文 |
 | ML 论文 + 代码仓库 | **Papers with Code** | REST API | 无需鉴权 |
 | ACM 顶会论文 (SIGKDD/WWW 等) | **ACM DL** | WebFetch + Jina | BibTeX 导出端点可直接访问 |
 | IEEE 期刊/会议论文 | **IEEE Xplore** | WebFetch / Jina | 有机构 Key 时用官方 API |
@@ -116,15 +121,31 @@ arXiv、Semantic Scholar、PubMed、Papers with Code 等 API 平台无需 Chrome
 
 详细 API 调用模板见 `references/api-cookbook.md`。
 
+## 学科路由
+
+先按用户问题判断学科，再读取对应 `references/disciplines/*.md`。如果用户问题跨学科，优先读取最核心学科的 profile，再用 OpenAlex / Crossref / Unpaywall 做跨学科补全。
+
+| 学科 | 读取文件 | 首选方向 |
+|------|----------|----------|
+| 计算机 / AI | `references/disciplines/computer-science.md` | arXiv、Semantic Scholar、ACM DL、IEEE、DBLP、Papers with Code |
+| 医学 / 生命科学 | `references/disciplines/biomedicine.md` | PubMed、PMC、Europe PMC、ClinicalTrials、bioRxiv、medRxiv |
+| 物理 / 数学 | `references/disciplines/physics-math.md` | arXiv categories、NASA ADS、INSPIRE HEP、MSC |
+| 化学 / 材料 | `references/disciplines/chemistry-materials.md` | Crossref、OpenAlex、ChemRxiv、ACS、RSC、Springer、Wiley |
+| 经济 / 社科 | `references/disciplines/economics-social-science.md` | RePEc、NBER、SSRN、OSF、PsyArXiv、JEL |
+| 人文 / 法律 | `references/disciplines/humanities-law.md` | Google Scholar、图书馆目录、JSTOR/Project MUSE/HeinOnline 访问状态 |
+
+学科 profile 决定 query expansion、排序标准、输出字段和全文访问边界。不要把 CCF 或 CS 顶会规则套到非 CS 学科。
+
 ## 核心能力
 
 ### 关键词搜索
 
-1. 根据领域选平台：CS/ML → arXiv + Semantic Scholar；生医 → PubMed；跨领域 → Semantic Scholar
+1. 先按"学科路由"读取 discipline profile：CS/ML → arXiv + Semantic Scholar；生医 → PubMed/Europe PMC；跨领域 → OpenAlex + Crossref + Semantic Scholar
 2. **扩展 query**：用户自然语言输入往往只是一个切入点，需要主动展开为 2-3 个互补 query 覆盖不同命名习惯：
    - 同义词替换：`agent` → `agentic` / `multi-agent` / `autonomous`
    - 子概念拆分：`time series agent` → `time series LLM agent` + `time series agentic reasoning` + `time series automated analysis`
    - 缩写与全称并用：`TS` / `time series`，`LLM` / `large language model`
+   - 学科受控词表：医学用 MeSH，经济用 JEL，数学用 MSC，计算机用 ACM CCS，化学可补 CAS/化合物同义词
    - 不同 query 结果合并去重，覆盖率比单 query 提升 30-50%
 3. 构造查询：arXiv 用 `search_query` 字段前缀语法；S2 用 `query` 参数；PubMed 用 `term` 布尔表达式
 4. **计划多次 S2 调用时优先用 batch API**（`/paper/batch`）而非多次 search，节省速率配额
@@ -141,7 +162,7 @@ arXiv、Semantic Scholar、PubMed、Papers with Code 等 API 平台无需 Chrome
 | Attention Is All You Need | 2017 | NeurIPS [CCF-A] | 120,000+ | ✓ arXiv |
 | BERT: Pre-training... | 2019 | NAACL [CCF-B] | 80,000+ | ✓ arXiv |
 
-Venue 等级标注规则：CS 会议参考 `references/venue-rankings.md`（CCF 分级）；期刊显示 JCR 分区（若可从 S2 `venue` 字段获取）。
+Venue 等级标注规则：CS 会议参考 `references/venue-rankings.md`（CCF 分级）；非 CS 学科先读取 `references/disciplines/*.md` 和 `references/rankings/*.md`，按该学科的证据等级、文献类型或期刊/来源规则排序。期刊显示 JCR 分区（若可从平台字段获取）时必须标明来源。
 
 ### 结果筛选
 
@@ -152,6 +173,7 @@ Venue 等级标注规则：CS 会议参考 `references/venue-rankings.md`（CCF 
 | 引用数阈值 | S2 `citationCount` | 经典论文通常引用数高；新兴方向可适当放低阈值 |
 | 发表年份 | 所有平台 | 综述类需要覆盖历史；最新进展限定近 2-3 年 |
 | Venue 等级 | S2 `venue` + `references/venue-rankings.md` | CS 会议参考 CCF 分级；优先 CCF-A/B |
+| 学科证据等级 | discipline profile + ranking reference | 医学、社科、人文等不要套用 CCF；按学科规则排序 |
 | 开放 PDF | S2 `externalIds.ArXiv` 存在即可得 | **只要有 ArXiv ID 就标 ✓**，不依赖 openAccessPdf（该字段经常为 null） |
 | 代码可用性 | Papers with Code API | ML 论文用 `paperswithcode.com/api/v1/papers/?arxiv_id={id}` 自动补全代码列 |
 
@@ -159,7 +181,7 @@ Venue 等级标注规则：CS 会议参考 `references/venue-rankings.md`（CCF 
 
 1. **时效性（最高权重）**：近 6 个月内发表的论文标注 `[新]` 并置顶展示，不因引用数低而降权——前沿方向的新论文引用数天然偏低，但代表最新进展
 2. **引用数（次要权重）**：同一时间段内按引用数降序，高引用代表社区认可度
-3. **CCF 等级（参考项）**：顶会发表是质量信号，但不作为首要排序维度——高质量工作越来越多以 arXiv 预印本形式先行发布，CCF 等级仅作为同引用数论文的决胜项，并在表格中标注供用户参考
+3. **学科评价规则（参考项）**：CS 用 CCF/顶会；医学用证据等级和研究类型；社科用期刊/工作论文体系和方法类型；人文允许专著、章节和档案来源优先于引用数。
 
 **实操分组示例**：
 - 第一组：近 6 个月论文，按引用数降序（含 `[新]` 标注）
@@ -172,7 +194,7 @@ Venue 等级标注规则：CS 会议参考 `references/venue-rankings.md`（CCF 
 
 ### 精确论文查找
 
-已知 DOI 或 arXiv ID 时，直接用 Semantic Scholar 精确查询：
+已知 DOI 或 arXiv ID 时，直接用 Semantic Scholar 确查询：
 ```bash
 # DOI 查询
 curl -s "https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}?fields=title,authors,year,abstract,citationCount,openAccessPdf"
@@ -189,17 +211,61 @@ curl -s "https://api.semanticscholar.org/graph/v1/paper/ARXIV:{arxiv_id}?fields=
 - **多篇**：Markdown 列表表格（标题、作者、年份、Venue、引用数、PDF 链接）
 - **批量导出**：JSON 数组
 
-### PDF 获取
+### PDF / 全文获取
 
-按以下优先级尝试：
+只获取合法可公开访问的全文。按以下优先级尝试，**每步失败后才进入下一步**，并在结果中记录 `full_text_status`：
 
-1. **arXiv PDF 直链**：`externalIds.ArXiv` 存在时，**直接构造** `https://arxiv.org/pdf/{arxiv_id}`，不检查 openAccessPdf（S2 该字段经常为 null，但 arXiv PDF 实际可得）
-2. **Semantic Scholar openAccessPdf**：从 API 响应的 `openAccessPdf.url` 字段获取（作为补充，非首选）
-3. **Unpaywall**：`https://api.unpaywall.org/v2/{doi}?email=your@email.com`，返回 Open Access PDF 链接
-4. **平台页面**：通过 WebFetch 或 CDP 访问论文页，提取 PDF 下载链接
-5. **用户决定**：如以上均无法获取免费 PDF，告知用户需要机构访问权限
+1. **arXiv PDF 直链**：`externalIds.ArXiv` 存在时，直接构造 `https://arxiv.org/pdf/{arxiv_id}`（S2 的 `openAccessPdf` 字段经常为 null，但 arXiv PDF 实际可得，不依赖该字段）
 
-不要尝试访问任何需要绕过付费墙的第三方服务。
+2. **Semantic Scholar openAccessPdf**：读取 API 响应 `openAccessPdf.url`，可作 arXiv 之外的 OA 补充
+
+3. **OpenAlex OA 检查**（有 DOI 时必须执行，不可跳过）：
+   ```bash
+   curl -s "https://api.openalex.org/works?filter=doi:{doi}&select=id,open_access,best_oa_location" \
+     -H "User-Agent: academic-search-skill/1.x (mailto:your@email.com)"
+   ```
+   响应中 `best_oa_location.pdf_url` 非 null 时直接用；`open_access.is_oa=false` 时记录并进入下一步
+
+4. **Unpaywall**（有 DOI 时必须执行）：
+   ```bash
+   curl -s "https://api.unpaywall.org/v2/{doi}?email=your@email.com"
+   ```
+   返回 `best_oa_location.url_for_pdf` 字段；`is_oa=false` 时说明出版商无授权 OA 版本
+
+5. **领域专用预印本库**（根据论文领域判断）：
+   - 地球科学 / 地质学 / 海洋 / 大气：EarthArXiv `https://eartharxiv.org/repository/search/?q={title_keywords}`
+   - 生物医学：Europe PMC `https://europepmc.org/search?query=DOI:{doi}`
+   - 物理 / 天文：INSPIRE-HEP `https://inspirehep.net/search?p=doi:{doi}`
+   - 心理 / 社科：PsyArXiv / SocArXiv
+
+6. **作者版预印本搜索**（前 5 步全失败时）：
+   WebSearch 查 `"{first_author_last_name}" "{paper_title_keywords}" filetype:pdf` 或 `site:researchgate.net`，寻找作者自存档版本
+
+7. **告知用户**：如以上均无法获取，明确说明：
+   - 该论文无公开 OA 版本（引用步骤 3/4 的检查结果作为依据）
+   - 建议通过机构图书馆、作者邮件索取、或 ILL（馆际互借）获取
+
+**Springer HTML 全文的特殊处理**：若 PDF 路由返回 HTML 而非 PDF 二进制（Content-Type 检查），说明该论文为"HTML 全文"形式（常见于 2024+ online-first 文章）。此时：
+- 记录为"HTML 全文可读，无独立 PDF"，不算获取失败
+- 返回文章 HTML 页面 URL 供用户在浏览器中阅读
+
+**Cloudflare/403 拦截处理**：Wiley、AGU/Wiley 等出版商对自动请求有强 bot 防护，CDP 浏览器模式也可能被 Cloudflare 拦截。遇到此情况：
+- 不要反复重试（会触发更严格封锁）
+- 直接跳到步骤 3（OpenAlex）和步骤 4（Unpaywall）检查是否有合法 OA 版本
+- 步骤 7 告知用户原因
+
+`full_text_status` 枚举：
+
+| 状态 | 含义 |
+|------|------|
+| `open_pdf` | 找到可公开访问 PDF |
+| `needs_institution` | 论文页可访问，但全文需要机构权限 |
+| `no_open_pdf` | 没有发现合法开放全文 |
+| `anti_bot_blocked` | 被 Cloudflare、验证码或反爬限制拦截 |
+| `html_not_pdf` | PDF 路由返回 HTML 页面而不是 PDF |
+| `unknown` | 当前证据不足，无法可靠判断 |
+
+不要尝试访问任何需要绕过付费墙的第三方服务。遇到 Elsevier、Wiley、Springer、ACS、Taylor & Francis、JSTOR 等商业出版平台时，先判定开放获取状态；若需要机构访问，停止自动下载并报告 `needs_institution`。
 
 ### BibTeX 导出
 
@@ -296,8 +362,9 @@ curl -s "http://127.0.0.1:${CDP_PROXY_PORT:-3456}/close?target=$TARGET"
 
 | 核实目标 | 一手来源 |
 |---------|---------|
-| 论文元数据（标题、作者、DOI）| 发表平台（ACM DL / IEEE / arXiv）的官方页面 |
+| 论文元数据（标题、作者、DOI）| 发表平台（ACM DL / IEEE / arXiv）官方页面、Crossref、OpenAlex |
 | 引用数 | Google Scholar（最全）> Semantic Scholar |
+| 开放获取状态 | Unpaywall > 出版商页面 > 仓储页面 |
 | 代码实现 | Papers with Code / 论文官方 GitHub |
 | 会议/期刊信息 | 主办方官网 |
 
@@ -307,7 +374,7 @@ curl -s "http://127.0.0.1:${CDP_PROXY_PORT:-3456}/close?target=$TARGET"
 
 操作中积累的特定网站经验，按域名存储在 `references/site-patterns/` 下。
 
-已预置经验的平台：arXiv、Semantic Scholar、Google Scholar、ACM DL、IEEE Xplore、PubMed、Papers with Code、CNKI（知网）
+已预置经验的平台：arXiv、Semantic Scholar、Google Scholar、ACM DL、IEEE Xplore、PubMed、Papers with Code、CNKI（知网），以及 ScienceDirect、Wiley、Springer、ACS 等主要出版商访问限制。
 
 确定目标平台后，**必须**读取对应文件获取先验知识（平台特征、有效模式、已知陷阱）。经验内容标注发现日期，当作**可能有效的提示，不是保证正确的事实**——按经验操作失败时，回退通用模式，并**更新经验文件**（记录失败原因和发现日期）。操作成功后若发现了新模式或陷阱，同样主动写入。
 
@@ -318,6 +385,9 @@ curl -s "http://127.0.0.1:${CDP_PROXY_PORT:-3456}/close?target=$TARGET"
 | `references/api-cookbook.md` | 需要 API 调用示例、参数说明、响应字段映射时 |
 | `references/metadata-schema.md` | 整理提取结果、多平台去重合并、生成 BibTeX 时 |
 | `references/cdp-api.md` | 需要 CDP 浏览器操作时（Google Scholar、CNKI 等） |
+| `references/disciplines/*.md` | 需要按学科选择平台、扩展 query、排序和输出字段时 |
+| `references/rankings/*.md` | 需要非 CS 学科证据等级或来源评价规则时 |
+| `references/workflows/*.md` | 需要执行系统综述、核心论文清单、快速综述等研究工作流时 |
 | `references/venue-rankings.md` | 标注 CS 会议/期刊等级（CCF 分级）时 |
 | `references/site-patterns/{domain}.md` | 确定目标平台后，读取对应站点经验 |
 | `references/site-patterns/cnki.net.md` | 知网检索时必读：登录态要求、DOM 选择器、数据库代码 |

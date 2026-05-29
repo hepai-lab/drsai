@@ -163,9 +163,9 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         "model",
-        "Show/switch model (session-local) or show model details: /model [name|info]",
+        "Show/switch model (session-local) or show model details: /model [name|info|add|edit|rm]",
         "Configuration",
-        args_hint="[name|info]",
+        args_hint="[name|info|add|edit|rm]",
         aliases=("m",),
         handler="async",
     ),

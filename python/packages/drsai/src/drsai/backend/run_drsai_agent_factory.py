@@ -102,6 +102,7 @@ class ModelEntry:
     max_tokens: int = 0                  # Maximum output tokens per request (0 = use token_limit * 0.25)
     client_type: str = "auto"            # anthropic | openai | auto
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
+    vision: bool = True                  # Whether the model supports image input (vision capability)
 
     @staticmethod
     def from_dict(alias: str, data: Any) -> "ModelEntry":
@@ -121,12 +122,24 @@ class ModelEntry:
             else:
                 reasoning = ReasoningConfig()
 
+            # Auto-detect vision when not explicitly set:
+            # Default True (most modern models support vision), but common
+            # non-vision model families (deepseek, gpt-3.5, etc.) default False.
+            vision_raw = data.get("vision")
+            if vision_raw is not None:
+                vision = bool(vision_raw)
+            else:
+                # Heuristic auto-detect from model name
+                model_lower = str(data.get("model", alias)).lower()
+                vision = not any(tag in model_lower for tag in ["deepseek", "gpt-3.5", "gpt-35", "o1-preview", "o1-mini"])
+
             return ModelEntry(
                 model=str(data.get("model", alias)),
                 token_limit=int(data.get("token_limit", 128000)),
                 max_tokens=int(data.get("max_tokens", 0)),
                 client_type=str(data.get("client_type", "auto")),
                 reasoning=reasoning,
+                vision=vision,
             )
 
         # Old format (v1): [model, token_limit] list/tuple
@@ -145,11 +158,16 @@ class ModelEntry:
         else:
             client_type = "openai"
 
+        # Auto-detect vision for v1 format
+        model_lower = model.lower()
+        vision = not any(tag in model_lower for tag in ["deepseek", "gpt-3.5", "gpt-35", "o1-preview", "o1-mini"])
+
         return ModelEntry(
             model=model,
             token_limit=token_limit,
             client_type=client_type,
             reasoning=ReasoningConfig(),
+            vision=vision,
         )
 
     def to_dict(self) -> dict:
@@ -200,6 +218,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,       # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+        vision=False,
     ),
     # ── OpenAI GPT ───────────────────────────────────────────────────
     "gpt-5.4": ModelEntry(
@@ -208,6 +227,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,      # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+        vision=True,            # GPT-5.x supports image input
     ),
     "gpt-5.5": ModelEntry(
         model="openai/gpt-5.5",
@@ -224,6 +244,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,      # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
+        vision=True,            # GLM-5.1 supports image input
     ),
     # ── MiniMax ──────────────────────────────────────────────────────
     "minimax-m2.7-highspeed": ModelEntry(
@@ -232,6 +253,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+        vision=False,           # MiniMax M2.7 does not support image input
     ),
     "hepai/minimax-m2.7-highspeed": ModelEntry(
         model="hepai/minimax-m2.7-highspeed",
@@ -239,6 +261,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+        vision=False,
     ),
     # ── Anthropic Claude ──────────────────────────────────────────────
     # token_limit = total context window (input + output share the same window)
@@ -264,6 +287,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,       # max output per request
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+        vision=True,            # Claude Haiku 4.5 supports image input
     ),
 }
 
@@ -656,6 +680,10 @@ def create_agent(
         if client_type == "anthropic":
             model_info = dict(_MODEL_INFO.get("claude-sonnet-4-5", {}))
             model_info["token_model"] = "claude-3-5-sonnet-20240620"
+            # Override vision from the config entry (rather than relying on
+            # the autogen built-in _MODEL_INFO which only covers well-known
+            # OpenAI/Anthropic model names).
+            model_info["vision"] = entry.vision
             # Add reasoning config to model_info for client to use
             model_info["reasoning_config"] = reasoning_config
             if anthropic_cache_control is not None:
@@ -668,10 +696,10 @@ def create_agent(
                 max_tokens=max_tokens,
             )
 
-        is_vision = "deepseek" not in llm_model
-        # Add reasoning config to model_info for client to use
+        # OpenAI-compatible client: use vision from the config entry
+        # (previously was hardcoded as "deepseek" not in llm_model).
         model_info = {
-            "vision": is_vision,
+            "vision": entry.vision,
             "function_calling": True,
             "json_output": True,
             "structured_output": False,
