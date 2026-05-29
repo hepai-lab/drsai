@@ -33,6 +33,8 @@ def _run_turn_in_background(
     text: str,
     state: dict,
     callback_token,
+    *,
+    images: list[dict] | None = None,
 ) -> None:
     """Run a single turn end-to-end on a background thread.
 
@@ -67,7 +69,7 @@ def _run_turn_in_background(
                 _clear_running_once()
 
         try:
-            sess.run_turn(text, _on_event)
+            sess.run_turn(text, _on_event, images=images)
         except Exception as exc:
             logger.exception("run_turn raised")
             _emit("error", session_id, {"message": f"{type(exc).__name__}: {exc}"})
@@ -81,11 +83,18 @@ def _run_turn_in_background(
 def _submit(rid, params: dict) -> dict:
     session_id = params.get("session_id") or ""
     text = params.get("text") or ""
+    images = params.get("images") or None  # list[{path, base64, mime_type}]
 
     if not session_id:
         return _err(rid, 4002, "session_id is required")
     if not isinstance(text, str) or not text.strip():
         return _err(rid, 4002, "text is required (non-empty string)")
+    if images is not None:
+        if not isinstance(images, list):
+            return _err(rid, 4002, "images must be a list of {path, base64, mime_type} dicts")
+        for img in images:
+            if not isinstance(img, dict) or "base64" not in img or "mime_type" not in img:
+                return _err(rid, 4002, "each image must contain base64 and mime_type")
 
     # Ensure agent is ready (also creates session state entry if missing).
     try:
@@ -112,6 +121,7 @@ def _submit(rid, params: dict) -> dict:
     worker = threading.Thread(
         target=_run_turn_in_background,
         args=(sess, session_id, text, state, callback_token),
+        kwargs={"images": images},
         name=f"drsai-turn-{session_id[:8]}",
         daemon=True,
     )

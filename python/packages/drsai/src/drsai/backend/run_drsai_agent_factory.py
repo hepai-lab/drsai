@@ -176,6 +176,7 @@ class ModelEntry:
             "token_limit": self.token_limit,
             "max_tokens": self.max_tokens,
             "client_type": self.client_type,
+            "vision": self.vision,
         }
         if self.reasoning.supported:
             d["reasoning"] = self.reasoning.to_dict()
@@ -196,6 +197,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,      # max output per request (DeepSeek supports extended output)
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="is_r1_model"),
+        vision=False,           # DeepSeek V4 text models do not support image input
     ),
     
     "hepai/deepseek-v4-flash": ModelEntry(
@@ -204,6 +206,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,       # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=False, effort_levels=[], param_type="none"),
+        vision=False,           # DeepSeek V4 text models do not support image input
     ),
     "deepseek-v4-pro": ModelEntry(
         model="deepseek-ai/deepseek-v4-pro",
@@ -211,6 +214,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,      # max output per request (DeepSeek supports extended output)
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="is_r1_model"),
+        vision=False,
     ),
     "deepseek-v4-flash": ModelEntry(
         model="deepseek-ai/deepseek-v4-flash",
@@ -235,6 +239,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,      # max output per request
         client_type="openai",
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
+        vision=True,            # GPT-5.x supports image input
     ),
     # ── Zhipu GLM ────────────────────────────────────────────────────
     # Sources: litellm (zai/glm-5), OpenRouter
@@ -273,6 +278,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,       # max output per request
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+        vision=True,            # Claude Sonnet 4.6 supports image input
     ),
     "claude-opus-4-7": ModelEntry(
         model="anthropic/claude-opus-4-7",
@@ -280,6 +286,7 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         max_tokens=64000,      # max output per request
         client_type="anthropic",
         reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+        vision=True,            # Claude Opus 4.7 supports image input
     ),
     "claude-haiku-4-5": ModelEntry(
         model="anthropic/claude-haiku-4-5",
@@ -348,6 +355,7 @@ def build_model_catalog(
             "model": entry.model,
             "token_limit": entry.token_limit,
             "max_tokens": entry.max_tokens,
+            "vision": entry.vision,
         })
     models.sort(key=lambda item: (item["client_type"], item["display_name"], item["alias"]))
     return {

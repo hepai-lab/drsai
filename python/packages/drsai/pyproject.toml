@@ -173,12 +173,12 @@ packages = [
     "src/drsai",
     ]
 
-# [tool.hatch.build.targets.wheel.force-include]
+[tool.hatch.build.targets.wheel.force-include]
 # Include the pre-built ui-tui bundle inside the wheel so PyPI users get a
 # self-contained install (only Node.js runtime required, no pnpm/npm/node_modules).
 # Build the bundle FIRST: cd ui-tui && pnpm install && pnpm build
-# "../../../ui-tui/dist/entry.mjs" = "drsai/ui_tui/dist/entry.mjs"
-# "../../../ui-tui/package.json"   = "drsai/ui_tui/package.json"
+"../../../ui-tui/dist/entry.mjs" = "drsai/ui_tui/dist/entry.mjs"
+"../../../ui-tui/package.json"   = "drsai/ui_tui/package.json"
 
 [tool.hatch.version]
 path = "src/drsai/version.py"

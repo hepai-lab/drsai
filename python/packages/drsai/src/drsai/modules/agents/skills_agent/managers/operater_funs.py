@@ -1020,13 +1020,22 @@ def get_operator_funcs(
     # ── Helper: build PowerShell command with cwd tracking ──────────────
     def _build_ps_command(command: str) -> str:
         """Build a PowerShell script string with cwd tracking and error handling.
-        
+
         Escapes single quotes in the cwd path (PowerShell: '' inside single-quoted strings).
         Wraps Set-Location in try/catch so a bad cwd doesn't silently fail.
+
+        UTF-8 preamble: forces the child process's stdout encoding to UTF-8 so
+        Python/Node output on Win10 zh-CN PowerShell 5.1 (default OEM/CP936)
+        doesn't garble or hang when emitting multi-byte sequences. PYTHONUTF8
+        and PYTHONIOENCODING also nudge any Python child to emit UTF-8 directly.
         """
         escaped_cwd = str(_ps_cwd[0]).replace("'", "''")
         return f"""
 $ErrorActionPreference = 'Continue'
+try {{ [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new() }} catch {{}}
+try {{ $OutputEncoding = [System.Text.UTF8Encoding]::new() }} catch {{}}
+$env:PYTHONIOENCODING = 'utf-8'
+$env:PYTHONUTF8 = '1'
 try {{
     Set-Location '{escaped_cwd}'
 }} catch {{
@@ -1035,6 +1044,28 @@ try {{
 {command}
 Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
 """
+
+    def _ps_args(ps_path: str, script: str) -> list:
+        """Return the argument list for invoking PowerShell with ``script``.
+
+        Legacy ``powershell.exe`` (PS 5.x) is faster and parses more reliably
+        with ``-EncodedCommand <base64-UTF16LE>``. It also bypasses quoting
+        issues that intermittently hang multi-line ``-Command`` strings on
+        Windows 10's conhost. Modern ``pwsh`` already handles UTF-8 and
+        complex quoted scripts well, so we keep readable ``-Command`` args
+        there for easier debugging.
+        """
+        base = ["-NoLogo", "-NoProfile", "-NonInteractive"]
+        low = ps_path.lower()
+        is_legacy_ps = (
+            platform.system() == "Windows"
+            and (low.endswith("\\powershell.exe") or low.endswith("/powershell.exe")
+                 or low == "powershell.exe" or low == "powershell")
+        )
+        if is_legacy_ps:
+            encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+            return base + ["-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded]
+        return base + ["-Command", script]
 
     def _ps_subprocess_kwargs() -> dict:
         """Return asyncio.create_subprocess_exec kwargs for PowerShell.
@@ -1168,14 +1199,17 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
                 proc = None
                 try:
                     proc = await asyncio.create_subprocess_exec(
-                        ps_path, "-NoProfile", "-NonInteractive", "-Command", ps_command,
+                        ps_path, *_ps_args(ps_path, ps_command),
                         **subproc_kwargs,
                     )
                     task_info["pid"] = proc.pid
 
                     async with asyncio.timeout(timeout):
                         stdout, stderr = await proc.communicate()
-                        raw_output = (stdout.decode('utf-8') if stdout else '') + (stderr.decode('utf-8') if stderr else '')
+                        raw_output = (
+                            (stdout.decode('utf-8', errors='replace') if stdout else '')
+                            + (stderr.decode('utf-8', errors='replace') if stderr else '')
+                        )
                         clean_output, new_cwd_str = _parse_ps_output(raw_output)
                         
                         # Update cwd
@@ -1221,13 +1255,16 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
-                ps_path, "-NoProfile", "-NonInteractive", "-Command", ps_command,
+                ps_path, *_ps_args(ps_path, ps_command),
                 **subproc_kwargs,
             )
 
             async with asyncio.timeout(timeout):
                 stdout, stderr = await proc.communicate()
-                raw_output = (stdout.decode('utf-8') if stdout else '') + (stderr.decode('utf-8') if stderr else '')
+                raw_output = (
+                    (stdout.decode('utf-8', errors='replace') if stdout else '')
+                    + (stderr.decode('utf-8', errors='replace') if stderr else '')
+                )
                 extra_lines = []
                 clean_output, new_cwd_str = _parse_ps_output(raw_output)
                 _update_ps_cwd(new_cwd_str, extra_lines)

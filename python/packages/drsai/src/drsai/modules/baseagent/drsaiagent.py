@@ -1293,10 +1293,15 @@ class DrSaiAgent(BaseChatAgent, Component[DrSaiAgentConfig]):
                 # user message if present (it was injected as a retry prompt).
                 if i < len(messages):
                     nxt = messages[i]
-                    if (
-                        isinstance(nxt, UserMessage)
-                        and "reply is empty" in nxt.content.lower()
-                    ):
+                    # Extract text content safely: nxt.content may be a str
+                    # (UserMessage) or a List[Union[str, Image]] (MultiModalMessage).
+                    _nxt_text = ""
+                    if isinstance(nxt, UserMessage):
+                        if isinstance(nxt.content, str):
+                            _nxt_text = nxt.content
+                        elif isinstance(nxt.content, list):
+                            pass
+                    if "reply is empty" in _nxt_text.lower():
                         messages.pop(i)
                         logger.debug("Removed 'reply is empty' retry UserMessage")
                 # Don't advance i — re-check the same index after removal

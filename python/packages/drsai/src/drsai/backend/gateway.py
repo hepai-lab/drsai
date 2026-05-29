@@ -1117,6 +1117,7 @@ class ModelConfigCreate(BaseModel):
     max_tokens: int = 0
     client_type: str = "auto"
     reasoning: dict | None = None
+    vision: bool = True
 
 
 class ModelConfigUpdate(BaseModel):
@@ -1125,6 +1126,7 @@ class ModelConfigUpdate(BaseModel):
     max_tokens: int | None = None
     client_type: str | None = None
     reasoning: dict | None = None
+    vision: bool | None = None
     new_alias: str | None = None
 
 
@@ -1171,6 +1173,7 @@ async def create_model_config(body: ModelConfigCreate):
         max_tokens=body.max_tokens,
         client_type=body.client_type,
         reasoning=reasoning,
+        vision=body.vision,
     )
 
     await asyncio.to_thread(save_llm_mode_config, llm_config, default_alias)
@@ -1205,6 +1208,8 @@ async def update_model_config(alias: str, body: ModelConfigUpdate):
             effort_levels=body.reasoning.get("effort_levels", entry.reasoning.effort_levels),
             param_type=body.reasoning.get("param_type", entry.reasoning.param_type),
         )
+    if body.vision is not None:
+        entry.vision = body.vision
 
     # Handle rename
     if body.new_alias and body.new_alias != alias:

@@ -4,14 +4,19 @@
 
 import { useStore } from '@nanostores/react'
 import { Box, Text, useApp, useInput } from 'ink'
+import { existsSync, readFileSync } from 'node:fs'
+import { basename, extname, resolve } from 'node:path'
+import { homedir } from 'node:os'
 import { useEffect, useRef, useState } from 'react'
 
 import { loadPromptHistory, savePromptHistory } from '../app/promptHistory.js'
 import { $isStreaming } from '../app/turnStore.js'
-import type { TurnController } from '../app/turnController.js'
+import type { ImageAttachment, TurnController } from '../app/turnController.js'
+import { $showReasoning } from '../app/uiStore.js'
 import type { SessionInfo, SessionListResult } from '../gatewayTypes.js'
 import { theme } from '../theme.js'
 
+import { ModelEditor, type ModelEditorValues } from './modelEditor.js'
 import { ModelPicker, type ModelEntry } from './modelPicker.js'
 import { SessionPicker } from './sessionPicker.js'
 import { SlashOutputOverlay } from './slashOutputOverlay.js'
@@ -23,13 +28,178 @@ export interface ComposerPaneProps {
   switchSession: (sid: string) => Promise<void>
 }
 
+// ── Image helpers ─────────────────────────────────────────────────────
+
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
+
+const MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml',
+}
+
+/** Maximum single image size (bytes) — 20 MB. */
+const MAX_IMAGE_SIZE = 20 * 1024 * 1024
+/** Maximum total images per message — 10. */
+const MAX_IMAGES_PER_MSG = 10
+
+/**
+ * Resolve a user-supplied file path to an absolute path.
+ *
+ * - `~/...`  → expand home directory
+ * - `/...`   → already absolute, keep as-is
+ * - `./...` or `photos/img.png` → resolve against the user's real working
+ *   directory (``DRSAI_USER_CWD``), NOT against ``process.cwd()`` which
+ *   may point to the ui-tui package directory.
+ */
+function resolveFilePath(filePath: string): string {
+  // Expand ~ to home directory
+  if (filePath.startsWith('~')) {
+    return filePath.replace('~', homedir())
+  }
+  // Already absolute
+  if (filePath.startsWith('/')) {
+    return filePath
+  }
+  // Relative path — resolve against the user's real cwd
+  const userCwd = process.env.DRSAI_USER_CWD?.trim() || process.cwd()
+  return resolve(userCwd, filePath)
+}
+
+/**
+ * Read a local image file and return an `ImageAttachment` object.
+ * Returns an error dict if the file does not exist, is not an image, or
+ * exceeds size limits.
+ */
+function readImageFile(filePath: string): ImageAttachment | { error: string } {
+  const expanded = resolveFilePath(filePath)
+
+  if (!existsSync(expanded)) {
+    return { error: `File not found: ${filePath} (resolved: ${expanded})` }
+  }
+
+  const ext = extname(expanded).toLowerCase()
+  const mime = MIME_BY_EXT[ext]
+  if (!mime) {
+    return { error: `Unsupported image format: ${ext} (${filePath})` }
+  }
+
+  const buffer = readFileSync(expanded)
+  if (buffer.length > MAX_IMAGE_SIZE) {
+    return { error: `Image too large: ${(buffer.length / 1024 / 1024).toFixed(1)} MB > 20 MB limit (${filePath})` }
+  }
+
+  return {
+    path: filePath,
+    base64: buffer.toString('base64'),
+    mime_type: mime,
+  }
+}
+
+/**
+ * Detect `@/path`, `@~/path`, `@./path` image references in the text,
+ * read the files, and return the cleaned text plus the image attachments.
+ *
+ * Examples:
+ *   "Look at @/tmp/photo.png please"
+ *   → { cleanText: "Look at [image: photo.png] please", images: [...] }
+ *
+ *   "Compare @./a.png and @./b.png"
+ *   → { cleanText: "Compare [image: a.png] and [image: b.png]", images: [...] }
+ */
+function extractInlineImages(text: string): {
+  cleanText: string
+  images: ImageAttachment[]
+  errors: string[]
+} {
+  const images: ImageAttachment[] = []
+  const errors: string[] = []
+
+  // Match @/abs/path.ext  @~/path.ext  @./relative/path.ext  @relative/path.ext
+  // Negative lookbehind to avoid matching inside a URL (http://...)
+  const inlineRe = /(?<![:\w])@(~?[./]?[^\s@]+\.(?:png|jpe?g|gif|webp|bmp|svg))/gi
+
+  const cleanText = text.replace(inlineRe, (_match, rawPath: string) => {
+    if (images.length + errors.length >= MAX_IMAGES_PER_MSG) {
+      errors.push(`Too many images (max ${MAX_IMAGES_PER_MSG})`)
+      return `@${rawPath}`
+    }
+
+    const result = readImageFile(rawPath)
+    if ('error' in result) {
+      errors.push(result.error)
+      return `@${rawPath}`
+    }
+
+    images.push(result)
+    return `[image: ${basename(rawPath)}]`
+  })
+
+  return { cleanText, images, errors }
+}
+
+/**
+ * Parse the `/image` (or `/img`) command.
+ *
+ * Supports multiple image paths:
+ *   /image /path/a.png ./b.png ~/c.jpg description text
+ *   /img /tmp/photo.png
+ *
+ * Returns `{ paths, description }` or `null` if the input doesn't match.
+ * All tokens that look like file paths (contain a dot + image extension)
+ * are collected as image paths; the remaining tokens become the description.
+ */
+function parseImageCommand(text: string): { paths: string[]; description: string } | null {
+  const m = text.match(/^\/(?:image|img)\s+(.+)$/s)
+  if (!m) return null
+
+  const tokens = m[1].trim().split(/\s+/)
+  const paths: string[] = []
+  const descTokens: string[] = []
+
+  for (const token of tokens) {
+    const ext = extname(token).toLowerCase()
+    if (IMAGE_EXTENSIONS.has(ext) || token.startsWith('/') || token.startsWith('~') || token.startsWith('./')) {
+      // Heuristic: if it has an image extension OR starts with a path prefix,
+      // treat it as an image path.
+      if (IMAGE_EXTENSIONS.has(ext)) {
+        paths.push(token)
+      } else {
+        // Path prefix but no image extension — might be a description word
+        // like "/help" or "./something". Only treat as path if it has an
+        // image extension.
+        descTokens.push(token)
+      }
+    } else {
+      descTokens.push(token)
+    }
+  }
+
+  if (paths.length === 0) return null
+  return { paths, description: descTokens.join(' ') }
+}
+
 export function ComposerPane({ sessionId, controller, switchSession }: ComposerPaneProps) {
   const { exit } = useApp()
   const isStreaming = useStore($isStreaming)
   const [slashOutput, setSlashOutput] = useState<string | null>(null)
   const slashOutputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [sessionPicker, setSessionPicker] = useState<SessionInfo[] | null>(null)
-  const [modelPicker, setModelPicker] = useState<ModelEntry[] | null>(null)
+  const [modelPicker, setModelPicker] = useState<
+    { models: ModelEntry[]; currentAlias?: string } | null
+  >(null)
+  const [modelEditor, setModelEditor] = useState<
+    | {
+        isNew: boolean
+        originalAlias?: string
+        initial?: Partial<ModelEditorValues>
+      }
+    | null
+  >(null)
   const [completions, setCompletions] = useState<string[]>([])
   const [initialHistory] = useState(() => loadPromptHistory())
   const historyRef = useRef<string[]>(initialHistory)
@@ -106,10 +276,89 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
         'model.options',
         {},
       )
-      setModelPicker(result.models || [])
+      setModelPicker({ models: result.models || [], currentAlias: result.current })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       showSlashOutput(`Error loading models: ${msg}`, 5000)
+    }
+  }
+
+  async function openModelEditor(alias?: string) {
+    if (!alias) {
+      // No alias supplied → open an empty "add" form.
+      setModelEditor({ isNew: true })
+      return
+    }
+    // Fetch the current entry to pre-fill the form.
+    try {
+      const result = await controller.gw.request<{
+        alias: string
+        model: string
+        token_limit: number
+        max_tokens: number
+        client_type: 'auto' | 'openai' | 'anthropic'
+        reasoning: { supported: boolean; effort_levels: string[]; param_type: string }
+      }>('model.get', { alias })
+      setModelEditor({
+        isNew: false,
+        originalAlias: alias,
+        initial: {
+          alias: result.alias,
+          model: result.model,
+          token_limit: result.token_limit,
+          max_tokens: result.max_tokens,
+          client_type: result.client_type,
+          reasoning: {
+            supported: result.reasoning.supported,
+            effort_levels: result.reasoning.effort_levels,
+            // Cast: backend has already validated against the enum.
+            param_type: result.reasoning.param_type as ModelEditorValues['reasoning']['param_type'],
+          },
+        },
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      showSlashOutput(`Cannot edit ${alias}: ${msg}`, 5000)
+    }
+  }
+
+  async function pickModelToEdit() {
+    // Reuse the picker but route Enter to "edit this one" instead of switch.
+    try {
+      const result = await controller.gw.request<{ models: ModelEntry[]; current?: string }>(
+        'model.options',
+        {},
+      )
+      const list = result.models || []
+      if (list.length === 0) {
+        showSlashOutput('No models configured — try /model add', 4000)
+        return
+      }
+      // Show picker; the user presses `e` (or Enter) to choose what to edit.
+      // To keep this simple we just pop the picker; pressing `e` on the cursor
+      // line opens the editor for that alias.
+      setModelPicker({ models: list, currentAlias: result.current })
+      showSlashOutput('Press e to edit the highlighted alias, a to add', 4000)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      showSlashOutput(`Error loading models: ${msg}`, 5000)
+    }
+  }
+
+  async function deleteModelWithConfirm(alias: string) {
+    // Single-step delete with explicit confirm in the toast.
+    try {
+      const result = await controller.gw.request<{ ok: boolean; fell_back_to: string | null }>(
+        'model.delete',
+        { alias, session_id: sessionId },
+      )
+      if (result.ok) {
+        const tail = result.fell_back_to ? ` (now on ${result.fell_back_to})` : ''
+        showSlashOutput(`Deleted ${alias}${tail}`, 4000)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      showSlashOutput(`Delete failed: ${msg}`, 5000)
     }
   }
 
@@ -177,6 +426,36 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     const displayText = displaySnips(text)
     resetPasteSnips()
     const trimmed = expanded.trim()
+
+    // ── Detect /image command ────────────────────────────────────────
+    const imageCmd = parseImageCommand(trimmed)
+    if (imageCmd) {
+      const images: ImageAttachment[] = []
+      const imgErrors: string[] = []
+      for (const p of imageCmd.paths) {
+        if (images.length + imgErrors.length >= MAX_IMAGES_PER_MSG) {
+          imgErrors.push(`Too many images (max ${MAX_IMAGES_PER_MSG})`)
+          break
+        }
+        const result = readImageFile(p)
+        if ('error' in result) {
+          imgErrors.push(result.error)
+        } else {
+          images.push(result)
+        }
+      }
+      if (imgErrors.length > 0) {
+        showSlashOutput(`⚠ Image errors:\n  ${imgErrors.join('\n  ')}`, 5000)
+      }
+      if (images.length === 0) return
+      const desc = imageCmd.description || images.map(i => basename(i.path)).join(', ')
+      await controller.submit({
+        sessionId,
+        text: desc,
+        images,
+      })
+      return
+    }
 
     // Detect slash command
     if (trimmed.startsWith('/')) {
@@ -255,6 +534,37 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
             setSlashOutput(null)
             return
           }
+          case 'reasoning.show':
+            $showReasoning.set(true)
+            break
+          case 'reasoning.hide':
+          case 'reasoning.off':
+            $showReasoning.set(false)
+            break
+          case 'model.add': {
+            const presetAlias = (result as { alias?: string }).alias
+            setModelEditor({
+              isNew: true,
+              initial: presetAlias ? { alias: presetAlias } : undefined,
+            })
+            return
+          }
+          case 'model.edit': {
+            const presetAlias = (result as { alias?: string }).alias
+            if (presetAlias) {
+              await openModelEditor(presetAlias)
+            } else {
+              await pickModelToEdit()
+            }
+            return
+          }
+          case 'model.rm': {
+            const presetAlias = (result as { alias?: string }).alias
+            if (presetAlias) {
+              await deleteModelWithConfirm(presetAlias)
+            }
+            return
+          }
         }
 
         // Keep informational slash-command output visible until the user dismisses it.
@@ -267,7 +577,17 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     }
 
     // Regular prompt
-    await controller.submit({ sessionId, text: trimmed, displayText: displayText.trim() })
+    // Regular prompt — detect @/path inline image references
+    const { cleanText, images, errors: imgErrors } = extractInlineImages(trimmed)
+    if (imgErrors.length > 0) {
+      showSlashOutput(`⚠ Image errors:\n  ${imgErrors.join('\n  ')}`, 5000)
+    }
+    await controller.submit({
+      sessionId,
+      text: cleanText.trim(),
+      displayText: displayText.trim(),
+      images: images.length > 0 ? images : undefined,
+    })
   }
 
   // Session picker overlay
@@ -291,11 +611,43 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     )
   }
 
+  // Model editor overlay (must come BEFORE the picker so a-from-picker
+  // transition shows the editor immediately without an interim render).
+  if (modelEditor) {
+    return (
+      <ModelEditor
+        isNew={modelEditor.isNew}
+        originalAlias={modelEditor.originalAlias}
+        initial={modelEditor.initial}
+        onCancel={() => setModelEditor(null)}
+        onSubmit={async values => {
+          try {
+            const result = await controller.gw.request<{
+              ok: boolean
+              alias: string
+              is_new: boolean
+              switched_to: string | null
+            }>('model.save', { ...values, session_id: sessionId })
+            setModelEditor(null)
+            const switched = result.switched_to ? ` (switched to ${result.switched_to})` : ''
+            const verb = result.is_new ? 'Saved' : 'Updated'
+            showSlashOutput(`${verb} model ${result.alias}${switched}`, 4000)
+            return { ok: true }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            return { ok: false, error: msg }
+          }
+        }}
+      />
+    )
+  }
+
   // Model picker overlay
   if (modelPicker) {
     return (
       <ModelPicker
-        models={modelPicker}
+        models={modelPicker.models}
+        currentAlias={modelPicker.currentAlias}
         onSelect={async alias => {
           setModelPicker(null)
           try {
@@ -309,6 +661,18 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
             const msg = err instanceof Error ? err.message : String(err)
             showSlashOutput(`Switch failed: ${msg}`, 5000)
           }
+        }}
+        onAdd={() => {
+          setModelPicker(null)
+          setModelEditor({ isNew: true })
+        }}
+        onEdit={async alias => {
+          setModelPicker(null)
+          await openModelEditor(alias)
+        }}
+        onDelete={async alias => {
+          setModelPicker(null)
+          await deleteModelWithConfirm(alias)
         }}
         onCancel={() => setModelPicker(null)}
       />

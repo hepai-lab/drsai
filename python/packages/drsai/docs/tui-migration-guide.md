@@ -54,6 +54,7 @@ drsai-tui --attach ws://127.0.0.1:8765/attach
 | `/workspace`, `/ws_global`, `/dangerous`, `/dg_global` | ✅ 完全兼容 |
 | `/memory`, `/init`, `/agent`, `/delegate` | ✅ 完全兼容 |
 | `/reasoning`, `/verbose`, `/bell`, `/fast` | ✅ 完全兼容 |
+| `/image`, `/img` | 🆕 **新增** — 图像多模态输入 |
 | `/cd`, `/workdir` | ⚠️ 桌面 GUI 专用，CLI 自动使用当前目录 |
 | 旧 Tk/Tray GUI 命令：`/install`, `/tray`, `/win_*` | 🗑️ 已移除，新的多平台 GUI 由 `desktop/` 项目承接 |
 
@@ -111,6 +112,80 @@ drsai-tui --attach ws://127.0.0.1:8765/attach
 ### 4. 虚拟滚动
 
 超过 50 条消息时只渲染最近 50 条（终端 scrollback 仍保留旧消息），1000+ 消息会话不再卡顿。
+
+### 5. 图像多模态输入 🆕
+
+新版 TUI 支持在 CLI 中向视觉模型（如 Claude Sonnet、GPT-4o 等）传入图像。提供两种方式，可自由组合使用。
+
+#### 方式 A：`/image` 命令
+
+直接发送一张或多张图像作为一轮对话：
+
+```
+# 单张图像 + 描述
+/image /tmp/photo.png 描述一下这张图片
+
+# 多张图像 + 描述
+/image /tmp/a.png ./b.jpg ~/pics/c.webp 比较这三张图
+
+# 仅图像（无描述时自动用文件名）
+/image ~/Desktop/screenshot.png
+
+# /img 是 /image 的别名
+/img ./diagram.png 解释这个流程图
+```
+
+**路径规则**：
+- `/abs/path.png` — 绝对路径
+- `~/path.png` — 相对于用户主目录
+- `./path.png` 或 `photos/img.png` — 相对于用户工作目录（即启动 `drsai` 时所在的目录，而非 ui-tui 内部目录）
+
+**限制**：
+- 单张图像 ≤ 20 MB
+- 单次最多 10 张图像
+- 支持格式：`.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` `.svg`
+
+#### 方式 B：`@/path` 内联引用
+
+在普通对话文本中嵌入图像路径，用 `@` 标记：
+
+```
+请分析一下 @/tmp/chart.png 中的数据趋势
+
+对比 @./before.png 和 @./after.png 的差异
+
+看看 @~/Desktop/error.jpg 这个报错截图
+```
+
+`@` 引用会在提交时被替换为 `[image: filename]` 标记，图像数据作为 `MultiModalMessage` 传给模型。两种方式可以混用：
+
+```
+/image /tmp/a.png 然后再看 @./b.jpg 的细节
+```
+
+> ⚠️ 注意：`@` 引用只匹配带图像扩展名的路径。`@/tmp/readme.txt` 不会被识别为图像。
+
+#### 工作原理
+
+```
+用户输入 → TUI 解析 @/path 或 /image → 读取文件 → base64 编码
+  → JSON-RPC prompt.submit {text, images: [{base64, mime_type}]}
+  → Gateway 构造 MultiModalMessage(content=[text, Image, ...])
+  → Agent.run_stream(task=MultiModalMessage)
+  → 视觉模型接收图像 + 文本
+```
+
+- 非视觉模型（不支持 vision）时，Agent 内部的 `_get_compatible_context` 会自动调用 `remove_images()` 去除图像，不会报错。
+- 文件读取在 TUI（Node.js）端完成，因此 **attach 模式也能正常工作**——即使 gateway 在远程机器上，本地图像仍可传入。
+
+#### 错误提示
+
+| 场景 | 提示 |
+|------|------|
+| 文件不存在 | `⚠ File not found: ./photo.png (resolved: /home/user/project/photo.png)` |
+| 格式不支持 | `⚠ Unsupported image format: .txt (./readme.txt)` |
+| 文件过大 | `⚠ Image too large: 25.0 MB > 20 MB limit (./big.png)` |
+| 图像过多 | `⚠ Too many images (max 10)` |
 
 ## 环境变量
 
