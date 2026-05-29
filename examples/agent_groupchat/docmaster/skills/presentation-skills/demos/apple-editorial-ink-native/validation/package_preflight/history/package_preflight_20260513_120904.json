@@ -1,0 +1,19 @@
+{
+  "pptx": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/SkillStudy/presentation-skills/demos/apple-editorial-ink-native/final/apple_editorial_ink_native_test.pptx",
+  "generated_at": "20260513_120904",
+  "summary": {
+    "error": 0,
+    "warning": 0,
+    "not_checked": 0
+  },
+  "issues": [],
+  "checks": {
+    "actual_slide_count": 10,
+    "presentation_slide_count": 10,
+    "docprops_slide_count": 10,
+    "section_slide_id_count": 0,
+    "slide_relationship_count": 10,
+    "slide_xml_count": 10,
+    "embedded_object_count": 0
+  }
+}

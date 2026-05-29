@@ -1,0 +1,4 @@
+interface:
+  display_name: "Web Demo Video Synthesis"
+  short_description: "Synthesize an auditable web demo video via segmented TTS + timeline-based recording + post-burn subtitles."
+  default_prompt: "Build a reproducible, auditable web-demo video pipeline: lock narration cues, generate per-segment TTS, compute timeline.json, record a no-caption demo driven by timeline anchors, then mux voiceover and post-burn subtitles. Prefer one-theme-per-page storytelling (finish one page then scroll), avoid overloading one screen. For visual style, default to white/beige backgrounds with lively tech accents (teal/sky/warm orange), avoid purple-heavy AI-looking themes unless explicitly requested. For vertical short-video output, keep core visuals in upper-middle area, subtitles in lower-middle safe area, and enable subtitle auto-wrap with conservative line width to avoid left/right overflow."

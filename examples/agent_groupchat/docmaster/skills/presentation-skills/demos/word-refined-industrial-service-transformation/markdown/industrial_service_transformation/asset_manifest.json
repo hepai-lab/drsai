@@ -1,0 +1,34 @@
+{
+  "assets": [
+    {
+      "asset_id": "exhibit_1_mix_margin_profile",
+      "asset_mode": "python_figure",
+      "source_file": "assets/generated/service_mix_margin_profile.png",
+      "generator_script": "../../scripts/render_figures.py",
+      "caption_position": "above",
+      "figure_note": "Reactive work declines as recurring contracts and remote diagnostics scale, allowing margin expansion without a proportional increase in dispatch volatility.",
+      "source_note": "Helios management interviews and team analysis based on fictional assumptions.",
+      "editable_required": false
+    },
+    {
+      "asset_id": "exhibit_2_branch_priority_matrix",
+      "asset_mode": "python_figure",
+      "source_file": "assets/generated/branch_priority_matrix.png",
+      "generator_script": "../../scripts/render_figures.py",
+      "caption_position": "above",
+      "figure_note": "The matrix distinguishes branches that are ready to scale from branches that need pricing, scheduling, or service-package repair before further growth.",
+      "source_note": "Helios operating review based on six fictional branch archetypes.",
+      "editable_required": false
+    },
+    {
+      "asset_id": "exhibit_3_margin_bridge",
+      "asset_mode": "python_figure",
+      "source_file": "assets/generated/margin_bridge.png",
+      "generator_script": "../../scripts/render_figures.py",
+      "caption_position": "above",
+      "figure_note": "The bridge isolates the margin effect of price architecture, remote resolution, planner productivity, and spare-parts discipline.",
+      "source_note": "Transformation office estimate based on fictional management assumptions.",
+      "editable_required": false
+    }
+  ]
+}

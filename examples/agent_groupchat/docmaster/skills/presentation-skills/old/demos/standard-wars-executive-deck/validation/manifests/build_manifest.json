@@ -1,0 +1,71 @@
+{
+  "deck_title": "标准战不是技术评测 | Why Better Tech Often Loses the Standard War",
+  "workspace": "/project/lisiyuan2/Projects/presentation-skills/demos/standard-wars-executive-deck",
+  "pptx": "/project/lisiyuan2/Projects/presentation-skills/demos/standard-wars-executive-deck/build/pptx/standard_wars_executive_deck.pptx",
+  "slide_count": 12,
+  "slides": [
+    {
+      "slide_id": "S01",
+      "title": "标准不会奖励最优技术，标准奖励最容易被生态一起采用的方案"
+    },
+    {
+      "slide_id": "S02",
+      "title": "市场不是在做技术评测，市场是在给协同风险定价"
+    },
+    {
+      "slide_id": "S03",
+      "title": "标准战真正结算的是五个变量：兼容、装机基盘、补充品、部署速度和预期管理"
+    },
+    {
+      "slide_id": "S04",
+      "title": "Betamax 输掉的不是画质，它先输给了家庭任务匹配和联盟扩张速度"
+    },
+    {
+      "slide_id": "S05",
+      "title": "VHS 形成了更低风险的集体下注路径，所以规格劣势没有妨碍它成为标准"
+    },
+    {
+      "slide_id": "S06",
+      "title": "OSI 输掉的不是理想性，它输给了太慢、太贵、太难落地"
+    },
+    {
+      "slide_id": "S07",
+      "title": "先跑起来的协议会反过来定义现实，架构完整性不会自动转化成标准地位"
+    },
+    {
+      "slide_id": "S08",
+      "title": "Blu-ray 赢的不是一项单点参数，它赢在内容联盟、PS3 装机与预期锚定"
+    },
+    {
+      "slide_id": "S09",
+      "title": "当用户看不懂技术差距，补充品和捆绑会替市场做决定"
+    },
+    {
+      "slide_id": "S10",
+      "title": "三个案例的共同点很稳定：输家优化局部性能，赢家先闭合生态协调"
+    },
+    {
+      "slide_id": "S11",
+      "title": "判断一场标准战，先问五个会让管理层真正下注的问题"
+    },
+    {
+      "slide_id": "S12",
+      "title": "更好的技术，只有在它同时更容易被一起采用时，才更可能成为标准"
+    }
+  ],
+  "inputs": {
+    "brief": "/project/lisiyuan2/Projects/presentation-skills/demos/standard-wars-executive-deck/brief.md",
+    "narrative": "/project/lisiyuan2/Projects/presentation-skills/demos/standard-wars-executive-deck/deck_narrative.md",
+    "slide_specs": "/project/lisiyuan2/Projects/presentation-skills/demos/standard-wars-executive-deck/build/generated/slide_specs.yaml"
+  },
+  "assets": {
+    "icons": "/project/lisiyuan2/Projects/presentation-skills/demos/standard-wars-executive-deck/assets/icons/theme_market_vote",
+    "factor_csv": "/project/lisiyuan2/Projects/presentation-skills/demos/standard-wars-executive-deck/data/processed/five_factor_framework.csv",
+    "comparison_csv": "/project/lisiyuan2/Projects/presentation-skills/demos/standard-wars-executive-deck/data/processed/comparison_matrix.csv",
+    "milestones_csv": "/project/lisiyuan2/Projects/presentation-skills/demos/standard-wars-executive-deck/data/processed/case_milestones.csv"
+  },
+  "font_policy": {
+    "latin": "Arial",
+    "east_asia": "黑体"
+  }
+}
