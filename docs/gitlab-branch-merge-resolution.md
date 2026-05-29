@@ -78,36 +78,63 @@ git push gitlab gitlab/merge_latest:refs/tags/backup/merge-latest-before-merge-$
 
 #### Phase 2：将 main 合并到 merge_latest（解决分歧的核心步骤）
 
+> ⚠️ **重要：`-X ours` / `-X theirs` 的方向陷阱**
+>
+> Git 的 `-X ours` 指的是"保留**当前 HEAD 所在分支**的版本"，不是你想要的"基准分支"。
+>
+> ```bash
+> # 你站在 merge_latest 上
+> git checkout merge_latest
+> git merge gitlab/main -X ours    # ❌ 错误！ours = merge_latest，冲突全保留了 merge_latest 的旧版本
+> git merge gitlab/main -X theirs  # ✅ 正确！theirs = main，冲突保留 main 的新版本
+> ```
+>
+> **但更安全的方式是：先让冲突暴露出来，再用 `git checkout` 逐文件从 main 检出。**
+
 ```bash
 # 1. 切到 merge_latest
 git checkout merge_latest
 git pull gitlab merge_latest
 
-# 2. 合并 main，冲突时以 main 为准（ours 策略）
-git merge gitlab/main -X ours --no-edit
+# 2. 合并 main，不指定自动策略，让冲突暴露出来
+git merge gitlab/main --no-edit
+# 此时会出现 18 个冲突文件
 
-# 3. 检查合并结果
-git status
+# 3. 对于所有以 main 为准的冲突文件，直接从 main 检出
+#    （drsai 核心 12 个 + ui-tui 3 个 + 根目录 1 个）
+git checkout gitlab/main -- \
+  python/packages/drsai/docs/tui-migration-guide.md \
+  python/packages/drsai/pyproject.toml \
+  python/packages/drsai/src/drsai/backend/cli/commands.py \
+  python/packages/drsai/src/drsai/backend/gateway.py \
+  python/packages/drsai/src/drsai/backend/run_cli.py \
+  python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py \
+  python/packages/drsai/src/drsai/backend/tui_gateway/adapter/agent_runner.py \
+  python/packages/drsai/src/drsai/backend/tui_gateway/handlers/prompt.py \
+  python/packages/drsai/src/drsai/backend/tui_gateway/handlers/slash.py \
+  python/packages/drsai/src/drsai/modules/agents/skills_agent/managers/operater_funs.py \
+  python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py \
+  python/packages/drsai/src/drsai/version.py \
+  ui-tui/src/app/turnController.ts \
+  ui-tui/src/components/composerPane.tsx \
+  ui-tui/src/components/streamingAssistant.tsx \
+  run_drsai_agent.py
 
-# 4. 如果有 18 个冲突文件，-X ours 已经自动选择了 main 的版本
-#    但需要确认 merge_latest 独有的代码没有被错误覆盖
-#    重点检查以下文件：
+# 4. 添加并提交
+git add -A
+git commit -m "merge: sync main into merge_latest, resolve conflicts (main as base)"
 ```
 
-> ⚠️ **`-X ours` 的局限**：对于 `add/add` 冲突（两边独立新增了同名文件），`-X ours` 会完全丢弃对方的内容。如果 merge_latest 中某些文件有 main 没有的重要代码，需要手动补回。
+> 💡 **为什么不推荐 `-X theirs`？** 虽然它理论上会保留 main 的版本，但对于某些复杂冲突（如 drsai_ui 中两边都有修改的文件），你可能需要手动选择。逐文件 `git checkout` 更精确可控。
 
-#### Phase 3：手动审查和修复关键冲突文件
+#### Phase 3：手动审查 drsai_ui 冲突文件（2 个）
 
-`-X ours` 自动解决后，以下文件可能需要手动补回 merge_latest 的独有改动：
+Phase 2 中已从 main 检出了 15 个文件，但 **drsai_ui 下的 2 个文件**两边都有修改，需要手动对比决定：
 
 | 文件 | 审查要点 |
 |------|----------|
 | `python/packages/drsai_ui/.../task_team.py` | main 可能没有此文件最新版，需确认是否保留 merge_latest 版本 |
 | `python/packages/drsai_ui/.../teammanager.py` | 同上 |
-| `ui-tui/src/components/streamingAssistant.tsx` | 如果 merge_latest 有自己的 UI 改动，需手动合并 |
-| `ui-tui/src/components/composerPane.tsx` | main 版本更新更全面，大概率以 main 为准即可 |
-| `ui-tui/src/app/turnController.ts` | 同上 |
-| `run_drsai_agent.py` | 检查 merge_latest 是否有独有的启动参数 |
 
 **审查方法**：
 
