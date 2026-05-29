@@ -5,7 +5,7 @@
 import { useStore } from '@nanostores/react'
 import { Box, Text, useApp, useInput } from 'ink'
 import { existsSync, readFileSync } from 'node:fs'
-import { basename, extname, resolve } from 'node:path'
+import { basename, extname, isAbsolute, resolve, win32 } from 'node:path'
 import { homedir } from 'node:os'
 import { useEffect, useRef, useState } from 'react'
 
@@ -61,10 +61,21 @@ function resolveFilePath(filePath: string): string {
   if (filePath.startsWith('~')) {
     return filePath.replace('~', homedir())
   }
-  // Already absolute
-  if (filePath.startsWith('/')) {
+
+  // Already absolute for the platform that is running the TUI.
+  if (isAbsolute(filePath)) {
     return filePath
   }
+
+  // A Windows absolute path such as ``D:\\foo\\bar.png`` is NOT considered
+  // absolute by Node when the TUI process is running on POSIX/Linux. Without
+  // this guard, ``path.resolve(linuxCwd, 'D:\\foo.png')`` produces a bogus path
+  // like ``/home/user/D:\\foo.png``. Treat it as absolute so the error message
+  // points at the real user input instead of a cwd-prefixed fake path.
+  if (win32.isAbsolute(filePath)) {
+    return filePath
+  }
+
   // Relative path — resolve against the user's real cwd
   const userCwd = process.env.DRSAI_USER_CWD?.trim() || process.cwd()
   return resolve(userCwd, filePath)

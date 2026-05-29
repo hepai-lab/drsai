@@ -86,13 +86,31 @@ cd python/packages/drsai_ui && pip install -e .
 deactivate
 ```
 
-#### pip 安装(版本可能落后)
+#### pip 安装 / 升级
 
 ```shell
 conda create -n drsai python=>3.11
 conda activate drsai
-pip install drsai drsai_ui -U
+
+# 首次安装
+python -m pip install -U drsai drsai_ui
+
+# 已安装环境升级推荐使用 --no-cache-dir，避免 pip 复用旧缓存包
+python -m pip install -U --no-cache-dir drsai drsai_ui
+
+# 如需强制重装指定版本，可使用：
+# python -m pip install --force-reinstall --no-cache-dir drsai==<version> drsai_ui==<version>
 ```
+
+> 注意：PyPI 上同一个版本号的 wheel 不会被覆盖。若已安装环境升级后仍出现旧行为，请先确认发布时已更新 `python/packages/drsai/src/drsai/version.py` 中的版本号，然后在目标环境中使用 `python -m pip install -U --no-cache-dir drsai drsai_ui` 重新升级。
+>
+> 新版 TUI 前端打包在 `drsai` wheel 内的 `drsai/ui_tui/dist/entry.mjs` 中。如果 `/image` 等前端命令仍表现为旧版本，可用下面命令确认当前环境是否安装到了包含新版 bundle 的包：
+>
+> ```shell
+> python -c "from pathlib import Path; import drsai; p=Path(drsai.__file__).resolve().parent/'ui_tui'/'dist'/'entry.mjs'; print('drsai:', drsai.__file__); print('bundle:', p); print('exists:', p.exists()); text=p.read_text(encoding='utf-8', errors='ignore') if p.exists() else ''; print('has /image client handler:', 'parseImageCommand' in text)"
+> ```
+>
+> 如果结果为 `False`，说明当前环境仍在使用旧 bundle；请升级到新的版本号，或检查是否设置了 `DRSAI_UI_TUI_DIR` 指向旧的本地 `ui-tui` 目录。
 
 #### 配置HepAI平台的API访问密钥
 
