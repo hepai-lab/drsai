@@ -138,13 +138,15 @@ export const useTaskActions = ({
         // Use files directly (already in the correct format from upload)
         const processedFiles = files && files.length > 0 ? files : [];
 
+        const llmPayload = buildLlmPayload(llm, effectiveAgentInfo as Record<string, any>);
+
         // Inner JSON (response field only): accepted, content, plan — no metadata here.
         // BESIII Revise etc. pass inputMetadata as sibling on the WebSocket envelope.
         const responseJson = {
           accepted: accepted,
           content: response,
           ...(planString !== "" && { plan: planString }),
-          ...buildLlmPayload(llm, effectiveAgentInfo as Record<string, any>),
+          ...llmPayload,
         };
         const responseString = JSON.stringify(responseJson);
 
@@ -182,8 +184,11 @@ export const useTaskActions = ({
               settings_config: {
                 ...settingsWithoutAgentId,
                 ...(outboundAgentId ? { agent_id: outboundAgentId } : {}),
-                agent_mode_config: effectiveAgentInfo,
-                ...buildLlmPayload(llm, effectiveAgentInfo as Record<string, any>),
+                agent_mode_config: {
+                  ...effectiveAgentInfo,
+                  ...llmPayload,
+                },
+                ...llmPayload,
               },
               ...(processedFiles.length > 0 && { files: processedFiles }),
               ...(hasInputMetadata ? inputMetadata : {}),
@@ -201,8 +206,10 @@ export const useTaskActions = ({
           metadata: {
             settings_config: {
               ...(outboundAgentId ? { agent_id: outboundAgentId } : {}),
-              ...(effectiveAgentInfo ? { agent_mode_config: effectiveAgentInfo } : {}),
-              ...buildLlmPayload(llm, effectiveAgentInfo as Record<string, any>),
+              ...(effectiveAgentInfo
+                ? { agent_mode_config: { ...effectiveAgentInfo, ...llmPayload } }
+                : {}),
+              ...llmPayload,
             },
             ...(processedFiles.length > 0 && { files: processedFiles }),
             ...(hasInputMetadata ? inputMetadata : {}),
@@ -432,11 +439,15 @@ export const useTaskActions = ({
         const outboundAgentId = resolveOutboundAgentId(effectiveAgentInfo as any);
         const { agent_id: _ignoredAgentId, ...settingsWithoutAgentId } =
           ((currentSettings as unknown) as Record<string, unknown>) || {};
+        const llmPayload = buildLlmPayload(llm, effectiveAgentInfo as Record<string, any>);
         const baseSettingsConfig: Record<string, unknown> = {
           ...settingsWithoutAgentId,
           ...(outboundAgentId ? { agent_id: outboundAgentId } : {}),
-          agent_mode_config: effectiveAgentInfo,
-          ...buildLlmPayload(llm, effectiveAgentInfo as Record<string, any>),
+          agent_mode_config: {
+            ...(effectiveAgentInfo || {}),
+            ...llmPayload,
+          },
+          ...llmPayload,
         };
         // Mirror CLI `--autonomous`: autonomous runs should not use cooperative planning.
         const settings_config =

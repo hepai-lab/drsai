@@ -395,7 +395,7 @@ const ChatInput = React.forwardRef<
       accepted: boolean,
       doResetInput: boolean = true
     ) => {
-      const selectedLlm = llmList.find((llm) => llm.label === selectedLlmLabel);
+      const selectedLlm = llmList.find((llm) => llm.label === selectedLlmLabel) || llmList[0];
       if (attachedPlan) {
         onSubmit(query, files as any, accepted, attachedPlan, selectedLlm);
       } else {

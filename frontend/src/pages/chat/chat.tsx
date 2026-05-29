@@ -53,6 +53,7 @@ interface ChatViewProps {
     query: string;
     files: any[];
     plan?: any;
+    llm?: { label: string; value: string };
   } | null;
   onPendingMessageSent?: () => void;
   /** From 库: attach already-uploaded files to the input */
@@ -524,8 +525,8 @@ export default function ChatView({
     }
     pendingMessageSentRef.current = true;
 
-    const { query, files, plan } = pendingFirstMessage;
-    runTask(query, files as any[], plan, true);
+    const { query, files, plan, llm } = pendingFirstMessage;
+    runTask(query, files as any[], plan, true, llm);
 
     if (onPendingMessageSent) {
       onPendingMessageSent();

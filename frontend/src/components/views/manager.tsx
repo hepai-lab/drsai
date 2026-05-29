@@ -1356,9 +1356,9 @@ export const SessionManager: React.FC = () => {
                   serverFilesPrefill={libraryAttachPrefill}
                   suppressSampleTasks={sampleTasksDismissed}
                   onDismissSampleTasks={() => setSampleTasksDismissed(true)}
-                  onSubmit={async (agent, query, files, plan) => {
+                  onSubmit={async (agent, query, files, plan, llm) => {
                     setSampleTasksDismissed(true);
-                    await createNewChatSession(agent, query, files, plan);
+                    await createNewChatSession(agent, query, files, plan, llm);
                   }}
                 />
               );
