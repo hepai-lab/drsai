@@ -138,6 +138,49 @@ export class SessionAPI {
             throw new Error(data.message || "Failed to delete session");
     }
 
+    async setSessionShare(
+        sessionId: number,
+        userId: string,
+        enabled: boolean
+    ): Promise<{ share_token: string; share_enabled: boolean }> {
+        const params = new URLSearchParams({
+            user_id: userId,
+            enabled: String(enabled),
+        });
+        const response = await fetch(
+            `${this.getBaseUrl()}/sessions/${sessionId}/share?${params.toString()}`,
+            {
+                method: "POST",
+                headers: this.getHeaders(),
+            }
+        );
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.detail || data.message || "Failed to update share");
+        return data.data;
+    }
+
+    async getSharedSession(shareToken: string): Promise<{
+        session: Session;
+        runs: SessionRuns["runs"];
+    }> {
+        const response = await fetch(
+            `${this.getBaseUrl()}/sessions/shared/${encodeURIComponent(shareToken)}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!data.status)
+            throw new Error(data.detail || data.message || "Failed to load shared session");
+        return data.data;
+    }
+
+    buildShareUrl(shareToken: string): string {
+        const prefix = process.env.GATSBY_PREFIX_PATH_VALUE || "";
+        const origin =
+            typeof window !== "undefined" ? window.location.origin : "";
+        return `${origin}${prefix}/share?token=${encodeURIComponent(shareToken)}`;
+    }
+
     // Adding messages endpoint
     async listSessionMessages(
         sessionId: number,
@@ -754,19 +797,6 @@ export class AgentWorkerAPI {
         return data;
     }
 
-    async getUserDefaultAgents(userId: string): Promise<any> {
-        const url = `${this.getBaseUrl()}/agentworker/user_default_agents/list?user_id=${encodeURIComponent(userId)}`;
-        const response = await fetch(url, {
-            headers: {
-                "Content-Type": "application/json",
-            },
-        });
-        const data = await response.json();
-        if (!data.status)
-            throw new Error(data.message || "Failed to fetch user default agents");
-        return data;
-    }
-
     async recordUserAgentUsage(userId: string, agentId: string): Promise<any> {
         const response = await fetch(
             `${this.getBaseUrl()}/agentworker/user_agent/usage`,
@@ -802,7 +832,12 @@ export class AgentWorkerAPI {
         return data.data || [];
     }
 
-    async getUserDefaultAgent(userId: string): Promise<{ default_agent_id: string | null; stored_default_agent_id: string | null }> {
+    async getUserDefaultAgent(userId: string): Promise<{
+        default_agent_id: string | null;
+        stored_default_agent_id: string | null;
+        auto_load_default_agent?: boolean;
+        default_agent_name?: string | null;
+    }> {
         const url = `${this.getBaseUrl()}/agentworker/user_default_agent?user_id=${encodeURIComponent(userId)}`;
         const response = await fetch(url, {
             headers: { "Content-Type": "application/json" },
@@ -952,6 +987,157 @@ export class FileAPI {
             fileUuid
         )}?user_id=${encodeURIComponent(userId)}`;
     }
+
+    async editDocx(
+        userId: string,
+        fileName: string,
+        originalParagraphs: string[],
+        edits: Array<{
+            type: string;
+            old_text?: string;
+            new_text?: string;
+            text?: string;
+            content?: string;
+            formatting?: { bold?: boolean | null; italic?: boolean | null };
+            position?: number;
+        }>,
+        fileUrl?: string | null,
+        fileBase64?: string | null,
+    ): Promise<{
+        success: boolean;
+        saved_name?: string;
+        uuid?: string;
+        path?: string;
+        url?: string;
+        changes?: string[];
+        message?: string;
+    }> {
+        const url = `${this.getBaseUrl()}/files/docx/edit`;
+        const body: Record<string, unknown> = {
+            user_id: userId,
+            file_name: fileName,
+            original_paragraphs: originalParagraphs,
+            edits: edits,
+        };
+        if (fileUrl) body.file_url = fileUrl;
+        if (fileBase64) body.file_base64 = fileBase64;
+
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(body),
+        });
+
+        const text = await response.text();
+        let data: any;
+        try {
+            data = JSON.parse(text);
+        } catch {
+            throw new Error(text || `Server error (${response.status})`);
+        }
+        if (!data.status) {
+            const detail = data.detail;
+            const errMsg = data.message
+                || (Array.isArray(detail) ? detail.map((d: any) => d.msg || JSON.stringify(d)).join("; ") : detail)
+                || "Failed to edit docx";
+            throw new Error(errMsg);
+        }
+        return data.data;
+    }
+
+    async uploadToHepAI(
+        userId: string,
+        file: File,
+        meta?: {
+            slug?: string;
+            display_name?: string;
+            icon?: string;
+            description?: string;
+            version?: string;
+            changelog?: string;
+        }
+    ): Promise<{ id: string; url: string }> {
+        const form = new FormData();
+        form.append("file", file);
+        const m = meta ?? {};
+        if (m.slug?.trim()) form.append("slug", m.slug.trim());
+        if (m.display_name?.trim()) form.append("display_name", m.display_name.trim());
+        if (m.icon?.trim()) form.append("icon", m.icon.trim());
+        if (m.description?.trim()) form.append("description", m.description.trim());
+        if (m.version?.trim()) form.append("version", m.version.trim());
+        if (m.changelog?.trim()) form.append("changelog", m.changelog.trim());
+        const url = `${this.getBaseUrl()}/files/hepai/upload?user_id=${encodeURIComponent(userId)}`;
+        const response = await fetch(url, { method: "POST", body: form });
+        const data = await response.json();
+        if (!response.ok || !data?.status) {
+            throw new Error(data?.detail || data?.message || "上传到 HepAI 失败");
+        }
+        const raw = data.data || {};
+        if (!raw.id || !raw.url) {
+            throw new Error("上传成功但未返回 HepAI 文件信息");
+        }
+        return { id: raw.id, url: raw.url };
+    }
+
+    async getHepaiZipSkillMd(userId: string, fileId: string): Promise<{ path: string; content: string }> {
+        const url = `${this.getBaseUrl()}/files/hepai/skill-md/${encodeURIComponent(fileId)}?user_id=${encodeURIComponent(
+            userId
+        )}`;
+        const response = await fetch(url);
+        const data = await response.json();
+        if (!response.ok || !data?.status) {
+            throw new Error(data?.detail || data?.message || "读取 SKILL.md 失败");
+        }
+        const raw = data.data || {};
+        if (typeof raw.content !== "string") {
+            throw new Error("读取成功但未返回 SKILL.md 内容");
+        }
+        return { path: String(raw.path || "SKILL.md"), content: raw.content };
+    }
+
+    async listHepaiFiles(
+        userId: string
+    ): Promise<
+        Array<{
+            id: string;
+            filename: string;
+            url: string;
+            createdAtMs: number;
+            description?: string;
+            uploadedBy?: string;
+            metadata?: Record<string, unknown>;
+        }>
+    > {
+        const url = `${this.getBaseUrl()}/files/hepai/list?user_id=${encodeURIComponent(userId)}`;
+        const response = await fetch(url);
+        const data = await response.json();
+        if (!response.ok || !data?.status) {
+            throw new Error(data?.detail || data?.message || "获取 HepAI 文件列表失败");
+        }
+        const rows = Array.isArray(data.data) ? data.data : [];
+        return rows
+            .filter((r: any) => r && typeof r.id === "string" && typeof r.url === "string")
+            .map((r: any) => {
+                const uploadedRaw = r.uploadedBy ?? r.uploaded_by;
+                return {
+                    id: r.id,
+                    filename: String(r.filename || r.name || "file.zip"),
+                    url: r.url,
+                    createdAtMs: Number(r.createdAtMs || Date.now()),
+                    description: typeof r.description === "string" ? r.description : undefined,
+                    uploadedBy:
+                        typeof uploadedRaw === "string" && uploadedRaw.trim()
+                            ? uploadedRaw.trim()
+                            : undefined,
+                    metadata:
+                        r.metadata && typeof r.metadata === "object" && r.metadata !== null
+                            ? r.metadata
+                            : undefined,
+                };
+            });
+    }
 }
 
 export class AuthAPI {
@@ -998,6 +1184,13 @@ export class AuthAPI {
             headers: this.getHeaders(),
         });
         const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                (data as { detail?: string; message?: string }).detail ||
+                    (data as { message?: string }).message ||
+                    `登录失败 (${response.status})`
+            );
+        }
         if (!data.status) {
             throw new Error(data.message || "登录失败");
         }
@@ -1012,26 +1205,53 @@ export type ManagedUser = {
     user_id: string;
     auth_source: "local" | "sso";
     is_admin: boolean;
-    org_id?: number | null;
-    org_slug?: string | null;
-    org_display_name?: string | null;
-    org_role?: string | null;
 };
 
-export type OrgAccess = {
+export type UserAccess = {
     is_platform_admin: boolean;
-    org: { org_id: number; role: string; is_org_admin: boolean } | null;
 };
 
-export type PlazaAgentRow = {
-    org_id: number;
-    org_slug: string;
-    org_display_name: string;
-    agent_id: string;
-    snapshot: Record<string, unknown>;
+export type AdminUsageOverviewData = {
+    usage_events: Array<{
+        user_id: string;
+        agent_id: string;
+        use_count: number;
+    }>;
+    top_agents_by_usage_records: Array<{
+        agent_id: string;
+        agent_name?: string | null;
+        total_use_count_records: number;
+    }>;
+    sessions_per_user: Array<{ user_id: string; session_count: number }>;
+    runs_per_user: Array<{ user_id: string; run_count: number }>;
+    today_session_stats?: {
+        today_key: string;
+        session_count: number;
+        dau: number;
+        recent_by_user_agent: Array<{
+            user_id: string;
+            agent_name?: string | null;
+            session_count: number;
+            latest_created_at: string;
+        }>;
+    };
+    session_usage_scatter?: Array<{
+        user_id: string;
+        agent_id: string;
+        agent_name?: string | null;
+        latest_created_at: string;
+        session_count: number;
+    }>;
+    usage_daily_trends?: Array<{
+        day_key: string;
+        agent_session_count: number;
+        active_user_count: number;
+    }>;
+    limits: { usage_events?: number };
 };
 
-export class OrganizationsAPI {
+/** Platform-admin cross-user usage aggregates (requires `UserRole.is_admin`). */
+export class AdminAnalyticsAPI {
     private getBaseUrl(): string {
         return getServerUrl();
     }
@@ -1040,222 +1260,27 @@ export class OrganizationsAPI {
         return { "Content-Type": "application/json" };
     }
 
-    async getAccess(userId: string): Promise<OrgAccess> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/access?user_id=${encodeURIComponent(userId)}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "access");
-        return data.data;
-    }
-
-    async getMyOrg(userId: string): Promise<Record<string, unknown> | null> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/me?user_id=${encodeURIComponent(userId)}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "me");
-        return data.data ?? null;
-    }
-
-    async listCatalog(): Promise<{ id: number; slug: string; display_name: string }[]> {
-        const response = await fetch(`${this.getBaseUrl()}/orgs/catalog`, { headers: this.getHeaders() });
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "catalog");
-        return data.data || [];
-    }
-
-    async listOrgs(operatorUserId: string): Promise<any[]> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "orgs");
-        return data.data || [];
-    }
-
-    async createOrg(
-        operatorUserId: string,
-        body: { slug: string; display_name?: string; default_agent_id?: string | null }
-    ): Promise<any> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            {
-                method: "POST",
-                headers: this.getHeaders(),
-                body: JSON.stringify(body),
-            }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "create org");
-        return data.data;
-    }
-
-    async deleteOrg(operatorUserId: string, orgId: number): Promise<void> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/${orgId}?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            { method: "DELETE", headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "delete org");
-    }
-
-    async listMembers(operatorUserId: string, orgId: number): Promise<any[]> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/${orgId}/members?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "members");
-        return data.data || [];
-    }
-
-    async addMember(operatorUserId: string, orgId: number, userId: string, role: string): Promise<any> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/${orgId}/members?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            {
-                method: "POST",
-                headers: this.getHeaders(),
-                body: JSON.stringify({ user_id: userId, role }),
-            }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "add member");
-        return data.data;
-    }
-
-    async removeMember(operatorUserId: string, orgId: number, userId: string): Promise<void> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/${orgId}/members/${encodeURIComponent(
-                userId
-            )}?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            { method: "DELETE", headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "remove member");
-    }
-
-    async listOrgAgents(orgId: number): Promise<any[]> {
-        const response = await fetch(`${this.getBaseUrl()}/orgs/${orgId}/agents`, {
-            headers: this.getHeaders(),
-        });
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "org agents");
-        return data.data || [];
-    }
-
-    async upsertOrgAgent(
-        operatorUserId: string,
-        orgId: number,
-        agentId: string,
-        snapshot: Record<string, unknown>
-    ): Promise<any> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/${orgId}/agents?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            {
-                method: "POST",
-                headers: this.getHeaders(),
-                body: JSON.stringify({ agent_id: agentId, snapshot }),
-            }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "save org agent");
-        return data.data;
-    }
-
-    async deleteOrgAgent(operatorUserId: string, orgId: number, agentId: string): Promise<void> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/${orgId}/agents/${encodeURIComponent(
-                agentId
-            )}?operator_user_id=${encodeURIComponent(operatorUserId)}`,
-            { method: "DELETE", headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "delete org agent");
-    }
-
-    async plazaList(userId: string): Promise<PlazaAgentRow[]> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/plaza/agents?user_id=${encodeURIComponent(userId)}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "plaza");
-        return data.data || [];
-    }
-
-    async plazaApply(applicantUserId: string, targetOrgId: number, requestedAgentId: string): Promise<any> {
-        const response = await fetch(`${this.getBaseUrl()}/orgs/plaza/requests`, {
-            method: "POST",
-            headers: this.getHeaders(),
-            body: JSON.stringify({
-                applicant_user_id: applicantUserId,
-                target_org_id: targetOrgId,
-                requested_agent_id: requestedAgentId,
-            }),
-        });
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "apply");
-        return data.data;
-    }
-
-    async plazaMyRequests(applicantUserId: string): Promise<any[]> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/plaza/requests/mine?applicant_user_id=${encodeURIComponent(
-                applicantUserId
-            )}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "mine");
-        return data.data || [];
-    }
-
-    async plazaPending(operatorUserId: string): Promise<any[]> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/plaza/requests/pending?operator_user_id=${encodeURIComponent(
-                operatorUserId
-            )}`,
-            { headers: this.getHeaders() }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "pending");
-        return data.data || [];
-    }
-
-    async plazaApprove(operatorUserId: string, requestUuid: string, message?: string): Promise<any> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/plaza/requests/${encodeURIComponent(requestUuid)}/approve`,
-            {
-                method: "PUT",
-                headers: this.getHeaders(),
-                body: JSON.stringify({ operator_user_id: operatorUserId, message: message || null }),
-            }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "approve");
-        return data.data;
-    }
-
-    async plazaReject(operatorUserId: string, requestUuid: string, message?: string): Promise<any> {
-        const response = await fetch(
-            `${this.getBaseUrl()}/orgs/plaza/requests/${encodeURIComponent(requestUuid)}/reject`,
-            {
-                method: "PUT",
-                headers: this.getHeaders(),
-                body: JSON.stringify({ operator_user_id: operatorUserId, message: message || null }),
-            }
-        );
-        const data = await response.json();
-        if (!data.status) throw new Error(data.detail || data.message || "reject");
-        return data.data;
+    async usageOverview(operatorUserId: string): Promise<AdminUsageOverviewData> {
+        const url = `${this.getBaseUrl()}/admin/analytics/usage-overview?operator_user_id=${encodeURIComponent(
+            operatorUserId
+        )}`;
+        const response = await fetch(url, { headers: this.getHeaders() });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const msg =
+                typeof data.detail === "string"
+                    ? data.detail
+                    : data.message || `HTTP ${response.status}`;
+            throw new Error(msg);
+        }
+        if (!data.status) {
+            throw new Error(data.detail || data.message || "usage overview failed");
+        }
+        return data.data as AdminUsageOverviewData;
     }
 }
 
-export const organizationsAPI = new OrganizationsAPI();
+export const adminAnalyticsAPI = new AdminAnalyticsAPI();
 
 export class UserAPI {
     private getBaseUrl(): string {
@@ -1266,6 +1291,27 @@ export class UserAPI {
         return {
             "Content-Type": "application/json",
         };
+    }
+
+    async getAccess(userId: string): Promise<UserAccess> {
+        const base = this.getBaseUrl();
+        const q = `user_id=${encodeURIComponent(userId)}`;
+        const urls = [`${base}/users/access?${q}`, `${base}/orgs/access?${q}`];
+        let lastError = "access";
+        for (const url of urls) {
+            const response = await fetch(url, { headers: this.getHeaders() });
+            const data = await response.json().catch(() => ({}));
+            if (response.ok && data.status && data.data) {
+                return {
+                    is_platform_admin: Boolean(data.data.is_platform_admin),
+                };
+            }
+            lastError =
+                typeof data.detail === "string"
+                    ? data.detail
+                    : data.message || `HTTP ${response.status}`;
+        }
+        throw new Error(lastError);
     }
 
     async listUsers(operatorUserId: string): Promise<ManagedUser[]> {
@@ -1404,3 +1450,135 @@ export class SkillsAPI {
 }
 
 export const skillsAPI = new SkillsAPI();
+
+export interface DocMasterTemplateEntry {
+    name: string;
+    aliases?: string[];
+    category?: string | null;
+    tags?: string[];
+    description?: string | null;
+    path?: string;
+    [key: string]: unknown;
+}
+
+export interface DocMasterTemplatesResponse {
+    shared: DocMasterTemplateEntry[];
+    mine: DocMasterTemplateEntry[];
+}
+
+export class DocMasterAPI {
+    private getBaseUrl(): string {
+        return getServerUrl();
+    }
+
+    private getHeaders(): HeadersInit {
+        return {
+            "Content-Type": "application/json",
+        };
+    }
+
+    /** URL the browser can hit to download/stream a template's .docx. */
+    templateFileUrl(params: {
+        templateId: string;
+        source: "shared" | "mine";
+        userId?: string;
+    }): string {
+        const qs = new URLSearchParams();
+        qs.set("template_id", params.templateId);
+        qs.set("source", params.source);
+        if (params.source === "mine" && params.userId) qs.set("user_id", params.userId);
+        return `${this.getBaseUrl()}/docmaster/templates/file?${qs.toString()}`;
+    }
+
+    async saveTemplate(params: {
+        userId: string;
+        name: string;
+        description?: string;
+        category?: string;
+        tags?: string[];
+        aliases?: string[];
+        templateId?: string;
+        file: File;
+    }): Promise<{ template_id?: string; metadata?: DocMasterTemplateEntry }> {
+        const form = new FormData();
+        form.append("user_id", params.userId);
+        form.append("name", params.name);
+        if (params.description) form.append("description", params.description);
+        if (params.category) form.append("category", params.category);
+        if (params.tags && params.tags.length > 0) {
+            form.append("tags", JSON.stringify(params.tags));
+        }
+        if (params.aliases && params.aliases.length > 0) {
+            form.append("aliases", JSON.stringify(params.aliases));
+        }
+        if (params.templateId) form.append("template_id", params.templateId);
+        form.append("file", params.file);
+        const response = await fetch(`${this.getBaseUrl()}/docmaster/templates`, {
+            method: "POST",
+            body: form,
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "保存模板失败"
+            );
+        }
+        if (!data.status) {
+            throw new Error(data.message || "保存模板失败");
+        }
+        return data.data || {};
+    }
+
+    async deleteTemplate(params: {
+        templateId: string;
+        userId: string;
+    }): Promise<{ removed_id?: string }> {
+        const qs = new URLSearchParams();
+        qs.set("user_id", params.userId);
+        const response = await fetch(
+            `${this.getBaseUrl()}/docmaster/templates/${encodeURIComponent(params.templateId)}?${qs.toString()}`,
+            { method: "DELETE", headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "删除模板失败"
+            );
+        }
+        if (!data.status) {
+            throw new Error(data.message || "删除模板失败");
+        }
+        return data.data || {};
+    }
+
+    async listTemplates(params: {
+        userId?: string;
+        category?: string;
+        query?: string;
+    } = {}): Promise<DocMasterTemplatesResponse> {
+        const qs = new URLSearchParams();
+        if (params.userId) qs.set("user_id", params.userId);
+        if (params.category) qs.set("category", params.category);
+        if (params.query) qs.set("query", params.query);
+        const suffix = qs.toString() ? `?${qs.toString()}` : "";
+        const response = await fetch(
+            `${this.getBaseUrl()}/docmaster/templates${suffix}`,
+            { headers: this.getHeaders() }
+        );
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "Failed to list templates"
+            );
+        }
+        if (!data.status) {
+            throw new Error(data.message || "Failed to list templates");
+        }
+        return {
+            shared: data.data?.shared || [],
+            mine: data.data?.mine || [],
+        };
+    }
+}
+
+export const docmasterAPI = new DocMasterAPI();

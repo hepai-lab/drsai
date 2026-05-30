@@ -1,4 +1,9 @@
 ########################
+# Cursor IDE（个人配置，不提交）
+########################
+.cursor/
+
+########################
 # 项目特定文件
 ########################
 examples/requests/zulip_python/.zuliprc
@@ -22,7 +27,6 @@ config.yaml
 structure.md
 overleaf_project_points_en.md
 .playwright-cli
-.drsai
 
 # 工作目录
 /workspace
@@ -30,6 +34,9 @@ test/
 tmp/
 scratch/
 scratch.py
+
+# DocMaster — user-uploaded templates and fill outputs (never share)
+examples/agent_groupchat/docmaster/workspace/
 
 ########################
 # 操作系统相关文件
@@ -204,6 +211,9 @@ cython_debug/
 ########################
 .claude/
 .aider*
+# .drsai/
+DRSAI.local.md
+.drsai/DRSAI.local.md
 
 ########################
 # Magentic UI / Autogen Studio

@@ -17,6 +17,8 @@ from .config import settings
 from .deps import cleanup_managers, init_managers
 from .initialization import AppInitializer
 from .routes import (
+    access_compat,
+    admin_analytics,
     plans,
     runs,
     sessions,
@@ -30,8 +32,9 @@ from .routes import (
     models,
     local_login,
     users,
-    organizations,
     skills,
+    docmaster,
+    auth,
 )
 import httpx
 from fastapi.responses import HTMLResponse
@@ -214,6 +217,13 @@ api.include_router(
 )
 
 api.include_router(
+    auth.router,
+    prefix="/auth",
+    tags=["auth"],
+    responses={401: {"description": "Unauthorized"}},
+)
+
+api.include_router(
     users.router,
     prefix="/users",
     tags=["users"],
@@ -221,16 +231,30 @@ api.include_router(
 )
 
 api.include_router(
-    organizations.router,
+    access_compat.router,
     prefix="/orgs",
-    tags=["organizations"],
+    tags=["access-compat"],
     responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    admin_analytics.router,
+    prefix="/admin/analytics",
+    tags=["admin-analytics"],
+    responses={403: {"description": "Forbidden"}},
 )
 
 api.include_router(
     skills.router,
     prefix="/skills",
     tags=["skills"],
+    responses={404: {"description": "Not found"}},
+)
+
+api.include_router(
+    docmaster.router,
+    prefix="/docmaster",
+    tags=["docmaster"],
     responses={404: {"description": "Not found"}},
 )
 

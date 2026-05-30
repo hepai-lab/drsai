@@ -1,5 +1,5 @@
-from typing import Dict, List, Any
-import os, shutil
+from typing import Dict, List, Any, Optional
+import os, re, shutil, tempfile, base64, io, zipfile
 from fastapi import (
     APIRouter, 
     File, 
@@ -9,6 +9,7 @@ from fastapi import (
     HTTPException,
     )
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 # from fastapi.responses import FileResponse, HTMLResponse
 import uuid
 from dotenv import load_dotenv
@@ -22,6 +23,38 @@ from openai import OpenAI
 from .....drsai_adapter.singleton import personal_key_config_fetcher as fetcher
 
 router = APIRouter()
+
+# Nested buckets inside `UserFiles.files` — not individual library rows for GET /files/{session_id}
+_USER_FILES_META_KEYS = frozenset({"hepai_files"})
+
+
+def _flat_user_library_files(files: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Return only top-level user library file records for the UI.
+
+    `UserFiles.files` may also store buckets like `hepai_files` (dict of HepAI uploads).
+    Those must not be returned as a pseudo file row (would show as FILE / NaN MB in UI).
+    """
+    if not files:
+        return []
+    out: List[Dict[str, Any]] = []
+    for _key, entry in files.items():
+        if _key in _USER_FILES_META_KEYS:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        # Expected local rows from POST /files/: name, path, suffix, size, uuid
+        if entry.get("uuid") is not None and not isinstance(entry.get("uuid"), str):
+            continue
+        sz = entry.get("size")
+        if sz is not None and not isinstance(sz, (int, float)):
+            continue
+        out.append(entry)
+    return out
+
 
 def get_initializer():
     """Get the initializer instance from app module"""
@@ -44,6 +77,196 @@ def upload_to_filesystem(file_path: str, user_id: str) -> Dict[str, Any]:
     file_obj = file_obj.model_dump()
     file_obj["url"] = url
     return file_obj
+
+
+def _download_hepai_file_bytes(file_id: str, user_id: str) -> bytes:
+    SERVICE_MODE = os.getenv("SERVICE_MODE", "DEV")
+    client = OpenAI(
+        base_url="https://aiapi.ihep.ac.cn/apiv2",
+        api_key=fetcher.get_personal_key(username=user_id)
+        if SERVICE_MODE == "PROD"
+        else os.environ.get("HEPAI_API_KEY"),
+    )
+
+    resp = client.files.content(file_id)
+    if hasattr(resp, "read"):
+        return resp.read()
+    if hasattr(resp, "content"):
+        return resp.content  # type: ignore[return-value]
+    if isinstance(resp, (bytes, bytearray)):
+        return bytes(resp)
+    return bytes(resp)  # best-effort fallback
+
+
+def _extract_skill_md_from_zip(zip_bytes: bytes) -> Dict[str, str]:
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"invalid zip: {e}") from e
+
+    names = [n for n in zf.namelist() if not n.endswith("/")]
+    candidates = [n for n in names if n.upper().endswith("SKILL.MD")]
+    if not candidates:
+        raise HTTPException(status_code=404, detail="SKILL.md not found in zip")
+
+    def _rank(p: str) -> tuple[int, int, str]:
+        # prefer root SKILL.md, then single-subdir, then shortest path
+        segs = [s for s in p.split("/") if s]
+        root_bonus = 0 if (len(segs) == 1 and segs[0].upper() == "SKILL.MD") else 1
+        depth = len(segs)
+        return (root_bonus, depth, p.lower())
+
+    chosen = sorted(candidates, key=_rank)[0]
+    try:
+        raw = zf.read(chosen)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail="SKILL.md missing in zip") from e
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", errors="replace")
+    return {"path": chosen, "content": text}
+
+
+def _parse_skill_md_description_from_text(content: str) -> Optional[str]:
+    """YAML frontmatter `description:` from SKILL.md (aligned with SkillLoader frontmatter parsing)."""
+    match = re.match(r"^---\s*\n(.*?)\n---\s*\n", content, re.DOTALL)
+    if not match:
+        return None
+    frontmatter = match.group(1)
+    for line in frontmatter.strip().split("\n"):
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        if key.strip() != "description":
+            continue
+        out = value.strip().strip("\"'")
+        return out or None
+    return None
+
+
+def _skill_md_description_from_zip_path(zip_path: str) -> Optional[str]:
+    try:
+        with open(zip_path, "rb") as zf_in:
+            zb = zf_in.read()
+        extracted = _extract_skill_md_from_zip(zb)
+        return _parse_skill_md_description_from_text(extracted["content"])
+    except Exception:
+        return None
+
+
+@router.post("/hepai/upload")
+async def upload_file_to_hepai(
+    user_id: str,
+    file: UploadFile = File(...),
+    db=Depends(get_db),
+) -> Dict:
+    """
+    Upload a single file to HepAI Files (purpose=user_data) and return its preview URL.
+
+    This endpoint exists to avoid browser CORS issues when uploading directly to
+    `https://aiapi.ihep.ac.cn/apiv2/files`.
+    """
+    if not user_id:
+        raise HTTPException(status_code=400, detail="missing user_id")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="missing file")
+
+    tmp_dir = tempfile.mkdtemp(prefix="hepai-upload-")
+    try:
+        tmp_path = os.path.join(tmp_dir, file.filename)
+        with open(tmp_path, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+
+        file_obj = upload_to_filesystem(tmp_path, user_id)
+        raw_meta = file_obj.get("metadata")
+        api_metadata: Dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
+        meta_desc_raw = api_metadata.get("description")
+        meta_description = (
+            meta_desc_raw.strip()
+            if isinstance(meta_desc_raw, str) and meta_desc_raw.strip()
+            else None
+        )
+        skill_md_description = _skill_md_description_from_zip_path(tmp_path)
+        resolved_description = meta_description or skill_md_description
+
+        # Persist hepai file info into DB for refresh/reload
+        try:
+            response = db.get(UserFiles, filters={"user_id": user_id})
+            if not response.status or not response.data:
+                userfiles = UserFiles(user_id=user_id, files={})
+            else:
+                userfiles: UserFiles = response.data[0]
+                if userfiles.files is None:
+                    userfiles.files = {}
+
+            hepai_files = userfiles.files.get("hepai_files")
+            if not isinstance(hepai_files, dict):
+                hepai_files = {}
+            hepai_files[file_obj["id"]] = {
+                "id": file_obj["id"],
+                "filename": file.filename,
+                "url": file_obj.get("url"),
+                "createdAtMs": int(__import__("time").time() * 1000),
+                "source": "hepai",
+                "uploadedBy": user_id,
+                "metadata": api_metadata,
+                **({"description": resolved_description} if resolved_description else {}),
+            }
+            userfiles.files["hepai_files"] = hepai_files
+            db.upsert(userfiles)
+        except Exception:
+            # best-effort persistence; upload already succeeded
+            pass
+        return {"status": True, "data": file_obj}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@router.get("/hepai/list")
+async def list_hepai_files(user_id: str, db=Depends(get_db)) -> Dict:
+    """List HepAI uploaded files persisted for the user."""
+    if not user_id:
+        raise HTTPException(status_code=400, detail="missing user_id")
+    response = db.get(UserFiles, filters={"user_id": user_id})
+    if not response.status or not response.data:
+        return {"status": True, "data": []}
+    userfiles: UserFiles = response.data[0]
+    if not userfiles.files:
+        return {"status": True, "data": []}
+    hepai_files = userfiles.files.get("hepai_files")
+    if not isinstance(hepai_files, dict):
+        return {"status": True, "data": []}
+    rows = list(hepai_files.values())
+    # newest first when createdAtMs exists
+    rows.sort(key=lambda x: x.get("createdAtMs", 0), reverse=True)
+    return {"status": True, "data": rows}
+
+
+@router.get("/hepai/skill-md/{file_id}")
+async def get_hepai_zip_skill_md(file_id: str, user_id: str) -> Dict:
+    """
+    Read `SKILL.md` from a ZIP stored in HepAI Files (purpose=user_data).
+
+    - Supports root `SKILL.md`
+    - Supports single-subdir `*/SKILL.md`
+    """
+    if not user_id:
+        raise HTTPException(status_code=400, detail="missing user_id")
+    if not file_id:
+        raise HTTPException(status_code=400, detail="missing file_id")
+
+    zip_bytes = _download_hepai_file_bytes(file_id=file_id, user_id=user_id)
+    extracted = _extract_skill_md_from_zip(zip_bytes)
+    return {"status": True, "data": extracted}
 
 @router.post("/")
 async def upload_files(
@@ -163,12 +386,208 @@ async def get_user_session_files(session_id: str, user_id: str, db=Depends(get_d
     检索用户上传的文件列表
     """
     response = db.get(UserFiles, filters={"user_id": user_id})
-    if not response.status or not response.data:
+    if not response.status:
         return {"status": False, "data": {}}
-    else:
-        userfiles: UserFiles = response.data[0]
-        if userfiles.files:
-            files_list = [userfiles.files[file] for file in userfiles.files]
-            return {"status": True, "data": files_list}
-
+    if not response.data:
         return {"status": True, "data": []}
+    userfiles: UserFiles = response.data[0]
+    if userfiles.files:
+        files_list = _flat_user_library_files(userfiles.files)
+        return {"status": True, "data": files_list}
+    return {"status": True, "data": []}
+
+
+class EditDocxRequest(BaseModel):
+    user_id: str
+    file_name: str
+    original_paragraphs: List[str]
+    edits: List[Dict[str, Any]]
+    file_path: Optional[str] = None
+    file_url: Optional[str] = None
+    file_base64: Optional[str] = None
+
+
+@router.post("/docx/edit")
+async def edit_docx_file(
+    req: EditDocxRequest,
+    db=Depends(get_db)
+) -> Dict:
+    """
+    Edit a .docx file using structured edits with content-based paragraph matching.
+    
+    This endpoint:
+    1. Applies edits to the docx using DocumentProcessor
+    2. Copies the edited file to user's files space
+    3. Registers the new file in UserFiles database
+    
+    The source file can be provided via one of three methods (tried in order):
+    - file_path: Direct path to a docx file on disk
+    - file_url:  URL to download the docx from (e.g. HepAI filesystem)
+    - file_base64: Base64-encoded docx content
+    
+    Args:
+        user_id: User identifier
+        file_name: Original file name
+        original_paragraphs: List of original paragraph texts for content matching
+        edits: List of edit operations (replace_text, format_text, etc.)
+        file_path: (Optional) Path to the docx file on disk
+        file_url: (Optional) URL to download the docx from
+        file_base64: (Optional) Base64-encoded docx content
+    
+    Returns:
+        {status: True, data: {success, saved_name, path, uuid, ...}}
+    """
+    from drsai_ext.tools.docx_processor import edit_docx_by_content_match
+    import datetime
+    import requests as http_requests
+    
+    _temp_file_to_cleanup: Optional[str] = None
+    
+    # Unpack request fields
+    user_id = req.user_id
+    file_name = req.file_name
+    original_paragraphs = req.original_paragraphs
+    edits = req.edits
+    file_path = req.file_path
+    file_url = req.file_url
+    file_base64 = req.file_base64
+
+    try:
+        # Resolve the source file: file_path > file_url > file_base64
+        if file_path and os.path.isfile(file_path):
+            source_path = file_path
+        elif file_url:
+            # Download from URL to a temp file
+            resp = http_requests.get(file_url, timeout=60)
+            resp.raise_for_status()
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=".docx", delete=False, prefix="docx_edit_"
+            )
+            tmp.write(resp.content)
+            tmp.close()
+            source_path = tmp.name
+            _temp_file_to_cleanup = source_path
+        elif file_base64:
+            # Decode base64 to a temp file
+            raw = base64.b64decode(file_base64)
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=".docx", delete=False, prefix="docx_edit_"
+            )
+            tmp.write(raw)
+            tmp.close()
+            source_path = tmp.name
+            _temp_file_to_cleanup = source_path
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="No file source provided. Supply file_path, file_url, or file_base64.",
+            )
+        
+        # Get user's files directory
+        initializer = get_initializer()
+        userfiles_path = str(initializer.user_files / user_id)
+        if not os.path.exists(userfiles_path):
+            os.makedirs(userfiles_path, exist_ok=True)
+        
+        # Generate new file name with sequential numbering: name_edited1.docx, name_edited2.docx, ...
+        name_parts = file_name.rsplit(".", 1)
+        base_name = name_parts[0] if len(name_parts) == 2 else file_name
+        ext = name_parts[1] if len(name_parts) == 2 else "docx"
+        # Strip any existing _editedN suffix to find the true base name
+        import re as _re
+        stripped = _re.sub(r"_edited\d+$", "", base_name)
+        prefix = f"{stripped}_edited"
+        # Find the highest existing number
+        max_num = 0
+        existing_files = os.listdir(userfiles_path) if os.path.isdir(userfiles_path) else []
+        for f in existing_files:
+            if f.startswith(prefix) and f.endswith(f".{ext}"):
+                num_str = f[len(prefix):-len(f".{ext}")]
+                if num_str.isdigit():
+                    max_num = max(max_num, int(num_str))
+        new_file_name = f"{prefix}{max_num + 1}.{ext}"
+        
+        # Create a copy for editing (don't modify original)
+        temp_copy_path = os.path.join(userfiles_path, f"temp_{new_file_name}")
+        shutil.copy2(source_path, temp_copy_path)
+        
+        # Apply edits using DocumentProcessor
+        result = edit_docx_by_content_match(
+            file_path=temp_copy_path,
+            edits=edits,
+            original_paragraphs=original_paragraphs,
+            preserve_format=True
+        )
+        
+        if not result.get("success", False):
+            # Clean up temp file
+            if os.path.exists(temp_copy_path):
+                os.remove(temp_copy_path)
+            raise HTTPException(status_code=500, detail=result.get("message", "Edit failed"))
+        
+        # Move to final location
+        final_path = os.path.join(userfiles_path, new_file_name)
+        if os.path.exists(final_path):
+            os.remove(final_path)
+        shutil.move(temp_copy_path, final_path)
+        
+        # Register in database
+        file_id = str(uuid.uuid4())
+        file_info = {
+            "name": new_file_name,
+            "type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "path": final_path,
+            "suffix": ".docx",
+            "size": os.path.getsize(final_path),
+            "uuid": file_id,
+            "description": f"Edited version of {file_name}",
+        }
+        
+        # Upload to HepAI filesystem if enabled
+        USE_HEPAI_FILE = os.getenv("USE_HEPAI_FILE", False)
+        if USE_HEPAI_FILE:
+            try:
+                file_obj = upload_to_filesystem(final_path, user_id)
+                file_info["url"] = file_obj["url"]
+            except Exception as upload_err:
+                print(f"Warning: HepAI upload failed: {upload_err}")
+        
+        # Save to database
+        response = db.get(UserFiles, filters={"user_id": user_id})
+        if not response.status or not response.data:
+            userfiles = UserFiles(
+                user_id=user_id,
+                files={file_id: file_info},
+            )
+        else:
+            userfiles: UserFiles = response.data[0]
+            if userfiles.files:
+                userfiles.files[file_id] = file_info
+            else:
+                userfiles.files = {file_id: file_info}
+        db.upsert(userfiles)
+        
+        return {
+            "status": True,
+            "data": {
+                "success": True,
+                "saved_name": new_file_name,
+                "uuid": file_id,
+                "path": final_path,
+                "url": file_info.get("url"),
+                "changes": result.get("changes_made", []),
+                "message": result.get("message", ""),
+            }
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    finally:
+        # Clean up temp file downloaded from URL or decoded from base64
+        if _temp_file_to_cleanup and os.path.exists(_temp_file_to_cleanup):
+            try:
+                os.remove(_temp_file_to_cleanup)
+            except OSError:
+                pass

@@ -19,11 +19,12 @@
 8. [Plan Mode 与 Prompt 注入](#8-plan-mode-与-prompt-注入)
 9. [状态与信息查看](#9-状态与信息查看)
 10. [安全控制](#10-安全控制)
-11. [显示与交互控制](#11-显示与交互控制)
-12. [中断与退出](#12-中断与退出)
-13. [定时任务与通知推送](#13-定时任务与通知推送)
-14. [完整命令速查表](#14-完整命令速查表)
-15. [TUI 行为与调优](#15-tui-行为与调优)
+11. [图像多模态输入](#11-图像多模态输入-)
+12. [显示与交互控制](#12-显示与交互控制)
+13. [中断与退出](#13-中断与退出)
+14. [定时任务与通知推送](#14-定时任务与通知推送)
+15. [完整命令速查表](#15-完整命令速查表)
+16. [TUI 行为与调优](#16-tui-行为与调优)
 
 ---
 
@@ -749,7 +750,87 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 
 ---
 
-## 11 显示与交互控制
+## 11 图像多模态输入 🆕
+
+新版 TUI 支持在 CLI 中向视觉模型（如 Claude Sonnet、GPT-4o 等）传入图像。提供两种方式，可自由组合使用。
+
+### 11.1 `/image` 命令
+
+直接发送一张或多张图像作为一轮对话：
+
+```
+# 单张图像 + 描述
+/image /tmp/photo.png 描述一下这张图片
+
+# 多张图像 + 描述
+/image /tmp/a.png ./b.jpg ~/pics/c.webp 比较这三张图
+
+# 仅图像（无描述时自动用文件名）
+/image ~/Desktop/screenshot.png
+
+# /img 是 /image 的别名
+/img ./diagram.png 解释这个流程图
+```
+
+**路径规则**：
+
+| 写法 | 解析方式 |
+|------|----------|
+| `/abs/path.png` | 绝对路径 |
+| `~/path.png` | 相对于用户主目录 |
+| `./path.png` 或 `photos/img.png` | 相对于用户工作目录（即启动 `drsai` 时所在的目录） |
+
+**限制**：
+- 单张图像 ≤ 20 MB
+- 单次最多 10 张图像
+- 支持格式：`.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` `.svg`
+
+### 11.2 `@/path` 内联引用
+
+在普通对话文本中嵌入图像路径，用 `@` 标记：
+
+```
+请分析一下 @/tmp/chart.png 中的数据趋势
+
+对比 @./before.png 和 @./after.png 的差异
+
+看看 @~/Desktop/error.jpg 这个报错截图
+```
+
+`@` 引用会在提交时被替换为 `[image: filename]` 标记，图像数据作为 `MultiModalMessage` 传给模型。两种方式可以混用：
+
+```
+/image /tmp/a.png 然后再看 @./b.jpg 的细节
+```
+
+> ⚠️ 注意：`@` 引用只匹配带图像扩展名的路径。`@/tmp/readme.txt` 不会被识别为图像。
+
+### 11.3 工作原理
+
+```
+用户输入 → TUI 解析 @/path 或 /image → 读取文件 → base64 编码
+  → JSON-RPC prompt.submit {text, images: [{base64, mime_type}]}
+  → Gateway 构造 MultiModalMessage(content=[text, Image, ...])
+  → Agent.run_stream(task=MultiModalMessage)
+  → 视觉模型接收图像 + 文本
+```
+
+**注意事项**：
+- 非视觉模型（不支持 vision）时，Agent 内部的 `_get_compatible_context` 会自动调用 `remove_images()` 去除图像，不会报错。
+- 文件读取在 TUI（Node.js）端完成，因此 **attach 模式也能正常工作**——即使 gateway 在远程机器上，本地图像仍可传入。
+
+### 11.4 错误提示
+
+| 场景 | 提示 |
+|------|------|
+| 文件不存在 | `⚠ File not found: ./photo.png (resolved: /home/user/project/photo.png)` |
+| 格式不支持 | `⚠ Unsupported image format: .txt (./readme.txt)` |
+| 文件过大 | `⚠ Image too large: 25.0 MB > 20 MB limit (./big.png)` |
+| 图像过多 | `⚠ Too many images (max 10)` |
+
+---
+
+## 12 显示与交互控制
 
 | 命令 | 说明 |
 |------|------|
@@ -773,36 +854,58 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 
 ---
 
-## 12 中断与退出
+## 13 中断与退出
 
-### 12.1 Ctrl+C 中断
+### 13.1 Ctrl+C 中断
 
-- **第一次 Ctrl+C**: 中断当前命令/LLM 调用，agent 进入 pause → resume 状态重置，可继续对话
-- **第二次 Ctrl+C**: 退出 REPL
+新版 TUI 的 Ctrl+C 行为与旧版单进程 REPL **不同**，具体取决于当前状态：
 
-中断流程：
+| 状态 | Ctrl+C 行为 | 说明 |
+|------|------------|------|
+| **streaming（LLM 流式输出中）** | 发送 `prompt.cancel` RPC，中断当前流 | TUI 前端 `useInput` 拦截 Ctrl+C，调用 `controller.cancel()` → gateway 收到 RPC → 调用 `agent.interrupt()` |
+| **空闲（等待用户输入）** | 进程收到 SIGINT → **直接退出** | 无 `useInput` 拦截，`entry.tsx` 的 `process.once('SIGINT')` 触发 `process.exit(130)` |
+
+> ⚠️ **注意**：空闲状态下按 Ctrl+C 会**立即退出进程**，不会保存对话状态。如需优雅退出，请使用 `/quit` 或 Ctrl+D。
+
+中断流程（streaming 期间）：
 ```
-Ctrl+C → agent.pause() → await 0.1s → agent.resume() → "已中断，状态已重置"
+Ctrl+C (streaming)
+  → TUI useInput 捕获 → controller.cancel(sessionId)
+  → JSON-RPC prompt.cancel {session_id}
+  → Gateway sess.interrupt()
+  → Agent 停止当前 LLM 调用，状态标记为 interrupted
+  → 用户可继续输入下一条消息
 ```
 
-### 12.2 退出命令
+**Gateway 进程免疫 SIGINT**：Python gateway 子进程启动时执行 `signal.signal(SIGINT, SIG_IGN)`，完全忽略终端的 Ctrl+C 信号，取消只能通过 RPC `prompt.cancel` 发起。
+
+### 13.2 退出命令
 
 | 命令 | 别名 | 说明 |
 |------|------|------|
-| `/quit` | `/exit`, `/q` | 保存状态并退出 |
+| `/quit` | `/exit`, `/q` | 优雅退出：通知 gateway 保存状态后退出 |
+| Ctrl+D | — | 强制退出：任何状态均有效（UI 卡死时可用） |
 
-退出流程：
+退出流程（`/quit`）：
 ```
-/quit → 停止通知轮询器 → 关闭远程 task_manager → _close_agent() → _hard_exit(0)
+/quit → TUI 捕获命令 → controller.gw.kill() → useApp().exit()
+  → entry.tsx restoreTerminal() → gateway 子进程终止
+  → inkInstance.waitUntilExit() → process.exit(0)
 ```
 
-`_hard_exit` 使用 `os._exit()` 强制退出，避免等待后台线程 join（否则用户需要再按一次 Ctrl+C）。
+退出流程（Ctrl+D）：
+```
+Ctrl+D → App useInput 捕获 → gw.kill() → exit()
+  → 与 /quit 路径相同，但跳过 gateway 状态保存
+```
+
+> 💡 **提示**：`/quit` 是推荐的退出方式，它会在退出前让 gateway 保存当前会话状态。Ctrl+D 适用于 UI 无响应时的紧急退出。
 
 ---
 
-## 13 定时任务与通知推送
+## 14 定时任务与通知推送
 
-### 13.1 远程 Worker 模式
+### 14.1 远程 Worker 模式
 
 配置了 Worker URL (`--url` 或 `cfg.url`) 时，CLI 启动远程定时任务管理：
 
@@ -821,7 +924,7 @@ drsai --url http://localhost:42858/apiv2
     构建完成，所有测试通过
 ```
 
-### 13.2 本地模式
+### 14.2 本地模式
 
 无 Worker URL 时，定时任务推送不可用，终端提示：
 
@@ -831,7 +934,7 @@ drsai --url http://localhost:42858/apiv2
 
 ---
 
-## 14 完整命令速查表
+## 15 完整命令速查表
 
 ### Session 管理
 
@@ -892,6 +995,14 @@ drsai --url http://localhost:42858/apiv2
 | `/workspace` | `/ws` | `on|off|status` | Workspace 路径限制（默认 on） |
 | `/dangerous` | `/dg` | `on|off|status` | 危险命令执行权限（默认 off，即拦截） |
 
+### 图像多模态输入 🆕
+
+| 命令 | 别名 | 参数 | 说明 |
+|------|------|------|------|
+| `/image` | `/img` | `<path> [path...] [描述]` | 发送一张或多张图像（可附带文字描述） |
+
+> 也可在普通对话中用 `@/path/to/image.png` 内联引用图像。
+
 ### 显示控制
 
 | 命令 | 参数 | 说明 |
@@ -904,13 +1015,14 @@ drsai --url http://localhost:42858/apiv2
 | 命令 | 别名 | 说明 |
 |------|------|------|
 | `/help` | `/h`, `/?` | 显示帮助 |
-| `/quit` | `/exit`, `/q` | 保存并退出 |
+| `/quit` | `/exit`, `/q` | 优雅退出（保存状态） |
+| Ctrl+D | — | 强制退出（任何状态均有效） |
 
 ---
 
-## 15 TUI 行为与调优
+## 16 TUI 行为与调优
 
-### 15.1 流式渲染策略
+### 16.1 流式渲染策略
 
 为了在 Windows PowerShell（特别是 Win10 的 PS 5.1 + 旧 `conhost.exe`）下保持流畅，TUI 采用了"流式期间纯文本、完成后再 Markdown"的渲染策略：
 
@@ -924,7 +1036,7 @@ DRSAI_TUI_FLUSH_MS=120 drsai chat      # 慢终端调宽
 DRSAI_TUI_FLUSH_MS=32  drsai chat      # 快终端调紧（最低 16，最高 500）
 ```
 
-### 15.2 PowerShell 兼容性 (run_powershell 工具)
+### 16.2 PowerShell 兼容性 (run_powershell 工具)
 
 `run_powershell` 工具（在 `is_powershell=True` 时取代 `run_bash`）做了以下处理保证兼容旧版 PowerShell：
 
@@ -934,7 +1046,7 @@ DRSAI_TUI_FLUSH_MS=32  drsai chat      # 快终端调紧（最低 16，最高 50
 
 详见 [operater_funs.py](../python/packages/drsai/src/drsai/modules/agents/skills_agent/managers/operater_funs.py) 的 `_build_ps_command` 和 `_ps_args`。
 
-### 15.3 前后端 RPC 映射
+### 16.3 前后端 RPC 映射
 
 | RPC | 触发 | 用途 |
 |------|------|------|
@@ -952,7 +1064,7 @@ DRSAI_TUI_FLUSH_MS=32  drsai chat      # 快终端调紧（最低 16，最高 50
 | `memory.reload` (event) | `/memory reload` | gateway → UI 通知刷新 |
 | `session.info` (event) | 状态变化 | 更新 StatusBar / badges |
 
-### 15.4 命令注册表与 `cli_only` 标记
+### 16.4 命令注册表与 `cli_only` 标记
 
 `backend/cli/commands.py` 中的 `COMMAND_REGISTRY` 是单一真相源，TUI 通过 `commands.catalog` RPC 拉取后用于 `/help` 和 Tab 补全。
 

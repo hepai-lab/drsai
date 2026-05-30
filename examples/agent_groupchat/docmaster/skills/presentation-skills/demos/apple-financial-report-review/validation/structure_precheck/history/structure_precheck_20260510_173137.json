@@ -1,0 +1,129 @@
+{
+  "pptx": "/project/lisiyuan/Projects/AutoCausePanel/references/temp/apple_financial_report_review/build/pptx/apple_fy2025_financial_report_review.pptx",
+  "generated_at": "20260510_173137",
+  "summary": {
+    "error": 0,
+    "warning": 0,
+    "not_checked": 6
+  },
+  "issues": [
+    {
+      "severity": "not_checked",
+      "issue_type": "structured_chart_label_collision_not_checked",
+      "message": "首期 `structure_precheck` 还没有读取原生 chart 内部 label 的真实边界，因此该 chart 的内部标签碰撞未自动检查。",
+      "slide_number": 3,
+      "shape_id": 6,
+      "source_kind": "chart",
+      "details": {
+        "shape_name": "Chart 5",
+        "shape_type": "CHART",
+        "rect_pt": {
+          "left": 46.8,
+          "top": 86.4,
+          "width": 543.6,
+          "height": 345.6
+        }
+      },
+      "suggested_fix": "当前先保留逐页预览复核；后续可补 chart title / axis / legend / data label 的结构化检查。"
+    },
+    {
+      "severity": "not_checked",
+      "issue_type": "structured_chart_label_collision_not_checked",
+      "message": "首期 `structure_precheck` 还没有读取原生 chart 内部 label 的真实边界，因此该 chart 的内部标签碰撞未自动检查。",
+      "slide_number": 4,
+      "shape_id": 6,
+      "source_kind": "chart",
+      "details": {
+        "shape_name": "Chart 5",
+        "shape_type": "CHART",
+        "rect_pt": {
+          "left": 46.8,
+          "top": 84.96,
+          "width": 554.4,
+          "height": 352.8
+        }
+      },
+      "suggested_fix": "当前先保留逐页预览复核；后续可补 chart title / axis / legend / data label 的结构化检查。"
+    },
+    {
+      "severity": "not_checked",
+      "issue_type": "structured_chart_label_collision_not_checked",
+      "message": "首期 `structure_precheck` 还没有读取原生 chart 内部 label 的真实边界，因此该 chart 的内部标签碰撞未自动检查。",
+      "slide_number": 5,
+      "shape_id": 6,
+      "source_kind": "chart",
+      "details": {
+        "shape_name": "Chart 5",
+        "shape_type": "CHART",
+        "rect_pt": {
+          "left": 46.8,
+          "top": 84.96,
+          "width": 543.6,
+          "height": 349.2
+        }
+      },
+      "suggested_fix": "当前先保留逐页预览复核；后续可补 chart title / axis / legend / data label 的结构化检查。"
+    },
+    {
+      "severity": "not_checked",
+      "issue_type": "structured_chart_label_collision_not_checked",
+      "message": "首期 `structure_precheck` 还没有读取原生 chart 内部 label 的真实边界，因此该 chart 的内部标签碰撞未自动检查。",
+      "slide_number": 6,
+      "shape_id": 6,
+      "source_kind": "chart",
+      "details": {
+        "shape_name": "Chart 5",
+        "shape_type": "CHART",
+        "rect_pt": {
+          "left": 46.8,
+          "top": 84.96,
+          "width": 496.8,
+          "height": 356.4
+        }
+      },
+      "suggested_fix": "当前先保留逐页预览复核；后续可补 chart title / axis / legend / data label 的结构化检查。"
+    },
+    {
+      "severity": "not_checked",
+      "issue_type": "structured_chart_label_collision_not_checked",
+      "message": "首期 `structure_precheck` 还没有读取原生 chart 内部 label 的真实边界，因此该 chart 的内部标签碰撞未自动检查。",
+      "slide_number": 7,
+      "shape_id": 6,
+      "source_kind": "chart",
+      "details": {
+        "shape_name": "Chart 5",
+        "shape_type": "CHART",
+        "rect_pt": {
+          "left": 46.8,
+          "top": 84.96,
+          "width": 554.4,
+          "height": 352.8
+        }
+      },
+      "suggested_fix": "当前先保留逐页预览复核；后续可补 chart title / axis / legend / data label 的结构化检查。"
+    },
+    {
+      "severity": "not_checked",
+      "issue_type": "structured_chart_label_collision_not_checked",
+      "message": "首期 `structure_precheck` 还没有读取原生 chart 内部 label 的真实边界，因此该 chart 的内部标签碰撞未自动检查。",
+      "slide_number": 8,
+      "shape_id": 6,
+      "source_kind": "chart",
+      "details": {
+        "shape_name": "Chart 5",
+        "shape_type": "CHART",
+        "rect_pt": {
+          "left": 46.8,
+          "top": 84.96,
+          "width": 554.4,
+          "height": 352.8
+        }
+      },
+      "suggested_fix": "当前先保留逐页预览复核；后续可补 chart title / axis / legend / data label 的结构化检查。"
+    }
+  ],
+  "counts": {
+    "shape_count": 168,
+    "text_item_count": 146
+  }
+}

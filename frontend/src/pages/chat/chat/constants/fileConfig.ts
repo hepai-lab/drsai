@@ -1,7 +1,7 @@
 // File upload configuration constants
 
-// Maximum file size in bytes (5MB)
-export const MAX_FILE_SIZE = 5 * 1024 * 1024;
+// Maximum file size in bytes (20MB)
+export const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 // Threshold for large text files (in characters)
 export const LARGE_TEXT_THRESHOLD = 1500;

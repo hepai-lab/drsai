@@ -35,10 +35,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ isVisible, onClose,
             marginBottom: 8,
           }}
           onClick={() => {
-            localStorage.removeItem("token");
-            localStorage.removeItem("username");
-            localStorage.removeItem("user_email");
-            localStorage.removeItem("user_name");
+            clearAuthSession();
             window.location.href = "/umt/logout";
           }}
         >

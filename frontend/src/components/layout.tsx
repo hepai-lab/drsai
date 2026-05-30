@@ -37,15 +37,11 @@ const MagenticUILayout = ({
   React.useEffect(() => {
     // 恢复用户状态（路由保护由 RouteGuard 统一处理）
     if (!user) {
-      // 如果没有用户信息，尝试从本地存储获取
       const email = localStorage.getItem("user_email") || "";
-      const name = localStorage.getItem("user_name") || email;
       if (email) {
-        // 修复：user 可能是 null，不能使用展开运算符
         setUser({
           email,
-          name,
-          username: email
+          name: email,
         });
 
         // 如果是新用户登录（没有持久化的agent选择），清除之前的agent选择

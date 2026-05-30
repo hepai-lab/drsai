@@ -3,6 +3,16 @@
     position: relative;
 }
 
+/* 输入框底部模型切换栏 */
+.chat-input-model-bar {
+    min-height: 2.25rem;
+}
+
+.chat-input-model-trigger:focus-visible {
+    outline: 2px solid rgba(139, 92, 246, 0.5);
+    outline-offset: 2px;
+}
+
 /* 隐藏滚动条但保留滚动功能 */
 .chat-input-scrollbar-hide {
     -ms-overflow-style: none;

@@ -1,171 +1,188 @@
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 import { appContext } from "@/hooks/provider";
-import React, { useContext, useEffect, useRef, useState } from "react";
+import { ArrowUpRight } from "lucide-react";
+import React, { useContext, useMemo } from "react";
 
 interface SampleTasksProps {
   onSelect: (task: string) => void;
-  hasInputValue: boolean;
+  /** When true, hide examples (input filled, example picked, or submit in flight). */
+  hidden: boolean;
 }
 
-const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect }) => {
-  const [isLoading, setIsLoading] = useState(false);
-  const [isInputFocused, setIsInputFocused] = useState(true);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+const MARQUEE_THRESHOLD = 4;
+const ROW_COUNT = 2;
+const MARQUEE_ROW_DURATIONS = ["38s", "44s"] as const;
 
-  const truncateText = (text: string, maxWords: number = 20): string => {
-    const words = text.trim().split(/\s+/);
-    if (words.length <= maxWords) return text;
-    return words.slice(0, maxWords).join(" ") + "...";
-  };
+const MARQUEE_MASK: React.CSSProperties = {
+  maskImage:
+    "linear-gradient(to right, transparent, black 6%, black 94%, transparent)",
+  WebkitMaskImage:
+    "linear-gradient(to right, transparent, black 6%, black 94%, transparent)",
+};
 
-  const { user, darkMode } = useContext(appContext);
-  const { agentInfo } = useAgentInfo(user?.email);
+const isSlashCommand = (text: string) => /^\s*\//.test(text);
 
-  // 监听输入框焦点
-  useEffect(() => {
-    const handleFocus = () => {
-      if (agentInfo?.examples && agentInfo.examples.length > 3) {
-        setIsInputFocused(true);
-      }
-    };
+function splitIntoRows<T>(items: T[], rowCount: number): T[][] {
+  const rows = Array.from({ length: rowCount }, () => [] as T[]);
+  items.forEach((item, i) => {
+    rows[i % rowCount].push(item);
+  });
+  return rows;
+}
 
-    const handleBlur = (e: FocusEvent) => {
-      if (dropdownRef.current && dropdownRef.current.contains(e.relatedTarget as Node)) {
-        return;
-      }
-      setIsInputFocused(false);
-    };
+/** Pad sparse rows so the loop track is wide enough for a smooth marquee. */
+function buildMarqueeLoop(items: string[]): string[] {
+  let segment = items;
+  while (segment.length < 4) {
+    segment = [...segment, ...items];
+  }
+  return [...segment, ...segment];
+}
 
-    const findTextarea = () =>
-      document.querySelector("#queryInput") as HTMLTextAreaElement | null;
+interface TaskChipProps {
+  task: string;
+  onSelect: (task: string) => void;
+  duplicate?: boolean;
+  /** Marquee track uses pills; few items use full-width rows */
+  layout?: "pill" | "row";
+}
 
-    const attach = (ta: HTMLTextAreaElement) => {
-      ta.addEventListener("focus", handleFocus);
-      ta.addEventListener("blur", handleBlur);
-    };
-
-    const textarea = findTextarea();
-    if (textarea) {
-      attach(textarea);
-      return () => {
-        textarea.removeEventListener("focus", handleFocus);
-        textarea.removeEventListener("blur", handleBlur);
-      };
-    }
-
-    const observer = new MutationObserver(() => {
-      const ta = findTextarea();
-      if (ta) {
-        attach(ta);
-        observer.disconnect();
-      }
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, [agentInfo?.examples]);
-
-  // 点击外部隐藏
-  useEffect(() => {
-    if (!isInputFocused) return;
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && dropdownRef.current.contains(event.target as Node)) return;
-      const textarea = document.querySelector("#queryInput") as HTMLTextAreaElement | null;
-      if (textarea && textarea.contains(event.target as Node)) return;
-      setIsInputFocused(false);
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isInputFocused]);
-
-  const handleTaskSelect = async (task: string) => {
-    try {
-      setIsLoading(true);
-      onSelect(task);
-      setIsInputFocused(false);
-    } catch {
-      onSelect(task);
-      setIsInputFocused(false);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const shouldShowDropdown = agentInfo?.examples && agentInfo.examples.length > 3;
+const TaskChip: React.FC<TaskChipProps> = ({
+  task,
+  onSelect,
+  duplicate = false,
+  layout = "pill",
+}) => {
+  const command = isSlashCommand(task);
+  const label = command ? task.trim().split(/\s+/)[0] : task;
+  const title = task.length > 48 ? task : command ? `使用 ${label}` : task;
+  const isRow = layout === "row";
 
   return (
-    <div className="w-full">
-      <style>{`
-        .sample-tasks-scrollbar::-webkit-scrollbar { width: 6px; }
-        .sample-tasks-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .sample-tasks-scrollbar::-webkit-scrollbar-thumb {
-          background: rgba(156,163,175,0.3); border-radius: 3px;
+    <button
+      type="button"
+      title={title}
+      tabIndex={duplicate ? -1 : undefined}
+      aria-hidden={duplicate || undefined}
+      onClick={() => onSelect(task)}
+      className={`group flex items-center gap-2 text-left text-sm transition-all duration-200 ease-[cubic-bezier(0.25,1,0.5,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45 ${
+        isRow
+          ? "w-full justify-between rounded-xl border px-4 py-3"
+          : "inline-flex shrink-0 max-w-full gap-1.5 rounded-full border px-3.5 py-2"
+      } ${
+        command
+          ? "border-accent/40 bg-accent/[0.08] font-agent-mono text-accent shadow-[0_0_0_1px_rgba(124,58,237,0.06)] hover:border-accent/60 hover:bg-accent/[0.14] dark:bg-accent/[0.12] dark:hover:bg-accent/[0.18]"
+          : "border-border-primary/55 bg-tertiary/25 text-primary hover:border-accent/45 hover:bg-accent/[0.06] dark:bg-tertiary/35"
+      }`}
+    >
+      <span
+        className={
+          command
+            ? "min-w-0 truncate"
+            : isRow
+              ? "min-w-0 flex-1 truncate"
+              : "line-clamp-2 max-w-[16rem]"
         }
-        .sample-tasks-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: rgba(156,163,175,0.5);
-        }
-        .sample-tasks-scrollbar { scrollbar-width: thin; scrollbar-color: rgba(156,163,175,0.3) transparent; }
-      `}</style>
+      >
+        {label}
+      </span>
+      <ArrowUpRight
+        className={`h-3.5 w-3.5 shrink-0 transition-opacity duration-200 ${
+          isRow
+            ? "text-secondary/50 group-hover:text-accent group-hover:opacity-100 group-focus-visible:text-accent"
+            : "opacity-0 group-hover:opacity-70 group-focus-visible:opacity-70"
+        }`}
+        aria-hidden
+      />
+    </button>
+  );
+};
 
-      {/* 超过3条时：列表下拉 */}
-      {shouldShowDropdown && isInputFocused && (
-        <div
-          ref={dropdownRef}
-          className="w-full rounded-b-2xl overflow-hidden border-border-primary mt-1"
-        >
-          <div className="max-h-[400px] flex flex-col items-center overflow-y-auto sample-tasks-scrollbar">
-            {agentInfo?.examples?.map((task: string, idx: number) => (
-              <button
-                key={idx}
-                className={`w-[94%] px-4 py-3 text-left transition-smooth text-primary hover:text-accent border-b last:border-b-0 group ${
-                  darkMode === "dark"
-                    ? "hover:bg-[#1a1a1a] hover:rounded-lg"
-                    : "hover:bg-gray-50 hover:rounded-lg"
-                }`}
-                style={{ borderBottomColor: "#434141" }}
-                onClick={() => handleTaskSelect(task)}
-                disabled={isLoading}
-                type="button"
-                title={task}
-              >
-                <div className="text-sm leading-loose line-clamp-2">
-                  {truncateText(task, 22)}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+interface MarqueeRowProps {
+  items: string[];
+  duration: string;
+  onSelect: (task: string) => void;
+}
 
-      {/* 3条及以下：卡片布局 */}
-      {!shouldShowDropdown && (
-        <div className="flex flex-wrap justify-center gap-3 w-full mt-2">
-          {agentInfo?.examples?.map((task: string, idx: number) => (
-            <button
-              key={idx}
-              className={`flex-1 min-w-[260px] max-w-[380px] rounded-2xl px-5 py-4 text-left transition-all duration-200 animate-fade-in group border ${
-                darkMode === "dark"
-                  ? "bg-white/[0.03] border-border-primary/50 hover:border-accent/40 hover:bg-white/[0.06]"
-                  : "bg-white/80 border-gray-200/70 hover:border-violet-300/70 hover:bg-violet-50/60"
-              } shadow-sm hover:shadow-modern`}
-              style={{ animationDelay: `${idx * 0.08}s` }}
-              onClick={() => handleTaskSelect(task)}
-              disabled={isLoading}
-              type="button"
-              title="点击填充到输入框，可编辑后发送"
-            >
-              <div className="text-sm leading-relaxed text-secondary group-hover:text-primary transition-colors line-clamp-3">
-                {task}
-              </div>
-              <div className="flex items-center gap-1.5 mt-3">
-                <span className="text-[10px] font-medium text-secondary/50 group-hover:text-accent/70 transition-colors uppercase tracking-wide">
-                  {isLoading ? "处理中..." : "点击使用"}
-                </span>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
+const MarqueeRow: React.FC<MarqueeRowProps> = ({
+  items,
+  duration,
+  onSelect,
+}) => {
+  const loop = useMemo(() => buildMarqueeLoop(items), [items]);
+  const segmentLen = loop.length / 2;
+
+  return (
+    <div className="group/row relative overflow-hidden" style={MARQUEE_MASK}>
+      <div
+        className="flex w-max gap-4 motion-reduce:animate-none animate-marquee-x group-hover/row:[animation-play-state:paused]"
+        style={{ ["--marquee-duration" as string]: duration }}
+      >
+        {loop.map((task, idx) => (
+          <TaskChip
+            key={`${idx}-${task.slice(0, 24)}`}
+            task={task}
+            onSelect={onSelect}
+            duplicate={idx >= segmentLen}
+          />
+        ))}
+      </div>
     </div>
+  );
+};
+
+const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect, hidden }) => {
+  const { user } = useContext(appContext);
+  const { agentInfo } = useAgentInfo(user?.email);
+  const examples = agentInfo?.examples ?? [];
+
+  const useMarquee = examples.length > MARQUEE_THRESHOLD;
+  const marqueeRows = useMemo(
+    () => (useMarquee ? splitIntoRows(examples, ROW_COUNT) : []),
+    [examples, useMarquee]
+  );
+
+  if (!examples.length || hidden) {
+    return null;
+  }
+
+  return (
+    <section className="mt-7 animate-fade-in" aria-label="示例任务">
+      <div className="mb-3 flex items-center justify-center gap-3">
+        <span className="h-px w-10 bg-border-primary/60" aria-hidden />
+        <span className="font-agent-mono text-[10px] font-medium uppercase tracking-[0.18em] text-secondary">
+          试试这些
+        </span>
+        <span className="h-px w-10 bg-border-primary/60" aria-hidden />
+      </div>
+
+      {useMarquee ? (
+        <div className="flex flex-col gap-4">
+          {marqueeRows.map((rowItems, rowIdx) =>
+            rowItems.length > 0 ? (
+              <MarqueeRow
+                key={rowIdx}
+                items={rowItems}
+                duration={MARQUEE_ROW_DURATIONS[rowIdx] ?? "40s"}
+                onSelect={onSelect}
+              />
+            ) : null
+          )}
+        </div>
+      ) : (
+        <ul className="mx-auto flex w-full max-w-xl flex-col gap-2">
+          {examples.map((task, idx) => (
+            <li key={`${idx}-${task.slice(0, 24)}`}>
+              <TaskChip
+                task={task}
+                onSelect={onSelect}
+                layout="row"
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 };
 

@@ -1,11 +1,14 @@
 # api/routes/local_login.py
 from typing import Dict
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
 import hashlib
 
 from ...datamodel.db import Userinfo
 from ...datamodel.db import UserRole
 from ..deps import get_db
+from ..auth_source import record_auth_source
 from ...datamodel.db import UserAgents, AgentModeSettings
 
 from .....agent_factory.agent_mode_cofigs import (
@@ -14,6 +17,7 @@ from .....agent_factory.agent_mode_cofigs import (
     get_user_agents,
     get_agents_mode,
     )
+from .....drsai_adapter.sso.jwt import ACCESS_TOKEN_EXPIRE_MINUTES, create_jwt_token
 
 router = APIRouter()
 
@@ -36,7 +40,11 @@ async def create_new_user(user_id: str, password: str, db=Depends(get_db)) -> Di
 
         # 创建新用户，密码进行哈希加密
         hashed_password = hash_password(password)
-        new_user = Userinfo(user_id=user_id, password=hashed_password)
+        new_user = Userinfo(
+            user_id=user_id,
+            password=hashed_password,
+            meta={"auth_source": "local"},
+        )
         result = db.upsert(new_user)
 
         if not result.status:
@@ -107,6 +115,8 @@ async def local_login(user_id: str, password: str, db=Depends(get_db)) -> Dict:
         hashed_password = hash_password(password)
         if user.password != hashed_password:
             raise HTTPException(status_code=401, detail="Invalid password")
+
+        record_auth_source(db, user_id, "local")
         
         response = db.get(AgentModeSettings, filters={"user_id": user_id})
         if not response.status or not response.data:
@@ -114,8 +124,20 @@ async def local_login(user_id: str, password: str, db=Depends(get_db)) -> Dict:
             agents_list = get_default_agent_mode_config(user_id)
             db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
             db.upsert(UserAgents(user_id=user_id, agents=agents_list))
+
+        access_token = create_jwt_token(
+            data={"sub": user_id},
+            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+        )
             
-        return {"status": True, "message": "Login successful", "data": {"user_id": user_id}}
+        return {
+            "status": True,
+            "message": "Login successful",
+            "data": {
+                "user_id": user_id,
+                "access_token": access_token.access_token,
+            },
+        }
 
     except HTTPException:
         raise

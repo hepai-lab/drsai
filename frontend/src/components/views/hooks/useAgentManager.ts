@@ -1,28 +1,55 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Agent } from '../../../types/common';
 import { useModeConfigStore } from '../../../store/modeConfig';
 import { getFirstRecentAgentId } from '../../../utils/recentAgentsStorage';
-import { pickLoginDefaultAgent, pickPreferredAgentFromList } from '../../../utils/agentPreference';
-import { agentAPI, agentWorkerAPI, organizationsAPI } from '../api';
+import {
+  pickAgentForSessionStart,
+  shouldRefreshAgentCatalog,
+  type PlatformAgentPolicy,
+} from '../../../utils/agentPreference';
+import { buildCatalogLoadingHints } from '../../../utils/agentCatalogLoadingHints';
+import { getModelApiKeyFromSettings } from '../../../utils/modelApiKey';
+import { agentAPI, agentWorkerAPI } from '../api';
+
+const HINT_ROTATE_MS = 2400;
 
 export const useAgentManager = (userEmail: string | undefined) => {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [agentCatalogLoaded, setAgentCatalogLoaded] = useState(false);
+  const [catalogRefreshing, setCatalogRefreshing] = useState(false);
+  const [catalogLoadingHint, setCatalogLoadingHint] = useState("");
+  const [platformAgentPolicy, setPlatformAgentPolicy] = useState<PlatformAgentPolicy | null>(null);
+  const hintTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { setSelectedAgent, setMode, setConfig, setAgentId, setAgentInfo } =
     useModeConfigStore();
 
-  const fetchUserAgentsFromDb = useCallback(async (): Promise<Agent[]> => {
-    if (!userEmail) return [];
-    const resp = await agentWorkerAPI.getUserDefaultAgents(userEmail);
-    return (resp?.data || []) as Agent[];
-  }, [userEmail]);
+  const stopHintRotation = useCallback(() => {
+    if (hintTimerRef.current) {
+      clearInterval(hintTimerRef.current);
+      hintTimerRef.current = null;
+    }
+    setCatalogRefreshing(false);
+    setCatalogLoadingHint("");
+  }, []);
+
+  const startHintRotation = useCallback((defaultAgentName?: string | null) => {
+    const hints = buildCatalogLoadingHints(defaultAgentName);
+    let index = 0;
+    setCatalogRefreshing(true);
+    setCatalogLoadingHint(hints[0] ?? "加载中…");
+    if (hintTimerRef.current) clearInterval(hintTimerRef.current);
+    hintTimerRef.current = setInterval(() => {
+      index = (index + 1) % hints.length;
+      setCatalogLoadingHint(hints[index] ?? "加载中…");
+    }, HINT_ROTATE_MS);
+  }, []);
 
   const fetchAgentList = useCallback(async (newAgents?: Agent[]) => {
     if (!userEmail) return;
 
     const applyAgent = async (agent: Agent) => {
       setSelectedAgent(agent);
-      // 与 /agentmode 列表一致，先写入以便首屏渲染（getUserAgentById 依赖 UserAgents 可能尚未同步）
       setAgentInfo(agent as Partial<Agent>);
       setMode(agent.mode || "magentic-one");
       if (agent.id) {
@@ -39,41 +66,70 @@ export const useAgentManager = (userEmail: string | undefined) => {
       }
     };
 
+    let userDefaultAgentId: string | null | undefined;
+    let platformPolicy: PlatformAgentPolicy | null = null;
+    let isBrandNewUser = false;
+
     try {
-      // 统一数据源：用 UserAgents 表（/user_default_agents/list），避免 /agentmode 与 /user_agents/{id} 不一致导致“智能体下线”
-      const res = newAgents || await fetchUserAgentsFromDb();
-      setAgents(res);
-
-      if (res.length === 0) return;
-
-      let orgDefaultAgentId: string | null | undefined;
-      let userDefaultAgentId: string | null | undefined;
       try {
-        const [myOrg, userDefault] = await Promise.all([
-          organizationsAPI.getMyOrg(userEmail).catch(() => null),
-          agentWorkerAPI.getUserDefaultAgent(userEmail).catch(() => null),
-        ]);
-        orgDefaultAgentId = (myOrg?.default_agent_id as string) || null;
-        // Treat personal default as "explicitly set by user".
-        // Backend may return a resolved fallback in default_agent_id (e.g. Dr.Sai General)
-        // even when the user never chose one; stored_default_agent_id preserves intent.
+        const userDefault = await agentWorkerAPI.getUserDefaultAgent(userEmail).catch(() => null);
         userDefaultAgentId = userDefault?.stored_default_agent_id ?? null;
+        platformPolicy = {
+          auto_load_default_agent: userDefault?.auto_load_default_agent,
+          default_agent_name: userDefault?.default_agent_name ?? null,
+        };
+        setPlatformAgentPolicy(platformPolicy);
       } catch {
-        orgDefaultAgentId = undefined;
         userDefaultAgentId = undefined;
+        setPlatformAgentPolicy(null);
       }
 
       const { selectedAgent, agentId, mode } = useModeConfigStore.getState();
-      const policyDefault = pickLoginDefaultAgent(res, orgDefaultAgentId, userDefaultAgentId);
-      const fallbackAgent =
-        policyDefault ||
-        pickPreferredAgentFromList(res) ||
-        res.find((agent) => agent.mode === "magentic-one") ||
-        res[0];
+      const recentFirstId = getFirstRecentAgentId();
+      isBrandNewUser = shouldRefreshAgentCatalog({
+        storedDefaultAgentId: userDefaultAgentId,
+        agentId,
+        mode,
+      });
 
-      // 与 drsai-mode-config 对齐：优先 drsai.recentAgents[0]，再 persisted agentId，再 mode
+      if (!newAgents && isBrandNewUser) {
+        startHintRotation(platformPolicy?.default_agent_name);
+      }
+
+      let res: Agent[];
+      if (newAgents) {
+        res = newAgents;
+      } else {
+        let catalogApiKey = "";
+        if (isBrandNewUser) {
+          try {
+            catalogApiKey =
+              (await getModelApiKeyFromSettings(userEmail)) ?? "";
+          } catch (error) {
+            console.warn(
+              "Could not load model API key for catalog refresh:",
+              error,
+            );
+          }
+        }
+        const refreshed = await agentWorkerAPI.getUserAgents(
+          userEmail,
+          catalogApiKey,
+          isBrandNewUser,
+        );
+        res = (refreshed || []) as Agent[];
+      }
+
+      setAgents(res);
+
+      if (res.length === 0) {
+        return;
+      }
+
+      const policyDefault = pickAgentForSessionStart(res, userDefaultAgentId, platformPolicy);
+      const fallbackAgent = policyDefault;
+
       const resolveLastUsedFromPersist = (): Agent | undefined => {
-        const recentFirstId = getFirstRecentAgentId();
         if (recentFirstId) {
           const byRecent = res.find((a) => a.id === recentFirstId);
           if (byRecent) return byRecent;
@@ -88,7 +144,6 @@ export const useAgentManager = (userEmail: string | undefined) => {
         return undefined;
       };
 
-      // 如果已经有选中的 agent，检查它是否仍然存在于新列表中
       if (selectedAgent && selectedAgent.mode) {
         const existingAgent = res.find(
           (agent) => agent.mode === selectedAgent.mode
@@ -106,7 +161,6 @@ export const useAgentManager = (userEmail: string | undefined) => {
         return;
       }
 
-      // 刷新后 selectedAgent 未持久化时，用 agentId / mode 恢复上次使用的智能体
       const lastUsed = resolveLastUsedFromPersist();
       if (lastUsed) {
         await applyAgent(lastUsed);
@@ -118,8 +172,20 @@ export const useAgentManager = (userEmail: string | undefined) => {
       }
     } catch (error) {
       console.error("Error fetching agent list:", error);
+    } finally {
+      stopHintRotation();
+      setAgentCatalogLoaded(true);
     }
-  }, [userEmail, setSelectedAgent, setMode, setConfig, setAgentId, setAgentInfo]);
+  }, [
+    userEmail,
+    setSelectedAgent,
+    setMode,
+    setConfig,
+    setAgentId,
+    setAgentInfo,
+    startHintRotation,
+    stopHintRotation,
+  ]);
 
   const deleteAgent = useCallback(async (id: string, onSuccess?: () => void, onError?: (error: any) => void) => {
     if (!userEmail) return;
@@ -138,11 +204,26 @@ export const useAgentManager = (userEmail: string | undefined) => {
     }
   }, [userEmail]);
 
+  useEffect(() => {
+    if (!userEmail) {
+      setAgentCatalogLoaded(true);
+      setAgents([]);
+      stopHintRotation();
+      return;
+    }
+    setAgentCatalogLoaded(false);
+  }, [userEmail, stopHintRotation]);
+
+  useEffect(() => () => stopHintRotation(), [stopHintRotation]);
+
   return {
     agents,
     isLoading,
+    agentCatalogLoaded,
+    catalogRefreshing,
+    catalogLoadingHint,
+    platformAgentPolicy,
     fetchAgentList,
     deleteAgent,
   };
 };
-

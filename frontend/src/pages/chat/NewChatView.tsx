@@ -9,8 +9,58 @@ import ChatInput from "./chat/chatinput";
 import type { ServerUploadedFileInfo } from "./chat/hooks/useFileUpload";
 import SampleTasks from "./sampletasks";
 
+const LOGO_BOX_BASE =
+    "mb-4 flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl";
+
+/** 有图：中性底 + contain，避免贴纸 logo 被裁切 */
+const LOGO_IMAGE_BOX_CLASS = `${LOGO_BOX_BASE} bg-light ring-1 ring-inset ring-border-primary/55 dark:bg-tertiary/50 dark:ring-border-primary/40`;
+
+function isMeaningfulAgentLogo(src?: string | null): boolean {
+    if (!src?.trim()) return false;
+    const url = src.trim();
+    if (/\/api\/placeholder\//i.test(url)) return false;
+    if (/^data:image\/svg\+xml/i.test(url)) return false;
+    return true;
+}
+
+function resolveLogoUrl(src: string): string {
+    const url = src.trim();
+    if (/^https?:\/\//i.test(url) || url.startsWith("data:")) return url;
+    if (url.startsWith("/")) {
+        return `${window.location.origin}${url}`;
+    }
+    return url;
+}
+
+function AgentHeaderLogo({ src }: { src?: string | null }) {
+    const [loadFailed, setLoadFailed] = React.useState(false);
+    const canShowImage = isMeaningfulAgentLogo(src) && !loadFailed;
+
+    React.useEffect(() => {
+        setLoadFailed(false);
+    }, [src]);
+
+    if (!canShowImage || !src) {
+        return null;
+    }
+
+    return (
+        <div className={LOGO_IMAGE_BOX_CLASS}>
+            <img
+                src={resolveLogoUrl(src)}
+                alt=""
+                className="h-10 w-10 object-contain p-0.5"
+                onError={() => setLoadFailed(true)}
+            />
+        </div>
+    );
+}
+
 interface NewChatViewProps {
     agent: Agent;
+    /** Lifted from manager — survives transition to WelcomeScreen after session create */
+    suppressSampleTasks?: boolean;
+    onDismissSampleTasks?: () => void;
     serverFilesPrefill?: ServerUploadedFileInfo[] | null;
     onSubmit: (agent: Agent, query: string, files: RcFile[] | Array<{
         name: string;
@@ -20,24 +70,37 @@ interface NewChatViewProps {
         size: number;
         uuid: string;
         url?: string;
-    }>, plan?: IPlan) => Promise<void>;
+    }>, plan?: IPlan, llm?: { label: string; value: string }) => Promise<void>;
 }
 
 /**
  * 新对话视图 - 当用户选中智能体但还没有创建会话时显示
  */
-export default function NewChatView({ agent, onSubmit, serverFilesPrefill }: NewChatViewProps) {
+export default function NewChatView({
+    agent,
+    onSubmit,
+    serverFilesPrefill,
+    suppressSampleTasks = false,
+    onDismissSampleTasks,
+}: NewChatViewProps) {
     const chatInputRef = React.useRef<{
         focus: () => void;
         setValue: (value: string) => void;
     }>(null);
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     const [hasInputValue, setHasInputValue] = React.useState(false);
-    const { user, darkMode } = React.useContext(appContext);
-    const { agentInfo } = useAgentInfo(user?.email);
-    const isDark = darkMode === "dark";
+    const [hideSampleTasks, setHideSampleTasks] = React.useState(false);
 
-    // 从 store 中获取 config 并合并到 agent 对象中
+    React.useEffect(() => {
+        if (hasInputValue) {
+            setHideSampleTasks(true);
+        }
+    }, [hasInputValue]);
+    const { user } = React.useContext(appContext);
+    const { agentInfo } = useAgentInfo(user?.email);
+    const displayName = agentInfo?.name ?? agent?.name ?? "Dr.Sai";
+    const description = agentInfo?.description ?? agent?.description;
+    const logoSrc = agentInfo?.logo ?? agent?.logo;
 
     const handleSubmit = async (
         query: string,
@@ -51,124 +114,121 @@ export default function NewChatView({ agent, onSubmit, serverFilesPrefill }: New
             url?: string;
         }>,
         accepted: boolean = false,
-        plan?: IPlan
+        plan?: IPlan,
+        llm?: { label: string; value: string }
     ) => {
-        // 允许只发送文件（没有文本）
         if (isSubmitting || (!query.trim() && (Array.isArray(files) ? files.length === 0 : false))) return;
 
-        // 如果只有文件没有文字，添加默认提示
         let finalQuery = query;
         if (!query.trim() && Array.isArray(files) && files.length > 0) {
             finalQuery = "请帮我分析这些文件。";
         }
 
+        onDismissSampleTasks?.();
+        setHideSampleTasks(true);
         setIsSubmitting(true);
         try {
-            // 注意：文件上传逻辑已经在 ChatInput 组件内部处理了
-            // 这里只需要调用 onSubmit，不需要再次上传文件
-            // 传递完整的 agent，确保使用的是包含完整配置的 agent
-            await onSubmit((agentInfo ?? agent) as Agent, finalQuery, files, plan);
+            await onSubmit((agentInfo ?? agent) as Agent, finalQuery, files, plan, llm);
         } finally {
             setIsSubmitting(false);
         }
     };
 
     return (
-        <>
-            <style>{`
-                .hide-scrollbar::-webkit-scrollbar {
-                    display: none;
-                }
-                .hide-scrollbar {
-                    -ms-overflow-style: none;
-                    scrollbar-width: none;
-                }
-            `}</style>
+        <div className="relative flex h-full flex-col overflow-hidden">
+            <div
+                className="pointer-events-none absolute inset-0 overflow-hidden"
+                aria-hidden
+            >
+                <div className="absolute left-1/2 top-[8%] h-48 w-[min(480px,85vw)] -translate-x-1/2 rounded-full bg-accent/[0.08] blur-3xl dark:bg-accent/[0.12]" />
+            </div>
 
-            <div className="flex flex-col h-full overflow-hidden">
-                <div className="flex-1 flex items-start justify-center overflow-y-auto hide-scrollbar pt-[15vh]">
-                    <div className="w-full max-w-4xl py-8 px-4">
-                        <div className="text-center space-y-8">
-                            {/* Agent Logo and Name */}
-                            <div className="animate-fade-in">
-                                <div className="flex flex-col items-center gap-4">
-                                    <div className="space-y-2">
-                                        <h1 className="text-5xl font-bold">
-                                            <span className="text-6xl bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent font-extrabold">
-                                                {agentInfo?.name ?? agent?.name ?? "Dr.Sai"}
-                                            </span>
-                                        </h1>
-                                        {(agentInfo?.description ?? agent?.description) && (
-                                            <p className="text-xl text-secondary">
-                                                {agentInfo?.description ?? agent?.description}
-                                            </p>
-                                        )}
-                                    </div>
+            <div className="hide-scrollbar relative flex flex-1 items-start justify-center overflow-y-auto pt-10 sm:pt-14 md:pt-[9vh]">
+                <div className="w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
+                    <header className="animate-fade-in mb-8 flex flex-col items-center text-center">
+                        <p className="font-agent-mono mb-3 text-[10px] font-medium uppercase tracking-[0.22em] text-accent">
+                            新对话
+                        </p>
+                        <AgentHeaderLogo src={logoSrc} />
+                        <h1
+                            id="new-chat-agent-title"
+                            className="font-agent max-w-xl text-[1.75rem] font-bold leading-[1.15] tracking-[-0.03em] text-primary sm:text-4xl md:text-[2.5rem] break-words"
+                        >
+                            {displayName}
+                        </h1>
+                        {description ? (
+                            <p className="mt-3 max-w-md text-[15px] leading-relaxed text-secondary sm:text-base">
+                                {description}
+                            </p>
+                        ) : (
+                            <p className="mt-3 max-w-md text-[15px] leading-relaxed text-secondary/80 sm:text-base">
+                                输入消息开始，或点选下方示例
+                            </p>
+                        )}
+                    </header>
+
+                    {serverFilesPrefill && serverFilesPrefill.length > 0 && (
+                        <div className="mb-5 text-left">
+                            <div className="rounded-2xl border border-border-primary/45 bg-tertiary/20 px-4 py-3 text-sm text-primary shadow-sm dark:bg-tertiary/30">
+                                <div className="mb-2 flex items-center gap-2 font-medium">
+                                    <FileText className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+                                    <span>已从库选择 {serverFilesPrefill.length} 个文件</span>
                                 </div>
-                            </div>
-
-                            {serverFilesPrefill && serverFilesPrefill.length > 0 && (
-                                <div className="w-full px-4 text-left">
-                                    <div
-                                        className={`rounded-xl border px-4 py-3 text-sm ${isDark
-                                            ? "border-border-primary/35 bg-white/[0.04] text-primary"
-                                            : "border-gray-200 bg-gray-50/90 text-gray-900"
-                                            }`}
-                                    >
-                                        <div className="flex items-center gap-2 font-medium mb-2">
-                                            <FileText className="w-4 h-4 shrink-0 opacity-80" aria-hidden />
-                                            <span>已从库选择 {serverFilesPrefill.length} 个文件（直接引用，无需重新上传）</span>
-                                        </div>
-                                        <ul className="space-y-1 text-secondary text-xs sm:text-sm">
-                                            {serverFilesPrefill.map((f) => (
-                                                <li key={f.uuid} className="truncate" title={f.name}>
-                                                    {f.name}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Chat Input - Centered between title and tasks */}
-                            <div className="w-full px-4">
-                                <ChatInput
-                                    ref={chatInputRef}
-                                    onSubmit={handleSubmit}
-                                    error={null}
-                                    onCancel={() => { }}
-                                    runStatus={undefined}
-                                    inputRequest={undefined}
-                                    isPlanMessage={false}
-                                    onPause={() => { }}
-                                    enable_upload={true}
-                                    onExecutePlan={() => { }}
-                                    sessionId={-1}
-                                    onTextChange={(text) => {
-                                        setHasInputValue(text.trim().length > 0);
-                                    }}
-                                    serverFilesPrefill={serverFilesPrefill}
-                                />
-                            </div>
-
-                            {/* Sample Tasks */}
-                            <div className="w-full px-4">
-                                <SampleTasks
-                                    hasInputValue={hasInputValue}
-                                    onSelect={(task: string) => {
-                                        setTimeout(() => {
-                                            if (chatInputRef.current) {
-                                                chatInputRef.current.setValue(task);
-                                            }
-                                        }, 200);
-                                    }}
-                                />
+                                <ul className="space-y-1 text-xs text-secondary sm:text-sm">
+                                    {serverFilesPrefill.map((f) => (
+                                        <li key={f.uuid} className="truncate font-agent-mono" title={f.name}>
+                                            {f.name}
+                                        </li>
+                                    ))}
+                                </ul>
                             </div>
                         </div>
+                    )}
+
+                    <div className="relative">
+                        <div
+                            className="pointer-events-none absolute -inset-x-2 -top-3 h-px bg-gradient-to-r from-transparent via-accent/35 to-transparent"
+                            aria-hidden
+                        />
+                        <ChatInput
+                            ref={chatInputRef}
+                            composerLabelledBy="new-chat-agent-title"
+                            onSubmit={handleSubmit}
+                            error={null}
+                            onCancel={() => { }}
+                            runStatus={undefined}
+                            inputRequest={undefined}
+                            isPlanMessage={false}
+                            onPause={() => { }}
+                            enable_upload={true}
+                            onExecutePlan={() => { }}
+                            sessionId={-1}
+                            onTextChange={(text) => {
+                                setHasInputValue(text.trim().length > 0);
+                            }}
+                            onClear={() => {
+                                if (!suppressSampleTasks) {
+                                    setHideSampleTasks(false);
+                                }
+                            }}
+                            serverFilesPrefill={serverFilesPrefill}
+                        />
                     </div>
+
+                    <SampleTasks
+                        hidden={
+                            suppressSampleTasks ||
+                            hideSampleTasks ||
+                            hasInputValue ||
+                            isSubmitting
+                        }
+                        onSelect={(task: string) => {
+                            setHideSampleTasks(true);
+                            chatInputRef.current?.setValue(task);
+                        }}
+                    />
                 </div>
             </div>
-        </>
+        </div>
     );
 }
-

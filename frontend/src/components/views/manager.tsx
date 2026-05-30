@@ -1,18 +1,17 @@
 import { appContext } from "@/hooks/provider";
-import { Dropdown, message, Spin } from "antd";
-import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Dropdown, Input, message, Modal, Popconfirm, Spin, Button } from "antd";
+import React, { Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { MoreVertical, Search, Trash2 } from "lucide-react";
+import { MoreVertical, Search, Share2, Trash2, Library, Plus, Upload, X } from "lucide-react";
 import { parse } from "yaml";
 import { useConfigStore } from "../../hooks/store";
 import { useModeConfigStore } from "../../store/modeConfig";
 import { Agent } from "../../types/common";
-import { AgentSquare } from "../features/Agents/AgentSquare";
 import { useAgentInfo } from "../features/Agents/useAgentInfo";
 import PlanList from "../features/Plans/PlanList";
 import { GeneralConfig, useSettingsStore } from "../store";
 import type { Session, FilesEvent, MessageFileItem } from "../types/datamodel";
-import { settingsAPI } from "./api";
+import { sessionAPI, settingsAPI, userAPI, docmasterAPI, type DocMasterTemplateEntry } from "./api";
 import ChatView from "../../pages/chat/chat";
 import NewChatView from "../../pages/chat/NewChatView";
 import { useAgentManager } from "./hooks/useAgentManager";
@@ -25,14 +24,13 @@ import ChannelsPage from "../../pages/settings/ChannelsPage";
 import FilePreviewPage from "../../pages/FilePreviewPage";
 import LogsPage from "../../pages/settings/LogsPage";
 import Config from "../../pages/settings/Config";
-import SkillsSquarePage from "../../pages/SkillsSquarePage";
 import UserManagementPage from "../../pages/UserManagementPage";
-import CooperationManagementPage from "../../pages/CooperationManagementPage";
-import LibraryPage from "../../pages/library/LibraryPage";
 import type { ServerUploadedFileInfo } from "../../pages/chat/chat/hooks/useFileUpload";
 import {
   MENU_LABELS,
   MENU_IDS,
+  DEFAULT_MENU_ID,
+  DEFAULT_VIEW_ID,
   type CanvasViewId,
   type MenuId,
   createSearchWithMenu,
@@ -40,14 +38,56 @@ import {
   getCanvasViewFromSearch,
   getMenuIdFromSearch,
 } from "./menuRoutes";
+import {
+  apiDatetimeToUtcMs,
+  formatApiDateTimeZhCN,
+  formatUnixForDisplayZhCN,
+} from "../../utils/apiDatetime";
 import { SessionEditor } from "./session_editor";
 import { AppLayout } from "../../layout";
 import { useRightPanelStore } from "../../store/rightPanel";
+import { useIsCompactLayout } from "../../hooks/useMediaQuery";
+
+const AgentSquare = React.lazy(() =>
+  import("../features/Agents/AgentSquare").then((m) => ({ default: m.AgentSquare }))
+);
+const SkillsSquarePage = React.lazy(() => import("../../pages/SkillsSquarePage"));
+const UsageAnalyticsPage = React.lazy(() => import("../../pages/settings/UsageAnalyticsPage"));
+const LibraryPage = React.lazy(() => import("../../pages/library/LibraryPage"));
+
+const MenuPanelFallback = () => (
+  <div className="flex h-full items-center justify-center text-secondary">
+    <Spin />
+  </div>
+);
+
+/** Extensions treated as inline-previewable images in the right-panel file list */
+const RIGHT_PANEL_IMAGE_EXT = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "bmp",
+]);
+
+const extensionFromFilename = (name: string): string => {
+  const i = name.lastIndexOf(".");
+  return i < 0 ? "" : name.slice(i + 1).toLowerCase();
+};
+
+const isImageMessageFile = (file: MessageFileItem): boolean => {
+  const mime = file.mime_type?.trim().toLowerCase() ?? "";
+  if (mime.startsWith("image/")) return true;
+  return RIGHT_PANEL_IMAGE_EXT.has(extensionFromFilename((file.name || "").trim()));
+};
 
 export const SessionManager: React.FC = () => {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | undefined>();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const isCompact = useIsCompactLayout();
   const [historySearchQuery, setHistorySearchQuery] = useState("");
   const historyScrollRef = useRef<HTMLDivElement | null>(null);
   const historyScrollTopRef = useRef(0);
@@ -55,16 +95,29 @@ export const SessionManager: React.FC = () => {
   const [libraryAttachPrefill, setLibraryAttachPrefill] = useState<
     ServerUploadedFileInfo[] | null
   >(null);
+  /** Survives NewChatView → ChatView/WelcomeScreen so example chips do not flash on first send */
+  const [sampleTasksDismissed, setSampleTasksDismissed] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
   const [baseUrl, setBaseUrl] = useState<string | undefined>();
   const [sessionFileEvents, setSessionFileEvents] = useState<Record<number, FilesEvent[]>>({});
   const [selectedPreviewFile, setSelectedPreviewFile] = useState<MessageFileItem | null>(null);
+  const [previewReadOnly, setPreviewReadOnly] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const activeSubMenuItem = useMemo(
+  const [pendingMenuId, setPendingMenuId] = useState<MenuId | null>(null);
+
+  const menuFromUrl = useMemo(
     () => getMenuIdFromSearch(location.search),
     [location.search]
   );
+  const activeSubMenuItem = pendingMenuId ?? menuFromUrl;
+
+  useEffect(() => {
+    if (pendingMenuId !== null && menuFromUrl === pendingMenuId) {
+      setPendingMenuId(null);
+    }
+  }, [pendingMenuId, menuFromUrl]);
+
   const activeCanvasView = useMemo(
     () => getCanvasViewFromSearch(location.search),
     [location.search]
@@ -74,10 +127,22 @@ export const SessionManager: React.FC = () => {
     [activeSubMenuItem]
   );
 
+  // 登入后常为 / 无 query，补全默认 menu/view（走 history，不触发 Gatsby page-data）
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(location.search);
+    if (params.has("menu") && params.has("view")) return;
+    const next = createSearchWithView(
+      createSearchWithMenu(location.search, DEFAULT_MENU_ID),
+      DEFAULT_VIEW_ID
+    );
+    navigate(next, { replace: true });
+  }, [location.search, navigate]);
+
   const navigateToMenu = useCallback(
     (menuId: MenuId) => {
       const withMenu = createSearchWithMenu(location.search, menuId);
-      navigate(createSearchWithView(withMenu, "chat"));
+      navigate(createSearchWithView(withMenu, DEFAULT_VIEW_ID));
     },
     [location.search, navigate]
   );
@@ -89,8 +154,67 @@ export const SessionManager: React.FC = () => {
     [location.search, navigate]
   );
 
+  useEffect(() => {
+    if (isCompact) {
+      setIsSidebarOpen(false);
+    }
+  }, [isCompact]);
+
+  useEffect(() => {
+    if (isCompact) {
+      setIsSidebarOpen(false);
+    }
+  }, [activeSubMenuItem, isCompact]);
+
+  const handleSubMenuChange = useCallback(
+    (tabId: string) => {
+      const menuId = tabId as MenuId;
+      flushSync(() => setPendingMenuId(menuId));
+      navigateToMenu(menuId);
+      if (isCompact) {
+        setIsSidebarOpen(false);
+      }
+    },
+    [isCompact, navigateToMenu]
+  );
+
   const { user, darkMode } = useContext(appContext);
   const rightPanelTab = useRightPanelStore((s) => s.layoutTab);
+  const [showAdminNav, setShowAdminNav] = useState(false);
+
+  const deferAfterPaint = useCallback((fn: () => void) => {
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(fn, { timeout: 2500 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(fn, 1);
+    return () => window.clearTimeout(id);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const uid = user?.email;
+    if (!uid) {
+      setShowAdminNav(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const cancelDefer = deferAfterPaint(() => {
+      userAPI
+        .getAccess(uid)
+        .then((a) => {
+          if (!cancelled) setShowAdminNav(Boolean(a?.is_platform_admin));
+        })
+        .catch(() => {
+          if (!cancelled) setShowAdminNav(false);
+        });
+    });
+    return () => {
+      cancelled = true;
+      cancelDefer();
+    };
+  }, [user?.email, deferAfterPaint]);
   const formatFileSize = useCallback((size: number | null | undefined) => {
     if (typeof size !== "number" || !Number.isFinite(size) || size <= 0) return "-";
     if (size < 1024) return `${size} B`;
@@ -119,7 +243,14 @@ export const SessionManager: React.FC = () => {
   }, []);
 
   const { session, setSession, setSessions } = useConfigStore();
-  const { selectedAgent, setSelectedAgent, setConfig } = useModeConfigStore();
+  const {
+    selectedAgent,
+    setSelectedAgent,
+    setConfig,
+    setAgentId,
+    setMode,
+    agentId,
+  } = useModeConfigStore();
   const { saveSessionId } = useSessionStorage();
   const { config: settingsConfig, updateConfig: updateSettingsConfig } = useSettingsStore();
 
@@ -144,38 +275,43 @@ export const SessionManager: React.FC = () => {
     onError: (msg) => messageApi.error(msg),
   });
 
+  const handleClearCurrentSession = useCallback(() => {
+    setSampleTasksDismissed(false);
+    clearCurrentSession();
+  }, [clearCurrentSession]);
+
   // WebSocket management
   const { getSessionSocket, closeSocket, stopSession } = useWebSocketManager();
 
   // Agent management
-  const { agents, fetchAgentList, deleteAgent } = useAgentManager(user?.email);
+  const {
+    agents,
+    fetchAgentList,
+    deleteAgent,
+    agentCatalogLoaded,
+    catalogRefreshing,
+    catalogLoadingHint,
+    platformAgentPolicy,
+  } = useAgentManager(user?.email);
 
   const { agentInfo } = useAgentInfo(user?.email);
 
-  // Load settings on page refresh
+  // 延后拉配置，避免登入后占满主线程导致菜单点击无响应
   useEffect(() => {
-    const loadSettings = async () => {
-      if (user?.email) {
+    if (!user?.email) return;
+    return deferAfterPaint(() => {
+      void (async () => {
         try {
-          // 请求全局setting配置
-          const settings = await settingsAPI.getSettings(user.email) as GeneralConfig;
-          // 不再使用服务端/历史里的 default_agent_id 驱动前端选中的智能体
+          const settings = (await settingsAPI.getSettings(user.email)) as GeneralConfig;
           const { default_agent_id: _omit, ...settingsForStore } = settings as GeneralConfig & {
             default_agent_id?: string;
           };
-
-          // 存储到store
           updateSettingsConfig(settingsForStore as GeneralConfig);
-
-          // 更新前端页面渲染（通过store的更新自动触发）
-          // 同时提取baseUrl用于其他用途
           if (settings.model_configs) {
             try {
               const parsed = parse(settings.model_configs);
               const baseUrl = parsed.model_config?.config?.base_url;
-              if (baseUrl) {
-                setBaseUrl(baseUrl);
-              }
+              if (baseUrl) setBaseUrl(baseUrl);
             } catch (parseError) {
               console.warn("Failed to parse model_configs for baseUrl:", parseError);
             }
@@ -183,23 +319,21 @@ export const SessionManager: React.FC = () => {
         } catch (error) {
           console.error("Failed to load settings:", error);
         }
-      }
-    };
-    loadSettings();
-  }, [user?.email, updateSettingsConfig]);
+      })();
+    });
+  }, [user?.email, updateSettingsConfig, deferAfterPaint]);
 
-  // 等 modeConfig 从 localStorage rehydrate 后再拉列表，否则 agentId 未恢复会误选默认智能体
   useEffect(() => {
     if (!user?.email) return;
-    const run = () => fetchAgentList();
-    if (useModeConfigStore.persist.hasHydrated()) {
-      run();
-      return;
-    }
-    return useModeConfigStore.persist.onFinishHydration(() => {
-      run();
+    return deferAfterPaint(() => {
+      const run = () => fetchAgentList();
+      if (useModeConfigStore.persist.hasHydrated()) {
+        run();
+        return;
+      }
+      useModeConfigStore.persist.onFinishHydration(run);
     });
-  }, [user?.email, fetchAgentList]);
+  }, [user?.email, fetchAgentList, deferAfterPaint]);
 
   useEffect(() => {
     const handleAgentListChanged = () => {
@@ -220,8 +354,11 @@ export const SessionManager: React.FC = () => {
   }, [fetchAgentList]);
 
   useEffect(() => {
-    fetchSessions();
-  }, [fetchSessions]);
+    if (!user?.email) return;
+    return deferAfterPaint(() => {
+      fetchSessions();
+    });
+  }, [user?.email, fetchSessions, deferAfterPaint]);
 
   // 库 → 聊天 时把文件放在 state 里传给 NewChatView；不要用短时定时器清空，否则智能体信息未加载完时
   // NewChatView 尚未挂载，prefill 已被清空，输入框收不到附件。
@@ -231,7 +368,6 @@ export const SessionManager: React.FC = () => {
     setLibraryAttachPrefill(null);
   }, [activeSubMenuItem, libraryAttachPrefill]);
 
-  const { setAgentId, setMode } = useModeConfigStore();
   // Handle agent click
   const handleAgentClick = useCallback(async (agent: Agent) => {
     if (!user?.email) return;
@@ -249,12 +385,12 @@ export const SessionManager: React.FC = () => {
       ? (selectedAgent?.id !== agent.id && selectedAgent?.name !== agent.name)
       : (selectedAgent?.mode !== agent.mode);
     if (isDifferentAgent) {
-      clearCurrentSession();
+      handleClearCurrentSession();
     }
 
     navigateToMenu(MENU_IDS.currentSession);
 
-  }, [user?.email, selectedAgent, clearCurrentSession, setAgentId, setMode]);
+  }, [user?.email, selectedAgent, handleClearCurrentSession, setAgentId, setMode]);
 
   // Handle edit session
   const handleEditSession = useCallback(async (sessionData?: Session) => {
@@ -267,9 +403,9 @@ export const SessionManager: React.FC = () => {
       // 不创建新会话，只是清空当前会话
       // 保持当前选中的 agent 不变
       // 会话将在用户发送第一条消息时创建
-      clearCurrentSession();
+      handleClearCurrentSession();
     }
-  }, [clearCurrentSession]);
+  }, [handleClearCurrentSession]);
 
   // Handle save session
   const handleSaveSession = useCallback(async (sessionData: Partial<Session>) => {
@@ -288,6 +424,30 @@ export const SessionManager: React.FC = () => {
       navigateToMenu(MENU_IDS.currentSession);
     }
   }, [deleteSession, closeSocket, session?.id]);
+
+  const handleCopyShareLink = useCallback(
+    async (sessionId: number) => {
+      if (!user?.email) {
+        messageApi.error("请先登录");
+        return;
+      }
+      try {
+        const { share_token } = await sessionAPI.setSessionShare(
+          sessionId,
+          user.email,
+          true
+        );
+        const url = sessionAPI.buildShareUrl(share_token);
+        await navigator.clipboard.writeText(url);
+        messageApi.success("分享链接已复制，访客可只读查看");
+      } catch (e) {
+        messageApi.error(
+          e instanceof Error ? e.message : "生成分享链接失败"
+        );
+      }
+    },
+    [user?.email, messageApi]
+  );
 
   // Handle delete agent
   const handleDeleteAgent = useCallback(async (id: string) => {
@@ -364,7 +524,7 @@ export const SessionManager: React.FC = () => {
       }
 
       if (clearSession) {
-        clearCurrentSession();
+        handleClearCurrentSession();
         return;
       }
 
@@ -393,7 +553,7 @@ export const SessionManager: React.FC = () => {
         handleSwitchToCurrentSession as unknown as EventListener
       );
     };
-  }, [setSelectedAgent, sessions, setSessions, setSession, saveSessionId, setConfig, clearCurrentSession]);
+  }, [setSelectedAgent, sessions, setSessions, setSession, saveSessionId, setConfig, handleClearCurrentSession]);
 
   // Listen for sessionDeleted event and ensure NewChatView is shown
   useEffect(() => {
@@ -453,6 +613,10 @@ export const SessionManager: React.FC = () => {
             onRunStatusChange={updateSessionRunStatus}
             pendingFirstMessage={session?.id === s.id ? pendingFirstMessage : null}
             onPendingMessageSent={() => setPendingFirstMessage(null)}
+            suppressSampleTasks={
+              session?.id === s.id &&
+              (sampleTasksDismissed || !!pendingFirstMessage)
+            }
             libraryServerFilesPrefill={
               session?.id === s.id ? libraryAttachPrefill : null
             }
@@ -468,6 +632,7 @@ export const SessionManager: React.FC = () => {
     getSessionSocket,
     updateSessionRunStatus,
     pendingFirstMessage,
+    sampleTasksDismissed,
     libraryAttachPrefill,
     handleFileEventsChange,
   ]);
@@ -476,12 +641,34 @@ export const SessionManager: React.FC = () => {
     const currentSessionId = session?.id;
     if (!currentSessionId) return null;
     const events = sessionFileEvents[currentSessionId] || [];
-    const files = events.flatMap((event) => event.content?.files || []);
-    if (files.length === 0) return null;
+    /** 与 apiDatetime 一致：数值很大视为毫秒，否则视为秒 */
+    const filesEventTimeMs = (event: FilesEvent): number => {
+      const raw = event.send_time_stamp ?? event.content?.send_time_stamp;
+      if (raw == null) return 0;
+      const n = typeof raw === "number" ? raw : Number(raw);
+      if (!Number.isFinite(n)) return 0;
+      return n > 1e12 ? n : n * 1000;
+    };
+    const isJsonFile = (file: MessageFileItem) => {
+      const name = (file.name || "").trim().toLowerCase();
+      if (name.endsWith(".json")) return true;
+      const mime = (file.mime_type || "").trim().toLowerCase();
+      return mime === "application/json" || mime === "text/json";
+    };
+    const fileRows = events
+      .flatMap((event) => {
+        const timeMs = filesEventTimeMs(event);
+        const list = event.content?.files || [];
+        return list
+          .filter((file) => !isJsonFile(file))
+          .map((file) => ({ file, timeMs }));
+      })
+      .sort((a, b) => b.timeMs - a.timeMs);
+    if (fileRows.length === 0) return null;
 
     return (
       <div className="h-full overflow-y-auto p-3 space-y-2">
-        {files.map((file, index) => {
+        {fileRows.map(({ file, timeMs }, index) => {
           const href = buildDownloadHref(file);
           return (
             <div
@@ -492,6 +679,7 @@ export const SessionManager: React.FC = () => {
                 type="button"
                 onClick={() => {
                   setSelectedPreviewFile(file);
+                  setPreviewReadOnly(false);
                   navigateToView("file_preview");
                 }}
                 className="text-sm font-medium text-primary break-all text-left hover:text-accent transition-colors"
@@ -500,13 +688,32 @@ export const SessionManager: React.FC = () => {
                 {file.name || `file-${index + 1}`}
               </button>
               <div className="mt-1 text-xs text-secondary">
-                {file.description || "无描述"} · {formatFileSize(file.size)}
+                {timeMs > 0 ? formatUnixForDisplayZhCN(timeMs) : "—"}  · {formatFileSize(file.size)}
               </div>
+              {href && isImageMessageFile(file) ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedPreviewFile(file);
+                    navigateToView("file_preview");
+                  }}
+                  className="mt-3 w-full h-20 flex items-center justify-center rounded-md overflow-hidden border border-border-primary/25 bg-tertiary/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                  title="点击查看完整预览"
+                >
+                  <img
+                    src={href}
+                    alt={file.name || "图片预览"}
+                    className="max-h-full max-w-full object-contain"
+                    loading="lazy"
+                  />
+                </button>
+              ) : null}
               <div className="mt-2 flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => {
                     setSelectedPreviewFile(file);
+                    setPreviewReadOnly(false);
                     navigateToView("file_preview");
                   }}
                   className="inline-flex items-center rounded-md px-2.5 py-1.5 text-xs font-medium bg-tertiary/20 text-primary hover:bg-tertiary/30 transition-colors"
@@ -532,14 +739,414 @@ export const SessionManager: React.FC = () => {
         })}
       </div>
     );
-  }, [session?.id, sessionFileEvents, buildDownloadHref, formatFileSize]);
+  }, [
+    session?.id,
+    sessionFileEvents,
+    buildDownloadHref,
+    formatFileSize,
+    navigateToView,
+  ]);
+
+  // Templates tab (DocMaster only) ------------------------------------------------
+  const isDocMaster = useMemo(() => {
+    const name =
+      (agentInfo as { name?: string } | null | undefined)?.name ||
+      selectedAgent?.name ||
+      "";
+    return name === "DocMaster";
+  }, [agentInfo, selectedAgent]);
+
+  const [docmasterTemplates, setDocmasterTemplates] = useState<{
+    shared: DocMasterTemplateEntry[];
+    mine: DocMasterTemplateEntry[];
+  }>({ shared: [], mine: [] });
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
+
+  const fetchTemplates = useCallback(async () => {
+    if (!isDocMaster) return;
+    setTemplatesLoading(true);
+    setTemplatesError(null);
+    try {
+      const data = await docmasterAPI.listTemplates({ userId: user?.email });
+      setDocmasterTemplates(data);
+    } catch (err) {
+      setTemplatesError(err instanceof Error ? err.message : "加载模板失败");
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, [isDocMaster, user?.email]);
+
+  useEffect(() => {
+    if (!isDocMaster) {
+      setDocmasterTemplates({ shared: [], mine: [] });
+      return;
+    }
+    void fetchTemplates();
+  }, [isDocMaster, fetchTemplates]);
+
+  // Allow chat-side template save/delete tool flows to refresh the catalog.
+  useEffect(() => {
+    if (!isDocMaster) return;
+    const handler = () => {
+      void fetchTemplates();
+    };
+    window.addEventListener("drsai:templateLibraryChanged", handler);
+    return () => {
+      window.removeEventListener("drsai:templateLibraryChanged", handler);
+    };
+  }, [isDocMaster, fetchTemplates]);
+
+  const handleUseTemplate = useCallback((entry: DocMasterTemplateEntry) => {
+    const alias =
+      (Array.isArray(entry.aliases) && entry.aliases.find((a) => a && a.trim())) ||
+      entry.name;
+    if (!alias) return;
+    const text = `请使用模板 ${alias}`;
+    window.dispatchEvent(
+      new CustomEvent("drsai:chatinput:setValue", { detail: { text } })
+    );
+    navigateToMenu(MENU_IDS.currentSession);
+    navigateToView("chat");
+  }, [navigateToMenu, navigateToView]);
+
+  const handlePreviewTemplate = useCallback((entry: DocMasterTemplateEntry) => {
+    const source = (entry.source as "shared" | "mine") || "shared";
+    const templateId = typeof entry.id === "string" ? entry.id : entry.name;
+    if (!templateId) return;
+    const url = docmasterAPI.templateFileUrl({
+      templateId,
+      source,
+      userId: source === "mine" ? user?.email : undefined,
+    });
+    const previewFile: MessageFileItem = {
+      name: `${entry.name || templateId}.docx`,
+      url,
+      base64_content: "",
+      size: 0,
+      mime_type:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      description: entry.description || "模板预览（只读）",
+      download_method: "url",
+    };
+    setSelectedPreviewFile(previewFile);
+    setPreviewReadOnly(true);
+    navigateToView("file_preview");
+  }, [navigateToView, user?.email]);
+
+  // --- Add / delete template flows --------------------------------------------
+  const [addTemplateOpen, setAddTemplateOpen] = useState(false);
+  const [addTemplateName, setAddTemplateName] = useState("");
+  const [addTemplateDescription, setAddTemplateDescription] = useState("");
+  const [addTemplateCategory, setAddTemplateCategory] = useState("");
+  const [addTemplateTags, setAddTemplateTags] = useState("");
+  const [addTemplateAliases, setAddTemplateAliases] = useState("");
+  const [addTemplateFile, setAddTemplateFile] = useState<File | null>(null);
+  const [addTemplateSubmitting, setAddTemplateSubmitting] = useState(false);
+  const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
+
+  const resetAddTemplateForm = useCallback(() => {
+    setAddTemplateName("");
+    setAddTemplateDescription("");
+    setAddTemplateCategory("");
+    setAddTemplateTags("");
+    setAddTemplateAliases("");
+    setAddTemplateFile(null);
+  }, []);
+
+  const openAddTemplate = useCallback(() => {
+    resetAddTemplateForm();
+    setAddTemplateOpen(true);
+  }, [resetAddTemplateForm]);
+
+  const parseCsvList = (raw: string): string[] =>
+    raw
+      .split(/[,，]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+  const handleSubmitAddTemplate = useCallback(async () => {
+    if (!user?.email) {
+      messageApi.error("未登录或无法识别用户邮箱");
+      return;
+    }
+    if (!addTemplateFile) {
+      messageApi.error("请选择 .docx 模板文件");
+      return;
+    }
+    if (!addTemplateFile.name.toLowerCase().endsWith(".docx")) {
+      messageApi.error("模板必须是 .docx 文件");
+      return;
+    }
+    if (!addTemplateName.trim()) {
+      messageApi.error("请填写模板名称");
+      return;
+    }
+    setAddTemplateSubmitting(true);
+    try {
+      await docmasterAPI.saveTemplate({
+        userId: user.email,
+        name: addTemplateName.trim(),
+        description: addTemplateDescription.trim(),
+        category: addTemplateCategory.trim() || undefined,
+        tags: parseCsvList(addTemplateTags),
+        aliases: parseCsvList(addTemplateAliases),
+        file: addTemplateFile,
+      });
+      messageApi.success("模板已保存");
+      setAddTemplateOpen(false);
+      resetAddTemplateForm();
+      await fetchTemplates();
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "保存模板失败");
+    } finally {
+      setAddTemplateSubmitting(false);
+    }
+  }, [
+    user?.email,
+    addTemplateFile,
+    addTemplateName,
+    addTemplateDescription,
+    addTemplateCategory,
+    addTemplateTags,
+    addTemplateAliases,
+    messageApi,
+    fetchTemplates,
+    resetAddTemplateForm,
+  ]);
+
+  const handleDeleteTemplate = useCallback(async (entry: DocMasterTemplateEntry) => {
+    if (!user?.email) {
+      messageApi.error("未登录或无法识别用户邮箱");
+      return;
+    }
+    const templateId = typeof entry.id === "string" ? entry.id : "";
+    if (!templateId) return;
+    setDeletingTemplateId(templateId);
+    try {
+      await docmasterAPI.deleteTemplate({ templateId, userId: user.email });
+      messageApi.success(`已删除模板 ${entry.name || templateId}`);
+      await fetchTemplates();
+    } catch (err) {
+      messageApi.error(err instanceof Error ? err.message : "删除模板失败");
+    } finally {
+      setDeletingTemplateId(null);
+    }
+  }, [user?.email, messageApi, fetchTemplates]);
+
+  const rightPanelTemplates = useMemo(() => {
+    if (!isDocMaster) return null;
+
+    const isDark = darkMode === "dark";
+    const cardBase = isDark
+      ? "rounded-lg border border-border-primary/30 bg-tertiary/10 p-3 hover:bg-tertiary/20"
+      : "rounded-lg border border-gray-200/70 bg-white/70 p-3 hover:bg-gray-100/60";
+    const chipBase = isDark
+      ? "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-white/[0.06] text-secondary"
+      : "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-gray-100 text-gray-600";
+    const aliasChip = isDark
+      ? "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-accent/15 text-accent"
+      : "inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] bg-violet-100 text-violet-700";
+
+    const actionBtn = isDark
+      ? "inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium bg-white/[0.06] text-primary hover:bg-white/[0.12]"
+      : "inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium bg-gray-100 text-gray-700 hover:bg-gray-200";
+    const actionBtnAccent = isDark
+      ? "inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium bg-accent/15 text-accent hover:bg-accent/25"
+      : "inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium bg-violet-100 text-violet-700 hover:bg-violet-200";
+
+    const renderEntry = (entry: DocMasterTemplateEntry, idx: number) => {
+      const aliases = Array.isArray(entry.aliases) ? entry.aliases.filter(Boolean) : [];
+      const tags = Array.isArray(entry.tags) ? entry.tags.filter(Boolean) : [];
+      return (
+        <div
+          key={`${entry.name || "tpl"}-${idx}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => handlePreviewTemplate(entry)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handlePreviewTemplate(entry);
+            }
+          }}
+          className={`block w-full text-left transition-colors cursor-pointer ${cardBase}`}
+          title="点击预览模板内容"
+        >
+          <div className="text-sm font-medium text-primary break-all">
+            {entry.name || `模板 ${idx + 1}`}
+          </div>
+          {entry.description && (
+            <div className="mt-1 text-xs text-secondary break-all line-clamp-2">
+              {entry.description}
+            </div>
+          )}
+          {(entry.category || tags.length > 0) && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {entry.category && (
+                <span className={chipBase}>{entry.category}</span>
+              )}
+              {tags.map((t) => (
+                <span key={t} className={chipBase}>#{t}</span>
+              ))}
+            </div>
+          )}
+          {aliases.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1">
+              {aliases.map((a) => (
+                <span key={a} className={aliasChip}>{a}</span>
+              ))}
+            </div>
+          )}
+          <div className="mt-2 flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePreviewTemplate(entry);
+              }}
+              className={actionBtn}
+            >
+              预览
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleUseTemplate(entry);
+              }}
+              className={actionBtnAccent}
+              title="把 “请使用模板 …” 写入聊天输入框"
+            >
+              使用
+            </button>
+            {entry.source === "mine" && (
+              <Popconfirm
+                title="删除该模板？"
+                description="只会从你的模板库移除，共享模板不受影响。"
+                okText="删除"
+                okButtonProps={{ danger: true, loading: deletingTemplateId === entry.id }}
+                cancelText="取消"
+                onConfirm={(e) => {
+                  e?.stopPropagation?.();
+                  void handleDeleteTemplate(entry);
+                }}
+                onCancel={(e) => e?.stopPropagation?.()}
+              >
+                <button
+                  type="button"
+                  onClick={(e) => e.stopPropagation()}
+                  className={`ml-auto inline-flex items-center rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+                    isDark
+                      ? "text-red-300/80 hover:text-red-300 hover:bg-red-500/10"
+                      : "text-red-500/80 hover:text-red-600 hover:bg-red-50"
+                  }`}
+                  title="删除该模板"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </Popconfirm>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    const sectionHeader = (text: string, count: number) => (
+      <div className="flex items-center justify-between px-1 mb-2">
+        <span className="text-xs font-semibold text-secondary tracking-wide uppercase">
+          {text}
+        </span>
+        <span className="text-[11px] text-secondary opacity-70">{count}</span>
+      </div>
+    );
+
+    const { shared, mine } = docmasterTemplates;
+    const hasAny = shared.length > 0 || mine.length > 0;
+
+    return (
+      <div className="h-full flex flex-col min-h-0">
+        <div className="flex-shrink-0 flex items-center justify-between px-3 pt-3 pb-2">
+          <div className="text-[11px] text-secondary opacity-70">
+            点击条目预览 · “使用” 写入聊天输入框
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={openAddTemplate}
+              className={`text-[11px] rounded-md px-2 py-1 inline-flex items-center gap-1 transition-colors ${
+                isDark
+                  ? "text-accent hover:bg-accent/10"
+                  : "text-violet-700 hover:bg-violet-100"
+              }`}
+              title="上传新模板到我的模板库"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              添加
+            </button>
+            <button
+              type="button"
+              onClick={() => void fetchTemplates()}
+              disabled={templatesLoading}
+              className={`text-[11px] rounded-md px-2 py-1 transition-colors ${
+                templatesLoading
+                  ? "opacity-40 cursor-not-allowed"
+                  : isDark
+                    ? "text-secondary hover:text-primary hover:bg-white/5"
+                    : "text-gray-500 hover:text-gray-800 hover:bg-gray-100/60"
+              }`}
+            >
+              {templatesLoading ? "加载中…" : "刷新"}
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 space-y-4">
+          {templatesError && (
+            <div className="text-xs text-red-500/90 px-1">{templatesError}</div>
+          )}
+          {!templatesError && !templatesLoading && !hasAny && (
+            <div className="flex items-center justify-center h-full text-secondary">
+              <div className="text-center">
+                <Library className="w-8 h-8 mx-auto mb-3 opacity-30" />
+                <p className="text-sm opacity-50">暂无模板</p>
+              </div>
+            </div>
+          )}
+          {shared.length > 0 && (
+            <div>
+              {sectionHeader("共享模板", shared.length)}
+              <div className="space-y-2">{shared.map(renderEntry)}</div>
+            </div>
+          )}
+          {mine.length > 0 && (
+            <div>
+              {sectionHeader("我的模板", mine.length)}
+              <div className="space-y-2">{mine.map(renderEntry)}</div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }, [
+    isDocMaster,
+    docmasterTemplates,
+    templatesLoading,
+    templatesError,
+    darkMode,
+    handleUseTemplate,
+    handlePreviewTemplate,
+    handleDeleteTemplate,
+    deletingTemplateId,
+    openAddTemplate,
+    fetchTemplates,
+  ]);
 
   const rightPanelHistory = useMemo(() => {
     const sortedSessions = Array.isArray(sessions)
       ? [...sessions].sort(
         (a, b) =>
-          new Date(b.updated_at || b.created_at || 0).getTime() -
-          new Date(a.updated_at || a.created_at || 0).getTime()
+          apiDatetimeToUtcMs(b.updated_at || b.created_at) -
+          apiDatetimeToUtcMs(a.updated_at || a.created_at)
       )
       : [];
 
@@ -616,7 +1223,7 @@ export const SessionManager: React.FC = () => {
                       {historySession.name || `Session ${sid ?? ""}`}
                     </div>
                     <div className="text-xs text-secondary mt-1">
-                      {lastTime ? new Date(lastTime).toLocaleString() : "-"}
+                      {lastTime ? formatApiDateTimeZhCN(lastTime) : "-"}
                     </div>
                   </button>
                   {sid != null && (
@@ -626,6 +1233,20 @@ export const SessionManager: React.FC = () => {
                         placement="bottomRight"
                         menu={{
                           items: [
+                            {
+                              key: "share",
+                              disabled: isSessionLoading,
+                              label: (
+                                <>
+                                  <Share2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5 align-middle" />
+                                  分享
+                                </>
+                              ),
+                              onClick: (e) => {
+                                e.domEvent.stopPropagation();
+                                void handleCopyShareLink(sid);
+                              },
+                            },
                             {
                               key: "delete",
                               danger: true,
@@ -653,8 +1274,8 @@ export const SessionManager: React.FC = () => {
                           onClick={(e) => e.stopPropagation()}
                           onPointerDown={(e) => e.stopPropagation()}
                           className={`flex items-center justify-center w-7 h-7 rounded-lg outline-none border-0 bg-transparent shadow-none ring-0 transition-colors ${isSessionLoading
-                              ? "opacity-40 cursor-not-allowed"
-                              : "text-secondary hover:text-primary hover:bg-tertiary/30"
+                            ? "opacity-40 cursor-not-allowed"
+                            : "text-secondary hover:text-primary hover:bg-tertiary/30"
                             }`}
                         >
                           <MoreVertical className="w-3.5 h-3.5" strokeWidth={2} />
@@ -677,6 +1298,7 @@ export const SessionManager: React.FC = () => {
     darkMode,
     isSessionLoading,
     handleDeleteSession,
+    handleCopyShareLink,
   ]);
 
   return (
@@ -691,16 +1313,25 @@ export const SessionManager: React.FC = () => {
         // LeftMenu
         activeSubMenuItem={activeSubMenuItem}
         activeMenuLabel={activeMenuLabel}
-        onSubMenuChange={(tabId) => navigateToMenu(tabId as MenuId)}
+        onSubMenuChange={handleSubMenuChange}
+        showAdminNav={showAdminNav}
         canvasActiveView={activeCanvasView}
         onCanvasViewChange={navigateToView}
-        canvasFilePreviewContent={<FilePreviewPage file={selectedPreviewFile} />}
+        canvasFilePreviewContent={<FilePreviewPage file={selectedPreviewFile} sessionId={session?.id ?? null} readOnly={previewReadOnly} onFileEvent={(evt) => {
+          const sid = session?.id;
+          if (!sid) return;
+          setSessionFileEvents((prev) => ({
+            ...prev,
+            [sid]: [...(prev[sid] || []), evt],
+          }));
+        }} />}
         rightPanelHistory={rightPanelHistory}
         rightPanelFiles={rightPanelFiles}
+        rightPanelTemplates={isDocMaster ? rightPanelTemplates : undefined}
         onRightPanelTabChange={(tab) => {
-          if (tab === "files") {
-            // Keep the current canvas view when only switching to the file-space tab.
-            // The canvas should switch to file preview only after selecting a specific file.
+          if (tab === "files" || tab === "templates") {
+            // Keep the current canvas view when switching to a non-chat side tab.
+            // The canvas should switch only on explicit user action (e.g. file preview).
             return;
           }
           navigateToView("chat");
@@ -708,7 +1339,7 @@ export const SessionManager: React.FC = () => {
         onNewSession={() => {
           navigateToMenu(MENU_IDS.currentSession);
           navigateToView("chat");
-          clearCurrentSession();
+          handleClearCurrentSession();
         }}
         showNewSessionButton={Boolean(session)}
       >
@@ -723,43 +1354,89 @@ export const SessionManager: React.FC = () => {
                 <NewChatView
                   agent={chatAgent}
                   serverFilesPrefill={libraryAttachPrefill}
-                  onSubmit={async (agent, query, files, plan) => {
-                    await createNewChatSession(agent, query, files, plan);
+                  suppressSampleTasks={sampleTasksDismissed}
+                  onDismissSampleTasks={() => setSampleTasksDismissed(true)}
+                  onSubmit={async (agent, query, files, plan, llm) => {
+                    setSampleTasksDismissed(true);
+                    await createNewChatSession(agent, query, files, plan, llm);
                   }}
                 />
               );
-            } else {
+            } else if (!user?.email) {
               return (
                 <div className="flex items-center justify-center h-full text-secondary">
                   <div className="text-center">
                     <Spin size="large" />
-                    <p className="mt-4 text-sm">Loading...</p>
+                    <p className="mt-4 text-sm">加载中…</p>
+                  </div>
+                </div>
+              );
+            } else if (!agentCatalogLoaded || (agentId && !agentInfo && !selectedAgent)) {
+              return (
+                <div className="flex items-center justify-center h-full text-secondary">
+                  <div className="text-center px-6 max-w-md">
+                    <Spin size="large" />
+                    <p
+                      key={catalogRefreshing ? catalogLoadingHint : "loading"}
+                      className="mt-4 text-sm transition-opacity duration-300"
+                    >
+                      {catalogRefreshing && catalogLoadingHint
+                        ? catalogLoadingHint
+                        : "加载中…"}
+                    </p>
+                  </div>
+                </div>
+              );
+            } else if (agents.length === 0) {
+              return (
+                <div className="flex items-center justify-center h-full text-secondary px-6">
+                  <div className="text-center max-w-md">
+                    <p className="text-base text-primary font-medium">暂无可用智能体</p>
+                    <p className="mt-2 text-sm">请稍后再试或联系管理员为你开通权限。</p>
                   </div>
                 </div>
               );
             }
+            return (
+              <div className="flex items-center justify-center h-full text-secondary px-6">
+                <div className="text-center max-w-md space-y-4">
+                  <p className="text-base text-primary font-medium">先选一个智能体再开始对话</p>
+                  <p className="text-sm">
+                    {platformAgentPolicy?.auto_load_default_agent === false
+                      ? "你还没有选择聊天要用的智能体。请到智能体广场挑选一个开始试用。"
+                      : "你还没有选择聊天要用的智能体。请到智能体广场挑选，或设置你的默认智能体。"}
+                  </p>
+                  <Button type="primary" size="large" onClick={() => navigateToMenu(MENU_IDS.agentSquare)}>
+                    前往智能体广场
+                  </Button>
+                </div>
+              </div>
+            );
           })()
         ) : activeSubMenuItem === MENU_IDS.agentSquare || activeSubMenuItem === MENU_IDS.myAgents ? (
           <div className="h-full overflow-hidden">
-            <AgentSquare agents={[]} handleAgentList={fetchAgentList} />
+            <Suspense fallback={<MenuPanelFallback />}>
+              <AgentSquare agents={[]} handleAgentList={fetchAgentList} />
+            </Suspense>
           </div>
         ) : activeSubMenuItem === MENU_IDS.skillsSquare ? (
-          <SkillsSquarePage />
+          <Suspense fallback={<MenuPanelFallback />}>
+            <SkillsSquarePage />
+          </Suspense>
         ) : activeSubMenuItem === MENU_IDS.channels ? (
           <ChannelsPage />
         ) : activeSubMenuItem === MENU_IDS.logs ? (
           <LogsPage />
-        ) : activeSubMenuItem === MENU_IDS.cooperationManagement ? (
-          <CooperationManagementPage />
         ) : activeSubMenuItem === MENU_IDS.agentManagement ? (
           <AgentManagementPage />
         ) : activeSubMenuItem === MENU_IDS.userManagement ? (
           <UserManagementPage />
+        ) : activeSubMenuItem === MENU_IDS.usageAnalytics ? (
+          <Suspense fallback={<MenuPanelFallback />}>
+            <UsageAnalyticsPage />
+          </Suspense>
         ) : activeSubMenuItem === MENU_IDS.profile ? (
-          <Config
-            user={user || { name: "", email: "" }}
-            onClose={() => navigateToMenu(MENU_IDS.currentSession)}
-          />
+          <Config />
         ) : activeSubMenuItem === MENU_IDS.savedPlan ? (
           <div className="h-full overflow-hidden">
             <PlanList
@@ -770,6 +1447,7 @@ export const SessionManager: React.FC = () => {
           </div>
         ) : activeSubMenuItem === MENU_IDS.library ? (
           <div className="h-full min-h-0 overflow-hidden">
+            <Suspense fallback={<MenuPanelFallback />}>
             <LibraryPage
               onStartChat={async (files, query) => {
                 const chatAgent = (agentInfo || selectedAgent) as import("../../types/common").Agent;
@@ -786,6 +1464,7 @@ export const SessionManager: React.FC = () => {
                 navigate(createSearchWithView(withMenu, "chat"));
               }}
             />
+            </Suspense>
           </div>
         ) : (
           <div className="flex items-center justify-center h-full text-secondary">
@@ -805,6 +1484,106 @@ export const SessionManager: React.FC = () => {
           }}
         />
       </AppLayout>
+
+      <Modal
+        title="添加模板"
+        open={addTemplateOpen}
+        onCancel={() => {
+          if (addTemplateSubmitting) return;
+          setAddTemplateOpen(false);
+        }}
+        onOk={() => void handleSubmitAddTemplate()}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={addTemplateSubmitting}
+        destroyOnClose
+        maskClosable={!addTemplateSubmitting}
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-secondary mb-1">
+              模板文件 <span className="text-red-500">*</span> <span className="opacity-60">(.docx)</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <label
+                className="inline-flex items-center gap-1.5 cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium bg-accent/15 text-accent hover:bg-accent/25"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                选择文件
+                <input
+                  type="file"
+                  accept=".docx"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    setAddTemplateFile(f);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+              {addTemplateFile && (
+                <div className="flex items-center gap-1 text-xs text-primary truncate max-w-[260px]">
+                  <span className="truncate">{addTemplateFile.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => setAddTemplateFile(null)}
+                    className="text-secondary hover:text-primary"
+                    title="移除"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-secondary mb-1">
+              名称 <span className="text-red-500">*</span>
+            </label>
+            <Input
+              value={addTemplateName}
+              onChange={(e) => setAddTemplateName(e.target.value)}
+              placeholder="例如：技术开发合同 3-1"
+              maxLength={120}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-secondary mb-1">描述</label>
+            <Input.TextArea
+              value={addTemplateDescription}
+              onChange={(e) => setAddTemplateDescription(e.target.value)}
+              placeholder="可选，简短说明这个模板的用途"
+              rows={2}
+              maxLength={500}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-secondary mb-1">分类</label>
+            <Input
+              value={addTemplateCategory}
+              onChange={(e) => setAddTemplateCategory(e.target.value)}
+              placeholder="例如：合同/技术开发"
+              maxLength={80}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-secondary mb-1">标签</label>
+            <Input
+              value={addTemplateTags}
+              onChange={(e) => setAddTemplateTags(e.target.value)}
+              placeholder="逗号分隔，例如：合同, 技术开发"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-secondary mb-1">别名</label>
+            <Input
+              value={addTemplateAliases}
+              onChange={(e) => setAddTemplateAliases(e.target.value)}
+              placeholder="逗号分隔，便于 “请使用模板 …” 命中"
+            />
+          </div>
+        </div>
+      </Modal>
     </>
   );
 };

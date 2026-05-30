@@ -4,6 +4,67 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { navigate as gatsbyNavigate } from "gatsby";
 
+type HistoryTarget = {
+    pathname: string;
+    search: string;
+    hash: string;
+};
+
+/** 仅 query/hash 变化且 pathname 不变时走 history，避免 Gatsby 重复拉 page-data.json */
+const resolveSamePathTarget = (to: string): HistoryTarget | null => {
+    if (typeof window === "undefined") return null;
+
+    if (to.startsWith("?")) {
+        return {
+            pathname: window.location.pathname,
+            search: to,
+            hash: window.location.hash,
+        };
+    }
+
+    if (to.startsWith("#")) {
+        return {
+            pathname: window.location.pathname,
+            search: window.location.search,
+            hash: to,
+        };
+    }
+
+    try {
+        const url = new URL(to, window.location.origin);
+        if (url.origin !== window.location.origin) return null;
+        if (url.pathname === window.location.pathname) {
+            return {
+                pathname: url.pathname,
+                search: url.search,
+                hash: url.hash,
+            };
+        }
+    } catch {
+        return null;
+    }
+
+    return null;
+};
+
+export const LOCATION_CHANGE_EVENT = "drsai:locationchange";
+
+const notifyLocationChange = () => {
+    // Do not dispatch PopStateEvent: Gatsby/@reach/router listens to it and will
+    // attempt a full client route transition (dev 404 on menu query changes).
+    window.dispatchEvent(new Event(LOCATION_CHANGE_EVENT));
+};
+
+const navigateWithHistory = (target: HistoryTarget, replace?: boolean) => {
+    const href = `${target.pathname}${target.search}${target.hash}`;
+    if (replace) {
+        window.history.replaceState(window.history.state, "", href);
+    } else {
+        window.history.pushState(window.history.state, "", href);
+    }
+    notifyLocationChange();
+};
+
 // 模拟 react-router-dom 的 useLocation
 export const useLocation = () => {
     const [pathname, setPathname] = useState(
@@ -21,9 +82,8 @@ export const useLocation = () => {
             const newPathname = window.location.pathname;
             const newSearch = window.location.search;
             const newHash = window.location.hash;
-            
+
             setPathname((prevPathname) => {
-                // 只有路径真正变化时才更新
                 return prevPathname !== newPathname ? newPathname : prevPathname;
             });
             setSearch((prevSearch) => {
@@ -34,10 +94,9 @@ export const useLocation = () => {
             });
         };
 
-        // 监听 popstate 事件（浏览器前进后退）
         window.addEventListener("popstate", handleLocationChange);
-        
-        // 监听 pushstate/replacestate（Gatsby navigate）
+        window.addEventListener(LOCATION_CHANGE_EVENT, handleLocationChange);
+
         const originalPushState = window.history.pushState;
         const originalReplaceState = window.history.replaceState;
 
@@ -53,36 +112,44 @@ export const useLocation = () => {
 
         return () => {
             window.removeEventListener("popstate", handleLocationChange);
+            window.removeEventListener(LOCATION_CHANGE_EVENT, handleLocationChange);
             window.history.pushState = originalPushState;
             window.history.replaceState = originalReplaceState;
         };
     }, []);
 
-    // 使用 useMemo 确保对象引用稳定
-    return useMemo(() => ({
-        pathname,
-        search,
-        hash,
-        state: null,
-    }), [pathname, search, hash]);
+    return useMemo(
+        () => ({
+            pathname,
+            search,
+            hash,
+            state: null,
+        }),
+        [pathname, search, hash]
+    );
 };
 
 // 模拟 react-router-dom 的 useNavigate
-export const useNavigate = (): ((to: string | number, options?: { replace?: boolean }) => void) => {
-    // 使用 useCallback 确保函数引用稳定
+export const useNavigate = (): ((
+    to: string | number,
+    options?: { replace?: boolean }
+) => void) => {
     return useCallback((to: string | number, options?: { replace?: boolean }) => {
         if (typeof to === "number") {
-            // 数字表示前进/后退
             window.history.go(to);
-        } else {
-            // 字符串表示路径
-            const path = to as string;
-            if (options?.replace) {
-                // 使用 replace 模式
-                gatsbyNavigate(path as any);
-            } else {
-                gatsbyNavigate(path as any);
-            }
+            return;
         }
+
+        const samePathTarget = resolveSamePathTarget(to);
+        if (samePathTarget) {
+            const nextHref = `${samePathTarget.pathname}${samePathTarget.search}${samePathTarget.hash}`;
+            const currentHref = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+            if (nextHref !== currentHref) {
+                navigateWithHistory(samePathTarget, options?.replace);
+            }
+            return;
+        }
+
+        gatsbyNavigate(to, { replace: options?.replace });
     }, []);
 };

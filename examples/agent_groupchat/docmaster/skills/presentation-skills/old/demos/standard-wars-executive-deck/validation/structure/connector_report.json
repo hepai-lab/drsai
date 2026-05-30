@@ -1,0 +1,67 @@
+{
+  "3": [
+    {
+      "connector_id": "16",
+      "from_shape_id": "9",
+      "to_shape_id": "10",
+      "from_idx": "3",
+      "to_idx": "1",
+      "from_text": "局部技术优势",
+      "to_text": "兼容与迁移"
+    },
+    {
+      "connector_id": "17",
+      "from_shape_id": "10",
+      "to_shape_id": "11",
+      "from_idx": "3",
+      "to_idx": "1",
+      "from_text": "兼容与迁移",
+      "to_text": "装机基盘"
+    },
+    {
+      "connector_id": "18",
+      "from_shape_id": "11",
+      "to_shape_id": "12",
+      "from_idx": "3",
+      "to_idx": "1",
+      "from_text": "装机基盘",
+      "to_text": "补充品联盟"
+    },
+    {
+      "connector_id": "19",
+      "from_shape_id": "12",
+      "to_shape_id": "13",
+      "from_idx": "3",
+      "to_idx": "1",
+      "from_text": "补充品联盟",
+      "to_text": "部署速度"
+    },
+    {
+      "connector_id": "20",
+      "from_shape_id": "13",
+      "to_shape_id": "14",
+      "from_idx": "2",
+      "to_idx": "3",
+      "from_text": "部署速度",
+      "to_text": "预期管理"
+    },
+    {
+      "connector_id": "21",
+      "from_shape_id": "14",
+      "to_shape_id": "15",
+      "from_idx": "1",
+      "to_idx": "3",
+      "from_text": "预期管理",
+      "to_text": "标准结果"
+    },
+    {
+      "connector_id": "22",
+      "from_shape_id": "11",
+      "to_shape_id": "15",
+      "from_idx": "2",
+      "to_idx": "0",
+      "from_text": "装机基盘",
+      "to_text": "标准结果"
+    }
+  ]
+}

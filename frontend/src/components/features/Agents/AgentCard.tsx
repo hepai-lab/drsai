@@ -37,7 +37,7 @@ const ICON_BOX =
 const ACTION_SHELL =
   "mt-auto flex items-center justify-start border-t border-[#ebe7f1] pt-1.5 dark:border-[#2f2a41]";
 
-const START_BUTTON_CLASS =
+export const START_BUTTON_CLASS =
   "inline-flex h-8 items-center rounded-[10px] bg-[rgba(167,139,250,0.18)] px-2.5 text-[11px] font-medium tracking-[-0.01em] text-[#5f5a73] ring-1 ring-inset ring-[rgba(167,139,250,0.18)] transition-colors hover:bg-[rgba(167,139,250,0.24)] hover:text-[#535069] focus:outline-none focus:ring-2 focus:ring-[#cbb8ff]/40 dark:bg-[rgba(167,139,250,0.16)] dark:text-[#e7e2f3] dark:ring-[rgba(167,139,250,0.14)] dark:hover:bg-[rgba(167,139,250,0.22)]";
 
 const TOP_ICON_BUTTON_BASE =
@@ -113,7 +113,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
             "bg-[#f3f1fb] text-[#665d94] shadow-[inset_0_1px_0_rgba(255,255,255,0.88)] dark:bg-[#32284a] dark:text-[#ece4ff] dark:shadow-[0_0_0_1px_rgba(167,139,250,0.18)]",
         }
         : {
-          text: "官方",
+          text: "本地",
           className:
             "bg-[#f5f5f8] text-[#39404e] shadow-[inset_0_1px_0_rgba(255,255,255,0.86)] dark:bg-[#2b2837] dark:text-[#eff1f7] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.06)]",
         };

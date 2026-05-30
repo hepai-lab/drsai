@@ -10,7 +10,7 @@ class OrchestratorConfig(BaseModel):
     Attributes:
         cooperative_planning (bool): Enable co-planning mode, requiring user-proxy feedback on plans. Default: True.
         autonomous_execution (bool): Enable autonomous execution mode; no human input is requested during execution. Default: False.
-        allow_follow_up_input (bool): Flag to determine if new input should be requested after a final answer is given. Default: True.
+        allow_follow_up_input (bool): Flag to determine if new input should be requested after a final answer is given. Default: False.
         plan (Optional[Plan]): A pre-defined plan. In cooperative planning mode, the plan will be enhanced with user feedback.
         max_turns (Optional[int]): Maximum number of operational turns allowed. Default: 20.
         allow_for_replans (bool): Whether to allow the orchestrator to create a new plan when needed. Default: True.
@@ -28,7 +28,7 @@ class OrchestratorConfig(BaseModel):
 
     cooperative_planning: bool = True
     autonomous_execution: bool = False
-    allow_follow_up_input: bool = True
+    allow_follow_up_input: bool = False
     plan: Optional[Plan] = None
     max_turns: Optional[int] = 20
     allow_for_replans: bool = True

@@ -197,8 +197,21 @@ class DrSaiSQLiteChatCompletionContext(
                     source=raw.get('source', 'system'),
                 )
             elif message_type == 'user':
+                content = raw.get('content', '')
+                if isinstance(content, list):
+                    rebuilt: List[Any] = []
+                    for item in content:
+                        if isinstance(item, dict) and item.get('type') == 'image' and 'data_uri' in item:
+                            try:
+                                from autogen_core import Image as _Image
+                                rebuilt.append(_Image.from_uri(item['data_uri']))
+                            except Exception:
+                                rebuilt.append(item.get('data_uri', ''))
+                        else:
+                            rebuilt.append(item)
+                    content = rebuilt
                 return UserMessage(
-                    content=raw.get('content', ''),
+                    content=content,
                     source=raw.get('source', 'user'),
                 )
             elif message_type == 'assistant':
@@ -246,6 +259,52 @@ class DrSaiSQLiteChatCompletionContext(
             logger.warning(f"Failed to convert row to LLMMessage: {e}")
             return None
 
+    @staticmethod
+    def _serialize_content_part(item: Any) -> Any:
+        """Serialize a single content item to a JSON-safe value.
+
+        Handles autogen_core.Image (multimodal) by converting to a data URI dict.
+        """
+        if isinstance(item, (str, int, float, bool)) or item is None:
+            return item
+        if isinstance(item, dict):
+            return item
+        # autogen_core.Image — has .data_uri property
+        if hasattr(item, "data_uri") and hasattr(item, "to_base64"):
+            try:
+                return {"type": "image", "data_uri": item.data_uri}
+            except Exception:
+                pass
+        if is_dataclass(item) and not isinstance(item, type):
+            return asdict(item)
+        if hasattr(item, "model_dump"):
+            return item.model_dump()
+        return str(item)
+
+    @classmethod
+    def _serialize_content(cls, content: Any) -> Any:
+        """Serialize a message content field (str or list) to JSON-safe form."""
+        if isinstance(content, list):
+            return [cls._serialize_content_part(p) for p in content]
+        return cls._serialize_content_part(content)
+
+    @staticmethod
+    def _extract_text_from_content(content: Any) -> str:
+        """Extract plain text from possibly-multimodal content for FTS column."""
+        if isinstance(content, str):
+            return content[:5000]
+        if isinstance(content, list):
+            parts = []
+            for p in content:
+                if isinstance(p, str):
+                    parts.append(p)
+                elif hasattr(p, "data_uri"):
+                    parts.append("[image]")
+                else:
+                    parts.append(str(p))
+            return " ".join(parts)[:5000]
+        return str(content)[:5000]
+
     def _llm_message_to_session_message(self, message: LLMMessage) -> SessionMessage:
         """Convert LLMMessage to SessionMessage for storage, preserving original format."""
         now = datetime.now()
@@ -268,8 +327,9 @@ class DrSaiSQLiteChatCompletionContext(
                 updated_at=now,
             )
         elif isinstance(message, UserMessage):
+            serialized = self._serialize_content(message.content)
             raw_dict = {
-                'content': message.content,
+                'content': serialized,
                 'source': getattr(message, 'source', 'user'),
                 'type': 'UserMessage',
             }
@@ -279,7 +339,7 @@ class DrSaiSQLiteChatCompletionContext(
                 message_type='user',
                 source=getattr(message, 'source', 'user'),
                 raw_message=raw_dict,
-                content=message.content,
+                content=self._extract_text_from_content(message.content),
                 created_at=now,
                 updated_at=now,
             )
@@ -295,6 +355,12 @@ class DrSaiSQLiteChatCompletionContext(
                         serialized_content.append(item)
                     elif is_dataclass(item) and not isinstance(item, type):
                         serialized_content.append(asdict(item))
+                    elif hasattr(item, 'data_uri') and hasattr(item, 'to_base64'):
+                        # autogen_core.Image
+                        try:
+                            serialized_content.append({"type": "image", "data_uri": item.data_uri})
+                        except Exception:
+                            serialized_content.append(str(item))
                     elif hasattr(item, 'model_dump'):
                         serialized_content.append(item.model_dump())
                     else:

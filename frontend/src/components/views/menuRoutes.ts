@@ -9,11 +9,11 @@ export const MENU_IDS = {
   skillsSquare: "skills_square",
   library: "library",
   profile: "profile",
+  usageAnalytics: "usage_analytics",
   channels: "channels",
   logs: "logs",
   agentManagement: "agent_management",
   userManagement: "user_management",
-  cooperationManagement: "cooperation_management",
 } as const;
 
 export type MenuId = (typeof MENU_IDS)[keyof typeof MENU_IDS];
@@ -32,11 +32,11 @@ export const MENU_LABELS: Record<MenuId, string> = {
   [MENU_IDS.skillsSquare]: "技能广场",
   [MENU_IDS.library]: "库",
   [MENU_IDS.profile]: "配置",
+  [MENU_IDS.usageAnalytics]: "使用分析",
   [MENU_IDS.channels]: "频道",
   [MENU_IDS.logs]: "日志",
   [MENU_IDS.agentManagement]: "智能体管理",
   [MENU_IDS.userManagement]: "用户管理",
-  [MENU_IDS.cooperationManagement]: "合作组管理",
 };
 
 export const getMenuIdFromSearch = (search: string): MenuId => {

@@ -1,6 +1,7 @@
 import React, { memo, useState, useEffect } from "react";
 import { Loader2, Maximize2, Minimize2, X } from "lucide-react";
 import { createPortal } from "react-dom";
+import { parseApiDateAsUtc } from "../../utils/apiDatetime";
 
 export const LoadingIndicator = ({ size = 16 }: { size: number }) => (
   // 旋转加载图标
@@ -235,10 +236,18 @@ export const ClickableImage: React.FC<{
   );
 };
 
-// dateUtils.ts
+// dateUtils.ts — API ISO strings without timezone are parsed as UTC (see apiDatetime).
 export function getRelativeTimeString(date: string | number | Date): string {
   const now = new Date();
-  const past = new Date(date);
+  let past: Date;
+  if (typeof date === "string") {
+    past = parseApiDateAsUtc(date) ?? new Date(date);
+  } else if (typeof date === "number") {
+    const ms = date > 1e12 ? date : date * 1000;
+    past = new Date(ms);
+  } else {
+    past = date;
+  }
   const diffInMs = now.getTime() - past.getTime();
 
   const diffInSeconds = Math.floor(diffInMs / 1000);

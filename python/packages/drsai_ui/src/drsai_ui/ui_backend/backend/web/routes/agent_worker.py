@@ -1,6 +1,7 @@
 from typing import Dict, List, Any  
 import asyncio, os, json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 # from openai import OpenAI
@@ -16,14 +17,31 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .....agent_factory.agent_mode_cofigs import (
-    get_agent_mode_config,
     get_default_agent_mode_config,
+    get_platform_agent_policy,
     get_user_agents,
 )
 
 from loguru import logger
 
 router = APIRouter()
+
+ANALYTICS_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _beijing_day_key(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ANALYTICS_TZ).strftime("%Y-%m-%d")
+
+
+def _bump_daily_use(row: UserAgentUsage, now: datetime) -> None:
+    day_key = _beijing_day_key(now)
+    if getattr(row, "today_use_day", None) == day_key:
+        row.today_use_count = (row.today_use_count or 0) + 1
+    else:
+        row.today_use_day = day_key
+        row.today_use_count = 1
 
 # @router.get("/ddf_agents")
 # async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
@@ -174,41 +192,6 @@ async def remove_remote_agent(
         raise HTTPException(status_code=500, detail=str(e)) from e
     
 
-@router.get("/user_default_agents/list")
-async def user_default_agents(user_id: str, db=Depends(get_db)) -> Dict:
-    '''
-    获取 drsai UI 侧为用户缓存的智能体列表（user_agents 表）；
-    若尚无记录则先用 get_default_agent_mode_config 初始化再返回。
-    '''
-    try:
-        response = db.get(UserAgents, filters={"user_id": user_id})
-        if not (response.status and response.data):
-            agents_list: List[Dict[str, Any]] = []
-            agents_list.extend(get_default_agent_mode_config(user_id=user_id))
-            user_agents = UserAgents(
-                user_id=user_id,
-                agents=agents_list
-            )
-            db.upsert(user_agents)
-
-        response = db.get(UserAgents, filters={"user_id": user_id})
-        if not (response.status and response.data):
-            return {
-                "status": True,
-                "message": "Get user's default agents successfully",
-                "data": [],
-            }
-        user_agents_row: UserAgents = response.data[0]
-        agents_after = user_agents_row.agents or []
-        return {
-            "status": True,
-            "message": "Get user's default agents successfully",
-            "data": agents_after,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
-
-
 @router.get("/user_agents/list")
 async def get_user_agents_route(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db=Depends(get_db)) -> Dict:
 
@@ -298,7 +281,7 @@ async def record_user_agent_usage(
     记录用户使用某个智能体（用于“最近使用/使用频次”）
     """
     try:
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         with DBSession(db.engine) as session:
             existing = session.exec(
                 select(UserAgentUsage).where(
@@ -310,17 +293,21 @@ async def record_user_agent_usage(
             if existing:
                 existing.last_used_at = now
                 existing.use_count = (existing.use_count or 0) + 1
+                _bump_daily_use(existing, now)
                 existing.updated_at = now
                 session.add(existing)
                 session.commit()
                 session.refresh(existing)
                 return {"status": True, "data": existing.model_dump(mode="json")}
 
+            day_key = _beijing_day_key(now)
             row = UserAgentUsage(
                 user_id=request.user_id,
                 agent_id=request.agent_id,
                 last_used_at=now,
                 use_count=1,
+                today_use_day=day_key,
+                today_use_count=1,
                 created_at=now,
                 updated_at=now,
             )
@@ -429,6 +416,7 @@ async def get_user_default_agent(user_id: str, db=Depends(get_db)) -> Dict:
             "data": {
                 "default_agent_id": resolved,
                 "stored_default_agent_id": stored,
+                **get_platform_agent_policy(),
             },
         }
     except Exception as e:

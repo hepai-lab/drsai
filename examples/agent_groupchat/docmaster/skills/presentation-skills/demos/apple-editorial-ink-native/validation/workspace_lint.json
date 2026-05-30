@@ -1,0 +1,31 @@
+{
+  "workspace": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/SkillStudy/presentation-skills/demos/apple-editorial-ink-native",
+  "required_dirs": {
+    "data": true,
+    "assets": true,
+    "build": true,
+    "validation": true,
+    "final": true
+  },
+  "required_files": {
+    "brief.md": true,
+    "deck_narrative.md": true
+  },
+  "derived_slide_specs": true,
+  "contract_check": {
+    "path": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/SkillStudy/presentation-skills/demos/apple-editorial-ink-native/build/generated/slide_specs.yaml",
+    "exists": true,
+    "slides": 10,
+    "asset_slots": 10
+  },
+  "legacy_dirs": [],
+  "asset_counts": {
+    "diagrams": 0,
+    "charts": 0,
+    "icons": 0,
+    "images": 0,
+    "tables": 0
+  },
+  "errors": [],
+  "warnings": []
+}
