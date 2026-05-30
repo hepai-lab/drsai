@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     CONFIG_DIR: str = "configs"  # Default config directory relative to app_root
     DEFAULT_USER_ID: str = "guestuser@gmail.com"
     UPGRADE_DATABASE: bool = False
+    DEFAULT_ADMIN_USER: str = "admin"
+    DEFAULT_ADMIN_PASSWORD: str = "admin123456"
+    DEFAULT_DEV_USER: str = "dev"
+    DEFAULT_DEV_PASSWORD: str = "dev123456"
     # Optional absolute path to skills root (folders with SKILL.md). If unset, server walks up from package to find agent_skills/skills.
     AGENT_SKILLS_CATALOG_DIR: str | None = None
 
