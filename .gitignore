@@ -27,7 +27,6 @@ config.yaml
 structure.md
 overleaf_project_points_en.md
 .playwright-cli
-.drsai
 
 # 工作目录
 /workspace
@@ -212,6 +211,9 @@ cython_debug/
 ########################
 .claude/
 .aider*
+# .drsai/
+DRSAI.local.md
+.drsai/DRSAI.local.md
 
 ########################
 # Magentic UI / Autogen Studio
