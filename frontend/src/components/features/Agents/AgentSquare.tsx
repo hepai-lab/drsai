@@ -1,21 +1,20 @@
+import { useModeConfigStore } from "@/store/modeConfig";
+import { pickAgentForSessionStart } from "@/utils/agentPreference";
+import { parseModelApiKeyFromSettingsConfig } from "@/utils/modelApiKey";
+import { DRSAI_RECENT_AGENTS_KEY } from "@/utils/recentAgentsStorage";
 import { message } from "antd";
-import { Plus, Sparkles, RefreshCw } from "lucide-react";
-import React, { useCallback, useContext, useEffect, useState, useRef } from "react";
+import { ArrowRight, Plus, RefreshCw, Star } from "lucide-react";
+import React, { useCallback, useContext, useEffect, useState } from "react";
 import { parse } from "yaml";
 import { appContext } from "../../../hooks/provider";
 import { Agent } from "../../../types/common";
 import { Button } from "../../common/Button";
 import { CustomAgentData } from "../../common/agent-form/CustomAgentForm";
-import { agentWorkerAPI, settingsAPI, agentAPI, organizationsAPI } from "../../views/api";
+import { getServerUrl } from "../../utils";
+import { agentWorkerAPI, settingsAPI } from "../../views/api";
 import { AgentCard, AgentCardData } from "./AgentCard";
 import CustomAgentModal from "./CustomAgentModal";
 import RemoteAgentModal from "./RemoteAgentModal";
-import { getServerUrl } from "../../utils";
-import { useModeConfigStore } from "@/store/modeConfig";
-import { DRSAI_RECENT_AGENTS_KEY } from "@/utils/recentAgentsStorage";
-import { pickLoginDefaultAgent } from "@/utils/agentPreference";
-import { isLocalPasswordLogin } from "@/utils/authSession";
-
 interface AgentSquareProps {
   agents: AgentCardData[];
   className?: string;
@@ -43,12 +42,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   const [ownerFilter, setOwnerFilter] = useState<"all" | "mine" | "official">("all");
   const [sortBy, setSortBy] = useState<"recent" | "name">("recent");
   const [recentAgentIds, setRecentAgentIds] = useState<string[]>([]);
-  const [plazaRows, setPlazaRows] = useState<
-    { org_id: number; org_display_name: string; agent_id: string; snapshot: Record<string, unknown> }[]
-  >([]);
-  const [plazaLoading, setPlazaLoading] = useState(false);
-  /** 广场接口失败（如本地账号、未接入组织服务）时仍为 true，用于提示而非整页空白 */
-  const [plazaLoadError, setPlazaLoadError] = useState(false);
   /** 未配置平台模型 API Key：不阻塞页面，仍可使用「连接远程」 */
   const [noModelApiKeyForList, setNoModelApiKeyForList] = useState(false);
   /** Server-side user default agent id */
@@ -165,8 +158,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     } catch {
       parsed = {};
     }
-    const modelConfig = (parsed?.model_config as { config?: Record<string, unknown> } | undefined)?.config || {};
-    const apiKey = modelConfig.api_key as string | undefined;
+    const modelConfig =
+      (parsed?.model_config as { config?: Record<string, unknown> } | undefined)
+        ?.config || {};
+    const apiKey = parseModelApiKeyFromSettingsConfig(settings);
     const baseUrl = modelConfig.base_url as string | undefined;
     return { apiKey, baseUrl };
   }, []);
@@ -433,7 +428,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     return () => window.removeEventListener("drsai:recentAgentsUpdated", handler as EventListener);
   }, [readRecentAgentIds, syncRecentFromServer, user?.email]);
 
-  // 新用户默认：后端个人显式默认(stored_default_agent_id) > 组织默认 > 列表偏好
+  // 仅当用户显式默认存在时自动写入 agentId；否则留空，由用户在智能体广场选择
   useEffect(() => {
     if (agentId) return;
     if (!agentList.length) return;
@@ -442,14 +437,18 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     let cancelled = false;
     void (async () => {
       try {
-        const [myOrg, userDefault] = await Promise.all([
-          organizationsAPI.getMyOrg(email).catch(() => null),
-          agentWorkerAPI.getUserDefaultAgent(email).catch(() => null),
-        ]);
+        const userDefault = await agentWorkerAPI.getUserDefaultAgent(email).catch(() => null);
         if (cancelled) return;
-        const orgDefault = (myOrg?.default_agent_id as string) || null;
         const userDefaultId = userDefault?.stored_default_agent_id ?? null;
-        const target = pickLoginDefaultAgent(agentList as Agent[], orgDefault, userDefaultId);
+        const platformPolicy = {
+          auto_load_default_agent: userDefault?.auto_load_default_agent,
+          default_agent_name: userDefault?.default_agent_name ?? null,
+        };
+        const target = pickAgentForSessionStart(
+          agentList as Agent[],
+          userDefaultId,
+          platformPolicy,
+        );
         if (!target?.id) return;
         setAgentId(target.id);
         setMode(target.mode || "");
@@ -461,33 +460,6 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       cancelled = true;
     };
   }, [agentId, agentList, setAgentId, setMode, user?.email]);
-
-  useEffect(() => {
-    const email = user?.email;
-    if (!email) return;
-    let cancelled = false;
-    void (async () => {
-      setPlazaLoading(true);
-      setPlazaLoadError(false);
-      try {
-        const rows = await organizationsAPI.plazaList(email);
-        if (!cancelled) {
-          setPlazaRows(rows || []);
-          setPlazaLoadError(false);
-        }
-      } catch {
-        if (!cancelled) {
-          setPlazaRows([]);
-          setPlazaLoadError(true);
-        }
-      } finally {
-        if (!cancelled) setPlazaLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.email]);
 
   if (loading) {
     return (
@@ -534,15 +506,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     (agent) => agent.mode !== "magentic-one" && agent.mode !== "besiii"
   );
 
-  /**
-   * 主推位（与下方网格去重）：
-   * - 优先展示后端标记的默认智能体（is_default），便于下游自定义“默认/主推”；
-   * - 若无默认，再回退到后端标记的 featured（官方精选）。
-   */
-  const featuredAgent =
-    (userDefaultAgentId ? baseList.find((a) => a.id === userDefaultAgentId) : undefined) ||
-    baseList.find((a) => a.is_default) ||
-    baseList.find((a) => a.featured && a.mode !== "remote" && a.mode !== "custom");
+  /** 主推位：仅展示用户设置的默认智能体 */
+  const defaultAgent = userDefaultAgentId
+    ? baseList.find((a) => a.id === userDefaultAgentId)
+    : undefined;
 
   const filteredList = baseList.filter((agent) => matchOwner(agent) && matchSearch(agent));
 
@@ -597,7 +564,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     <div className={`flex flex-col h-full ${className}`}>
       {/* 工具条（置顶） */}
       <div className="sticky top-0 z-10 mb-4 bg-transparent pr-4">
-        <div className="ml-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#e7e7ef] bg-white/70 px-3 py-2 backdrop-blur dark:border-[#2a2a3a] dark:bg-[#101018]/70">
+        <div className="ml-4 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white/70 px-3 py-2 backdrop-blur dark:border-[#2a2a3a] dark:bg-[#101018]/70">
           <div className="flex min-w-[260px] flex-1 items-center gap-2">
             <div className="text-sm font-semibold text-[#233457] dark:text-[#e4e8ff]">
               智能体
@@ -609,7 +576,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="搜索名称 / 描述 / 创建人"
-              className="ml-2 h-8 w-full max-w-[420px] rounded-lg border border-[#e7e7ef] bg-white px-3 text-sm outline-none transition-colors focus:border-[#b5a1ff] dark:border-[#2a2a3a] dark:bg-[#0f0f16] dark:text-[#e4e8ff]"
+              className="ml-2 h-8 w-full max-w-[420px] rounded-lg border border-[#e7e7ef] bg-white px-3 text-sm outline-none transition-colors focus:border-[#d3adf7] dark:border-[#2a2a3a] dark:bg-[#0f0f16] dark:text-[#e4e8ff]"
             />
           </div>
 
@@ -632,7 +599,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               size="sm"
               onClick={() => setIsRemoteModalOpen(true)}
               icon={<Plus className="h-3 w-3" />}
-              className="h-8 rounded-lg !border border-[#e7e7ef] bg-white/80 px-3 text-xs font-medium text-[#334155] shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-sm hover:bg-white hover:border-[#c7b8ff] hover:shadow-[0_10px_30px_rgba(93,63,205,0.12)] active:translate-y-0 dark:border-[#2a2a3a] dark:bg-[#0f0f16]/80 dark:text-[#cfd6e9] dark:hover:bg-[#121226] dark:hover:border-[#5d3fcd]/50"
+              className="h-8 rounded-lg !border border-[#e7e7ef] bg-white/80 px-3 text-xs font-medium text-[#334155]  backdrop-blur-sm hover:bg-white hover:border-[#c7b8ff] active:translate-y-0 dark:border-[#2a2a3a] dark:bg-[#0f0f16]/80 dark:text-[#cfd6e9] dark:hover:bg-[#121226] dark:hover:border-[#5d3fcd]/50"
             >
               连接远程
             </Button>
@@ -643,7 +610,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
                 [
                   ["all", "全部"],
                   ["mine", "我的"],
-                  ["official", "官方"],
+                  ["official", "本地"],
                 ] as const
               ).map(([key, label]) => (
                 <button
@@ -671,66 +638,18 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
             </select>
 
             <Button
-              variant="primary"
+              variant="secondary"
               size="sm"
               onClick={handleRefresh}
               disabled={isRefreshing}
               icon={<RefreshCw className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`} />}
-              className="text-xs px-2 py-1 bg-blue-500 hover:bg-blue-600 text-white border-0 shadow-none"
+              className="h-8 rounded-lg !border border-[#d4c9ff] bg-[#f5f3ff]/90 px-3 text-xs font-medium text-[#5d3fcd]  backdrop-blur-sm   dark:border-[#5d3fcd]/40 dark:bg-[#2a2342]/80 dark:text-[#bca8ff] dark:hover:border-[#7c5ce8] dark:hover:bg-[#322a4a]"
             >
               刷新
             </Button>
           </div>
         </div>
       </div>
-
-      {user?.email && plazaLoadError && isLocalPasswordLogin() && (
-        <div className="mb-3 ml-4 mr-4 rounded-xl border border-amber-200/90 bg-amber-50/95 px-3 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/35 dark:text-amber-100/95">
-          普通用户访问worker受限，暂不可用。不影响使用上方「连接远程」添加外部智能体。
-        </div>
-      )}
-
-      {user?.email && plazaRows.length > 0 && (
-        <div className="mb-4 ml-4 mr-4 rounded-xl border border-[#e7e7ef] bg-white/80 p-3 dark:border-[#2a2a3a] dark:bg-[#101018]/80">
-          <div className="mb-2 text-xs font-semibold text-[#55627a] dark:text-[#b6bdd0]">
-            其他合作组智能体（申请通过后可在「我的智能体」侧栏使用）
-            {plazaLoading ? <span className="ml-2 text-[10px] opacity-70">加载中…</span> : null}
-          </div>
-          <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
-            {plazaRows.map((row) => {
-              const snap = row.snapshot || {};
-              const name = (snap.name as string) || row.agent_id;
-              return (
-                <div
-                  key={`${row.org_id}-${row.agent_id}`}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#eee] px-2 py-1.5 text-xs dark:border-[#2a2a3a]"
-                >
-                  <div className="min-w-0">
-                    <span className="font-medium text-[#0f172a] dark:text-[#e4e8ff]">{name}</span>
-                    <span className="ml-2 text-[#9aa2b2]">
-                      {row.org_display_name || `org ${row.org_id}`}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    className="shrink-0 rounded-md bg-[#5d3fcd] px-2 py-1 text-[11px] font-medium text-white hover:bg-[#4c32b3]"
-                    onClick={async () => {
-                      try {
-                        await organizationsAPI.plazaApply(user.email!, row.org_id, row.agent_id);
-                        message.success("已提交申请，请等待平台管理员审批");
-                      } catch (e: any) {
-                        message.error(e?.message || "申请失败");
-                      }
-                    }}
-                  >
-                    申请使用
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       {/* 检查是否没有智能体 */}
       {baseList.length === 0 ? (
@@ -755,73 +674,64 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {/* 主推位：用户默认 > 官方精选 */}
-          {featuredAgent && (featuredAgent.is_user_default || ownerFilter !== "mine") && (
-            <div className="mb-6 pl-4 pr-4">
-              <div className="mb-3 flex items-center gap-2">
-                <span className="inline-flex items-center rounded-full bg-[#111827] px-2.5 py-1 text-[11px] font-semibold tracking-wide text-white dark:bg-white dark:text-[#111827]">
-                  {featuredAgent.is_user_default ? "Default" : "Featured"}
-                </span>
-                <span className="text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
-                  {featuredAgent.is_user_default ? "我的默认智能体" : "官方精选"}
-                </span>
-              </div>
+          {/* 主推位：我的默认智能体 */}
+          {defaultAgent && (
+            <div className="mb-4 pl-4 pr-4">
+              <div className="w-full max-w-[min(100%,36rem)]">
+                <div className="mb-2 flex items-center gap-1.5">
+                  <Star className="h-3 w-3 fill-[#c4b5fd] text-[#c4b5fd] dark:fill-[#a78bfa] dark:text-[#a78bfa]" />
+                  <span className="text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
+                    我的默认智能体
+                  </span>
+                </div>
 
-              <div className="w-full max-w-[min(100%,42rem)]">
-                <div className="group relative overflow-hidden rounded-2xl border border-[#e7e7ef] bg-white shadow-sm dark:border-[#2a2a3a] dark:bg-[#0f0f16]">
-                  <div className="pointer-events-none absolute -left-24 -top-24 h-64 w-64 rounded-full bg-gradient-to-br from-[#a78bfa]/30 via-[#60a5fa]/20 to-transparent blur-2xl" />
-                  <div className="pointer-events-none absolute -bottom-24 -right-24 h-64 w-64 rounded-full bg-gradient-to-tr from-[#f472b6]/20 via-[#34d399]/10 to-transparent blur-2xl" />
-
-                  <div className="relative flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
-                    <div className="flex min-w-[240px] flex-1 items-start gap-3">
-                      <div className="relative shrink-0">
-                        <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-white ring-1 ring-inset ring-black/5 shadow-sm dark:bg-[#111122] dark:ring-white/10">
-                          <img
-                            src={featuredAgent.logo}
-                            alt=""
-                            className="h-8 w-8 object-contain"
-                          />
-                        </div>
-                        <span className="absolute -right-1 -top-1 inline-flex h-4 w-4 rounded-full bg-gradient-to-br from-[#7c3aed] to-[#2563eb] ring-2 ring-white dark:ring-[#0f0f16]" />
-                      </div>
-
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-[#0f172a] dark:text-[#e4e8ff]">
-                            {featuredAgent.name}
-                          </h3>
-                          <span className="inline-flex shrink-0 items-center rounded-full bg-black/5 px-2 py-0.5 text-[11px] font-medium text-[#334155] dark:bg-white/10 dark:text-[#cfd6e9]">
-                            官方
-                          </span>
-                        </div>
-                        <div className="mt-0.5 truncate text-[12px] text-[#64748b] dark:text-[#aab3c8]">
-                          {featuredAgent.owner}
-                        </div>
-                        <p className="mt-2 line-clamp-3 text-[13px] leading-relaxed text-[#334155] dark:text-[#cfd6e9]">
-                          {featuredAgent.description}
-                        </p>
-                      </div>
+                <div className="flex flex-col gap-3 rounded-[18px] border border-[#ddd3ef] bg-[#fafafe] p-4 shadow-[0_6px_16px_rgba(43,51,72,0.035)] dark:border-[#433a5e] dark:bg-[rgba(167,139,250,0.08)] dark:shadow-[0_8px_20px_rgba(0,0,0,0.18)] sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-[#f8f9fc] ring-1 ring-inset ring-[#dfe3ec] dark:bg-[#222032] dark:ring-[#3b3651]">
+                      <img
+                        src={defaultAgent.logo}
+                        alt=""
+                        className="h-5 w-5 object-contain"
+                      />
                     </div>
 
-                    <div className="flex w-full shrink-0 flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center">
-                      {featuredAgent.mode === "custom" && (
-                        <button
-                          type="button"
-                          onClick={() => handleEditCustomAgent(featuredAgent)}
-                          className="inline-flex items-center justify-center rounded-full border border-[#e7e7ef] bg-white px-4 py-2 text-sm font-medium text-[#334155] transition hover:bg-[#f8fafc] dark:border-[#2a2a3a] dark:bg-[#181824] dark:text-[#e4e8ff] dark:hover:bg-[#1f1f2e]"
-                        >
-                          编辑
-                        </button>
-                      )}
+                    <div className="min-w-0 flex-1">
+                      <h3 className="truncate text-[15px] font-semibold tracking-[-0.02em] text-[#25324a] dark:text-[#eef2ff]">
+                        {defaultAgent.name}
+                      </h3>
+                      <div className="mt-0.5 truncate text-[12px] text-[#8f98ac] dark:text-[#9fa8bf]">
+                        {defaultAgent.owner}
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-[#404e67] dark:text-[#c7d0e6]">
+                        {defaultAgent.description}
+                      </p>
+                    </div>
+                  </div>
 
+                  <div className="flex shrink-0 items-center gap-2 sm:flex-col sm:items-end">
+                    {defaultAgent.mode === "custom" && (
                       <button
                         type="button"
-                        onClick={() => startWithAgent(featuredAgent)}
-                        className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-[#4f46e5] to-[#7c3aed] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-transform hover:scale-[1.01] active:scale-[0.99]"
+                        onClick={() => handleEditCustomAgent(defaultAgent)}
+                        className="inline-flex h-8 items-center justify-center rounded-[10px] border border-[#ebe7f1] bg-white px-3 text-xs font-medium text-[#5f5a73] transition hover:border-[#d3adf7] hover:text-[#544d92] dark:border-[#2f2a41] dark:bg-[#1c1628] dark:text-[#d0c0e8]"
                       >
-                        开始使用
+                        编辑
                       </button>
-                    </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => startWithAgent(defaultAgent)}
+                      title="开始对话"
+                      aria-label="开始对话"
+                      className="agent-featured-cta group/cta"
+                    >
+                      <span className="agent-featured-cta__shine" aria-hidden />
+                      <span className="agent-featured-cta__label">开始对话</span>
+                      <span className="agent-featured-cta__arrow">
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </span>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -838,7 +748,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               </div>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
                 {recentAgents
-                  .filter((a) => (featuredAgent?.id ? a.id !== featuredAgent.id : true))
+                  .filter((a) => (defaultAgent?.id ? a.id !== defaultAgent.id : true))
                   .slice(0, 6)
                   .map((agent) => (
                     <AgentCard

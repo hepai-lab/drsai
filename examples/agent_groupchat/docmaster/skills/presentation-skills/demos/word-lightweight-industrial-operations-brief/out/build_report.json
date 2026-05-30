@@ -1,0 +1,21 @@
+{
+  "markdown_path": "/project/lisiyuan2/Projects/AgenticMoe/references/presentation-skills/demos/word-lightweight-industrial-operations-brief/doc.md",
+  "output_docx": "/project/lisiyuan2/Projects/AgenticMoe/references/presentation-skills/demos/word-lightweight-industrial-operations-brief/out/industrial_operations_brief.docx",
+  "style_profile": "cn_song_times",
+  "block_count": 44,
+  "block_roles": {
+    "doc_title": 1,
+    "subtitle": 1,
+    "lead": 1,
+    "heading_1": 5,
+    "body": 10,
+    "table_title": 4,
+    "table_body": 4,
+    "table_caption": 4,
+    "figure_body": 2,
+    "figure_title": 2,
+    "figure_note": 2,
+    "source_note": 2,
+    "list": 6
+  }
+}

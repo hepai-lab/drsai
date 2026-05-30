@@ -28,6 +28,11 @@ export const replaceRenderer = ({
   replaceBodyHTMLString,
   setHeadComponents,
 }: any) => {
+  // Custom replaceRenderer breaks Gatsby develop client routing; keep it for production builds only.
+  if (process.env.NODE_ENV === "development") {
+    return;
+  }
+
   const cache = createCache();
   const bodyHTML = renderToString(
     <StyleProvider cache={cache} hashPriority="high">
@@ -46,6 +51,11 @@ export const replaceRenderer = ({
 
 export const onRenderBody = ({ setHeadComponents }) =>
   setHeadComponents([
+    <meta
+      key="viewport"
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />,
     <script
       key="myscript"
       dangerouslySetInnerHTML={{ __html: codeToRunOnClient }}

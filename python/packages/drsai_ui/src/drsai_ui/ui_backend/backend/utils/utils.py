@@ -12,6 +12,29 @@ from hepai import HepAI
 import tempfile
 import yaml
 
+def _is_image_attachment(file: Dict[str, Any]) -> bool:
+    """Detect image attachments for ``construct_task`` (MIME, legacy ``type: image``, or extension)."""
+    t = (file.get("type") or "").strip().lower()
+    if t.startswith("image/") or t == "image":
+        return True
+    name = (file.get("name") or "").lower()
+    path = (file.get("path") or "").lower()
+    for ext in (
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".tif",
+        ".tiff",
+        ".svg",
+    ):
+        if name.endswith(ext) or path.endswith(ext):
+            return True
+    return False
+
+
 def upload_to_hepai_filesystem(
         file_path: str = None, 
         api_key: str = None, 
@@ -100,7 +123,7 @@ def construct_task(
                     file_content = f.read()
                     file_base64 = base64.b64encode(file_content).decode("utf-8")
 
-            if file.get("type", "").startswith("image/"):
+            if _is_image_attachment(file):
                 image = Image.from_file(file["path"])
                 images.append(image)
                 text_parts.append(f"Attached image: {file.get('name', 'unknown.img')}")

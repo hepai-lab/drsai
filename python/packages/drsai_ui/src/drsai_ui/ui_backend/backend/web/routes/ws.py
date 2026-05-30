@@ -117,7 +117,6 @@ async def run_websocket(
                         metadata=start_metadata,
                     )
                     if task and team_config:
-                        # await ws_manager.start_stream(run_id, task, team_config)
                         asyncio.create_task(
                             ws_manager.start_stream(
                                 run_id, task, team_config, settings_config, files=files

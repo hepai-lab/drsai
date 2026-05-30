@@ -37,6 +37,7 @@ members = ["packages/*"]
 [tool.uv.sources]
 drsai= { workspace = true }
 drsai_ui = { workspace = true }
+drsai_ext = { workspace = true }
 
 [tool.ruff]
 line-length = 120

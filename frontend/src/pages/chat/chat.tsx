@@ -26,6 +26,7 @@ import { messageUtils } from "./rendermessage";
 import RunView from "./runview";
 import WelcomeScreen from "./WelcomeScreen";
 import type { ServerUploadedFileInfo } from "./chat/hooks/useFileUpload";
+import { parseFlexibleTimestampToUnixSeconds } from "../../utils/apiDatetime";
 
 // Extend RunStatus for sidebar status reporting
 type SidebarRunStatus = BaseRunStatus | "final_answer_awaiting_input";
@@ -52,10 +53,13 @@ interface ChatViewProps {
     query: string;
     files: any[];
     plan?: any;
+    llm?: { label: string; value: string };
   } | null;
   onPendingMessageSent?: () => void;
   /** From 库: attach already-uploaded files to the input */
   libraryServerFilesPrefill?: ServerUploadedFileInfo[] | null;
+  /** Hide example chips after new-chat flow (see manager sampleTasksDismissed) */
+  suppressSampleTasks?: boolean;
   /** Notify parent when current run file events change */
   onFileEventsChange?: (sessionId: number, fileEvents: FilesEvent[]) => void;
 }
@@ -70,6 +74,7 @@ export default function ChatView({
   onPendingMessageSent,
   libraryServerFilesPrefill,
   onFileEventsChange,
+  suppressSampleTasks = false,
 }: ChatViewProps) {
   // Context and store
   const settingsConfig = useSettingsStore((state) => state.config);
@@ -259,6 +264,7 @@ export default function ChatView({
         content.files &&
         Array.isArray(content.files)
       ) {
+        const tsSec = parseFlexibleTimestampToUnixSeconds(rawTimestamp);
         // 转换为 FilesEvent 格式
         const filesEvent: any = {
           source: config.source,
@@ -268,20 +274,10 @@ export default function ChatView({
             files: content.files,
             title: content.title,
             description: content.description,
-            send_time_stamp:
-              typeof rawTimestamp === "number"
-                ? rawTimestamp
-                : typeof rawTimestamp === "string"
-                  ? Number(rawTimestamp) || Date.parse(rawTimestamp) / 1000
-                  : undefined,
+            send_time_stamp: tsSec,
           },
           // 优先使用后端发送的 send_time_stamp；如果没有则回退到 message.created_at
-          send_time_stamp:
-            typeof rawTimestamp === "number"
-              ? rawTimestamp
-              : typeof rawTimestamp === "string"
-                ? Number(rawTimestamp) || Date.parse(rawTimestamp) / 1000
-                : undefined,
+          send_time_stamp: tsSec,
           type: config.type || 'FilesEvent',
         };
         fileEvents.push(filesEvent);
@@ -342,12 +338,7 @@ export default function ChatView({
           content: contentValue,
           title: messageAny.title,
           source: messageAny.source || config.source,
-          send_time_stamp:
-            typeof rawTimestamp === "number"
-              ? rawTimestamp
-              : typeof rawTimestamp === "string"
-                ? Number(rawTimestamp) || Date.parse(rawTimestamp) / 1000
-                : undefined,
+          send_time_stamp: parseFlexibleTimestampToUnixSeconds(rawTimestamp),
           send_level: messageAny.send_level,
           content_type: messageAny.content_type || "log",
         };
@@ -401,6 +392,9 @@ export default function ChatView({
 
       if (latestRun) {
         applyExtractions(latestRun);
+        if (!latestRun.session_id && session.id) {
+          latestRun.session_id = session.id;
+        }
       }
 
       return latestRun;
@@ -531,8 +525,8 @@ export default function ChatView({
     }
     pendingMessageSentRef.current = true;
 
-    const { query, files, plan } = pendingFirstMessage;
-    runTask(query, files as any[], plan, true);
+    const { query, files, plan, llm } = pendingFirstMessage;
+    runTask(query, files as any[], plan, true, llm);
 
     if (onPendingMessageSent) {
       onPendingMessageSent();
@@ -650,6 +644,7 @@ export default function ChatView({
                 {currentRun && (
                   <RunView
                     run={currentRun}
+                    sessionId={session.id}
                     onSavePlan={handlePlanUpdate}
                     onPause={handlePause}
                     onRegeneratePlan={handleRegeneratePlan}
@@ -685,6 +680,7 @@ export default function ChatView({
               error={error}
               isPlanMessage={isPlanMessage}
               chatInputRef={chatInputRef}
+              suppressSampleTasks={suppressSampleTasks || !!pendingFirstMessage}
               serverFilesPrefill={
                 noMessagesYet ? libraryServerFilesPrefill ?? null : null
               }

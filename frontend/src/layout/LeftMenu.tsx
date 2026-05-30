@@ -1,22 +1,17 @@
 import { Tooltip } from "antd";
 import {
   Bot,
-  BotMessageSquare,
-  Building2,
+  ChartColumn,
   ChevronLeft,
   ChevronRight,
-  FileText,
   Grid2X2,
   Library,
   MessageSquare,
-  Radio,
   Settings,
-  Shield,
-  User,
   UserCog,
   Users,
-  Zap,
   ChevronDown,
+  Wrench,
 } from "lucide-react";
 import React, { useContext, useEffect, useState } from "react";
 import { appContext } from "../hooks/provider";
@@ -26,15 +21,16 @@ interface LeftMenuProps {
   activeSubMenuItem: string;
   onSubMenuChange: (tabId: string) => void;
   onClose: () => void;
+  /** Platform admin only: settings → 使用分析 / 用户管理 */
+  showAdminNav?: boolean;
 }
 
-type SectionId = "chat" | "agents" | "settings" | "admin";
+type SectionId = "chat" | "agents" | "settings";
 
 const SECTIONS: { id: SectionId; icon: React.ReactNode; label: string; defaultItem: string }[] = [
   { id: "chat", icon: <MessageSquare className="w-3.5 h-3.5" />, label: "聊天", defaultItem: "current_session" },
   { id: "agents", icon: <Bot className="w-3.5 h-3.5" />, label: "智能体", defaultItem: "my_agents" },
   { id: "settings", icon: <Settings className="w-3.5 h-3.5" />, label: "设置", defaultItem: "profile" },
-  { id: "admin", icon: <Shield className="w-3.5 h-3.5" />, label: "管理员", defaultItem: "cooperation_management" },
 ];
 
 const LeftMenu: React.FC<LeftMenuProps> = ({
@@ -42,6 +38,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
   activeSubMenuItem,
   onSubMenuChange,
   onClose,
+  showAdminNav = false,
 }) => {
   const { darkMode } = useContext(appContext);
   const isDark = darkMode === "dark";
@@ -50,7 +47,6 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
     chat: true,
     agents: false,
     settings: false,
-    admin: false,
   });
 
   useEffect(() => {
@@ -58,12 +54,12 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
       setExpanded((e) => ({ ...e, chat: true }));
     } else if (["my_agents", "agent_square", "skills_square", "library"].includes(activeSubMenuItem)) {
       setExpanded((e) => ({ ...e, agents: true }));
-    } else if (["profile", "channels", "logs"].includes(activeSubMenuItem)) {
-      setExpanded((e) => ({ ...e, settings: true }));
     } else if (
-      ["agent_management", "user_management", "cooperation_management"].includes(activeSubMenuItem)
+      ["profile", "channels", "logs", "usage_analytics", "user_management", "agent_management"].includes(
+        activeSubMenuItem
+      )
     ) {
-      setExpanded((e) => ({ ...e, admin: true }));
+      setExpanded((e) => ({ ...e, settings: true }));
     }
   }, [activeSubMenuItem]);
 
@@ -121,8 +117,13 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
   const SECTION_ITEMS: Record<SectionId, string[]> = {
     chat: ["current_session"],
     agents: ["my_agents", "agent_square", "skills_square", "library"],
-    settings: ["profile", "channels", "logs"],
-    admin: ["cooperation_management", "agent_management", "user_management"],
+    settings: [
+      "profile",
+      "channels",
+      "logs",
+      ...(showAdminNav ? ["usage_analytics", "user_management"] : []),
+      "agent_management",
+    ],
   };
 
   if (!isSidebarOpen) {
@@ -223,7 +224,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
               />
               <NavItem
                 id="skills_square"
-                icon={<Zap className="w-3.5 h-3.5" />}
+                icon={<Wrench className="w-3.5 h-3.5" />}
                 label="技能广场"
                 onClick={() => onSubMenuChange("skills_square")}
               />
@@ -250,12 +251,28 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
                 label="配置"
                 onClick={() => onSubMenuChange("profile")}
               />
-              <NavItem
+              {showAdminNav ? (
+                <>
+                  <NavItem
+                    id="usage_analytics"
+                    icon={<ChartColumn className="w-3.5 h-3.5" />}
+                    label="使用分析"
+                    onClick={() => onSubMenuChange("usage_analytics")}
+                  />
+                  <NavItem
+                    id="user_management"
+                    icon={<Users className="w-3.5 h-3.5" />}
+                    label="用户管理"
+                    onClick={() => onSubMenuChange("user_management")}
+                  />
+                </>
+              ) : null}
+              {/* <NavItem
                 id="channels"
                 icon={<Radio className="w-3.5 h-3.5" />}
                 label="频道"
                 onClick={() => onSubMenuChange("channels")}
-              />
+              /> */}
               {/* <NavItem
                 id="logs"
                 icon={<FileText className="w-3.5 h-3.5" />}
@@ -265,35 +282,6 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
             </div>
           )}
         </div>
-
-        <div className="h-px bg-border-primary/25 my-1.5" />
-
-        {/* ── 管理员 ── */}
-        {/* <div>
-          <SectionHeader id="admin" icon={<Shield className="w-3.5 h-3.5" />} label="管理员" />
-          {expanded.admin && (
-            <div className="mt-0.5 space-y-0.5">
-              <NavItem
-                id="cooperation_management"
-                icon={<Building2 className="w-3.5 h-3.5" />}
-                label="合作组管理"
-                onClick={() => onSubMenuChange("cooperation_management")}
-              />
-              <NavItem
-                id="agent_management"
-                icon={<BotMessageSquare className="w-3.5 h-3.5" />}
-                label="智能体管理"
-                onClick={() => onSubMenuChange("agent_management")}
-              />
-              <NavItem
-                id="user_management"
-                icon={<Users className="w-3.5 h-3.5" />}
-                label="用户管理"
-                onClick={() => onSubMenuChange("user_management")}
-              />
-            </div>
-          )}
-        </div> */}
       </div>
     </div>
   );

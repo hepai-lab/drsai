@@ -1,0 +1,18 @@
+{
+  "deck_title": "AI Market Intelligence 2026 | Value Migration from Model Capex to Workflow Monetization",
+  "brief": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/brief.md",
+  "narrative": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/deck_narrative.md",
+  "derived_slide_specs": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/generated/slide_specs.yaml",
+  "output_pptx": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/pptx/ai_market_intelligence_demo.pptx",
+  "slide_count": 6,
+  "native_chart_count": 2,
+  "python_figure_count": 3,
+  "connector_count": 11,
+  "generated_assets": {
+    "hero_image": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/rendered/generated/hero_ai_market.png",
+    "ranked_bar": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/rendered/python_figures/enterprise_budget_rank.png",
+    "heatmap": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/rendered/python_figures/sector_adoption_heatmap.png",
+    "timeline": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/build/rendered/python_figures/capability_rollout_timeline.png",
+    "icon_theme_dir": "/Users/svenli/FilesOnNut/0ProjectsOnNut/AgentProjects/presentation-skills/demos/ppt-polished-deck-collab-ai-market-intelligence/assets/icons/theme_consulting_light"
+  }
+}

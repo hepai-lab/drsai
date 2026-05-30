@@ -244,7 +244,8 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
     agent: Agent,
     query: string,
     files: any[] = [],
-    plan?: any
+    plan?: any,
+    llm?: { label: string; value: string }
   ) => {
     if (!userEmail) {
       onError?.("User not logged in");
@@ -255,7 +256,7 @@ export const useSessionManager = ({ userEmail, onSuccess, onError }: UseSessionM
       setIsLoading(true);
 
       // 1. 保存待发送的消息
-      setPendingFirstMessage({ query, files, plan });
+      setPendingFirstMessage({ query, files, plan, llm });
 
       // 2. 创建新会话
       const sessionData = {

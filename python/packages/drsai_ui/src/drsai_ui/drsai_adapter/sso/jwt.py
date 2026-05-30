@@ -21,13 +21,15 @@ class AccessToken(BaseModel):
 
 
 class AccessTokenData(BaseModel):
-    username: Optional[str] = None
+    user_id: Optional[str] = None
 
 
 SECRET_KEY = "b6b14c922c4362377bf8d86e37847adca5ca1a3c54141bc58a10d8ea08f0971a"
 ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+REFRESH_TOKEN_EXPIRE_DAYS = 30
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/apiv2/portal/user/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/apiv2/portal/user/login", auto_error=False)
 
 illegal_token_exception = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -74,14 +76,23 @@ def decode_jwt_token(token: str) -> AccessTokenData:
         payload = jwt.decode(
             token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": True}
         )
-        username: str = payload.get("sub")
-        if username is None:
+        user_id: str = payload.get("sub")
+        if user_id is None:
             raise illegal_token_exception
-        return AccessTokenData(username=username)
+        return AccessTokenData(user_id=user_id)
     except ExpiredSignatureError:
         raise expire_exception
     except JWTError:
         raise illegal_token_exception
+
+
+def get_current_user_id(token: str | None = Depends(oauth2_scheme)) -> str:
+    if not token:
+        raise illegal_token_exception
+    data = decode_jwt_token(token)
+    if not data.user_id:
+        raise illegal_token_exception
+    return data.user_id
 
 
 # async def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInfoModel:

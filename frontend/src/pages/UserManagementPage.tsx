@@ -1,4 +1,4 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Input, Switch, Table, Tag, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { appContext } from "../hooks/provider";
@@ -12,7 +12,26 @@ const UserManagementPage: React.FC = () => {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
+  const [tableScrollY, setTableScrollY] = useState<number>();
+  const tableWrapRef = useRef<HTMLDivElement>(null);
   const [msgApi, holder] = message.useMessage();
+
+  useEffect(() => {
+    const el = tableWrapRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+
+    const TABLE_CHROME = 112;
+
+    const update = () => {
+      const next = el.clientHeight - TABLE_CHROME;
+      setTableScrollY(next > 120 ? next : undefined);
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const load = useCallback(async () => {
     if (!operatorUserId) {
@@ -57,20 +76,6 @@ const UserManagementPage: React.FC = () => {
         v === "sso" ? <Tag color="purple">SSO</Tag> : <Tag color="blue">LOCAL</Tag>,
     },
     {
-      title: "合作组",
-      key: "org",
-      width: 160,
-      render: (_: unknown, record: Row) =>
-        record.org_slug ? (
-          <span className="text-xs">
-            <Tag>{record.org_slug}</Tag>
-            {record.org_role ? <span className="text-secondary ml-1">{record.org_role}</span> : null}
-          </span>
-        ) : (
-          <span className="text-secondary text-xs">—</span>
-        ),
-    },
-    {
       title: "管理员",
       dataIndex: "is_admin",
       key: "is_admin",
@@ -105,9 +110,7 @@ const UserManagementPage: React.FC = () => {
       <div className="flex items-center justify-between gap-3 mb-3">
         <div>
           <div className="text-base font-semibold text-primary">用户管理</div>
-          <div className="text-xs text-secondary mt-1">
-            需要管理员权限。当前操作人：<span className="font-mono">{operatorUserId || "-"}</span>
-          </div>
+
         </div>
         <div className="flex items-center gap-2">
           <Input
@@ -123,7 +126,7 @@ const UserManagementPage: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0">
+      <div ref={tableWrapRef} className="flex-1 min-h-0 h-full">
         <Table<Row>
           size="middle"
           bordered
@@ -131,6 +134,7 @@ const UserManagementPage: React.FC = () => {
           columns={columns}
           dataSource={filtered}
           pagination={{ pageSize: 20, showSizeChanger: true }}
+          scroll={tableScrollY ? { y: tableScrollY } : undefined}
         />
       </div>
     </div>

@@ -4,11 +4,14 @@
 
 import { useStore } from '@nanostores/react'
 import { Box, Text, useApp, useInput } from 'ink'
+import { existsSync, readFileSync } from 'node:fs'
+import { basename, extname, isAbsolute, resolve, win32 } from 'node:path'
+import { homedir } from 'node:os'
 import { useEffect, useRef, useState } from 'react'
 
 import { loadPromptHistory, savePromptHistory } from '../app/promptHistory.js'
 import { $isStreaming } from '../app/turnStore.js'
-import type { TurnController } from '../app/turnController.js'
+import type { ImageAttachment, TurnController } from '../app/turnController.js'
 import { $showReasoning } from '../app/uiStore.js'
 import type { SessionInfo, SessionListResult } from '../gatewayTypes.js'
 import { theme } from '../theme.js'
@@ -23,6 +26,181 @@ export interface ComposerPaneProps {
   sessionId: string
   controller: TurnController
   switchSession: (sid: string) => Promise<void>
+}
+
+// ── Image helpers ─────────────────────────────────────────────────────
+
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
+
+const MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml',
+}
+
+/** Maximum single image size (bytes) — 20 MB. */
+const MAX_IMAGE_SIZE = 20 * 1024 * 1024
+/** Maximum total images per message — 10. */
+const MAX_IMAGES_PER_MSG = 10
+
+/**
+ * Resolve a user-supplied file path to an absolute path.
+ *
+ * - `~/...`  → expand home directory
+ * - `/...`   → already absolute, keep as-is
+ * - `./...` or `photos/img.png` → resolve against the user's real working
+ *   directory (``DRSAI_USER_CWD``), NOT against ``process.cwd()`` which
+ *   may point to the ui-tui package directory.
+ */
+function resolveFilePath(filePath: string): string {
+  // Expand ~ to home directory
+  if (filePath.startsWith('~')) {
+    return filePath.replace('~', homedir())
+  }
+
+  // Already absolute for the platform that is running the TUI.
+  if (isAbsolute(filePath)) {
+    return filePath
+  }
+
+  // A Windows absolute path such as ``D:\\foo\\bar.png`` is NOT considered
+  // absolute by Node when the TUI process is running on POSIX/Linux. Without
+  // this guard, ``path.resolve(linuxCwd, 'D:\\foo.png')`` produces a bogus path
+  // like ``/home/user/D:\\foo.png``. Treat it as absolute so the error message
+  // points at the real user input instead of a cwd-prefixed fake path.
+  if (win32.isAbsolute(filePath)) {
+    return filePath
+  }
+
+  // Relative path — resolve against the user's real cwd
+  const userCwd = process.env.DRSAI_USER_CWD?.trim() || process.cwd()
+  return resolve(userCwd, filePath)
+}
+
+/**
+ * Read a local image file and return an `ImageAttachment` object.
+ * Returns an error dict if the file does not exist, is not an image, or
+ * exceeds size limits.
+ */
+function readImageFile(filePath: string): ImageAttachment | { error: string } {
+  const expanded = resolveFilePath(filePath)
+
+  if (!existsSync(expanded)) {
+    return { error: `File not found: ${filePath} (resolved: ${expanded})` }
+  }
+
+  const ext = extname(expanded).toLowerCase()
+  const mime = MIME_BY_EXT[ext]
+  if (!mime) {
+    return { error: `Unsupported image format: ${ext} (${filePath})` }
+  }
+
+  const buffer = readFileSync(expanded)
+  if (buffer.length > MAX_IMAGE_SIZE) {
+    return { error: `Image too large: ${(buffer.length / 1024 / 1024).toFixed(1)} MB > 20 MB limit (${filePath})` }
+  }
+
+  return {
+    path: filePath,
+    base64: buffer.toString('base64'),
+    mime_type: mime,
+  }
+}
+
+/**
+ * Detect `@/path`, `@~/path`, `@./path` image references in the text,
+ * read the files, and return the cleaned text plus the image attachments.
+ *
+ * Examples:
+ *   "Look at @/tmp/photo.png please"
+ *   → { cleanText: "Look at [image: photo.png] please", images: [...] }
+ *
+ *   "Compare @./a.png and @./b.png"
+ *   → { cleanText: "Compare [image: a.png] and [image: b.png]", images: [...] }
+ */
+function extractInlineImages(text: string): {
+  cleanText: string
+  images: ImageAttachment[]
+  errors: string[]
+} {
+  const images: ImageAttachment[] = []
+  const errors: string[] = []
+
+  // Match @/abs/path.ext  @~/path.ext  @./relative/path.ext  @relative/path.ext
+  // Negative lookbehind to avoid matching inside a URL (http://...)
+  const inlineRe = /(?<![:\w])@(~?[./]?[^\s@]+\.(?:png|jpe?g|gif|webp|bmp|svg))/gi
+
+  const cleanText = text.replace(inlineRe, (_match, rawPath: string) => {
+    if (images.length + errors.length >= MAX_IMAGES_PER_MSG) {
+      errors.push(`Too many images (max ${MAX_IMAGES_PER_MSG})`)
+      return `@${rawPath}`
+    }
+
+    const result = readImageFile(rawPath)
+    if ('error' in result) {
+      errors.push(result.error)
+      return `@${rawPath}`
+    }
+
+    images.push(result)
+    return `[image: ${basename(rawPath)}]`
+  })
+
+  return { cleanText, images, errors }
+}
+
+/**
+ * Parse the `/image` (or `/img`) command.
+ *
+ * Supports multiple image paths:
+ *   /image /path/a.png ./b.png ~/c.jpg description text
+ *   /img /tmp/photo.png
+ *
+ * Returns `{ paths, description }` or `null` if the input doesn't match.
+ * All tokens that look like file paths (contain a dot + image extension)
+ * are collected as image paths; the remaining tokens become the description.
+ */
+function _looksLikePath(token: string): boolean {
+  // POSIX
+  if (token.startsWith('/') || token.startsWith('~') || token.startsWith('./')) return true
+  // Windows: .\relative  D:\absolute  \\UNC
+  if (token.startsWith('.\\') || token.startsWith('\\\\')) return true
+  if (/^[A-Za-z]:[\\\/]/.test(token)) return true
+  return false
+}
+
+function parseImageCommand(text: string): { paths: string[]; description: string } | null {
+  const m = text.match(/^\/(?:image|img)\s+(.+)$/s)
+  if (!m) return null
+
+  const tokens = m[1].trim().split(/\s+/)
+  const paths: string[] = []
+  const descTokens: string[] = []
+
+  for (const token of tokens) {
+    const ext = extname(token).toLowerCase()
+    if (IMAGE_EXTENSIONS.has(ext) || _looksLikePath(token)) {
+      // Heuristic: if it has an image extension OR looks like a path,
+      // treat it as an image path.
+      if (IMAGE_EXTENSIONS.has(ext)) {
+        paths.push(token)
+      } else {
+        // Path prefix but no image extension — might be a description word
+        // like "/help" or "./something". Only treat as path if it has an
+        // image extension.
+        descTokens.push(token)
+      }
+    } else {
+      descTokens.push(token)
+    }
+  }
+
+  if (paths.length === 0) return null
+  return { paths, description: descTokens.join(' ') }
 }
 
 export function ComposerPane({ sessionId, controller, switchSession }: ComposerPaneProps) {
@@ -269,6 +447,56 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     resetPasteSnips()
     const trimmed = expanded.trim()
 
+    // ── Detect /image command ────────────────────────────────────────
+    const imageCmd = parseImageCommand(trimmed)
+    if (imageCmd) {
+      const images: ImageAttachment[] = []
+      const imgErrors: string[] = []
+      for (const p of imageCmd.paths) {
+        if (images.length + imgErrors.length >= MAX_IMAGES_PER_MSG) {
+          imgErrors.push(`Too many images (max ${MAX_IMAGES_PER_MSG})`)
+          break
+        }
+        const result = readImageFile(p)
+        if ('error' in result) {
+          imgErrors.push(result.error)
+        } else {
+          images.push(result)
+        }
+      }
+      if (imgErrors.length > 0) {
+        showSlashOutput(`⚠ Image errors:\n  ${imgErrors.join('\n  ')}`, 5000)
+      }
+      if (images.length === 0) return
+      const desc = imageCmd.description || images.map(i => basename(i.path)).join(', ')
+      await controller.submit({
+        sessionId,
+        text: desc,
+        images,
+      })
+      return
+    }
+
+    // ── /image or /img without valid paths ──────────────────────────
+    // parseImageCommand() returns null when the regex matches but no image
+    // paths were found, OR when the input is just "/image" with no args.
+    // Intercept here so we show a friendly message instead of falling
+    // through to slash.exec (which would return a 4040 error).
+    if (/^\/(?:image|img)(?:\s|$)/i.test(trimmed)) {
+      showSlashOutput(
+        '⚠  Usage: /image <path1> [path2...] [description]\n' +
+        '       /img  <path1> [path2...] [description]\n\n' +
+        'Each path must have a supported image extension\n' +
+        '(.png, .jpg, .jpeg, .gif, .webp, .bmp, .svg).\n\n' +
+        'Examples:\n' +
+        '  /image /tmp/photo.png\n' +
+        '  /image ./a.png ./b.jpg describe these\n' +
+        '  /img ~/photo.png what is this?',
+        6000,
+      )
+      return
+    }
+
     // Detect slash command
     if (trimmed.startsWith('/')) {
       const parts = trimmed.slice(1).split(/\s+/)
@@ -389,7 +617,17 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     }
 
     // Regular prompt
-    await controller.submit({ sessionId, text: trimmed, displayText: displayText.trim() })
+    // Regular prompt — detect @/path inline image references
+    const { cleanText, images, errors: imgErrors } = extractInlineImages(trimmed)
+    if (imgErrors.length > 0) {
+      showSlashOutput(`⚠ Image errors:\n  ${imgErrors.join('\n  ')}`, 5000)
+    }
+    await controller.submit({
+      sessionId,
+      text: cleanText.trim(),
+      displayText: displayText.trim(),
+      images: images.length > 0 ? images : undefined,
+    })
   }
 
   // Session picker overlay

@@ -1,0 +1,8 @@
+{
+  "source_docx": null,
+  "markdown_file": "markdown/industrial_service_transformation/industrial_service_transformation.md",
+  "assets_dir": "markdown/industrial_service_transformation/assets",
+  "output_docx": "build/docx/industrial_service_transformation.docx",
+  "style_profile": "teal_consulting_report",
+  "workflow_mode": "refined"
+}

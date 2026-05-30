@@ -120,7 +120,7 @@ export const useFileUpload = ({
   ): Promise<boolean> => {
     // Check file size
     if (file.size > MAX_FILE_SIZE) {
-      message.error(`${file.name} is too large. Maximum size is 5MB.`);
+      message.error(`${file.name} is too large. Maximum size is 20MB.`);
       return false;
     }
 
@@ -306,7 +306,7 @@ export const useFileUpload = ({
           } else if (file && file.size > MAX_FILE_SIZE) {
             message.error(
               `Pasted image ${file.name || "image"
-              } is too large. Maximum size is 5MB.`
+              } is too large. Maximum size is 20MB.`
             );
           }
         }

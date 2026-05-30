@@ -1,0 +1,4 @@
+interface:
+  display_name: "PPT Polished Deck Copilot"
+  short_description: "Compile polished editable PPT decks with contracts, asset slots, and validation"
+  default_prompt: "Use $ppt-polished-deck-collab to clarify the PPT goal in plain language, align the deck contract, plan asset slots, build an editable PPTX, and validate the result."

@@ -1,0 +1,273 @@
+.usage-analytics-shell .usage-analytics-muted {
+  color: rgba(196, 181, 253, 0.58);
+}
+
+.usage-analytics-shell .usage-analytics-stat {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  background: linear-gradient(145deg, rgba(22, 14, 34, 0.96), rgba(12, 10, 20, 0.98));
+  padding: 14px 16px;
+  box-shadow:
+    0 0 0 1px rgba(124, 58, 237, 0.05) inset,
+    0 10px 30px rgba(0, 0, 0, 0.28);
+}
+
+.usage-analytics-shell .usage-analytics-stat::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at 100% 0%, rgba(168, 85, 247, 0.12), transparent 55%);
+}
+
+.usage-analytics-shell .usage-analytics-stat-label {
+  position: relative;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(196, 181, 253, 0.72);
+}
+
+.usage-analytics-shell .usage-analytics-stat-value {
+  position: relative;
+  margin-top: 6px;
+  font-size: 1.5rem;
+  line-height: 1.2;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #f3e8ff;
+  text-shadow: 0 0 24px rgba(168, 85, 247, 0.25);
+}
+
+.usage-analytics-shell .usage-analytics-stat-hint {
+  position: relative;
+  margin-top: 6px;
+  font-size: 10px;
+  color: rgba(167, 139, 250, 0.55);
+}
+
+.usage-analytics-shell .usage-analytics-panel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem;
+  border: 1px solid rgba(168, 85, 247, 0.22);
+  background: linear-gradient(145deg, rgba(18, 12, 28, 0.96) 0%, rgba(12, 10, 20, 0.98) 45%, rgba(26, 10, 46, 0.55) 100%);
+  box-shadow:
+    0 0 0 1px rgba(124, 58, 237, 0.06) inset,
+    0 18px 50px rgba(0, 0, 0, 0.45),
+    0 0 40px rgba(124, 58, 237, 0.08);
+}
+
+.usage-analytics-shell .usage-analytics-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at 18% 0%, rgba(168, 85, 247, 0.14), transparent 42%);
+}
+
+.usage-analytics-shell .usage-analytics-panel::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(192, 132, 252, 0.45), transparent);
+}
+
+/* 看板主体：KPI + 图表网格 */
+.usage-analytics-shell .usage-analytics-board {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.usage-analytics-shell .usage-analytics-charts-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.usage-analytics-shell .usage-analytics-charts-row-top {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+@media (min-width: 1440px) {
+  .usage-analytics-shell .usage-analytics-charts-row-top {
+    grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+    align-items: stretch;
+  }
+}
+
+.usage-analytics-shell .usage-analytics-chart-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 0.875rem;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  background: linear-gradient(145deg, rgba(18, 12, 28, 0.94), rgba(12, 10, 20, 0.98));
+  overflow: hidden;
+}
+
+.usage-analytics-shell .usage-analytics-chart-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.1);
+}
+
+.usage-analytics-shell .usage-analytics-chart-card-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(237, 233, 254, 0.95);
+}
+
+.usage-analytics-shell .usage-analytics-chart-card-caption {
+  margin: 2px 0 0;
+  font-size: 10px;
+  color: rgba(167, 139, 250, 0.5);
+}
+
+.usage-analytics-shell .usage-analytics-chart-card-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(196, 181, 253, 0.65);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  background: rgba(124, 58, 237, 0.12);
+}
+
+.usage-analytics-shell .usage-analytics-chart-card-body {
+  position: relative;
+  min-height: 0;
+}
+
+.usage-analytics-shell .usage-analytics-chart-card-body .usage-analytics-panel {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  min-height: 0 !important;
+}
+
+.usage-analytics-shell .usage-analytics-chart-card-body .usage-analytics-panel::before,
+.usage-analytics-shell .usage-analytics-chart-card-body .usage-analytics-panel::after {
+  display: none;
+}
+
+.usage-analytics-shell .usage-analytics-chart-card-body .usage-analytics-muted {
+  display: block;
+  padding: 12px;
+  font-size: 11px;
+}
+
+.usage-analytics-shell .usage-analytics-chart-card--wide {
+  width: 100%;
+}
+
+/* 今日面板 */
+.usage-analytics-shell .usage-analytics-today {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  padding: 10px 12px 12px;
+  overflow: hidden;
+}
+
+.usage-analytics-shell .usage-analytics-today-head {
+  flex-shrink: 0;
+}
+
+.usage-analytics-shell .usage-analytics-today-feed {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(168, 85, 247, 0.14);
+  background: rgba(12, 10, 20, 0.45);
+  padding: 10px;
+}
+
+.usage-analytics-shell .usage-analytics-today-section-title {
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgba(216, 180, 254, 0.88);
+}
+
+.usage-analytics-shell .usage-analytics-today-feed-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+  min-height: 0;
+}
+
+.usage-analytics-shell .usage-analytics-today-feed-item {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 4px;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.08);
+  font-size: 11px;
+}
+
+.usage-analytics-shell .usage-analytics-today-feed-item:last-child {
+  border-bottom: none;
+}
+
+.usage-analytics-shell .usage-analytics-today-feed-time {
+  font-variant-numeric: tabular-nums;
+  color: rgba(196, 181, 253, 0.75);
+}
+
+.usage-analytics-shell .usage-analytics-today-feed-agent {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: rgba(237, 233, 254, 0.92);
+}
+
+.usage-analytics-shell .usage-analytics-today-feed-user {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  color: rgba(167, 139, 250, 0.72);
+}
+
+.usage-analytics-shell .usage-analytics-today-feed-count {
+  font-variant-numeric: tabular-nums;
+  color: rgba(192, 132, 252, 0.9);
+}
+
+.usage-analytics-shell .usage-analytics-today-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 64px;
+  padding: 12px;
+}
+
+/* Segmented 在深色卡片头内 */
+.usage-analytics-shell .usage-analytics-chart-card-head .ant-segmented {
+  background: rgba(12, 10, 20, 0.65);
+}

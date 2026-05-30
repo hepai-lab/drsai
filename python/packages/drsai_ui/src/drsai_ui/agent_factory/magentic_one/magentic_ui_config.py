@@ -94,7 +94,7 @@ class MagenticUIConfig(BaseModel):
     retrieve_relevant_plans: Literal["never", "hint", "reuse"] = "never"
     memory_controller_key: Optional[str] = None
     model_context_token_limit: int = 110000
-    allow_follow_up_input: bool = True
+    allow_follow_up_input: bool = False
     final_answer_prompt: str | None = None
     playwright_port: int = -1
     novnc_port: int = -1

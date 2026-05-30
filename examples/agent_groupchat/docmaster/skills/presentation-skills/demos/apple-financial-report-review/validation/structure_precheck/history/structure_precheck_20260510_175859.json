@@ -1,0 +1,129 @@
+{
+  "pptx": "/project/lisiyuan/Projects/AutoCausePanel/references/temp/apple_financial_report_review/build/pptx/apple_fy2025_financial_report_review.pptx",
+  "generated_at": "20260510_175859",
+  "summary": {
+    "error": 0,
+    "warning": 0,
+    "not_checked": 6
+  },
+  "issues": [
+    {
+      "severity": "not_checked",
+      "issue_type": "structured_chart_label_collision_not_checked",
+      "message": "首期 `structure_precheck` 还没有读取原生 chart 内部 label 的真实边界，因此该 chart 的内部标签碰撞未自动检查。",
+      "slide_number": 3,
+      "shape_id": 15,
+      "source_kind": "chart",
+      "details": {
+        "shape_name": "Chart 14",
+        "shape_type": "CHART",
+        "rect_pt": {
+          "left": 62.64,
+          "top": 116.64,
+          "width": 526.32,
+          "height": 231.84
+        }
+      },
+      "suggested_fix": "当前先保留逐页预览复核；后续可补 chart title / axis / legend / data label 的结构化检查。"
+    },
+    {
+      "severity": "not_checked",
+      "issue_type": "structured_chart_label_collision_not_checked",
+      "message": "首期 `structure_precheck` 还没有读取原生 chart 内部 label 的真实边界，因此该 chart 的内部标签碰撞未自动检查。",
+      "slide_number": 4,
+      "shape_id": 15,
+      "source_kind": "chart",
+      "details": {
+        "shape_name": "Chart 14",
+        "shape_type": "CHART",
+        "rect_pt": {
+          "left": 62.64,
+          "top": 116.64,
+          "width": 526.32,
+          "height": 231.84
+        }
+      },
+      "suggested_fix": "当前先保留逐页预览复核；后续可补 chart title / axis / legend / data label 的结构化检查。"
+    },
+    {
+      "severity": "not_checked",
+      "issue_type": "structured_chart_label_collision_not_checked",
+      "message": "首期 `structure_precheck` 还没有读取原生 chart 内部 label 的真实边界，因此该 chart 的内部标签碰撞未自动检查。",
+      "slide_number": 5,
+      "shape_id": 15,
+      "source_kind": "chart",
+      "details": {
+        "shape_name": "Chart 14",
+        "shape_type": "CHART",
+        "rect_pt": {
+          "left": 62.64,
+          "top": 116.64,
+          "width": 526.32,
+          "height": 231.84
+        }
+      },
+      "suggested_fix": "当前先保留逐页预览复核；后续可补 chart title / axis / legend / data label 的结构化检查。"
+    },
+    {
+      "severity": "not_checked",
+      "issue_type": "structured_chart_label_collision_not_checked",
+      "message": "首期 `structure_precheck` 还没有读取原生 chart 内部 label 的真实边界，因此该 chart 的内部标签碰撞未自动检查。",
+      "slide_number": 6,
+      "shape_id": 15,
+      "source_kind": "chart",
+      "details": {
+        "shape_name": "Chart 14",
+        "shape_type": "CHART",
+        "rect_pt": {
+          "left": 62.64,
+          "top": 116.64,
+          "width": 486.72,
+          "height": 233.28
+        }
+      },
+      "suggested_fix": "当前先保留逐页预览复核；后续可补 chart title / axis / legend / data label 的结构化检查。"
+    },
+    {
+      "severity": "not_checked",
+      "issue_type": "structured_chart_label_collision_not_checked",
+      "message": "首期 `structure_precheck` 还没有读取原生 chart 内部 label 的真实边界，因此该 chart 的内部标签碰撞未自动检查。",
+      "slide_number": 7,
+      "shape_id": 15,
+      "source_kind": "chart",
+      "details": {
+        "shape_name": "Chart 14",
+        "shape_type": "CHART",
+        "rect_pt": {
+          "left": 62.64,
+          "top": 116.64,
+          "width": 526.32,
+          "height": 231.84
+        }
+      },
+      "suggested_fix": "当前先保留逐页预览复核；后续可补 chart title / axis / legend / data label 的结构化检查。"
+    },
+    {
+      "severity": "not_checked",
+      "issue_type": "structured_chart_label_collision_not_checked",
+      "message": "首期 `structure_precheck` 还没有读取原生 chart 内部 label 的真实边界，因此该 chart 的内部标签碰撞未自动检查。",
+      "slide_number": 8,
+      "shape_id": 15,
+      "source_kind": "chart",
+      "details": {
+        "shape_name": "Chart 14",
+        "shape_type": "CHART",
+        "rect_pt": {
+          "left": 62.64,
+          "top": 116.64,
+          "width": 526.32,
+          "height": 231.84
+        }
+      },
+      "suggested_fix": "当前先保留逐页预览复核；后续可补 chart title / axis / legend / data label 的结构化检查。"
+    }
+  ],
+  "counts": {
+    "shape_count": 205,
+    "text_item_count": 315
+  }
+}

@@ -1,0 +1,2456 @@
+{
+  "pptx": "/project/lisiyuan/Projects/AutoCausePanel/references/temp/apple_financial_report_review/build/pptx/apple_fy2025_financial_report_review.pptx",
+  "generated_at": "20260510_174927",
+  "summary": {
+    "error": 89,
+    "warning": 33,
+    "not_checked": 0
+  },
+  "issues": [
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "指标",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.9223,
+          "max_component_area": 202,
+          "width_px": 163,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "指标",
+        "right_gap_pt": 65.38,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2021",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 540,
+          "width_px": 180,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2021",
+        "right_gap_pt": 63.14,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2022",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 540,
+          "width_px": 180,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2022",
+        "right_gap_pt": 63.14,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2023",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 540,
+          "width_px": 180,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2023",
+        "right_gap_pt": 63.14,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2024",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 540,
+          "width_px": 180,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2024",
+        "right_gap_pt": 63.14,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2025",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 540,
+          "width_px": 180,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2025",
+        "right_gap_pt": 63.14,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "365.8",
+        "right_gap_pt": 69.0,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2609,
+          "max_component_area": 10,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "394.3",
+        "right_gap_pt": 69.0,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2899,
+          "max_component_area": 16,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "383.3",
+        "right_gap_pt": 69.0,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.3478,
+          "max_component_area": 23,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "416.2",
+        "right_gap_pt": 69.0,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.3043,
+          "max_component_area": 14,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "94.7",
+        "right_gap_pt": 72.65,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2174,
+          "max_component_area": 12,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "99.8",
+        "right_gap_pt": 72.65,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 10,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "93.7",
+        "right_gap_pt": 72.65,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2319,
+          "max_component_area": 13,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "112.0",
+        "right_gap_pt": 69.0,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2464,
+          "max_component_area": 17,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "经营利润率",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.09,
+          "max_component_area": 15,
+          "width_px": 163,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "29.8%",
+        "right_gap_pt": 69.91,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2174,
+          "max_component_area": 9,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "30.3%",
+        "right_gap_pt": 69.91,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 7,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "29.8%",
+        "right_gap_pt": 69.91,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2174,
+          "max_component_area": 9,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "31.5%",
+        "right_gap_pt": 69.91,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 7,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 3,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "32.0%",
+        "right_gap_pt": 69.91,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 9,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "类别",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.9553,
+          "max_component_area": 424,
+          "width_px": 298,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "类别",
+        "right_gap_pt": 130.18,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2025",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 804,
+          "width_px": 268,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2025",
+        "right_gap_pt": 105.62,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "占比",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.9394,
+          "max_component_area": 371,
+          "width_px": 253,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "占比",
+        "right_gap_pt": 108.58,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "同比",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.9493,
+          "max_component_area": 400,
+          "width_px": 276,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "同比",
+        "right_gap_pt": 119.38,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "50.4%",
+        "right_gap_pt": 105.19,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 10,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "+4.2%",
+        "right_gap_pt": 116.91,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.1884,
+          "max_component_area": 9,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "109.2",
+        "right_gap_pt": 111.48,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2899,
+          "max_component_area": 13,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "26.2%",
+        "right_gap_pt": 105.19,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2174,
+          "max_component_area": 10,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "+13.5%",
+        "right_gap_pt": 113.26,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.1884,
+          "max_component_area": 9,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "35.7",
+        "right_gap_pt": 115.13,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2609,
+          "max_component_area": 12,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "8.6%",
+        "right_gap_pt": 108.84,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.2174,
+          "max_component_area": 10,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 4,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "-3.6%",
+        "right_gap_pt": 116.91,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 9,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "指标",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.9288,
+          "max_component_area": 226,
+          "width_px": 178,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "指标",
+        "right_gap_pt": 72.58,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2021",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 531,
+          "width_px": 177,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2021",
+        "right_gap_pt": 61.7,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2022",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 531,
+          "width_px": 177,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2022",
+        "right_gap_pt": 61.7,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2023",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 531,
+          "width_px": 177,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2023",
+        "right_gap_pt": 61.7,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2024",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 531,
+          "width_px": 177,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2024",
+        "right_gap_pt": 61.7,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2025",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 531,
+          "width_px": 177,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2025",
+        "right_gap_pt": 61.7,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "综合毛利率",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.0506,
+          "max_component_area": 11,
+          "width_px": 178,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "41.8",
+        "right_gap_pt": 71.21,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2899,
+          "max_component_area": 17,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "43.3",
+        "right_gap_pt": 71.21,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2899,
+          "max_component_area": 16,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "44.1",
+        "right_gap_pt": 71.21,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2319,
+          "max_component_area": 16,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "46.2",
+        "right_gap_pt": 71.21,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2754,
+          "max_component_area": 10,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "46.9",
+        "right_gap_pt": 71.21,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2754,
+          "max_component_area": 18,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "69.7",
+        "right_gap_pt": 71.21,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2319,
+          "max_component_area": 16,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "71.7",
+        "right_gap_pt": 71.21,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2174,
+          "max_component_area": 12,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "70.8",
+        "right_gap_pt": 71.21,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2609,
+          "max_component_area": 10,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "73.9",
+        "right_gap_pt": 71.21,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.1884,
+          "max_component_area": 8,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "75.4",
+        "right_gap_pt": 71.21,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.4348,
+          "max_component_area": 30,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "6.0%",
+        "right_gap_pt": 72.12,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 9,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "6.7%",
+        "right_gap_pt": 72.12,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 7,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "7.8%",
+        "right_gap_pt": 72.12,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.2174,
+          "max_component_area": 9,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "8.0%",
+        "right_gap_pt": 72.12,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 7,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 5,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "8.3%",
+        "right_gap_pt": 72.12,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 9,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "指标",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.9288,
+          "max_component_area": 226,
+          "width_px": 178,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "指标",
+        "right_gap_pt": 72.58,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2021",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 531,
+          "width_px": 177,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2021",
+        "right_gap_pt": 61.7,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2022",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 531,
+          "width_px": 177,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2022",
+        "right_gap_pt": 61.7,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2023",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 531,
+          "width_px": 177,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2023",
+        "right_gap_pt": 61.7,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2024",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 531,
+          "width_px": 177,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2024",
+        "right_gap_pt": 61.7,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2025",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 531,
+          "width_px": 177,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2025",
+        "right_gap_pt": 61.7,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "自由现金流",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.088,
+          "max_component_area": 18,
+          "width_px": 178,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "93.0",
+        "right_gap_pt": 71.21,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2464,
+          "max_component_area": 17,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "111.4",
+        "right_gap_pt": 67.56,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2899,
+          "max_component_area": 19,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "108.8",
+        "right_gap_pt": 67.56,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 10,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "98.8",
+        "right_gap_pt": 71.21,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2899,
+          "max_component_area": 17,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "100.4",
+        "right_gap_pt": 67.56,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.4348,
+          "max_component_area": 30,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "104.2",
+        "right_gap_pt": 67.56,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2899,
+          "max_component_area": 13,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "110.2",
+        "right_gap_pt": 67.56,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2754,
+          "max_component_area": 10,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "106.1",
+        "right_gap_pt": 67.56,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2174,
+          "max_component_area": 15,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "25.4%",
+        "right_gap_pt": 68.47,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 9,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "28.3%",
+        "right_gap_pt": 68.47,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 7,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "26.0%",
+        "right_gap_pt": 68.47,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2174,
+          "max_component_area": 9,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "27.8%",
+        "right_gap_pt": 68.47,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 7,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 7,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "23.7%",
+        "right_gap_pt": 68.47,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2029,
+          "max_component_area": 9,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "指标",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 0.9391,
+          "max_component_area": 271,
+          "width_px": 208,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "指标",
+        "right_gap_pt": 86.98,
+        "overflow_ratio": 0.0211,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2021",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 513,
+          "width_px": 171,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2021",
+        "right_gap_pt": 58.82,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2022",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 513,
+          "width_px": 171,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2022",
+        "right_gap_pt": 58.82,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2023",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 513,
+          "width_px": 171,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2023",
+        "right_gap_pt": 58.82,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2024",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 513,
+          "width_px": 171,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2024",
+        "right_gap_pt": 58.82,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2025",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 513,
+          "width_px": 171,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "FY2025",
+        "right_gap_pt": 58.82,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 1.0,
+          "max_component_area": 69,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "现金及可出售证券",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.1074,
+          "max_component_area": 18,
+          "width_px": 208,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "190.5",
+        "right_gap_pt": 64.68,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2464,
+          "max_component_area": 12,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "169.1",
+        "right_gap_pt": 64.68,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.4203,
+          "max_component_area": 29,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "162.1",
+        "right_gap_pt": 64.68,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2319,
+          "max_component_area": 16,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "156.7",
+        "right_gap_pt": 64.68,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2174,
+          "max_component_area": 12,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "132.4",
+        "right_gap_pt": 64.68,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.4493,
+          "max_component_area": 31,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "124.7",
+        "right_gap_pt": 64.68,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2174,
+          "max_component_area": 12,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "120.1",
+        "right_gap_pt": 64.68,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.4203,
+          "max_component_area": 29,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "111.1",
+        "right_gap_pt": 64.68,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2319,
+          "max_component_area": 16,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "98.7",
+        "right_gap_pt": 68.33,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2174,
+          "max_component_area": 12,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "warning",
+      "issue_type": "boundary_touch_ink_bottom",
+      "message": "文本框底边 strip 检测到明显深色笔画触边，存在字形下沿被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "净现金",
+        "bottom_gap_pt": -0.24,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.0497,
+          "max_component_area": 18,
+          "width_px": 208,
+          "height_px": 3
+        }
+      },
+      "suggested_fix": "增加文本框底部留白、加高文本框，或降低该对象的文案密度。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "65.8",
+        "right_gap_pt": 68.33,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2899,
+          "max_component_area": 10,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "51.0",
+        "right_gap_pt": 68.33,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.1594,
+          "max_component_area": 6,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    },
+    {
+      "severity": "error",
+      "issue_type": "boundary_touch_ink_right",
+      "message": "文本框右边 strip 检测到明显深色笔画触边，存在右侧笔画被切掉或贴边的风险。",
+      "slide_number": 8,
+      "shape_id": 16,
+      "source_kind": "table_cell",
+      "details": {
+        "text": "33.8",
+        "right_gap_pt": 68.33,
+        "overflow_ratio": 0.0212,
+        "strip_analysis": {
+          "dark_ratio": 0.2899,
+          "max_component_area": 10,
+          "width_px": 3,
+          "height_px": 23
+        }
+      },
+      "suggested_fix": "增加文本框宽度、减少该行文案，或调整对象边界避免右侧触墨。"
+    }
+  ],
+  "preview_dir": "/project/lisiyuan/Projects/AutoCausePanel/references/temp/apple_financial_report_review/build/rendered/ppt_preview",
+  "counts": {
+    "shape_count": 205,
+    "text_item_count": 315
+  }
+}

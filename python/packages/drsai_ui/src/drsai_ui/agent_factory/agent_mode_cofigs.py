@@ -45,6 +45,71 @@ def _float_env(name: str, default: float, min_value: float = 0.1) -> float:
     return max(min_value, value)
 
 
+def get_platform_auto_load_default_agent() -> bool:
+    """Whether brand-new users (no personal default / usage) auto-select a platform agent."""
+    return _truthy_env(os.getenv("DRSUI_AUTO_LOAD_DEFAULT_AGENT"))
+
+
+def get_platform_default_agent_name() -> str | None:
+    """Agent display name to match in /user_agents/list when auto-load is enabled."""
+    raw = os.getenv("DRSUI_DEFAULT_AGENT_NAME")
+    if raw is None:
+        return None
+    name = raw.strip()
+    return name or None
+
+
+def find_agent_by_name(agents: List[Dict[str, Any]], name: str | None) -> Dict[str, Any] | None:
+    target = (name or "").strip()
+    if not target:
+        return None
+    return next(
+        (agent for agent in agents if str(agent.get("name") or "").strip() == target),
+        None,
+    )
+
+
+def get_platform_agent_policy() -> Dict[str, Any]:
+    return {
+        "auto_load_default_agent": get_platform_auto_load_default_agent(),
+        "default_agent_name": get_platform_default_agent_name(),
+    }
+
+
+def _resolve_platform_api_key(
+    authorization: str | None,
+    *,
+    user_id: str | None = None,
+    is_refresh: bool = False,
+) -> str:
+    """Prefer caller Bearer; on DDF refresh without Bearer use user's HepAI key; else admin env."""
+    apikey = ""
+    if authorization and authorization.startswith("Bearer "):
+        apikey = authorization[7:].strip()
+    if apikey:
+        return apikey
+    if is_refresh and user_id:
+        try:
+            from drsai_ui.drsai_adapter.singleton import (
+                personal_key_config_fetcher as fetcher,
+            )
+
+            personal = fetcher.get_personal_key(username=user_id).strip()
+            if personal:
+                return personal
+        except Exception as exc:
+            logger.warning(
+                "Failed to resolve personal HepAI API key for user %s: %s",
+                user_id,
+                exc,
+            )
+    for env_name in ("HEPAI_APP_ADMIN_API_KEY", "HEPAI_API_KEY"):
+        candidate = (os.getenv(env_name) or "").strip()
+        if candidate:
+            return candidate
+    return ""
+
+
 def _mark_featured_and_default_agents(agents: List[Dict[str, Any]]) -> None:
     """
     Add UI-related flags to agent dicts.
@@ -101,65 +166,18 @@ def _mark_featured_and_default_agents(agents: List[Dict[str, Any]]) -> None:
 def get_agent_mode_config(
         user_id: str,
 ) -> list[dict[str, str]]:
-    return [
-      {
-            "name": "Dr.Sai General",
-            "description": "A general assistant for PDF QA, writing code, implementing features, and fixing bugs.",
-            "version": "0.1.0",
-            "author": "xiongdb@ihep.ac.cn",
-            "logo": "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
-            "examples": [
-                  "你有什么技能，如何下载新技能?",
-                  "如何配置自己的子智能体，如何使用子智能体。",
-                  "如何构建自己的RAGFlow知识库，并不断更新自己的知识库？",
-            ],
-            "agent_config": {
-                  "claude-sonnet-4-6(High)": "anthropic/claude-sonnet-4-6",
-                  "claude-haiku-4-5(Fast)": "anthropic/claude-haiku-4-5",
-                  "minimax-m2.5": "minimax/minimax-m2.5",
-                  "minimax-m2.5-highspeed": "minimax/minimax-m2.5-highspeed",
-                  "minimax-m2.7": "minimax/minimax-m2.7",
-                  "minimax-m2.7-highspeed": "minimax/minimax-m2.7-highspeed",
-                  "gpt-4o": "openai/gpt-4o",
-                  "gpt-4.1": "openai/gpt-4.1",
-                  "gpt-5.2": "openai/gpt-5.2",
-                  "deepseek-r1(No image)": "deepseek-ai/deepseek-r1",
-                  "deepseek-v3.2(No image)": "deepseek-ai/deepseek-v3.2",
-            },
-            "default_config_name": "deepseek-v3.2(No image)",
-            "mode": "ddf",
-            "owner": "xiongdb@ihep.ac.cn",
-            "id": "eab8c9e8-e5be-4bb2-9dd8-0fdc6938e357",
-            "config": {
-                  "name": "Dr.Sai General",
-                  "url": "https://aiapi.ihep.ac.cn/apiv2",
-            },
-            "featured": True,
-            "is_default": True,
-      },
-      { 
-            "id": "010022126sdfnjsdnqw",
-            "mode": "magentic-one", 
-            "name": "Dr.Sai WebSurfer",
-            "description": "Dr.Sai网页浏览智能体，适用于自动操控网页、文件等任务。", 
-            "config":{}, 
-            "type": "default", 
-            "examples": ["Search arXiv for the latest papers on computer use agents","检索arXiv上关于计算机使用智能体的最新进展",]
-      },
-      {
-            "id": "121532415mlnmjhg",
-            "mode": "besiii", 
-            "name": "Dr.Sai BESIII", 
-            "description": "BESIII实验专用智能体，专为高能物理实验优化", 
-            "config":{}, 
-            "type": "default", 
-            "examples": [
-                  "帮我测量psi(4260) -> pi+ pi- [J/psi -> mu+ mu-]过程在4.26 GeV能量点上的截面，并且绘制Jpsi（mumu）的不变质量。先规划后执行。",
-                  "帮我测量Psip -> pi+ pi- [J/psi -> Lambda Lambdabar]过程在3.686GeV能量点上的截面,并且绘制Lambda的能量分布。先规划后执行。",
-                  "帮我测量Jpsi to eta [phi -> K+ K-]过程在3.097 GeV能量点上的截面,并且绘制eta的动量分布。先规划后执行。",]
-           
-      },
-    ]
+    """
+    Legacy built-in agent pack (General / WebSurfer / BESIII) is disabled.
+
+    The catalog for /user_agents/list is built from:
+    - DEFAULT_REMOTE_AGENTS JSON (if set), else nothing here;
+    - platform DDF agents (get_ddf_agents);
+    - user remote/custom agents.
+
+    To ship a fixed starter list, use the DEFAULT_REMOTE_AGENTS file or register
+    workers on the HepAI platform instead of hard-coding builtins.
+    """
+    return []
 
 
 def get_default_agent_mode_config(user_id: str) -> List[Dict[str, Any]]:
@@ -214,8 +232,6 @@ async def get_agents_mode(user_id: str, db:DatabaseManager) -> Dict:
     '''
     获取侧边栏的 mode 配置
     '''
-    from drsai_ui.agent_factory.org_agent_merge import merge_sidebar_agents_mode
-
     response = db.get(AgentModeSettings, filters={"user_id": user_id})
     if not response.status or not response.data:
         # create a default agents_mode
@@ -228,7 +244,16 @@ async def get_agents_mode(user_id: str, db:DatabaseManager) -> Dict:
     else:
         settings = response.data[0]
 
-    merged = merge_sidebar_agents_mode(db, user_id, list(settings.agents_mode or []))
+    stored = [dict(a) for a in (settings.agents_mode or []) if isinstance(a, dict)]
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for agent in get_default_agent_mode_config(user_id=user_id):
+        if isinstance(agent, dict) and agent.get("id"):
+            by_id[str(agent["id"])] = dict(agent)
+    for agent in stored:
+        if isinstance(agent, dict) and agent.get("id"):
+            by_id[str(agent["id"])] = dict(agent)
+    merged = list(by_id.values())
+    _mark_featured_and_default_agents(merged)
     payload = settings.model_dump(mode="json")
     payload["agents_mode"] = merged
     return {"status": True, "data": payload}
@@ -257,12 +282,10 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                         # Return cached data
                         return {"status": True, "data": agents_old}
 
-        # Extract API key from Authorization header (Bearer format)
-        if not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Invalid authorization header format")
-        
-        apikey = authorization[7:]  # Remove "Bearer " prefix
-        if not apikey.strip():
+        apikey = _resolve_platform_api_key(
+            authorization, user_id=user_id, is_refresh=is_refresh
+        )
+        if not apikey:
             return {"status": True, "data": agents_old}
 
         client = HepAI(
