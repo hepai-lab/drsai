@@ -206,15 +206,15 @@ def ui(
         for key, value in env_vars.items():
             temp_env.write(f"{key}={value}\n")
     
-    from .ui_backend.backend.web.app import app as ui_app
+    src_dir = str(Path(__file__).parent)
     uvicorn.run(
-         # "drsai.backend.ui.ui_backend.backend.web.app:app",
-        ui_app,
+        "drsai_ui.ui_backend.backend.web.app:app",
         host=host,
         port=port,
         workers=workers,
         reload=reload,
-        reload_excludes=["**/alembic/*", "**/alembic.ini", "**/versions/*"]
+        reload_dirs=[src_dir] if reload else None,
+        reload_excludes=["**/alembic/*", "**/alembic.ini", "**/versions/*", "**/__pycache__/*"]
         if reload
         else None,
         env_file=env_file_path,
