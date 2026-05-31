@@ -1,9 +1,11 @@
 # api/app.py
 import os
+import re
 import yaml
 from dotenv import load_dotenv
 load_dotenv()
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator, Any
 
 # import logging
@@ -37,11 +39,48 @@ from .routes import (
     auth,
 )
 import httpx
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 # Initialize application - will be set in lifespan
 app_file_path = os.path.dirname(os.path.abspath(__file__))
 initializer = None
+
+
+def _normalize_ui_path_prefix(raw: str) -> str:
+    raw = raw.strip()
+    if not raw:
+        return ""
+    if not raw.startswith("/"):
+        raw = f"/{raw}"
+    return raw.rstrip("/")
+
+
+def _detect_ui_path_prefix_from_build(ui_root: Path) -> str:
+    index = ui_root / "index.html"
+    if not index.is_file():
+        return ""
+    try:
+        content = index.read_text(encoding="utf-8", errors="ignore")[:100_000]
+    except OSError:
+        return ""
+    for pattern in (
+        r'src="(/[^"/]+)/webpack-runtime',
+        r'data-href="(/[^"/]+)/styles\.',
+        r'href="(/[^"/]+)/styles\.',
+    ):
+        match = re.search(pattern, content)
+        if match:
+            return _normalize_ui_path_prefix(match.group(1))
+    return ""
+
+
+def _resolve_ui_path_prefix(ui_root: Path) -> str:
+    env_prefix = _normalize_ui_path_prefix(
+        os.getenv("GATSBY_PREFIX_PATH_VALUE") or os.getenv("PREFIX_PATH_VALUE") or ""
+    )
+    if env_prefix:
+        return env_prefix
+    return _detect_ui_path_prefix_from_build(ui_root)
 
 
 @asynccontextmanager
@@ -62,7 +101,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             StaticFiles(directory=initializer.static_root, html=True),
             name="files",
         )
-        app.mount("/", StaticFiles(directory=initializer.ui_root, html=True), name="ui")
+        ui_path_prefix = _resolve_ui_path_prefix(initializer.ui_root)
+        app.state.ui_path_prefix = ui_path_prefix
+        ui_mount = ui_path_prefix or "/"
+        app.mount(
+            ui_mount,
+            StaticFiles(directory=initializer.ui_root, html=True),
+            name="ui",
+        )
+        if ui_path_prefix:
+            logger.info(f"Serving UI under path prefix: {ui_path_prefix}")
 
         # Load the config if provided
         config: dict[str, Any] = {}
@@ -83,8 +131,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
 
         # Any other initialization code
+        ui_url = getattr(app.state, "ui_path_prefix", "") or "/"
         logger.info(
-            f"Application startup complete. Navigate to http://{os.environ.get('_HOST', '127.0.0.1')}:{os.environ.get('_PORT', '8081')}"
+            f"Application startup complete. Navigate to http://{os.environ.get('_HOST', '127.0.0.1')}:{os.environ.get('_PORT', '8081')}{ui_url}"
         )
 
     except Exception as e:
@@ -104,6 +153,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 # Create FastAPI application
 app = FastAPI(lifespan=lifespan, debug=True)
+
+
+@app.middleware("http")
+async def ui_path_prefix_redirects(request: Request, call_next):
+    prefix = getattr(request.app.state, "ui_path_prefix", "")
+    path = request.url.path
+    if prefix and path in ("/", prefix):
+        return RedirectResponse(url=f"{prefix}/")
+    return await call_next(request)
+
 
 # CORS middleware configuration
 app.add_middleware(
