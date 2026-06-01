@@ -272,10 +272,10 @@ def _template_api_delete(template_id, user_id):
 
 # 支持的模型配置
 llm_mode_config = {
-    "deepseek-v4-flash(Fast)": "hepai/deepseek-v4-flash",
-    "qwen3_30b": "hepai/qwen3_30b",
     "minimax-m2.7": "hepai/minimax-m2.7",
     "minimax-m2.7-highspeed": "hepai/minimax-m2.7-highspeed",
+    "deepseek-v4-flash(Fast)": "hepai/deepseek-v4-flash",
+    "qwen3_30b": "hepai/qwen3_30b",
 }
 
 def _build_files_event_data(file_path: str, description: str) -> dict | None:
@@ -5854,7 +5854,7 @@ def main():
             
             # 模型配置
             agent_config=llm_mode_config,
-            default_config_name="minimax-m2.7-highspeed",
+            defult_config_name="minimax-m2.7-highspeed",
             
             # 智能体工厂
             agent_factory=create_word_editor_agent,

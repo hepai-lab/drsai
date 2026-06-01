@@ -82,7 +82,12 @@ logger = logging.getLogger(__name__)
 
 
 _CATALOG_FILENAME = "catalog.yaml"
-_TEMPLATE_FILENAME = "template.docx"
+_DEFAULT_TEMPLATE_FILENAME = "template.docx"
+_ALLOWED_TEMPLATE_SUFFIXES = {".docx", ".pptx"}
+_TEMPLATE_MIME_TYPES = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
 _ID_SAFE_RE = re.compile(r"[^a-z0-9\-]+")
 _ASCII_LETTER_RE = re.compile(r"[a-zA-Z0-9]")
 
@@ -181,7 +186,7 @@ class TemplateLibrarySkill:
             self._shared_dir() if source == "shared"
             else self._user_dir(user_id)
         )
-        rel_file = entry.get("file") or f"{entry['id']}/{_TEMPLATE_FILENAME}"
+        rel_file = entry.get("file") or f"{entry['id']}/{_DEFAULT_TEMPLATE_FILENAME}"
         full_path = (catalog_dir / rel_file).resolve()
         if not full_path.exists():
             return {
@@ -217,10 +222,11 @@ class TemplateLibrarySkill:
                 "success": False,
                 "message": f"源文件不存在: {source_path}",
             }
-        if src.suffix.lower() != ".docx":
+        suffix = src.suffix.lower()
+        if suffix not in _ALLOWED_TEMPLATE_SUFFIXES:
             return {
                 "success": False,
-                "message": f"模板必须是 .docx 文件 (当前 {src.suffix})",
+                "message": f"模板必须是 .docx 或 .pptx 文件 (当前 {src.suffix})",
             }
         if not user_id or not user_id.strip():
             return {
@@ -239,7 +245,7 @@ class TemplateLibrarySkill:
             chosen_id = self._unique_id(chosen_id, existing_ids)
         target_dir = self._user_dir(user_id) / chosen_id
         target_dir.mkdir(parents=True, exist_ok=True)
-        target_file = target_dir / _TEMPLATE_FILENAME
+        target_file = target_dir / f"template{suffix}"
         try:
             shutil.copyfile(src, target_file)
         except Exception as exc:
@@ -254,7 +260,8 @@ class TemplateLibrarySkill:
             "category": (category or "").strip() or None,
             "tags": list(tags or []),
             "aliases": list(aliases or []),
-            "file": f"{chosen_id}/{_TEMPLATE_FILENAME}",
+            "file": f"{chosen_id}/template{suffix}",
+            "file_type": suffix.lstrip("."),
             "owner": user_id,
             "added_at": str(date.today()),
         }
@@ -476,6 +483,8 @@ class TemplateLibrarySkill:
         return f"{base}-{i}"
 
     def _public_view(self, entry: Dict[str, Any], source: str) -> Dict[str, Any]:
+        file_value = str(entry.get("file") or "")
+        suffix = Path(file_value).suffix.lower() if file_value else ".docx"
         return {
             "id": entry["id"],
             "name": entry.get("name", entry["id"]),
@@ -486,6 +495,8 @@ class TemplateLibrarySkill:
             "owner": entry.get("owner", source),
             "added_at": entry.get("added_at", ""),
             "source": source,
+            "file": file_value,
+            "file_type": entry.get("file_type") or suffix.lstrip("."),
         }
 
 
