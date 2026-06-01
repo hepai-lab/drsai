@@ -25,18 +25,18 @@ export const DEFAULT_MENU_ID: MenuId = MENU_IDS.currentSession;
 export const DEFAULT_VIEW_ID: CanvasViewId = "chat";
 
 export const MENU_LABELS: Record<MenuId, string> = {
-  [MENU_IDS.currentSession]: "聊天",
-  [MENU_IDS.myAgents]: "我的智能体",
-  [MENU_IDS.agentSquare]: "智能体广场",
-  [MENU_IDS.savedPlan]: "计划",
-  [MENU_IDS.skillsSquare]: "技能广场",
-  [MENU_IDS.library]: "库",
-  [MENU_IDS.profile]: "配置",
-  [MENU_IDS.usageAnalytics]: "使用分析",
-  [MENU_IDS.channels]: "频道",
-  [MENU_IDS.logs]: "日志",
-  [MENU_IDS.agentManagement]: "智能体管理",
-  [MENU_IDS.userManagement]: "用户管理",
+  [MENU_IDS.currentSession]: "menuRoute.chat",
+  [MENU_IDS.myAgents]: "menuRoute.myAgents",
+  [MENU_IDS.agentSquare]: "menuRoute.agentSquare",
+  [MENU_IDS.savedPlan]: "menuRoute.savedPlan",
+  [MENU_IDS.skillsSquare]: "menuRoute.skillsSquare",
+  [MENU_IDS.library]: "menuRoute.library",
+  [MENU_IDS.profile]: "menuRoute.profile",
+  [MENU_IDS.usageAnalytics]: "menuRoute.usageAnalytics",
+  [MENU_IDS.channels]: "menuRoute.channels",
+  [MENU_IDS.logs]: "menuRoute.logs",
+  [MENU_IDS.agentManagement]: "menuRoute.agentManagement",
+  [MENU_IDS.userManagement]: "menuRoute.userManagement",
 };
 
 export const getMenuIdFromSearch = (search: string): MenuId => {

@@ -3,10 +3,12 @@
 import * as React from "react";
 import { navigate } from "gatsby";
 import { appContext } from "../hooks/provider";
+import { useLang } from "../i18n/useLang";
 import { saveAuthSession } from "../utils/authSession";
 
 const CallbackPage = () => {
     const { setUser } = React.useContext(appContext);
+    const { t } = useLang();
     const [error, setError] = React.useState<string | null>(null);
 
     React.useEffect(() => {
@@ -15,7 +17,7 @@ const CallbackPage = () => {
         const userEmail = params.get("username");
 
         if (!token || !userEmail) {
-            setError("未收到有效的登录凭证");
+            setError(t("callback.error.noCredentials"));
             return;
         }
 
@@ -31,7 +33,7 @@ const CallbackPage = () => {
             <div className="min-h-screen flex items-center justify-center bg-gray-50">
                 <div className="text-center">
                     <p className="text-red-500 mb-4">{error}</p>
-                    <a href="/login" className="text-blue-600 underline text-sm">返回登录</a>
+                    <a href="/login" className="text-blue-600 underline text-sm">{t("callback.backToLogin")}</a>
                 </div>
             </div>
         );
@@ -39,7 +41,7 @@ const CallbackPage = () => {
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-gray-50">
-            <p className="text-gray-500">正在登录，请稍候...</p>
+            <p className="text-gray-500">{t("callback.loggingIn")}</p>
         </div>
     );
 };

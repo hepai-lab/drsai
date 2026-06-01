@@ -1,20 +1,21 @@
 import React, { useCallback, useContext, useEffect } from "react";
 import { Activity, Clock, FileText, ChevronLeft, ChevronRight, Library } from "lucide-react";
 import { appContext } from "../hooks/provider";
+import { useLang } from "../i18n/useLang";
 import { useRightPanelStore, type RightPanelLayoutTab } from "../store/rightPanel";
 
 type RightPanelTab = RightPanelLayoutTab;
 export type RightPanelTabSpec = { id: RightPanelTab; label: string; icon: React.ReactNode };
 
 export const DEFAULT_RIGHT_PANEL_TABS: RightPanelTabSpec[] = [
-  { id: "files", label: "文件空间", icon: <FileText className="w-3.5 h-3.5" /> },
-  { id: "overview", label: "运行概览", icon: <Activity className="w-3.5 h-3.5" /> },
-  { id: "history", label: "历史会话", icon: <Clock className="w-3.5 h-3.5" /> },
+  { id: "files", label: "Files", icon: <FileText className="w-3.5 h-3.5" /> },
+  { id: "overview", label: "Overview", icon: <Activity className="w-3.5 h-3.5" /> },
+  { id: "history", label: "History", icon: <Clock className="w-3.5 h-3.5" /> },
 ];
 
 export const TEMPLATES_TAB: RightPanelTabSpec = {
   id: "templates",
-  label: "模板库",
+  label: "Templates",
   icon: <Library className="w-3.5 h-3.5" />,
 };
 
@@ -43,6 +44,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
   onTabChange,
 }) => {
   const { darkMode } = useContext(appContext);
+  const { t } = useLang();
   const activeTab = useRightPanelStore((s) => s.layoutTab);
   const setActiveTab = useRightPanelStore((s) => s.setLayoutTab);
   const isOpen = useRightPanelStore((s) => s.isOpen);
@@ -116,7 +118,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
                   <span className={`transition-transform ${isActive ? "scale-110" : ""}`}>
                     {tab.icon}
                   </span>
-                  <span className={isActive ? "font-semibold" : ""}>{tab.label}</span>
+                  <span className={isActive ? "font-semibold" : ""}>{t("rightpanel.tab." + tab.id)}</span>
                   {isActive && (
                     <span className="absolute bottom-0 left-2 right-2 h-[3px] rounded-full bg-accent" />
                   )}
@@ -128,7 +130,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
             <button
               type="button"
               onClick={() => setIsOpen(false)}
-              title="收起面板"
+              title={t("rightpanel.collapse")}
               className={`flex-shrink-0 flex min-h-[44px] min-w-[44px] items-center justify-center transition-colors ${
                 isDark
                   ? "text-secondary hover:text-primary hover:bg-white/5"
@@ -145,18 +147,18 @@ const RightPanel: React.FC<RightPanelProps> = ({
               <div ref={overviewSlotRef} className="h-full w-full" />
             </div>
             <div className={activeTab === "history" ? "h-full" : "hidden"}>
-              {historyContent ?? <Empty icon={<Clock />} text="暂无历史会话" />}
+              {historyContent ?? <Empty icon={<Clock />} text={t("rightpanel.empty.history")} />}
             </div>
             <div className={activeTab === "files" ? "h-full" : "hidden"}>
               {filesContent ?? (
                 <div className="border border-gray-200/70 rounded-lg m-4 h-full flex items-center justify-center bg-gray-100/60">
-                  <Empty icon={<FileText />} text="暂无文件" />
+                  <Empty icon={<FileText />} text={t("rightpanel.empty.files")} />
                 </div>
               )}
             </div>
             {visibleTabs.some((t) => t.id === "templates") && (
               <div className={activeTab === "templates" ? "h-full" : "hidden"}>
-                {templatesContent ?? <Empty icon={<Library />} text="暂无模板" />}
+                {templatesContent ?? <Empty icon={<Library />} text={t("rightpanel.empty.templates")} />}
               </div>
             )}
           </div>
@@ -167,7 +169,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
           <button
             type="button"
             onClick={() => setIsOpen(true)}
-            title="展开面板"
+            title={t("rightpanel.expand")}
             className={`flex items-center justify-center w-full h-8 transition-colors ${
               isDark
                 ? "text-secondary hover:text-primary hover:bg-white/5"
@@ -187,7 +189,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
                   setActiveTab(tab.id);
                   onTabChange?.(tab.id);
                 }}
-                title={tab.label}
+                title={t("rightpanel.tab." + tab.id)}
                 className={`flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${
                   activeTab === tab.id
                     ? "text-accent bg-accent/10"

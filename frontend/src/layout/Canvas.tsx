@@ -8,6 +8,7 @@ import {
   createSearchWithView,
 } from "../components/views/menuRoutes";
 import { appContext } from "../hooks/provider";
+import { useLang } from "../i18n/useLang";
 import { useConfigStore } from "../hooks/store";
 import { useLocation, useNavigate } from "../hooks/useRouter";
 import { useModeConfigStore } from "../store/modeConfig";
@@ -44,6 +45,7 @@ const Canvas: React.FC<CanvasProps> = ({
   onOpenRightPanel,
 }) => {
   const { darkMode } = useContext(appContext);
+  const { t } = useLang();
   const location = useLocation();
   const navigate = useNavigate();
   const session = useConfigStore((s) => s.session);
@@ -103,7 +105,7 @@ const Canvas: React.FC<CanvasProps> = ({
               : "bg-violet-100 text-violet-700"
               }`}
           >
-            {activeMenuLabel}
+            {t(activeMenuLabel)}
           </span>
         </div>
 
@@ -125,10 +127,8 @@ const Canvas: React.FC<CanvasProps> = ({
                 aria-hidden={!agentOfflineSnapshot}
                 {...(agentOfflineSnapshot
                   ? {
-                    "aria-label":
-                      "智能体已从列表移除，当前为会话中的存档配置",
-                    title:
-                      "智能体已从列表移除，当前为会话中的存档配置",
+                    "aria-label": t("canvas.agentOffline"),
+                    title: t("canvas.agentOffline"),
                   }
                   : {})}
               />
@@ -174,8 +174,8 @@ const Canvas: React.FC<CanvasProps> = ({
                 ? "bg-white/[0.04] hover:bg-white/[0.07] text-secondary border border-border-primary/30"
                 : "bg-white/70 hover:bg-white text-gray-700 border border-gray-200/80"
                 }`}
-              aria-label="打开侧面板"
-              title="打开侧面板"
+              aria-label={t("canvas.openPanel")}
+              title={t("canvas.openPanel")}
             >
               <PanelLeftOpen className="w-3.5 h-3.5" />
             </button>
@@ -189,11 +189,11 @@ const Canvas: React.FC<CanvasProps> = ({
                 ? "bg-white/[0.04] hover:bg-white/[0.07] text-secondary border border-border-primary/30"
                 : "bg-white/70 hover:bg-white text-gray-700 border border-gray-200/80"
                 }`}
-              aria-label="新建会话"
-              title="新建会话"
+              aria-label={t("canvas.newSession")}
+              title={t("canvas.newSession")}
             >
               <Plus className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">新建会话</span>
+              <span className="hidden sm:inline">{t("canvas.newSession")}</span>
             </button>
           )}
 
@@ -208,8 +208,8 @@ const Canvas: React.FC<CanvasProps> = ({
                 ? "ring-offset-[#0b0f19]"
                 : "ring-offset-white"
                 }`}
-              aria-label="体验更多：跳转智能体广场"
-              title="体验更多：智能体广场"
+              aria-label={t("canvas.exploreMoreAria")}
+              title={t("canvas.exploreMoreTitle")}
             >
               <span
                 className={`absolute inset-0 rounded-lg opacity-100 transition-opacity ${darkMode === "dark"
@@ -228,7 +228,7 @@ const Canvas: React.FC<CanvasProps> = ({
                   }`}
               >
                 <Grid2X2 className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">体验更多</span>
+                <span className="hidden sm:inline">{t("canvas.exploreMore")}</span>
               </span>
             </button>
           )}
@@ -245,7 +245,7 @@ const Canvas: React.FC<CanvasProps> = ({
             <div className="flex items-center justify-center h-full text-secondary">
               <div className="text-center">
                 <FileText className="w-10 h-10 mx-auto mb-3 opacity-20" />
-                <p className="text-sm opacity-40">暂无文件</p>
+                <p className="text-sm opacity-40">{t("canvas.noFile")}</p>
               </div>
             </div>
           )}

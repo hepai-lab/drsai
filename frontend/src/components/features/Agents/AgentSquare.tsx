@@ -7,6 +7,7 @@ import { ArrowRight, Plus, RefreshCw, Star } from "lucide-react";
 import React, { useCallback, useContext, useEffect, useState } from "react";
 import { parse } from "yaml";
 import { appContext } from "../../../hooks/provider";
+import { useLang } from "../../../i18n/useLang";
 import { Agent } from "../../../types/common";
 import { Button } from "../../common/Button";
 import { CustomAgentData } from "../../common/agent-form/CustomAgentForm";
@@ -26,6 +27,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   handleAgentList,
 }) => {
   const { user } = useContext(appContext);
+  const { t } = useLang();
   const { agentId, setAgentId, setMode } = useModeConfigStore();
   const [agentList, setAgentList] = useState<AgentCardData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -90,10 +92,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     try {
       await agentWorkerAPI.setUserDefaultAgent(user.email, agentId);
       setUserDefaultAgentId(agentId);
-      message.success("已设为默认智能体");
+      message.success(t("agentsquare.defaultSet"));
     } catch (err) {
       console.error("Failed to set default agent:", err);
-      message.error("设置默认智能体失败");
+      message.error(t("agentsquare.defaultSetFailed"));
     }
   }, [user?.email]);
 
@@ -113,8 +115,8 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     id: agent.id,
     logo: agent.logo || "/api/placeholder/64/64",
     name: agent.name,
-    description: agent.description || "远程智能体 - 自定义连接",
-    owner: agent.owner || "未知",
+    description: agent.description || t("agentsquare.remoteAgentDesc"),
+    owner: agent.owner || t("agentsquare.unknown"),
     url: agent.url || "",
     config: agent.config,
     mode: agent.mode || "remote",
@@ -129,9 +131,9 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     return {
       id: agent.id,
       logo: agent.logo || "/api/placeholder/64/64",
-      name: agent.name || config.name || "未知智能体",
-      description: agent.description || "智能体",
-      owner: agent.owner || user?.email || "未知",
+      name: agent.name || config.name || t("agentsquare.unknownAgent"),
+      description: agent.description || t("agentsquare.agent"),
+      owner: agent.owner || user?.email || t("agentsquare.unknown"),
       url: agent.url || config.url || config.base_url || "",
       config: agent.config,
       mode: agent.mode || "remote",
@@ -299,7 +301,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
   const handleCustomAgentSave = useCallback(async (customConfig: CustomAgentData) => {
     if (!user?.email) {
-      message.error("用户未登录");
+      message.error(t("agentsquare.userNotLoggedIn"));
       return;
     }
 
@@ -311,7 +313,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       const payload: any = {
         mode: "custom",
         name: customConfig.name,
-        description: customConfig.description || "自定义智能体",
+        description: customConfig.description || t("agentsquare.customAgent"),
         owner: user.email,
         type: isEdit ? "update" : "add",
         logo: customConfig.avatar || "/api/placeholder/64/64",
@@ -323,7 +325,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
           // 后端期望 ragflow_configs 为列表
           ragflow_configs: customConfig.ragflow_configs,
           name: customConfig.name,
-          description: customConfig.description || "自定义智能体",
+          description: customConfig.description || t("agentsquare.customAgent"),
           system_message: customConfig.system_message,
         },
       };
@@ -339,12 +341,12 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         await handleAgentList(updatedAgents);
       }
 
-      message.success(isEdit ? "自定义智能体已更新" : "自定义智能体已保存");
+      message.success(isEdit ? t("agentsquare.customUpdated") : t("agentsquare.customSaved"));
       setIsCustomModalOpen(false);
       setEditingCustomAgent(null);
     } catch (err) {
       console.error("Failed to save custom agent:", err);
-      message.error("保存自定义智能体失败");
+      message.error(t("agentsquare.customSaveFailed"));
     } finally {
       setIsSavingCustomAgent(false);
     }
@@ -373,7 +375,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
 
   const handleRefresh = useCallback(async () => {
     if (!user?.email) {
-      message.warning("无法刷新：缺少用户信息");
+      message.warning(t("agentsquare.cannotRefresh"));
       return;
     }
 
@@ -393,10 +395,10 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       console.log("agentsData", agentsData);
       const agents = agentsData.map(transformUnifiedAgentToCardData);
       setAgentList(agents);
-      message.success("刷新成功");
+      message.success(t("agentsquare.refreshSuccess"));
     } catch (err) {
       console.error("Failed to refresh agent list:", err);
-      message.error("刷新失败");
+      message.error(t("agentsquare.refreshFailed"));
     } finally {
       setIsRefreshing(false);
     }
@@ -466,7 +468,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       <div
         className={`flex justify-center items-center h-64 ${className}`}
       >
-        <div className="text-secondary">加载中...</div>
+        <div className="text-secondary">{t("agentsquare.loading")}</div>
       </div>
     );
   }
@@ -476,8 +478,8 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
       <div
         className={`flex flex-col items-center justify-center h-64 ${className}`}
       >
-        <div className="text-red-500 mb-2">加载失败: {error}</div>
-        <div className="text-secondary text-sm">使用默认数据</div>
+        <div className="text-red-500 mb-2">{t("agentsquare.loadFailed")}: {error}</div>
+        <div className="text-secondary text-sm">{t("agentsquare.useDefault")}</div>
       </div>
     );
   }
@@ -567,7 +569,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         <div className="ml-4 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white/70 px-3 py-2 backdrop-blur dark:border-[#2a2a3a] dark:bg-[#101018]/70">
           <div className="flex min-w-[260px] flex-1 items-center gap-2">
             <div className="text-sm font-semibold text-[#233457] dark:text-[#e4e8ff]">
-              智能体
+              {t("agentsquare.title")}
               <span className="ml-2 text-xs font-normal text-[#9aa2b2] dark:text-[#b6bdd0]">
                 {filteredList.length}/{baseList.length}
               </span>
@@ -575,7 +577,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索名称 / 描述 / 创建人"
+              placeholder={t("agentsquare.searchPlaceholder")}
               className="ml-2 h-8 w-full max-w-[420px] rounded-lg border border-[#e7e7ef] bg-white px-3 text-sm outline-none transition-colors focus:border-[#d3adf7] dark:border-[#2a2a3a] dark:bg-[#0f0f16] dark:text-[#e4e8ff]"
             />
           </div>
@@ -601,16 +603,16 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               icon={<Plus className="h-3 w-3" />}
               className="h-8 rounded-lg !border border-[#e7e7ef] bg-white/80 px-3 text-xs font-medium text-[#334155]  backdrop-blur-sm hover:bg-white hover:border-[#c7b8ff] active:translate-y-0 dark:border-[#2a2a3a] dark:bg-[#0f0f16]/80 dark:text-[#cfd6e9] dark:hover:bg-[#121226] dark:hover:border-[#5d3fcd]/50"
             >
-              连接远程
+              {t("agentsquare.connectRemote")}
             </Button>
 
             {/* owner filter */}
             <div className="flex items-center rounded-lg border border-[#e7e7ef] bg-white px-1 py-1 text-xs dark:border-[#2a2a3a] dark:bg-[#0f0f16]">
               {(
                 [
-                  ["all", "全部"],
-                  ["mine", "我的"],
-                  ["official", "本地"],
+                  ["all", t("agentsquare.filterAll")],
+                  ["mine", t("agentsquare.filterMine")],
+                  ["official", t("agentsquare.filterOfficial")],
                 ] as const
               ).map(([key, label]) => (
                 <button
@@ -633,8 +635,8 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               onChange={(e) => setSortBy(e.target.value as any)}
               className="h-8 rounded-lg border border-[#e7e7ef] bg-white px-2 text-xs text-[#55627a] outline-none dark:border-[#2a2a3a] dark:bg-[#0f0f16] dark:text-[#b6bdd0]"
             >
-              <option value="recent">按最近使用</option>
-              <option value="name">按名称</option>
+              <option value="recent">{t("agentsquare.sortRecent")}</option>
+              <option value="name">{t("agentsquare.sortName")}</option>
             </select>
 
             <Button
@@ -645,7 +647,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
               icon={<RefreshCw className={`h-3 w-3 ${isRefreshing ? "animate-spin" : ""}`} />}
               className="h-8 rounded-lg !border border-[#d4c9ff] bg-[#f5f3ff]/90 px-3 text-xs font-medium text-[#5d3fcd]  backdrop-blur-sm   dark:border-[#5d3fcd]/40 dark:bg-[#2a2342]/80 dark:text-[#bca8ff] dark:hover:border-[#7c5ce8] dark:hover:bg-[#322a4a]"
             >
-              刷新
+              {t("agentsquare.refresh")}
             </Button>
           </div>
         </div>
@@ -659,16 +661,16 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
           {noModelApiKeyForList ? (
             <>
               <div className="text-[#334155] dark:text-[#cfd6e9] mb-2 font-medium">
-                未配置平台模型 API Key，托管智能体列表无法加载
+                {t("agentsquare.noApiKeyTitle")}
               </div>
               <div className="text-secondary text-sm max-w-md">
-                本地账号可点击上方「连接远程」，填写远程智能体地址与 Key 即可使用；若需平台托管智能体，请在设置中配置模型 API Key 后刷新。
+                {t("agentsquare.noApiKeyDesc")}
               </div>
             </>
           ) : (
             <>
-              <div className="text-secondary mb-2">当前用户未部署任何智能体</div>
-              <div className="text-secondary text-sm">请联系管理员部署智能体或使用默认智能体</div>
+              <div className="text-secondary mb-2">{t("agentsquare.noAgents")}</div>
+              <div className="text-secondary text-sm">{t("agentsquare.noAgentsDesc")}</div>
             </>
           )}
         </div>
@@ -681,7 +683,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
                 <div className="mb-2 flex items-center gap-1.5">
                   <Star className="h-3 w-3 fill-[#c4b5fd] text-[#c4b5fd] dark:fill-[#a78bfa] dark:text-[#a78bfa]" />
                   <span className="text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
-                    我的默认智能体
+                    {t("agentsquare.myDefaultAgent")}
                   </span>
                 </div>
 
@@ -715,19 +717,19 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
                         onClick={() => handleEditCustomAgent(defaultAgent)}
                         className="inline-flex h-8 items-center justify-center rounded-[10px] border border-[#ebe7f1] bg-white px-3 text-xs font-medium text-[#5f5a73] transition hover:border-[#d3adf7] hover:text-[#544d92] dark:border-[#2f2a41] dark:bg-[#1c1628] dark:text-[#d0c0e8]"
                       >
-                        编辑
+                        {t("agentsquare.edit")}
                       </button>
                     )}
 
                     <button
                       type="button"
                       onClick={() => startWithAgent(defaultAgent)}
-                      title="开始对话"
-                      aria-label="开始对话"
+                      title={t("agentsquare.startChat")}
+                      aria-label={t("agentsquare.startChat")}
                       className="agent-featured-cta group/cta"
                     >
                       <span className="agent-featured-cta__shine" aria-hidden />
-                      <span className="agent-featured-cta__label">开始对话</span>
+                      <span className="agent-featured-cta__label">{t("agentsquare.startChat")}</span>
                       <span className="agent-featured-cta__arrow">
                         <ArrowRight className="h-3.5 w-3.5" />
                       </span>
@@ -743,7 +745,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
             <div className="mb-5 pl-4 pr-4">
               <div className="mb-2 flex items-center justify-between">
                 <div className="text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
-                  最近使用
+                  {t("agentsquare.recentUsed")}
                 </div>
               </div>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
@@ -761,14 +763,13 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
             </div>
           )}
 
-          {/* 全部 */}
           <div className="pl-4 pr-4 pb-6">
             <div className="mb-2 text-xs font-semibold tracking-wide text-[#55627a] dark:text-[#b6bdd0]">
-              全部
+            {t("agentsquare.all")}
             </div>
             {filteredList.length === 0 ? (
               <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-[#e7e7ef] text-sm text-[#9aa2b2] dark:border-[#2a2a3a] dark:text-[#8f97ad]">
-                没有匹配的智能体
+                {t("agentsquare.noMatch")}
               </div>
             ) : (
               <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-5">
@@ -798,7 +799,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         onReloadModels={loadAvailableModels}
         isSaving={isSavingCustomAgent}
         initialData={editingCustomAgent?.initialData}
-        title={editingCustomAgent ? "编辑自定义智能体" : "自定义智能体"}
+        title={editingCustomAgent ? t("agentsquare.editCustomAgentTitle") : t("agentsquare.customAgentTitle")}
       />
 
       {/* 远程智能体连接弹框 */}

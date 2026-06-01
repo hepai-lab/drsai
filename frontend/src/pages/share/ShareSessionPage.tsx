@@ -1,5 +1,6 @@
 import { Spin } from "antd";
 import React, { useEffect, useMemo, useState } from "react";
+import { useLang } from "../../i18n/useLang";
 import { sessionAPI } from "../../components/views/api";
 import type { Run, Session } from "../../components/types/datamodel";
 import RunView from "../chat/runview";
@@ -17,6 +18,7 @@ function normalizeRun(raw: Run, sessionId: number): Run {
 }
 
 const ShareSessionPage: React.FC = () => {
+  const { t } = useLang();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -31,7 +33,7 @@ const ShareSessionPage: React.FC = () => {
 
   useEffect(() => {
     if (!shareToken) {
-      setError("缺少分享 token");
+      setError(t("shareSession.missingToken"));
       setLoading(false);
       return;
     }
@@ -58,7 +60,7 @@ const ShareSessionPage: React.FC = () => {
         setShowPanel(shouldShowPanel(mode));
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : "无法加载分享的会话");
+          setError(e instanceof Error ? e.message : t("shareSession.loadFailed"));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -86,8 +88,8 @@ const ShareSessionPage: React.FC = () => {
   if (error || !session) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-primary px-4">
-        <p className="text-primary text-lg mb-2">无法查看该会话</p>
-        <p className="text-secondary text-sm">{error ?? "链接无效或分享已关闭"}</p>
+        <p className="text-primary text-lg mb-2">{t("shareSession.cannotView")}</p>
+        <p className="text-secondary text-sm">{error ?? t("shareSession.invalidLink")}</p>
       </div>
     );
   }
@@ -97,12 +99,12 @@ const ShareSessionPage: React.FC = () => {
       <div className="min-h-screen flex flex-col bg-primary">
         <header className="border-b border-border px-4 py-3">
           <h1 className="text-lg font-medium text-primary truncate">
-            {session.name || "分享的会话"}
+            {session.name || t("shareSession.sharedSession")}
           </h1>
-          <p className="text-xs text-secondary mt-1">只读 · 访客模式</p>
+          <p className="text-xs text-secondary mt-1">{t("shareSession.readOnly")}</p>
         </header>
         <div className="flex-1 flex items-center justify-center text-secondary">
-          该会话暂无消息记录
+          {t("shareSession.noMessages")}
         </div>
       </div>
     );

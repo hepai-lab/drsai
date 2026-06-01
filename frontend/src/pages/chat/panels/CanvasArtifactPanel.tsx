@@ -28,6 +28,7 @@ const CanvasArtifactPanel: React.FC<CanvasArtifactPanelProps> = ({
   onSelect,
 }) => {
   const { darkMode } = useContext(appContext);
+  const { t } = useLang();
   const isDark = darkMode === "dark";
 
   const selected = useMemo(() => {
@@ -39,7 +40,7 @@ const CanvasArtifactPanel: React.FC<CanvasArtifactPanelProps> = ({
   if (!artifacts.length) {
     return (
       <div className="flex h-full items-center justify-center px-4 text-center text-sm text-secondary">
-        暂无产出物。智能体可在消息中附带 ui_canvas 结构化内容，在此以仪表盘形式展示。
+        {t("canvasArtifact.empty")}
       </div>
     );
   }

@@ -1,6 +1,7 @@
 import { Network, Pencil, X, Star } from "lucide-react";
 import React from "react";
 import { useModeConfigStore } from "@/store/modeConfig";
+import { useLang } from "../../../i18n/useLang";
 import { DRSAI_RECENT_AGENTS_KEY } from "@/utils/recentAgentsStorage";
 import type { AgentMode } from "@/types/common";
 
@@ -69,6 +70,7 @@ const pushRecentAgent = (agentId?: string) => {
 
 const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
   const { setAgentId, setMode } = useModeConfigStore();
+  const { t } = useLang();
 
   const handleTryClick = async () => {
     setAgentId(agent.id || "");
@@ -102,18 +104,18 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
   const modeLabel =
     agent.mode === "remote"
       ? {
-        text: "远程",
+        text: t("agentsquare.connectRemote"),
         className:
           "bg-[#f1f5fb] text-[#587090] shadow-[inset_0_1px_0_rgba(255,255,255,0.88)] dark:bg-[#243247] dark:text-[#dbe8ff] dark:shadow-[0_0_0_1px_rgba(125,154,205,0.24)]",
       }
       : agent.mode === "custom"
         ? {
-          text: "自定义",
+          text: t("agentsquare.customAgent"),
           className:
             "bg-[#f3f1fb] text-[#665d94] shadow-[inset_0_1px_0_rgba(255,255,255,0.88)] dark:bg-[#32284a] dark:text-[#ece4ff] dark:shadow-[0_0_0_1px_rgba(167,139,250,0.18)]",
         }
         : {
-          text: "本地",
+          text: t("agentsquare.filterOfficial"),
           className:
             "bg-[#f5f5f8] text-[#39404e] shadow-[inset_0_1px_0_rgba(255,255,255,0.86)] dark:bg-[#2b2837] dark:text-[#eff1f7] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.06)]",
         };
@@ -151,7 +153,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
                     type="button"
                     onClick={handleEditClick}
                     className="flex h-7 w-7 items-center justify-center rounded-full bg-[#faf9fc] text-[#657086] transition-colors hover:bg-[#f1eef7] hover:text-[#544d92] dark:bg-[#201d30] dark:text-[#a9b3ca] dark:hover:bg-[#28243b]"
-                    title="编辑自定义智能体"
+                    title={t("agentsquare.editCustomAgentTitle")}
                   >
                     <Pencil className="h-3 w-3" />
                   </button>
@@ -161,7 +163,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
                     type="button"
                     onClick={handleRemoveClick}
                     className="flex h-7 w-7 items-center justify-center rounded-full bg-[#faf9fc] text-[#7b8395] transition-colors hover:bg-[#f3eff8] hover:text-[#c2410c] dark:bg-[#201d30] dark:text-[#a9b3ca] dark:hover:bg-[#34212a] dark:hover:text-[#ff8a8a]"
-                    title="移除智能体"
+                    title={t("agentsquare.removeAgent")}
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -176,8 +178,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
                   e.stopPropagation();
                   agent.onSetDefault?.(agent.id);
                 }}
-                title={agent.is_user_default ? "当前默认智能体" : "设为默认"}
-                aria-label={agent.is_user_default ? "当前默认智能体" : "设为默认"}
+                title={agent.is_user_default ? t("agentsquare.currentDefault") : t("agentsquare.setAsDefault")}
+                aria-label={agent.is_user_default ? t("agentsquare.currentDefault") : t("agentsquare.setAsDefault")}
                 className={`${TOP_ICON_BUTTON_BASE} absolute right-0 top-0 transition-transform ${(agent.mode === "remote" || agent.mode === "custom") && agent.onRemove ? "group-hover:-translate-x-8" : ""
                   } ${agent.is_user_default ? STAR_BUTTON_ACTIVE : STAR_BUTTON_IDLE}`}
               >
@@ -224,11 +226,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
         <button
           type="button"
           onClick={handleTryClick}
-          title="开始试用"
-          aria-label="开始试用"
+          title={t("agentsquare.startChat")}
+          aria-label={t("agentsquare.startChat")}
           className={START_BUTTON_CLASS}
         >
-          开始试用
+          {t("agentsquare.startChat")}
         </button>
       </div>
     </div>

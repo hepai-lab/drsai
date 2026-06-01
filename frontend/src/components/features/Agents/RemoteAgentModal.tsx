@@ -2,6 +2,7 @@ import React, { useState, useContext } from "react";
 import ReactDOM from "react-dom";
 import { X, Wifi, Save, Zap, CheckCircle2, AlertCircle } from "lucide-react";
 import { appContext } from "../../../hooks/provider";
+import { useLang } from "../../../i18n/useLang";
 import { agentWorkerAPI } from "../../views/api";
 import { message } from "antd";
 
@@ -23,6 +24,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
   onSave,
 }) => {
   const { darkMode, user } = useContext(appContext);
+  const { t } = useLang();
   const [modalRoot, setModalRoot] = useState<HTMLElement | null>(null);
   const [formData, setFormData] = useState<RemoteAgentConfig>({
     name: "R1_test",
@@ -53,7 +55,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
 
   const testConnection = async () => {
     if (!formData.name || !formData.url || !formData.api_key) {
-      message.error("请填写所有必填字段");
+      message.error(t("remoteModal.fillRequired"));
       return;
     }
 
@@ -63,7 +65,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
     try {
       // 检查用户是否已登录
       if (!user?.email) {
-        throw new Error("用户未登录");
+        throw new Error("User not logged in");
       }
 
       // 使用后端接口测试远程智能体连接
@@ -76,12 +78,12 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
 
       setAgentInfo(testResult);
       setConnectionTestPassed(true);
-      message.success("连接测试成功！远程智能体响应正常");
+      message.success(t("remoteModal.testSuccess"));
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "连接失败";
+      const errorMessage = error instanceof Error ? error.message : "Connection failed";
       setTestError(errorMessage);
-      message.error(`连接测试失败: ${errorMessage}`);
+      message.error(t("remoteModal.testFailed") + errorMessage);
     } finally {
       setIsTestingConnection(false);
     }
@@ -89,12 +91,12 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
 
   const handleSave = () => {
     if (!connectionTestPassed) {
-      message.error("请先测试连接成功后再保存");
+      message.error(t("remoteModal.testFirst"));
       return;
     }
 
     onSave(formData, agentInfo);
-    message.success("远程智能体配置已保存");
+    message.success(t("remoteModal.saveSuccess"));
     onClose();
 
     // Reset form
@@ -153,11 +155,11 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
           <div className="flex items-center gap-2">
             <Wifi className="h-5 w-5 text-[#4d3dc3]" />
             <h2 className={`text-lg font-semibold ${darkMode === "dark" ? "text-[#e5e5e5]" : "text-[#2d3748]"}`}>
-              连接远程智能体
+              {t("remoteModal.title")}
             </h2>
             {connectionTestPassed && (
               <span className="ml-1 inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
-                已通过验证
+                {t("remoteModal.verified")}
               </span>
             )}
           </div>
@@ -175,21 +177,21 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
 
           {/* Form */}
           <form onSubmit={(e) => e.preventDefault()}>
-            {renderInputField("智能体名称", "name", "例如: My Remote Agent")}
-            {renderInputField("服务器URL", "url", "例如: http://localhost:42806/apiv2")}
-            {renderInputField("API密钥", "api_key", "例如: sk-xxxxxxxxxxxxxxxx", "password")}
+            {renderInputField(t("remoteModal.agentName"), "name", "例如: My Remote Agent")}
+            {renderInputField(t("remoteModal.serverUrl"), "url", "例如: http://localhost:42806/apiv2")}
+            {renderInputField(t("remoteModal.apiKey"), "api_key", "例如: sk-xxxxxxxxxxxxxxxx", "password")}
 
             {/* Inline Status Messages - minimal */}
             {testError && (
               <div className="mb-3 flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
                 <AlertCircle className="h-4 w-4" />
-                <span>连接测试失败：{testError}</span>
+                <span>{t("remoteModal.testFailed")}{testError}</span>
               </div>
             )}
             {connectionTestPassed && (
               <div className="mb-3 flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
                 <CheckCircle2 className="h-4 w-4" />
-                <span>连接测试成功，可以保存配置。</span>
+                <span>{t("remoteModal.testReady")}</span>
               </div>
             )}
           </form>
@@ -204,7 +206,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
               : "text-gray-600 hover:text-gray-800 hover:bg-gray-100"
               }`}
           >
-            取消
+            {t("remoteModal.cancel")}
           </button>
           <button
             onClick={testConnection}
@@ -221,12 +223,12 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
             {isTestingConnection ? (
               <>
                 <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                测试中...
+                {t("remoteModal.testing")}
               </>
             ) : (
               <>
                 <Zap className="h-4 w-4" />
-                测试连接
+                {t("remoteModal.testConnection")}
               </>
             )}
           </button>
@@ -243,7 +245,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
               }`}
           >
             <Save className="h-4 w-4" />
-            保存
+            {t("remoteModal.save")}
           </button>
         </div>
       </div>

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useLang } from "../../i18n/useLang";
 
 export interface QuestionNavItem {
   messageIndex: number;
@@ -19,6 +20,7 @@ const QuestionNavRail: React.FC<QuestionNavRailProps> = ({
   questions,
   onNavigate,
 }) => {
+  const { t } = useLang();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -62,7 +64,7 @@ const QuestionNavRail: React.FC<QuestionNavRailProps> = ({
 
   return (
     <nav
-      aria-label="问题导航"
+      aria-label={t("questionNavRail.aria")}
       className="question-nav-rail hidden lg:block absolute top-1/2 -translate-y-1/2 z-20 pointer-events-none"
     >
       <div className="question-nav-rail__stack relative flex flex-col items-center">
@@ -76,7 +78,7 @@ const QuestionNavRail: React.FC<QuestionNavRailProps> = ({
             <button
               key={question.messageIndex}
               type="button"
-              aria-label={`跳转到第 ${question.questionNumber} 个问题：${question.preview}`}
+              aria-label={t("questionNavRail.jumpTo", question.questionNumber, question.preview)}
               aria-current={isActive ? "true" : undefined}
               className={`question-nav-rail__marker pointer-events-auto ${
                 isActive ? "question-nav-rail__marker--active" : ""
@@ -103,7 +105,7 @@ const QuestionNavRail: React.FC<QuestionNavRailProps> = ({
 
       {activeQuestion && (
         <div className="sr-only" aria-live="polite">
-          当前问题：{activeQuestion.preview}
+          {t("questionNavRail.currentQuestion", activeQuestion.preview)}
         </div>
       )}
     </nav>
