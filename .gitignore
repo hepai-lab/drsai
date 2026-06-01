@@ -233,6 +233,7 @@ src/magentic_ui/backend/web/files/ui/*
 OAI_CONFIG_LIST
 src/magentic_ui/backend/web/workdir/*
 src/magentic_ui/backend/web/ui/*
+python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/
 src/magentic_ui/backend/web/skills/user/*
 .release.sh
 .nightly.sh
