@@ -91,6 +91,16 @@ def _get_owned_session(db, session_id: int, user_id: str) -> Session:
 async def list_sessions(user_id: str, db=Depends(get_db)) -> Dict:
     """List all sessions for a user"""
     response = db.get(Session, filters={"user_id": user_id})
+    if response.data and len(response.data) > 0:
+        agent_modes = {}
+        for s in response.data:
+            cfg = getattr(s, 'agent_mode_config', None) or {}
+            mode = cfg.get('mode', 'unknown') if isinstance(cfg, dict) else 'unknown'
+            agent_modes[mode] = agent_modes.get(mode, 0) + 1
+        logger.info(
+            f"total={len(response.data)} "
+            f"by_mode={agent_modes}"
+        )
     return {"status": True, "data": response.data}
 
 
@@ -209,7 +219,6 @@ async def update_session(
 @router.delete("/{session_id}")
 async def delete_session(session_id: int, user_id: str, db=Depends(get_db)) -> Dict:
     """Delete a session and all its associated runs and messages"""
-    # Delete the session
     db.delete(filters={"id": session_id, "user_id": user_id}, model_class=Session)
 
     return {"status": True, "message": "Session deleted successfully"}

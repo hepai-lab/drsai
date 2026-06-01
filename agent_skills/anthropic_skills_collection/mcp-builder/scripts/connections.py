@@ -4,10 +4,11 @@ from abc import ABC, abstractmethod
 from contextlib import AsyncExitStack
 from typing import Any
 
+import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 
 class MCPConnection(ABC):
@@ -106,7 +107,8 @@ class MCPConnectionHTTP(MCPConnection):
         self.headers = headers or {}
 
     def _create_context(self):
-        return streamablehttp_client(url=self.url, headers=self.headers)
+        http_client = httpx.AsyncClient(headers=self.headers) if self.headers else None
+        return streamable_http_client(url=self.url, http_client=http_client)
 
 
 def create_connection(
