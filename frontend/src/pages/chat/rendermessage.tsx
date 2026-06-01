@@ -978,10 +978,44 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     if (!message) return null;
     if (message.metadata?.type === "browser_address") return null;
 
-    // Check if this is a FilesEvent - these should only be shown in panel, not in main chat
+    // Check if this is a FilesEvent - render inline images in the chat
     const messageAny = message as any;
     if (messageAny.type === "FilesEvent" || message.metadata?.type === "FilesEvent") {
-      return null;
+      const filesData = messageAny.content?.files || messageAny.files || [];
+      if (filesData.length === 0) return null;
+      return (
+        <div className="space-y-2 my-2">
+          {filesData.map((file: any, idx: number) => {
+            const b64 = file.base64_content;
+            const name = file.name || "";
+            const desc = file.description || "";
+            const mime = file.mime_type || (name.endsWith('.svg') ? 'image/svg+xml' : 'image/png');
+            if (!b64) return null;
+            const dataUri = `data:${mime};base64,${b64}`;
+            return (
+              <div key={idx} className="flex flex-col gap-1 max-w-md">
+                <a
+                  href={dataUri}
+                  download={name}
+                  className="text-xs font-medium text-accent hover:underline truncate"
+                  title={desc || name}
+                >
+                  📎 {name}
+                </a>
+                <img
+                  src={dataUri}
+                  alt={desc || name}
+                  className="max-w-full max-h-[50vh] rounded-lg border border-border-primary/30 cursor-zoom-in"
+                  onClick={() => {
+                    const win = window.open();
+                    if (win) win.document.write(`<img src="${dataUri}" style="max-width:100vw;max-height:100vh" />`);
+                  }}
+                />
+              </div>
+            );
+          })}
+        </div>
+      );
     }
 
     // BESIII global_info — right panel only (runview besiiiServerGlobalInfo); hide from main thread

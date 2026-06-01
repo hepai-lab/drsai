@@ -2,7 +2,6 @@ import { message } from "antd";
 import { RcFile } from "antd/es/upload";
 import * as React from "react";
 import { appContext } from "../../hooks/provider";
-import { useMessageCacheStore } from "../../store/messageCache";
 import { useSettingsStore } from "../../components/store";
 import { IStatus } from "../../components/types/app";
 import {
@@ -79,8 +78,7 @@ export default function ChatView({
   // Context and store
   const settingsConfig = useSettingsStore((state) => state.config);
   const { user } = React.useContext(appContext);
-  const setSessionRunCache = useMessageCacheStore((state) => state.setSessionRun);
-  const getSessionRunCache = useMessageCacheStore((state) => state.getSessionRun);
+
 
   // Local state
   const [error, setError] = React.useState<IStatus | null>({
@@ -141,7 +139,6 @@ export default function ChatView({
     session,
     getSessionSocket,
     setCurrentRun,
-    setSessionRun: setSessionRunCache,
     userEmail: user?.email,
   });
 
@@ -376,19 +373,11 @@ export default function ChatView({
     };
 
     try {
-      // Prefer cache when it has more messages (streamed content preserved from before switch)
-      const cachedRun = getSessionRunCache(session.id);
       const response = await sessionAPI.getSessionRuns(
         session.id,
         user?.email
       );
       let latestRun = response.runs[response.runs.length - 1];
-
-      if (cachedRun && latestRun && cachedRun.id === latestRun.id) {
-        if (cachedRun.messages.length >= latestRun.messages.length) {
-          latestRun = { ...cachedRun };
-        }
-      }
 
       if (latestRun) {
         applyExtractions(latestRun);
@@ -403,7 +392,7 @@ export default function ChatView({
       messageApi.error("Failed to load chat history");
       return null;
     }
-  }, [session?.id, user?.email, messageApi, getSessionRunCache, extractFileEventsFromMessages, extractLogEventsFromMessages]);
+  }, [session?.id, user?.email, messageApi, extractFileEventsFromMessages, extractLogEventsFromMessages]);
 
 
   React.useEffect(() => {

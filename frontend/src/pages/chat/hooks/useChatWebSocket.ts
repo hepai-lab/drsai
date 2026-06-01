@@ -22,7 +22,6 @@ interface UseWebSocketProps {
     only_retrieve_existing_socket: boolean
   ) => WebSocket | null;
   setCurrentRun: React.Dispatch<React.SetStateAction<Run | null>>;
-  setSessionRun?: (sessionId: number, run: Run) => void;
   userEmail?: string;
 }
 
@@ -30,24 +29,12 @@ export const useChatWebSocket = ({
   session,
   getSessionSocket,
   setCurrentRun,
-  setSessionRun,
   userEmail,
 }: UseWebSocketProps) => {
   const [activeSocket, setActiveSocket] = React.useState<WebSocket | null>(null);
   const activeSocketRef = React.useRef<WebSocket | null>(null);
   const inputTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const streamingMessageRef = React.useRef<{ source: string; content: string } | null>(null);
-  const cacheSessionRun = React.useCallback(
-    (sessionId: number, run: Run) => {
-      if (!setSessionRun) return;
-      try {
-        setSessionRun(sessionId, run);
-      } catch (error) {
-        console.warn("Failed to cache message:", error);
-      }
-    },
-    [setSessionRun]
-  );
 
   const handleWebSocketMessage = React.useCallback(
     (wsMessage: WebSocketMessage) => {
@@ -87,8 +74,6 @@ export const useChatWebSocket = ({
               messages: [...current.messages, newMessage],
             };
 
-            cacheSessionRun(session.id, updatedRun);
-
             return updatedRun;
           case "message_task":
             if (!wsMessage.data) return current;
@@ -97,7 +82,6 @@ export const useChatWebSocket = ({
               ...current,
               task: taskData,
             };
-            cacheSessionRun(session.id, updatedRun);
             return updatedRun;
           case "message_chunk":
             if (!wsMessage.data) return current;
@@ -143,7 +127,6 @@ export const useChatWebSocket = ({
                   messages: [...current.messages, newChunkMessage],
                 };
 
-                cacheSessionRun(session.id, updatedRun);
                 return updatedRun;
               }
 
@@ -187,7 +170,6 @@ export const useChatWebSocket = ({
                     messages: updatedMessages,
                   };
 
-                  cacheSessionRun(session.id, updatedRun);
                   return updatedRun;
                 }
               }
@@ -213,7 +195,6 @@ export const useChatWebSocket = ({
                 messages: [...current.messages, newChunkMessage],
               };
 
-              cacheSessionRun(session.id, updatedRun);
               return updatedRun;
             }
             return current;
@@ -301,7 +282,6 @@ export const useChatWebSocket = ({
               messages: updatedMessages,
               logs: updatedLogs,
             };
-            cacheSessionRun(session.id, updatedRun);
             return updatedRun;
 
           case "tool_call_summary": {
@@ -371,7 +351,6 @@ export const useChatWebSocket = ({
               ...current,
               messages: updatedMessages,
             };
-            cacheSessionRun(session.id, updatedRun);
             return updatedRun;
           }
 
@@ -382,7 +361,6 @@ export const useChatWebSocket = ({
               ...current,
               file_events: [...(current.file_events || []), filesEvent],
             };
-            cacheSessionRun(session.id, updatedRun);
             return updatedRun;
           case "input_request":
             let input_request: InputRequest;
@@ -407,7 +385,6 @@ export const useChatWebSocket = ({
               input_request: input_request,
             };
 
-            cacheSessionRun(session.id, updatedRun);
             return updatedRun;
 
           case "system":
@@ -416,7 +393,6 @@ export const useChatWebSocket = ({
               status: wsMessage.status as BaseRunStatus,
             };
 
-            cacheSessionRun(session.id, updatedRun);
             return updatedRun;
 
           case "result":
@@ -452,7 +428,6 @@ export const useChatWebSocket = ({
                   : null,
             };
 
-            cacheSessionRun(session.id, updatedRun);
             return updatedRun;
 
           default:
@@ -460,7 +435,7 @@ export const useChatWebSocket = ({
         }
       });
     },
-    [cacheSessionRun, session?.id, activeSocket, setCurrentRun, userEmail]
+    [session?.id, activeSocket, setCurrentRun, userEmail]
   );
 
   const setupWebSocket = React.useCallback(
@@ -524,8 +499,7 @@ export const useChatWebSocket = ({
                 duration: 0,
               } as TeamResult,
             };
-            cacheSessionRun(session.id, updatedRun);
-            return updatedRun;
+return updatedRun;
           }
           return current;
         });
@@ -544,7 +518,7 @@ export const useChatWebSocket = ({
       activeSocketRef.current = socket;
       return socket;
     },
-    [cacheSessionRun, session?.id, getSessionSocket, handleWebSocketMessage, setCurrentRun]
+    [session?.id, getSessionSocket, handleWebSocketMessage, setCurrentRun]
   );
 
   const ensureWebSocketConnection = React.useCallback(
