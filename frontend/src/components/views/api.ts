@@ -1465,13 +1465,23 @@ export class SkillsAPI {
 export const skillsAPI = new SkillsAPI();
 
 export interface DocMasterTemplateEntry {
+    id?: string;
     name: string;
     aliases?: string[];
     category?: string | null;
     tags?: string[];
     description?: string | null;
     path?: string;
+    file?: string;
+    file_type?: string | null;
+    source?: "shared" | "mine";
     [key: string]: unknown;
+}
+
+export interface DocMasterPptxPreviewSlide {
+    index: number;
+    name: string;
+    url: string;
 }
 
 export interface DocMasterTemplatesResponse {
@@ -1490,7 +1500,7 @@ export class DocMasterAPI {
         };
     }
 
-    /** URL the browser can hit to download/stream a template's .docx. */
+    /** URL the browser can hit to download/stream a template file. */
     templateFileUrl(params: {
         templateId: string;
         source: "shared" | "mine";
@@ -1501,6 +1511,38 @@ export class DocMasterAPI {
         qs.set("source", params.source);
         if (params.source === "mine" && params.userId) qs.set("user_id", params.userId);
         return `${this.getBaseUrl()}/docmaster/templates/file?${qs.toString()}`;
+    }
+
+    pptxPreviewUrl(params: {
+        templateId: string;
+        source: "shared" | "mine";
+        userId?: string;
+    }): string {
+        const qs = new URLSearchParams();
+        qs.set("template_id", params.templateId);
+        qs.set("source", params.source);
+        if (params.source === "mine" && params.userId) qs.set("user_id", params.userId);
+        return `${this.getBaseUrl()}/docmaster/templates/pptx-preview?${qs.toString()}`;
+    }
+
+    async getPptxPreview(params: {
+        templateId: string;
+        source: "shared" | "mine";
+        userId?: string;
+    }): Promise<{ template_id: string; name: string; slides: DocMasterPptxPreviewSlide[] }> {
+        const response = await fetch(this.pptxPreviewUrl(params), {
+            headers: this.getHeaders(),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(
+                typeof data.detail === "string" ? data.detail : data.message || "PPTX 预览加载失败"
+            );
+        }
+        if (!data.status) {
+            throw new Error(data.message || "PPTX 预览加载失败");
+        }
+        return data.data;
     }
 
     async saveTemplate(params: {
