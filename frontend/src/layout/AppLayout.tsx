@@ -2,6 +2,7 @@ import { ConfigProvider, theme } from "antd";
 import "antd/dist/reset.css";
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { appContext } from "../hooks/provider";
+import { useLang } from "../i18n/useLang";
 import { useIsCompactLayout } from "../hooks/useMediaQuery";
 import TopNav from "./TopNav";
 import LeftMenu from "./LeftMenu";
@@ -58,6 +59,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
   showNewSessionButton = false,
 }) => {
   const { darkMode } = useContext(appContext);
+  const { t } = useLang();
   const isCompact = useIsCompactLayout();
   const rightPanelIsOpen = useRightPanelStore((s) => s.isOpen);
   const setRightPanelOpen = useRightPanelStore((s) => s.setIsOpen);
@@ -243,7 +245,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
                 <div
                   role="separator"
                   aria-orientation="vertical"
-                  aria-label="调整左侧栏宽度"
+                  aria-label={t("applayout.resize.left")}
                   onPointerDown={(e) => beginDrag(e, "left")}
                   className={`w-1 rounded-full transition-colors ${
                     darkMode === "dark"
@@ -286,7 +288,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
                 <div
                   role="separator"
                   aria-orientation="vertical"
-                  aria-label="调整右侧栏宽度"
+                  aria-label={t("applayout.resize.right")}
                   onPointerDown={(e) => beginDrag(e, "right")}
                   className={`w-1 rounded-full transition-colors ${
                     darkMode === "dark"
@@ -306,7 +308,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           <>
             <button
               type="button"
-              aria-label="关闭导航菜单"
+              aria-label={t("applayout.close.menu")}
               className="fixed inset-0 top-12 lg:top-14 z-40 bg-black/50"
               onClick={onToggleSidebar}
             />
@@ -323,7 +325,7 @@ const AppLayout: React.FC<AppLayoutProps> = ({
           <>
             <button
               type="button"
-              aria-label="关闭侧面板"
+              aria-label={t("applayout.close.panel")}
               className="fixed inset-0 top-12 lg:top-14 z-40 bg-black/50"
               onClick={() => setRightPanelOpen(false)}
             />

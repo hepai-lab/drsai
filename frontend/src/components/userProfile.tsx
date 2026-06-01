@@ -1,5 +1,6 @@
 import React from "react";
 import { Modal } from "antd";
+import { useLang } from "../i18n/useLang";
 
 type UserProfileModalProps = {
   isVisible: boolean;
@@ -8,13 +9,14 @@ type UserProfileModalProps = {
 };
 
 const UserProfileModal: React.FC<UserProfileModalProps> = ({ isVisible, onClose, user }) => {
+  const { t } = useLang();
 
   return (
     <Modal
       open={isVisible}
       onCancel={onClose}
       footer={null}
-      title="用户信息"
+      title={t("userProfile.title")}
       centered
       destroyOnClose
     >

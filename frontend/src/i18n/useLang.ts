@@ -1,0 +1,468 @@
+import { useCallback, useContext } from "react";
+import { appContext } from "../hooks/provider";
+
+/**
+ * 翻译字典 — 所有可见字符串集中管理。
+ * 增量添加：在此追加 key → { zh, en }，组件中 t("your.key") 直接可用。
+ */
+const dict = {
+  "topnav.menu.aria":              { zh: "打开导航菜单", en: "Open navigation menu" },
+  "topnav.search.placeholder":     { zh: "搜索...",       en: "Search..." },
+  "topnav.theme.light":            { zh: "切换亮色",       en: "Light mode" },
+  "topnav.theme.dark":             { zh: "切换暗色",       en: "Dark mode" },
+  "topnav.lang.switch":            { zh: "Switch to English", en: "切换为中文" },
+  "topnav.docs":                   { zh: "文档",          en: "Documentation" },
+  "topnav.profile":                { zh: "个人设置",       en: "Profile Settings" },
+  "topnav.logout":                 { zh: "退出登录",       en: "Sign Out" },
+
+  "login.brand.ihep":              { zh: "IHEP CAS",               en: "IHEP Computing Center" },
+  "login.brand.platform":          { zh: "Open Dr. Sai 智能体平台", en: "Open Dr. Sai Agent Platform" },
+  "login.brand.subtitle":          { zh: "智能体平台",             en: "Agent Platform" },
+
+  "login.features.smartChat":      { zh: "智能对话",       en: "Smart Chat" },
+  "login.features.smartChatDesc":  { zh: "与 Open Dr. Sai 进行自然语言交互，快速获取专业解答", en: "Interact with Open Dr. Sai in natural language for quick expert answers" },
+  "login.features.powerfulAgents": { zh: "强大智能体",     en: "Powerful Agents" },
+  "login.features.powerfulAgentsDesc": { zh: "支持多种 AI 智能体，覆盖科研计算全流程", en: "Multiple AI agents covering the full scientific computing workflow" },
+  "login.features.secure":         { zh: "安全可靠",       en: "Secure & Reliable" },
+  "login.features.secureDesc":     { zh: "依托高能所统一认证，保障数据安全", en: "Built on IHEP unified authentication for data security" },
+
+  "login.tab.sso":                 { zh: "SSO 登录",       en: "SSO Login" },
+  "login.tab.localLogin":          { zh: "本地登录",       en: "Local Login" },
+  "login.tab.register":            { zh: "注册",          en: "Register" },
+
+  "login.loading.redirecting":     { zh: "跳转中",        en: "Redirecting" },
+  "login.loading.loggingIn":       { zh: "登录中",        en: "Logging in" },
+  "login.loading.registering":     { zh: "注册中",        en: "Registering" },
+
+  "login.submit.sso":              { zh: "IHEP-SSO 登录", en: "IHEP-SSO Login" },
+  "login.submit.login":            { zh: "登录",          en: "Login" },
+  "login.submit.register":         { zh: "注册",          en: "Register" },
+
+  "login.sso.description":         { zh: "使用高能所统一认证（IHEP-SSO）登录，无需单独注册账号。", en: "Log in with IHEP unified authentication (SSO). No separate registration needed." },
+  "login.sso.noAccount":           { zh: "没有 IHEP 账号？", en: "No IHEP account?" },
+  "login.sso.registerNow":         { zh: "立即注册",       en: "Register now" },
+
+  "login.form.username":           { zh: "用户名",        en: "Username" },
+  "login.form.password":           { zh: "密码",          en: "Password" },
+  "login.form.usernameHint":       { zh: "用户名（至少3个字符，不能是纯数字）", en: "Username (min 3 chars, not all digits)" },
+  "login.form.passwordHint":       { zh: "密码（至少6个字符）", en: "Password (min 6 chars)" },
+  "login.form.confirmPassword":    { zh: "确认密码",       en: "Confirm password" },
+
+  "login.agreement.read":          { zh: "我已阅读并同意",  en: "I have read and agree to the" },
+  "login.agreement.title":         { zh: "用户协议",       en: "User Agreement" },
+  "login.agreement.saved":         { zh: "协议已保存，下次无需重新勾选", en: "Saved — no need to re-check next time" },
+
+  "login.modal.title":             { zh: "请先阅读用户协议", en: "Please read the User Agreement" },
+  "login.modal.description":       { zh: "使用本平台前，请阅读并同意用户协议及隐私政策。", en: "Please read and agree to the User Agreement and Privacy Policy before using this platform." },
+  "login.modal.agree":             { zh: "同意并继续",     en: "Agree & Continue" },
+  "login.modal.cancel":            { zh: "取消",          en: "Cancel" },
+
+  "login.error.emptyFields":       { zh: "请输入用户名和密码", en: "Please enter username and password" },
+  "login.error.loginFailed":       { zh: "登录失败，请重试", en: "Login failed, please try again" },
+  "login.error.emptyRegistration": { zh: "请填写所有字段",  en: "Please fill in all fields" },
+  "login.error.digitsOnly":        { zh: "用户名不能是纯数字", en: "Username cannot be all digits" },
+  "login.error.usernameTooShort":  { zh: "用户名至少 3 个字符", en: "Username must be at least 3 characters" },
+  "login.error.passwordTooShort":  { zh: "密码至少 6 个字符", en: "Password must be at least 6 characters" },
+  "login.error.passwordMismatch":  { zh: "两次输入的密码不一致", en: "Passwords do not match" },
+  "login.error.registrationFailed":{ zh: "注册失败，请重试", en: "Registration failed, please try again" },
+
+  "login.footer.contact":          { zh: "联系我们",       en: "Contact us" },
+  "login.theme.aria":              { zh: "切换主题",       en: "Toggle theme" },
+
+  // ===== Layout (LeftMenu / AppLayout / Canvas / RightPanel / sidebar) =====
+  "leftmenu.section.chat":        { zh: "聊天",        en: "Chat" },
+  "leftmenu.section.agents":      { zh: "智能体",      en: "Agents" },
+  "leftmenu.section.settings":    { zh: "设置",        en: "Settings" },
+  "leftmenu.expand":              { zh: "展开侧边栏",  en: "Expand sidebar" },
+  "leftmenu.collapse":            { zh: "收起侧边栏",  en: "Collapse sidebar" },
+  "leftmenu.nav.agentSquare":     { zh: "智能体广场",  en: "Agent Square" },
+  "leftmenu.nav.skillsSquare":    { zh: "技能广场",    en: "Skills Square" },
+  "leftmenu.nav.library":         { zh: "库",          en: "Library" },
+  "leftmenu.nav.profile":         { zh: "配置",        en: "Profile" },
+  "leftmenu.nav.usageAnalytics":  { zh: "使用分析",    en: "Usage Analytics" },
+  "leftmenu.nav.userManagement":  { zh: "用户管理",    en: "User Management" },
+
+  "applayout.resize.left":        { zh: "调整左侧栏宽度", en: "Resize left panel" },
+  "applayout.resize.right":       { zh: "调整右侧栏宽度", en: "Resize right panel" },
+  "applayout.close.menu":         { zh: "关闭导航菜单",  en: "Close navigation menu" },
+  "applayout.close.panel":        { zh: "关闭侧面板",    en: "Close side panel" },
+
+  "canvas.openPanel":             { zh: "打开侧面板",        en: "Open side panel" },
+  "canvas.newSession":            { zh: "新建会话",         en: "New session" },
+  "canvas.exploreMore":           { zh: "体验更多",         en: "Explore more" },
+  "canvas.exploreMoreAria":       { zh: "体验更多：跳转智能体广场", en: "Explore more: go to Agent Square" },
+  "canvas.exploreMoreTitle":      { zh: "体验更多：智能体广场",     en: "Explore more: Agent Square" },
+  "canvas.agentOffline":          { zh: "智能体已从列表移除，当前为会话中的存档配置", en: "Agent removed from list — current session uses archived config" },
+  "canvas.noFile":                { zh: "暂无文件",       en: "No file" },
+
+  "rightpanel.tab.files":        { zh: "文件空间",    en: "Files" },
+  "rightpanel.tab.overview":     { zh: "运行概览",    en: "Overview" },
+  "rightpanel.tab.history":      { zh: "历史会话",    en: "History" },
+  "rightpanel.tab.templates":    { zh: "模板库",      en: "Templates" },
+  "rightpanel.collapse":         { zh: "收起面板",    en: "Collapse panel" },
+  "rightpanel.expand":           { zh: "展开面板",    en: "Expand panel" },
+  "rightpanel.empty.history":    { zh: "暂无历史会话", en: "No history" },
+  "rightpanel.empty.files":      { zh: "暂无文件",     en: "No files" },
+  "rightpanel.empty.templates":  { zh: "暂无模板",     en: "No templates" },
+
+  "sidebar.user.info":           { zh: "用户信息",    en: "User info" },
+  "sidebar.user.settings":       { zh: "设置",        en: "Settings" },
+  "sidebar.user.logout":         { zh: "退出登录",    en: "Sign Out" },
+
+  // ===== SSO / Callback / User Profile =====
+  "sso.brand.ihep":              { zh: "IHEP计算中心",       en: "IHEP Computing Center" },
+  "sso.welcome":                 { zh: "欢迎探索 Dr. Sai 智能体", en: "Welcome to Dr. Sai Agent" },
+  "sso.description":             { zh: "使用高能所统一认证（IHEP-SSO）登录", en: "Log in with IHEP unified authentication (SSO)" },
+  "sso.localLogin":              { zh: "本地用户登录",       en: "Local Login" },
+  "sso.loginBtn":                { zh: "登录",               en: "Login" },
+  "sso.usernamePlaceholder":     { zh: "账号",               en: "Username" },
+  "sso.passwordPlaceholder":     { zh: "密码",               en: "Password" },
+  "sso.close":                   { zh: "关闭",               en: "Close" },
+  "sso.error.emptyFields":       { zh: "请输入账号和密码",   en: "Please enter username and password" },
+
+  "callback.error.noCredentials": { zh: "未收到有效的登录凭证", en: "No valid login credentials received" },
+  "callback.backToLogin":        { zh: "返回登录",           en: "Back to login" },
+  "callback.loggingIn":          { zh: "正在登录，请稍候...", en: "Logging in, please wait..." },
+
+  "userProfile.title":           { zh: "用户信息",           en: "User info" },
+  "userProfile.logout":          { zh: "退出登录",           en: "Sign Out" },
+
+  // ===== Voice Input / Output / Settings =====
+  "voiceinput.notDetected":      { zh: "没有检测到语音，请重试", en: "No speech detected, please try again" },
+  "voiceinput.noMicAccess":      { zh: "无法访问麦克风，请检查权限设置", en: "Cannot access microphone, check permissions" },
+  "voiceinput.micDenied":        { zh: "麦克风权限被拒绝，请在浏览器设置中允许麦克风访问", en: "Microphone permission denied — allow access in browser settings" },
+  "voiceinput.networkError":     { zh: "网络错误，请检查网络连接", en: "Network error, please check connection" },
+  "voiceinput.recognitionError": { zh: "语音识别错误",        en: "Speech recognition error" },
+  "voiceinput.startFailed":      { zh: "启动语音识别失败",    en: "Failed to start speech recognition" },
+  "voiceinput.notSupported":     { zh: "浏览器不支持语音识别", en: "Speech recognition not supported" },
+  "voiceinput.stopRecording":    { zh: "点击停止录音",        en: "Click to stop recording" },
+  "voiceinput.startRecording":   { zh: "点击开始录音",        en: "Click to start recording" },
+
+  "voiceoutput.unavailable":     { zh: "语音合成不可用或没有文本内容", en: "Speech synthesis unavailable or no text" },
+  "voiceoutput.synthesisFailed": { zh: "语音合成失败",        en: "Speech synthesis failed" },
+  "voiceoutput.cancelled":       { zh: "语音播放被取消",      en: "Playback cancelled" },
+  "voiceoutput.interrupted":     { zh: "语音播放被中断",      en: "Playback interrupted" },
+  "voiceoutput.busy":            { zh: "音频设备忙，请稍后重试", en: "Audio device busy, try again later" },
+  "voiceoutput.hardwareError":   { zh: "音频硬件错误",        en: "Audio hardware error" },
+  "voiceoutput.networkError":    { zh: "网络错误",            en: "Network error" },
+  "voiceoutput.notSupported":    { zh: "不支持语音合成",      en: "Speech synthesis not supported" },
+  "voiceoutput.langNotSupported":{ zh: "不支持该语言",        en: "Language not supported" },
+  "voiceoutput.ttsSynthesisFailed": { zh: "语音合成失败",     en: "TTS synthesis failed" },
+
+  "voicesettings.title":         { zh: "语音设置",            en: "Voice settings" },
+  "voicesettings.inputLang":     { zh: "语音输入语言",        en: "Input language" },
+  "voicesettings.outputLang":    { zh: "语音输出语言",        en: "Output language" },
+  "voicesettings.speed":         { zh: "语速",                en: "Speed" },
+  "voicesettings.pitch":         { zh: "音调",                en: "Pitch" },
+  "voicesettings.autoPlay":      { zh: "自动播放",            en: "Auto play" },
+  "voicesettings.langZhCN":      { zh: "中文 (简体)",         en: "Chinese (Simplified)" },
+  "voicesettings.langZhTW":      { zh: "中文 (繁体)",         en: "Chinese (Traditional)" },
+  "voicesettings.langEn":        { zh: "English",             en: "English" },
+  "voicesettings.langJa":        { zh: "日本語",              en: "Japanese" },
+  "voicesettings.inputSection":  { zh: "语音输入设置",        en: "Input settings" },
+  "voicesettings.outputSection": { zh: "语音输出设置",        en: "Output settings" },
+  "voicesettings.voiceSelect":   { zh: "语音选择",            en: "Voice selection" },
+
+  // ===== Agent Management Pages =====
+  "agentManagement.title":       { zh: "智能体管理",          en: "Agent Management" },
+  "agentManagement.description": { zh: "在这里查看你的智能体列表。", en: "View your agent list here." },
+  "agentManagement.refresh":     { zh: "刷新",                en: "Refresh" },
+  "agentManagement.column.name": { zh: "名称",                en: "Name" },
+  "agentManagement.column.mode": { zh: "模式",                en: "Mode" },
+  "agentManagement.column.tags": { zh: "标签",                en: "Tags" },
+
+  "userManagement.column.user":  { zh: "用户",                en: "User" },
+  "userManagement.column.source":{ zh: "来源",                en: "Source" },
+  "userManagement.column.admin": { zh: "管理员",              en: "Admin" },
+
+  "userManagement.title":        { zh: "用户管理",            en: "User Management" },
+  "userManagement.searchPlaceholder": { zh: "按 user_id 搜索", en: "Search by user ID" },
+  "userManagement.refresh":      { zh: "刷新",                en: "Refresh" },
+
+  // ===== Menu Routes (labels) =====
+  "menuRoute.chat":              { zh: "聊天",                en: "Chat" },
+  "menuRoute.myAgents":          { zh: "我的智能体",          en: "My Agents" },
+  "menuRoute.agentSquare":       { zh: "智能体广场",          en: "Agent Square" },
+  "menuRoute.savedPlan":         { zh: "计划",                en: "Saved Plans" },
+  "menuRoute.skillsSquare":      { zh: "技能广场",            en: "Skills Square" },
+  "menuRoute.profile":           { zh: "配置",                en: "Profile" },
+  "menuRoute.usageAnalytics":    { zh: "使用分析",            en: "Usage Analytics" },
+  "menuRoute.channels":          { zh: "频道",                en: "Channels" },
+  "menuRoute.library":           { zh: "库",                  en: "Library" },
+  "menuRoute.logs":              { zh: "日志",                en: "Logs" },
+  "menuRoute.agentManagement":   { zh: "智能体管理",          en: "Agent Management" },
+  "menuRoute.userManagement":    { zh: "用户管理",            en: "User Management" },
+
+  // ===== Placeholder Pages =====
+  "channelsPage.title":          { zh: "频道",                en: "Channels" },
+  "channelsPage.placeholder":    { zh: "页面建设中...",       en: "Page under construction..." },
+  "logsPage.title":              { zh: "日志",                en: "Logs" },
+  "logsPage.placeholder":        { zh: "页面建设中...",       en: "Page under construction..." },
+
+  // ===== Share Session =====
+  "shareSession.missingToken":   { zh: "缺少分享 token",      en: "Missing share token" },
+  "shareSession.loadFailed":     { zh: "无法加载分享的会话",   en: "Failed to load shared session" },
+  "shareSession.cannotView":     { zh: "无法查看该会话",       en: "Cannot view this session" },
+  "shareSession.invalidLink":    { zh: "链接无效或分享已关闭", en: "Invalid link or sharing has been closed" },
+  "shareSession.sharedSession":  { zh: "分享的会话",           en: "Shared session" },
+  "shareSession.readOnly":       { zh: "只读 · 访客模式",     en: "Read-only · Guest mode" },
+  "shareSession.noMessages":     { zh: "该会话暂无消息记录",   en: "No messages in this session" },
+
+  // ===== Chat UI =====
+  "questionNavRail.aria":        { zh: "问题导航",              en: "Question navigation" },
+  "questionNavRail.jumpTo":      { zh: "跳转到第 %1 个问题：%2", en: "Jump to question %1: %2" },
+  "questionNavRail.currentQuestion": { zh: "当前问题：%1",      en: "Current question: %1" },
+
+  "welcomeScreen.title":         { zh: "输入消息开始对话，或从下方选择示例任务", en: "Type a message to start, or pick an example task below" },
+  "newChatView.title":           { zh: "新对话",                en: "New Chat" },
+  "newChatView.placeholder":     { zh: "输入消息开始，或点选下方示例", en: "Type a message or pick an example below" },
+  "newChatView.filesSelected":   { zh: "已从库选择 %1 个文件",   en: "%1 files selected from Library" },
+
+  "sampleTasks.section":         { zh: "试试这些",               en: "Try these" },
+  "sampleTasks.use":             { zh: "使用",                  en: "Use" },
+
+  "chatTeaser.viewArtifact":     { zh: "在右侧「产出物」中查看", en: "View in the artifact panel on the right" },
+  "canvasArtifact.empty":        { zh: "暂无产出物。智能体可在消息中附带 ui_canvas 结构化内容，在此以仪表盘形式展示。", en: "No artifacts yet. Agents can attach ui_canvas structured content to messages, displayed here as dashboards." },
+
+  // ===== Agent Square =====
+  "agentsquare.loading":         { zh: "加载中...",           en: "Loading..." },
+  "agentsquare.loadFailed":      { zh: "加载失败",            en: "Failed to load" },
+  "agentsquare.useDefault":      { zh: "使用默认数据",        en: "Using default data" },
+  "agentsquare.userNotLoggedIn": { zh: "用户未登录",          en: "User not logged in" },
+  "agentsquare.unknown":         { zh: "未知",                en: "Unknown" },
+  "agentsquare.unknownAgent":    { zh: "未知智能体",          en: "Unknown agent" },
+  "agentsquare.agent":           { zh: "智能体",              en: "Agent" },
+  "agentsquare.remoteAgentDesc": { zh: "远程智能体 - 自定义连接", en: "Remote agent — custom connection" },
+  "agentsquare.defaultSet":      { zh: "已设为默认智能体",    en: "Set as default agent" },
+  "agentsquare.defaultSetFailed":{ zh: "设置默认智能体失败",  en: "Failed to set default agent" },
+  "agentsquare.customAgent":     { zh: "自定义智能体",        en: "Custom agent" },
+  "agentsquare.customUpdated":   { zh: "自定义智能体已更新",  en: "Custom agent updated" },
+  "agentsquare.customSaved":     { zh: "自定义智能体已保存",  en: "Custom agent saved" },
+  "agentsquare.customSaveFailed":{ zh: "保存自定义智能体失败", en: "Failed to save custom agent" },
+  "agentsquare.cannotRefresh":   { zh: "无法刷新：缺少用户信息", en: "Cannot refresh: missing user info" },
+  "agentsquare.refreshSuccess":  { zh: "刷新成功",            en: "Refresh successful" },
+  "agentsquare.refreshFailed":   { zh: "刷新失败",            en: "Refresh failed" },
+  "agentsquare.title":           { zh: "智能体",              en: "Agents" },
+  "agentsquare.searchPlaceholder": { zh: "搜索名称 / 描述 / 创建人", en: "Search name / description / owner" },
+  "agentsquare.connectRemote":   { zh: "连接远程",            en: "Connect Remote" },
+  "agentsquare.filterAll":       { zh: "全部",                en: "All" },
+  "agentsquare.filterMine":      { zh: "我的",                en: "Mine" },
+  "agentsquare.filterOfficial":  { zh: "本地",                en: "Local" },
+  "agentsquare.sortRecent":      { zh: "按最近使用",          en: "Recent" },
+  "agentsquare.sortName":        { zh: "按名称",              en: "Name" },
+  "agentsquare.refresh":         { zh: "刷新",                en: "Refresh" },
+  "agentsquare.noApiKeyTitle":   { zh: "未配置平台模型 API Key，托管智能体列表无法加载", en: "No platform API key configured — hosted agent list unavailable" },
+  "agentsquare.noApiKeyDesc":    { zh: "本地账号可点击上方「连接远程」，填写远程智能体地址与 Key 即可使用；若需平台托管智能体，请在设置中配置模型 API Key 后刷新。", en: "Click 'Connect Remote' above to use a remote agent. For hosted agents, configure a model API Key in Settings and refresh." },
+  "agentsquare.noAgents":        { zh: "当前用户未部署任何智能体", en: "No agents deployed for this user" },
+  "agentsquare.noAgentsDesc":    { zh: "请联系管理员部署智能体或使用默认智能体", en: "Contact admin or use a default agent" },
+  "agentsquare.myDefaultAgent":  { zh: "我的默认智能体",      en: "My Default Agent" },
+  "agentsquare.edit":            { zh: "编辑",                en: "Edit" },
+  "agentsquare.startChat":       { zh: "开始对话",            en: "Start Chat" },
+  "agentsquare.recentUsed":      { zh: "最近使用",            en: "Recently Used" },
+  "agentsquare.all":             { zh: "全部",                en: "All" },
+  "agentsquare.noMatch":         { zh: "没有匹配的智能体",    en: "No matching agents" },
+  "agentsquare.editCustomAgentTitle": { zh: "编辑自定义智能体", en: "Edit Custom Agent" },
+  "agentsquare.removeAgent":       { zh: "移除智能体",        en: "Remove agent" },
+  "agentsquare.currentDefault":    { zh: "当前默认智能体",     en: "Current default agent" },
+  "agentsquare.setAsDefault":      { zh: "设为默认",          en: "Set as default" },
+
+  // ===== Remote Agent Modal =====
+  "remoteModal.title":           { zh: "连接远程智能体",     en: "Connect Remote Agent" },
+  "remoteModal.verified":        { zh: "已通过验证",         en: "Verified" },
+  "remoteModal.agentName":       { zh: "智能体名称",         en: "Agent Name" },
+  "remoteModal.serverUrl":       { zh: "服务器URL",          en: "Server URL" },
+  "remoteModal.apiKey":          { zh: "API密钥",            en: "API Key" },
+  "remoteModal.testConnection":  { zh: "测试连接",           en: "Test Connection" },
+  "remoteModal.testing":         { zh: "测试中...",          en: "Testing..." },
+  "remoteModal.testSuccess":     { zh: "连接测试成功！远程智能体响应正常", en: "Connection test passed! Remote agent responding." },
+  "remoteModal.testFailed":      { zh: "连接测试失败：",     en: "Connection failed: " },
+  "remoteModal.testReady":       { zh: "连接测试成功，可以保存配置。", en: "Test passed — ready to save." },
+  "remoteModal.testFirst":       { zh: "请先测试连接成功后再保存", en: "Test the connection before saving" },
+  "remoteModal.saveSuccess":     { zh: "远程智能体配置已保存", en: "Remote agent configuration saved" },
+  "remoteModal.fillRequired":    { zh: "请填写所有必填字段", en: "Please fill in all required fields" },
+  "remoteModal.cancel":          { zh: "取消",               en: "Cancel" },
+  "remoteModal.save":            { zh: "保存",               en: "Save" },
+
+  // ===== Settings / Config =====
+  "settings.title":              { zh: "配置",                en: "Settings" },
+  "settings.profileTab":         { zh: "个人信息",            en: "Profile" },
+  "settings.username":           { zh: "用户名",              en: "Username" },
+  "settings.email":              { zh: "邮箱",                en: "Email" },
+  "settings.executionPolicy":    { zh: "执行策略",            en: "Execution Policy" },
+  "settings.approvalPolicy":     { zh: "操作审批策略",        en: "Approval Policy" },
+  "settings.never":              { zh: "从不需要审批",        en: "Never" },
+  "settings.autoConservative":   { zh: "AI 自动判断",         en: "Auto (AI decides)" },
+  "settings.always":             { zh: "始终需要审批",        en: "Always" },
+  "settings.allowReplan":        { zh: "允许重新规划",        en: "Allow Re-planning" },
+  "settings.on":                 { zh: "开",                  en: "On" },
+  "settings.off":                { zh: "关",                  en: "Off" },
+  "settings.retrievePlans":      { zh: "检索历史计划",        en: "Retrieve Past Plans" },
+  "settings.noRetrieve":         { zh: "不检索",              en: "No retrieve" },
+  "settings.asHint":             { zh: "作为提示",            en: "As hint" },
+  "settings.reuse":              { zh: "直接复用",            en: "Reuse" },
+  "settings.websiteAccess":      { zh: "网站访问控制",        en: "Website Access" },
+  "settings.allowlist":          { zh: "允许访问列表",        en: "Allow List" },
+  "settings.restrictAccess":     { zh: "限制访问",            en: "Restricted" },
+  "settings.unrestricted":       { zh: "不限制",              en: "Unrestricted" },
+  "settings.add":                { zh: "添加",                en: "Add" },
+  "settings.modelConfig":        { zh: "模型配置",            en: "Model Configuration" },
+  "settings.quickSelect":        { zh: "快速选择模型",        en: "Quick select model" },
+  "settings.importYaml":         { zh: "导入 YAML",           en: "Import YAML" },
+  "settings.advancedConfig":     { zh: "高级配置（YAML）",    en: "Advanced Config (YAML)" },
+  "settings.storage":            { zh: "存储管理",            en: "Storage" },
+  "settings.storageUsage":       { zh: "当前占用：",          en: "Usage: " },
+  "settings.clearCache":         { zh: "清除消息缓存",        en: "Clear message cache" },
+  "settings.clearAll":           { zh: "清除所有数据",        en: "Clear all data" },
+  "settings.resetDefaults":      { zh: "恢复默认设置",        en: "Reset to defaults" },
+  "settings.saveFailed":         { zh: "保存设置失败",        en: "Failed to save settings" },
+  "settings.yamlImported":       { zh: "YAML 配置导入成功",   en: "YAML config imported" },
+  "settings.modelUpdated":       { zh: "模型配置已更新",      en: "Model config updated" },
+  "settings.defaultsRestored":   { zh: "已恢复默认设置",      en: "Defaults restored" },
+  "settings.cacheCleared":       { zh: "消息缓存已清除",      en: "Message cache cleared" },
+  "settings.allCleared":         { zh: "所有数据已清除",      en: "All data cleared" },
+  "settings.clearAllTitle":      { zh: "清除所有 Dr.Sai 数据", en: "Clear all Dr.Sai data" },
+  "settings.clearAllBody":       { zh: "将清除所有设置、消息缓存等本地数据，操作不可撤销。", en: "This will clear all local settings, message cache, and data. This action cannot be undone." },
+
+  "settings.tooltipApproval":    { zh: "控制智能体执行操作前是否需要人工确认", en: "Controls whether agent actions require human approval" },
+  "settings.tooltipReplan":      { zh: "当计划不可行时，智能体自动重新制定计划", en: "When a plan fails, the agent will automatically re-plan" },
+  "settings.tooltipRetrieve":    { zh: "控制智能体是否检索历史任务的计划作为参考", en: "Controls whether the agent retrieves past plans as reference" },
+  "settings.tooltipAllowlist":   { zh: "开启后，智能体只能访问列表中的网站", en: "When enabled, the agent can only access listed websites" },
+  "settings.tooltipAdvancedYaml":{ zh: "AutoGen ChatCompletionClient 格式，必须包含 orchestrator_client、coder_client、web_surfer_client、file_surfer_client", en: "AutoGen ChatCompletionClient format. Must include orchestrator_client, coder_client, web_surfer_client, file_surfer_client" },
+  "agentsquare.customAgentTitle":{ zh: "自定义智能体",        en: "Custom Agent" },
+
+  // ===== Skills Square =====
+  "skillSquare.title":           { zh: "技能广场",              en: "Skills Square" },
+  "skillSquare.subtitle":        { zh: "浏览、预览与分享 Agent 技能包", en: "Browse, preview, and share Agent skill packs" },
+  "skillSquare.searchPlaceholder": { zh: "搜索名称或描述",      en: "Search name or description" },
+  "skillSquare.publishBtn":      { zh: "发布 Skill",            en: "Publish Skill" },
+  "skillSquare.publishFirst":    { zh: "发布第一个 Skill",      en: "Publish your first Skill" },
+  "skillSquare.emptyTitle":      { zh: "还没有技能包",          en: "No skill packs yet" },
+  "skillSquare.emptyDesc":       { zh: "上传包含 SKILL.md 的 zip 包，审核通过后会展示在这里", en: "Upload a SKILL.md zip — it'll appear here after review" },
+  "skillSquare.noMatchTitle":    { zh: "没有匹配的技能",        en: "No matching skills" },
+  "skillSquare.noMatchDesc":     { zh: "试试其他关键词，或清空搜索", en: "Try different keywords or clear the search" },
+  "skillSquare.clearSearch":     { zh: "清空搜索",              en: "Clear search" },
+  "skillSquare.summary":         { zh: "共 %1 个技能",          en: "%1 skills total" },
+  "skillSquare.summaryMatch":    { zh: "共 %1 个技能 · 匹配 %2 个", en: "%1 skills · %2 matched" },
+
+  "skillSquare.iconPackage":     { zh: "包裹",                  en: "Package" },
+  "skillSquare.iconWrench":      { zh: "扳手",                  en: "Wrench" },
+  "skillSquare.iconCode":        { zh: "代码",                  en: "Code" },
+  "skillSquare.iconSparkles":    { zh: "创意",                  en: "Sparkles" },
+  "skillSquare.iconBot":         { zh: "智能体",                en: "Agent" },
+  "skillSquare.iconFileText":    { zh: "文档",                  en: "Document" },
+
+  "skillSquare.previewSkillMd":  { zh: "预览 SKILL.md",        en: "Preview SKILL.md" },
+  "skillSquare.download":        { zh: "下载",                  en: "Download" },
+  "skillSquare.copyLink":        { zh: "复制链接",              en: "Copy link" },
+  "skillSquare.copied":          { zh: "已复制",                en: "Copied" },
+  "skillSquare.copyFailed":      { zh: "复制失败",              en: "Copy failed" },
+  "skillSquare.copyFullText":    { zh: "已复制全文",            en: "Full text copied" },
+  "skillSquare.downloadStarted": { zh: "已开始下载",            en: "Download started" },
+  "skillSquare.noPreviewContent": { zh: "暂无可预览内容",       en: "No preview available" },
+  "skillSquare.noPreviewDesc":   { zh: "请确认 ZIP 内包含有效的 SKILL.md", en: "Make sure the ZIP contains a valid SKILL.md" },
+
+  "skillSquare.zipNoFiles":      { zh: "未选择任何文件",        en: "No files selected" },
+  "skillSquare.zipTooManyFiles": { zh: "文件夹内文件请不超过 %1 个", en: "Maximum %1 files per folder" },
+  "skillSquare.zipNeedSkillMd":  { zh: "文件夹内需包含 SKILL.md", en: "Folder must contain SKILL.md" },
+  "skillSquare.zipTooLarge":     { zh: "打包后超过 10 MB，请精简文件后重试", en: "Archive exceeds 10 MB — reduce file size and retry" },
+  "skillSquare.zipPacked":       { zh: "已将文件夹打包为 zip",  en: "Folder packed as zip" },
+  "skillSquare.zipPickError":    { zh: "未能按文件夹读取文件，请使用 Chrome / Edge 等浏览器，或直接「选择 zip 文件」", en: "Could not read as folder — use Chrome/Edge, or select a .zip file directly" },
+  "skillSquare.zipFileTooLarge": { zh: "压缩包总大小请不超过 10 MB", en: "Total archive size must not exceed 10 MB" },
+  "skillSquare.zipFormatError":  { zh: "请上传 .zip 格式的技能包", en: "Please upload a .zip skill pack" },
+  "skillSquare.publishSlugHint": { zh: "Slug 仅允许小写字母、数字和连字符；不需要可留空", en: "Slug: lowercase letters, digits, hyphens only. Leave empty if unsure." },
+  "skillSquare.publishNameRequired": { zh: "请填写显示名称",    en: "Display name is required" },
+  "skillSquare.publishSuccess":  { zh: "发布成功",              en: "Published successfully" },
+  "skillSquare.uploadFromFolder":{ zh: "从文件夹导入（打包为 zip）", en: "Import from folder (pack as zip)" },
+  "skillSquare.uploadFromZip":   { zh: "选择 zip 文件",        en: "Select zip file" },
+
+  "skillSquare.modalPublish":    { zh: "发布技能包",            en: "Publish Skill Pack" },
+  "skillSquare.modalSlug":       { zh: "Slug（唯一标识，可选）", en: "Slug (unique ID, optional)" },
+  "skillSquare.modalDisplayName":{ zh: "显示名称",              en: "Display name" },
+  "skillSquare.modalIcon":       { zh: "图标",                  en: "Icon" },
+  "skillSquare.modalDescription":{ zh: "描述",                  en: "Description" },
+  "skillSquare.modalVersion":    { zh: "版本",                  en: "Version" },
+  "skillSquare.modalChangelog":  { zh: "更新日志",              en: "Changelog" },
+  "skillSquare.modalCancel":     { zh: "取消",                  en: "Cancel" },
+  "skillSquare.modalSubmit":     { zh: "发布",                  en: "Publish" },
+  "skillSquare.modalSubmitting": { zh: "发布中...",             en: "Publishing..." },
+  "skillSquare.modalFolderBtn":  { zh: "从文件夹导入",          en: "Import from folder" },
+  "skillSquare.modalZipBtn":     { zh: "选择 .zip 文件",       en: "Select .zip file" },
+
+  "skillSquare.timeJustNow":    { zh: "刚刚",                  en: "Just now" },
+  "skillSquare.timeSecondsAgo": { zh: "%1 秒前",               en: "%1s ago" },
+  "skillSquare.timeMinutesAgo": { zh: "%1 分钟前",             en: "%1m ago" },
+  "skillSquare.timeHoursAgo":   { zh: "%1 小时前",             en: "%1h ago" },
+  "skillSquare.timeDaysAgo":    { zh: "%1 天前",               en: "%1d ago" },
+
+  // ===== Library =====
+  "library.title":              { zh: "库",                    en: "Library" },
+  "library.subtitle":           { zh: "管理上传文件；选中后可发起对话或下载。", en: "Manage uploaded files. Select to chat or download." },
+  "library.noFiles":            { zh: "暂无文件",               en: "No files" },
+  "library.previewUnavailable": { zh: "预览不可用",             en: "Preview unavailable" },
+  "library.viewFullImage":      { zh: "查看大图",               en: "View full image" },
+  "library.selectFile":         { zh: "选择文件 %1",            en: "Select file %1" },
+  "library.copyLink":           { zh: "复制文件链接",           en: "Copy file link" },
+  "library.loadFailed":         { zh: "加载库文件失败",         en: "Failed to load library" },
+
+  "library.upload":             { zh: "上传",                   en: "Upload" },
+  "library.searchPlaceholder":  { zh: "搜索文件名",            en: "Search file name" },
+  "library.uploadSuccess":      { zh: "上传成功",               en: "Upload successful" },
+  "library.uploadFailed":       { zh: "上传失败",               en: "Upload failed" },
+  "library.removeConfirmTitle": { zh: "移除所选文件？",         en: "Remove selected files?" },
+  "library.removeConfirmBody":  { zh: "将从库中删除，且无法恢复。", en: "Files will be deleted permanently." },
+  "library.removeConfirmOk":    { zh: "删除",                   en: "Delete" },
+  "library.removeConfirmCancel":{ zh: "取消",                   en: "Cancel" },
+  "library.removed":            { zh: "已移除",                 en: "Removed" },
+  "library.removeFailed":       { zh: "删除失败",               en: "Delete failed" },
+  "library.cannotGetLink":      { zh: "无法获取文件链接",       en: "Cannot get file link" },
+  "library.linkCopied":         { zh: "已复制文件链接",         en: "File link copied" },
+  "library.copyFailed":         { zh: "复制失败",               en: "Copy failed" },
+
+  "library.chatTitle":          { zh: "开始聊天 · %1 个文件",   en: "Start Chat · %1 files" },
+  "library.chatClose":          { zh: "关闭",                   en: "Close" },
+  "library.chatReadyHint":      { zh: "文件已就绪，无需重新上传。Enter 发送，Shift+Enter 换行。", en: "Files ready, no re-upload needed. Enter to send, Shift+Enter for new line." },
+  "library.chatPlaceholder":    { zh: "输入问题…",              en: "Type your question…" },
+  "library.chatSend":           { zh: "发送",                   en: "Send" },
+  "library.emptyHint":          { zh: "对话中上传的文件会出现在这里", en: "Files uploaded in chat will appear here" },
+  "library.noMatch":            { zh: "没有匹配的文件",        en: "No matching files" },
+  "library.searchResults":     { zh: "搜索结果",               en: "Search results" },
+  "library.allFiles":          { zh: "全部文件",               en: "All files" },
+  "library.sortAsc":           { zh: "按名称升序",            en: "Sort A→Z" },
+  "library.sortDesc":          { zh: "按名称降序",            en: "Sort Z→A" },
+  "library.nameAZ":            { zh: "名称 A→Z",             en: "Name A→Z" },
+  "library.nameZA":            { zh: "名称 Z→A",             en: "Name Z→A" },
+  "library.gridView":          { zh: "网格",                  en: "Grid" },
+  "library.listView":          { zh: "列表",                  en: "List" },
+
+  "besiiiPanel.executing":       { zh: "执行中",                en: "Executing" },
+  "besiiiPanel.waiting":         { zh: "等待中",                en: "Waiting" },
+  "besiiiPanel.noLogs":          { zh: "暂无日志",              en: "No logs" },
+  "besiiiPanel.logCount":        { zh: "共 %1 条日志条目",      en: "%1 log entries" },
+} as const;
+
+type TranslationKey = keyof typeof dict;
+
+/** 从当前语言查字典，返回对应文本。找不到 key 时返回 key 本身作为 fallback */
+export function useLang() {
+  const { lang, setLang } = useContext(appContext);
+
+  const t = useCallback(
+    (key: TranslationKey, ...args: (string | number)[]): string => {
+      const entry = dict[key];
+      if (!entry) return key as string;
+      let text: string = entry[lang];
+      if (args.length > 0) {
+        args.forEach((arg, i) => { text = text.replace(`%${i + 1}`, String(arg)); });
+      }
+      return text;
+    },
+    [lang]
+  );
+
+  const toggleLang = useCallback(() => {
+    const next = lang === "zh" ? "en" : "zh";
+    setLang(next);
+  }, [lang, setLang]);
+
+  return { lang, setLang, toggleLang, t };
+}

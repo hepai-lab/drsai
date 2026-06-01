@@ -16,6 +16,8 @@ export interface AppContextType {
   cookie_name: string;
   darkMode: string;
   setDarkMode: any;
+  lang: "zh" | "en";
+  setLang: (lang: "zh" | "en") => void;
 }
 
 const cookie_name = "coral_app_cookie_";
@@ -28,6 +30,14 @@ const Provider = ({ children }: any) => {
   const [darkMode, setDarkMode] = useState(
     storedValue === null ? "light" : storedValue === "dark" ? "dark" : "light"
   );
+
+  const [lang, setLangState] = useState<"zh" | "en">(
+    () => (getLocalStorage("drsai_lang", false) as "zh" | "en") || "zh"
+  );
+  const updateLang = (newLang: "zh" | "en") => {
+    setLangState(newLang);
+    setLocalStorage("drsai_lang", newLang, false);
+  };
 
   const logout = () => {
     message.info("Please implement your own logout logic");
@@ -66,6 +76,8 @@ const Provider = ({ children }: any) => {
         cookie_name,
         darkMode,
         setDarkMode: updateDarkMode,
+        lang,
+        setLang: updateLang,
       }}
     >
       {children}

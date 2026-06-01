@@ -21,6 +21,7 @@ import MarkdownRenderer from "../components/common/markdownrender";
 import { useSettingsStore } from "../components/store";
 import { fileAPI, skillsAPI, type SkillsCatalogItem } from "../components/views/api";
 import { appContext } from "../hooks/provider";
+import { useLang } from "../i18n/useLang";
 import JSZip from "jszip";
 
 const ENABLE_SKILL_DOWNLOAD = false;
@@ -41,9 +42,9 @@ type FileWithRelativePath = File & { webkitRelativePath?: string };
 async function zipFolderFileListToZipFile(files: FileList): Promise<File> {
     const zip = new JSZip();
     const n = files.length;
-    if (n === 0) throw new Error("未选择任何文件");
+    if (n === 0) throw new Error("No files selected");
     if (n > MAX_SKILL_FOLDER_FILES) {
-        throw new Error(`文件夹内文件请不超过 ${MAX_SKILL_FOLDER_FILES} 个`);
+        throw new Error(`Max ${MAX_SKILL_FOLDER_FILES} files per folder`);
     }
     let hasSkillMd = false;
     for (let i = 0; i < n; i++) {
@@ -55,11 +56,11 @@ async function zipFolderFileListToZipFile(files: FileList): Promise<File> {
         zip.file(rel, await f.arrayBuffer());
     }
     if (!hasSkillMd) {
-        throw new Error("文件夹内需包含 SKILL.md");
+        throw new Error("Folder must contain a SKILL.md");
     }
     const blob = await zip.generateAsync({ type: "blob", compression: "DEFLATE" });
     if (blob.size > HEPAI_MAX_ZIP_BYTES) {
-        throw new Error("打包后超过 10 MB，请精简文件后重试");
+        throw new Error("Archive exceeds 10 MB, please reduce and retry");
     }
     const first = files[0] as FileWithRelativePath;
     const firstRel = (first.webkitRelativePath || first.name).replace(/\\/g, "/");
@@ -73,12 +74,12 @@ const SKILL_ICON_OPTIONS: {
     label: string;
     Icon: React.ElementType;
 }[] = [
-        { value: "package", label: "包裹", Icon: Package },
-        { value: "wrench", label: "扳手", Icon: Wrench },
-        { value: "code", label: "代码", Icon: Code },
-        { value: "sparkles", label: "创意", Icon: Sparkles },
-        { value: "bot", label: "智能体", Icon: Bot },
-        { value: "file-text", label: "文档", Icon: FileText },
+        { value: "package", label: "Package", Icon: Package },
+        { value: "wrench", label: "Wrench", Icon: Wrench },
+        { value: "code", label: "Code", Icon: Code },
+        { value: "sparkles", label: "Sparkles", Icon: Sparkles },
+        { value: "bot", label: "Agent", Icon: Bot },
+        { value: "file-text", label: "Document", Icon: FileText },
     ];
 
 type HepAIUploadRow = {
@@ -144,14 +145,14 @@ function splitArchiveName(filename: string): { stem: string; ext: string } {
 /** 相对上传时间，超过约一周回落到日期。 */
 function formatRelativePast(ms: number): string {
     const sec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-    if (sec < 15) return "刚刚";
-    if (sec < 60) return `${sec} 秒前`;
+    if (sec < 15) return "Just now";
+    if (sec < 60) return `${sec}s ago`;
     const min = Math.floor(sec / 60);
-    if (min < 60) return `${min} 分钟前`;
+    if (min < 60) return `${min}m ago`;
     const hr = Math.floor(min / 60);
-    if (hr < 24) return `${hr} 小时前`;
+    if (hr < 24) return `${hr}h ago`;
     const day = Math.floor(hr / 24);
-    if (day < 7) return `${day} 天前`;
+    if (day < 7) return `${day}d ago`;
     return new Date(ms).toLocaleDateString();
 }
 
@@ -166,6 +167,7 @@ function formatBytes(n: number): string {
 
 const SkillsSquarePage: React.FC = () => {
     const { user } = React.useContext(appContext);
+    const { t } = useLang();
     const [search, setSearch] = useState("");
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [active, setActive] = useState<SkillsCatalogItem | null>(null);
@@ -263,7 +265,7 @@ const SkillsSquarePage: React.FC = () => {
         if (!list?.length) return;
         const first = list[0] as FileWithRelativePath;
         if (!first.webkitRelativePath) {
-            message.error("未能按文件夹读取文件，请使用 Chrome / Edge 等浏览器，或直接「选择 zip 文件」");
+            message.error(t("skillSquare.zipPickError"));
             e.target.value = "";
             return;
         }
@@ -271,7 +273,7 @@ const SkillsSquarePage: React.FC = () => {
         try {
             const zipFile = await zipFolderFileListToZipFile(list);
             syncPickFromFile(zipFile);
-            message.success("已将文件夹打包为 zip");
+            message.success(t("skillSquare.zipPacked"));
         } catch (err) {
             message.error(err instanceof Error ? err.message : String(err));
         } finally {
@@ -354,7 +356,7 @@ const SkillsSquarePage: React.FC = () => {
         if (!skillMdBody) return;
         try {
             await navigator.clipboard.writeText(skillMdBody);
-            message.success("已复制全文");
+            message.success(t("skillSquare.copyFullText"));
         } catch {
             message.error("复制失败");
         }
@@ -365,7 +367,7 @@ const SkillsSquarePage: React.FC = () => {
         setDownloadSlug(slug);
         try {
             await skillsAPI.downloadCatalogArchive(slug);
-            message.success("已开始下载");
+            message.success(t("skillSquare.downloadStarted"));
         } catch (e) {
             message.error(e instanceof Error ? e.message : String(e));
         } finally {
@@ -375,31 +377,31 @@ const SkillsSquarePage: React.FC = () => {
     const submitHepaiUpload = async () => {
         const file = hepaiZipFile;
         if (!file) {
-            message.warning("请选择技能包 .zip 文件");
+            message.warning("Select a .zip skill pack");
             return;
         }
         if (!file.name.toLowerCase().endsWith(".zip")) {
-            message.warning("请上传 .zip 格式的技能包");
+            message.warning(t("skillSquare.zipFormatError"));
             return;
         }
         if (file.size > HEPAI_MAX_ZIP_BYTES) {
-            message.warning("压缩包总大小请不超过 10 MB");
+            message.warning(t("skillSquare.zipFileTooLarge"));
             return;
         }
         const dn = publishDisplayName.trim();
         if (!dn) {
-            message.warning("请填写显示名称");
+            message.warning(t("skillSquare.publishNameRequired"));
             return;
         }
         const slugTrim = publishSlug.trim();
         if (slugTrim && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slugTrim.toLowerCase())) {
-            message.warning("Slug 仅允许小写字母、数字和连字符；不需要可留空");
+            message.warning(t("skillSquare.publishSlugHint"));
             return;
         }
 
         const userId = user?.email || "";
         if (!userId) {
-            message.error("未登录或缺少 user_id（email）");
+            message.error("Not logged in or missing user_id (email)");
             return;
         }
 
@@ -425,7 +427,7 @@ const SkillsSquarePage: React.FC = () => {
                     metadata: r.metadata,
                 }))
             );
-            message.success("发布成功");
+            message.success(t("skillSquare.publishSuccess"));
             setHepaiUploadOpen(false);
             resetPublishForm();
         } catch (e) {
@@ -438,7 +440,7 @@ const SkillsSquarePage: React.FC = () => {
     const openSkillMdPreview = async (fileId: string, filename: string) => {
         const userId = user?.email || "";
         if (!userId) {
-            message.error("未登录或缺少 user_id（email）");
+            message.error("Not logged in or missing user_id (email)");
             return;
         }
         setSkillMdTitle(filename);
@@ -486,11 +488,11 @@ const SkillsSquarePage: React.FC = () => {
                                     <Wrench className="h-[18px] w-[18px]" aria-hidden />
                                 </span>
                                 <h1 className="font-agent text-xl font-semibold tracking-[-0.02em] text-primary sm:text-[1.35rem]">
-                                    技能广场
+                                    {t("skillSquare.title")}
                                 </h1>
                             </div>
                             <p className="mt-2 max-w-md text-sm leading-relaxed text-secondary">
-                                浏览、预览与分享 Agent 技能包
+                                {t("skillSquare.subtitle")}
                             </p>
                             {listSummary ? (
                                 <p className="mt-1 text-xs text-secondary/80">{listSummary}</p>
@@ -507,7 +509,7 @@ const SkillsSquarePage: React.FC = () => {
                                     type="search"
                                     value={search}
                                     onChange={(e) => setSearch(e.target.value)}
-                                    placeholder="搜索名称或描述"
+                                    placeholder={t("skillSquare.searchPlaceholder")}
                                     className={SEARCH_INPUT_CLS}
                                 />
                             </div>
@@ -519,7 +521,7 @@ const SkillsSquarePage: React.FC = () => {
                                     className="shrink-0"
                                     onClick={openPublishModal}
                                 >
-                                    发布 Skill
+                                    {t("skillSquare.publishBtn")}
                                 </Button>
                             ) : null}
                         </div>
@@ -533,9 +535,9 @@ const SkillsSquarePage: React.FC = () => {
                                 <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-border-primary/50 bg-primary shadow-sm dark:border-white/10">
                                     <Package className="h-8 w-8 text-accent" strokeWidth={1.75} aria-hidden />
                                 </div>
-                                <p className="text-base font-medium text-primary">还没有技能包</p>
+                                <p className="text-base font-medium text-primary">{t("skillSquare.emptyTitle")}</p>
                                 <p className="mt-2 max-w-xs text-sm leading-relaxed text-secondary">
-                                    上传包含 SKILL.md 的 zip 包，审核通过后会展示在这里
+                                    {t("skillSquare.emptyDesc")}
                                 </p>
                                 {ENABLE_HEPAI_SKILL_ZIP_UPLOAD ? (
                                     <Button
@@ -545,7 +547,7 @@ const SkillsSquarePage: React.FC = () => {
                                         className="mt-6"
                                         onClick={openPublishModal}
                                     >
-                                        发布第一个 Skill
+                                        {t("skillSquare.publishFirst")}
                                     </Button>
                                 ) : null}
                             </div>
@@ -554,14 +556,14 @@ const SkillsSquarePage: React.FC = () => {
                                 <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-tertiary/40 dark:bg-white/[0.06]">
                                     <Search className="h-5 w-5 text-secondary" aria-hidden />
                                 </div>
-                                <p className="text-sm font-medium text-primary">没有匹配的技能</p>
-                                <p className="mt-1.5 text-xs text-secondary">试试其他关键词，或清空搜索</p>
+                                <p className="text-sm font-medium text-primary">{t("skillSquare.noMatchTitle")}</p>
+                                <p className="mt-1.5 text-xs text-secondary">{t("skillSquare.noMatchDesc")}</p>
                                 <button
                                     type="button"
                                     className="mt-4 text-xs font-medium text-accent transition-colors hover:text-accent/80"
                                     onClick={() => setSearch("")}
                                 >
-                                    清空搜索
+                                    {t("skillSquare.clearSearch")}
                                 </button>
                             </div>
                         ) : (
@@ -631,8 +633,8 @@ const SkillsSquarePage: React.FC = () => {
                                                         type="button"
                                                         className={LIST_ROW_ACTION_BTN}
                                                         onClick={() => void openSkillMdPreview(r.id, r.filename)}
-                                                        title="预览 SKILL.md"
-                                                        aria-label="预览 SKILL.md"
+                                                        title={t("skillSquare.previewSkillMd")}
+                                                        aria-label={t("skillSquare.previewSkillMd")}
                                                     >
                                                         <Eye className="h-4 w-4" aria-hidden />
                                                     </button>
@@ -641,8 +643,8 @@ const SkillsSquarePage: React.FC = () => {
                                                         target="_blank"
                                                         rel="noreferrer"
                                                         className={LIST_ROW_ACTION_BTN}
-                                                        title="下载"
-                                                        aria-label="下载"
+                                                        title={t("skillSquare.download")}
+                                                        aria-label={t("skillSquare.download")}
                                                     >
                                                         <Download className="h-4 w-4" aria-hidden />
                                                     </a>
@@ -653,8 +655,8 @@ const SkillsSquarePage: React.FC = () => {
                                                             copied ? "border-accent/35 bg-accent/10 text-accent" : "",
                                                         ].join(" ")}
                                                         onClick={() => void copyPreviewUrl(r.id, r.previewUrl)}
-                                                        title={copied ? "已复制" : "复制链接"}
-                                                        aria-label={copied ? "已复制" : "复制链接"}
+                                                        title={copied ? t("skillSquare.copied") : t("skillSquare.copyLink")}
+                                                        aria-label={copied ? t("skillSquare.copied") : t("skillSquare.copyLink")}
                                                     >
                                                         {copied ? (
                                                             <Check className="h-4 w-4" strokeWidth={2.5} aria-hidden />
@@ -821,7 +823,7 @@ const SkillsSquarePage: React.FC = () => {
                                 if (f?.name?.toLowerCase().endsWith(".zip")) {
                                     syncPickFromFile(f);
                                 } else {
-                                    message.warning("请将 .zip 文件拖到此处；文件夹请使用下方「选择文件夹」");
+                                    message.warning("Drag .zip files here, or use the 'Select folder' button below");
                                 }
                             }}
                         >
@@ -1029,9 +1031,9 @@ const SkillsSquarePage: React.FC = () => {
                 ) : (
                     <div className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-tertiary/50 bg-tertiary/[0.06] px-6 py-10 text-center dark:border-white/[0.1] dark:bg-white/[0.02]">
                         <FileText className="h-10 w-10 text-secondary/70" strokeWidth={1.5} aria-hidden />
-                        <p className="text-sm font-medium text-primary">暂无可预览内容</p>
+                        <p className="text-sm font-medium text-primary">{t("skillSquare.noPreviewContent")}</p>
                         <p className="max-w-sm text-xs leading-relaxed text-secondary">
-                            请确认 ZIP 内包含有效的 SKILL.md
+                            {t("skillSquare.noPreviewDesc")}
                         </p>
                     </div>
                 )}

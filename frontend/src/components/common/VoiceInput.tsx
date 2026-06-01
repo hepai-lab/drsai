@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Mic, MicOff } from "lucide-react";
+import { useLang } from "../../i18n/useLang";
 
 interface VoiceInputProps {
     onTranscript: (text: string) => void;
@@ -16,6 +17,7 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
     className = "",
     language = "zh-CN",
 }) => {
+    const { t } = useLang();
     const [isListening, setIsListening] = useState(false);
     const [isSupported, setIsSupported] = useState(false);
     const [recognition, setRecognition] = useState<any>(null);
@@ -80,15 +82,15 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
     const getErrorMessage = (error: string) => {
         switch (error) {
             case "no-speech":
-                return "没有检测到语音，请重试";
+                return t("voiceinput.notDetected");
             case "audio-capture":
-                return "无法访问麦克风，请检查权限设置";
+                return t("voiceinput.noMicAccess");
             case "not-allowed":
-                return "麦克风权限被拒绝，请在浏览器设置中允许麦克风访问";
+                return t("voiceinput.micDenied");
             case "network":
-                return "网络错误，请检查网络连接";
+                return t("voiceinput.networkError");
             default:
-                return `语音识别错误: ${error}`;
+                return `${t("voiceinput.recognitionError")}: ${error}`;
         }
     };
 
@@ -101,7 +103,7 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
             try {
                 recognition?.start();
             } catch (error) {
-                onError?.("启动语音识别失败");
+                onError?.(t("voiceinput.startFailed"));
             }
         }
     };
@@ -114,7 +116,7 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
                     ? "bg-gray-600 text-gray-400"
                     : "bg-gray-300 text-gray-500"
                     } cursor-not-allowed ${className}`}
-                title="浏览器不支持语音识别"
+                title={t("voiceinput.notSupported")}
             >
                 <Mic className="h-5 w-5" />
             </button>
@@ -137,7 +139,7 @@ const VoiceInput: React.FC<VoiceInputProps> = ({
                         ? "opacity-50 cursor-not-allowed"
                         : "cursor-pointer"
                     } ${className}`}
-                title={isListening ? "点击停止录音" : "点击开始录音"}
+                title={isListening ? t("voiceinput.stopRecording") : t("voiceinput.startRecording")}
             >
                 {isListening ? (
                     <MicOff className="h-5 w-5" />

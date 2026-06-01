@@ -1,5 +1,6 @@
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 import { appContext } from "@/hooks/provider";
+import { useLang } from "../../i18n/useLang";
 import { ArrowUpRight } from "lucide-react";
 import React, { useContext, useMemo } from "react";
 

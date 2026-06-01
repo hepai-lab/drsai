@@ -1,4 +1,5 @@
 import { appContext } from "@/hooks/provider";
+import { useLang } from "@/i18n/useLang";
 import { useAgentManager } from "@/components/views/hooks/useAgentManager";
 import type { Agent } from "@/types/common";
 import { Button, Table, Tag } from "antd";
@@ -9,6 +10,7 @@ type AgentRow = Agent & { key: string };
 
 const AgentManagementPage: React.FC = () => {
   const { user } = useContext(appContext);
+  const { t } = useLang();
   const userId = user?.email;
   const { agents, fetchAgentList, isLoading } = useAgentManager(userId);
 
@@ -26,7 +28,7 @@ const AgentManagementPage: React.FC = () => {
   const columns: ColumnsType<AgentRow> = useMemo(
     () => [
       {
-        title: "名称",
+        title: t("agentManagement.column.name"),
         dataIndex: "name",
         key: "name",
         render: (name: string, row: AgentRow) => (
@@ -43,7 +45,7 @@ const AgentManagementPage: React.FC = () => {
         ),
       },
       {
-        title: "模式",
+        title: t("agentManagement.column.mode"),
         dataIndex: "mode",
         key: "mode",
         width: 160,
@@ -61,7 +63,7 @@ const AgentManagementPage: React.FC = () => {
         ),
       },
       {
-        title: "标签",
+        title: t("agentManagement.column.tags"),
         dataIndex: "tags",
         key: "tags",
         width: 220,
@@ -85,13 +87,13 @@ const AgentManagementPage: React.FC = () => {
     <div className="h-full min-h-0 flex flex-col p-4">
       <div className="flex items-start justify-between gap-3 mb-4">
         <div>
-          <div className="text-base font-medium text-primary">智能体管理</div>
+          <div className="text-base font-medium text-primary">{t("agentManagement.title")}</div>
           <div className="text-sm text-secondary mt-1">
-            在这里查看你的智能体列表。
+            {t("agentManagement.description")}
           </div>
         </div>
         <Button onClick={() => void fetchAgentList()} loading={isLoading}>
-          刷新
+          {t("agentManagement.refresh")}
         </Button>
       </div>
 
