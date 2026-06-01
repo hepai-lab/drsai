@@ -11,7 +11,7 @@ import { useAgentInfo } from "../features/Agents/useAgentInfo";
 import PlanList from "../features/Plans/PlanList";
 import { GeneralConfig, useSettingsStore } from "../store";
 import type { Session, FilesEvent, MessageFileItem } from "../types/datamodel";
-import { sessionAPI, settingsAPI, userAPI, docmasterAPI, type DocMasterTemplateEntry } from "./api";
+import { sessionAPI, settingsAPI, userAPI, docmasterAPI, type DocMasterTemplateEntry, type DocMasterPptxPreviewSlide } from "./api";
 import ChatView from "../../pages/chat/chat";
 import NewChatView from "../../pages/chat/NewChatView";
 import { useAgentManager } from "./hooks/useAgentManager";
@@ -810,10 +810,44 @@ export const SessionManager: React.FC = () => {
     navigateToView("chat");
   }, [navigateToMenu, navigateToView]);
 
-  const handlePreviewTemplate = useCallback((entry: DocMasterTemplateEntry) => {
+  const handlePreviewTemplate = useCallback(async (entry: DocMasterTemplateEntry) => {
     const source = (entry.source as "shared" | "mine") || "shared";
     const templateId = typeof entry.id === "string" ? entry.id : entry.name;
     if (!templateId) return;
+    const fileType = String(entry.file_type || "docx").toLowerCase();
+
+    if (fileType === "pptx") {
+      try {
+        const preview = await docmasterAPI.getPptxPreview({
+          templateId,
+          source,
+          userId: source === "mine" ? user?.email : undefined,
+        });
+        const previewFile: MessageFileItem & { preview_slides?: DocMasterPptxPreviewSlide[]; previewSlides?: DocMasterPptxPreviewSlide[] } = {
+          name: `${entry.name || templateId}.pptx`,
+          url: docmasterAPI.templateFileUrl({
+            templateId,
+            source,
+            userId: source === "mine" ? user?.email : undefined,
+          }),
+          base64_content: "",
+          size: 0,
+          mime_type:
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+          description: entry.description || "模板预览（只读）",
+          download_method: "url",
+          preview_slides: preview.slides,
+          previewSlides: preview.slides,
+        };
+        setSelectedPreviewFile(previewFile);
+        setPreviewReadOnly(true);
+        navigateToView("file_preview");
+      } catch (err) {
+        messageApi.error(err instanceof Error ? err.message : "PPTX 预览加载失败");
+      }
+      return;
+    }
+
     const url = docmasterAPI.templateFileUrl({
       templateId,
       source,
@@ -832,7 +866,7 @@ export const SessionManager: React.FC = () => {
     setSelectedPreviewFile(previewFile);
     setPreviewReadOnly(true);
     navigateToView("file_preview");
-  }, [navigateToView, user?.email]);
+  }, [navigateToView, user?.email, messageApi]);
 
   // --- Add / delete template flows --------------------------------------------
   const [addTemplateOpen, setAddTemplateOpen] = useState(false);
@@ -871,11 +905,11 @@ export const SessionManager: React.FC = () => {
       return;
     }
     if (!addTemplateFile) {
-      messageApi.error("请选择 .docx 模板文件");
+      messageApi.error("请选择 .docx 或 .pptx 模板文件");
       return;
     }
-    if (!addTemplateFile.name.toLowerCase().endsWith(".docx")) {
-      messageApi.error("模板必须是 .docx 文件");
+    if (![".docx", ".pptx"].some((ext) => addTemplateFile.name.toLowerCase().endsWith(ext))) {
+      messageApi.error("模板必须是 .docx 或 .pptx 文件");
       return;
     }
     if (!addTemplateName.trim()) {
@@ -1502,7 +1536,7 @@ export const SessionManager: React.FC = () => {
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-secondary mb-1">
-              模板文件 <span className="text-red-500">*</span> <span className="opacity-60">(.docx)</span>
+              模板文件 <span className="text-red-500">*</span> <span className="opacity-60">(.docx / .pptx)</span>
             </label>
             <div className="flex items-center gap-2">
               <label
@@ -1512,7 +1546,7 @@ export const SessionManager: React.FC = () => {
                 选择文件
                 <input
                   type="file"
-                  accept=".docx"
+                  accept=".docx,.pptx"
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0] || null;

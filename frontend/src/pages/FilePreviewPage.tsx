@@ -371,6 +371,7 @@ const WordEditor: React.FC<WordEditorProps> = ({ file, onClose, onFileEvent }) =
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"]);
 const WORD_EXTENSIONS = new Set(["doc", "docx"]);
+const PPT_EXTENSIONS = new Set(["ppt", "pptx"]);
 const TEXT_EXTENSIONS = new Set([
   "txt",
   "md",
@@ -446,6 +447,15 @@ const isWordFile = (file: MessageFileItem): boolean => {
   return WORD_EXTENSIONS.has(getExtension(file.name || ""));
 };
 
+const isPptFile = (file: MessageFileItem): boolean => {
+  if (
+    file.mime_type === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    file.mime_type === "application/vnd.ms-powerpoint"
+  )
+    return true;
+  return PPT_EXTENSIONS.has(getExtension(file.name || ""));
+};
+
 const isMarkdownFile = (file: MessageFileItem): boolean => {
   const ext = getExtension(file.name || "");
   return ext === "md" || ext === "markdown";
@@ -502,10 +512,25 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionI
   const imageMode = React.useMemo(() => (file ? isImageFile(file) : false), [file]);
   const pdfMode = React.useMemo(() => (file ? isPdfFile(file) : false), [file]);
   const wordMode = React.useMemo(() => (file ? isWordFile(file) : false), [file]);
+  const pptMode = React.useMemo(() => (file ? isPptFile(file) : false), [file]);
 
   const wordContainerRef = React.useRef<HTMLDivElement>(null);
   const [wordLoading, setWordLoading] = React.useState(false);
   const [wordError, setWordError] = React.useState<string | null>(null);
+
+  // PPTX: fast-path uses backend-rendered slide images (`preview_slides`);
+  // otherwise we render the .pptx in-browser via pptx-preview into pptContainerRef.
+  const pptSlides = React.useMemo(() => {
+    const candidate = file as ((MessageFileItem & { preview_slides?: Array<{ index: number; name: string; url: string }> }) | null);
+    const raw = candidate?.preview_slides || (candidate as { previewSlides?: Array<{ index: number; name: string; url: string }> } | null)?.previewSlides;
+    if (Array.isArray(raw) && raw.length > 0) {
+      return raw;
+    }
+    return [];
+  }, [file]);
+  const pptContainerRef = React.useRef<HTMLDivElement>(null);
+  const [pptLoading, setPptLoading] = React.useState(false);
+  const [pptError, setPptError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -551,6 +576,57 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionI
       cancelled = true;
     };
   }, [file, wordMode]);
+
+  // Render .pptx in-browser via pptx-preview when the backend hasn't already
+  // supplied rendered slide images (pptSlides). Mirrors the docx-preview flow.
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!file || !pptMode || pptSlides.length > 0) return;
+
+    const loadPpt = async () => {
+      setPptLoading(true);
+      setPptError(null);
+      try {
+        let arrayBuffer: ArrayBuffer;
+        if (file.download_method === "base64" && file.base64_content) {
+          const binary = atob(file.base64_content);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+          arrayBuffer = bytes.buffer;
+        } else if (file.download_method === "url" && file.url) {
+          const response = await fetch(file.url);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          arrayBuffer = await response.arrayBuffer();
+        } else {
+          throw new Error("当前文件没有可用内容");
+        }
+
+        if (cancelled) return;
+        const container = pptContainerRef.current;
+        if (!container) return;
+        container.innerHTML = "";
+        const { init } = await import("pptx-preview");
+        // Scale slides to the container's width while keeping 16:9.
+        const width = Math.max(container.clientWidth || 960, 480);
+        const height = Math.round((width * 9) / 16);
+        const previewer = init(container, { width, height });
+        await previewer.preview(arrayBuffer);
+      } catch (e) {
+        if (cancelled) return;
+        const message = e instanceof Error ? e.message : "加载失败";
+        setPptError(`文件加载失败：${message}`);
+      } finally {
+        if (!cancelled) setPptLoading(false);
+      }
+    };
+
+    void loadPpt();
+    return () => {
+      cancelled = true;
+    };
+  }, [file, pptMode, pptSlides.length]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -721,7 +797,29 @@ const FilePreviewPage: React.FC<FilePreviewPageProps> = ({ file = null, sessionI
             </div>
           )}
 
-          {!loading && !error && !textMode && !imageMode && !pdfMode && !wordMode && (
+          {!loading && !error && pptMode && (
+            <div className="space-y-4">
+              {pptSlides.length > 0 ? (
+                pptSlides.map((slide) => (
+                  <div key={slide.name} className="rounded-lg border border-border-primary/30 bg-white p-3">
+                    <div className="mb-2 text-xs text-secondary">第 {slide.index} 页</div>
+                    <img src={slide.url} alt={`Slide ${slide.index}`} className="w-full rounded-md border border-border-primary/20" />
+                  </div>
+                ))
+              ) : (
+                <>
+                  {pptLoading && <div className="text-sm text-secondary">正在加载幻灯片...</div>}
+                  {pptError && <div className="text-sm text-red-500">{pptError}</div>}
+                  <div
+                    ref={pptContainerRef}
+                    className={`overflow-auto bg-white rounded-md border border-border-primary/30 p-2${pptLoading || pptError ? " hidden" : ""}`}
+                  />
+                </>
+              )}
+            </div>
+          )}
+
+          {!loading && !error && !textMode && !imageMode && !pdfMode && !wordMode && !pptMode && (
             <div className="text-sm text-secondary">
               当前文件类型暂不支持在线编辑，可使用下载按钮查看。
             </div>
