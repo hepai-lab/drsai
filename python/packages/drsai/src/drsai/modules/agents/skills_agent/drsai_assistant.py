@@ -187,6 +187,8 @@ class DrSaiAssistantConfig(DrSaiAgentConfig):
     memory_dataset_id: str
     learning_dataset_id: str
     context_type: str  # "ragflow" | "sqlite"
+    llm_max_retries: int  # Max retries for LLM call failures / empty output
+    llm_retry_base_delay: float  # Base delay (seconds) between retries (exponential backoff)
     
 
 class DrSaiAssistant(DrSaiAgent):
@@ -255,6 +257,9 @@ class DrSaiAssistant(DrSaiAgent):
         learning_dataset_id: Optional[str] = None,
         # context type selection
         context_type: str = "sqlite",  # "ragflow" or "sqlite"
+        # LLM retry configuration
+        llm_max_retries: int = 10,  # Max retries on model error or empty output
+        llm_retry_base_delay: float = 2.0,  # Base delay (s) for exponential backoff
     ):
         super().__init__(
             name=name,
@@ -450,6 +455,10 @@ Current Session_ID is {self._thread_id}"""
         self._cached_tools_prompt: str = ""
         self._cached_skills_loader = None
         self._skip_startup_checks: bool = False
+
+        # === LLM retry configuration ===
+        self._llm_max_retries = llm_max_retries
+        self._llm_retry_base_delay = llm_retry_base_delay
 
     def _create_context(
         self,
@@ -1168,37 +1177,131 @@ Current Session_ID is {self._thread_id}"""
             # TODO: Update model context with any relevant memory -> When? How?
 
             turn_count = 0
-            max_empty_turn = 3
-            empty_turn_count = 0
+            llm_retry_count = 0  # Track retries across the current turn
             while turn_count < self._max_turn_count:
 
                 # Sanitize messages to handle orphaned tool results / missing stubs
                 # This prevents tool_call_id mismatches after model switches
                 await self._sanitize_api_messages()
 
+                # ── LLM call with retry logic ──────────────────────────────
                 model_result = None
-                async for inference_output in self._call_llm(
-                    model_client=model_client,
-                    model_client_stream=model_client_stream,
-                    system_messages=system_messages,
-                    model_context=model_context,
-                    workbench=workbench,
-                    handoff_tools=handoff_tools,
-                    manager_tools=manager_tools,
-                    agent_name=agent_name,
-                    cancellation_token=cancellation_token,
-                    output_content_type=output_content_type,
-                ):
-                    if self.is_paused:
-                        raise asyncio.CancelledError()
-                    
-                    if isinstance(inference_output, CreateResult):
-                        model_result = inference_output
-                    else:
-                        # Streaming chunk event
-                        yield inference_output
+                llm_retry_count = 0
+                _chunks_yielded = False  # track whether we already streamed chunks to the user
 
-                assert model_result is not None, "No model result was produced."
+                while llm_retry_count <= self._llm_max_retries:
+                    try:
+                        _chunks_yielded = False
+                        async for inference_output in self._call_llm(
+                            model_client=model_client,
+                            model_client_stream=model_client_stream,
+                            system_messages=system_messages,
+                            model_context=model_context,
+                            workbench=workbench,
+                            handoff_tools=handoff_tools,
+                            manager_tools=manager_tools,
+                            agent_name=agent_name,
+                            cancellation_token=cancellation_token,
+                            output_content_type=output_content_type,
+                        ):
+                            if self.is_paused:
+                                raise asyncio.CancelledError()
+                            
+                            if isinstance(inference_output, CreateResult):
+                                model_result = inference_output
+                            else:
+                                # Yield streaming chunks immediately for zero-latency UX
+                                yield inference_output
+                                _chunks_yielded = True
+
+                        assert model_result is not None, "No model result was produced."
+
+                        # ── Check for empty text output ─────────────────────
+                        if isinstance(model_result.content, str) and not model_result.content.strip():
+                            # Empty output — treat as a retriable failure
+                            if llm_retry_count < self._llm_max_retries:
+                                llm_retry_count += 1
+                                delay = min(self._llm_retry_base_delay * (2 ** (llm_retry_count - 1)), 60)
+                                logger.warning(
+                                    f"[LLM Retry] Empty output (attempt {llm_retry_count}/{self._llm_max_retries}), "
+                                    f"retrying in {delay:.1f}s…"
+                                )
+                                yield AgentLogEvent(
+                                    source="system",
+                                    title="LLM Retry",
+                                    content=f"⚠️ 模型输出为空，正在重试 ({llm_retry_count}/{self._llm_max_retries})，等待 {delay:.1f}s…",
+                                    send_level=Send_level.WARNING,
+                                )
+                                await asyncio.sleep(delay)
+                                # Do NOT add empty output to context — just retry
+                                model_result = None
+                                continue
+                            else:
+                                # Exhausted retries for empty output
+                                logger.error(
+                                    f"[LLM Retry] Empty output after {self._llm_max_retries} retries"
+                                )
+                                # Fall through: the empty string will be handled below
+                                break
+
+                        # ── Success — break retry loop ──
+                        break  # exit retry while-loop
+
+                    except asyncio.CancelledError:
+                        raise  # propagate cancellation, no retry
+
+                    except Exception as llm_err:
+                        # ── Model API error — retriable ──────────────────────
+                        if llm_retry_count < self._llm_max_retries:
+                            llm_retry_count += 1
+                            delay = min(self._llm_retry_base_delay * (2 ** (llm_retry_count - 1)), 60)
+                            logger.warning(
+                                f"[LLM Retry] Model call failed: {llm_err} "
+                                f"(attempt {llm_retry_count}/{self._llm_max_retries}), "
+                                f"retrying in {delay:.1f}s…"
+                            )
+                            retry_msg = (
+                                f"⚠️ 模型调用失败: {type(llm_err).__name__}: {llm_err}\n"
+                                f"正在重试 ({llm_retry_count}/{self._llm_max_retries})，等待 {delay:.1f}s…"
+                            )
+                            if _chunks_yielded:
+                                # Partial text was already shown — inform user it may be incomplete
+                                retry_msg = (
+                                    f"⚠️ 以上输出因模型调用中断可能不完整。"
+                                    f"错误: {type(llm_err).__name__}: {llm_err}\n"
+                                    f"正在重试 ({llm_retry_count}/{self._llm_max_retries})，等待 {delay:.1f}s…\n"
+                                    f"────────────────────────────────"
+                                )
+                            yield AgentLogEvent(
+                                source="system",
+                                title="LLM Retry",
+                                content=retry_msg,
+                                send_level=Send_level.WARNING,
+                            )
+                            await asyncio.sleep(delay)
+                            # Do NOT add error to context — just retry
+                            continue
+                        else:
+                            # Exhausted retries — re-raise to outer except handler
+                            logger.error(
+                                f"[LLM Retry] Model call failed after {self._llm_max_retries} retries: {llm_err}"
+                            )
+                            raise
+
+                # ── Post-retry: handle the final model_result ─────────────────
+                if model_result is None:
+                    # All retries produced empty output
+                    yield Response(
+                        chat_message=TextMessage(
+                            content="❌ 模型多次返回空输出，请稍后重试或创建新会话。\n"
+                                    "The model returned empty output after multiple retries. "
+                                    "Please try again later or start a new session.",
+                            source=agent_name,
+                            metadata={"internal": "no"},
+                        ),
+                        inner_messages=inner_messages,
+                    )
+                    return
 
                 # --- NEW: If the model produced a hidden "thought," yield it as an event ---
                 if model_result.thought:
@@ -1218,21 +1321,7 @@ Current Session_ID is {self._thread_id}"""
                 
                 # If direct text response (string)
                 if isinstance(model_result.content, str):
-
-                    if not model_result.content and empty_turn_count < max_empty_turn:
-                        empty_turn_count += 1
-                        await self._model_context.add_message(
-                            UserMessage(
-                                content=f"Your reply is empty. Please continue with the task above.",
-                                source="user"
-                            )
-                        )
-                        continue
-                    elif not model_result.content and empty_turn_count >= max_empty_turn:
-                        model_result.content = "The response is empty. Please try again or create a new session."
-                    else:
-                        empty_turn_count = 0
-
+                    # At this point non-empty strings already passed the retry check above
                     reponse = await self.handle_str_reponse(
                         model_result = model_result,
                         agent_name = agent_name,
@@ -1303,16 +1392,13 @@ Current Session_ID is {self._thread_id}"""
         except Exception as e:
             logger.error(f"Error in {self._user_profile_manager.agent_name}: {e}")
             logger.error(traceback.format_exc())
-            # add to chat history
-            await self._model_context.add_message(
-                UserMessage(
-                    content=f"An error occurred while executing the task: {e}",
-                    source=self._name
-                )
-            )
+            # Do NOT add error to chat history — retry logic in the loop already
+            # handled retriable failures.  If we reach here the error is fatal.
             yield Response(
                 chat_message=TextMessage(
-                    content=f"An error occurred while executing the task: {e}",
+                    content=f"❌ 执行任务时发生错误: {type(e).__name__}: {e}\n\n"
+                            f"模型调用已重试 {self._llm_max_retries} 次仍然失败。请检查网络连接或模型配置后重试。\n"
+                            f"An error occurred after {self._llm_max_retries} retries: {e}",
                     source=self._user_profile_manager.agent_name,
                     metadata={"internal": "no"},
                 ),
