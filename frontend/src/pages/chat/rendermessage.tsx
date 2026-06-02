@@ -980,6 +980,11 @@ export const RenderMessage: React.FC<MessageProps> = memo(
 
     // Check if this is a FilesEvent - render inline images in the chat
     const messageAny = message as any;
+    const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp']);
+    const isImageFile = (fname: string) => {
+      const ext = fname.split('.').pop()?.toLowerCase() || '';
+      return IMAGE_EXTENSIONS.has(ext);
+    };
     if (messageAny.type === "FilesEvent" || message.metadata?.type === "FilesEvent") {
       const filesData = messageAny.content?.files || messageAny.files || [];
       if (filesData.length === 0) return null;
@@ -989,7 +994,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
             const b64 = file.base64_content;
             const name = file.name || "";
             const desc = file.description || "";
-            const mime = file.mime_type || (name.endsWith('.svg') ? 'image/svg+xml' : 'image/png');
+            const mime = file.mime_type || "application/octet-stream";
             if (!b64) return null;
             const dataUri = `data:${mime};base64,${b64}`;
             return (
@@ -997,20 +1002,25 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                 <a
                   href={dataUri}
                   download={name}
-                  className="text-xs font-medium text-accent hover:underline truncate"
+                  className="text-xs font-medium text-accent hover:underline truncate flex items-center gap-1"
                   title={desc || name}
                 >
-                  📎 {name}
+                  <span className="text-[10px] font-mono font-semibold uppercase px-1.5 py-0.5 rounded bg-tertiary/30 text-secondary">
+                    {name.split('.').pop()?.toUpperCase() || 'FILE'}
+                  </span>
+                  {name}
                 </a>
-                <img
-                  src={dataUri}
-                  alt={desc || name}
-                  className="max-w-full max-h-[50vh] rounded-lg border border-border-primary/30 cursor-zoom-in"
-                  onClick={() => {
-                    const win = window.open();
-                    if (win) win.document.write(`<img src="${dataUri}" style="max-width:100vw;max-height:100vh" />`);
-                  }}
-                />
+                {isImageFile(name) ? (
+                  <img
+                    src={dataUri}
+                    alt={desc || name}
+                    className="max-w-full max-h-[50vh] rounded-lg border border-border-primary/30 cursor-zoom-in"
+                    onClick={() => {
+                      const win = window.open();
+                      if (win) win.document.write(`<img src="${dataUri}" style="max-width:100vw;max-height:100vh" />`);
+                    }}
+                  />
+                ) : null}
               </div>
             );
           })}

@@ -295,6 +295,13 @@ class WebSocketManager:
                         self.db_manager.upsert(run)
                     continue
                 
+                # ── Clear chunk buffer when complete TextMessage arrives ──
+                # Must run BEFORE the internal-message skip, because internal
+                # TextMessages (which is all non-user ones from round-robin)
+                # get `continue`-d and would never reach the clear below.
+                if isinstance(message, TextMessage) and run_id in self._chunk_buffers:
+                    self._chunk_buffers[run_id].pop(message.source or "assistant", None)
+
                 # Skip internal messages not meant for client display
                 if (
                     hasattr(message, "metadata")
@@ -484,25 +491,7 @@ class WebSocketManager:
             traceback.print_exc()
             await self._handle_stream_error(run_id, e)
         finally:
-            # ── FLUSH accumulated chunks on stream end ──
-            chunk_buf = self._chunk_buffers.pop(run_id, None)
-            if chunk_buf:
-                for source, text in chunk_buf.items():
-                    text = text.strip()
-                    if text and len(text) > 10:
-                        try:
-                            flush_msg = TextMessage(
-                                source=source,
-                                content=text,
-                                metadata={"internal": "yes", "is_save": "yes"},
-                            )
-                            await self._save_message(run_id, flush_msg)
-                            logger.info(
-                                f"({len(text)} chars) for run {run_id}"
-                            )
-                        except Exception as e:
-                            pass
-
+            self._chunk_buffers.pop(run_id, None)
             self._cancellation_tokens.pop(run_id, None)
             self._team_managers.pop(run_id, None)  # Remove the team manager when done
 
@@ -519,51 +508,37 @@ class WebSocketManager:
 
         run = await self._get_run(run_id)
         if run:
-            # --- DEBUG LOG: trace every message save ---
-            msg_type = type(message).__name__
-            msg_source = getattr(message, "source", "unknown")
-            msg_content_preview = ""
-            try:
-                content = getattr(message, "content", None)
-                if content is not None:
-                    if isinstance(content, str):
-                        msg_content_preview = content[:200]
-                    elif isinstance(content, list):
-                        # MultiModalMessage content is a list of dicts
-                        parts_info = []
-                        for item in content:
-                            if isinstance(item, dict):
-                                if "data" in item:
-                                    parts_info.append(f"Image(data_len={len(str(item.get('data','')))[:6]})")
-                                elif "url" in item:
-                                    parts_info.append(f"Image(url={item['url'][:80]})")
-                                elif "text" in item:
-                                    parts_info.append(f"Text({item['text'][:80]})")
-                                else:
-                                    parts_info.append(f"dict({list(item.keys())})")
-                            else:
-                                parts_info.append(str(type(item).__name__))
-                        msg_content_preview = " | ".join(parts_info) if parts_info else "empty_list"
-                    else:
-                        msg_content_preview = str(content)[:200]
-            except Exception as e:
-                msg_content_preview = f"<error getting preview: {e}>"
+            # Dedup: skip if same source + content already saved for this run
+            should_save = True
+            if isinstance(message, TextMessage):
+                new_content = getattr(message, "content", None)
+                new_source = getattr(message, "source", "")
+                if new_content and isinstance(new_content, str) and len(new_content) > 20:
+                    try:
+                        existing = self.db_manager.get(
+                            Message, filters={"run_id": run_id}, return_json=False
+                        )
+                        if existing.status and existing.data:
+                            for em in existing.data:
+                                cfg = getattr(em, "config", {}) or {}
+                                if isinstance(cfg, dict):
+                                    if (cfg.get("source") == new_source
+                                        and cfg.get("content") == new_content
+                                        and cfg.get("type") == "TextMessage"):
+                                        should_save = False
+                                        break
+                    except Exception:
+                        pass
 
-            model_dump_keys = []
-            try:
-                d = message.model_dump()
-                model_dump_keys = list(d.keys())
-            except Exception:
-                pass
-
-            db_message = Message(
-                created_at=datetime.now(),
-                session_id=run.session_id,
-                run_id=run_id,
-                config=message.model_dump(),
-                user_id=run.user_id,  # Pass the user_id from the run object
-            )
-            result = self.db_manager.upsert(db_message)
+            if should_save:
+                db_message = Message(
+                    created_at=datetime.now(),
+                    session_id=run.session_id,
+                    run_id=run_id,
+                    config=message.model_dump(),
+                    user_id=run.user_id,
+                )
+                self.db_manager.upsert(db_message)
 
     async def _update_run(
         self,
