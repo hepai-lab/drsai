@@ -649,18 +649,11 @@ export const SessionManager: React.FC = () => {
       if (!Number.isFinite(n)) return 0;
       return n > 1e12 ? n : n * 1000;
     };
-    const isJsonFile = (file: MessageFileItem) => {
-      const name = (file.name || "").trim().toLowerCase();
-      if (name.endsWith(".json")) return true;
-      const mime = (file.mime_type || "").trim().toLowerCase();
-      return mime === "application/json" || mime === "text/json";
-    };
     const fileRows = events
       .flatMap((event) => {
         const timeMs = filesEventTimeMs(event);
         const list = event.content?.files || [];
         return list
-          .filter((file) => !isJsonFile(file))
           .map((file) => ({ file, timeMs }));
       })
       .sort((a, b) => b.timeMs - a.timeMs);
