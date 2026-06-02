@@ -66,16 +66,16 @@ ENV CODESERVER_CONFIG=/root/.config/code-server/config.yaml
 COPY . /app
 
 # 安装 Python 包（按依赖顺序）
-# 先安装 drsai 核心包
+# 1. 先安装 drsai 核心包
 WORKDIR /app/python/packages/drsai
 RUN pip install --no-cache-dir -e .
 
-# 安装 drsai_ui UI 包
-WORKDIR /app/python/packages/drsai_ui
+# 2. 安装 drsai_ext 扩展包（drsai_ui 依赖它，必须在 drsai_ui 之前安装）
+WORKDIR /app/python/packages/drsai_ext
 RUN pip install --no-cache-dir -e .
 
-# 安装 drsai_ext 扩展包
-WORKDIR /app/python/packages/drsai_ext
+# 3. 安装 drsai_ui UI 包（依赖 drsai 和 drsai_ext，放在最后）
+WORKDIR /app/python/packages/drsai_ui
 RUN pip install --no-cache-dir -e .
 
 # 创建必要的目录
