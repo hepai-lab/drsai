@@ -1,4 +1,5 @@
 # api/deps.py
+import hashlib
 import logging
 from contextlib import contextmanager
 from typing import Any, Dict, Optional
@@ -62,6 +63,24 @@ async def get_websocket_manager() -> WebSocketManager:
 # Manager initialization and cleanup
 
 
+def _seed_default_users(db: DatabaseManager) -> None:
+    from ..datamodel.db import Userinfo, UserRole
+
+    accounts = [
+        (settings.DEFAULT_ADMIN_USER, settings.DEFAULT_ADMIN_PASSWORD, True),
+        (settings.DEFAULT_DEV_USER,   settings.DEFAULT_DEV_PASSWORD,   False),
+    ]
+    for user_id, password, is_admin in accounts:
+        if not user_id or not password:
+            continue
+        resp = db.get(Userinfo, filters={"user_id": user_id})
+        if resp.status and resp.data:
+            continue
+        db.upsert(Userinfo(user_id=user_id, password=hashlib.sha256(password.encode()).hexdigest()))
+        db.upsert(UserRole(user_id=user_id, is_admin=is_admin))
+        logger.info(f"Seeded default user: {user_id} (admin={is_admin})")
+
+
 async def init_managers(
     database_uri: str,
     config_dir: Path,
@@ -80,6 +99,7 @@ async def init_managers(
         # Initialize database manager
         _db_manager = DatabaseManager(engine_uri=database_uri, base_dir=app_root)
         _db_manager.initialize_database(auto_upgrade=settings.UPGRADE_DATABASE)
+        _seed_default_users(_db_manager)
 
         from .authz import bootstrap_platform_admins
 
