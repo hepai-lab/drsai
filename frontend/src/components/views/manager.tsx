@@ -1,4 +1,5 @@
 import { appContext } from "@/hooks/provider";
+import { useLang } from "@/i18n/useLang";
 import { Dropdown, Input, message, Modal, Popconfirm, Spin, Button } from "antd";
 import React, { Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -84,6 +85,7 @@ const isImageMessageFile = (file: MessageFileItem): boolean => {
 };
 
 export const SessionManager: React.FC = () => {
+  const { t } = useLang();
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | undefined>();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -1211,7 +1213,7 @@ export const SessionManager: React.FC = () => {
               type="search"
               value={historySearchQuery}
               onChange={(e) => setHistorySearchQuery(e.target.value)}
-              placeholder="搜索会话名称或 ID…"
+              placeholder={t("sidebar.searchSessions")}
               autoComplete="off"
               className={`w-full rounded-lg pl-9 pr-3 py-2 text-sm border outline-none transition-shadow ${inputRing}`}
             />
@@ -1266,7 +1268,7 @@ export const SessionManager: React.FC = () => {
                               label: (
                                 <>
                                   <Share2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5 align-middle" />
-                                  分享
+                                  {t("sidebar.share")}
                                 </>
                               ),
                               onClick: (e) => {
@@ -1281,7 +1283,7 @@ export const SessionManager: React.FC = () => {
                               label: (
                                 <>
                                   <Trash2 className="w-4 h-4 inline-block mr-1.5 -mt-0.5 align-middle" />
-                                  删除
+                                  {t("sidebar.deleteSession")}
                                 </>
                               ),
                               onClick: (e) => {

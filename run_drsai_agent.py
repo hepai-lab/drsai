@@ -195,14 +195,22 @@ if __name__ == "__main__":
             #     "users": [], 
             #     "owner": "admin"
             #     },
-            description = "专属于您的AI智能体❤",
+            description = '{"en":"Your personal assistant❤","zh":"您的专属AI智能体❤"}',
             version = "0.1.0",
             logo="https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
             examples=[
-                "/help",
-                "你有哪些技能？",
-                "我应该如何将openclaw作为我的子智能体？",
-                "如何设置定时任务？"
+               {
+                "en":"/help",
+                "zh":"/帮助"
+               },
+               {
+                "en":"/skills",
+                "zh":"/技能"
+               },
+               {
+                "en":"/settings",
+                "zh":"/设置"
+               }
             ],
             agent_config = llm_mode_config,
             defult_config_name="hepai/deepseek-v4-flash",
