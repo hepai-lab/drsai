@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useLang } from "../../i18n/useLang";
 import { RcFile } from "antd/es/upload";
 import { IPlan } from "../../components/types/plan";
 import { Run } from "../../components/types/datamodel";
@@ -52,6 +53,7 @@ export default function WelcomeScreen({
     serverFilesPrefill,
     suppressSampleTasks = false,
 }: WelcomeScreenProps) {
+    const { t } = useLang();
     const [hasInputValue, setHasInputValue] = React.useState(false);
     const [hideSampleTasks, setHideSampleTasks] = React.useState(suppressSampleTasks);
 
@@ -79,7 +81,7 @@ export default function WelcomeScreen({
                         className="text-base text-secondary animate-slide-up max-w-sm mx-auto leading-relaxed"
                         style={{ animationDelay: "0.15s" }}
                     >
-                        输入消息开始对话，或从下方选择示例任务
+                        {t("welcomeScreen.title")}
                     </p>
                 </div>
             </div>

@@ -1,5 +1,6 @@
 import React from "react";
 import { navigate } from "gatsby";
+import { useLang } from "../i18n/useLang";
 
 const backgroundStyle: React.CSSProperties = {
   minHeight: "100vh",
@@ -102,6 +103,7 @@ const closeBtnStyle: React.CSSProperties = {
 };
 
 export const SSOLogin: React.FC = () => {
+  const { t } = useLang();
   const [hover, setHover] = React.useState(false);
   const [showModal, setShowModal] = React.useState(false);
   const [username, setUsername] = React.useState("");
@@ -119,7 +121,7 @@ export const SSOLogin: React.FC = () => {
     e.preventDefault();
     // TODO: 替换为实际本地登录逻辑
     if (username === "" || password === "") {
-      setLoginError("请输入账号和密码");
+      setLoginError(t("sso.error.emptyFields"));
     } else {
       setLoginError("");
       // 跳转到 /auth?username=xxx
@@ -132,11 +134,11 @@ export const SSOLogin: React.FC = () => {
   return (
     <div style={backgroundStyle}>
       <div style={logoContainerStyle}>
-        IHEP计算中心
+        {t("sso.brand.ihep")}
       </div>
       <div style={containerStyle}>
         <h2 style={h2Style}>
-          欢迎探索 Dr. Sai 智能体
+          {t("sso.welcome")}
         </h2>
         <button
           style={hover ? { ...buttonStyle, ...buttonHoverStyle } : buttonStyle}
@@ -144,7 +146,7 @@ export const SSOLogin: React.FC = () => {
           onMouseLeave={() => setHover(false)}
           onClick={handleLogin}
         >
-          使用高能所统一认证（IHEP-SSO）登录
+          {t("sso.description")}
         </button>
       </div>
       {showModal && (
@@ -153,13 +155,13 @@ export const SSOLogin: React.FC = () => {
             style={modalStyle}
             onClick={e => e.stopPropagation()}
           >
-            <button style={closeBtnStyle} onClick={() => setShowModal(false)} title="关闭">×</button>
-            <h3 style={{ marginBottom: 20 }}>本地用户登录</h3>
+            <button style={closeBtnStyle} onClick={() => setShowModal(false)} title={t("sso.close")}>×</button>
+            <h3 style={{ marginBottom: 20 }}>{t("sso.localLogin")}</h3>
             <form onSubmit={handleLocalLogin}>
               <div style={{ marginBottom: 15 }}>
                 <input
                   type="text"
-                  placeholder="账号"
+                  placeholder={t("sso.usernamePlaceholder")}
                   value={username}
                   onChange={e => setUsername(e.target.value)}
                   style={{
@@ -175,7 +177,7 @@ export const SSOLogin: React.FC = () => {
               <div style={{ marginBottom: 15 }}>
                 <input
                   type="password"
-                  placeholder="密码"
+                  placeholder={t("sso.passwordPlaceholder")}
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   style={{
@@ -200,7 +202,7 @@ export const SSOLogin: React.FC = () => {
                   marginTop: 5,
                 }}
               >
-                登录
+                {t("sso.loginBtn")}
               </button>
             </form>
           </div>

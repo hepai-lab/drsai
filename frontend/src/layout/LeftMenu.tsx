@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import React, { useContext, useEffect, useState } from "react";
 import { appContext } from "../hooks/provider";
+import { useLang } from "../i18n/useLang";
 
 interface LeftMenuProps {
   isSidebarOpen: boolean;
@@ -28,9 +29,9 @@ interface LeftMenuProps {
 type SectionId = "chat" | "agents" | "settings";
 
 const SECTIONS: { id: SectionId; icon: React.ReactNode; label: string; defaultItem: string }[] = [
-  { id: "chat", icon: <MessageSquare className="w-3.5 h-3.5" />, label: "聊天", defaultItem: "current_session" },
-  { id: "agents", icon: <Bot className="w-3.5 h-3.5" />, label: "智能体", defaultItem: "my_agents" },
-  { id: "settings", icon: <Settings className="w-3.5 h-3.5" />, label: "设置", defaultItem: "profile" },
+  { id: "chat", icon: <MessageSquare className="w-3.5 h-3.5" />, label: "Chat", defaultItem: "current_session" },
+  { id: "agents", icon: <Bot className="w-3.5 h-3.5" />, label: "Agents", defaultItem: "my_agents" },
+  { id: "settings", icon: <Settings className="w-3.5 h-3.5" />, label: "Settings", defaultItem: "profile" },
 ];
 
 const LeftMenu: React.FC<LeftMenuProps> = ({
@@ -41,6 +42,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
   showAdminNav = false,
 }) => {
   const { darkMode } = useContext(appContext);
+  const { t } = useLang();
   const isDark = darkMode === "dark";
 
   const [expanded, setExpanded] = useState<Record<SectionId, boolean>>({
@@ -66,7 +68,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
   const toggleSection = (id: SectionId) =>
     setExpanded((e) => ({ ...e, [id]: !e[id] }));
 
-  const SectionHeader = ({ id, icon, label }: { id: SectionId; icon: React.ReactNode; label: string }) => (
+  const SectionHeader = ({ id, icon }: { id: SectionId; icon: React.ReactNode }) => (
     <button
       type="button"
       onClick={() => toggleSection(id)}
@@ -74,7 +76,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
     >
       <div className="flex items-center gap-2">
         {icon}
-        <span>{label}</span>
+        <span>{t("leftmenu.section." + id)}</span>
       </div>
       {expanded[id] ? (
         <ChevronDown className="w-3.5 h-3.5" />
@@ -133,7 +135,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
         <button
           type="button"
           onClick={onClose}
-          title="展开侧边栏"
+          title={t("leftmenu.expand")}
           className={`flex items-center justify-center w-full h-8 transition-colors ${isDark
             ? "text-secondary hover:text-primary hover:bg-white/5"
             : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
@@ -147,7 +149,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
           {SECTIONS.map((s) => {
             const isSectionActive = SECTION_ITEMS[s.id].includes(activeSubMenuItem);
             return (
-              <Tooltip key={s.id} title={s.label} placement="right">
+              <Tooltip key={s.id} title={t("leftmenu.section." + s.id)} placement="right">
                 <button
                   type="button"
                   onClick={() => { onSubMenuChange(s.defaultItem); onClose(); }}
@@ -176,7 +178,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
         <button
           type="button"
           onClick={onClose}
-          title="收起侧边栏"
+          title={t("leftmenu.collapse")}
           className={`flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-lg transition-colors ${isDark
             ? "text-secondary hover:text-primary hover:bg-white/5"
             : "text-gray-400 hover:text-gray-600 hover:bg-gray-100/60"
@@ -190,13 +192,13 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
       <div className="flex-1 overflow-y-auto px-2 pt-2 pb-4 sidebar-scroll space-y-1">
         {/* ── 聊天 ── */}
         <div>
-          <SectionHeader id="chat" icon={<MessageSquare className="w-3.5 h-3.5" />} label="聊天" />
+          <SectionHeader id="chat" icon={<MessageSquare className="w-3.5 h-3.5" />} />
           {expanded.chat && (
             <div className="mt-0.5 space-y-0.5">
               <NavItem
                 id="current_session"
                 icon={<MessageSquare className="w-3.5 h-3.5" />}
-                label="聊天"
+                label={t("leftmenu.section.chat")}
                 onClick={() => onSubMenuChange("current_session")}
               />
             </div>
@@ -207,7 +209,7 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
 
         {/* ── 智能体 ── */}
         <div>
-          <SectionHeader id="agents" icon={<Bot className="w-3.5 h-3.5" />} label="智能体" />
+          <SectionHeader id="agents" icon={<Bot className="w-3.5 h-3.5" />} />
           {expanded.agents && (
             <div className="mt-0.5 space-y-0.5">
               {/* <NavItem
@@ -219,19 +221,19 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
               <NavItem
                 id="agent_square"
                 icon={<Grid2X2 className="w-3.5 h-3.5" />}
-                label="智能体广场"
+                label={t("leftmenu.nav.agentSquare")}
                 onClick={() => onSubMenuChange("agent_square")}
               />
               <NavItem
                 id="skills_square"
                 icon={<Wrench className="w-3.5 h-3.5" />}
-                label="技能广场"
+                label={t("leftmenu.nav.skillsSquare")}
                 onClick={() => onSubMenuChange("skills_square")}
               />
               <NavItem
                 id="library"
                 icon={<Library className="w-3.5 h-3.5" />}
-                label="库"
+                label={t("leftmenu.nav.library")}
                 onClick={() => onSubMenuChange("library")}
               />
             </div>
@@ -242,13 +244,13 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
 
         {/* ── 设置 ── */}
         <div>
-          <SectionHeader id="settings" icon={<Settings className="w-3.5 h-3.5" />} label="设置" />
+          <SectionHeader id="settings" icon={<Settings className="w-3.5 h-3.5" />} />
           {expanded.settings && (
             <div className="mt-0.5 space-y-0.5">
               <NavItem
                 id="profile"
                 icon={<UserCog className="w-3.5 h-3.5" />}
-                label="配置"
+                label={t("leftmenu.nav.profile")}
                 onClick={() => onSubMenuChange("profile")}
               />
               {showAdminNav ? (
@@ -256,13 +258,13 @@ const LeftMenu: React.FC<LeftMenuProps> = ({
                   <NavItem
                     id="usage_analytics"
                     icon={<ChartColumn className="w-3.5 h-3.5" />}
-                    label="使用分析"
+                    label={t("leftmenu.nav.usageAnalytics")}
                     onClick={() => onSubMenuChange("usage_analytics")}
                   />
                   <NavItem
                     id="user_management"
                     icon={<Users className="w-3.5 h-3.5" />}
-                    label="用户管理"
+                    label={t("leftmenu.nav.userManagement")}
                     onClick={() => onSubMenuChange("user_management")}
                   />
                 </>

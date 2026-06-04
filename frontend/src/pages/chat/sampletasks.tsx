@@ -1,5 +1,7 @@
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 import { appContext } from "@/hooks/provider";
+import { useLang } from "@/i18n/useLang";
+import { parseAgentExamples } from "@/utils/agentLocalizedText";
 import { ArrowUpRight } from "lucide-react";
 import React, { useContext, useMemo } from "react";
 
@@ -21,6 +23,10 @@ const MARQUEE_MASK: React.CSSProperties = {
 };
 
 const isSlashCommand = (text: string) => /^\s*\//.test(text);
+
+function exampleKey(task: string, idx: number): string {
+  return `${idx}-${task.slice(0, 24)}`;
+}
 
 function splitIntoRows<T>(items: T[], rowCount: number): T[][] {
   const rows = Array.from({ length: rowCount }, () => [] as T[]);
@@ -120,7 +126,7 @@ const MarqueeRow: React.FC<MarqueeRowProps> = ({
       >
         {loop.map((task, idx) => (
           <TaskChip
-            key={`${idx}-${task.slice(0, 24)}`}
+            key={exampleKey(task, idx)}
             task={task}
             onSelect={onSelect}
             duplicate={idx >= segmentLen}
@@ -133,8 +139,12 @@ const MarqueeRow: React.FC<MarqueeRowProps> = ({
 
 const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect, hidden }) => {
   const { user } = useContext(appContext);
+  const { lang } = useLang();
   const { agentInfo } = useAgentInfo(user?.email);
-  const examples = agentInfo?.examples ?? [];
+  const examples = useMemo(
+    () => parseAgentExamples(agentInfo?.examples, lang),
+    [agentInfo?.examples, lang]
+  );
 
   const useMarquee = examples.length > MARQUEE_THRESHOLD;
   const marqueeRows = useMemo(
@@ -172,7 +182,7 @@ const SampleTasks: React.FC<SampleTasksProps> = ({ onSelect, hidden }) => {
       ) : (
         <ul className="mx-auto flex w-full max-w-xl flex-col gap-2">
           {examples.map((task, idx) => (
-            <li key={`${idx}-${task.slice(0, 24)}`}>
+            <li key={exampleKey(task, idx)}>
               <TaskChip
                 task={task}
                 onSelect={onSelect}

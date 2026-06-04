@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Volume2, VolumeX, Pause, Play } from "lucide-react";
+import { useLang } from "../../i18n/useLang";
 
 interface VoiceOutputProps {
     text: string;
@@ -24,6 +25,7 @@ const VoiceOutput: React.FC<VoiceOutputProps> = ({
     pitch = 1,
     autoPlay = false,
 }) => {
+    const { t } = useLang();
     const [isSupported, setIsSupported] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
     const [isPaused, setIsPaused] = useState(false);
@@ -73,7 +75,7 @@ const VoiceOutput: React.FC<VoiceOutputProps> = ({
 
     const speakText = () => {
         if (!isSupported || !selectedVoice || !text.trim()) {
-            onError?.("语音合成不可用或没有文本内容");
+            onError?.(t("voiceoutput.unavailable"));
             return;
         }
 
@@ -107,7 +109,7 @@ const VoiceOutput: React.FC<VoiceOutputProps> = ({
             utteranceRef.current = utterance;
             window.speechSynthesis.speak(utterance);
         } catch (error) {
-            onError?.("语音合成失败");
+            onError?.(t("voiceoutput.ttsSynthesisFailed"));
         }
     };
 
@@ -147,29 +149,29 @@ const VoiceOutput: React.FC<VoiceOutputProps> = ({
     const getErrorMessage = (error: string) => {
         switch (error) {
             case "canceled":
-                return "语音播放被取消";
+                return t("voiceoutput.cancelled");
             case "interrupted":
-                return "语音播放被中断";
+                return t("voiceoutput.interrupted");
             case "audio-busy":
-                return "音频设备忙，请稍后重试";
+                return t("voiceoutput.busy");
             case "audio-hardware":
-                return "音频硬件错误";
+                return t("voiceoutput.hardwareError");
             case "network":
-                return "网络错误";
+                return t("voiceoutput.networkError");
             case "synthesis-not-supported":
-                return "不支持语音合成";
+                return t("voiceoutput.notSupported");
             case "synthesis-failed":
-                return "语音合成失败";
+                return t("voiceoutput.synthesisFailed");
             case "language-not-supported":
-                return "不支持该语言";
+                return t("voiceoutput.langNotSupported");
             case "voice-not-supported":
-                return "不支持该语音";
+                return "Voice not supported";
             case "text-too-long":
-                return "文本过长";
+                return "Text too long";
             case "invalid-argument":
-                return "参数无效";
+                return "Invalid argument";
             default:
-                return `语音合成错误: ${error}`;
+                return `${t("voiceoutput.synthesisFailed")}: ${error}`;
         }
     };
 

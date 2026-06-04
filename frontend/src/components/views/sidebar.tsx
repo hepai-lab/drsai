@@ -24,6 +24,7 @@ import React, { useEffect, useMemo, useRef } from "react";
 import magneticOneIcon from "../../assets/magentic-one.png";
 import magneticTwoIcon from "../../assets/magentic-two.svg";
 import { appContext } from "../../hooks/provider";
+import { useLang } from "../../i18n/useLang";
 import { clearAuthSession } from "../../utils/authSession";
 import { Agent } from "../../types/common";
 import { Button } from "../common/Button";
@@ -80,6 +81,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onDeleteAgent,
 }) => {
   const { user, darkMode } = React.useContext(appContext);
+  const { t } = useLang();
   const [isProfileModalOpen, setIsProfileModalOpen] = React.useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
   const [isAgentsExpanded, setIsAgentsExpanded] = React.useState(true);
@@ -640,13 +642,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 items: [
                   {
                     key: "profile",
-                    label: "用户信息",
+                    label: t("sidebar.user.info"),
                     icon: <User className="w-4 h-4" />,
                     onClick: () => setIsProfileModalOpen(true),
                   },
                   {
                     key: "settings",
-                    label: "设置",
+                    label: t("sidebar.user.settings"),
                     icon: <Settings className="w-4 h-4" />,
                     onClick: () => setIsSettingsOpen(true),
                   },
@@ -657,7 +659,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   },
                   {
                     key: "logout",
-                    label: "退出登录",
+                    label: t("sidebar.user.logout"),
                     icon: <LogOut className="w-4 h-4" />,
                     onClick: handleLogout,
                     danger: true,

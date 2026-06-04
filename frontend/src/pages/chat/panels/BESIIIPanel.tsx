@@ -1,6 +1,7 @@
 import { Check, CheckCircle, Circle, Clock } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { appContext } from "../../../hooks/provider";
+import { useLang } from "../../../i18n/useLang";
 import { BESIIIPanelProps, BESIIISubTask, BESIIITask } from "./types";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { formatUnixForDisplayZhCN } from "../../../utils/apiDatetime";
@@ -44,6 +45,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
     onTabChange,
 }) => {
     const { darkMode, user } = React.useContext(appContext);
+    const { t } = useLang();
     const [internalActiveTab, setInternalActiveTab] = useState<TabType>('global_info');
     // 使用受控的 activeTab（如果提供），否则使用内部状态
     const activeTab = controlledActiveTab !== undefined ? controlledActiveTab : internalActiveTab;
@@ -183,14 +185,14 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                 return (
                     <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${darkMode === "dark" ? "bg-yellow-500/20 text-yellow-400" : "bg-yellow-100 text-yellow-800"}`}>
                         <Clock size={14} />
-                        <span>执行中</span>
+                        <span>{t("besiiiPanel.executing")}</span>
                     </div>
                 );
             case 'waiting':
                 return (
                     <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${darkMode === "dark" ? "bg-gray-700 text-gray-400" : "bg-gray-100 text-gray-500"}`}>
                         <Circle size={14} />
-                        <span>等待中</span>
+                        <span>{t("besiiiPanel.waiting")}</span>
                     </div>
                 );
         }
@@ -387,7 +389,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                 <div className="flex h-full min-h-0 items-center justify-center rounded-lg border border-gray-900 bg-gray-950 text-sm text-slate-300">
                     <div className="text-center">
                         <div className="text-slate-500 mb-2">📋</div>
-                        <div>暂无日志</div>
+                        <div>{t("besiiiPanel.noLogs")}</div>
                     </div>
                 </div>
             );
@@ -428,7 +430,7 @@ const BESIIIPanel: React.FC<BESIIIPanelProps> = ({
                     </div>
                 </div>
                 <div className="mt-2 flex items-center justify-between text-xs text-slate-400 px-1">
-                    <span>共 {logs.length} 条日志条目</span>
+                    <span>{t("besiiiPanel.logCount", logs.length)}</span>
                     <span className="text-slate-500">自动滚动到底部</span>
                 </div>
             </div>

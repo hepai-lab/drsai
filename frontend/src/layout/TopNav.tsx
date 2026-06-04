@@ -8,8 +8,9 @@ import {
   Search,
   User,
 } from "lucide-react";
-import React, { useContext, useEffect, useState } from "react";
+import React, { useContext, useState } from "react";
 import { appContext } from "../hooks/provider";
+import { useLang } from "../i18n/useLang";
 import UserProfileModal from "../components/userProfile";
 import { clearAuthSession } from "../utils/authSession";
 
@@ -20,14 +21,8 @@ interface TopNavProps {
 
 const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
   const { user, darkMode, setDarkMode } = useContext(appContext);
+  const { lang, toggleLang, t } = useLang();
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
-  const [lang, setLang] = useState<"zh" | "en">(
-    () => (localStorage.getItem("drsai_lang") as "zh" | "en") || "zh"
-  );
-
-  useEffect(() => {
-    console.log(user, "user");
-  }, [user]);
 
   const handleLogout = () => {
     clearAuthSession();
@@ -36,12 +31,6 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
     } else {
       window.location.href = "/umt/logout";
     }
-  };
-
-  const toggleLang = () => {
-    const next = lang === "zh" ? "en" : "zh";
-    setLang(next);
-    localStorage.setItem("drsai_lang", next);
   };
 
   return (
@@ -58,7 +47,7 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
           <button
             type="button"
             onClick={onToggleSidebar}
-            aria-label="打开导航菜单"
+            aria-label={t("topnav.menu.aria")}
             className="lg:hidden flex items-center justify-center w-9 h-9 rounded-xl text-primary hover:text-accent hover:bg-tertiary/30 transition-all"
           >
             <Menu className="w-5 h-5" />
@@ -82,7 +71,7 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
         <div className="flex items-center gap-0.5 lg:gap-1 flex-shrink-0">
           <Input
             prefix={<Search className="w-4 h-4 text-secondary" />}
-            placeholder={lang === "zh" ? "搜索..." : "Search..."}
+            placeholder={t("topnav.search.placeholder")}
             className={`hidden lg:block w-64 rounded-xl mr-2 ${
               darkMode === "dark"
                 ? "[&_.ant-input]:!bg-white/5 [&_.ant-input]:!text-primary [&_.ant-input-affix-wrapper]:!bg-white/5 [&_.ant-input-affix-wrapper]:!border-border-primary/50"
@@ -92,15 +81,7 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
           />
 
           <Tooltip
-            title={
-              darkMode === "dark"
-                ? lang === "zh"
-                  ? "切换亮色"
-                  : "Light mode"
-                : lang === "zh"
-                  ? "切换暗色"
-                  : "Dark mode"
-            }
+            title={darkMode === "dark" ? t("topnav.theme.light") : t("topnav.theme.dark")}
           >
             <button
               onClick={() => setDarkMode(darkMode === "dark" ? "light" : "dark")}
@@ -114,7 +95,7 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
             </button>
           </Tooltip>
 
-          <Tooltip title={lang === "zh" ? "Switch to English" : "切换为中文"}>
+          <Tooltip title={t("topnav.lang.switch")}>
             <button
               onClick={toggleLang}
               className="flex items-center justify-center w-9 h-9 rounded-xl text-primary hover:text-accent hover:bg-tertiary/30 transition-all text-sm font-medium"
@@ -134,7 +115,7 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
             </a>
           </Tooltip>
 
-          <Tooltip title={lang === "zh" ? "文档" : "Documentation"}>
+          <Tooltip title={t("topnav.docs")}>
             <a
               href="https://docs-drsai.ihep.ac.cn/"
               target="_blank"
@@ -152,14 +133,14 @@ const TopNav: React.FC<TopNavProps> = ({ onToggleSidebar }) => {
                 items: [
                   {
                     key: "profile",
-                    label: lang === "zh" ? "个人设置" : "Profile Settings",
+                    label: t("topnav.profile"),
                     icon: <User className="w-4 h-4" />,
                     onClick: () => setIsProfileModalOpen(true),
                   },
                   { type: "divider" as const },
                   {
                     key: "logout",
-                    label: lang === "zh" ? "退出登录" : "Sign Out",
+                    label: t("topnav.logout"),
                     icon: <LogOut className="w-4 h-4" />,
                     onClick: handleLogout,
                     danger: true,
