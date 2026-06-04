@@ -1,5 +1,6 @@
 import React, { useContext } from "react";
 import { appContext } from "../../hooks/provider";
+import { useLang } from "../../i18n/useLang";
 import {
   Tabs,
   Select,
@@ -32,6 +33,7 @@ type UserLike = { name?: string; email?: string; avatar_url?: string };
 
 const ProfileSection: React.FC<{ user: UserLike }> = ({ user }) => {
   const { darkMode } = useContext(appContext);
+  const { t } = useLang();
   const initial = String(user.name || user.email || "?").charAt(0).toUpperCase();
 
   return (
@@ -72,8 +74,8 @@ const ProfileSection: React.FC<{ user: UserLike }> = ({ user }) => {
                 : "border-gray-100 bg-gray-50/80"
               }`}
           >
-            <ConfigRow label="用户名" value={user.name || "—"} />
-            <ConfigRow label="邮箱" value={user.email || "—"} />
+            <ConfigRow label={t("settings.username")} value={user.name || "—"} />
+            <ConfigRow label={t("settings.email")} value={user.email || "—"} />
           </div>
         </div>
       </div>
@@ -101,6 +103,7 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
   userEmail,
 }) => {
   const { darkMode } = useContext(appContext);
+  const { t } = useLang();
   const { config, updateConfig, resetToDefaults } = useSettingsStore();
   const [websiteInput, setWebsiteInput] = React.useState("");
   const [cachedWebsites, setCachedWebsites] = React.useState<string[]>(
@@ -133,7 +136,7 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
         model_name: res.config.model_name,
       });
     } catch {
-      message.error("保存设置失败");
+      message.error(t("settings.saveFailed"));
     }
   };
 
@@ -157,7 +160,7 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
     reader.onload = (e) => {
       const content = e.target?.result as string;
       handleUpdateConfig({ model_configs: content, model_name: modelLabel });
-      message.success("YAML 配置导入成功");
+      message.success(t("settings.yamlImported"));
     };
     reader.readAsText(file);
     return false;
@@ -175,7 +178,7 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
       model_configs: generateOpenAIModelConfig(modelName),
       model_name: label,
     });
-    message.success("模型配置已更新");
+    message.success(t("settings.modelUpdated"));
   };
 
   const handleResetDefaults = () => {
@@ -186,19 +189,19 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
         .updateSettings(userEmail, useSettingsStore.getState().config)
         .catch(() => { });
     }
-    message.success("已恢复默认设置");
+    message.success(t("settings.defaultsRestored"));
   };
 
   return (
     <div className="space-y-6 px-1 pt-4">
       {/* 执行策略 */}
       <div>
-        <h3 className="text-sm font-semibold text-primary mb-3">执行策略</h3>
+        <h3 className="text-sm font-semibold text-primary mb-3">{t("settings.executionPolicy")}</h3>
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm">
-              操作审批策略
-              <Tooltip title="控制智能体执行操作前是否需要人工确认">
+              {t("settings.approvalPolicy")}
+              <Tooltip title={t("settings.tooltipApproval")}>
                 <InfoCircleOutlined className="text-secondary" />
               </Tooltip>
             </span>
@@ -207,24 +210,24 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
               onChange={(value) => handleUpdateConfig({ approval_policy: value })}
               style={{ width: 200 }}
               options={[
-                { value: "never", label: "从不需要审批" },
-                { value: "auto-conservative", label: "AI 自动判断" },
-                { value: "always", label: "始终需要审批" },
+                { value: "never", label: t("settings.never") },
+                { value: "auto-conservative", label: t("settings.autoConservative") },
+                { value: "always", label: t("settings.always") },
               ]}
             />
           </div>
 
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm">
-              允许重新规划
-              <Tooltip title="当计划不可行时，智能体自动重新制定计划">
+              {t("settings.allowReplan")}
+              <Tooltip title={t("settings.tooltipReplan")}>
                 <InfoCircleOutlined className="text-secondary" />
               </Tooltip>
             </span>
             <Switch
               checked={config.allow_for_replans}
-              checkedChildren="开"
-              unCheckedChildren="关"
+              checkedChildren={t("settings.on")}
+              unCheckedChildren={t("settings.off")}
               onChange={(checked) =>
                 handleUpdateConfig({ allow_for_replans: checked })
               }
@@ -233,8 +236,8 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
 
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm">
-              检索历史计划
-              <Tooltip title="控制智能体是否检索历史任务的计划作为参考">
+              {t("settings.retrievePlans")}
+              <Tooltip title={t("settings.tooltipRetrieve")}>
                 <InfoCircleOutlined className="text-secondary" />
               </Tooltip>
             </span>
@@ -245,9 +248,9 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
               }
               style={{ width: 200 }}
               options={[
-                { value: "never", label: "不检索" },
-                { value: "hint", label: "作为提示" },
-                { value: "reuse", label: "直接复用" },
+                { value: "never", label: t("settings.noRetrieve") },
+                { value: "hint", label: t("settings.asHint") },
+                { value: "reuse", label: t("settings.reuse") },
               ]}
             />
           </div>
@@ -259,21 +262,21 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
       {/* 网站访问控制 */}
       <div>
         <h3 className="text-sm font-semibold text-primary mb-3">
-          网站访问控制
+          {t("settings.websiteAccess")}
         </h3>
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm">
-              允许访问列表
-              <Tooltip title="开启后，智能体只能访问列表中的网站">
+              {t("settings.allowlist")}
+              <Tooltip title={t("settings.tooltipAllowlist")}>
                 <InfoCircleOutlined className="text-secondary" />
               </Tooltip>
             </span>
             {cachedWebsites.length === 0 && (
               <Switch
                 checked={allowedlistEnabled}
-                checkedChildren="限制访问"
-                unCheckedChildren="不限制"
+                checkedChildren={t("settings.restrictAccess")}
+                unCheckedChildren={t("settings.unrestricted")}
                 onChange={(checked) => {
                   setAllowedlistEnabled(checked);
                   if (!checked) {
@@ -295,7 +298,7 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
                   className="flex-1"
                 />
                 <Button icon={<Plus size={16} />} onClick={addWebsite}>
-                  添加
+                  {t("settings.add")}
                 </Button>
               </div>
               <div>
@@ -319,11 +322,11 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
 
       {/* 模型配置 */}
       <div>
-        <h3 className="text-sm font-semibold text-primary mb-3">模型配置</h3>
+        <h3 className="text-sm font-semibold text-primary mb-3">{t("settings.modelConfig")}</h3>
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <div className="flex-1">
-              <div className="text-sm text-secondary mb-1">快速选择模型</div>
+              <div className="text-sm text-secondary mb-1">{t("settings.quickSelect")}</div>
               <Select
                 labelInValue
                 style={{ width: "100%" }}
@@ -345,8 +348,8 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
 
           <div>
             <div className="flex items-center gap-2 text-sm text-secondary mb-1">
-              高级配置（YAML）
-              <Tooltip title="AutoGen ChatCompletionClient 格式，必须包含 orchestrator_client、coder_client、web_surfer_client、file_surfer_client">
+              {t("settings.advancedConfig")}
+              <Tooltip title={t("settings.tooltipAdvancedYaml")}>
                 <InfoCircleOutlined />
               </Tooltip>
             </div>
@@ -371,20 +374,20 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
 
       {/* 存储管理 */}
       <div>
-        <h3 className="text-sm font-semibold text-primary mb-3">存储管理</h3>
+        <h3 className="text-sm font-semibold text-primary mb-3">{t("settings.storage")}</h3>
         <div className="space-y-2">
           <div className="text-sm text-secondary">
-            当前占用：{getStorageUsageString()}
+            {t("settings.storageUsage")}{getStorageUsageString()}
           </div>
           <div className="flex gap-2">
             <Button
               size="small"
               onClick={() => {
                 clearMessageCache();
-                message.success("消息缓存已清除");
+                message.success(t("settings.cacheCleared"));
               }}
             >
-              清除消息缓存
+              {t("settings.clearCache")}
             </Button>
             <Button
               size="small"
@@ -396,20 +399,20 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
                     "将清除所有设置、消息缓存等本地数据，操作不可撤销。",
                   onOk: () => {
                     clearDrSaiStorage();
-                    message.success("所有数据已清除");
+                    message.success(t("settings.allCleared"));
                     setTimeout(() => window.location.reload(), 1000);
                   },
                 })
               }
             >
-              清除所有数据
+              {t("settings.clearAll")}
             </Button>
           </div>
         </div>
       </div>
 
       <div className="pt-2">
-        <Button onClick={handleResetDefaults}>恢复默认设置</Button>
+        <Button onClick={handleResetDefaults}>{t("settings.resetDefaults")}</Button>
       </div>
     </div>
   );
@@ -419,11 +422,12 @@ const AgentSettingsSection: React.FC<{ userEmail?: string }> = ({
 
 const Config: React.FC = () => {
   const { user: ctxUser } = useContext(appContext);
+  const { t } = useLang();
   const user: UserLike = ctxUser || {};
   const tabItems = [
     {
       key: "profile",
-      label: "个人信息",
+      label: t("settings.profileTab"),
       children: <ProfileSection user={user} />,
     },
     // {
@@ -436,7 +440,7 @@ const Config: React.FC = () => {
   return (
     <div className="h-full overflow-y-auto px-6 pt-6 pb-10">
       <div className="max-w-2xl mx-auto">
-        <h1 className="text-xl font-semibold text-primary mb-6">配置</h1>
+        <h1 className="text-xl font-semibold text-primary mb-6">{t("settings.title")}</h1>
         <Tabs tabPosition="left" items={tabItems} />
       </div>
     </div>

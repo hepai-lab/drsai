@@ -1,5 +1,7 @@
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 import { appContext } from "@/hooks/provider";
+import { useLang } from "../../i18n/useLang";
+import { parseAgentText } from "@/utils/agentLocalizedText";
 import { FileText } from "lucide-react";
 import { RcFile } from "antd/es/upload";
 import * as React from "react";
@@ -97,9 +99,14 @@ export default function NewChatView({
         }
     }, [hasInputValue]);
     const { user } = React.useContext(appContext);
+    const { t, lang } = useLang();
     const { agentInfo } = useAgentInfo(user?.email);
     const displayName = agentInfo?.name ?? agent?.name ?? "Dr.Sai";
-    const description = agentInfo?.description ?? agent?.description;
+    const rawDescription = agentInfo?.description ?? agent?.description;
+    const description = React.useMemo(
+        () => parseAgentText(rawDescription, lang),
+        [rawDescription, lang]
+    );
     const logoSrc = agentInfo?.logo ?? agent?.logo;
 
     const handleSubmit = async (
@@ -147,7 +154,7 @@ export default function NewChatView({
                 <div className="w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
                     <header className="animate-fade-in mb-8 flex flex-col items-center text-center">
                         <p className="font-agent-mono mb-3 text-[10px] font-medium uppercase tracking-[0.22em] text-accent">
-                            新对话
+                            {t("newChatView.title")}
                         </p>
                         <AgentHeaderLogo src={logoSrc} />
                         <h1
@@ -162,7 +169,7 @@ export default function NewChatView({
                             </p>
                         ) : (
                             <p className="mt-3 max-w-md text-[15px] leading-relaxed text-secondary/80 sm:text-base">
-                                输入消息开始，或点选下方示例
+                                {t("newChatView.placeholder")}
                             </p>
                         )}
                     </header>
@@ -172,7 +179,7 @@ export default function NewChatView({
                             <div className="rounded-2xl border border-border-primary/45 bg-tertiary/20 px-4 py-3 text-sm text-primary shadow-sm dark:bg-tertiary/30">
                                 <div className="mb-2 flex items-center gap-2 font-medium">
                                     <FileText className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-                                    <span>已从库选择 {serverFilesPrefill.length} 个文件</span>
+                                    <span>{t("newChatView.filesSelected", serverFilesPrefill.length)}</span>
                                 </div>
                                 <ul className="space-y-1 text-xs text-secondary sm:text-sm">
                                     {serverFilesPrefill.map((f) => (

@@ -18,12 +18,7 @@ const BACKEND_URL = process.env.GATSBY_API_URL
   : "http://localhost:4291";
 
 const config: GatsbyConfig = {
-  pathPrefix: process.env.PREFIX_PATH_VALUE || "",
-  proxy: [
-    { prefix: "/api", url: BACKEND_URL },
-    { prefix: "/umt", url: BACKEND_URL },
-    { prefix: "/files", url: BACKEND_URL },
-  ],
+  pathPrefix: "",
   siteMetadata: {
     // title: `Magentic-UI`,
     tille: "Dr.Sai",

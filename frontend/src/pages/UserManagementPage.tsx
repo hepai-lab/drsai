@@ -2,12 +2,14 @@ import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } 
 import { Button, Input, Switch, Table, Tag, message } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { appContext } from "../hooks/provider";
+import { useLang } from "../i18n/useLang";
 import { ManagedUser, userAPI } from "../components/views/api";
 
 type Row = ManagedUser & { key: string };
 
 const UserManagementPage: React.FC = () => {
   const { user } = useContext(appContext);
+  const { t } = useLang();
   const operatorUserId = user?.email || "";
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
@@ -62,13 +64,13 @@ const UserManagementPage: React.FC = () => {
 
   const columns: ColumnsType<Row> = [
     {
-      title: "用户",
+      title: t("userManagement.column.user"),
       dataIndex: "user_id",
       key: "user_id",
       render: (v: string) => <span className="font-mono text-xs">{v}</span>,
     },
     {
-      title: "来源",
+      title: t("userManagement.column.source"),
       dataIndex: "auth_source",
       key: "auth_source",
       width: 120,
@@ -76,7 +78,7 @@ const UserManagementPage: React.FC = () => {
         v === "sso" ? <Tag color="purple">SSO</Tag> : <Tag color="blue">LOCAL</Tag>,
     },
     {
-      title: "管理员",
+      title: t("userManagement.column.admin"),
       dataIndex: "is_admin",
       key: "is_admin",
       width: 120,
@@ -109,19 +111,19 @@ const UserManagementPage: React.FC = () => {
       {holder}
       <div className="flex items-center justify-between gap-3 mb-3">
         <div>
-          <div className="text-base font-semibold text-primary">用户管理</div>
+          <div className="text-base font-semibold text-primary">{t("userManagement.title")}</div>
 
         </div>
         <div className="flex items-center gap-2">
           <Input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="按 user_id 搜索"
+            placeholder={t("userManagement.searchPlaceholder")}
             allowClear
             style={{ width: 220 }}
           />
           <Button onClick={() => void load()} loading={loading} type="primary">
-            刷新
+            {t("userManagement.refresh")}
           </Button>
         </div>
       </div>

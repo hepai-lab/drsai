@@ -978,10 +978,54 @@ export const RenderMessage: React.FC<MessageProps> = memo(
     if (!message) return null;
     if (message.metadata?.type === "browser_address") return null;
 
-    // Check if this is a FilesEvent - these should only be shown in panel, not in main chat
+    // Check if this is a FilesEvent - render inline images in the chat
     const messageAny = message as any;
+    const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp']);
+    const isImageFile = (fname: string) => {
+      const ext = fname.split('.').pop()?.toLowerCase() || '';
+      return IMAGE_EXTENSIONS.has(ext);
+    };
     if (messageAny.type === "FilesEvent" || message.metadata?.type === "FilesEvent") {
-      return null;
+      const filesData = messageAny.content?.files || messageAny.files || [];
+      if (filesData.length === 0) return null;
+      return (
+        <div className="space-y-2 my-2">
+          {filesData.map((file: any, idx: number) => {
+            const b64 = file.base64_content;
+            const name = file.name || "";
+            const desc = file.description || "";
+            const mime = file.mime_type || "application/octet-stream";
+            if (!b64) return null;
+            const dataUri = `data:${mime};base64,${b64}`;
+            return (
+              <div key={idx} className="flex flex-col gap-1 max-w-md">
+                <a
+                  href={dataUri}
+                  download={name}
+                  className="text-xs font-medium text-accent hover:underline truncate flex items-center gap-1"
+                  title={desc || name}
+                >
+                  <span className="text-[10px] font-mono font-semibold uppercase px-1.5 py-0.5 rounded bg-tertiary/30 text-secondary">
+                    {name.split('.').pop()?.toUpperCase() || 'FILE'}
+                  </span>
+                  {name}
+                </a>
+                {isImageFile(name) ? (
+                  <img
+                    src={dataUri}
+                    alt={desc || name}
+                    className="max-w-full max-h-[50vh] rounded-lg border border-border-primary/30 cursor-zoom-in"
+                    onClick={() => {
+                      const win = window.open();
+                      if (win) win.document.write(`<img src="${dataUri}" style="max-width:100vw;max-height:100vh" />`);
+                    }}
+                  />
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      );
     }
 
     // BESIII global_info — right panel only (runview besiiiServerGlobalInfo); hide from main thread

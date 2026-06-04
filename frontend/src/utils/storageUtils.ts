@@ -78,7 +78,7 @@ export const clearDrSaiStorage = (): void => {
 export const clearMessageCache = (): void => {
   if (typeof window === "undefined") return;
   
-  localStorage.removeItem('drsai-message-cache');
+  // Cache removed — data now lives entirely on backend
 };
 
 /**

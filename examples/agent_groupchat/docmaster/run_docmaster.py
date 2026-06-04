@@ -272,10 +272,10 @@ def _template_api_delete(template_id, user_id):
 
 # 支持的模型配置
 llm_mode_config = {
-    "deepseek-v4-flash(Fast)": "hepai/deepseek-v4-flash",
-    "qwen3_30b": "hepai/qwen3_30b",
     "minimax-m2.7": "hepai/minimax-m2.7",
     "minimax-m2.7-highspeed": "hepai/minimax-m2.7-highspeed",
+    "deepseek-v4-flash(Fast)": "hepai/deepseek-v4-flash",
+    "qwen3_30b": "hepai/qwen3_30b",
 }
 
 def _build_files_event_data(file_path: str, description: str) -> dict | None:
@@ -733,14 +733,16 @@ def create_word_editor_agent(
         """设置模型客户端"""
         # Try different models if the default fails
         if default_config_name is None:
-            default_config_name = "deepseek-v4-flash(Fast)"
-        
-        # List of models to try in order (fastest/lightest first)
+            default_config_name = "minimax-m2.7-highspeed"
+
+        # List of models to try in order (most-context-tolerant first).
+        # qwen3_30b / deepseek-v4-flash fail (HTTP 503) on the large DocMaster
+        # system prompt, so the minimax models lead.
         models_to_try = [
-            "deepseek-v4-flash(Fast)",   # Default - fast and reliable
-            "qwen3_30b",                  # Qwen 30B
-            "minimax-m2.7-highspeed",    # Fast minimax
+            "minimax-m2.7-highspeed",    # Default - handles full system prompt
             "minimax-m2.7",              # Standard minimax
+            "qwen3_30b",                  # Small-prompt fallback only
+            "deepseek-v4-flash(Fast)",   # Small-prompt fallback only
         ]
         
         # If specified model is in the list, try it first
@@ -5852,7 +5854,7 @@ def main():
             
             # 模型配置
             agent_config=llm_mode_config,
-            default_config_name="deepseek-v4-flash(Fast)",
+            defult_config_name="minimax-m2.7-highspeed",
             
             # 智能体工厂
             agent_factory=create_word_editor_agent,

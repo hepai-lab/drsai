@@ -80,7 +80,8 @@ class WebSocketManager:
         self._closed_connections: set[int] = set()
         self._input_responses: Dict[int, asyncio.Queue[str]] = {}
         self._team_managers: Dict[int, TeamManager] = {}
-        # self._streaming_buffers: Dict[int, Dict[str, Any]] = {}
+        # Accumulated streaming chunk content per run_id per source
+        self._chunk_buffers: Dict[int, Dict[str, str]] = {}
         # Track run states and state locks for atomic state transitions
         self._run_states: Dict[int, RunStatus] = {}
         self._state_locks: Dict[int, asyncio.Lock] = {}
@@ -222,6 +223,9 @@ class WebSocketManager:
                     agent_mode_config["defult_config_name"] = requested_model_alias
                 settings_config["agent_mode_config"] = agent_mode_config
             else:
+                logger.error(
+                    f"user_id={run.user_id}. Frontend will be told to create new session!"
+                )
                 raise ValueError(
                     f"No agent config found for agent_id {agent_id} in UserAgents,"
                     f"(user_id={run.user_id}). Please create a new session!"
@@ -291,6 +295,13 @@ class WebSocketManager:
                         self.db_manager.upsert(run)
                     continue
                 
+                # ── Clear chunk buffer when complete TextMessage arrives ──
+                # Must run BEFORE the internal-message skip, because internal
+                # TextMessages (which is all non-user ones from round-robin)
+                # get `continue`-d and would never reach the clear below.
+                if isinstance(message, TextMessage) and run_id in self._chunk_buffers:
+                    self._chunk_buffers[run_id].pop(message.source or "assistant", None)
+
                 # Skip internal messages not meant for client display
                 if (
                     hasattr(message, "metadata")
@@ -300,10 +311,31 @@ class WebSocketManager:
                         await self._save_message(run_id, message)
                     continue
 
+                # ── Accumulate streaming chunks ──
+                if isinstance(message, ModelClientStreamingChunkEvent):
+                    chunk_source = message.source or "assistant"
+                    chunk_content = message.content or ""
+                    if run_id not in self._chunk_buffers:
+                        self._chunk_buffers[run_id] = {}
+                    prev = self._chunk_buffers[run_id].get(chunk_source, "")
+                    self._chunk_buffers[run_id][chunk_source] = prev + chunk_content
+
+                # ── Flush chunks BEFORE tool events for correct ordering ──
+                if isinstance(message, (ToolCallRequestEvent, AgentLogEvent)):
+                    buf = self._chunk_buffers.get(run_id, {})
+                    for source in list(buf.keys()):
+                        text = buf[source].strip()
+                        if text and len(text) > 10:
+                            flush_msg = TextMessage(
+                                source=source, content=text,
+                                metadata={"internal": "yes", "is_save": "yes"},
+                            )
+                            await self._save_message(run_id, flush_msg)
+                        buf[source] = ""
+
                 formatted_message = self._format_message(message)
                 if formatted_message:
-                    await self._send_message(run_id, formatted_message)
-
+                    # ── SAVE FIRST, then send ──
                     if isinstance(
                         message,
                         (
@@ -321,8 +353,111 @@ class WebSocketManager:
                         ),
                     ):
                         await self._save_message(run_id, message)
+
+                    await self._send_message(run_id, formatted_message)
+
+                    # For FilesEvent, also emit a "message" type so images render in chat
+                    if isinstance(message, FilesEvent):
+                        try:
+                            msg_dump = message.model_dump()
+                            files_list = msg_dump.get("content", msg_dump).get("files", [])
+                            if files_list:
+                                image_text_parts = []
+                                for f in files_list:
+                                    b64 = f.get("base64_content")
+                                    name = f.get("name", "file")
+                                    desc = f.get("description", "")
+                                    if b64:
+                                        ext = name.rsplit(".", 1)[-1].lower() if "." in name else "png"
+                                        mime = f"image/{'svg+xml' if ext == 'svg' else ext}"
+                                        data_uri = f"data:{mime};base64,{b64}"
+                                        image_text_parts.append(f"![{desc or name}]({data_uri})")
+                                if image_text_parts:
+                                    chat_content = "\n\n".join(image_text_parts)
+                                    image_msg = TextMessage(
+                                        source=message.source or "system",
+                                        content=chat_content,
+                                        metadata={"internal": "no"},
+                                    )
+                                    # SAVE image message BEFORE sending
+                                    await self._save_message(run_id, image_msg)
+                                    image_formatted = self._format_message(image_msg)
+                                    if image_formatted:
+                                        await self._send_message(run_id, image_formatted)
+                        except Exception as e:
+                            pass
+
                     elif isinstance(message, TeamResult):
                         final_result = message.model_dump()
+                    else:
+                        pass
+
+
+            # ── Post-stream: try to fetch & emit any companion images ──
+            # Remote workers (non-magentic-one) may generate .png files during
+            # run_bash execution but NOT embed them in the response stream.
+            # We attempt to fetch them via the agent's base URL and the run's
+            # chat_id, convert to data URIs, and emit as viewable messages.
+            team_manager = self._team_managers.get(run_id)
+            agent_mode = getattr(team_manager, 'mode', None) if team_manager else None
+            if agent_mode and agent_mode not in ("magentic-one",) and final_result:
+                try:
+                    # Check the final TextMessage content for image file references
+                    final_msgs = []
+                    if isinstance(final_result, dict):
+                        task_result = final_result.get("task_result", {})
+                        msgs = task_result.get("messages", []) if isinstance(task_result, dict) else []
+                        for msg in msgs:
+                            if isinstance(msg, dict) and msg.get("source") not in ("user", "user_proxy"):
+                                content = msg.get("content", "")
+                                if isinstance(content, str):
+                                    final_msgs.append(content)
+                    
+                    combined = " ".join(final_msgs)
+                    # Look for common image file patterns in agent's output
+                    import re
+                    image_refs = re.findall(r'[\w\-./]+\.(?:png|jpg|jpeg|gif|webp|svg)', combined, re.IGNORECASE)
+                    if image_refs:
+                        # Try to fetch from the run's static file path
+                        run = await self._get_run(run_id)
+                        if run:
+                            run_file_dir = (
+                                self.internal_workspace_root / "files" / "user" /
+                                str(run.user_id) / str(run.session_id) / str(run_id)
+                            )
+                            for ref in set(image_refs):
+                                ref_path = Path(ref)
+                                if ref_path.is_absolute():
+                                    candidate = ref_path
+                                else:
+                                    candidate = run_file_dir / ref_path
+                                # Also check direct filename match in run dir
+                                if not candidate.exists():
+                                    candidate = run_file_dir / ref_path.name
+                                if candidate.exists() and candidate.suffix.lower() in ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'):
+                                    import base64
+                                    mime_map = {
+                                        '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                                        '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+                                    }
+                                    b64 = base64.b64encode(candidate.read_bytes()).decode()
+                                    mime = mime_map.get(candidate.suffix.lower(), 'image/png')
+                                    data_uri = f"data:{mime};base64,{b64}"
+                                    image_msg = TextMessage(
+                                        source="system",
+                                        content="",
+                                        metadata={
+                                            "internal": "no",
+                                            "type": "inline_image",
+                                            "url": data_uri,
+                                        },
+                                    )
+                                    formatted = self._format_message(image_msg)
+                                    if formatted:
+                                        await self._send_message(run_id, formatted)
+                except Exception as e:
+                    logger.warning(f"Error fetching companion images: {e}")
+
             if (
                 not cancellation_token.is_cancelled()
                 and run_id not in self._closed_connections
@@ -356,6 +491,7 @@ class WebSocketManager:
             traceback.print_exc()
             await self._handle_stream_error(run_id, e)
         finally:
+            self._chunk_buffers.pop(run_id, None)
             self._cancellation_tokens.pop(run_id, None)
             self._team_managers.pop(run_id, None)  # Remove the team manager when done
 
@@ -372,14 +508,37 @@ class WebSocketManager:
 
         run = await self._get_run(run_id)
         if run:
-            db_message = Message(
-                created_at=datetime.now(),
-                session_id=run.session_id,
-                run_id=run_id,
-                config=message.model_dump(),
-                user_id=run.user_id,  # Pass the user_id from the run object
-            )
-            self.db_manager.upsert(db_message)
+            # Dedup: skip if same source + content already saved for this run
+            should_save = True
+            if isinstance(message, TextMessage):
+                new_content = getattr(message, "content", None)
+                new_source = getattr(message, "source", "")
+                if new_content and isinstance(new_content, str) and len(new_content) > 20:
+                    try:
+                        existing = self.db_manager.get(
+                            Message, filters={"run_id": run_id}, return_json=False
+                        )
+                        if existing.status and existing.data:
+                            for em in existing.data:
+                                cfg = getattr(em, "config", {}) or {}
+                                if isinstance(cfg, dict):
+                                    if (cfg.get("source") == new_source
+                                        and cfg.get("content") == new_content
+                                        and cfg.get("type") == "TextMessage"):
+                                        should_save = False
+                                        break
+                    except Exception:
+                        pass
+
+            if should_save:
+                db_message = Message(
+                    created_at=datetime.now(),
+                    session_id=run.session_id,
+                    run_id=run_id,
+                    config=message.model_dump(),
+                    user_id=run.user_id,
+                )
+                self.db_manager.upsert(db_message)
 
     async def _update_run(
         self,
@@ -536,6 +695,35 @@ class WebSocketManager:
         if run_id in self._cancellation_tokens:
             logger.info(f"Stopping run {run_id}")
 
+            # ── FLUSH accumulated chunks ──
+            chunk_buf = self._chunk_buffers.pop(run_id, None)
+            if chunk_buf:
+                for source, text in chunk_buf.items():
+                    text = text.strip()
+                    if text and len(text) > 10:
+                        try:
+                            flush_msg = TextMessage(
+                                source=source,
+                                content=text,
+                                metadata={"internal": "yes", "is_save": "yes"},
+                            )
+                            await self._save_message(run_id, flush_msg)
+                            logger.warning(
+                                f"[CHUNK_FLUSH_STOP] Saved {len(text)} chars from {source} for run {run_id}"
+                            )
+                        except Exception as e:
+                            pass
+
+            # ── FLUSH: count saved messages for this run ──
+            try:
+                msg_count = self.db_manager.get(Message, filters={"run_id": run_id})
+                if msg_count.status and msg_count.data:
+                    logger.warning(
+                        f"reason={reason}"
+                    )
+            except Exception as e:
+                pass
+
             stop_message = self._get_stop_message(reason)
 
             try:
@@ -579,7 +767,24 @@ class WebSocketManager:
         """
         logger.info(f"Disconnecting run {run_id}")
 
-        # Mark as closed before cleanup to prevent any new messages
+        # ── FLUSH accumulated chunks on disconnect ──
+        chunk_buf = self._chunk_buffers.pop(run_id, None)
+        if chunk_buf:
+            for source, text in chunk_buf.items():
+                text = text.strip()
+                if text and len(text) > 10:
+                    try:
+                        flush_msg = TextMessage(
+                            source=source,
+                            content=text,
+                            metadata={"internal": "yes", "is_save": "yes"},
+                        )
+                        await self._save_message(run_id, flush_msg)
+                        logger.warning(
+                            f"[CHUNK_FLUSH_DISCONNECT] Saved {len(text)} chars from {source} for run {run_id}"
+                        )
+                    except Exception as e:
+                        pass
         self._closed_connections.add(run_id)
 
         # Cancel any running tasks
@@ -677,6 +882,8 @@ class WebSocketManager:
                 message_content: list[dict[str, Any]] = []
                 for row in message_dump["content"]:
                     if "data" in row:
+                        data_len = len(str(row.get("data", "")))
+
                         message_content.append(
                             {
                                 "url": f"data:image/png;base64,{row['data']}",
@@ -684,6 +891,7 @@ class WebSocketManager:
                             }
                         )
                     else:
+
                         message_content.append(row)
                 message_dump["content"] = message_content
 
@@ -772,8 +980,8 @@ class WebSocketManager:
                 if agent["id"] == agent_id:
                     updated_agent = agent
                     break
-        if updated_agent is None:
-            logger.warning(f"Agent config not found in UserAgents for user_id={user_id}, agent_id={agent_id}")
+            if updated_agent is None:
+                logger.warning(f"Agent config not found in UserAgents for user_id={user_id}, agent_id={agent_id}")
         return updated_agent
 
     async def _get_settings(self, user_id: str) -> Optional[Settings]:

@@ -1,4 +1,5 @@
 import { appContext } from "@/hooks/provider";
+import { useLang } from "@/i18n/useLang";
 import { fileAPI } from "@/components/views/api";
 import type { ServerUploadedFileInfo } from "@/pages/chat/chat/hooks/useFileUpload";
 import officeDocxIcon from "@/assets/file-icons/office-docx.svg";
@@ -64,6 +65,7 @@ function LibraryImagePreview({
   onOpen: () => void;
   isDark: boolean;
 }) {
+  const { t } = useLang();
   const [failed, setFailed] = useState(false);
 
   return (
@@ -92,7 +94,7 @@ function LibraryImagePreview({
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-secondary">
             <FileImage className="h-8 w-8 opacity-40" aria-hidden />
-            <span className="text-[11px] opacity-70">预览不可用</span>
+            <span className="text-[11px] opacity-70">{t("library.previewUnavailable")}</span>
           </div>
         )}
       </div>
@@ -101,7 +103,7 @@ function LibraryImagePreview({
           isDark ? "bg-gradient-to-t from-black/70 to-transparent text-white/90" : "bg-gradient-to-t from-black/55 to-transparent text-white"
         }`}
       >
-        查看大图
+        {t("library.viewFullImage")}
       </span>
     </button>
   );
@@ -126,6 +128,7 @@ function LibraryFileGridCard({
   onCopyLink,
   onOpenImage,
 }: LibraryFileCardProps) {
+  const { t } = useLang();
   const { Icon, iconSrc, tone } = getFileVisual(file.suffix, file.name);
   const toneCls = getFileToneClasses(tone, isDark);
   const imagePreviewSrc = libraryImagePreviewSrc(file, userId);
@@ -141,7 +144,7 @@ function LibraryFileGridCard({
           onToggleSelect();
         }
       }}
-      aria-label={`选择文件 ${file.name}`}
+      aria-label={t("library.selectFile", file.name)}
       aria-pressed={isSelected}
       className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-[18px] border text-left outline-none transition-all duration-200 focus-visible:ring-2 focus-visible:ring-accent/35 hover:-translate-y-px ${
         isSelected
@@ -202,8 +205,8 @@ function LibraryFileGridCard({
           <button
             type="button"
             className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-secondary opacity-0 outline-none transition-all hover:bg-tertiary/35 hover:text-primary focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent/35 group-hover:opacity-100"
-            title="复制文件链接"
-            aria-label="复制文件链接"
+            title={t("library.copyLink")}
+            aria-label={t("library.copyLink")}
             onClick={(e) => {
               e.stopPropagation();
               onCopyLink();
@@ -226,6 +229,7 @@ function LibraryFileListRow({
   onCopyLink,
   onOpenImage,
 }: LibraryFileCardProps) {
+  const { t } = useLang();
   const { Icon, iconSrc, tone } = getFileVisual(file.suffix, file.name);
   const toneCls = getFileToneClasses(tone, isDark);
   const imagePreviewSrc = libraryImagePreviewSrc(file, userId);
@@ -241,7 +245,7 @@ function LibraryFileListRow({
           onToggleSelect();
         }
       }}
-      aria-label={`选择文件 ${file.name}`}
+      aria-label={t("library.selectFile", file.name)}
       aria-pressed={isSelected}
       className={`group flex w-full cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-left outline-none transition-all duration-200 focus-visible:ring-2 focus-visible:ring-accent/35 ${
         isSelected
@@ -301,8 +305,8 @@ function LibraryFileListRow({
       <button
         type="button"
         className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-secondary opacity-0 outline-none transition-all hover:bg-tertiary/35 hover:text-primary focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent/35 group-hover:opacity-100"
-        title="复制文件链接"
-        aria-label="复制文件链接"
+        title={t("library.copyLink")}
+        aria-label={t("library.copyLink")}
         onClick={(e) => {
           e.stopPropagation();
           onCopyLink();
@@ -453,6 +457,7 @@ interface ChatModalProps {
 }
 
 const ChatModal: React.FC<ChatModalProps> = ({ open, files, onClose, onSubmit }) => {
+  const { t } = useLang();
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -502,14 +507,14 @@ const ChatModal: React.FC<ChatModalProps> = ({ open, files, onClose, onSubmit })
           <div className="flex items-center gap-2 min-w-0">
             <MessageSquare className="w-4 h-4 text-accent shrink-0" aria-hidden />
             <span className="font-medium text-sm sm:text-base text-primary truncate">
-              开始聊天 · {files.length} 个文件
+              {t("library.chatTitle", files.length)}
             </span>
           </div>
           <button
             type="button"
             onClick={onClose}
             className="p-1.5 rounded-lg text-secondary hover:text-primary hover:bg-tertiary/40 transition-colors"
-            aria-label="关闭"
+            aria-label={t("library.chatClose")}
           >
             <X className="w-4 h-4" />
           </button>
@@ -532,7 +537,7 @@ const ChatModal: React.FC<ChatModalProps> = ({ open, files, onClose, onSubmit })
         </div>
 
         <p className="px-4 mb-2 text-xs flex-shrink-0 text-secondary">
-          文件已就绪，无需重新上传。Enter 发送，Shift+Enter 换行。
+          {t("library.chatReadyHint")}
         </p>
 
         <div className="px-4 pb-4 flex gap-2 items-end flex-shrink-0">
@@ -542,7 +547,7 @@ const ChatModal: React.FC<ChatModalProps> = ({ open, files, onClose, onSubmit })
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入问题…"
+            placeholder={t("library.chatPlaceholder")}
             className={inputCls}
           />
           <Button
@@ -552,7 +557,7 @@ const ChatModal: React.FC<ChatModalProps> = ({ open, files, onClose, onSubmit })
             disabled={!text.trim() || submitting}
             onClick={() => void handleSubmit()}
             className="shrink-0"
-            aria-label="发送"
+            aria-label={t("library.chatSend")}
             icon={<Send className="w-4 h-4" />}
           />
         </div>
@@ -566,6 +571,7 @@ const ChatModal: React.FC<ChatModalProps> = ({ open, files, onClose, onSubmit })
 /* ------------------------------------------------------------------ */
 const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
   const { user, darkMode } = useContext(appContext);
+  const { t } = useLang();
   const userId = user?.email || "";
   const isDark = darkMode === "dark";
 
@@ -593,7 +599,7 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
       setItems(Array.isArray(list) ? list : []);
     } catch (e) {
       console.error(e);
-      message.error("加载库文件失败");
+      message.error(t("library.loadFailed"));
       setItems([]);
     } finally {
       setLoading(false);
@@ -638,11 +644,11 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
     if (!files?.length || !userId) return;
     try {
       await fileAPI.saveFilesToServer(userId, Array.from(files), 0);
-      message.success("上传成功");
+      message.success(t("library.uploadSuccess"));
       await load();
     } catch (err) {
       console.error(err);
-      message.error(err instanceof Error ? err.message : "上传失败");
+      message.error(err instanceof Error ? err.message : t("library.uploadFailed"));
     } finally {
       e.target.value = "";
     }
@@ -664,22 +670,22 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
   const handleRemove = () => {
     if (!userId || selectedFiles.length === 0) return;
     Modal.confirm({
-      title: "移除所选文件？",
-      content: "将从库中删除，且无法恢复。",
-      okText: "删除",
+      title: t("library.removeConfirmTitle"),
+      content: t("library.removeConfirmBody"),
+      okText: t("library.removeConfirmOk"),
       okType: "danger",
-      cancelText: "取消",
+      cancelText: t("library.removeConfirmCancel"),
       onOk: async () => {
         try {
           for (const f of selectedFiles) {
             await fileAPI.deleteUserFile(userId, f.uuid);
           }
-          message.success("已移除");
+          message.success(t("library.removed"));
           setSelected(new Set());
           await load();
         } catch (err) {
           console.error(err);
-          message.error(err instanceof Error ? err.message : "删除失败");
+          message.error(err instanceof Error ? err.message : t("library.removeFailed"));
         }
       },
     });
@@ -688,7 +694,7 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
   const copyLibraryFileAddress = useCallback(async (f: ServerUploadedFileInfo) => {
     const addr = libraryFileAddress(f, userId);
     if (!addr) {
-      message.warning("无法获取文件链接");
+      message.warning(t("library.cannotGetLink"));
       return;
     }
     try {
@@ -704,9 +710,9 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
         document.execCommand("copy");
         document.body.removeChild(ta);
       }
-      message.success("已复制文件链接");
+      message.success(t("library.linkCopied"));
     } catch {
-      message.error("复制失败");
+      message.error(t("library.copyFailed"));
     }
   }, [userId]);
 
@@ -734,14 +740,14 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
       <div className="h-full min-h-0 flex flex-col bg-primary p-4 text-primary sm:p-5">
         <div className="flex-shrink-0 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
           <div className="min-w-0">
-            <div className="text-base font-semibold tracking-[-0.01em] text-primary">库</div>
+            <div className="text-base font-semibold tracking-[-0.01em] text-primary">{t("library.title")}</div>
             <div className="mt-0.5 text-sm text-secondary">
-              管理上传文件；选中后可发起对话或下载。
+              {t("library.subtitle")}
             </div>
             {!loading && (
               <div className="mt-1 text-xs text-secondary/80">
                 {items.length === 0
-                  ? "暂无文件"
+                  ? t("library.noFiles")
                   : query.trim()
                     ? `共 ${items.length} 个文件 · 匹配 ${sorted.length} 个`
                     : `共 ${items.length} 个文件`}
@@ -758,12 +764,12 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="搜索文件名"
+                placeholder={t("library.searchPlaceholder")}
                 className="w-full rounded-md border border-primary/40 bg-tertiary/10 dark:bg-white/[0.04] pl-9 pr-3 py-1.5 text-sm text-primary outline-none placeholder:text-secondary/60 focus:border-accent/50 focus:ring-1 focus:ring-accent/30"
               />
             </div>
             <Button type="primary" htmlType="button" onClick={handleUploadPick} icon={<Upload className="w-4 h-4" />}>
-              上传
+              {t("library.upload")}
             </Button>
           </div>
           <input
@@ -825,12 +831,12 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
 
         <div className="mt-3 flex flex-shrink-0 flex-wrap items-center gap-2 border-b border-primary/30 pb-3">
           <div className="text-xs font-semibold tracking-wide text-secondary">
-            {query.trim() ? "搜索结果" : "全部文件"}
+            {query.trim() ? t("library.searchResults") : t("library.allFiles")}
           </div>
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
-              title={sortOrder === "asc" ? "按名称升序" : "按名称降序"}
+              title={sortOrder === "asc" ? t("library.sortAsc") : t("library.sortDesc")}
               className={`${iconToggle} inline-flex items-center gap-1.5 px-2.5`}
               onClick={() => setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
             >
@@ -840,13 +846,13 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
                 <ArrowUpAZ className="h-4 w-4" />
               )}
               <span className="hidden text-xs sm:inline">
-                {sortOrder === "asc" ? "名称 A→Z" : "名称 Z→A"}
+                {sortOrder === "asc" ? t("library.nameAZ") : t("library.nameZA")}
               </span>
             </button>
             <div className="flex overflow-hidden rounded-lg border border-primary/40 bg-tertiary/10 p-0.5 gap-0.5 dark:bg-white/[0.03]">
               <button
                 type="button"
-                title="网格"
+                title={t("library.gridView")}
                 onClick={() => setViewMode("grid")}
                 className={`${iconToggle} rounded-md ${viewMode === "grid" ? iconToggleActive : ""}`}
               >
@@ -854,7 +860,7 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
               </button>
               <button
                 type="button"
-                title="列表"
+                title={t("library.listView")}
                 onClick={() => setViewMode("list")}
                 className={`${iconToggle} rounded-md ${viewMode === "list" ? iconToggleActive : ""}`}
               >
@@ -874,7 +880,7 @@ const LibraryPage: React.FC<LibraryPageProps> = ({ onStartChat }) => {
             <div className="flex flex-col items-center justify-center py-24 text-secondary">
               <FolderOpen className="mb-3 h-10 w-10 opacity-25" aria-hidden />
               <p className="text-sm">
-                {items.length === 0 ? "对话中上传的文件会出现在这里" : "没有匹配的文件"}
+                {items.length === 0 ? t("library.emptyHint") : t("library.noMatch")}
               </p>
             </div>
           ) : viewMode === "grid" ? (

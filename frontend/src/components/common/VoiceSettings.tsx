@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Settings, Mic, Volume2 } from "lucide-react";
+import { useLang } from "../../i18n/useLang";
 import {
     useVoiceSettingsStore,
     VoiceSettings as VoiceSettingsType,
@@ -10,6 +11,7 @@ interface VoiceSettingsProps {
 }
 
 const VoiceSettings: React.FC<VoiceSettingsProps> = ({ className = "" }) => {
+    const { t } = useLang();
     const [isOpen, setIsOpen] = useState(false);
     const [availableVoices, setAvailableVoices] = useState<
         SpeechSynthesisVoice[]
@@ -68,7 +70,7 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ className = "" }) => {
             <button
                 onClick={() => setIsOpen(!isOpen)}
                 className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 transition-colors"
-                title="语音设置"
+                title={t("voicesettings.title")}
             >
                 <Settings className="h-5 w-5" />
             </button>
@@ -77,14 +79,14 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ className = "" }) => {
                 <div className="absolute bottom-full mb-2 right-0 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-4 shadow-lg min-w-80 z-50">
                     <div className="space-y-4">
                         <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-                            语音设置
+                            {t("voicesettings.title")}
                         </h3>
 
                         {/* 语音输入设置 */}
                         <div className="space-y-2">
                             <div className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
                                 <Mic className="h-4 w-4" />
-                                语音输入语言
+                                {t("voicesettings.inputLang")}
                             </div>
                             <select
                                 value={settings.inputLanguage}
@@ -108,7 +110,7 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ className = "" }) => {
                         <div className="space-y-2">
                             <div className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
                                 <Volume2 className="h-4 w-4" />
-                                语音输出语言
+                                {t("voicesettings.outputLang")}
                             </div>
                             <select
                                 value={settings.outputLanguage}
@@ -142,7 +144,7 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ className = "" }) => {
                         {/* 语音选择 */}
                         <div className="space-y-2">
                             <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                语音选择
+                                {t("voicesettings.voiceSelect")}
                             </label>
                             <select
                                 value={settings.outputVoice}
@@ -167,7 +169,7 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ className = "" }) => {
                         {/* 语速设置 */}
                         <div className="space-y-2">
                             <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                语速: {settings.outputRate}x
+                                {t("voicesettings.speed")}: {settings.outputRate}x
                             </label>
                             <input
                                 type="range"
@@ -188,7 +190,7 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ className = "" }) => {
                         {/* 音调设置 */}
                         <div className="space-y-2">
                             <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                音调: {settings.outputPitch}
+                                {t("voicesettings.pitch")}: {settings.outputPitch}
                             </label>
                             <input
                                 type="range"
@@ -209,7 +211,7 @@ const VoiceSettings: React.FC<VoiceSettingsProps> = ({ className = "" }) => {
                         {/* 自动播放设置 */}
                         <div className="flex items-center justify-between">
                             <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                自动播放回复
+                                {t("voicesettings.autoPlay")}
                             </label>
                             <input
                                 type="checkbox"

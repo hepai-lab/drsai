@@ -9,6 +9,7 @@ interface CanvasChatTeaserProps {
 }
 
 const CanvasChatTeaser: React.FC<CanvasChatTeaserProps> = ({ doc, darkMode, onOpen }) => {
+  const { t } = useLang();
   const isDark = darkMode === "dark";
   return (
     <div
@@ -40,7 +41,7 @@ const CanvasChatTeaser: React.FC<CanvasChatTeaserProps> = ({ doc, darkMode, onOp
                 : "bg-violet-600 text-white hover:bg-violet-700"
             }`}
           >
-            在右侧「产出物」中查看
+            {t("chatTeaser.viewArtifact")}
           </button>
         </div>
       </div>
