@@ -59,6 +59,12 @@ export function StatusBar() {
             <Text color={theme.warn}>plan</Text>
           </>
         )}
+        {meta?.default_subagent && (
+          <>
+            <Text color={theme.muted}> · </Text>
+            <Text color={theme.accent}>🤖 {meta.default_subagent}</Text>
+          </>
+        )}
         {meta?.workspace_enabled === false && (
           <>
             <Text color={theme.muted}> · </Text>

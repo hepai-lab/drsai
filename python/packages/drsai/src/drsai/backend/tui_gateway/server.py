@@ -128,6 +128,7 @@ _LONG_HANDLERS = frozenset({
     "slash.exec",
     "shell.exec",
     "skills.manage",
+    "gateway.shutdown",
 })
 
 try:

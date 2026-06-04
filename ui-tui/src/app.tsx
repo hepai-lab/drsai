@@ -41,11 +41,32 @@ export function App({ gw }: AppProps) {
   // needing the App's effect to re-run (which would recreate the controller).
   const setupCompleteHandlerRef = useRef<(() => Promise<void>) | null>(null)
 
-  // Hard-exit on Ctrl+D so the user can always escape even if the UI is wedged.
+  // Graceful exit on Ctrl+D:
+  //   1. Send gateway.shutdown RPC to trigger session save on the Python side.
+  //   2. Wait up to 5 s for the gateway process to exit on its own.
+  //   3. If it doesn't exit within 5 s, force-kill and exit anyway.
+  // This prevents session history loss that occurred with the old `gw.kill(); exit()`.
+  const isExitingRef = useRef(false)
   useInput((_input, key) => {
     if (key.ctrl && _input === 'd') {
-      gw.kill()
-      exit()
+      if (isExitingRef.current) return  // debounce double-press
+      isExitingRef.current = true
+
+      // Fire-and-forget shutdown RPC; don't await (the gateway may die mid-flight).
+      gw.request('gateway.shutdown', {}).catch(() => {})
+
+      // Wait for gateway to exit gracefully, then hard-exit.
+      const TIMEOUT_MS = 5000
+      const deadline = setTimeout(() => {
+        gw.kill()
+        exit()
+      }, TIMEOUT_MS)
+
+      // If the gateway sends a gateway.exit event before the timeout, exit cleanly.
+      gw.onEvent('gateway.exit', () => {
+        clearTimeout(deadline)
+        exit()
+      })
     }
   })
 

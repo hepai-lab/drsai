@@ -246,6 +246,7 @@ class WeChatBot:
         )
 
         replied = False
+        daemon_buffer = ""  # 缓冲 daemon 的流式输出，完成后一次性发送
         try:
             async for line in self.model.drsai.a_drsai_ui_completions(**kwargs):
                 if not isinstance(line, str):
@@ -260,21 +261,66 @@ class WeChatBot:
 
                 event_type = event.get("type", "")
 
-                if event_type == "AgentLogEvent":
-                    title = event.get("title", "")
-                    await self._reply(user_id, context_token, title)
-                if event_type == "TextMessage":
+                if event_type == "message.delta":
+                    # AgentSessionAdapter (daemon) 路径：流式文本增量
+                    # 缓冲所有 chunk，等 message.complete 或 TaskResult 时一次性发送
+                    content = event.get("text", "")
+                    if content:
+                        daemon_buffer += content
+                elif event_type == "subagent.thinking":
+                    # 子智能体流式输出（daemon 委托路径）：
+                    # 与 message.delta 同等处理，缓冲等待子智能体完成
+                    content = event.get("text", "")
+                    if content:
+                        daemon_buffer += content
+                elif event_type == "message.complete":
+                    # Daemon 完整消息输出 — 发送缓冲的全部内容
+                    if daemon_buffer.strip():
+                        await self._reply(user_id, context_token, daemon_buffer)
+                        replied = True
+                    daemon_buffer = ""
+                elif event_type == "subagent.complete":
+                    # 子智能体完成 — 发送缓冲的全部内容
+                    if daemon_buffer.strip():
+                        await self._reply(user_id, context_token, daemon_buffer)
+                        replied = True
+                    daemon_buffer = ""
+                elif event_type == "TextMessage":
+                    # DrSaiAPP (旧 run_worker) 路径：完整消息
                     source = event.get("source", "")
                     content = event.get("content", "")
                     if source != "user" and content:
                         await self._reply(user_id, context_token, content)
                         replied = True
-
+                elif event_type == "AgentLogEvent":
+                    # DrSaiAPP (旧 run_worker) 路径：日志事件
+                    title = event.get("title", "")
+                    if title:
+                        await self._reply(user_id, context_token, title)
+                elif event_type == "error":
+                    # 通用错误事件 — 先发送已缓冲的内容再报错
+                    if daemon_buffer.strip():
+                        await self._reply(user_id, context_token, daemon_buffer)
+                        replied = True
+                    daemon_buffer = ""
+                    err_msg = event.get("message", "未知错误")
+                    await self._reply(user_id, context_token, f"❌ {err_msg}")
                 elif event_type == "TaskResult":
+                    # 任务完成 — 发送缓冲的全部内容
+                    if daemon_buffer.strip():
+                        await self._reply(user_id, context_token, daemon_buffer)
+                        replied = True
+                    daemon_buffer = ""
                     break
 
         except Exception as e:
             logger.exception("agent 调用出错 (chat_id=%s): %s", chat_id, e)
+            # 异常时发送已缓冲的 daemon 内容
+            if daemon_buffer.strip():
+                try:
+                    await self._reply(user_id, context_token, daemon_buffer)
+                except Exception:
+                    pass
 
         if not replied:
             await self._reply(user_id, context_token, "（Agent 未返回内容，请重试）")

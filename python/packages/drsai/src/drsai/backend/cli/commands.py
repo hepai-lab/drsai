@@ -305,6 +305,41 @@ COMMAND_REGISTRY: list[CommandDef] = [
         handler="special",  # handled in composerPane, not by slash.exec RPC
     ),
 
+    # ── Skills ──────────────────────────────────────────────────────────
+    CommandDef(
+        "skills",
+        "Open the Skill manager panel: browse, view, delete and hot-reload user skills",
+        "Skills",
+        aliases=("skill",),
+        handler="special",  # handled in composerPane (SkillsPane overlay), not by slash.exec RPC
+    ),
+
+    # ── Daemon ──────────────────────────────────────────────────────────
+    CommandDef(
+        "daemons",
+        "List and manage background daemon processes",
+        "Daemon",
+        aliases=("dm",),
+        args_hint="[name|logs <name>]",
+        handler="async",
+    ),
+    CommandDef(
+        "daemon-run",
+        "Submit a one-off task to a running daemon",
+        "Daemon",
+        aliases=("dr",),
+        args_hint="<name> <task>",
+        handler="async",
+    ),
+    CommandDef(
+        "daemon-model",
+        "View or change a daemon's model (runtime hot-switch)",
+        "Daemon",
+        aliases=("dmodel",),
+        args_hint="<name> [model]",
+        handler="async",
+    ),
+
     # ── Meta ─────────────────────────────────────────────────────────────────
     CommandDef(
         "help",
@@ -345,7 +380,7 @@ def resolve_command(name: str) -> Optional[CommandDef]:
 
 def commands_by_category() -> dict[str, list[CommandDef]]:
     """Return commands grouped by category, in fixed category order."""
-    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Subagent", "Multimedia", "Info"]
+    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Subagent", "Multimedia", "Daemon", "Skills", "Info"]
     groups: dict[str, list[CommandDef]] = {cat: [] for cat in order}
     for cmd in COMMAND_REGISTRY:
         if cmd.category in groups:

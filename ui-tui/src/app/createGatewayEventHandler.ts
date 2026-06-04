@@ -171,6 +171,40 @@ export function createGatewayEventHandler(
         $sudo.set(ev.payload as never)
         return
 
+      // ── Subagent streaming ───────────────────────────────────
+      case 'subagent.start': {
+        // 子智能体开始工作 — 在状态栏显示提示
+        const p = ev.payload as { source?: string; goal?: string } | undefined
+        const name = p?.source?.replace(/^sub:/, '') ?? 'subagent'
+        $statusLine.set(`⚡ ${name}: ${p?.goal ? p.goal.slice(0, 60) : 'working…'}`)
+        return
+      }
+      case 'subagent.thinking': {
+        // 子智能体流式 token — 追加到当前 turn 的 text（与 message.delta 同等处理）
+        const text = (ev.payload as { text?: string } | undefined)?.text || ''
+        if (!text) return
+        textBuf += text
+        scheduleFlush()
+        return
+      }
+      case 'subagent.complete': {
+        // 子智能体完成 — 如有最终 text 且尚未流式输出则补充，然后清除状态栏
+        const p = ev.payload as { text?: string; source?: string } | undefined
+        const finalText = p?.text || ''
+        // 如果没有经过 subagent.thinking 流式传输（非流式子智能体），
+        // 则把最终文本作为一次性 delta 追加
+        if (finalText) {
+          const cur = $current.get()
+          if (cur && !cur.text && !textBuf) {
+            // 没有已流式的内容，把最终答案全量追加
+            textBuf += finalText
+            scheduleFlush()
+          }
+        }
+        $statusLine.set('')
+        return
+      }
+
       // ── Status ───────────────────────────────────────────────
       case 'status.update': {
         const p = ev.payload as { kind?: string; text?: string } | undefined

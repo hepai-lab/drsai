@@ -66,6 +66,14 @@ def _ensure_agent_session(session_id: str, user_id: str) -> Any:
         return existing["agent_session"]
 
     cfg = cli_config.load_config()
+
+    # Daemon model override — if running inside a daemon process that has a
+    # specific model configured (via --model at startup or /api/model at
+    # runtime), override the config file's default model.
+    daemon_model = os.environ.get("DRSAI_DAEMON_MODEL", "")
+    if daemon_model:
+        cfg["defult_config_name"] = daemon_model
+
     sess = AgentSession(
         session_id=session_id,
         user_id=user_id,
@@ -74,12 +82,17 @@ def _ensure_agent_session(session_id: str, user_id: str) -> Any:
     )
     sess.init()
 
+    # Preserve any transport that was already bound (e.g. via session.subscribe
+    # from a WebSocket client) so events are routed to the correct peer.
+    old_transport = existing.get("transport") if existing else None
     _sessions[session_id] = {
         "agent_session": sess,
         "user_id": user_id,
         "history_lock": __import__("threading").Lock(),
         "running": False,
     }
+    if old_transport is not None:
+        _sessions[session_id]["transport"] = old_transport
 
     # Emit session.info so the UI can show model/tools/workdir.
     try:
@@ -344,3 +357,46 @@ def _info(rid, params: dict) -> dict:
     if sess is None:
         return _err(rid, 4001, "agent not initialised")
     return _ok(rid, sess.info())
+
+
+@method("gateway.shutdown")
+def _gateway_shutdown(rid, params: dict) -> dict:
+    """Graceful shutdown requested by the TUI (Ctrl+D).
+
+    Steps:
+    1. Save state for every active AgentSession.
+    2. Emit a ``gateway.exit`` event so the TUI can exit cleanly.
+    3. Schedule ``sys.exit(0)`` on the next stdin loop tick via a daemon thread.
+
+    This handler runs on the RPC pool thread, so ``sys.exit`` must be deferred
+    to avoid killing the process before the JSON response reaches the TUI.
+    """
+    import sys
+    import threading as _threading
+
+    # Save state for all active sessions.
+    for sid, state in list(_sessions.items()):
+        sess = state.get("agent_session")
+        if sess is None:
+            continue
+        try:
+            sess.save_state()
+            logger.info("gateway.shutdown: saved state for session %s", sid)
+        except Exception:
+            logger.exception("gateway.shutdown: save_state failed for %s", sid)
+
+    # Tell the TUI we're about to exit.
+    try:
+        _emit("gateway.exit", "", {"reason": "shutdown"})
+    except Exception:
+        logger.exception("gateway.shutdown: failed to emit gateway.exit")
+
+    # Deferred exit: give the event time to reach the TUI before the process dies.
+    def _deferred_exit() -> None:
+        import time as _time
+        _time.sleep(0.5)
+        sys.exit(0)
+
+    _threading.Thread(target=_deferred_exit, daemon=True, name="gateway-shutdown").start()
+
+    return _ok(rid, {"ok": True})

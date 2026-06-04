@@ -174,9 +174,9 @@ export function useLocalCommands({
 
         case "/help": {
           const categoryLabels: Record<string, string> = {
-            chat: t("chat.categoryChat"),
-            agent: t("chat.categoryAgent"),
-            tools: t("chat.categoryTools"),
+            session: t("chat.categorySession"),
+            display: t("chat.categoryDisplay"),
+            config: t("chat.categoryConfig"),
             info: t("chat.categoryInfo"),
           };
           const grouped = new Map<string, typeof SLASH_COMMANDS>();
@@ -186,7 +186,7 @@ export function useLocalCommands({
             grouped.set(c.category, arr);
           }
           let md = `**${t("chat.availableCommands")}**\n`;
-          for (const cat of ["chat", "agent", "tools", "info"] as const) {
+          for (const cat of ["session", "display", "config", "info"] as const) {
             const cmds = grouped.get(cat);
             if (!cmds) continue;
             md += `\n**${categoryLabels[cat]}**\n`;

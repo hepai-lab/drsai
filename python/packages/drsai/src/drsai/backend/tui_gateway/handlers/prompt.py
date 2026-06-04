@@ -56,7 +56,22 @@ def _run_turn_in_background(
             return
         with state["history_lock"]:
             state["running"] = False
-        _callbacks.reset_session(callback_token)
+        # reset_session(token) crashes with "Token was created in a different
+        # Context" when this runs in a background thread whose context was
+        # copied from the pool worker (ContextVar tokens are tied to the
+        # specific Context they were created in).  Use the ContextVar directly
+        # instead — set(None) is cross-context safe.
+        try:
+            _callbacks.reset_session(callback_token)
+        except ValueError:
+            # Fallback: clear the ContextVar directly (cross-context safe)
+            import contextvars as _cv
+            _current_sid: _cv.ContextVar = getattr(_callbacks, '_current_session_id', None)
+            if _current_sid is not None:
+                try:
+                    _current_sid.set(None)
+                except Exception:
+                    pass
         running_cleared = True
 
     try:

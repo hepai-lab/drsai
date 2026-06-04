@@ -348,6 +348,17 @@ class AgentSession:
                         logger.exception("on_event callback raised")
         except asyncio.CancelledError:
             status = "interrupted"
+            # The task was cancelled (via interrupt() → _cancel_all_tasks).
+            # agent.pause() has already set is_paused=True on the DrSaiAgent.
+            # We MUST call resume() here to clear is_paused before re-raising,
+            # otherwise the agent will refuse all future turns with
+            # "The agent is paused." (see on_messages_stream guard at top).
+            try:
+                if self.agent is not None and hasattr(self.agent, "resume"):
+                    await self.agent.resume()
+                    logger.debug("_async_run_turn: agent resumed after CancelledError")
+            except Exception:
+                logger.exception("_async_run_turn: agent.resume() failed after cancel")
             raise
         except Exception as e:
             logger.exception("run_turn failed")
@@ -389,10 +400,47 @@ class AgentSession:
                 logger.exception("agent.resume failed")
 
     def interrupt(self) -> None:
-        """Pause then resume — the canonical way to abort a running turn."""
+        """Interrupt a running turn by cancelling all asyncio Tasks on the agent loop.
+
+        The old implementation used ``pause()`` + ``sleep(0.05)`` + ``resume()``.
+        That 50 ms window is far too short: when the agent is awaiting an HTTP
+        response from the LLM API, the event loop is blocked on IO and the
+        CancellationToken check inside ``run_stream`` may not fire before
+        ``resume()`` clears ``is_paused``.
+
+        New approach:
+          1. Call ``agent.pause()`` to set ``is_paused=True`` and cancel the
+             ``CancellationToken``.  This is still useful for the LLM-streaming
+             path that checks ``cancellation_token.is_cancelled()``.
+          2. Cancel **all** pending asyncio Tasks on the agent loop directly
+             via ``loop.call_soon_threadsafe``.  This reliably interrupts the
+             ``async for message in stream`` loop even while the event loop is
+             waiting on network IO — asyncio raises ``CancelledError`` into the
+             task at the next ``await`` boundary.
+          3. ``resume()`` is NOT called here.  It is called inside
+             ``_async_run_turn``'s ``except asyncio.CancelledError`` block,
+             where it runs on the agent's own event loop (the correct thread).
+             This clears ``is_paused`` so the agent accepts the next prompt.
+        """
+        # Step 1: set CancellationToken + is_paused flag on the agent.
         self.pause()
-        time.sleep(0.05)
-        self.resume()
+
+        # Step 2: cancel all live asyncio tasks on the agent's event loop.
+        # We use call_soon_threadsafe because the loop runs on a different thread.
+        def _cancel_all_tasks() -> None:
+            try:
+                for task in asyncio.all_tasks(self._loop):
+                    if not task.done():
+                        task.cancel()
+            except Exception:
+                logger.exception("interrupt: task cancellation failed")
+
+        self._loop.call_soon_threadsafe(_cancel_all_tasks)
+
+        # Step 3: give the event loop a brief moment to process the cancellation
+        # before returning, so the caller sees a clean state.
+        # 200 ms is enough for one asyncio tick even under high load.
+        time.sleep(0.2)
 
     def inject_system_prompt(
         self,
@@ -440,6 +488,7 @@ class AgentSession:
             "plan_mode": bool(getattr(agent, "_injected_prefix", "") if agent else False),
             "workspace_enabled": bool(getattr(agent, "_only_in_workspace", True) if agent else True),
             "allow_dangerous_commands": bool(getattr(agent, "_allow_dangerous_commands", False) if agent else False),
+            "default_subagent": self.get_state_value("default_subagent", ""),
         }
         # Tool list (best effort) — coerce names to strings to keep payload JSON-safe.
         tools: list[str] = []
@@ -516,6 +565,19 @@ class AgentSession:
                         self.agent.update_system_prompt()
                     except Exception:
                         logger.exception("update_system_prompt after inject_suffix failed")
+        elif key == "default_subagent":
+            # Sync to UserProfileManager (THREAD_CONFIG.json) so on_messages_stream
+            # can pick it up via get_default_subagent(thread_id).
+            upm = getattr(self.agent, "_user_profile_manager", None)
+            thread_id = getattr(self.agent, "_thread_id", None)
+            if upm is not None and thread_id is not None:
+                try:
+                    if value:
+                        upm.set_default_subagent(thread_id, value)
+                    else:
+                        upm.clear_default_subagent(thread_id)
+                except Exception:
+                    logger.exception("set_state_value: failed to sync default_subagent to THREAD_CONFIG.json")
 
     # ── Shutdown ──────────────────────────────────────────────────
 

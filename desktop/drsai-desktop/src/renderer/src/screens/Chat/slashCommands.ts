@@ -103,8 +103,32 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     category: "config",
   },
   {
+    name: "/skills",
+    description: "List installed skills",
+    category: "config",
+    local: true,
+  },
+  {
     name: "/setup",
     description: "Open setup to change API configuration",
+    category: "config",
+    local: true,
+  },
+  {
+    name: "/memory",
+    description: "Show agent memory entries",
+    category: "config",
+    local: true,
+  },
+  {
+    name: "/persona",
+    description: "Show current persona configuration",
+    category: "config",
+    local: true,
+  },
+  {
+    name: "/version",
+    description: "Show DrSai and desktop app versions",
     category: "config",
     local: true,
   },

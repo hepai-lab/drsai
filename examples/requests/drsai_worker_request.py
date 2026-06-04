@@ -142,7 +142,7 @@ if __name__ == '__main__':
     # get_model_list()
     # asyncio.run(test_async_request())
     test_sync_request(
-       name = "My Dr.Sai",
+       name = "Dr.Sai Synchrotron",
       #  base_url = "http://10.5.8.19:42858/apiv2"
       base_url = "https://aiapi.ihep.ac.cn/apiv2"
     )
