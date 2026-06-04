@@ -1,6 +1,7 @@
 import { useAgentInfo } from "@/components/features/Agents/useAgentInfo";
 import { appContext } from "@/hooks/provider";
 import { useLang } from "../../i18n/useLang";
+import { parseAgentText } from "@/utils/agentLocalizedText";
 import { FileText } from "lucide-react";
 import { RcFile } from "antd/es/upload";
 import * as React from "react";
@@ -98,10 +99,14 @@ export default function NewChatView({
         }
     }, [hasInputValue]);
     const { user } = React.useContext(appContext);
-    const { t } = useLang();
+    const { t, lang } = useLang();
     const { agentInfo } = useAgentInfo(user?.email);
     const displayName = agentInfo?.name ?? agent?.name ?? "Dr.Sai";
-    const description = agentInfo?.description ?? agent?.description;
+    const rawDescription = agentInfo?.description ?? agent?.description;
+    const description = React.useMemo(
+        () => parseAgentText(rawDescription, lang),
+        [rawDescription, lang]
+    );
     const logoSrc = agentInfo?.logo ?? agent?.logo;
 
     const handleSubmit = async (

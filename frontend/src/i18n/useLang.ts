@@ -108,6 +108,9 @@ const dict = {
   "sidebar.user.info":           { zh: "用户信息",    en: "User info" },
   "sidebar.user.settings":       { zh: "设置",        en: "Settings" },
   "sidebar.user.logout":         { zh: "退出登录",    en: "Sign Out" },
+  "sidebar.searchSessions":    { zh: "搜索会话名称或 ID…", en: "Search session name or ID…" },
+  "sidebar.share":               { zh: "分享",        en: "Share" },
+  "sidebar.deleteSession":       { zh: "删除",        en: "Delete" },
 
   // ===== SSO / Callback / User Profile =====
   "sso.brand.ihep":              { zh: "IHEP计算中心",       en: "IHEP Computing Center" },
