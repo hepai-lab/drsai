@@ -190,6 +190,8 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
 
     # ── Tool call request ────────────────────────────────────────────
     if isinstance(message, ToolCallRequestEvent):
+        msg_source = getattr(message, "source", "") or ""
+        is_sub = _is_subagent_source(msg_source)
         calls = message.content or []
         for call in calls:
             if not isinstance(call, FunctionCall):
@@ -198,15 +200,21 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
             name = getattr(call, "name", "?")
             args = _parse_tool_args(getattr(call, "arguments", {}))
             state.pending_tool_calls[tool_id] = (name, args, time.time())
-            out.append(("tool.start", {
+            payload: dict = {
                 "tool_id": tool_id,
                 "name": name,
                 "args": args,
-            }))
+            }
+            if is_sub:
+                payload["source"] = msg_source
+                payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
+            out.append(("tool.start", payload))
         return out
 
     # ── Tool call result ─────────────────────────────────────────────
     if isinstance(message, ToolCallExecutionEvent):
+        msg_source = getattr(message, "source", "") or ""
+        is_sub = _is_subagent_source(msg_source)
         results = message.content or []
         for r in results:
             tool_id = getattr(r, "call_id", None) or getattr(r, "id", None) or ""
@@ -221,39 +229,54 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
                     name = pname
                 args = pargs
                 duration_ms = int((time.time() - started) * 1000)
-            out.append(("tool.complete", {
+            payload = {
                 "tool_id": tool_id,
                 "name": name,
                 "args": args,
                 "result": result_str,
                 "duration_ms": duration_ms,
-            }))
+            }
+            if is_sub:
+                payload["source"] = msg_source
+                payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
+            out.append(("tool.complete", payload))
         return out
 
     # ── Tool call summary (DrSaiAgent path) ──────────────────────────
     if isinstance(message, ToolCallSummaryMessage):
+        msg_source = getattr(message, "source", "") or ""
+        is_sub = _is_subagent_source(msg_source)
         # Drain any pending tool calls without explicit ExecutionEvent.
         content = getattr(message, "content", None)
         result_str = _safe_str(content)
         if state.pending_tool_calls:
             for tool_id, (name, args, started) in list(state.pending_tool_calls.items()):
                 duration_ms = int((time.time() - started) * 1000)
-                out.append(("tool.complete", {
+                payload = {
                     "tool_id": tool_id,
                     "name": name,
                     "args": args,
                     "result": result_str,
                     "duration_ms": duration_ms,
-                }))
+                }
+                if is_sub:
+                    payload["source"] = msg_source
+                    payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
+                out.append(("tool.complete", payload))
                 state.pending_tool_calls.pop(tool_id, None)
         else:
-            out.append(("tool.complete", {
+            name = getattr(message, "source", "") or "tool"
+            payload = {
                 "tool_id": "",
-                "name": getattr(message, "source", "") or "tool",
+                "name": name,
                 "args": {},
                 "result": result_str,
                 "duration_ms": 0,
-            }))
+            }
+            if is_sub:
+                payload["source"] = msg_source
+                payload["name"] = f"[{msg_source.replace('sub:', '')}] {name}"
+            out.append(("tool.complete", payload))
         return out
 
     # ── TextMessage ──────────────────────────────────────────────────

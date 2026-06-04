@@ -19,6 +19,7 @@ import { theme } from '../theme.js'
 import { ModelEditor, type ModelEditorValues } from './modelEditor.js'
 import { ModelPicker, type ModelEntry } from './modelPicker.js'
 import { SessionPicker } from './sessionPicker.js'
+import { SkillsPane } from './skillsPane.js'
 import { SlashOutputOverlay } from './slashOutputOverlay.js'
 import { TextInput } from './textInput.js'
 
@@ -209,6 +210,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   const [slashOutput, setSlashOutput] = useState<string | null>(null)
   const slashOutputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [sessionPicker, setSessionPicker] = useState<SessionInfo[] | null>(null)
+  const [showSkillsPane, setShowSkillsPane] = useState(false)
   const [modelPicker, setModelPicker] = useState<
     { models: ModelEntry[]; currentAlias?: string } | null
   >(null)
@@ -477,6 +479,12 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
       return
     }
 
+    // ── /skills — open the skills manager pane ────────────────────────
+    if (/^\/skills?(?:\s|$)/i.test(trimmed)) {
+      setShowSkillsPane(true)
+      return
+    }
+
     // ── /image or /img without valid paths ──────────────────────────
     // parseImageCommand() returns null when the regex matches but no image
     // paths were found, OR when the input is just "/image" with no args.
@@ -628,6 +636,17 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
       displayText: displayText.trim(),
       images: images.length > 0 ? images : undefined,
     })
+  }
+
+  // Skills manager overlay
+  if (showSkillsPane) {
+    return (
+      <SkillsPane
+        gw={controller.gw}
+        sessionId={sessionId}
+        onDismiss={() => setShowSkillsPane(false)}
+      />
+    )
   }
 
   // Session picker overlay

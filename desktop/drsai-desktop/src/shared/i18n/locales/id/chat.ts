@@ -34,6 +34,9 @@
   categoryAgent: "Agent",
   categoryTools: "Alat",
   categoryInfo: "Info",
+  categorySession: "Sesi",
+  categoryDisplay: "Tampilan",
+  categoryConfig: "Konfigurasi",
   noUsageData: "Belum ada data penggunaan. Kirim pesan terlebih dahulu.",
   commands: {
     new: "Mulai chat baru",

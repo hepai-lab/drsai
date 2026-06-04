@@ -513,6 +513,237 @@ def version_cmd() -> None:
     typer.echo(f"{APPNAME} version: {VERSION}")
 
 
+# ── Daemon 子命令组 ───────────────────────────────────────────────────────────
+
+daemon_app = typer.Typer(
+    name="daemon",
+    help="管理后台常驻的 DrSai Agent 服务（daemon）",
+    no_args_is_help=True,
+)
+app.add_typer(daemon_app, name="daemon")
+
+
+@daemon_app.command("start")
+def daemon_start(
+    name: str = typer.Option("default", "--name", "-n", help="Daemon 名称"),
+    port: Optional[int] = typer.Option(None, "--port", "-p", help="WebSocket 端口（默认自动选择）"),
+    wechat_port: Optional[int] = typer.Option(None, "--wechat-port", help="微信接入端口"),
+    wechat: bool = typer.Option(False, "--wechat/--no-wechat", help="是否启用微信接入"),
+    restart: bool = typer.Option(False, "--restart", help="如已运行则先停止再启动"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="指定 daemon 使用的模型别名（如 claude-sonnet-4-5, gpt-4o）"),
+) -> None:
+    """启动后台常驻的 DrSai Agent Daemon。"""
+    from drsai.backend.daemon.pid_manager import start_daemon, stop_daemon, is_running
+
+    if restart and is_running(name):
+        typer.echo(f"  停止现有 daemon '{name}'...")
+        stop_daemon(name)
+
+    typer.echo(f"\n  启动 Daemon '{name}'...")
+    try:
+        state = start_daemon(
+            name=name,
+            ws_port=port,
+            wechat_port=wechat_port,
+            wechat_enabled=wechat,
+            model=model,
+        )
+    except RuntimeError as e:
+        typer.echo(typer.style(f"\n  ✗ 启动失败: {e}", fg=typer.colors.RED))
+        raise typer.Exit(1)
+    except TimeoutError as e:
+        typer.echo(typer.style(f"\n  ✗ 超时: {e}", fg=typer.colors.RED))
+        raise typer.Exit(1)
+
+    typer.echo(typer.style(f"\n  ✓ DrSai Daemon '{name}' 启动成功\n", fg=typer.colors.GREEN, bold=True))
+    typer.echo(f"  PID        : {state['pid']}")
+    typer.echo(f"  模型       : {state.get('model') or '(使用全局默认)'}")
+    typer.echo(f"  WebSocket  : ws://127.0.0.1:{state['ws_port']}/ws")
+    typer.echo(f"  管理 API   : http://127.0.0.1:{state['ws_port']}/api")
+    if state.get("wechat_enabled"):
+        typer.echo(f"  微信接入   : ilink Bot 长轮询 (端口 {state['wechat_port']})")
+    typer.echo(f"  API Token  : {state['api_token']}")
+    typer.echo(f"  日志文件   : {state['log_file']}")
+    typer.echo(f"\n  Attach URL : ws://127.0.0.1:{state['ws_port']}/ws?token={state['api_token']}")
+    typer.echo(f"\n  在 TUI 中使用 /daemons 命令查看和管理此 daemon。\n")
+
+
+@daemon_app.command("stop")
+def daemon_stop(
+    name: Optional[str] = typer.Option(None, "--name", "-n", help="Daemon 名称"),
+    all_: bool = typer.Option(False, "--all", help="停止所有 daemon"),
+) -> None:
+    """停止后台 daemon。"""
+    from drsai.backend.daemon.pid_manager import stop_daemon, list_daemons
+
+    targets: list[str] = []
+    if all_:
+        targets = [d["name"] for d in list_daemons() if d.get("alive")]
+    elif name:
+        targets = [name]
+    else:
+        typer.echo("请指定 --name 或 --all")
+        raise typer.Exit(1)
+
+    for n in targets:
+        if stop_daemon(n):
+            typer.echo(typer.style(f"  ✓ Daemon '{n}' 已停止", fg=typer.colors.GREEN))
+        else:
+            typer.echo(f"  Daemon '{n}' 未在运行")
+
+
+@daemon_app.command("status")
+def daemon_status(
+    name: Optional[str] = typer.Option(None, "--name", "-n", help="查看指定 daemon（默认列出全部）"),
+) -> None:
+    """查看 daemon 运行状态。"""
+    import datetime
+    from drsai.backend.daemon.pid_manager import list_daemons, read_state, is_running
+
+    if name:
+        # 单个 daemon 详情
+        state = read_state(name)
+        if not state:
+            typer.echo(f"  Daemon '{name}' 未找到")
+            raise typer.Exit(1)
+        alive = is_running(name)
+        status_str = typer.style("运行中", fg=typer.colors.GREEN) if alive else typer.style("已停止", fg=typer.colors.RED)
+        typer.echo(f"\n  Daemon: {name}")
+        typer.echo(f"  状态  : {status_str}")
+        typer.echo(f"  PID   : {state.get('pid', '─')}")
+        typer.echo(f"  WS 端口: ws://127.0.0.1:{state.get('ws_port', '─')}/ws")
+        if alive:
+            uptime = datetime.timedelta(seconds=int(datetime.datetime.now().timestamp() - state.get("started_at", 0)))
+            typer.echo(f"  运行时间: {uptime}")
+        typer.echo(f"  微信  : {'已启用' if state.get('wechat_enabled') else '未启用'}")
+        typer.echo(f"  日志  : {state.get('log_file', '─')}\n")
+        return
+
+    daemons = list_daemons()
+    if not daemons:
+        typer.echo("  当前没有已配置的 daemon。使用 `drsai daemon start` 启动一个。")
+        return
+
+    typer.echo(f"\n  {'名称':<20} {'状态':<8} {'PID':<8} {'WS端口':<8} {'运行时间':<14} {'微信'}")
+    typer.echo("  " + "─" * 70)
+    for d in daemons:
+        alive = d.get("alive", False)
+        status_str = typer.style("运行中", fg=typer.colors.GREEN) if alive else typer.style("已停止", fg=typer.colors.RED)
+        uptime = str(datetime.timedelta(seconds=int(d.get("uptime_seconds", 0)))) if alive else "─"
+        wechat = "✓" if d.get("wechat_enabled") else "─"
+        pid = str(d.get("pid", "─")) if alive else "─"
+        typer.echo(f"  {d['name']:<20} {status_str:<8} {pid:<8} {d.get('ws_port', '─')!s:<8} {uptime:<14} {wechat}")
+    typer.echo()
+
+
+@daemon_app.command("list")
+def daemon_list(
+    json_output: bool = typer.Option(False, "--json", help="JSON 格式输出"),
+) -> None:
+    """列出所有已配置的 daemon（脚本友好格式）。"""
+    import json as _json
+    from drsai.backend.daemon.pid_manager import list_daemons
+
+    daemons = list_daemons()
+    if json_output:
+        print(_json.dumps(daemons, ensure_ascii=False, indent=2))
+    else:
+        if not daemons:
+            typer.echo("(无 daemon)")
+            return
+        for d in daemons:
+            alive = "up" if d.get("alive") else "down"
+            print(f"{d['name']}  {alive}  ws:{d.get('ws_port', '?')}")
+
+
+@daemon_app.command("logs")
+def daemon_logs(
+    name: str = typer.Option("default", "--name", "-n", help="Daemon 名称"),
+    tail: int = typer.Option(50, "--tail", "-n", help="显示末尾行数"),
+    follow: bool = typer.Option(False, "--follow", "-f", help="持续跟踪输出"),
+) -> None:
+    """查看 daemon 日志。"""
+    import subprocess as sp
+    from drsai.backend.daemon.pid_manager import _log_file
+
+    log_path = _log_file(name)
+    if not log_path.exists():
+        typer.echo(f"  日志文件不存在: {log_path}")
+        raise typer.Exit(1)
+
+    cmd = ["tail", f"-n{tail}"]
+    if follow:
+        cmd.append("-f")
+    cmd.append(str(log_path))
+    sp.run(cmd)
+
+
+@daemon_app.command("send")
+def daemon_send(
+    message: str = typer.Argument(..., help="要发送的消息"),
+    name: str = typer.Option("default", "--name", "-n", help="Daemon 名称"),
+    session: str = typer.Option("auto", "--session", "-s", help="会话 ID"),
+) -> None:
+    """向指定 daemon 发送一条消息（调试用）。"""
+    import json as _json
+    from drsai.backend.daemon.pid_manager import read_state
+
+    state = read_state(name)
+    if not state:
+        typer.echo(f"  Daemon '{name}' 未找到或未运行")
+        raise typer.Exit(1)
+
+    try:
+        import websocket  # websocket-client
+    except ImportError:
+        typer.echo("  缺少依赖: websocket-client。请运行 `pip install websocket-client`")
+        raise typer.Exit(1)
+
+    url = f"ws://127.0.0.1:{state['ws_port']}/ws?token={state['api_token']}"
+    try:
+        ws = websocket.create_connection(url, timeout=10)
+    except Exception as e:
+        typer.echo(f"  连接 daemon 失败: {e}")
+        raise typer.Exit(1)
+
+    ws.recv()  # gateway.ready
+
+    ws.send(_json.dumps({
+        "jsonrpc": "2.0", "id": "r1",
+        "method": "session.create",
+        "params": {"name": f"cli-send-{name}"}
+    }))
+    resp = _json.loads(ws.recv())
+    sid = (resp.get("result") or {}).get("session_id", session)
+
+    ws.send(_json.dumps({
+        "jsonrpc": "2.0", "id": "r2",
+        "method": "prompt.submit",
+        "params": {"session_id": sid, "text": message}
+    }))
+
+    typer.echo(f"\n  [Daemon: {name}] [Session: {sid}]\n")
+
+    while True:
+        try:
+            frame = _json.loads(ws.recv())
+        except Exception:
+            break
+        params = frame.get("params") or {}
+        ev_type = params.get("type", "")
+        payload = params.get("payload") or {}
+        if ev_type == "message.delta":
+            print(payload.get("text", ""), end="", flush=True)
+        elif ev_type == "message.complete":
+            print()
+            break
+        elif ev_type == "error":
+            typer.echo(f"\n  ✗ {payload.get('message', '')}")
+            break
+
+    ws.close()
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 

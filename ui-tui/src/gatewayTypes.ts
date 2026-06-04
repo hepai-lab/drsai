@@ -86,6 +86,7 @@ export interface SessionMetadata {
   plan_mode: boolean
   workspace_enabled: boolean
   allow_dangerous_commands?: boolean
+  default_subagent?: string
   tools: string[]
 }
 

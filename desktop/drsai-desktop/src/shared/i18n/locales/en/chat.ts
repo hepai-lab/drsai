@@ -31,6 +31,9 @@
   categoryAgent: "Agent",
   categoryTools: "Tools",
   categoryInfo: "Info",
+  categorySession: "Session",
+  categoryDisplay: "Display",
+  categoryConfig: "Config",
   noUsageData: "No usage data yet. Send a message first.",
   commands: {
     new: "Start a new chat",

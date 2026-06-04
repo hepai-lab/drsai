@@ -689,22 +689,61 @@ def cmd_cd(ctx: SlashContext) -> str:
 
 # ── Subagent ──────────────────────────────────────────────────────────────────
 
+def _get_fresh_sub_agents(ctx: SlashContext) -> dict:
+    """Return up-to-date _user_sub_agents, forcing a reload from SUBAGENT_CONFIG.json.
+
+    _user_sub_agents is only populated by _run_startup_checks() which runs inside
+    on_messages_stream(). Slash commands bypass that path, so we call
+    update_user_subagents() directly here to ensure SUBAGENT_CONFIG.json is
+    reflected without needing to send a message first.
+    """
+    agent = getattr(ctx.session, "agent", None)
+    if agent is None:
+        return {}
+    update_fn = getattr(agent, "update_user_subagents", None)
+    if update_fn is not None:
+        try:
+            update_fn()
+        except Exception:
+            logger.exception("cmd_agent: update_user_subagents failed")
+    return getattr(agent, "_user_sub_agents", {})
+
+
 def cmd_agent(ctx: SlashContext) -> dict:
     """Set/clear default subagent or list available subagents."""
-    args = ctx.args.lower()
+    args = ctx.args.strip()
+    args_lower = args.lower()
 
-    if not args or args == "list":
-        # List available subagents
-        # TODO: query agent._user_sub_agents
-        return {"output": "Available subagents: (feature pending)"}
+    if not args or args_lower == "list":
+        sub_agents = _get_fresh_sub_agents(ctx)
+        if sub_agents:
+            lines = [f"- {name}: {cfg.get('description', '')}" for name, cfg in sub_agents.items()]
+            output = "Available subagents:\n" + "\n".join(lines)
+        else:
+            output = "Available subagents: (none configured)"
+        return {"output": output}
 
-    if args == "clear":
+    if args_lower == "clear":
         ctx.session.set_state_value("default_subagent", "")
+        ctx.refresh_info()
         return {"output": "Default subagent cleared"}
 
-    # Set default subagent
-    ctx.session.set_state_value("default_subagent", args)
-    return {"output": f"Default subagent set to: {args}"}
+    # Force reload so newly added agents in SUBAGENT_CONFIG.json are visible
+    sub_agents = _get_fresh_sub_agents(ctx)
+
+    # Case-insensitive match to preserve original casing (e.g. RongZai_Agent)
+    matched_name = next(
+        (name for name in sub_agents if name.lower() == args_lower),
+        args,  # fallback: pass as-is, on_messages_stream will validate
+    )
+
+    if matched_name not in sub_agents:
+        available = ", ".join(sub_agents.keys()) or "none"
+        return {"output": f"Subagent '{matched_name}' not found. Available: {available}"}
+
+    ctx.session.set_state_value("default_subagent", matched_name)
+    ctx.refresh_info()
+    return {"output": f"Default subagent set to: {matched_name}"}
 
 
 def cmd_delegate(ctx: SlashContext) -> dict:
@@ -853,6 +892,191 @@ def cmd_setup(ctx: SlashContext) -> str:
     )
 
 
+def cmd_daemons(ctx: SlashContext) -> str:
+    """List / manage background daemon processes.
+
+    Usage:
+        /daemons              — list all daemons
+        /daemons <name>       — show daemon details
+        /daemons logs <name>  — tail daemon logs
+    """
+    from drsai.backend.daemon.pid_manager import list_daemons, read_state, is_running
+    from drsai.backend.daemon.pid_manager import _log_file as daemon_log_file
+
+    args = ctx.args.strip() if ctx.args else ""
+
+    # /daemons logs <name>
+    if args.startswith("logs "):
+        name = args[5:].strip() or "default"
+        log_path = daemon_log_file(name)
+        if not log_path.exists():
+            return f"No log file for daemon '{name}'."
+        lines = log_path.read_text(errors="replace").splitlines()
+        recent = lines[-20:]
+        header = f"Logs for daemon '{name}' (last {len(recent)} lines):\n{'-'*40}"
+        return header + "\n" + "\n".join(recent)
+
+    # /daemons <name>  → detail view
+    if args:
+        name = args.split()[0]
+        state = read_state(name)
+        if not state:
+            return f"Daemon '{name}' not found. Use `/daemons` to list all."
+        alive = "running" if is_running(name) else "stopped"
+        uptime_s = state.get("uptime_seconds", 0)
+        h, m = int(uptime_s // 3600), int((uptime_s % 3600) // 60)
+        return (
+            f"Daemon: {name}\n"
+            f"  Status:  {alive}\n"
+            f"  PID:     {state.get('pid', '?')}\n"
+            f"  WS Port: {state.get('ws_port', '?')}\n"
+            f"  Uptime:  {h}h {m}m\n"
+            f"  Token:   {state.get('api_token', '?')[:12]}…\n"
+            f"  Log:     {state.get('log_file', '?')}\n"
+            f"\n"
+            f"  Usage:\n"
+            f"    /agent daemon:{name}   — set as default subagent\n"
+            f"    /daemon-run {name} <task>  — run a one-off task"
+        )
+
+    # /daemons (no args) → list all
+    daemons = list_daemons()
+    if not daemons:
+        return (
+            "No daemons configured.\n\n"
+            "Start one from shell:\n"
+            "  drsai daemon start --name <name>\n"
+        )
+    lines = []
+    for d in daemons:
+        status_icon = "●" if d.get("alive") else "○"
+        name = d.get("name", "?")
+        pid = d.get("pid", "?")
+        port = d.get("ws_port", "?")
+        uptime_s = d.get("uptime_seconds", 0)
+        h, m = int(uptime_s // 3600), int((uptime_s % 3600) // 60)
+        lines.append(
+            f"  {status_icon} daemon:{name}  pid={pid}  port={port}  uptime={h}h{m}m"
+        )
+    return (
+        "Daemons:\n" + "\n".join(lines) +
+        "\n\nUse /agent daemon:<name> to set as default, "
+        "or let the LLM Delegate to daemon:<name>."
+    )
+
+
+def cmd_daemon_run(ctx: SlashContext) -> str:
+    """Submit a one-off task to a running daemon.
+
+    Usage:
+        /daemon-run <name> <task>
+        /dr <name> <task>
+
+    Example:
+        /daemon-run default Analyze this project structure
+    """
+    args = ctx.args.strip()
+    if not args:
+        return "Usage: /daemon-run <name> <task>\nShort: /dr <name> <task>"
+
+    parts = args.split(None, 1)
+    if len(parts) < 2:
+        return "Usage: /daemon-run <name> <task>\nShort: /dr <name> <task>"
+
+    daemon_name, task = parts
+
+    # Validate daemon exists and is running
+    from drsai.backend.daemon.pid_manager import read_state, is_running
+    state = read_state(daemon_name)
+    if not state:
+        return f"Daemon '{daemon_name}' not found. Use `/daemons` to list all."
+    if not is_running(daemon_name):
+        return f"Daemon '{daemon_name}' is not running."
+
+    # Validate session exists
+    if not ctx.session:
+        return "Error: no active session. Create or switch to a session first."
+
+    # Dispatch via subagent.invoke (same as LLM Delegate path)
+    from drsai.backend.tui_gateway.handlers.daemon import subagent_invoke
+    result = subagent_invoke("", {
+        "daemon_name": daemon_name,
+        "message": task,
+        "caller_session_id": ctx.session_id,
+    })
+    if "error" in result:
+        return f"Failed: {result['error']}"
+    task_id = (result.get("result") or {}).get("task_id", "?")
+    return f"Task submitted to daemon '{daemon_name}' (task_id={task_id}).\nWatch the transcript for streaming output."
+
+
+def cmd_daemon_model(ctx: SlashContext) -> str:
+    """View or change a daemon's model.
+
+    Usage:
+        /daemon-model <name>              — view current model
+        /daemon-model <name> <model>      — change daemon's model
+
+    Examples:
+        /daemon-model mydaemon              → shows current model
+        /daemon-model mydaemon claude-haiku → switches to claude-haiku
+    """
+    from drsai.backend.tui_gateway.handlers.daemon import _daemon_http
+    from drsai.backend.daemon.pid_manager import read_state, is_running
+
+    args = (ctx.args or "").strip().split(None, 1)
+    if not args or not args[0]:
+        return (
+            "Usage:\n"
+            "  /daemon-model <name>            — view current model\n"
+            "  /daemon-model <name> <model>    — change model\n"
+            "\n"
+            "Use /daemons to list all daemons."
+        )
+
+    daemon_name = args[0]
+
+    # Validate daemon exists and is running
+    state = read_state(daemon_name)
+    if not state:
+        return f"Daemon '{daemon_name}' not found. Use `/daemons` to list all."
+    if not is_running(daemon_name):
+        return f"Daemon '{daemon_name}' is not running."
+
+    if len(args) == 1:
+        # View current model
+        try:
+            info = _daemon_http(daemon_name, "/api/info")
+            current = info.get("model", "未知")
+        except Exception:
+            current = state.get("model") or "(使用全局默认)"
+        return f"Daemon '{daemon_name}' 当前模型: {current}"
+
+    # Change model
+    new_model = args[1]
+    try:
+        import json as _json
+        import urllib.request
+        url = f"http://127.0.0.1:{state['ws_port']}/api/model"
+        data = _json.dumps({"model": new_model}).encode()
+        req = urllib.request.Request(
+            url, data=data, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            resp = _json.loads(r.read())
+        if "error" in resp:
+            return f"切换失败: {resp['error']}"
+        switched = resp.get("sessions_switched", 0)
+        return (
+            f"✓ Daemon '{daemon_name}' 模型已切换为 '{new_model}'。\n"
+            f"  {switched} 个活跃 session 已同步切换。\n"
+            f"  新 session 将默认使用此模型。"
+        )
+    except Exception as e:
+        return f"切换失败: {e}"
+
+
 def cmd_image(ctx: SlashContext) -> str:
     """Fallback handler for /image when not intercepted by TUI frontend.
 
@@ -952,6 +1176,13 @@ SLASH_HANDLERS: dict[str, Any] = {
     "status": cmd_status,
     "setup": cmd_setup,
     "env": cmd_setup,
+    # ── Daemon management ───────────────────────────────────────────────
+    "daemons": cmd_daemons,
+    "dm": cmd_daemons,
+    "daemon-run": cmd_daemon_run,
+    "dr": cmd_daemon_run,
+    "daemon-model": cmd_daemon_model,
+    "dmodel": cmd_daemon_model,
     # ── Image (fallback — normally intercepted by TUI frontend) ──────────
     "image": cmd_image,
     "img": cmd_image,

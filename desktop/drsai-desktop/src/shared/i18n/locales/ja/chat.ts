@@ -31,6 +31,9 @@
   categoryAgent: "エージェント",
   categoryTools: "ツール",
   categoryInfo: "情報",
+  categorySession: "セッション",
+  categoryDisplay: "表示",
+  categoryConfig: "設定",
   noUsageData: "まだ使用データがありません。まずメッセージを送ってみてください。",
   commands: {
     new: "新しいチャットを開始",

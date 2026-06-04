@@ -31,6 +31,9 @@
   categoryAgent: "Agente",
   categoryTools: "Herramientas",
   categoryInfo: "Información",
+  categorySession: "Sesión",
+  categoryDisplay: "Pantalla",
+  categoryConfig: "Configuración",
   noUsageData: "Todavía no hay datos de uso. Envía primero un mensaje.",
   commands: {
     new: "Iniciar un nuevo chat",

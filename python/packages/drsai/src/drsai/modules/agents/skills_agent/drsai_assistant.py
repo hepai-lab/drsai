@@ -12,7 +12,7 @@ from typing import (
     Self,
     Mapping,
     )
-import os, json, sys, uuid, shutil, copy
+import json, re, uuid, shutil, copy
 import asyncio, traceback
 from pydantic import BaseModel
 from pathlib import Path
@@ -100,6 +100,7 @@ from .managers.scheduled_task_manager import (
 )
 from .utils.utils import HELP_TEXT
 from .managers import ScheduledTask, ScheduleType, TaskStatus
+from .daemon_subagent import DaemonSubagent
 
 # ── Built-in subagent definitions ──────────────────────────────────────────
 BUILTIN_SUBAGENTS: Dict[str, Dict[str, Any]] = {
@@ -751,15 +752,31 @@ Current Session_ID is {self._thread_id}"""
         if self._file_changed(self._user_profile_manager.subagent_config_path):
             subagent_error = self.update_user_subagents()
             if subagent_error:
+                subagent_config_path = self._user_profile_manager.subagent_config_path
+                try:
+                    current_content = subagent_config_path.read_text(encoding='utf-8')
+                except Exception:
+                    current_content = "(unable to read file)"
                 warnings.append(
-                    f"⚠️ **子智能体配置加载警告 / Subagent Config Loading Warning**\n\n"
-                    f"无法加载子智能体配置文件 `SUBAGENT_CONFIG.json`:\n"
-                    f"Failed to load subagent config `SUBAGENT_CONFIG.json`:\n\n"
-                    f"```\n{subagent_error}\n```\n\n"
-                    f"将继续使用之前的子智能体配置。\n"
-                    f"Continuing with previous subagent configuration.\n\n"
-                    f"💡 请检查 `SUBAGENT_CONFIG.json` 文件格式是否正确。\n"
-                    f"💡 Please check if `SUBAGENT_CONFIG.json` format is correct."
+                    f"⚠️ **子智能体配置加载失败 / Subagent Config Load Error**\n\n"
+                    f"**错误 / Error:** `{subagent_error}`\n\n"
+                    f"**配置文件路径 / Config file path:**\n"
+                    f"`{subagent_config_path}`\n\n"
+                    f"**当前文件内容 / Current file content:**\n"
+                    f"```json\n{current_content}\n```\n\n"
+                    f"**正确的格式 / Expected format** — 以智能体名称为 key 的扁平对象:\n"
+                    f"```json\n"
+                    f'{{\n'
+                    f'  "MyAgent": {{\n'
+                    f'    "type": "DrSaiAgent",\n'
+                    f'    "description": "描述此智能体的用途",\n'
+                    f'    "prompt": "系统提示词",\n'
+                    f'    "tools": "*"\n'
+                    f'  }}\n'
+                    f'}}\n'
+                    f"```\n\n"
+                    f"**请立即使用 `run_write` 工具修正上述配置文件，然后继续回答用户的问题。**\n"
+                    f"**Please use the `run_write` tool to fix the config file above, then proceed to answer the user's request.**"
                 )
 
         return warnings
@@ -991,26 +1008,65 @@ Current Session_ID is {self._thread_id}"""
             for name, cfg in sub_agent_config.items()
         )
     
-    def update_user_subagents(self):
+    def update_user_subagents(self) -> str | None:
         """Update user subagents (merge builtins with user config).
 
         User config overrides builtin definitions with the same name.
-        """
-        subagents_config = self._user_profile_manager.load_subagents_config()
-        # Reset to builtins, then apply user overrides
-        self._user_sub_agents.clear()
-        self._user_sub_agents.update(BUILTIN_SUBAGENTS)
-        self._user_sub_agents.update(subagents_config)
 
-        if self._user_sub_agents:
-            self._sub_agent_descriptions = self.get_subagent_descriptions(sub_agent_config = self._user_sub_agents)
-            self._subagent_tools = [
-                get_subagent_tools(
-                    sub_agents=list(self._user_sub_agents.keys()),
-                    description=self._sub_agent_descriptions)]
-        else:
-            self._sub_agent_descriptions = ""
-            self._subagent_tools = []
+        Also injects running daemon processes as available subagents
+        (key = ``daemon:<name>``, type = ``DaemonAgent``) so they can be
+        targeted via /agent and the Delegate tool.
+
+        Returns:
+            Error message string if loading failed, None on success.
+        """
+        try:
+            subagents_config = self._user_profile_manager.load_subagents_config()
+            if not isinstance(subagents_config, dict):
+                return (
+                    f"SUBAGENT_CONFIG.json must be a JSON object (dict), "
+                    f"got {type(subagents_config).__name__}."
+                )
+            # Reset to builtins, then apply user overrides
+            self._user_sub_agents.clear()
+            self._user_sub_agents.update(BUILTIN_SUBAGENTS)
+            self._user_sub_agents.update(subagents_config)
+
+            # ── Inject running daemons ──────────────────────────────────
+            try:
+                from drsai.backend.daemon.pid_manager import list_daemons
+                for d in list_daemons():
+                    if d.get("alive"):
+                        daemon_key = f"daemon:{d['name']}"
+                        self._user_sub_agents[daemon_key] = {
+                            "type": "DaemonAgent",
+                            "description": f"后台常驻 Daemon [{d['name']}] — pid={d.get('pid')}, port={d.get('ws_port')}",
+                            "tools": ["*"],
+                            "role": "leaf",
+                            "timeout": 600,
+                            # Daemon-specific fields
+                            "daemon_name": d["name"],
+                            "daemon_ws_port": d.get("ws_port"),
+                            "daemon_api_token": d.get("api_token"),
+                        }
+            except Exception:
+                logger.debug("Daemon injection skipped (daemon module not available)", exc_info=True)
+            # ─────────────────────────────────────────────────────────────
+
+            if self._user_sub_agents:
+                self._sub_agent_descriptions = self.get_subagent_descriptions(sub_agent_config = self._user_sub_agents)
+                self._subagent_tools = [
+                    get_subagent_tools(
+                        sub_agents=list(self._user_sub_agents.keys()),
+                        description=self._sub_agent_descriptions)]
+            else:
+                self._sub_agent_descriptions = ""
+                self._subagent_tools = []
+            return None
+        except Exception as e:
+            logger.error(f"Failed to update user subagents: {e}")
+            logger.error(traceback.format_exc())
+            return str(e)
 
     async def run_stream(
         self,
@@ -1156,8 +1212,15 @@ Current Session_ID is {self._thread_id}"""
                     yield message
                 return
 
-            # Check if there's a default subagent set for this thread
-            default_subagent_name = self._user_profile_manager.get_default_subagent(self._thread_id)
+            # Check if there's a default subagent set for this thread.
+            # Priority: in-memory _thread_state (set via set_state_value / slash cmd)
+            # fallback: THREAD_CONFIG.json persisted value.
+            # Using _thread_state as primary source avoids cross-session races that
+            # can occur when multiple sessions share the same THREAD_CONFIG.json file.
+            default_subagent_name = (
+                (self._thread_state.get("default_subagent") if isinstance(getattr(self, "_thread_state", None), dict) else None)
+                or self._user_profile_manager.get_default_subagent(self._thread_id)
+            )
             if default_subagent_name and default_subagent_name in self._user_sub_agents:
                 # Route to default subagent
                 async for message in self._handle_default_subagent_mode(
@@ -1241,7 +1304,10 @@ Current Session_ID is {self._thread_id}"""
                                 logger.error(
                                     f"[LLM Retry] Empty output after {self._llm_max_retries} retries"
                                 )
-                                # Fall through: the empty string will be handled below
+                                # Set model_result to None so the post-loop guard
+                                # (if model_result is None) yields the error Response
+                                # instead of treating empty content as a valid reply.
+                                model_result = None
                                 break
 
                         # ── Success — break retry loop ──
@@ -1251,6 +1317,12 @@ Current Session_ID is {self._thread_id}"""
                         raise  # propagate cancellation, no retry
 
                     except Exception as llm_err:
+                        # ── Fast-path: if the cancellation token is already
+                        #    cancelled (e.g. user pressed Ctrl+C), bail out
+                        #    immediately instead of entering the retry loop.
+                        if cancellation_token.is_cancelled():
+                            raise asyncio.CancelledError()
+
                         # ── Model API error — retriable ──────────────────────
                         if llm_retry_count < self._llm_max_retries:
                             llm_retry_count += 1
@@ -1604,11 +1676,17 @@ Current Session_ID is {self._thread_id}"""
             cancellation_token=cancellation_token,
         ):
             if isinstance(message, Response):
-                # Add subagent response to model context
+                # Add subagent response to model context.
+                # source must satisfy assert_valid_name (^[a-zA-Z0-9_-]+$);
+                # sanitize the original key which may contain spaces.
+                safe_src = re.sub(r'[^a-zA-Z0-9_\-]', '_', default_subagent_name).strip('_') or 'subagent'
+                content = str(message.chat_message.content)
+                if not content.strip():
+                    content = f"[{default_subagent_name}] returned an empty response."
                 await model_context.add_message(
                     AssistantMessage(
-                        content=str(message.chat_message.content),
-                        source=default_subagent_name,
+                        content=content,
+                        source=safe_src,
                     )
                 )
                 yield message
@@ -1707,8 +1785,13 @@ Current Session_ID is {self._thread_id}"""
                 )
                 return
 
-            # Save the selected subagent to thread config
+            # Save the selected subagent to thread config.
+            # Also write to in-memory _thread_state so on_messages_stream reads
+            # the correct value without file-level cross-session races.
             try:
+                if not isinstance(getattr(self, "_thread_state", None), dict):
+                    self._thread_state = {}
+                self._thread_state["default_subagent"] = argument
                 self._user_profile_manager.set_default_subagent(self._thread_id, argument)
 
                 description = self._user_sub_agents[argument].get("description", "")
@@ -1742,7 +1825,10 @@ Current Session_ID is {self._thread_id}"""
         elif command_type == "agent_clear":
             # Clear default subagent for current thread
             try:
-                current_subagent = self._user_profile_manager.get_default_subagent(self._thread_id)
+                current_subagent = (
+                    (self._thread_state.get("default_subagent") if isinstance(getattr(self, "_thread_state", None), dict) else None)
+                    or self._user_profile_manager.get_default_subagent(self._thread_id)
+                )
 
                 if not current_subagent:
                     yield Response(
@@ -1755,6 +1841,9 @@ Current Session_ID is {self._thread_id}"""
                     return
 
                 self._user_profile_manager.clear_default_subagent(self._thread_id)
+                # Also clear in-memory _thread_state
+                if isinstance(getattr(self, "_thread_state", None), dict):
+                    self._thread_state.pop("default_subagent", None)
 
                 response_text = f"✅ 已取消当前会话的默认子智能体设置（之前为: **{current_subagent}**）\n\n"
                 response_text += f"💡 现在将恢复使用主智能体 **{agent_name}** 处理消息。\n\n"
@@ -2532,7 +2621,7 @@ Current Session_ID is {self._thread_id}"""
         remote_configs = cfg.get("model_remote_configs", {})
 
         subagent = HepAIWorkerAgent(
-            name=sub_agent_name,
+            name="Remote_Subagent",
             description=cfg.get("description", ""),
             model_remote_configs={
                 "url": remote_configs.get("url", "https://aiapi.ihep.ac.cn/apiv2"),
@@ -2547,6 +2636,49 @@ Current Session_ID is {self._thread_id}"""
         )
 
         await subagent.lazy_init()
+        return subagent
+
+    async def _create_daemon_subagent(
+        self,
+        sub_agent_name: str,
+    ) -> "DaemonSubagent":
+        """Create a DaemonSubagent wrapper for a running daemon process.
+
+        The daemon must already be running (started via ``drsai daemon start``).
+        Communication happens over WebSocket JSON-RPC.
+
+        Args:
+            sub_agent_name: The full subagent key (e.g. ``daemon:default``).
+        """
+
+        cfg = self._user_sub_agents.get(sub_agent_name, {})
+        daemon_name = cfg.get("daemon_name", "default")
+        ws_port = cfg.get("daemon_ws_port")
+        api_token = cfg.get("daemon_api_token")
+
+        if not ws_port or not api_token:
+            raise ValueError(
+                f"Daemon '{daemon_name}' state is incomplete: "
+                f"ws_port={ws_port}, token={'***' if api_token else 'MISSING'}"
+            )
+
+        # 连接复用：优先从连接池获取已有的 DaemonSubagent
+        pooled = DaemonSubagent.get_from_pool(ws_port, api_token)
+        if pooled is not None:
+            logger.debug(
+                "Reusing pooled DaemonSubagent for %s (ws_port=%s)",
+                daemon_name, ws_port,
+            )
+            return pooled
+
+        subagent = DaemonSubagent(
+            name=f"daemon:{daemon_name}",
+            ws_port=ws_port,
+            api_token=api_token,
+            daemon_name=daemon_name,
+        )
+        # 放入连接池供后续复用
+        DaemonSubagent.put_to_pool(subagent)
         return subagent
 
     @staticmethod
@@ -2577,13 +2709,21 @@ Current Session_ID is {self._thread_id}"""
         message: "BaseAgentEvent | BaseChatMessage",
         sub_agent_name: str,
     ) -> "BaseAgentEvent | BaseChatMessage":
-        """Tag a message with subagent source for display differentiation."""
+        """Tag a message with subagent source for display differentiation.
+
+        ``message.source`` is validated by ``autogen_ext`` before every LLM
+        call (``assert_valid_name``: only ``[a-zA-Z0-9_-]`` allowed).
+        Sanitize ``sub_agent_name`` before embedding it so that names like
+        ``"RongZai Agent"`` (with a space) don't cause a ValueError on the
+        next parent-agent LLM call.
+        """
+        safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub_agent_name).strip('_') or 'subagent'
         if hasattr(message, 'source'):
             src = message.source or ""
             if not src:
-                message.source = f"sub:{sub_agent_name}"
+                message.source = f"sub:{safe_name}"
             elif not src.startswith("sub:"):
-                message.source = f"sub:{sub_agent_name}/{src}"
+                message.source = f"sub:{safe_name}/{src}"
         return message
 
     async def _safe_close_subagent(self, subagent, sub_agent_name: str) -> None:
@@ -2638,11 +2778,13 @@ Current Session_ID is {self._thread_id}"""
         # 1. Depth check
         self._check_delegate_depth()
 
-        # 2. Create subagent (remote if config type indicates it)
+        # 2. Create subagent (remote / daemon if config type indicates it)
         cfg = self._user_sub_agents.get(sub_agent_name, {})
         agent_type = cfg.get("type", "DrSaiAgent")
         if agent_type in ("HepAIWorkerAgent", "RemoteAgent"):
             subagent = await self._create_remote_subagent(sub_agent_name)
+        elif agent_type == "DaemonAgent":
+            subagent = await self._create_daemon_subagent(sub_agent_name)
         else:
             subagent = await self._create_local_subagent(sub_agent_name)
 
@@ -2782,9 +2924,10 @@ Current Session_ID is {self._thread_id}"""
 
         # Yield collected results for the caller
         for sub_agent_name, content in subagent_results.items():
+            safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', sub_agent_name).strip('_') or 'subagent'
             yield TextMessage(
                 content=f"[{sub_agent_name}] {content}",
-                source=f"sub:{sub_agent_name}",
+                source=f"sub:{safe_name}",
                 metadata={"subagent_result": sub_agent_name},
             )
 

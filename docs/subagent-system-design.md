@@ -521,3 +521,256 @@ on_messages_stream()                          L979
 - **位置**：`_create_local_subagent()` L2282-2325
 - **根因**：`DrSaiAssistant.__init__` 在 super().__init__ 之后通过 `get_operator_funcs()` 追加了全部基础工具
 - **修复**：传 `allolow_basic_tools=[]` + 清零 `manager_tools` + `_skip_startup_checks = True`
+
+---
+
+## 十二、Daemon 模式子智能体调用
+
+> 核心文件：`python/packages/drsai/src/drsai/backend/daemon/`
+> RPC 注册：`python/packages/drsai/src/drsai/backend/tui_gateway/handlers/daemon.py`
+
+### 12.1 架构概览
+
+Daemon 模式提供了一种**独立于 TUI 进程**的后台常驻子智能体服务。与第 3 节中的远程子智能体（`HepAIWorkerAgent`）不同，daemon 子智能体通过 **WebSocket JSON-RPC 协议**与本机 TUI/CLI 通信，TUI 退出后 daemon 继续运行。
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  TUI (drsai chat) 或 CLI (drsai daemon start)                   │
+│                                                                 │
+│  /daemons → cmd_daemons (slash.py)                              │
+│  /agent   → cmd_agent   (slash.py)                              │
+│                 │                                                │
+│  subagent.invoke RPC (daemon.py handler)                        │
+│                 │                                                │
+│  ┌──────────────▼──────────────────────────────────────────────┐│
+│  │  Daemon 进程 (独立 subprocess, 脱离终端)                     ││
+│  │                                                              ││
+│  │  pid_manager.start_daemon()                                  ││
+│  │    ├─ 分配空闲端口 (42500-43000)                             ││
+│  │    ├─ 生成 API Token                                         ││
+│  │    ├─ subprocess.Popen(                                      ││
+│  │    │     python -m drsai.backend.daemon,                     ││
+│  │    │     start_new_session=True,  ← 脱离父进程组              ││
+│  │    │     close_fds=True,                                      ││
+│  │    │  )                                                      ││
+│  │    └─ 等待就绪 (_wait_for_ready, timeout=15s)                ││
+│  │                                                              ││
+│  │  daemon_server.py (FastAPI + WebSocket)                      ││
+│  │    ├─ /api/health, /api/info, /api/sessions                  ││
+│  │    └─ /ws?token=xxx                                          ││
+│  │         ├─ session.create → 新建 Agent 会话                  ││
+│  │         ├─ prompt.submit  → 提交任务                         ││
+│  │         └─ 事件流: message.delta / message.complete / error  ││
+│  └──────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 12.2 子智能体调用流程（subagent.invoke）
+
+**文件位置**：`daemon.py` → `@method("subagent.invoke")` L138
+
+```
+TUI/CLI 调用 subagent.invoke({ daemon_name, message, caller_session_id })
+  │
+  ├─ 1. 读取 daemon state（PID 文件 + JSON 状态文件）
+  │     pid_manager.read_state(daemon_name)
+  │
+  ├─ 2. 建立 WebSocket 连接
+  │     ws://127.0.0.1:{port}/ws?token={api_token}
+  │
+  ├─ 3. 创建会话
+  │     → session.create RPC
+  │     ← session_id
+  │
+  ├─ 4. 提交提示词
+  │     → prompt.submit RPC
+  │
+  ├─ 5. 流式接收响应（在后台线程中运行）
+  │     while True:
+  │       frame = ws.recv()
+  │       switch frame.type:
+  │         "message.delta"    → emit subagent.thinking (实时 chunk)
+  │         "message.complete" → emit subagent.complete (最终结果)
+  │         "error"            → emit subagent.complete (错误)
+  │
+  └─ 6. 关闭连接
+        ws.close()
+```
+
+### 12.3 远程子智能体 vs Daemon 子智能体对比
+
+| 特性 | 远程子智能体 (HepAIWorkerAgent) | Daemon 子智能体 |
+|------|-------------------------------|----------------|
+| **通信协议** | HTTP REST API (`POST /worker/unified_gate/`) | WebSocket JSON-RPC |
+| **发现机制** | `get_worker_sync_functions()` 获取远程函数列表 | 直接创建 session + 提交 prompt |
+| **生命周期** | 每次调用创建新 Agent 实例，用完 close | 独立进程常驻，跨会话复用 |
+| **配置位置** | `SUBAGENT_CONFIG.json` → `model_remote_configs` | `pid_manager` 状态文件 |
+| **适用场景** | 调用外部部署的 AI 模型/智能体服务 | 本机后台常驻 Agent，TUI 退出后继续运行 |
+| **流式输出** | 通过 `a_chat_completions(stream=True)` | 通过 WebSocket 事件流 |
+| **启动方式** | 自动（发送消息时触发） | 手动 `drsai daemon start --name <name>` |
+
+### 12.4 SUBAGENT_CONFIG.json 配置规范
+
+**文件位置**：`~/.drsai/workspace/runs/{user_id}/configs/SUBAGENT_CONFIG.json`
+
+```json
+{
+  "RongZai_Agent": {
+    "type": "HepAIWorkerAgent",
+    "description": "蓉仔——粉末中子衍射精修助手",
+    "model_remote_configs": {
+      "name": "RongZai_Agent",
+      "url": "https://aiapi.ihep.ac.cn/apiv2"
+    }
+  }
+}
+```
+
+> **⚠️ 命名约束**：`SUBAGENT_CONFIG.json` 的 key 和 `model_remote_configs.name` 必须使用
+> `[a-zA-Z0-9_-]` 字符集。如果 key 中包含空格（如 `"RongZai Agent"`），`_tag_message()` 
+> 方法会将空格替换为下划线生成 `source` 标记（见 `drsai_assistant.py` L2618），但
+> `/agent` 命令也会因空格导致匹配失败。**推荐统一使用下划线**（如 `"RongZai_Agent"`）。
+
+---
+
+## 十三、/daemons 斜杠命令
+
+**文件位置**：`slash.py` → `cmd_daemons()` L893, `SLASH_HANDLERS` L1058
+
+### 13.1 命令用法
+
+| 命令 | 功能 |
+|------|------|
+| `/daemons` | 列出所有 daemon（● 运行中 / ○ 已停止） |
+| `/daemons <name>` | 查看单个 daemon 详情（状态、PID、端口、运行时间） |
+| `/daemons logs <name>` | 查看 daemon 日志尾行（最近 20 行） |
+| `/dm` | `/daemons` 的短别名 |
+
+### 13.2 底层 RPC 方法
+
+`/daemons` 命令直接调用 `pid_manager` 函数，同时 daemon 模块也注册了独立的 RPC 方法（`daemon.py`），供非 TUI 客户端调用：
+
+| RPC 方法 | 说明 |
+|----------|------|
+| `daemon.list` | 列出所有 daemon + HTTP 获取 session_count |
+| `daemon.start` | 启动 daemon |
+| `daemon.stop` | 停止 daemon |
+| `daemon.status` | 获取单个 daemon 状态 |
+| `daemon.logs` | 读取 daemon 日志 |
+| `subagent.invoke` | 向 daemon 提交子任务（WebSocket 流式） |
+
+### 13.3 CLI 命令对照
+
+| TUI 命令 | CLI 等价命令 |
+|----------|-------------|
+| `/daemons` | `drsai daemon status` |
+| `/daemons <name>` | `drsai daemon status --name <name>` |
+| `/daemons logs <name>` | `drsai daemon logs --name <name>` |
+| 无直接 TUI 命令 | `drsai daemon start --name <name>` |
+| 无直接 TUI 命令 | `drsai daemon stop --name <name>` |
+
+### 13.4 已知问题：/daemons 曾缺失
+
+**时间**：2026-06-03 前
+**现象**：CLI `drsai daemon start` 提示用户"在 TUI 中使用 /daemons 命令查看和管理此 daemon"，但 `/daemons` 从未在 `SLASH_HANDLERS` 中注册，TUI 返回 `unknown slash command: daemons`。
+**修复**：新增 `cmd_daemons()` 函数并注册到 `SLASH_HANDLERS`，同时添加短别名 `/dm`。
+
+### 13.5 /daemon-run 命令
+
+| 命令 | 功能 |
+|------|------|
+| `/daemon-run <name> <task>` | 向 daemon 提交一次性任务 |
+| `/dr <name> <task>` | `/daemon-run` 的短别名 |
+
+`/daemon-run` 内部调用 `subagent.invoke` RPC，通过 WebSocket 向 daemon 提交任务并流式返回结果。
+
+---
+
+## 十四、Daemon 与 Delegate/Agent 集成
+
+> 实现时间：2026-06-03
+
+### 14.1 概述
+
+运行中的 daemon 进程现在可以作为标准的子智能体，通过两种方式被调用：
+
+- **方式 1**：LLM 主动 Delegate — daemon 出现在 Delegate 工具的 agent_type 列表中
+- **方式 2**：默认子智能体模式 — 通过 `/agent daemon:<name>` 设置
+
+### 14.2 动态注入机制
+
+在 `update_user_subagents()` 中（`drsai_assistant.py`），加载 `SUBAGENT_CONFIG.json` 后，自动扫描运行中的 daemon 并注入为子智能体：
+
+```
+list_daemons() → for each alive daemon:
+    _user_sub_agents[f"daemon:{name}"] = {
+        "type": "DaemonAgent",
+        "description": "后台常驻 Daemon [name] — pid=...",
+        "daemon_name": name,
+        "daemon_ws_port": port,
+        "daemon_api_token": token,
+        ...
+    }
+```
+
+### 14.3 执行流程
+
+```
+/agent daemon:default  或  LLM Delegate→{agent_type:"daemon:default"}
+  │
+  ▼
+_execute_subagent(sub_agent_name="daemon:default")
+  │
+  ├── agent_type = "DaemonAgent"
+  ├── _create_daemon_subagent("daemon:default")
+  │     └── DaemonSubagent(ws_port, api_token, daemon_name)
+  │
+  ├── _build_subagent_messages(prompt, work_dir, context)
+  │
+  └── subagent.on_messages_stream(messages, ct)
+        │
+        │  [后台线程]                  [异步主循环]
+        │  WebSocket connect ──→      asyncio.Queue
+        │  session.create    ──→      │
+        │  prompt.submit     ──→      │
+        │  message.delta ────→ queue ─→ yield TextMessage(chunk)
+        │  message.complete ─→ queue ─→ yield Response(...)
+        │
+        └── close()
+```
+
+### 14.4 DaemonSubagent 类
+
+**文件**：`python/packages/drsai/src/drsai/modules/agents/skills_agent/daemon_subagent.py`
+
+轻量包装器，实现 `on_messages_stream()` 和 `close()` 接口。使用 `threading.Thread` + `asyncio.Queue` 桥接同步 WebSocket 和异步生成器。
+
+### 14.5 使用示例
+
+```bash
+# 1. 启动 daemon（shell）
+drsai daemon start --name default
+
+# 2. 在 TUI 中查看
+/daemons                    # → ● daemon:default  pid=...  port=42500
+
+# 3. 设置为默认子智能体
+/agent daemon:default       # → Default subagent set
+
+# 4. 之后所有消息自动路由到 daemon
+帮我分析项目结构
+
+# 或通过 LLM Delegate（在普通模式下）
+"Please delegate to daemon:default to analyze the codebase"
+```
+
+### 14.6 关键文件
+
+| 文件 | 说明 |
+|------|------|
+| `daemon_subagent.py` | DaemonSubagent 类（WebSocket→asyncio.Queue 桥接） |
+| `drsai_assistant.py` L1010 | `update_user_subagents()` 动态注入 daemon |
+| `drsai_assistant.py` L2595 | `_create_daemon_subagent()` |
+| `drsai_assistant.py` L2758 | `_execute_subagent()` 中 DaemonAgent 分支 |
+| `slash.py` L893 | `cmd_daemons()` 和 `cmd_daemon_run()` |
+| `slash.py` L1058 | SLASH_HANDLERS 注册 |

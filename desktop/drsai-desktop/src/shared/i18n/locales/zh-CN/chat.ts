@@ -30,6 +30,9 @@
   categoryAgent: "代理",
   categoryTools: "工具",
   categoryInfo: "信息",
+  categorySession: "会话",
+  categoryDisplay: "显示",
+  categoryConfig: "配置",
   noUsageData: "暂无使用数据。请先发送一条消息。",
   commands: {
     new: "开始新对话",
