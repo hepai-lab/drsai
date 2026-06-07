@@ -1,23 +1,13 @@
 #!/bin/bash
+# run_drsai_ui.sh — 向后兼容入口，转发到统一管理脚本 drsai-dev.sh
+#
+# 历史上此脚本直接 pm2 start 前后端，但缺少 --host/--port 导致后端绑到
+# 127.0.0.1:8081（前端连不上）。现统一由 drsai-dev.sh 管理：正确的
+# --host 0.0.0.0 --port 4291、幂等预检、健康验证。
+#
+# 直接管理服务请用：
+#   ./drsai-dev.sh start|stop|restart|status|verify|logs
+set -euo pipefail
 
-# 检查根目录下是否存在.env文件
-if [ ! -f ".env" ]; then
-    echo "错误: .env文件不存在，请先创建.env文件"
-    exit 1
-fi
-
-# 检查frontend目录下是否存在.env.development文件
-if [ ! -f "./frontend/.env.development" ]; then
-    echo "错误: frontend/.env.development文件不存在，请先创建该文件"
-    exit 1
-fi
-
-source ~/.bashrc
-
-conda activate drsai
-
-pm2 start -n drsai_backend "drsai-ui ui"
-
-cd ./frontend
-pm2 start -n drsai_frontend "yarn run dev "
-
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "${SCRIPT_DIR}/drsai-dev.sh" start all

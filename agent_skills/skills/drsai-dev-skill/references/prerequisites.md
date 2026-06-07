@@ -1,5 +1,7 @@
 # 启动前提条件检查与修复
 
+> `./drsai-dev.sh start` 会自动执行下面大部分预检并在缺失时明确报错。本文档用于手动核对或排查。
+
 在启动任何服务之前，按以下顺序检查并修复环境问题。
 
 ## 检查清单
@@ -17,16 +19,19 @@ ls /path/to/drsai/frontend /path/to/drsai/python
 ls /path/to/drsai/.env
 ```
 
-**不存在时**：
+**不存在时**（`.env` 含密钥，需手动复制并填写，脚本不会自动创建）：
 ```bash
 cp /path/to/drsai/.env.example /path/to/drsai/.env
 ```
 
-然后提示用户编辑 `.env`，至少设置：
+然后编辑 `.env`，至少设置：
 ```
 HEPAI_API_KEY=your_api_key_here
-SERVICE_MODE=DEV
+SERVICE_MODE=DEV        # 启用本地登录与多用户
 ```
+
+> **DEV 模式默认账号**：后端启动时自动播种 `admin/admin123456`（管理员）、`dev/dev123456`（开发者），
+> 可用 `DRSAI_UI_DEFAULT_ADMIN_USER/PASSWORD` 等在 `.env` 覆盖。
 
 ### 3. 检查 `HEPAI_API_KEY`
 
