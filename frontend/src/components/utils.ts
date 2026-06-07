@@ -2,12 +2,25 @@ import { RcFile } from "antd/es/upload";
 import { IStatus } from "./types/app";
 
 export const getServerUrl = () => {
-  const url = process.env.GATSBY_API_URL || "/api";
-  // 页面通过 HTTPS 加载时，自动将 http:// 升级为 https://，避免 mixed content
-  if (typeof window !== "undefined" && window.location.protocol === "https:" && url.startsWith("http://")) {
-    return url.replace("http://", "https://");
+  // 1. 显式配置优先：GATSBY_API_URL 覆盖一切（HTTPS 页面自动升级 http→https，避免 mixed content）
+  if (process.env.GATSBY_API_URL) {
+    const url = process.env.GATSBY_API_URL;
+    if (typeof window !== "undefined" && window.location.protocol === "https:" && url.startsWith("http://")) {
+      return url.replace("http://", "https://");
+    }
+    return url;
   }
-  return url;
+
+  // 2. DEV 模式（前端 4290 与后端 4291 分离）：用浏览器当前 hostname 推导后端地址。
+  //    读 window.location.hostname（地址栏里那个 IP），与容器内网卡 IP 无关——
+  //    无论 drsai 跑在容器还是宿主机，都能指向「你用来访问它的那个 IP」的后端端口。
+  if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+    const port = process.env.GATSBY_DEV_API_PORT || "4291";
+    return `${window.location.protocol}//${window.location.hostname}:${port}/api`;
+  }
+
+  // 3. PROD：前端由后端同源托管，走相对路径
+  return "/api";
 };
 
 export function setCookie(name: string, value: any, days: number) {

@@ -172,7 +172,17 @@ app.add_middleware(
         "https://drsai.ihep.ac.cn",
         "https://aitest.ihep.ac.cn",
      ],
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):\d+",
+    allow_origin_regex=(
+        r"https?://("
+        r"localhost"
+        r"|127\.0\.0\.1"
+        # DEV/容器/局域网：放行私网段 IP（10.x、192.168.x、172.16-31.x）访问，
+        # 前端按浏览器 hostname 推导后端地址时需要它们通过 CORS。
+        r"|10(\.\d{1,3}){3}"
+        r"|192\.168(\.\d{1,3}){2}"
+        r"|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2}"
+        r"):\d+"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
