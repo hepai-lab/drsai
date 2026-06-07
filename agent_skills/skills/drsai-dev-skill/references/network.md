@@ -9,6 +9,20 @@ DrSai 服务启动后，需要确认：
 > ⚠️ **重要**：用 `curl http://<本机IP>:端口` 自测永远能通，**不代表外部机器能访问**。
 > 必须区分运行环境后再判断实际的访问控制层级。
 
+## 前端如何找到后端（DEV 自动推导）
+
+DEV 模式下前端(4290)与后端(4291)分离。前端 `getServerUrl()`（`frontend/src/components/utils.ts`）
+**不写死后端地址**，而是按优先级推导：
+
+1. 若设了 `GATSBY_API_URL` → 用它（一般不需要，除非后端在另一台主机）
+2. DEV 模式 → `http://${window.location.hostname}:${GATSBY_DEV_API_PORT||4291}/api`
+   —— 即跟随**浏览器访问前端所用的 host** 自动指向同主机的后端
+3. PROD → 相对路径 `/api`（后端同源托管）
+
+含义：从哪个 IP/域名访问前端，API 就自动走哪个 IP 的 4291。**所以请用对外可达的独立 IP
+（下文的 net1）访问前端**，不要用容器内网 eth0 的地址，也不要在 `.env.development` 硬编码
+`GATSBY_API_URL`（会覆盖自动推导）。
+
 ## 环境检测（必须先做）
 
 ```bash

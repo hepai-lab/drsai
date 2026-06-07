@@ -1,5 +1,9 @@
 # 服务验证流程
 
+> **最快方式**：`./drsai-dev.sh verify` —— 自动逐项检查端口监听、`/api/version`、本地登录取 token、
+> `/auth/me` JWT 校验、CORS 预检，并打印推荐访问地址（独立网卡 IP）。
+> 下面是各步骤的手动等价命令，便于单独排查。
+
 服务启动后，按以下步骤逐步验证服务是否真正可用。
 
 ## 验证后端（端口 4291）
@@ -21,7 +25,20 @@ curl -s -o /dev/null -w "Backend HTTP status: %{http_code}\n" http://localhost:4
 ### Step 3：验证 API 端点
 
 ```bash
-curl -s http://localhost:4291/api/health 2>/dev/null | python3 -m json.tool
+curl -s http://localhost:4291/api/version 2>/dev/null | python3 -m json.tool
+```
+
+### Step 4：验证本地登录链路（DEV）
+
+```bash
+# 用默认管理员账号登录，应返回 access_token
+TOKEN=$(curl -s -X POST \
+  "http://localhost:4291/api/umtlocal/login?user_id=admin&password=admin123456" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['access_token'])")
+echo "token: ${TOKEN:0:20}..."
+
+# 用 token 校验 /auth/me，应返回 {"status":true,"data":{"user_id":"admin"}}
+curl -s http://localhost:4291/api/auth/me -H "Authorization: Bearer $TOKEN"
 ```
 
 ### 判断标准
@@ -64,8 +81,8 @@ Gatsby 开发服务器首次启动编译需要 1-3 分钟，在此期间请等�
 
 ```bash
 pm2 list
-pm2 logs drsai_backend --lines 50
-pm2 logs drsai_frontend --lines 50
+pm2 logs drsai-dev-backend --lines 50
+pm2 logs drsai-dev-frontend --lines 50
 ```
 
 pm2 进程状态说明：

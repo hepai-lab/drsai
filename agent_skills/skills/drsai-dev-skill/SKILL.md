@@ -1,150 +1,146 @@
 ---
 name: drsai-dev-skill
-description: 当用户需要启动、停止、重启 DrSai 前端或后端服务，或验证服务是否正常运行时立即使用。适用场景包括：初次部署、环境更换、服务异常排查、服务状态查询等。
-allowed-tools: Bash(pm2:*) Bash(curl:*) Bash(yarn:*) Bash(node:*) Bash(drsai-ui:*) Bash(drsai:*) Bash(kill:*) Bash(lsof:*) Bash(bash:*)
+description: 当用户需要启动、停止、重启、验证 DrSai 前端或后端开发服务，或排查登录/访问/CORS 等开发环境问题时立即使用。适用场景包括：初次部署、环境更换、服务异常排查、服务状态查询、本地登录排错等。
+allowed-tools: Bash(pm2:*) Bash(curl:*) Bash(yarn:*) Bash(node:*) Bash(drsai-ui:*) Bash(drsai:*) Bash(kill:*) Bash(lsof:*) Bash(ss:*) Bash(ip:*) Bash(bash:*) Bash(./drsai-dev.sh:*)
 ---
 
-# DrSai 前后端启动与验证指南
+# DrSai 开发环境管理指南
 
-## 项目结构概览
+## 首选入口：`drsai-dev.sh`
 
+项目根目录提供统一管理脚本 `drsai-dev.sh`，**优先用它**管理开发环境，它封装了正确的
+host/port、幂等预检和完整健康验证：
+
+```bash
+cd /path/to/drsai
+
+./drsai-dev.sh start   [backend|frontend|all]   # 启动（默认 all）
+./drsai-dev.sh stop    [backend|frontend|all]   # 停止
+./drsai-dev.sh restart [backend|frontend|all]   # 重启（重新读取端口/.env）
+./drsai-dev.sh status                            # 进程状态 + 端口监听
+./drsai-dev.sh verify                            # 完整健康链路 + 推荐访问地址
+./drsai-dev.sh logs    [backend|frontend]        # 查看日志
 ```
-drsai/                          # 项目根目录
-├── .env                        # 后端环境变量（从 .env.example 复制）
-├── frontend/                   # 前端 Gatsby 项目
-│   ├── .env.development        # 前端开发环境变量（从 .env.example 复制）
-│   ├── run_drsai_frontend.sh   # 前端一键启动脚本
-│   └── package.json
-└── python/packages/drsai_ui/   # 后端 Python 包
-```
+
+- 后端：`drsai-ui ui --host 0.0.0.0 --port 4291 --reload`（pm2 进程 `drsai-dev-backend`）
+- 前端：`GATSBY_DEV_PORT=4290 yarn develop`（pm2 进程 `drsai-dev-frontend`）
+- 端口/环境名可用 env 覆盖：`DRSAI_BACKEND_PORT`、`DRSAI_FRONTEND_PORT`、`DRSAI_CONDA_ENV`
+
+> `run_drsai_ui.sh` 现已是转发到 `./drsai-dev.sh start all` 的薄壳，保留向后兼容。
+
+## 访问地址与 IP（重要）
+
+DEV 模式下前端(4290)与后端(4291)分离，前端如何找到后端：
+
+- **自动推导（默认，推荐）**：前端 `getServerUrl()`（`frontend/src/components/utils.ts`）在 DEV
+  下用 `window.location.hostname` —— 即**你浏览器地址栏里的 host** —— 拼出后端地址
+  `http://<hostname>:4291/api`。所以：
+  - 用 `http://localhost:4290` 访问 → 后端走 `localhost:4291`
+  - 用 `http://10.5.8.104:4290` 访问 → 后端走 `10.5.8.104:4291`
+  - **无需写死任何 IP**，跟随你访问用的地址自动适配。
+- **不要**在 `frontend/.env.development` 里硬编码 `GATSBY_API_URL`，否则会覆盖上面的自动推导，
+  导致从其他 IP 访问时后端地址错误（参见 troubleshooting 的 `Unexpected end of JSON input`）。
+
+### 容器 / K8s 多网卡：用独立 IP
+
+本项目常运行在 K8s Pod（Multus 多网卡）中：
+
+| 网卡 | 示例 IP | MTU | 用途 |
+|------|---------|-----|------|
+| `eth0` | 10.42.x.x | 1450 | 集群 overlay 内网，**非对外** |
+| `net1` | 10.5.x.x | 1500 | 独立网卡，**对外访问地址** |
+
+`./drsai-dev.sh verify` 会自动选 MTU=1500 的独立网卡并打印推荐访问 URL。**从浏览器请用这个
+独立 IP（如 `http://10.5.8.104:4290`）访问**，前端会自动把 API 指向同一 IP 的 4291。
+
+> 容器内用 `curl http://<eth0_ip>:端口` 自测能通**不代表**外部可访问，详见
+> [references/network.md](references/network.md)。
+
+## 本地登录与默认账号
+
+DEV 模式（`.env` 中 `SERVICE_MODE="DEV"`）走**本地账号登录**，不需要 IHEP 统一认证。
+
+后端启动时自动播种两个默认账号（`deps.py::_seed_default_users`，账号已存在则跳过）：
+
+| 账号 | 密码 | 角色 |
+|------|------|------|
+| `admin` | `admin123456` | 管理员 |
+| `dev` | `dev123456` | 开发者 |
+
+- 登录页（`/login`）选 **「本地登录」** Tab，填上面任一组即可。
+- 默认值可在 `.env` 用 `DRSAI_UI_DEFAULT_ADMIN_USER/PASSWORD`、`DRSAI_UI_DEFAULT_DEV_USER/PASSWORD`
+  覆盖（`config.py` 的 `Settings`，前缀 `DRSAI_UI_`）。
+- 登录链路：前端 `LoginPage.tsx` → `authAPI.login()` → 后端 `POST /api/umtlocal/login` → 签发 JWT；
+  之后 `RouteGuard` 用 `GET /api/auth/me` 校验 token。
 
 ## 启动前提条件
 
-启动前**必须**检查以下前提条件，缺少则引导用户修复：
+`drsai-dev.sh` 会自动预检，缺失项会明确报错。手动核对见
+[references/prerequisites.md](references/prerequisites.md)。要点：
 
-1. **后端 `.env` 文件**：项目根目录下必须有 `.env`，可从 `.env.example` 复制
-2. **`HEPAI_API_KEY`**：`.env` 中必须设置有效的 API Key
-3. **前端依赖**：`frontend/node_modules` 存在且非空（否则需要先 `yarn install`）
-4. **Python 包**：`drsai-ui` 命令可用（`drsai_ui` 包已安装）
-
-具体的检查与修复流程见 [references/prerequisites.md](references/prerequisites.md)。
-
-## 后端启动
-
-### 开发模式（推荐）
-
-```bash
-cd /path/to/drsai
-source .env 2>/dev/null || true
-drsai-ui ui --host 0.0.0.0 --port 4291
-```
-
-后端默认监听 `0.0.0.0:4291`，提供 API 和静态前端服务。
-
-### 用 pm2 后台运行
-
-```bash
-cd /path/to/drsai
-pm2 start -n drsai_backend "drsai-ui ui --host 0.0.0.0 --port 4291 --reload"
-```
-
-### 常用参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `--host` | `0.0.0.0` | 监听地址 |
-| `--port` | `4291` | 监听端口 |
-| `--reload` | 关闭 | 代码变更时自动重载（开发用） |
-| `--agent-config` | `agent_config.yaml` | 智能体配置文件路径 |
-
-## 前端启动
-
-### 一键启动（推荐）
-
-```bash
-cd /path/to/drsai/frontend
-bash run_drsai_frontend.sh
-```
-
-该脚本会自动完成：环境检测 → 安装依赖 → 初始化 `.env.development` → 启动开发服务器。
-
-### 手动步骤
-
-```bash
-cd /path/to/drsai/frontend
-yarn install --legacy-peer-deps          # 首次安装依赖
-cp .env.example .env.development         # 首次初始化环境变量
-GATSBY_DEV_PORT=4290 yarn develop        # 启动，端口 4290
-```
-
-### 用 pm2 后台运行
-
-```bash
-cd /path/to/drsai/frontend
-pm2 start -n drsai_frontend "GATSBY_DEV_PORT=4290 yarn develop"
-```
-
-### 端口说明
-
-| 命令 | 端口 |
-|------|------|
-| `GATSBY_DEV_PORT=4290 yarn develop` | 4290（项目约定端口） |
-| `yarn develop` | 8000（默认） |
-| `GATSBY_DEV_PORT=xxxx yarn develop` | 自定义 |
+1. **后端 `.env`**：项目根必须有 `.env`（含密钥，**不会自动创建**），从 `.env.example` 复制并填 `HEPAI_API_KEY`
+2. **`SERVICE_MODE="DEV"`**：启用本地登录与多用户
+3. **conda 环境 `drsai`** + `drsai-ui` 命令可用（`drsai_ui` 包已 editable 安装）
+4. **Node >= 18 + yarn**（脚本会自动 source nvm）
+5. **前端依赖**：`frontend/node_modules`（脚本会在缺失时 `yarn install --legacy-peer-deps`）
+6. **前端 `.env.development`**：缺失时脚本自动从 `.env.example` 复制（**不要**硬编码 `GATSBY_API_URL`）
 
 ## 服务验证
 
-启动后必须验证服务实际可用，详见 [references/verification.md](references/verification.md)。
-
-### 快速验证命令
+最简单：
 
 ```bash
-# 验证后端
-curl -s -o /dev/null -w "%{http_code}" http://localhost:4291/
-
-# 验证前端
-curl -s -o /dev/null -w "%{http_code}" http://localhost:4290/
-
-# 检查端口是否监听
-ss -tlnp | grep -E "4290|4291"
+./drsai-dev.sh verify
 ```
 
-## IP 与端口可达性验证
+它按已验证的链路逐项检查并打印推荐访问地址：
 
-服务启动后，需确认从本机各网卡 IP 均可访问，并检查防火墙是否放行了对应端口。详见 [references/network.md](references/network.md)。
+1. 后端/前端端口监听
+2. `GET /api/version` == 200
+3. 本地登录 `admin` → 取得 JWT
+4. `GET /api/auth/me`（Bearer）→ 返回 user_id
+5. CORS 预检（`Origin: http://<独立IP>:4290`）→ allow-origin 匹配
 
-### 一键网络验证
+逐步手动验证见 [references/verification.md](references/verification.md)。
+
+## 手动命令参考
+
+若不便用脚本，等价手动命令：
 
 ```bash
-# 获取本机 IP
-hostname -I
+# 后端（开发，热加载）
+cd /path/to/drsai
+source .env
+conda activate drsai
+drsai-ui ui --host 0.0.0.0 --port 4291 --reload
 
-# 从各 IP 测试后端可达性
-for ip in $(hostname -I); do
-    STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://${ip}:4291/" 2>/dev/null)
-    echo "http://${ip}:4291/ → HTTP $STATUS"
-done
-
-# 从各 IP 测试前端可达性
-for ip in $(hostname -I); do
-    STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 "http://${ip}:4290/" 2>/dev/null)
-    echo "http://${ip}:4290/ → HTTP $STATUS"
-done
+# 前端（HMR）
+cd /path/to/drsai/frontend
+yarn install --legacy-peer-deps        # 首次
+GATSBY_DEV_PORT=4290 yarn develop
 ```
+
+| 后端参数 | 默认 | 说明 |
+|---------|------|------|
+| `--host` | `127.0.0.1`（CLI 默认）| 开发须显式设 `0.0.0.0` 才能外部访问 |
+| `--port` | `8081`（CLI 默认）| 项目约定 `4291`，须显式指定 |
+| `--reload` | 关 | editable 安装下代码变更自动重载 |
+
+> ⚠️ 后端 host/port 是 CLI 参数，**不读环境变量**，必须显式 `--host 0.0.0.0 --port 4291`，
+> 否则会绑到 `127.0.0.1:8081`，前端连不上。这是 `drsai-dev.sh` 帮你保证的关键点。
 
 ## 停止服务
 
 ```bash
-# pm2 管理的服务
-pm2 stop drsai_backend
-pm2 stop drsai_frontend
-pm2 delete drsai_backend drsai_frontend
-
-# 按端口强制停止
+./drsai-dev.sh stop all
+# 或按端口强制
 kill $(lsof -t -i :4291)
 kill $(lsof -t -i :4290)
 ```
 
 ## 常见问题
 
-详见 [references/troubleshooting.md](references/troubleshooting.md)。
+详见 [references/troubleshooting.md](references/troubleshooting.md)，含：
+- 登录报 `Unexpected end of JSON input`
+- 外部 IP 访问 / CORS 被拦
+- 后端绑错 host/port、`drsai-ui not found`、前端依赖与 nvm 等
