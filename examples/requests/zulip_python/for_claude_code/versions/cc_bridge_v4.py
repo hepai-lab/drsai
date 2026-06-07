@@ -1,18 +1,19 @@
 """
-cc_bridge_v3.py — Zulip <-> Claude Code 桥接器（SDK 多轮 + Zulip 权限交互版）
-===============================================================================
-与 v2 的区别：
-  - 工具权限确认通过 Zulip 完成：Claude 要执行危险操作时，在 Zulip 发问，
-    用户回复 yes/no，Claude 再继续或取消。
-  - 错误信息完整展示到 Zulip（捕获 ProcessError.stderr）
-
-依赖：
-  pip install zulip claude-code-sdk
+cc_bridge_v4.py — Zulip <-> Claude Code 桥接器（SDK 多轮 + Zulip 权限交互 + 并发保护）
+========================================================================================
+与 v3 的区别：
+  - 每个对话 key 只允许同时运行一个 Claude 进程（per-key 互斥锁），
+    新消息到达时若当前 key 正在处理，回复"正忙"提示。
+  - Claude 调用设 5 分钟超时，避免永久挂起。
+  - update_message / send_message 通过 run_in_executor 调用，不阻塞 async 事件循环。
+  - 启动时清理残留的 bridge 用 Claude 子进程。
 """
 
 import asyncio
 import json
 import os
+import signal
+import subprocess
 import sys
 import time
 import threading
@@ -28,12 +29,15 @@ from claude_code_sdk.types import (
 
 # ── 配置 ──────────────────────────────────────────────────────────────────────
 
-ZULIPRC_PATH = os.environ.get("ZULIPRC", os.path.expanduser("~/.zuliprc"))
-WORKDIR      = os.environ.get("CLAUDE_WORKDIR", os.path.expanduser("~/VSProjects/drsai"))
-PERM_TIMEOUT = int(os.environ.get("PERM_TIMEOUT", "300"))  # 权限等待超时秒数
+ZULIPRC_PATH    = os.environ.get("ZULIPRC", os.path.expanduser("~/.zuliprc"))
+WORKDIR         = os.environ.get("CLAUDE_WORKDIR", os.path.expanduser("~/VSProjects/drsai"))
+PERM_TIMEOUT    = int(os.environ.get("PERM_TIMEOUT", "300"))
+CALL_TIMEOUT    = int(os.environ.get("CALL_TIMEOUT", "300"))   # Claude 整体超时（秒）
+HEARTBEAT_INTERVAL = 8.0
+EDIT_INTERVAL   = 0.8
 
 HELP_TEXT = (
-    "**Claude Code Zulip Bridge v3**\n\n"
+    "**Claude Code Zulip Bridge v4**\n\n"
     "- 私聊：直接发消息即可\n"
     "- 频道：使用 `@**bot名**` 提及我\n\n"
     "命令：\n"
@@ -45,21 +49,20 @@ HELP_TEXT = (
     "**权限确认**：Claude 执行危险操作时会在此询问，回复 `yes`/`no` 即可。"
 )
 
-# 高危 Bash 命令模式，匹配到才请求 Zulip 确认
 import re as _re
 _DANGEROUS_PATTERNS = _re.compile(
-    r"rm\s+-[a-z]*r[a-z]*\s+-[a-z]*f|"   # rm -rf / rm -fr
-    r"rm\s+-[a-z]*f[a-z]*\s+-[a-z]*r|"   # rm -fr
-    r"git\s+push\s+.*--force|"            # git push --force
-    r"git\s+push\s+-f\b|"                 # git push -f
-    r"git\s+reset\s+--hard|"              # git reset --hard
-    r"git\s+clean\s+-[a-z]*f|"            # git clean -f
-    r":\s*>\s*[^\s]|"                     # : > file (truncate)
-    r"dd\s+if=|"                           # dd if=...
-    r"chmod\s+-[a-z]*R|"                  # chmod -R
-    r"chown\s+-[a-z]*R|"                  # chown -R
-    r"DROP\s+(TABLE|DATABASE)|"           # SQL DROP
-    r"pkill|killall",                     # mass kill
+    r"rm\s+-[a-z]*r[a-z]*\s+-[a-z]*f|"
+    r"rm\s+-[a-z]*f[a-z]*\s+-[a-z]*r|"
+    r"git\s+push\s+.*--force|"
+    r"git\s+push\s+-f\b|"
+    r"git\s+reset\s+--hard|"
+    r"git\s+clean\s+-[a-z]*f|"
+    r":\s*>\s*[^\s]|"
+    r"dd\s+if=|"
+    r"chmod\s+-[a-z]*R|"
+    r"chown\s+-[a-z]*R|"
+    r"DROP\s+(TABLE|DATABASE)|"
+    r"pkill|killall",
     _re.IGNORECASE
 )
 
@@ -74,8 +77,6 @@ _SESSIONS_FILE = os.path.expanduser("~/.claude/zulip_bridge_sessions.json")
 
 
 class Sessions:
-    """存储 Zulip 对话 key → Claude session_id 的映射，持久化到磁盘。"""
-
     def __init__(self):
         self._lock = threading.Lock()
         self._store: dict[str, str] = self._load()
@@ -114,13 +115,24 @@ class Sessions:
             self._save()
 
 
+# ── 并发保护：每个 key 同时只允许一个 Claude 调用 ─────────────────────────────
+
+_conv_locks: dict[str, threading.Lock] = {}
+_conv_locks_registry_lock = threading.Lock()
+
+
+def _get_conv_lock(key: str) -> threading.Lock:
+    with _conv_locks_registry_lock:
+        if key not in _conv_locks:
+            _conv_locks[key] = threading.Lock()
+        return _conv_locks[key]
+
+
 # ── 权限确认（Zulip 交互）────────────────────────────────────────────────────
 
-# conv_key -> {"event": threading.Event, "answer": str|None}
 _pending_confirmations: dict[str, dict] = {}
 _pending_lock = threading.Lock()
 
-# conv_key -> (asyncio.AbstractEventLoop, ClaudeSDKClient) — 正在运行的任务
 _active_tasks: dict[str, tuple] = {}
 _active_lock = threading.Lock()
 
@@ -145,7 +157,7 @@ async def ask_permission_via_zulip(
     tool_name: str,
     tool_input: dict,
 ) -> PermissionResultAllow | PermissionResultDeny:
-    send_message(zclient, target, _format_tool_request(tool_name, tool_input))
+    await _send_async(zclient, target, _format_tool_request(tool_name, tool_input))
 
     event = threading.Event()
     with _pending_lock:
@@ -164,6 +176,41 @@ async def ask_permission_via_zulip(
     if answer in ("yes", "y", "是", "好", "允许", "ok"):
         return PermissionResultAllow()
     return PermissionResultDeny(message="用户拒绝了此操作。")
+
+
+# ── Zulip API 辅助（非阻塞 async 包装）──────────────────────────────────────
+
+def _send_message_sync(zclient: zulip.Client, target: dict, content: str) -> int | None:
+    for attempt in range(3):
+        resp = zclient.send_message({**target, "content": content})
+        if resp.get("result") == "success":
+            return resp["id"]
+        retry_after = resp.get("retry-after", 1)
+        if resp.get("code") == "RATE_LIMIT_HIT" and attempt < 2:
+            time.sleep(float(retry_after) + 0.1)
+            continue
+        print(f"[错误] 发送失败: {resp}", flush=True)
+        return None
+    return None
+
+
+def _update_message_sync(zclient: zulip.Client, msg_id: int, content: str) -> None:
+    try:
+        zclient.update_message({"message_id": msg_id, "content": content})
+    except Exception as e:
+        print(f"[错误] 更新消息失败: {e}", flush=True)
+
+
+async def _send_async(zclient, target, content) -> int | None:
+    return await asyncio.get_event_loop().run_in_executor(
+        None, _send_message_sync, zclient, target, content
+    )
+
+
+async def _update_async(zclient, msg_id, content) -> None:
+    await asyncio.get_event_loop().run_in_executor(
+        None, _update_message_sync, zclient, msg_id, content
+    )
 
 
 # ── 工具调用状态提示 ──────────────────────────────────────────────────────────
@@ -195,7 +242,7 @@ async def call_claude_sdk(
 ):
     options = ClaudeCodeOptions(
         resume=session_id,
-        permission_mode="bypassPermissions",  # SDK 层全放行，危险命令由 can_use_tool 拦截
+        permission_mode="bypassPermissions",
         cwd=workdir,
         max_turns=20,
         can_use_tool=can_use_tool_cb,
@@ -210,7 +257,9 @@ async def call_claude_sdk(
             _active_tasks[conv_key] = (loop, client)
         try:
             await client.query(prompt)
-            async for event in client.receive_messages():
+            # receive_response() 在收到 ResultMessage 后自动终止，
+            # 避免 receive_messages() 在响应结束后无限等待下一条消息。
+            async for event in client.receive_response():
                 if isinstance(event, AssistantMessage):
                     for block in event.content:
                         if isinstance(block, ToolUseBlock):
@@ -225,6 +274,7 @@ async def call_claude_sdk(
                     if event.is_error and not text_parts:
                         yield f"⚠️ Claude 执行出错 (session={event.session_id})", event.session_id, None
                         return
+                    # receive_response() 会在本次迭代后自动 return
         finally:
             with _active_lock:
                 _active_tasks.pop(conv_key, None)
@@ -264,24 +314,6 @@ def reply_target(msg: dict) -> dict:
     return {"type": "stream", "to": msg["stream_id"], "topic": msg["subject"]}
 
 
-def send_message(zclient: zulip.Client, target: dict, content: str) -> int | None:
-    for attempt in range(3):
-        resp = zclient.send_message({**target, "content": content})
-        if resp.get("result") == "success":
-            return resp["id"]
-        retry_after = resp.get("retry-after", 1)
-        if resp.get("code") == "RATE_LIMIT_HIT" and attempt < 2:
-            time.sleep(float(retry_after) + 0.1)
-            continue
-        print(f"[错误] 发送失败: {resp}", file=sys.stderr)
-        return None
-    return None
-
-
-def update_message(zclient: zulip.Client, msg_id: int, content: str) -> None:
-    zclient.update_message({"message_id": msg_id, "content": content})
-
-
 async def handle_async(
     zclient: zulip.Client,
     sessions: Sessions,
@@ -297,11 +329,12 @@ async def handle_async(
     key = Sessions.key(msg)
     target = reply_target(msg)
 
+    # ── 内置命令（不受并发锁影响）────────────────────────────────────────────
     if user_text in ("/help",):
-        send_message(zclient, target, HELP_TEXT)
+        await _send_async(zclient, target, HELP_TEXT)
         return
     if user_text in ("/ping",):
-        send_message(zclient, target, "pong 🏓")
+        await _send_async(zclient, target, "pong 🏓")
         return
     if user_text in ("/stop",):
         with _active_lock:
@@ -309,78 +342,99 @@ async def handle_async(
         if task:
             task_loop, task_client = task
             asyncio.run_coroutine_threadsafe(task_client.interrupt(), task_loop)
-            send_message(zclient, target, "⏹️ 已发送中断信号。")
+            await _send_async(zclient, target, "⏹️ 已发送中断信号。")
         else:
-            send_message(zclient, target, "_(当前没有正在运行的任务)_")
+            await _send_async(zclient, target, "_(当前没有正在运行的任务)_")
         return
     if user_text in ("/reset", "/clear"):
         old = sessions.get(key)
         sessions.reset(key)
-        send_message(zclient, target, f"✅ 已清空会话上下文（旧 session: `{old}`）。")
+        await _send_async(zclient, target, f"✅ 已清空会话上下文（旧 session: `{old}`）。")
         return
     if not user_text:
-        send_message(zclient, target, "_(消息为空，发送 `/help` 查看用法)_")
+        await _send_async(zclient, target, "_(消息为空，发送 `/help` 查看用法)_")
         return
 
-    session_id = sessions.get(key)
-    print(f"[claude] key={key} resume={session_id} prompt={repr(user_text[:60])}", flush=True)
-
-    placeholder_id = send_message(zclient, target, "_思考中..._")
-    if placeholder_id is None:
+    # ── 并发保护 ─────────────────────────────────────────────────────────────
+    conv_lock = _get_conv_lock(key)
+    if not conv_lock.acquire(blocking=False):
+        await _send_async(zclient, target, "_⏳ 正忙，请等当前任务完成后再发送。_")
         return
 
-    # 权限回调：只有危险 Bash 命令才走 Zulip 确认，其余全部放行
-    async def permission_callback(tool_name: str, tool_input: dict, ctx):
-        if tool_name == "Bash" and _is_dangerous_bash(tool_input.get("command", "")):
-            return await ask_permission_via_zulip(key, zclient, target, tool_name, tool_input)
-        return PermissionResultAllow()
-
-    buf: list[str] = []
-    last_edit = 0.0
-    EDIT_INTERVAL = 0.8
-    HEARTBEAT_INTERVAL = 8.0  # 超过 8s 没有新事件，刷新一次心跳
-    new_session_id: str | None = None
-    current_hint: str = ""
-    start_time = time.monotonic()
-
-    # 心跳：在长时间工具执行期间定期更新占位消息，让用户知道还在运行
+    # 所有需要在 except 块中访问的变量先初始化
     heartbeat_stop = asyncio.Event()
-
-    async def heartbeat():
-        while not heartbeat_stop.is_set():
-            await asyncio.sleep(HEARTBEAT_INTERVAL)
-            if heartbeat_stop.is_set():
-                break
-            if current_hint:
-                elapsed = int(time.monotonic() - start_time)
-                status = ("".join(buf) + "\n\n" + current_hint) if buf else current_hint
-                status += f" _(已运行 {elapsed}s)_"
-                update_message(zclient, placeholder_id, status)
-
-    loop = asyncio.get_event_loop()
-    hb_task = loop.create_task(heartbeat())
+    hb_task = None
+    placeholder_id = None
 
     try:
-        async for chunk, sid, hint in call_claude_sdk(user_text, session_id, WORKDIR, key, permission_callback):
-            if sid is not None:
-                new_session_id = sid
-            if hint is not None:
-                current_hint = hint
-                status = ("".join(buf) + "\n\n" + hint) if buf else hint
-                update_message(zclient, placeholder_id, status)
-                last_edit = time.monotonic()
-            if chunk:
-                current_hint = ""
-                buf.append(chunk)
-                now = time.monotonic()
-                if now - last_edit >= EDIT_INTERVAL:
-                    update_message(zclient, placeholder_id, "".join(buf))
-                    last_edit = now
+        session_id = sessions.get(key)
+        print(f"[claude] key={key} resume={session_id} prompt={repr(user_text[:60])}", flush=True)
+
+        placeholder_id = await _send_async(zclient, target, "_思考中..._")
+        if placeholder_id is None:
+            return
+
+        async def permission_callback(tool_name: str, tool_input: dict, ctx):
+            if tool_name == "Bash" and _is_dangerous_bash(tool_input.get("command", "")):
+                return await ask_permission_via_zulip(key, zclient, target, tool_name, tool_input)
+            return PermissionResultAllow()
+
+        buf: list[str] = []
+        last_edit = 0.0
+        new_session_id: str | None = None
+        current_hint: str = ""
+        start_time = time.monotonic()
+
+        async def heartbeat():
+            while not heartbeat_stop.is_set():
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                if heartbeat_stop.is_set():
+                    break
+                if current_hint:
+                    elapsed = int(time.monotonic() - start_time)
+                    status = ("".join(buf) + "\n\n" + current_hint) if buf else current_hint
+                    status += f" _(已运行 {elapsed}s)_"
+                    await _update_async(zclient, placeholder_id, status)
+
+        hb_task = asyncio.get_event_loop().create_task(heartbeat())
+
+        async def run_sdk():
+            nonlocal new_session_id, current_hint, last_edit
+            async for chunk, sid, hint in call_claude_sdk(
+                user_text, session_id, WORKDIR, key, permission_callback
+            ):
+                if sid is not None:
+                    new_session_id = sid
+                if hint is not None:
+                    current_hint = hint
+                    status = ("".join(buf) + "\n\n" + hint) if buf else hint
+                    await _update_async(zclient, placeholder_id, status)
+                    last_edit = time.monotonic()
+                if chunk:
+                    current_hint = ""
+                    buf.append(chunk)
+                    now = time.monotonic()
+                    if now - last_edit >= EDIT_INTERVAL:
+                        await _update_async(zclient, placeholder_id, "".join(buf))
+                        last_edit = now
+
+        try:
+            await asyncio.wait_for(run_sdk(), timeout=CALL_TIMEOUT)
+        except asyncio.TimeoutError:
+            heartbeat_stop.set()
+            if hb_task:
+                await hb_task
+            timeout_msg = f"⏰ 超时（>{CALL_TIMEOUT}s），任务已中断。"
+            if placeholder_id:
+                await _update_async(zclient, placeholder_id, timeout_msg)
+            print(f"[claude] timeout key={key}", flush=True)
+            return
 
         heartbeat_stop.set()
-        await hb_task
+        if hb_task:
+            await hb_task
         final = "".join(buf).strip() or "_(空回复)_"
-        update_message(zclient, placeholder_id, final)
+        await _update_async(zclient, placeholder_id, final)
         print(f"[claude] done session={new_session_id} reply={repr(final[:80])}", flush=True)
 
         if new_session_id:
@@ -388,19 +442,60 @@ async def handle_async(
 
     except ProcessError as e:
         heartbeat_stop.set()
+        if hb_task:
+            await hb_task
         stderr_part = f"\n\nStderr:\n```\n{e.stderr.strip()}\n```" if e.stderr else ""
         err = f"⚠️ Claude 进程出错 (exit_code={e.exit_code}){stderr_part}"
-        print(err, file=sys.stderr, flush=True)
-        update_message(zclient, placeholder_id, err)
+        print(err, flush=True)
+        if placeholder_id:
+            await _update_async(zclient, placeholder_id, err)
     except Exception as e:
         heartbeat_stop.set()
+        if hb_task:
+            try:
+                await hb_task
+            except Exception:
+                pass
         err = f"⚠️ 处理出错: {e}"
-        print(err, file=sys.stderr, flush=True)
-        update_message(zclient, placeholder_id, err)
+        print(err, flush=True)
+        if placeholder_id:
+            try:
+                await _update_async(zclient, placeholder_id, err)
+            except Exception:
+                pass
+    finally:
+        conv_lock.release()
 
 
 def handle(zclient, sessions, bot_user_id, msg):
     asyncio.run(handle_async(zclient, sessions, bot_user_id, msg))
+
+
+# ── 清理残留 Claude 子进程 ────────────────────────────────────────────────────
+
+def _cleanup_orphan_claude_procs():
+    """启动时终止残留的 bridge 用 Claude CLI 子进程。"""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "bypassPermissions"],
+            capture_output=True, text=True
+        )
+        pids = [int(p) for p in result.stdout.split() if p.strip().isdigit()]
+        own_pid = os.getpid()
+        killed = []
+        for pid in pids:
+            if pid == own_pid:
+                continue
+            try:
+                os.kill(pid, signal.SIGTERM)
+                killed.append(pid)
+            except ProcessLookupError:
+                pass
+        if killed:
+            print(f"[bridge] 清理残留 Claude 进程: {killed}", flush=True)
+            time.sleep(1)  # 等待进程退出
+    except Exception as e:
+        print(f"[bridge] 清理残留进程失败: {e}", flush=True)
 
 
 # ── 主入口 ────────────────────────────────────────────────────────────────────
@@ -410,34 +505,33 @@ def run_bot() -> None:
         print(f"找不到 zuliprc: {ZULIPRC_PATH}", file=sys.stderr)
         sys.exit(1)
 
+    _cleanup_orphan_claude_procs()
+
     zclient      = zulip.Client(config_file=ZULIPRC_PATH)
     profile      = zclient.get_profile()
     bot_user_id  = profile["user_id"]
     sessions     = Sessions()
 
     print("=" * 60)
-    print(f"Claude Code Zulip Bridge v3 (SDK 多轮 + Zulip 权限交互) 启动")
+    print("Claude Code Zulip Bridge v4 (SDK 多轮 + 并发保护) 启动")
     print(f"  bot:     {profile['full_name']} (id={bot_user_id})")
     print(f"  workdir: {WORKDIR}")
+    print(f"  timeout: {CALL_TIMEOUT}s per call")
     print("=" * 60)
 
     def on_message(msg: dict) -> None:
-        # 跳过 bot 自身消息
         if msg.get("sender_id") == bot_user_id:
             return
 
         key = Sessions.key(msg)
         content = msg.get("content", "").strip()
 
-        # /stop 优先级最高，不被权限确认拦截
         if content in ("/stop",):
-            t = threading.Thread(
+            threading.Thread(
                 target=handle, args=(zclient, sessions, bot_user_id, msg), daemon=True
-            )
-            t.start()
+            ).start()
             return
 
-        # 其次检查是否是待处理的权限确认回复
         with _pending_lock:
             if key in _pending_confirmations:
                 entry = _pending_confirmations[key]
@@ -445,10 +539,9 @@ def run_bot() -> None:
                 entry["event"].set()
                 return
 
-        t = threading.Thread(
+        threading.Thread(
             target=handle, args=(zclient, sessions, bot_user_id, msg), daemon=True
-        )
-        t.start()
+        ).start()
 
     while True:
         try:
