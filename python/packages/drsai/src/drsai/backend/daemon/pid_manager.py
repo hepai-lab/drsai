@@ -198,11 +198,13 @@ def start_daemon(
         # with ERROR_INVALID_HANDLE in PowerShell / GUI parent processes.
         #
         # Workaround: pass the log *path* via env var and let the daemon child
-        # redirect its own stdout/stderr.  Use DETACHED_PROCESS (instead of
-        # POSIX start_new_session) to decouple from the parent's console.
+        # redirect its own stdout/stderr (see __main__.py).  Use
+        # DETACHED_PROCESS (instead of POSIX start_new_session) to decouple
+        # from the parent's console.
         proc = subprocess.Popen(
             [sys.executable, "-m", "drsai.backend.daemon"],
             env=env,
+            stdin=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
             | subprocess.DETACHED_PROCESS,
             close_fds=False,
@@ -221,7 +223,7 @@ def start_daemon(
 
     # 等待就绪
     try:
-        _wait_for_ready(ws_port, timeout=15.0)
+        _wait_for_ready(proc, ws_port, timeout=15.0)
     except TimeoutError:
         # 尝试清理
         try:
@@ -247,23 +249,76 @@ def start_daemon(
     return state
 
 
-def _wait_for_ready(port: int, timeout: float = 15.0) -> None:
-    """轮询 /api/health 直到 daemon 就绪。"""
+def _wait_for_ready(proc, port: int, timeout: float = 15.0) -> None:
+    """轮询直到 daemon HTTP 端就绪。
+
+    Args:
+        proc: ``subprocess.Popen`` instance (used for exit-code diagnostics).
+    """
+    import socket
     import urllib.request
     import urllib.error
 
     deadline = time.time() + timeout
     url = f"http://127.0.0.1:{port}/api/health"
+    last_error = None
+    tcp_open = False
+
     while time.time() < deadline:
+        # Did the child crash already?
+        rc = proc.poll()
+        if rc is not None:
+            raise TimeoutError(
+                f"Daemon process exited prematurely (exit code {rc}). "
+                f"Check the log file for details."
+            )
+
+        # ── Phase 1: raw TCP check (fast, tells us whether uvicorn has bound) ──
+        if not tcp_open:
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1.0)
+                result = sock.connect_ex(("127.0.0.1", port))
+                sock.close()
+                if result == 0:
+                    tcp_open = True
+                    # Fall through to phase 2 immediately
+                else:
+                    time.sleep(0.3)
+                    continue
+            except OSError as e:
+                last_error = f"TCP: {type(e).__name__}({e})"
+                time.sleep(0.3)
+                continue
+
+        # ── Phase 2: HTTP health-check ───────────────────────────────────
         try:
             with urllib.request.urlopen(url, timeout=1) as r:
                 if r.status == 200:
                     return
-        except (urllib.error.URLError, OSError):
-            pass
+                # Got a non-200 — maybe lifespan hasn't yielded yet
+                last_error = f"HTTP {r.status}"
+        except (urllib.error.URLError, OSError) as e:
+            last_error = f"HTTP: {type(e).__name__}({e})"
         time.sleep(0.3)
+
+    # ── 超时 ─────────────────────────────────────────────────────────────
+    rc = proc.poll()
+    if rc is not None:
+        raise TimeoutError(
+            f"Daemon process exited prematurely (exit code {rc}). "
+            f"Check the log file for details."
+        )
+    if tcp_open:
+        raise TimeoutError(
+            f"TCP port {port} is open but HTTP health-check failed "
+            f"within {timeout}s.  Last error: {last_error}.  "
+            f"Check the log file for errors."
+        )
     raise TimeoutError(
-        f"Daemon did not become ready within {timeout}s. "
+        f"Daemon did not become ready within {timeout}s "
+        f"(TCP port {port} never opened, PID={proc.pid}). "
+        f"Last error: {last_error}.  "
         f"Check the log file for errors."
     )
 

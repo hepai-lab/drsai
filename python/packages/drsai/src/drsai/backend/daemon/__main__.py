@@ -13,10 +13,20 @@ import sys
 if sys.platform == "win32" and os.environ.get("DRSAI_DAEMON_LOG_FILE"):
     _log_path = os.environ["DRSAI_DAEMON_LOG_FILE"]
     os.makedirs(os.path.dirname(_log_path), exist_ok=True)
+
+    # 1. Redirect OS-level fds so C extensions / subprocess in daemon
+    #    also write to the log file.
     _log_fd = open(_log_path, "a", buffering=1)  # line-buffered
-    os.dup2(_log_fd.fileno(), 1, True)   # stdout → log
-    os.dup2(_log_fd.fileno(), 2, True)   # stderr → log
+    os.dup2(_log_fd.fileno(), 1)   # stdout → log
+    os.dup2(_log_fd.fileno(), 2)   # stderr → log
     _log_fd.close()
+
+    # 2. Re-open Python-level wrappers.  After DETACHED_PROCESS startup
+    #    sys.stdout / sys.stderr may carry stale internal state (e.g.
+    #    cached error flags for an invalid console handle).  Fresh
+    #    wrappers guarantee that every `print()` / `logging` call works.
+    sys.stdout = open(1, "w", buffering=1, closefd=False, encoding="utf-8")
+    sys.stderr = open(2, "w", buffering=1, closefd=False, encoding="utf-8")
 
 logging.basicConfig(
     level=logging.INFO,
