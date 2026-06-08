@@ -223,6 +223,7 @@ const dict = {
 
   "sampleTasks.section":         { zh: "试试这些",               en: "Try these" },
   "sampleTasks.use":             { zh: "使用",                  en: "Use" },
+  "sampleTasks.more":            { zh: "其他示例（%1）",        en: "More (%1)" },
 
   "chatTeaser.viewArtifact":     { zh: "在右侧「产出物」中查看", en: "View in the artifact panel on the right" },
   "canvasArtifact.empty":        { zh: "暂无产出物。智能体可在消息中附带 ui_canvas 结构化内容，在此以仪表盘形式展示。", en: "No artifacts yet. Agents can attach ui_canvas structured content to messages, displayed here as dashboards." },
