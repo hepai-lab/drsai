@@ -176,7 +176,6 @@ def start_daemon(
 
     # 准备日志文件
     log_path = _log_file(name)
-    log_fd = open(log_path, "a")
 
     # 启动子进程（脱离终端）
     env = os.environ.copy()
@@ -189,17 +188,36 @@ def start_daemon(
         "DRSAI_DAEMON_MODEL": model or "",
         "LLM_DEFAULT_ALIAS": model or os.environ.get("LLM_DEFAULT_ALIAS", ""),
         "DRSAI_DAEMON_STARTED_AT": str(time.time()),
+        "DRSAI_DAEMON_LOG_FILE": str(log_path),
     })
 
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "drsai.backend.daemon"],
-        env=env,
-        stdout=log_fd,
-        stderr=log_fd,
-        start_new_session=True,  # 脱离父进程组，TUI 退出后继续运行
-        close_fds=True,
-    )
-    log_fd.close()
+    if sys.platform == "win32":
+        # Windows: Python opens files with O_NOINHERIT, so file handles from
+        # open() are NOT inheritable by child processes.  Passing stdout=log_fd
+        # together with close_fds=True causes _winapi.CreateProcess to fail
+        # with ERROR_INVALID_HANDLE in PowerShell / GUI parent processes.
+        #
+        # Workaround: pass the log *path* via env var and let the daemon child
+        # redirect its own stdout/stderr.  Use DETACHED_PROCESS (instead of
+        # POSIX start_new_session) to decouple from the parent's console.
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "drsai.backend.daemon"],
+            env=env,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.DETACHED_PROCESS,
+            close_fds=False,
+        )
+    else:
+        log_fd = open(log_path, "a")
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "drsai.backend.daemon"],
+            env=env,
+            stdout=log_fd,
+            stderr=log_fd,
+            start_new_session=True,  # 脱离父进程组，TUI 退出后继续运行
+            close_fds=True,
+        )
+        log_fd.close()
 
     # 等待就绪
     try:

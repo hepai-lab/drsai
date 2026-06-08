@@ -365,6 +365,20 @@ class AgentSession:
             status = "error"
             on_event("error", {"message": f"{type(e).__name__}: {e}"})
         finally:
+            # Belt-and-suspenders: ensure the agent is never left in a
+            # paused state after a turn, even when the agent layer silently
+            # swallows CancelledError (as DrSaiAgent.on_messages_stream /
+            # LongToolAgent.on_messages_stream do — they catch CancelledError,
+            # yield a Response, and return normally without re-raising).
+            # Without this guard the agent stays paused permanently,
+            # refusing all future turns with 「The agent is paused.」
+            # (metadata.internal="yes" → hidden by event_translator, so the
+            # user sees only "in=0 out=0" with no explanation).
+            try:
+                if self.agent is not None and hasattr(self.agent, "resume"):
+                    await self.agent.resume()
+            except Exception:
+                pass
             ev_type, payload = finalize(state, status=status)
             try:
                 on_event(ev_type, payload)
