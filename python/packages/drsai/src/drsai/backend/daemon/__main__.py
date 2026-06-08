@@ -3,6 +3,20 @@
 import logging
 import os
 import secrets
+import sys
+
+# ── Windows: redirect stdout/stderr to log file early ─────────────────
+# On Windows, Python opens files with O_NOINHERIT so file handles cannot
+# be passed cross-process via subprocess.Popen(stdout=...).  The parent
+# (pid_manager.py) passes the log path via DRSAI_DAEMON_LOG_FILE and the
+# child redirects itself here — before any logging / output starts.
+if sys.platform == "win32" and os.environ.get("DRSAI_DAEMON_LOG_FILE"):
+    _log_path = os.environ["DRSAI_DAEMON_LOG_FILE"]
+    os.makedirs(os.path.dirname(_log_path), exist_ok=True)
+    _log_fd = open(_log_path, "a", buffering=1)  # line-buffered
+    os.dup2(_log_fd.fileno(), 1, True)   # stdout → log
+    os.dup2(_log_fd.fileno(), 2, True)   # stderr → log
+    _log_fd.close()
 
 logging.basicConfig(
     level=logging.INFO,
