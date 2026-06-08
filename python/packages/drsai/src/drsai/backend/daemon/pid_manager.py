@@ -201,10 +201,15 @@ def start_daemon(
         # redirect its own stdout/stderr (see __main__.py).  Use
         # DETACHED_PROCESS (instead of POSIX start_new_session) to decouple
         # from the parent's console.
+        # On Windows **all three** std handles must be provided when ANY
+        # one is given, otherwise STARTF_USESTDHANDLES causes CreateProcess
+        # to fail spuriously with ERROR_FILE_NOT_FOUND.
         proc = subprocess.Popen(
             [sys.executable, "-m", "drsai.backend.daemon"],
             env=env,
             stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
             | subprocess.DETACHED_PROCESS,
             close_fds=False,
