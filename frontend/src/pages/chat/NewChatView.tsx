@@ -153,9 +153,9 @@ export default function NewChatView({
             <div className="hide-scrollbar relative flex flex-1 items-start justify-center overflow-y-auto pt-10 sm:pt-14 md:pt-[9vh]">
                 <div className="w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
                     <header className="animate-fade-in mb-8 flex flex-col items-center text-center">
-                        <p className="font-agent-mono mb-3 text-[10px] font-medium uppercase tracking-[0.22em] text-accent">
+                        {/* <p className="font-agent-mono mb-3 text-[10px] font-medium uppercase tracking-[0.22em] text-accent">
                             {t("newChatView.title")}
-                        </p>
+                        </p> */}
                         <AgentHeaderLogo src={logoSrc} />
                         <h1
                             id="new-chat-agent-title"
