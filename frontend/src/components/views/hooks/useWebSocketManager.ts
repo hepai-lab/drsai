@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { getServerUrl } from '../../utils';
 
 interface SessionWebSocket {
@@ -11,8 +11,6 @@ type SessionWebSockets = {
 };
 
 export const useWebSocketManager = () => {
-  const [sessionSockets, setSessionSockets] = useState<SessionWebSockets>({});
-  // Ref to avoid stale closure when closing existing sockets (React setState is async)
   const sessionSocketsRef = useRef<SessionWebSockets>({});
 
   const getBaseUrl = useCallback((url: string): string => {
@@ -33,7 +31,6 @@ export const useWebSocketManager = () => {
   }, []);
 
   const setupWebSocket = useCallback((sessionId: number, runId: string): WebSocket => {
-    // Use ref to get current socket - avoids stale closure when called rapidly (setState is async)
     const existing = sessionSocketsRef.current[sessionId];
     if (existing) {
       try {
@@ -51,16 +48,10 @@ export const useWebSocketManager = () => {
     const socket = new WebSocket(wsUrl);
     const entry: SessionWebSocket = { socket, runId };
 
-    // Update ref immediately so subsequent rapid calls see the latest socket
     sessionSocketsRef.current = {
       ...sessionSocketsRef.current,
       [sessionId]: entry,
     };
-
-    setSessionSockets((prev) => ({
-      ...prev,
-      [sessionId]: entry,
-    }));
 
     return socket;
   }, [getBaseUrl]);
@@ -101,7 +92,6 @@ export const useWebSocketManager = () => {
       const updated = { ...sessionSocketsRef.current };
       delete updated[sessionId];
       sessionSocketsRef.current = updated;
-      setSessionSockets(updated);
     }
   }, []);
 
@@ -143,7 +133,6 @@ export const useWebSocketManager = () => {
   }, []);
 
   return {
-    sessionSockets,
     getSessionSocket,
     closeSocket,
     stopSession,
