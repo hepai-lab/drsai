@@ -94,16 +94,47 @@ def remove_state(name: str) -> None:
 
 
 def is_running(name: str) -> bool:
-    """检查 daemon 是否仍在运行（PID 文件存在且进程存活）。"""
+    """检查 daemon 是否仍在运行（PID 文件存在且进程存活）。
+
+    如果 PID 文件丢失，会从 state 文件中回退读取 PID 并重建 PID 文件。
+    """
     pid = read_pid(name)
     if pid is None:
+        # PID 文件丢失，从 state 文件回退读取
+        state = read_state(name)
+        if state and "pid" in state:
+            pid = state["pid"]
+            # 如果进程确实存活，重建 PID 文件
+            if _pid_alive(pid):
+                write_pid(name, pid)
+            else:
+                return False
+        else:
+            return False
+    return _pid_alive(pid)
+
+
+def _pid_alive(pid: int) -> bool:
+    """检查指定 PID 的进程是否仍在运行（跨平台兼容）。"""
+    if sys.platform == "win32":
+        # Windows: os.kill(pid, 0) 不可靠 —— 对 DETACHED_PROCESS 子进程
+        # 会抛出 OSError [WinError 87]（参数错误）。
+        # 使用 ctypes 调用 OpenProcess 来检查进程是否存在。
+        import ctypes
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
         return False
-    try:
-        os.kill(pid, 0)  # 发送 signal 0 检查进程是否存在
-        return True
-    except (OSError, ProcessLookupError):
-        remove_pid(name)
-        return False
+    else:
+        # POSIX: signal 0 仅检查进程存在性，不发送信号
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
 
 
 # ── State 文件 ───────────────────────────────────────────────────────
@@ -125,6 +156,83 @@ def write_state(name: str, state: dict) -> None:
 
 
 # ── Daemon 启动 ──────────────────────────────────────────────────────
+
+
+def _cleanup_orphan_daemons(name: str) -> list[int]:
+    """检测并终止同名的孤儿 daemon 子进程。
+
+    场景：之前的 bug（如 is_running() 在 Windows 误判）导致
+    PID/state 文件被删除，但 daemon 子进程仍在运行。
+    启动新 daemon 前需要清理这些孤儿进程，否则会出现重复回复等问题。
+
+    Returns:
+        被终止的孤儿进程 PID 列表
+    """
+    orphans: list[int] = []
+
+    if sys.platform == "win32":
+        # Windows: 通过 WMI 查找 python 进程，检查命令行是否匹配
+        try:
+            import ctypes
+            import subprocess
+            result = subprocess.run(
+                [
+                    "wmic", "process", "where",
+                    "Name='python.exe'", "get",
+                    "ProcessId,CommandLine", "/format:csv",
+                ],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.strip().splitlines():
+                line = line.strip()
+                if not line or line.startswith("Node"):
+                    continue
+                parts = line.split(",")
+                # CSV 格式: Node,CommandLine,ProcessId
+                if len(parts) >= 3:
+                    cmdline = parts[-2]
+                    pid_str = parts[-1].strip()
+                    # 匹配 python -m drsai.backend.daemon 且环境变量中 DRSAI_DAEMON_NAME=name
+                    # wmic 无法读取环境变量，通过端口监听判断
+                    if "drsai.backend.daemon" in cmdline and pid_str.isdigit():
+                        pid = int(pid_str)
+                        # 排除当前 PID 文件中的进程（is_running 已正确识别的）
+                        current_pid = read_pid(name)
+                        if pid != current_pid and _pid_alive(pid):
+                            orphans.append(pid)
+        except Exception:
+            pass
+    else:
+        # POSIX: 通过 /proc 查找
+        try:
+            for proc_dir in Path("/proc").glob("[0-9]*"):
+                pid = int(proc_dir.name)
+                try:
+                    cmdline = (proc_dir / "cmdline").read_text("\0")
+                    if "drsai.backend.daemon" in cmdline:
+                        current_pid = read_pid(name)
+                        if pid != current_pid and _pid_alive(pid):
+                            # 检查环境变量中的 DAEMON_NAME
+                            try:
+                                environ = (proc_dir / "environ").read_text("\0")
+                                if f"DRSAI_DAEMON_NAME={name}" in environ:
+                                    orphans.append(pid)
+                            except (OSError, ValueError):
+                                orphans.append(pid)
+                except (OSError, ValueError):
+                    continue
+        except Exception:
+            pass
+
+    # 终止孤儿进程
+    for pid in orphans:
+        try:
+            os.kill(pid, signal.SIGTERM if sys.platform != "win32" else signal.SIGTERM)
+            logger.warning("Killed orphan daemon process: PID=%d (name=%s)", pid, name)
+        except (OSError, ProcessLookupError):
+            pass
+
+    return orphans
 
 
 def start_daemon(
@@ -150,6 +258,10 @@ def start_daemon(
             f"Daemon '{name}' is already running (PID={state.get('pid')}). "
             f"Use `drsai daemon stop --name {name}` to stop it first."
         )
+
+    # 清理孤儿 daemon 进程：同名的 daemon 子进程可能仍在运行，
+    # 但 PID/state 文件已丢失（例如之前的 is_running() bug 导致误删）。
+    _cleanup_orphan_daemons(name)
 
     # 端口分配
     if ws_port is None:
@@ -342,24 +454,30 @@ def stop_daemon(name: str, timeout: float = 10.0) -> bool:
         remove_pid(name)
         return False
 
+    # Windows: os.kill(pid, signal.SIGTERM) 映射为 TerminateProcess
+    # Linux: SIGTERM 正常发送终止信号
     try:
         os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
+    except (OSError, ProcessLookupError):
+        # 进程可能在 is_running() 和 os.kill() 之间退出
         remove_pid(name)
+        remove_state(name)
         return False
 
     # 等待进程退出
     deadline = time.time() + timeout
     while time.time() < deadline:
-        try:
-            os.kill(pid, 0)
-            time.sleep(0.2)
-        except (OSError, ProcessLookupError):
+        if not _pid_alive(pid):
             break
+        time.sleep(0.2)
     else:
         # 超时后强制杀死
         try:
-            os.kill(pid, signal.SIGKILL)
+            if sys.platform == "win32":
+                # Windows 没有 SIGKILL，使用 SIGTERM 再次发送 (等同于 TerminateProcess)
+                os.kill(pid, signal.SIGTERM)
+            else:
+                os.kill(pid, signal.SIGKILL)
         except (OSError, ProcessLookupError):
             pass
 

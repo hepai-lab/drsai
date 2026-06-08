@@ -574,11 +574,16 @@ def daemon_stop(
     all_: bool = typer.Option(False, "--all", help="停止所有 daemon"),
 ) -> None:
     """停止后台 daemon。"""
-    from drsai.backend.daemon.pid_manager import stop_daemon, list_daemons
+    from drsai.backend.daemon.pid_manager import stop_daemon, list_daemons, remove_pid, remove_state
 
     targets: list[str] = []
+    dead_daemons: list[str] = []
     if all_:
-        targets = [d["name"] for d in list_daemons() if d.get("alive")]
+        for d in list_daemons():
+            if d.get("alive"):
+                targets.append(d["name"])
+            else:
+                dead_daemons.append(d["name"])
     elif name:
         targets = [name]
     else:
@@ -590,6 +595,13 @@ def daemon_stop(
             typer.echo(typer.style(f"  ✓ Daemon '{n}' 已停止", fg=typer.colors.GREEN))
         else:
             typer.echo(f"  Daemon '{n}' 未在运行")
+
+    # 清理已死 daemon 的残留 state 文件
+    if dead_daemons:
+        for n in dead_daemons:
+            remove_pid(n)
+            remove_state(n)
+            typer.echo(typer.style(f"  ✓ Daemon '{n}' 残留状态已清理", fg=typer.colors.YELLOW))
 
 
 @daemon_app.command("status")
@@ -659,11 +671,10 @@ def daemon_list(
 @daemon_app.command("logs")
 def daemon_logs(
     name: str = typer.Option("default", "--name", "-n", help="Daemon 名称"),
-    tail: int = typer.Option(50, "--tail", "-n", help="显示末尾行数"),
+    tail: int = typer.Option(50, "--tail", help="显示末尾行数"),
     follow: bool = typer.Option(False, "--follow", "-f", help="持续跟踪输出"),
 ) -> None:
     """查看 daemon 日志。"""
-    import subprocess as sp
     from drsai.backend.daemon.pid_manager import _log_file
 
     log_path = _log_file(name)
@@ -671,11 +682,40 @@ def daemon_logs(
         typer.echo(f"  日志文件不存在: {log_path}")
         raise typer.Exit(1)
 
-    cmd = ["tail", f"-n{tail}"]
-    if follow:
-        cmd.append("-f")
-    cmd.append(str(log_path))
-    sp.run(cmd)
+    # Windows does not ship `tail`; use pure-Python fallback so the command
+    # works on both platforms without requiring Git-BASH / WSL.
+    if sys.platform == "win32" or not shutil.which("tail"):
+        _tail_fallback(log_path, tail, follow)
+    else:
+        import subprocess as sp
+        cmd = ["tail", f"-n{tail}"]
+        if follow:
+            cmd.append("-f")
+        cmd.append(str(log_path))
+        sp.run(cmd)
+
+
+def _tail_fallback(path: Path, n: int, follow: bool) -> None:
+    """Pure-Python ``tail -n N [-f]`` for Windows (or systems without tail)."""
+    import time
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            # Read all lines, keep only last n
+            lines = fh.readlines()
+            for line in lines[-n:]:
+                print(line, end="")
+            if not follow:
+                return
+            # -f mode: seek to end and poll for new lines
+            fh.seek(0, 2)  # EOF
+            while True:
+                line = fh.readline()
+                if line:
+                    print(line, end="")
+                else:
+                    time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
 
 
 @daemon_app.command("send")
