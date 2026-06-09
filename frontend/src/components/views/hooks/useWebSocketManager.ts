@@ -54,7 +54,7 @@ export const useWebSocketManager = () => {
     };
 
     return socket;
-  }, [getBaseUrl]);
+  }, []);
 
   const getSessionSocket = useCallback((
     sessionId: number,
