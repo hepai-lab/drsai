@@ -140,8 +140,14 @@ export const useChatWebSocket = ({
                   (lastMessage.config as any).type === "AgentLogEvent" ||
                   lastMessage.config.metadata?.type === "AgentLogEvent";
 
+                // Check if last message is a FilesEvent — chunk should not append to file messages
+                const isLastMessageFilesEvent =
+                  lastMessage.config.type === "FilesEvent" ||
+                  lastMessage.config.metadata?.type === "FilesEvent";
+
                 if (
                   !isLastMessageLog &&
+                  !isLastMessageFilesEvent &&
                   (lastMessage.config.source === "assistant" ||
                   lastMessage.config.source === chunkSource)
                 ) {
@@ -357,9 +363,16 @@ export const useChatWebSocket = ({
           case "message_files":
             if (!wsMessage.data) return current;
             const filesEvent = wsMessage.data as FilesEvent;
+            const filesMessage = createMessage(
+              filesEvent as unknown as AgentMessageConfig,
+              current.id,
+              session.id,
+              userEmail
+            );
             updatedRun = {
               ...current,
               file_events: [...(current.file_events || []), filesEvent],
+              messages: [...current.messages, filesMessage],
             };
             return updatedRun;
           case "input_request":
