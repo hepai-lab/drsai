@@ -1,4 +1,5 @@
 # api/routes/sessions.py
+import re
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,6 +9,26 @@ from ...datamodel import Message, Run, Session, RunStatus
 from ..deps import get_db
 
 router = APIRouter()
+
+# Non-image extensions that should NOT be rendered as inline markdown images
+_NON_IMAGE_EXTENSIONS = (
+    "json", "txt", "csv", "xml", "yaml", "yml", "toml", "ini", "cfg",
+    "py", "js", "ts", "jsx", "tsx", "html", "css", "md", "rst",
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+    "zip", "tar", "gz", "rar", "7z",
+)
+
+# Pattern to match markdown image syntax with data URIs for non-image files
+_NON_IMAGE_MD_PATTERN = re.compile(
+    r'!\[[^\]]*\]\(data:image/(' + '|'.join(_NON_IMAGE_EXTENSIONS) + r');base64,[^)]+\)\n*'
+)
+
+
+def _clean_historical_markdown_images(content: str) -> str:
+    """Remove markdown image syntax for files that are not real images (json, csv, etc.)"""
+    if not isinstance(content, str):
+        return content
+    return _NON_IMAGE_MD_PATTERN.sub("", content)
 
 _SHARE_FLAG = "_share_enabled"
 
@@ -25,6 +46,20 @@ def _set_session_shared(session: Session, enabled: bool) -> Session:
         cfg.pop(_SHARE_FLAG, None)
     session.agent_mode_config = cfg
     return session
+
+
+def _clean_message(msg: Any) -> Any:
+    """Clean a message's content by removing non-image markdown image syntax."""
+    if not isinstance(msg, dict):
+        return msg
+    config = msg.get("config")
+    if isinstance(config, dict):
+        content = config.get("content")
+        if isinstance(content, str):
+            config["content"] = _clean_historical_markdown_images(content)
+    elif isinstance(msg.get("content"), str):
+        msg["content"] = _clean_historical_markdown_images(msg["content"])
+    return msg
 
 
 def _build_runs_payload(db, session_id: int) -> List[Dict[str, Any]]:
@@ -55,7 +90,9 @@ def _build_runs_payload(db, session_id: int) -> List[Dict[str, Any]]:
                     "status": run.status,
                     "task": run.task,
                     "team_result": run.team_result,
-                    "messages": messages.data or [],
+                    "messages": [
+                        _clean_message(m) for m in (messages.data or [])
+                    ],
                     "input_request": getattr(run, "input_request", None),
                     "session_id": session_id,
                 }
