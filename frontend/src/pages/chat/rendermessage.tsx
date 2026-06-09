@@ -344,15 +344,20 @@ const RenderMultiModal: React.FC<{
 const RenderToolCall: React.FC<{ content: FunctionCall[] }> = memo(
   ({ content }) => (
     <div className="space-y-2 text-sm">
-      {content.map((call) => (
-        <div key={call.id} className="border border-secondary rounded p-2">
-          <div className="font-medium">Function: {call.name}</div>
-          <MarkdownRenderer
-            content={JSON.stringify(JSON.parse(call.arguments), null, 2)}
-            indented={true}
-          />
-        </div>
-      ))}
+      {content.map((call) => {
+        let formattedArgs: string;
+        try {
+          formattedArgs = JSON.stringify(JSON.parse(call.arguments), null, 2);
+        } catch {
+          formattedArgs = call.arguments;
+        }
+        return (
+          <div key={call.id} className="border border-secondary rounded p-2">
+            <div className="font-medium">Function: {call.name}</div>
+            <MarkdownRenderer content={formattedArgs} indented={true} />
+          </div>
+        );
+      })}
     </div>
   )
 );
@@ -372,7 +377,7 @@ const RenderToolResult: React.FC<{ content: FunctionExecutionResult[] }> = memo(
       <div className="space-y-2 text-sm">
         {content.map((result) => {
           const isExpanded = expandedResults[result.call_id];
-          const displayContent = isExpanded ? result.content : result.content.slice(0, 100) + (result.content.length > 100 ? "..." : "");
+          const displayContent = isExpanded ? result.content : result.content.slice(0, 300) + (result.content.length > 300 ? "..." : "");
 
           return (
             <div key={result.call_id} className="rounded p-2">
@@ -382,7 +387,7 @@ const RenderToolResult: React.FC<{ content: FunctionExecutionResult[] }> = memo(
                 onClick={() => toggleExpand(result.call_id)}
               >
                 <MarkdownRenderer content={displayContent} indented={true} />
-                {result.content.length > 100 && (
+                {result.content.length > 300 && (
                   <div className="text-xs text-gray-500 mt-1">
                     {isExpanded ? "Click to minimize" : "Click to expand"}
                   </div>
@@ -396,12 +401,23 @@ const RenderToolResult: React.FC<{ content: FunctionExecutionResult[] }> = memo(
   }
 );
 
+const extractToolLabel = (title: string | undefined): string => {
+  if (!title) return "Tool result";
+  const match = title.match(/I am using tools?:\s*(.+)/i);
+  if (match) {
+    return match[1].trim() || "Tool result";
+  }
+  return title.length <= 40 ? title : "Tool result";
+};
+
 const RenderToolCallSummaryCard: React.FC<{
   content: string;
+  label?: string;
   defaultCollapsed?: boolean;
-}> = memo(({ content, defaultCollapsed = true }) => {
+}> = memo(({ content, label, defaultCollapsed = true }) => {
   const [expanded, setExpanded] = useState(!defaultCollapsed);
   const trimmed = (content || "").trim();
+  const displayLabel = label ? extractToolLabel(label) : "Tool result";
 
   return (
     <div className="rounded-lg bg-gradient-to-br from-violet-500/12 via-purple-500/8 to-fuchsia-500/[0.06] pl-2.5 pr-2  backdrop-blur-[2px] dark:from-violet-400/16 dark:via-purple-500/11 dark:to-fuchsia-500/8">
@@ -420,7 +436,7 @@ const RenderToolCallSummaryCard: React.FC<{
           aria-hidden
         />
         <span className="text-xs font-medium text-violet-900/75 truncate flex-1 min-w-0 dark:text-violet-100/80">
-          Tool result
+          {displayLabel}
         </span>
       </button>
 
@@ -986,24 +1002,31 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       return IMAGE_EXTENSIONS.has(ext);
     };
     if (messageAny.type === "FilesEvent" || message.metadata?.type === "FilesEvent") {
-      const filesData = messageAny.content?.files || messageAny.files || [];
+      const rawContent = messageAny.content;
+      const parsedContent = typeof rawContent === "string"
+        ? (() => { try { return JSON.parse(rawContent); } catch { return null; } })()
+        : rawContent;
+      const filesData = parsedContent?.files || messageAny.files || [];
       if (filesData.length === 0) return null;
       return (
         <div className="space-y-2 my-2">
           {filesData.map((file: any, idx: number) => {
             const b64 = file.base64_content;
+            const url = file.url;
             const name = file.name || "";
-            const desc = file.description || "";
             const mime = file.mime_type || "application/octet-stream";
-            if (!b64) return null;
-            const dataUri = `data:${mime};base64,${b64}`;
+            // Determine the href: prefer base64, fall back to url
+            const href = b64 ? `data:${mime};base64,${b64}` : url || null;
+            if (!href) return null;
             return (
               <div key={idx} className="flex flex-col gap-1 max-w-md">
                 <a
-                  href={dataUri}
-                  download={name}
+                  href={href}
+                  download={b64 ? name : undefined}
+                  target={b64 ? undefined : "_blank"}
+                  rel={b64 ? undefined : "noopener noreferrer"}
                   className="text-xs font-medium text-accent hover:underline truncate flex items-center gap-1"
-                  title={desc || name}
+                  title={name}
                 >
                   <span className="text-[10px] font-mono font-semibold uppercase px-1.5 py-0.5 rounded bg-tertiary/30 text-secondary">
                     {name.split('.').pop()?.toUpperCase() || 'FILE'}
@@ -1012,12 +1035,12 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                 </a>
                 {isImageFile(name) ? (
                   <img
-                    src={dataUri}
-                    alt={desc || name}
+                    src={href}
+                    alt={name}
                     className="max-w-full max-h-[50vh] rounded-lg border border-border-primary/30 cursor-zoom-in"
                     onClick={() => {
                       const win = window.open();
-                      if (win) win.document.write(`<img src="${dataUri}" style="max-width:100vw;max-height:100vh" />`);
+                      if (win) win.document.write(`<img src="${href}" style="max-width:100vw;max-height:100vh" />`);
                     }}
                   />
                 ) : null}
@@ -1263,36 +1286,31 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       return stringifyForDisplay(parsedContent.text);
     };
 
-    const handleCopy = async () => {
-      const textToCopy = getTextContent();
-      if (textToCopy.trim()) {
-        try {
-          // Check if clipboard API is available
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(textToCopy);
-          } else {
-            // Fallback for environments where clipboard API is not available
-            const textArea = document.createElement('textarea');
-            textArea.value = textToCopy;
-            textArea.style.position = 'fixed';
-            textArea.style.left = '-999999px';
-            textArea.style.top = '-999999px';
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            document.execCommand('copy');
-            textArea.remove();
-          }
-          setIsCopied(true);
-          // Reset after 2 seconds
-          setTimeout(() => {
-            setIsCopied(false);
-          }, 2000);
-        } catch (err) {
-          console.error('Failed to copy text:', err);
+    const copyToClipboard = async (text: string) => {
+      if (!text.trim()) return;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+        } else {
+          const textArea = document.createElement('textarea');
+          textArea.value = text;
+          textArea.style.position = 'fixed';
+          textArea.style.left = '-999999px';
+          textArea.style.top = '-999999px';
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          document.execCommand('copy');
+          textArea.remove();
         }
+        setIsCopied(true);
+        setTimeout(() => setIsCopied(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy text:', err);
       }
     };
+
+    const handleCopy = () => copyToClipboard(getTextContent());
 
     // Get text content for non-user messages
     const getNonUserTextContent = (): string => {
@@ -1301,7 +1319,6 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       }
       if (orchestratorContent?.type === "step-execution") {
         const stepContent = orchestratorContent.content;
-        console.log("stepContent", stepContent);
         return stepContent.details || stepContent.progress_summary || "";
       }
       if (messageUtils.isToolCallContent(parsedContent.text)) {
@@ -1319,36 +1336,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
       return stringifyForDisplay(parsedContent.text);
     };
 
-    const handleNonUserCopy = async () => {
-      const textToCopy = getNonUserTextContent();
-      if (textToCopy.trim()) {
-        try {
-          // Check if clipboard API is available
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(textToCopy);
-          } else {
-            // Fallback for environments where clipboard API is not available
-            const textArea = document.createElement('textarea');
-            textArea.value = textToCopy;
-            textArea.style.position = 'fixed';
-            textArea.style.left = '-999999px';
-            textArea.style.top = '-999999px';
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            document.execCommand('copy');
-            textArea.remove();
-          }
-          setIsCopied(true);
-          // Reset after 2 seconds
-          setTimeout(() => {
-            setIsCopied(false);
-          }, 2000);
-        } catch (err) {
-          console.error('Failed to copy text:', err);
-        }
-      }
-    };
+    const handleNonUserCopy = () => copyToClipboard(getNonUserTextContent());
 
     const canEditUserMessage = (isUser || isUserProxy) &&
       !messageUtils.isMultiModalContent(parsedContent.text) &&
@@ -1548,6 +1536,7 @@ export const RenderMessage: React.FC<MessageProps> = memo(
                               >
                                 <RenderToolCallSummaryCard
                                   content={(normalizedMessage.metadata as any).tool_call_summary}
+                                  label={typeof parsedContent.text === "string" ? parsedContent.text : undefined}
                                   defaultCollapsed={true}
                                 />
                               </div>
