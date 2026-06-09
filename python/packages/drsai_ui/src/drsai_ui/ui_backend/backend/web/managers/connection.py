@@ -369,9 +369,10 @@ class WebSocketManager:
                                     desc = f.get("description", "")
                                     if b64:
                                         ext = name.rsplit(".", 1)[-1].lower() if "." in name else "png"
-                                        mime = f"image/{'svg+xml' if ext == 'svg' else ext}"
-                                        data_uri = f"data:{mime};base64,{b64}"
-                                        image_text_parts.append(f"![{desc or name}]({data_uri})")
+                                        if ext in ("png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"):
+                                            mime = f"image/{'svg+xml' if ext == 'svg' else ext}"
+                                            data_uri = f"data:{mime};base64,{b64}"
+                                            image_text_parts.append(f"![{name}]({data_uri})")
                                 if image_text_parts:
                                     chat_content = "\n\n".join(image_text_parts)
                                     image_msg = TextMessage(
