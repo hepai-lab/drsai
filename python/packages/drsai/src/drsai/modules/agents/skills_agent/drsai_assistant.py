@@ -11,6 +11,7 @@ from typing import (
     Tuple,
     Self,
     Mapping,
+    TYPE_CHECKING,
     )
 import json, re, uuid, shutil, copy
 import asyncio, traceback
@@ -34,7 +35,10 @@ from drsai.modules.baseagent import (
     )
 from drsai.modules.baseagent.drsaiagent import DrSaiAgentConfig
 from drsai.modules.baseagent import CodeExecutorAgent, CodeExecutor
-from drsai.modules.agents import RemoteAgent, HepAIWorkerAgent
+from drsai.modules.agents import RemoteAgent
+
+if TYPE_CHECKING:
+    from drsai.modules.agents import HepAIWorkerAgent
 from drsai.modules.components import (
     ComponentModel,
 )
@@ -1030,6 +1034,7 @@ Current Session_ID is {self._thread_id}"""
             # Reset to builtins, then apply user overrides
             self._user_sub_agents.clear()
             self._user_sub_agents.update(BUILTIN_SUBAGENTS)
+            self._user_sub_agents.update(self._sub_agent_config) 
             self._user_sub_agents.update(subagents_config)
 
             # ── Inject running daemons ──────────────────────────────────

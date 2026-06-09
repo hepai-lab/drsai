@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   FileTextIcon,
   ImageIcon,
+  FileCode2,
   CheckCircle,
   RefreshCw,
   Clock,
@@ -1012,35 +1013,35 @@ export const RenderMessage: React.FC<MessageProps> = memo(
         <div className="space-y-2 my-2">
           {filesData.map((file: any, idx: number) => {
             const b64 = file.base64_content;
-            const url = file.url;
             const name = file.name || "";
+            const desc = file.description || "";
             const mime = file.mime_type || "application/octet-stream";
-            // Determine the href: prefer base64, fall back to url
-            const href = b64 ? `data:${mime};base64,${b64}` : url || null;
-            if (!href) return null;
+            if (!b64) return null;
+            const dataUri = `data:${mime};base64,${b64}`;
             return (
               <div key={idx} className="flex flex-col gap-1 max-w-md">
                 <a
-                  href={href}
-                  download={b64 ? name : undefined}
-                  target={b64 ? undefined : "_blank"}
-                  rel={b64 ? undefined : "noopener noreferrer"}
+                  href={dataUri}
+                  download={name}
                   className="text-xs font-medium text-accent hover:underline truncate flex items-center gap-1"
                   title={name}
                 >
                   <span className="text-[10px] font-mono font-semibold uppercase px-1.5 py-0.5 rounded bg-tertiary/30 text-secondary">
-                    {name.split('.').pop()?.toUpperCase() || 'FILE'}
+                    {isImageFile(name) ? (
+                      <ImageIcon className="w-4 h-4" />
+                    ) : (
+                      <FileCode2 className="w-4 h-4" />
+                    )}
                   </span>
                   {name}
                 </a>
                 {isImageFile(name) ? (
                   <img
-                    src={href}
+                    src={dataUri}
                     alt={name}
                     className="max-w-full max-h-[50vh] rounded-lg border border-border-primary/30 cursor-zoom-in"
                     onClick={() => {
                       const win = window.open();
-                      if (win) win.document.write(`<img src="${href}" style="max-width:100vw;max-height:100vh" />`);
                     }}
                   />
                 ) : null}
