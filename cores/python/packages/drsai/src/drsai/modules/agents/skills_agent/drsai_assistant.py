@@ -253,8 +253,9 @@ class DrSaiAssistant(DrSaiAgent):
         skills_dir: Optional[str | List[str]] = [],
         executor: CodeExecutor | None = None,
         sub_agent_config: Dict = {},
+        max_agent_concurrent: int = 10,
         # task loop and memory
-        max_turn_count: int = 200,
+        max_turn_count: int = 500,
         token_limit: int = 50000,
         rag_flow_url: Optional[str] = None,
         rag_flow_token: Optional[str] = None,
@@ -433,6 +434,7 @@ Current Session_ID is {self._thread_id}"""
         # === delegation control ===
         self._delegate_depth: int = 0
         self._max_delegate_depth: int = 1
+        self._max_agent_concurrent: int = max_agent_concurrent
         self._subagent_timeout: int = 600
         self._cleanup_subagent_messages: bool = True
 
@@ -1961,7 +1963,7 @@ Current Session_ID is {self._thread_id}"""
             async for message in self._execute_subagents_parallel(
                 delegate_calls=parallel_tasks,
                 cancellation_token=cancellation_token,
-                max_concurrent=3,
+                max_concurrent=self._max_agent_concurrent,
             ):
                 # Collect final results from metadata-tagged messages
                 if isinstance(message, TextMessage):

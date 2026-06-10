@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from types import SimpleNamespace
 from typing import (
     Any,
     AsyncGenerator,
@@ -14,6 +15,7 @@ from typing import (
     cast,
 )
 
+import httpx
 from anthropic import  AsyncStream
 from anthropic.types import (
     # Base64ImageSourceParam,
@@ -235,14 +237,29 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
                 request_args["cache_control"] = cache_control
 
         # Stream the response
-        stream_future: asyncio.Task[AsyncStream[RawMessageStreamEvent]] = asyncio.ensure_future(
-            cast(Coroutine[Any, Any, AsyncStream[RawMessageStreamEvent]], self._client.messages.create(**request_args))
-        )
+        # NOTE: Some HepAI-style gateways wrap upstream Anthropic SSE events
+        # inside a non-standard envelope:
+        #     event: message_metrics
+        #     data:  {"event": "<real_type>", "data": {...real Anthropic payload...}}
+        # The anthropic SDK dispatches on the SSE "event:" name, so it sees
+        # only "message_metrics" and yields nothing. Detect this upfront and
+        # take a custom httpx parsing path; otherwise use the SDK stream.
+        use_custom_sse = self._gateway_uses_metrics_envelope()
+        stream: Optional[AsyncStream[RawMessageStreamEvent]] = None
+        custom_sse_iter: Optional[AsyncGenerator[Any, None]] = None
 
-        if cancellation_token is not None:
-            cancellation_token.link_future(stream_future)  # type: ignore
-
-        stream: AsyncStream[RawMessageStreamEvent] = cast(AsyncStream[RawMessageStreamEvent], await stream_future)  # type: ignore
+        if use_custom_sse:
+            custom_sse_iter = self._stream_sse_via_httpx(
+                request_args=request_args,
+                cancellation_token=cancellation_token,
+            )
+        else:
+            stream_future: asyncio.Task[AsyncStream[RawMessageStreamEvent]] = asyncio.ensure_future(
+                cast(Coroutine[Any, Any, AsyncStream[RawMessageStreamEvent]], self._client.messages.create(**request_args))
+            )
+            if cancellation_token is not None:
+                cancellation_token.link_future(stream_future)  # type: ignore
+            stream = cast(AsyncStream[RawMessageStreamEvent], await stream_future)  # type: ignore
 
         text_content: List[str] = []
         tool_calls: Dict[str, Dict[str, Any]] = {}  # Track tool calls by ID
@@ -254,10 +271,13 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         stop_reason: Optional[str] = None
 
         first_chunk = True
+        any_event_seen = False
         serialized_messages: List[Dict[str, Any]] = [self._serialize_message(msg) for msg in anthropic_messages]
 
-        # Process the stream
-        async for chunk in stream:
+        # Process the stream — either SDK stream or our custom SSE iterator
+        chunk_source: Any = custom_sse_iter if use_custom_sse else stream
+        async for chunk in chunk_source:
+            any_event_seen = True
             if first_chunk:
                 first_chunk = False
                 # Emit the start event.
@@ -320,6 +340,62 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
                         cache_creation_input_tokens = usage_obj.cache_creation_input_tokens or 0
                     if getattr(usage_obj, "cache_read_input_tokens", None) is not None:
                         cache_read_input_tokens = usage_obj.cache_read_input_tokens or 0
+
+        # Fallback for upstream gateways that ignore stream=true and return a
+        # single aggregated JSON payload. The SDK then yields zero events and
+        # we'd produce CreateResult(content=""). Detect this and replay the
+        # same request as a non-stream call so the caller still gets content.
+        if not any_event_seen or (not text_content and not tool_calls):
+            logger.warning(
+                "Anthropic stream produced no usable events "
+                "(events_seen=%s, text=%s, tool_calls=%s). "
+                "Falling back to non-stream messages.create().",
+                any_event_seen,
+                bool(text_content),
+                bool(tool_calls),
+            )
+            fallback_args = dict(request_args)
+            fallback_args["stream"] = False
+            fallback_future = asyncio.ensure_future(
+                cast(Any, self._client.messages.create(**fallback_args))
+            )
+            if cancellation_token is not None:
+                cancellation_token.link_future(fallback_future)  # type: ignore
+            fb_msg = await fallback_future
+
+            fb_usage = getattr(fb_msg, "usage", None)
+            if fb_usage is not None:
+                input_tokens = getattr(fb_usage, "input_tokens", input_tokens) or input_tokens
+                output_tokens = getattr(fb_usage, "output_tokens", output_tokens) or output_tokens
+                cache_creation_input_tokens = (
+                    getattr(fb_usage, "cache_creation_input_tokens", None) or cache_creation_input_tokens
+                )
+                cache_read_input_tokens = (
+                    getattr(fb_usage, "cache_read_input_tokens", None) or cache_read_input_tokens
+                )
+            stop_reason = getattr(fb_msg, "stop_reason", stop_reason) or stop_reason
+
+            for block in getattr(fb_msg, "content", []) or []:
+                btype = getattr(block, "type", None)
+                if btype == "text":
+                    text = getattr(block, "text", "") or ""
+                    if text:
+                        text_content.append(text)
+                        yield text
+                elif btype == "tool_use":
+                    tool_id = getattr(block, "id", None)
+                    if tool_id is None:
+                        continue
+                    raw_input = getattr(block, "input", {})
+                    try:
+                        input_str = json.dumps(raw_input) if not isinstance(raw_input, str) else raw_input
+                    except (TypeError, ValueError):
+                        input_str = str(raw_input)
+                    tool_calls[tool_id] = {
+                        "id": tool_id,
+                        "name": getattr(block, "name", ""),
+                        "input": input_str,
+                    }
 
         # Prepare the final response
         usage = RequestUsage(
@@ -392,3 +468,141 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         self._actual_usage = _add_usage(self._actual_usage, usage)
 
         yield result
+
+    # ── HepAI gateway SSE envelope handling ─────────────────────────────────
+    # The HepAI Anthropic-compatible gateway wraps upstream Anthropic events
+    # inside a non-standard envelope:
+    #     event: message_metrics
+    #     data:  {"event": "<real_event>", "data": {<real Anthropic payload>}}
+    # The anthropic SDK dispatches by SSE event-name and ignores anything
+    # outside its known set, so the SDK stream silently yields zero events.
+    # We detect this at runtime and substitute our own SSE reader that
+    # unwraps the envelope and yields objects shaped like the SDK's
+    # RawMessageStreamEvent so the rest of create_stream_tmp can stay
+    # unchanged. Re-detected per-request (cached on the instance).
+
+    _METRICS_ENVELOPE_DETECTED_ATTR = "_hepai_metrics_envelope_detected"
+
+    def _gateway_uses_metrics_envelope(self) -> bool:
+        """Return True if a prior request confirmed the metrics-envelope
+        gateway. Defaults to True for HepAI-style base_urls so the first
+        request also takes the safe path; flips to False permanently on the
+        first response whose Content-Type is plain JSON (i.e. real
+        Anthropic / standard provider)."""
+        cached = getattr(self, self._METRICS_ENVELOPE_DETECTED_ATTR, None)
+        if cached is not None:
+            return cached
+        # Heuristic: if base_url points at the HepAI Anthropic gateway,
+        # assume the envelope is in play until proven otherwise.
+        base_url = str(getattr(self._client, "base_url", "") or "")
+        return "aiapi.ihep.ac.cn" in base_url or "/apiv2/anthropic" in base_url
+
+    def _remember_envelope_detection(self, detected: bool) -> None:
+        setattr(self, self._METRICS_ENVELOPE_DETECTED_ATTR, detected)
+
+    async def _stream_sse_via_httpx(
+        self,
+        request_args: Dict[str, Any],
+        cancellation_token: Optional[CancellationToken],
+    ) -> AsyncGenerator[Any, None]:
+        """Stream the Anthropic /v1/messages SSE response with our own httpx
+        reader, unwrapping the HepAI ``message_metrics`` envelope. Yields
+        objects shaped like ``anthropic.types.RawMessageStreamEvent`` —
+        attribute access only (``chunk.type``, ``chunk.delta.text`` …), which
+        is all create_stream_tmp uses."""
+
+        base_url = str(self._client.base_url).rstrip("/")
+        url = base_url + "/v1/messages"
+
+        # Honor the SDK's auth header, plus standard SSE expectations.
+        api_key = getattr(self._client, "api_key", None) or ""
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+        }
+
+        # Strip non-JSON-serializable keys (cache_control passed as object
+        # already serializes fine).
+        payload = {k: v for k, v in request_args.items() if v is not None}
+        payload["stream"] = True
+
+        timeout = httpx.Timeout(connect=30.0, read=600.0, write=60.0, pool=30.0)
+
+        async with httpx.AsyncClient(timeout=timeout) as hc:
+            req_ctx = hc.stream("POST", url, headers=headers, json=payload)
+            try:
+                resp_cm = req_ctx.__aenter__()
+                if cancellation_token is not None:
+                    cancellation_token.link_future(asyncio.ensure_future(asyncio.sleep(0)))  # type: ignore
+                resp = await resp_cm
+
+                if resp.status_code >= 400:
+                    body = (await resp.aread()).decode("utf-8", errors="replace")
+                    raise RuntimeError(
+                        f"Anthropic gateway returned HTTP {resp.status_code}: {body[:500]}"
+                    )
+
+                content_type = (resp.headers.get("content-type") or "").lower()
+                if "text/event-stream" not in content_type:
+                    # Gateway didn't actually stream — remember so future
+                    # requests skip this path. The caller's downstream
+                    # "no events" fallback will then handle it.
+                    self._remember_envelope_detection(False)
+                    logger.warning(
+                        "HepAI Anthropic gateway returned %s instead of SSE; "
+                        "skipping custom SSE parser.", content_type or "no content-type"
+                    )
+                    return
+
+                # Confirmed SSE. Whether the envelope is present we'll learn
+                # from the first event line.
+                envelope_confirmed: Optional[bool] = None
+
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    if not line.startswith("data:"):
+                        # Skip event-name / comment lines
+                        continue
+                    data_str = line[len("data:"):].strip()
+                    if not data_str or data_str == "[DONE]":
+                        continue
+                    try:
+                        raw = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        logger.warning("Skipping non-JSON SSE data: %r", data_str[:120])
+                        continue
+
+                    # Detect envelope: {"event": "...", "data": {...}}
+                    is_envelope = (
+                        isinstance(raw, dict)
+                        and "event" in raw
+                        and isinstance(raw.get("data"), dict)
+                        and raw["data"].get("type") == raw.get("event")
+                    )
+                    if envelope_confirmed is None:
+                        envelope_confirmed = is_envelope
+                        self._remember_envelope_detection(is_envelope)
+
+                    payload_dict = raw["data"] if is_envelope else raw
+                    if not isinstance(payload_dict, dict):
+                        continue
+                    yield _to_attr_namespace(payload_dict)
+            finally:
+                try:
+                    await req_ctx.__aexit__(None, None, None)
+                except Exception:
+                    pass
+
+
+def _to_attr_namespace(obj: Any) -> Any:
+    """Recursively convert dict → SimpleNamespace so that downstream code
+    using attribute access (chunk.type, chunk.delta.text, …) keeps working,
+    while preserving lists and primitives."""
+    if isinstance(obj, dict):
+        return SimpleNamespace(**{k: _to_attr_namespace(v) for k, v in obj.items()})
+    if isinstance(obj, list):
+        return [_to_attr_namespace(v) for v in obj]
+    return obj

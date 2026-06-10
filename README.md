@@ -47,15 +47,41 @@
 
 #### 源码安装(推荐)
 
+> **前置条件**：源码安装需要 **Node.js (≥20)** 和 **pnpm** 来编译 TUI 前端。
+> 安装脚本会自动检测并调用 pnpm；如果未安装，请先执行：
+> ```shell
+> # 安装 Node.js（推荐 LTS 版本）
+> # 方式一：从官网下载 https://nodejs.org/
+> # 方式二：使用 nvm
+> curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+> nvm install 22
+>
+> # 安装 pnpm
+> npm install -g pnpm
+> ```
+> 如果无法安装 Node.js，也可跳过 TUI 编译：
+> ```shell
+> # 先创建占位文件，跳过编译
+> mkdir -p apps/ui-tui/dist && touch apps/ui-tui/dist/entry.mjs
+> pip install -e cores/python/packages/drsai
+> ```
+
 ```shell
 conda create -n drsai python=>3.11
 conda activate drsai
 git clone https://github.com/hepai-lab/drsai.git drsai # From Github
 git clone https://code.ihep.ac.cn/hepai/drsai drsai # or From IHEP
 
-cd cores/python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
-cd apps/webui/backend && pip install -e . # for DrSai-UI  human-computer interaction frontend
+cd drsai
+pip install -e cores/python/packages/drsai # for OpenDrSai backend and agent components
+pip install -e apps/webui/backend # for DrSai-UI  human-computer interaction frontend
 ```
+
+> `pip install -e` 时会自动调用 `pnpm install && pnpm build` 编译
+> `apps/ui-tui` 前端，无需手动构建。如自动构建失败，可手动执行：
+> ```shell
+> cd apps/ui-tui && pnpm install && pnpm build
+> ```
 
 #### venv 安装（无需 conda）
 
@@ -76,9 +102,11 @@ git clone https://code.ihep.ac.cn/hepai/drsai drsai    # or From IHEP
 
 # 安装 OpenDrSai
 cd drsai
-cd cores/python/packages/drsai && pip install -e .
-cd apps/webui/backend && pip install -e .
+pip install -e cores/python/packages/drsai
+pip install -e apps/webui/backend
 ```
+
+> 同样需要 Node.js (≥20) + pnpm。安装过程会自动编译前端。
 
 退出虚拟环境：
 

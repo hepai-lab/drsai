@@ -293,6 +293,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<agent_type> <prompt>",
         handler="async",
     ),
+    CommandDef(
+        "max_concurrent",
+        "Set max parallel subagent count or show current value (global, saved)",
+        "Subagent",
+        aliases=("mc",),
+        args_hint="<number|status>",
+        handler="async",
+    ),
 
 
     # ── Multimedia ──────────────────────────────────────────────────────
