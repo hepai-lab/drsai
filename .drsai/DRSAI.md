@@ -9,29 +9,29 @@
 
 <!-- 这些是 DrSai 每次都需要知道的命令，不要让它自己猜 -->
 
-- Build: `pip install -e python/packages/drsai`
-- Install dev: `pip install -e "python/packages/drsai[all]"` (安装了 dev 依赖项)
-- Test: `cd python/packages/drsai && python -m pytest tests/ --cov=src/drsai`
-- Test single: `cd python/packages/drsai && python -m pytest tests/path/to/test_file.py::test_name -xvs`
+- Build: `pip install -e cores/python/packages/drsai`
+- Install dev: `pip install -e "cores/python/packages/drsai[all]"` (安装了 dev 依赖项)
+- Test: `cd cores/python/packages/drsai && python -m pytest tests/ --cov=src/drsai`
+- Test single: `cd cores/python/packages/drsai && python -m pytest tests/path/to/test_file.py::test_name -xvs`
 - Run TUI: `python -m drsai.backend.run_cli chat`
 - Run agent: `python run_drsai_agent.py`
-- Frontend dev: `cd frontend && yarn dev` 或 `cd frontend && npm run develop`
-- TUI build: `cd ui-tui && pnpm install && pnpm build`
+- Frontend dev: `cd apps/webui/frontend && yarn dev` 或 `cd apps/webui/frontend && npm run develop`
+- TUI build: `cd apps/ui-tui && pnpm install && pnpm build`
 
 ## Project Architecture
 
 <!-- 关键架构决策和目录布局 -->
 
 ### Key directories
-- **Core agent framework:** `python/packages/drsai/src/drsai/`
+- **Core agent framework:** `cores/python/packages/drsai/src/drsai/`
   - `modules/agents/` — 智能体实现 (skills_agent, baseagent)
   - `modules/components/` — 组件 (model_context, model_client, tools)
   - `modules/managers/` — 数据库、配置管理器
   - `backend/run_cli.py` — CLI/TUI 入口
   - `backend/tui_gateway/` — TUI 网关服务
-- **Terminal UI (TUI):** `ui-tui/` — 基于 React/Ink 的终端界面，用 pnpm 管理
-- **Web Frontend:** `frontend/` — 基于 Gatsby 的 Web 前端
-- **Desktop:** `desktop/` — Electron 桌面应用
+- **Terminal UI (TUI):** `apps/ui-tui/` — 基于 React/Ink 的终端界面，用 pnpm 管理
+- **Web Frontend:** `apps/webui/frontend/` — 基于 Gatsby 的 Web 前端
+- **Desktop:** `apps/desktop/` — Electron 桌面应用
 - **Docs:** `docs/` — 文档（docs-drsai.ihep.ac.cn）
 - **Skills:** `agent_skills/` — 智能体技能定义
 - **Examples:** `examples/` — 示例配置和代码
@@ -44,9 +44,9 @@
 - 环境配置：`.env` 文件 (参考 `.env.example`) -->
 
 <!-- ### Important: Python path
-- Python 源码安装在 `python/packages/drsai/src/drsai/`
-- 开发模式必须 `pip install -e python/packages/drsai`
-- Pyright 配置的 include 是 `["src", "tests", "samples"]`，在 `python/packages/drsai/` 目录下运行 -->
+- Python 源码安装在 `cores/python/packages/drsai/src/drsai/`
+- 开发模式必须 `pip install -e cores/python/packages/drsai`
+- Pyright 配置的 include 是 `["src", "tests", "samples"]`，在 `cores/python/packages/drsai/` 目录下运行 -->
 
 <!-- ## Coding Standards -->
 
@@ -80,12 +80,12 @@
 3. 检查 `.env` 配置是否与 `.env.example` 一致
 
 ### 修改 CLI/TUI 代码
-1. 修改 `python/packages/drsai/src/drsai/backend/run_cli.py` 或 `tui_gateway/`
+1. 修改 `cores/python/packages/drsai/src/drsai/backend/run_cli.py` 或 `tui_gateway/`
 2. 运行 `python -m drsai.backend.run_cli chat` 手动测试
-3. 如涉及 TUI 前端 (`ui-tui/`)，需要 `cd ui-tui && pnpm build`
+3. 如涉及 TUI 前端 (`apps/ui-tui/`)，需要 `cd apps/ui-tui && pnpm build`
 
 ### 修改前端代码
-1. `cd frontend && npm run develop` 启动开发服务器
+1. `cd apps/webui/frontend && npm run develop` 启动开发服务器
 2. 修改代码，浏览器自动热更新
 3. 提交前运行 `npm run build` 确认无编译错误
 
@@ -107,9 +107,9 @@
 ### 模块归属
 | 模块 | 负责人 | 非负责人变更规则 |
 |------|--------|-----------------|
-| `python/packages/drsai/` | xiongdb | 必须先沟通 + MR 审核 |
-| `ui-tui/` | xiongdb | 必须先沟通 + MR 审核 |
-| `frontend/` | frontend 团队 | 必须先沟通 + MR 审核 |
+| `cores/python/packages/drsai/` | xiongdb | 必须先沟通 + MR 审核 |
+| `apps/ui-tui/` | xiongdb | 必须先沟通 + MR 审核 |
+| `apps/webui/frontend/` | frontend 团队 | 必须先沟通 + MR 审核 |
 | `docs/` | 所有人 | MR 审核即可 |
 
 ### 合并冲突处理

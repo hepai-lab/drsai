@@ -128,7 +128,7 @@ class Thread(SQLModel, table=True):
 
 #### 其他表信息
 
-- 其他表信息，比如SingleTask、Tasks、PlanCheck、AgentJson等，具体见[python/packages/drsai/src/drsai/modules/managers/datamodel/db.py](https://github.com/hepai-lab/drsai/blob/main/python/packages/drsai/src/drsai/modules/managers/datamodel/db.py)
+- 其他表信息，比如SingleTask、Tasks、PlanCheck、AgentJson等，具体见[cores/python/packages/drsai/src/drsai/modules/managers/datamodel/db.py](https://github.com/hepai-lab/drsai/blob/main/cores/python/packages/drsai/src/drsai/modules/managers/datamodel/db.py)
 
 - 参考表内容，维护你自己的数据库表结构来管理后端状态。
 
@@ -143,4 +143,4 @@ class Thread(SQLModel, table=True):
 -  db_manager.upsert()
 -  db_manager.delete()
 
-db_manager在[DrSaiAgent(from drsai import DrSaiAgent)](https://github.com/hepai-lab/drsai/blob/main/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py)和[DrSaiGroupChat(from drsai import DrSaiGroupChat)](https://github.com/hepai-lab/drsai/blob/main/python/packages/drsai/src/drsai/modules/groupchat/drsai_base_group_chat.py)中自动传入，可以直接使用，通过self._db_manager全局变量获取，通过继承DrSaiAgent或DrSaiGroupChat来实现自己的数据库管理。在通过`run_worker`启动智能体服务的时，数据库默认地址在`~/.drsai/drsai.db`，可以通过`run_worker`传入`base_dir`和`engine_uri`来管理数据库的保存地址
+db_manager在[DrSaiAgent(from drsai import DrSaiAgent)](https://github.com/hepai-lab/drsai/blob/main/cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py)和[DrSaiGroupChat(from drsai import DrSaiGroupChat)](https://github.com/hepai-lab/drsai/blob/main/cores/python/packages/drsai/src/drsai/modules/groupchat/drsai_base_group_chat.py)中自动传入，可以直接使用，通过self._db_manager全局变量获取，通过继承DrSaiAgent或DrSaiGroupChat来实现自己的数据库管理。在通过`run_worker`启动智能体服务的时，数据库默认地址在`~/.drsai/drsai.db`，可以通过`run_worker`传入`base_dir`和`engine_uri`来管理数据库的保存地址

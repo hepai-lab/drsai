@@ -15,7 +15,7 @@ tags: OpenDrSai, 智能体文档
 ## 2.基础智能体`DrSaiAgent`内的协作逻辑
 
 
-OpenDrSai提供了基础功能的智能体-`DrSaiAgent`，内部通过以下流程使用组件、子系统、通信协议构建了`DrSaiAgent`的外部消息智能处理逻辑，代码见[drsaiagent.py](https://github.com/hepai-lab/drsai/blob/main/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py)。
+OpenDrSai提供了基础功能的智能体-`DrSaiAgent`，内部通过以下流程使用组件、子系统、通信协议构建了`DrSaiAgent`的外部消息智能处理逻辑，代码见[drsaiagent.py](https://github.com/hepai-lab/drsai/blob/main/cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py)。
 
 ![](https://note.ihep.ac.cn/uploads/16b8f934-2d0c-44d8-93ac-c68713f33b45.png)
 

@@ -55,8 +55,8 @@ conda activate drsai
 git clone https://github.com/hepai-lab/drsai.git drsai # From Github
 git clone https://code.ihep.ac.cn/hepai/drsai drsai # or From IHEP
 
-cd your/path/to/drsai/python/packages/drsai && pip install -e . # backend and agent components
-cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # frontend UI
+cd your/path/to/drsai/cores/python/packages/drsai && pip install -e . # backend and agent components
+cd your/path/to/drsai/apps/webui/backend && pip install -e . # frontend UI
 ```
 
 #### Install with venv (No Conda Required)
@@ -78,8 +78,8 @@ git clone https://code.ihep.ac.cn/hepai/drsai drsai    # or From IHEP
 
 # Install OpenDrSai
 cd drsai
-cd python/packages/drsai && pip install -e .
-cd python/packages/drsai_ui && pip install -e .
+cd cores/python/packages/drsai && pip install -e .
+cd apps/webui/backend && pip install -e .
 ```
 
 Deactivate when done:
@@ -104,7 +104,7 @@ python -m pip install -U --no-cache-dir drsai drsai_ui
 # python -m pip install --force-reinstall --no-cache-dir drsai==<version> drsai_ui==<version>
 ```
 
-> Note: PyPI wheels are immutable for the same version number. If an existing environment still shows old behavior after upgrading, make sure the release version in `python/packages/drsai/src/drsai/version.py` was bumped before publishing, then run `python -m pip install -U --no-cache-dir drsai drsai_ui` in the target environment.
+> Note: PyPI wheels are immutable for the same version number. If an existing environment still shows old behavior after upgrading, make sure the release version in `cores/python/packages/drsai/src/drsai/version.py` was bumped before publishing, then run `python -m pip install -U --no-cache-dir drsai drsai_ui` in the target environment.
 >
 > The new TUI frontend is bundled inside the `drsai` wheel at `drsai/ui_tui/dist/entry.mjs`. If frontend commands such as `/image` still behave like an old version, verify that the installed package contains the updated bundle:
 >
@@ -112,7 +112,7 @@ python -m pip install -U --no-cache-dir drsai drsai_ui
 > python -c "from pathlib import Path; import drsai; p=Path(drsai.__file__).resolve().parent/'ui_tui'/'dist'/'entry.mjs'; print('drsai:', drsai.__file__); print('bundle:', p); print('exists:', p.exists()); text=p.read_text(encoding='utf-8', errors='ignore') if p.exists() else ''; print('has /image client handler:', 'parseImageCommand' in text)"
 > ```
 >
-> If it prints `False`, the environment is still using an old bundle. Upgrade to a newer version number, or check whether `DRSAI_UI_TUI_DIR` points to an old local `ui-tui` directory.
+> If it prints `False`, the environment is still using an old bundle. Upgrade to a newer version number, or check whether `DRSAI_UI_TUI_DIR` points to an old local `apps/ui-tui` directory.
 
 #### Configure HepAI API Key
 

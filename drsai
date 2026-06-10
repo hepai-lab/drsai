@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-set -e
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export DRSAI_HOME="${DRSAI_HOME:-/home/xiongdb/.drsai}"
-exec "$DIR/venv/bin/python" -m drsai.backend.run_cli "$@"

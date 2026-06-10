@@ -4,7 +4,7 @@ tags: OpenDrSai, 智能体文档
 
 # OpenDrSai-智能体的上下文管理组件
 
-这里主要介绍OpenDrSai中实现长期记忆智能压缩和管理的`DrSaiChatCompletionContext`，继承于AutoGen的`ChatCompletionContext`组件，可通过`drsai.modules.components.model_context`导入，具体代码见[drsai_model_context.py](https://github.com/hepai-lab/drsai/blob/main/python/packages/drsai/src/drsai/modules/components/model_context/drsai_model_context.py)。
+这里主要介绍OpenDrSai中实现长期记忆智能压缩和管理的`DrSaiChatCompletionContext`，继承于AutoGen的`ChatCompletionContext`组件，可通过`drsai.modules.components.model_context`导入，具体代码见[drsai_model_context.py](https://github.com/hepai-lab/drsai/blob/main/cores/python/packages/drsai/src/drsai/modules/components/model_context/drsai_model_context.py)。
 
 `ChatCompletionContext`基类中存在两个关键函数：
 

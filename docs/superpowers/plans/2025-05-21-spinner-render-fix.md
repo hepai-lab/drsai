@@ -48,14 +48,14 @@ This way stdout output continues from where it was, and the bottom row is update
 
 ## File Structure
 
-- **Modify:** `python/packages/drsai/src/drsai/backend/cli/renderer.py` — Core fix in `_spin_task_loop`, `_clear_bottom_row`, and `_println` (add spinner-aware bottom-row protection)
+- **Modify:** `cores/python/packages/drsai/src/drsai/backend/cli/renderer.py` — Core fix in `_spin_task_loop`, `_clear_bottom_row`, and `_println` (add spinner-aware bottom-row protection)
 
 ---
 
 ### Task 1: Refactor `_spin_task_loop` to use ANSI save/restore cursor via stdout
 
 **Files:**
-- Modify: `python/packages/drsai/src/drsai/backend/cli/renderer.py:506-531`
+- Modify: `cores/python/packages/drsai/src/drsai/backend/cli/renderer.py:506-531`
 
 - [ ] **Step 1: Replace `_spin_task_loop` implementation**
 
@@ -113,7 +113,7 @@ cd /home/xiongdb/drsai && python -c "from drsai.backend.cli.renderer import DrSa
 ### Task 2: Refactor `_clear_bottom_row` to use same ANSI mechanism
 
 **Files:**
-- Modify: `python/packages/drsai/src/drsai/backend/cli/renderer.py:528-531`
+- Modify: `cores/python/packages/drsai/src/drsai/backend/cli/renderer.py:528-531`
 
 - [ ] **Step 1: Replace `_clear_bottom_row` implementation**
 
@@ -145,7 +145,7 @@ cd /home/xiongdb/drsai && python -c "from drsai.backend.cli.renderer import DrSa
 ### Task 3: Add bottom-row protection in `_println` to prevent content overwrite
 
 **Files:**
-- Modify: `python/packages/drsai/src/drsai/backend/cli/renderer.py:230-255`
+- Modify: `cores/python/packages/drsai/src/drsai/backend/cli/renderer.py:230-255`
 
 **Context:** When `_println` writes via Rich Console, it may emit terminal control codes that could interact badly with the bottom spinner line. However, since the spinner uses save/restore cursor, this should not be an issue — the cursor always gets restored before any `_println` call. The existing code already calls `_println` only from the same event-loop thread.
 
@@ -188,7 +188,7 @@ Simulates a turn with tool calls to verify:
 """
 import asyncio
 import sys
-sys.path.insert(0, "/home/xiongdb/drsai/python/packages/drsai/src")
+sys.path.insert(0, "/home/xiongdb/drsai/cores/python/packages/drsai/src")
 
 from drsai.backend.cli.renderer import DrSaiCLIRender похаAS
 
@@ -227,7 +227,7 @@ Wait, the imports are wrong above — `DrSaiCLIRenderer` is not the class name. 
 - [ ] **Step 1: Verify exact class name**
 
 ```bash
-grep "^class " /home/xiongdb/drsai/python/packages/drsai/src/drsai/backend/cli/renderer.py
+grep "^class " /home/xiongdb/drsai/cores/python/packages/drsai/src/drsai/backend/cli/renderer.py
 ```
 
 Expected: `class DrSaiCLIRenderer:`
@@ -239,7 +239,7 @@ cat > /tmp/test_spinner_fix.py << 'PYEOF'
 """Quick integration test for the fixed spinner."""
 import asyncio
 import sys
-sys.path.insert(0, "/home/xiongdb/drsai/python/packages/drsai/src")
+sys.path.insert(0, "/home/xiongdb/drsai/cores/python/packages/drsai/src")
 
 from drsai.backend.cli.renderer import DrSaiCLIRenderer
 
@@ -288,7 +288,7 @@ After running the test, verify:
 
 ```bash
 cd /home/xiongdb/drsai
-git add python/packages/drsai/src/drsai/backend/cli/renderer.py
+git add cores/python/packages/drsai/src/drsai/backend/cli/renderer.py
 git commit -m "fix(renderer): use ANSI save/restore for bottom-anchored spinner
 
     Replace stderr \r-based spinner with stdout + DECSC/DECRC (cursor

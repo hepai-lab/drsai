@@ -47,7 +47,7 @@ def _to_config(self) -> DrSaiAgentConfig:
 
 ### 实现细节
 
-位置: `python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py:1089-1112`
+位置: `cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py:1089-1112`
 
 ```python
 def _to_config(self) -> AssistantAgentConfig:
@@ -132,7 +132,7 @@ def _from_config(
 
 ### 实现细节
 
-位置: `python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py:1114-1153`
+位置: `cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py:1114-1153`
 
 ```python
 @classmethod
@@ -367,7 +367,7 @@ DrSaiAgent提供了两套并行的持久化机制:
 
 ### 状态管理 (save_state / load_state)
 
-位置: `python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py:1070-1079`
+位置: `cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py:1070-1079`
 
 ```python
 async def save_state(self) -> Mapping[str, Any]:

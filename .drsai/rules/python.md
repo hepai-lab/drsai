@@ -1,6 +1,6 @@
 ---
 paths:
-  - "python/packages/drsai/src/**/*.py"
+  - "cores/python/packages/drsai/src/**/*.py"
   - "python/**/*.py"
 ---
 

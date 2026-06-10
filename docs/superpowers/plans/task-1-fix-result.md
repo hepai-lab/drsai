@@ -2,7 +2,7 @@
 
 ## Fix 1: `default_alias` YAML roundtrip corruption
 
-**File:** `python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py`
+**File:** `cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py`
 
 **Problem:** `_write_llm_config()` wrote `default_alias` as a top-level YAML key. Since `load_llm_mode_config()` only filters keys starting with `_`, `default_alias` (which does NOT start with `_`) was passed to `ModelEntry.from_dict()` as if it were a model alias. Since its value is a plain string like `"hepai/minimax-m2.7-highspeed"`, `from_dict()` hit the fallback path and created a bogus `ModelEntry`.
 

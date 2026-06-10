@@ -121,7 +121,7 @@ else
 fi
 
 cd "$INSTALL_DIR"
-PACKAGE_DIR="$INSTALL_DIR/python/packages/drsai"
+PACKAGE_DIR="$INSTALL_DIR/cores/python/packages/drsai"
 [[ -f "$PACKAGE_DIR/pyproject.toml" ]] || die "Cannot find DrSai Python package at $PACKAGE_DIR"
 
 VENV_DIR="$INSTALL_DIR/venv"

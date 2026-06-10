@@ -85,8 +85,8 @@ Key file checks:
 - `desktop/drsai-desktop/src/renderer/src/screens/Skills/Skills.tsx` - Minor updates
 
 **Python backend:**
-- `python/packages/drsai/src/drsai/backend/gateway.py` - Added full CRUD routes for model config (+388 lines)
-- `python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py` - Added `ReasoningConfig`, `ModelEntry.to_dict()`, `build_model_catalog` (+80 lines)
+- `cores/python/packages/drsai/src/drsai/backend/gateway.py` - Added full CRUD routes for model config (+388 lines)
+- `cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py` - Added `ReasoningConfig`, `ModelEntry.to_dict()`, `build_model_catalog` (+80 lines)
 
 ---
 

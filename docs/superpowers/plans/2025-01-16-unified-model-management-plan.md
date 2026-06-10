@@ -14,8 +14,8 @@
 
 ```
 Backend:
-  MODIFY: python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py
-  MODIFY: python/packages/drsai/src/drsai/backend/gateway.py
+  MODIFY: cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py
+  MODIFY: cores/python/packages/drsai/src/drsai/backend/gateway.py
 
 Desktop:
   MODIFY: desktop/drsai-desktop/src/main/model-catalog.ts
@@ -35,7 +35,7 @@ Desktop:
 ### Task 1: Backend — ModelEntry.to_dict() + save/ensure helpers
 
 **Files:**
-- Modify: `python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py`
+- Modify: `cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py`
 
 - [ ] **Step 1: Add `to_dict()` method to `ModelEntry` and `ReasoningConfig`**
 
@@ -133,7 +133,7 @@ cd /home/xiongdb/drsai && python -c "from drsai.backend.run_drsai_agent_factory 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py
+git add cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py
 git commit -m "feat: add ModelEntry.to_dict() and llm config save helpers"
 ```
 
@@ -142,7 +142,7 @@ git commit -m "feat: add ModelEntry.to_dict() and llm config save helpers"
 ### Task 2: Backend — Add CRUD endpoints to gateway
 
 **Files:**
-- Modify: `python/packages/drsai/src/drsai/backend/gateway.py`
+- Modify: `cores/python/packages/drsai/src/drsai/backend/gateway.py`
 
 - [ ] **Step 1: Update import to include new helpers**
 
@@ -365,7 +365,7 @@ cd /home/xiongdb/drsai && python -c "from drsai.backend.gateway import app; prin
 - [ ] **Step 11: Commit**
 
 ```bash
-git add python/packages/drsai/src/drsai/backend/gateway.py
+git add cores/python/packages/drsai/src/drsai/backend/gateway.py
 git commit -m "feat: add model config CRUD endpoints to gateway"
 ```
 

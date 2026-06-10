@@ -35,10 +35,10 @@ main（发行分支）
 
 | 模块 | 负责人 | 非负责人变更规则 |
 |------|--------|-----------------|
-| `python/packages/drsai/` | xiongdb | 必须先沟通 + MR 审核 |
-| `python/packages/drsai_ui/` | drsai_ui 团队 | 必须先沟通 + MR 审核 |
-| `frontend/` | frontend 团队 | 必须先沟通 + MR 审核 |
-| `ui-tui/` | xiongdb | 必须先沟通 + MR 审核 |
+| `cores/python/packages/drsai/` | xiongdb | 必须先沟通 + MR 审核 |
+| `apps/webui/backend/` | drsai_ui 团队 | 必须先沟通 + MR 审核 |
+| `apps/webui/frontend/` | frontend 团队 | 必须先沟通 + MR 审核 |
+| `apps/ui-tui/` | xiongdb | 必须先沟通 + MR 审核 |
 | `docs/` | 所有人 | MR 审核即可 |
 
 ## 合并冲突处理
@@ -47,7 +47,7 @@ main（发行分支）
 1. **基准选择**：main 是发行分支，核心代码以 main 为准
 2. **合并方向**：站在 merge_latest 上，将 main 合入
 3. **处理策略**：drsai 核心和 ui-tui 文件 → 直接用 main 版本（`git checkout gitlab/main -- <文件>`）
-4. **手动审查**：两边都有修改的文件（如 `drsai_ui/`），手动对比后决定
+4. **手动审查**：两边都有修改的文件（如 `apps/webui/backend/`），手动对比后决定
 
 ### ⚠️ `-X ours` / `-X theirs` 方向陷阱：
 

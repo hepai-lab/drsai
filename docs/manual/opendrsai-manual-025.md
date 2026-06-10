@@ -461,7 +461,7 @@ work_dir/{user_id}/
 ```
 
 
-你需要根据以上的要求，参考`/home/xiongdb/drsai_dev/python/packages/drsai/src/drsai/modules/agents/skills_agent/assistant_skill.py`，在on_messages_stream函数中设计一个智能体的任务循环执行逻辑。
+你需要根据以上的要求，参考`/home/xiongdb/drsai_dev/cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/assistant_skill.py`，在on_messages_stream函数中设计一个智能体的任务循环执行逻辑。
 
 需要改写原来依赖模块的功能时一定要新开一个文件进行重写，不要覆盖原来的文件内容。
 
@@ -469,11 +469,11 @@ work_dir/{user_id}/
 
 1. 任务生成以及获取前端用户同意或修改意见的代码见：/home/xiongdb/drsai_dev/examples/agent_groupchat/assistant_task_interaction.py
 
-2. Agent skills的加载和获取的模块见：/home/xiongdb/drsai_dev/python/packages/drsai/src/drsai/modules/agents/skills_agent/skill_loader.py
+2. Agent skills的加载和获取的模块见：/home/xiongdb/drsai_dev/cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/skill_loader.py
 
-3. EgdeAgent上下文管理是通过/home/xiongdb/drsai_dev/python/packages/drsai/src/drsai/modules/components/model_context/drsai_model_context.py中的DrSaiChatCompletionContext进行管理的。
+3. EgdeAgent上下文管理是通过/home/xiongdb/drsai_dev/cores/python/packages/drsai/src/drsai/modules/components/model_context/drsai_model_context.py中的DrSaiChatCompletionContext进行管理的。
 
-4. 你可以参考`/home/xiongdb/drsai_dev/python/packages/drsai/src/drsai/modules/agents/skills_agent/assistant_skill.py`，通过tool call调用选择执行哪一项任务。
+4. 你可以参考`/home/xiongdb/drsai_dev/cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/assistant_skill.py`，通过tool call调用选择执行哪一项任务。
 
 ````
 

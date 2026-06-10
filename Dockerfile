@@ -67,15 +67,15 @@ COPY . /app
 
 # 安装 Python 包（按依赖顺序）
 # 1. 先安装 drsai 核心包
-WORKDIR /app/python/packages/drsai
+WORKDIR /app/cores/python/packages/drsai
 RUN pip install --no-cache-dir -e .
 
 # 2. 安装 drsai_ext 扩展包（drsai_ui 依赖它，必须在 drsai_ui 之前安装）
-WORKDIR /app/python/packages/drsai_ext
+WORKDIR /app/cores/python/packages/drsai_ext
 RUN pip install --no-cache-dir -e .
 
 # 3. 安装 drsai_ui UI 包（依赖 drsai 和 drsai_ext，放在最后）
-WORKDIR /app/python/packages/drsai_ui
+WORKDIR /app/apps/webui/backend
 RUN pip install --no-cache-dir -e .
 
 # 创建必要的目录
