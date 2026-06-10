@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build a complete PyPI wheel that includes the pre-built ui-tui bundle.
 #
-# Output: python/packages/drsai/dist/drsai-X.Y.Z-py3-none-any.whl
+# Output: cores/python/packages/drsai/dist/drsai-X.Y.Z-py3-none-any.whl
 #
 # Run from repo root:
 #   ./scripts/build-wheel.sh
@@ -15,7 +15,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "==> 1/3 Building ui-tui bundle (esbuild)..."
-cd ui-tui
+cd apps/ui-tui
 if [ ! -d node_modules ]; then
   pnpm install
 fi
@@ -24,7 +24,7 @@ cd "$REPO_ROOT"
 
 echo ""
 echo "==> 2/3 Building Python wheel (hatch)..."
-cd python/packages/drsai
+cd cores/python/packages/drsai
 rm -rf dist build
 python -m build --wheel
 

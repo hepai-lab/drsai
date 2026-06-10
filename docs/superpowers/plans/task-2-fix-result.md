@@ -4,7 +4,7 @@
 
 ## Fix 1: `build_model_catalog` hardcodes `DEFAULT_CONFIG_NAME` instead of using actual default_alias
 
-**File:** `python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py`
+**File:** `cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py`
 
 **Problem:** `build_model_catalog()` always returned `DEFAULT_CONFIG_NAME` as the `default_alias`, ignoring the actual default alias stored in the YAML file (`_default_alias`). After a user changes the default via `PUT /v1/models/config/default/{alias}`, `list_model_configs` would still show the hardcoded default.
 
@@ -17,7 +17,7 @@ def build_model_catalog(
 ```
 And changed the return to use `default_alias or DEFAULT_CONFIG_NAME`.
 
-**File:** `python/packages/drsai/src/drsai/backend/gateway.py`
+**File:** `cores/python/packages/drsai/src/drsai/backend/gateway.py`
 
 **Fix:** Updated `list_model_configs` to pass the resolved default alias from `_get_live_llm_config()`:
 ```python
@@ -28,7 +28,7 @@ The existing `GET /v1/config/model-catalog` endpoint remains unchanged (still us
 
 ## Fix 2: Rename silently overwrites existing model
 
-**File:** `python/packages/drsai/src/drsai/backend/gateway.py`
+**File:** `cores/python/packages/drsai/src/drsai/backend/gateway.py`
 
 **Problem:** When renaming a model via `PUT /v1/models/config/{alias}`, if `body.new_alias` matched an existing model alias, it would silently overwrite it without warning.
 
@@ -43,7 +43,7 @@ if body.new_alias and body.new_alias != alias:
 
 ## Fix 3: Dead variable `target_alias`
 
-**File:** `python/packages/drsai/src/drsai/backend/gateway.py`
+**File:** `cores/python/packages/drsai/src/drsai/backend/gateway.py`
 
 **Problem:** The line `target_alias = body.new_alias or alias` was assigned but never used anywhere.
 

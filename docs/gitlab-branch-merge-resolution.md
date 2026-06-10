@@ -40,7 +40,7 @@
 | 判断项 | 结论 |
 |--------|------|
 | 冲突是否可以自动解决？ | ❌ 不可以，18 个文件需手动解决 |
-| 冲突是否集中？ | ✅ 比较集中，大部分在 `python/packages/drsai/` 的后端代码 |
+| 冲突是否集中？ | ✅ 比较集中，大部分在 `cores/python/packages/drsai/` 的后端代码 |
 | 两个分支的修改是否有逻辑关联？ | ❌ 几乎没有，各自在不同模块开发 |
 | drsai_ui/frontend 的代码在 main 中有吗？ | 有一部分旧版本，但 merge_latest 的更新 main 没有 |
 | main 的核心代码在 merge_latest 中有吗？ | 旧版本有，但 main 的重构 merge_latest 没有 |
@@ -103,18 +103,18 @@ git merge gitlab/main --no-edit
 # 3. 对于所有以 main 为准的冲突文件，直接从 main 检出
 #    （drsai 核心 12 个 + ui-tui 3 个 + 根目录 1 个）
 git checkout gitlab/main -- \
-  python/packages/drsai/docs/tui-migration-guide.md \
-  python/packages/drsai/pyproject.toml \
-  python/packages/drsai/src/drsai/backend/cli/commands.py \
-  python/packages/drsai/src/drsai/backend/gateway.py \
-  python/packages/drsai/src/drsai/backend/run_cli.py \
-  python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py \
-  python/packages/drsai/src/drsai/backend/tui_gateway/adapter/agent_runner.py \
-  python/packages/drsai/src/drsai/backend/tui_gateway/handlers/prompt.py \
-  python/packages/drsai/src/drsai/backend/tui_gateway/handlers/slash.py \
-  python/packages/drsai/src/drsai/modules/agents/skills_agent/managers/operater_funs.py \
-  python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py \
-  python/packages/drsai/src/drsai/version.py \
+  cores/python/packages/drsai/docs/tui-migration-guide.md \
+  cores/python/packages/drsai/pyproject.toml \
+  cores/python/packages/drsai/src/drsai/backend/cli/commands.py \
+  cores/python/packages/drsai/src/drsai/backend/gateway.py \
+  cores/python/packages/drsai/src/drsai/backend/run_cli.py \
+  cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py \
+  cores/python/packages/drsai/src/drsai/backend/tui_gateway/adapter/agent_runner.py \
+  cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/prompt.py \
+  cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/slash.py \
+  cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/managers/operater_funs.py \
+  cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py \
+  cores/python/packages/drsai/src/drsai/version.py \
   ui-tui/src/app/turnController.ts \
   ui-tui/src/components/composerPane.tsx \
   ui-tui/src/components/streamingAssistant.tsx \
@@ -133,34 +133,34 @@ Phase 2 中已从 main 检出了 15 个文件，但 **drsai_ui 下的 2 个文�
 
 | 文件 | 审查要点 |
 |------|----------|
-| `python/packages/drsai_ui/.../task_team.py` | main 可能没有此文件最新版，需确认是否保留 merge_latest 版本 |
-| `python/packages/drsai_ui/.../teammanager.py` | 同上 |
+| `cores/apps/webui/backend/.../task_team.py` | main 可能没有此文件最新版，需确认是否保留 merge_latest 版本 |
+| `cores/apps/webui/backend/.../teammanager.py` | 同上 |
 
 **审查方法**：
 
 ```bash
 # 查看某个冲突文件在两边版本的差异
-git diff gitlab/main gitlab/merge_latest -- python/packages/drsai_ui/src/drsai_ui/agent_factory/magentic_one/task_team.py
+git diff gitlab/main gitlab/merge_latest -- cores/apps/webui/backend/src/drsai_ui/agent_factory/magentic_one/task_team.py
 
 # 如果确认应以 merge_latest 版本为准，检出该文件
-git checkout gitlab/merge_latest -- python/packages/drsai_ui/src/drsai_ui/agent_factory/magentic_one/task_team.py
-git add python/packages/drsai_ui/src/drsai_ui/agent_factory/magentic_one/task_team.py
+git checkout gitlab/merge_latest -- cores/apps/webui/backend/src/drsai_ui/agent_factory/magentic_one/task_team.py
+git add cores/apps/webui/backend/src/drsai_ui/agent_factory/magentic_one/task_team.py
 ```
 
 #### Phase 4：验证合并结果
 
 ```bash
 # 1. 确认 drsai_ui 和 frontend 代码完整存在
-ls python/packages/drsai_ui/
+ls cores/apps/webui/backend/
 ls frontend/
 
 # 2. 确认 main 的核心代码完整
-ls python/packages/drsai/src/drsai/backend/tui_gateway/
-ls ui-tui/src/
+ls cores/python/packages/drsai/src/drsai/backend/tui_gateway/
+ls apps/ui-tui/src/
 
 # 3. 尝试构建/运行
-cd ui-tui && pnpm install && pnpm build
-cd ../python/packages/drsai && pip install -e .
+cd apps/ui-tui && pnpm install && pnpm build
+cd ../cores/python/packages/drsai && pip install -e .
 
 # 4. 提交合并
 git add -A
@@ -193,14 +193,14 @@ git checkout -b fix/sync-merge-latest gitlab/main
 
 # 2. 只复制 merge_latest 独有的目录（不涉及冲突）
 #    drsai_ui 和 frontend 在 main 中有旧版本，直接覆盖
-git checkout gitlab/merge_latest -- python/packages/drsai_ui/
+git checkout gitlab/merge_latest -- cores/apps/webui/backend/
 git checkout gitlab/merge_latest -- frontend/
 git add -A
 git commit -m "chore: sync drsai_ui and frontend from merge_latest"
 
 # 3. 对于冲突的 drsai 核心文件，逐一对比后手动决定
 #    使用 VS Code 或 diff 工具对比两个版本
-git difftool gitlab/main gitlab/merge_latest -- python/packages/drsai/src/drsai/backend/cli/commands.py
+git difftool gitlab/main gitlab/merge_latest -- cores/python/packages/drsai/src/drsai/backend/cli/commands.py
 # ... 手动编辑 ...
 
 # 4. 测试 + 合并
@@ -245,8 +245,8 @@ git difftool gitlab/main gitlab/merge_latest -- python/packages/drsai/src/drsai/
 
 | 模块目录 | 主要负责人 | 其他开发者变更时 |
 |----------|-----------|----------------|
-| `python/packages/drsai/` | xiongdb | ⚠️ 必须先与 xiongdb 沟通，通过 MR 审核 |
-| `python/packages/drsai_ui/` | drsai_ui 开发者 | ⚠️ 必须先与负责人沟通 |
+| `cores/python/packages/drsai/` | xiongdb | ⚠️ 必须先与 xiongdb 沟通，通过 MR 审核 |
+| `cores/apps/webui/backend/` | drsai_ui 开发者 | ⚠️ 必须先与负责人沟通 |
 | `frontend/` | frontend 开发者 | ⚠️ 必须先与负责人沟通 |
 | `ui-tui/` | xiongdb | ⚠️ 必须先与 xiongdb 沟通 |
 | `docs/` | 所有人 | 无限制，但 MR 需审核 |
@@ -307,25 +307,25 @@ sync-check:
 
 | # | 文件路径 | 冲突类型 | 处理建议 |
 |---|---------|----------|----------|
-| 1 | `python/packages/drsai/docs/tui-migration-guide.md` | add/add | 保留 main 版本（main 新增） |
-| 2 | `python/packages/drsai/pyproject.toml` | content | 保留 main 版本（版本号等） |
-| 3 | `python/packages/drsai/src/drsai/backend/cli/commands.py` | content | 保留 main 版本（大幅重构） |
-| 4 | `python/packages/drsai/src/drsai/backend/gateway.py` | add/add | 保留 main 版本（新增） |
-| 5 | `python/packages/drsai/src/drsai/backend/run_cli.py` | content | 保留 main 版本（重构） |
-| 6 | `python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py` | content | 保留 main 版本 |
-| 7 | `python/packages/drsai/src/drsai/backend/tui_gateway/adapter/agent_runner.py` | add/add | 保留 main 版本（新增） |
-| 8 | `python/packages/drsai/src/drsai/backend/tui_gateway/handlers/prompt.py` | add/add | 保留 main 版本（新增） |
-| 9 | `python/packages/drsai/src/drsai/backend/tui_gateway/handlers/slash.py` | add/add | 保留 main 版本（新增） |
-| 10 | `python/packages/drsai/src/drsai/modules/agents/skills_agent/managers/operater_funs.py` | content | 保留 main 版本 |
-| 11 | `python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py` | content | 保留 main 版本（核心重构） |
-| 12 | `python/packages/drsai/src/drsai/version.py` | content | 保留 main 版本（版本号） |
+| 1 | `cores/python/packages/drsai/docs/tui-migration-guide.md` | add/add | 保留 main 版本（main 新增） |
+| 2 | `cores/python/packages/drsai/pyproject.toml` | content | 保留 main 版本（版本号等） |
+| 3 | `cores/python/packages/drsai/src/drsai/backend/cli/commands.py` | content | 保留 main 版本（大幅重构） |
+| 4 | `cores/python/packages/drsai/src/drsai/backend/gateway.py` | add/add | 保留 main 版本（新增） |
+| 5 | `cores/python/packages/drsai/src/drsai/backend/run_cli.py` | content | 保留 main 版本（重构） |
+| 6 | `cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py` | content | 保留 main 版本 |
+| 7 | `cores/python/packages/drsai/src/drsai/backend/tui_gateway/adapter/agent_runner.py` | add/add | 保留 main 版本（新增） |
+| 8 | `cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/prompt.py` | add/add | 保留 main 版本（新增） |
+| 9 | `cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/slash.py` | add/add | 保留 main 版本（新增） |
+| 10 | `cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/managers/operater_funs.py` | content | 保留 main 版本 |
+| 11 | `cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py` | content | 保留 main 版本（核心重构） |
+| 12 | `cores/python/packages/drsai/src/drsai/version.py` | content | 保留 main 版本（版本号） |
 
 ### B. drsai_ui 代码（2 个文件，需手动合并）
 
 | # | 文件路径 | 冲突类型 | 处理建议 |
 |---|---------|----------|----------|
-| 13 | `python/packages/drsai_ui/.../task_team.py` | content | ⚠️ 两边都有修改，手动对比 |
-| 14 | `python/packages/drsai_ui/.../teammanager.py` | content | ⚠️ 两边都有修改，手动对比 |
+| 13 | `cores/apps/webui/backend/.../task_team.py` | content | ⚠️ 两边都有修改，手动对比 |
+| 14 | `cores/apps/webui/backend/.../teammanager.py` | content | ⚠️ 两边都有修改，手动对比 |
 
 ### C. ui-tui 代码（3 个文件，建议以 main 为准）
 

@@ -63,13 +63,13 @@ tags: OpenDrSai, 智能体文档
 
 - [ ] 状态管理系统：暂无进一步开发计划，欢迎提出需求。
 
-~~进一步支持长任务的状态管理，但是用户进一步开发智能体工具端、智能体长任务查询逻辑等，具体见python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py的_process_long_task_query函数~~
+~~进一步支持长任务的状态管理，但是用户进一步开发智能体工具端、智能体长任务查询逻辑等，具体见cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py的_process_long_task_query函数~~
 
 - [ ] 文件管理系统：正在进一步开发文件缓存和注入系统
 
 - [x] 智能体配置管理系统：暂无开发计划，欢迎提出需求。
 
-~~进一步优化智能体配置和基于组件化和快照回复的智能体配置管理，具体见python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py的_to_config、_from_config与save_state、load_state函数。~~
+~~进一步优化智能体配置和基于组件化和快照回复的智能体配置管理，具体见cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py的_to_config、_from_config与save_state、load_state函数。~~
 
 - [x] 智能体学习系统: 正在进一步开发智能体学习系统，在智能体回复结束后异步记录智能体根据聊天上下文任务回复的内容和策略，存入智能体知识库
 
@@ -115,7 +115,7 @@ tags: OpenDrSai, 智能体文档
 
 - [x] 非文本文件和大文件的上传与智能体接收机制开发，计划通过文件系统进行前后端大文件交互， 支持传入HepAI文件系统的url
 
-- [x] 开放可链接RAGFlow知识库/记忆知识库和MCP远程函数的智能体调用，数据格式符合python/packages/drsai_ui/src/drsai_ui/configs/agent_config.yaml（尽快）
+- [x] 开放可链接RAGFlow知识库/记忆知识库和MCP远程函数的智能体调用，数据格式符合apps/webui/backend/src/drsai_ui/configs/agent_config.yaml（尽快）
 
 ## 3.联系我们
 

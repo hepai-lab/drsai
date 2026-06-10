@@ -30,7 +30,7 @@ bash scripts/install.sh \
 这条命令做四件事：
 1. `ln -s /home/you/drsai ~/.drsai/drsai-agent`
 2. `python -m venv ~/.drsai/drsai-agent/venv`
-3. `venv/bin/pip install -e python/packages/drsai`
+3. `venv/bin/pip install -e cores/python/packages/drsai`
 4. 写 `drsai` CLI wrapper
 
 完成后 `~/.drsai/drsai-agent/venv/bin/python` 可用，Electron 的 `startGateway` 直接使用。
@@ -85,7 +85,7 @@ cd drsai
 
 # 安装 uv (Python 包管理器)
 curl -LsSf https://astral.sh/uv/install.sh | sh
-uv sync --directory python/packages/drsai
+uv sync --directory cores/python/packages/drsai
 
 # 开发者安装
 bash scripts/install.sh --dev-source $(pwd) --skip-setup

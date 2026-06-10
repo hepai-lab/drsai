@@ -269,9 +269,9 @@ docker run -d \
 docker run -it \
   --name drsai-dev \
   -p 42818:42818 \
-  -v $(pwd)/python/packages/drsai:/app/python/packages/drsai \
-  -v $(pwd)/python/packages/drsai_ui:/app/python/packages/drsai_ui \
-  -v $(pwd)/python/packages/drsai_ext:/app/python/packages/drsai_ext \
+  -v $(pwd)/cores/python/packages/drsai:/app/cores/python/packages/drsai \
+  -v $(pwd)/apps/webui/backend:/app/apps/webui/backend \
+  -v $(pwd)/cores/python/packages/drsai_ext:/app/cores/python/packages/drsai_ext \
   -v $(pwd)/workspace:/app/workspace \
   --env-file .env \
   drsai:latest \
@@ -281,7 +281,7 @@ docker run -it \
 容器内运行：
 ```bash
 # 重新安装开发版本
-cd /app/python/packages/drsai && pip install -e .
+cd /app/cores/python/packages/drsai && pip install -e .
 
 # 启动服务
 python /app/run_drsai_agent.py

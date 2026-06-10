@@ -1,6 +1,6 @@
 # DrSai CLI 使用手册
 
-> 版本: 对应 Ink TUI (`ui-tui/`) + `backend/tui_gateway/` + `cli/commands.py` 命令注册表
+> 版本: 对应 Ink TUI (`apps/ui-tui/`) + `backend/tui_gateway/` + `cli/commands.py` 命令注册表
 > 最后更新: 2026-06（新增：Skill 管理、Ctrl+C/D 修复、Daemon 后台服务、微信接入自动扫码登录、Subagent 子智能体/Delegate）
 >
 > **架构提示**：从本次更新起，`drsai` / `drsai chat` 启动的是基于 React/Ink 的双进程 TUI（前端 = Node.js，后端 = Python JSON-RPC gateway）。旧的单进程 `run_cli.py` 已被保留为 `_deprecated/run_cli_legacy.py`，不再接入。下文记录的所有命令都通过 JSON-RPC 的 `slash.exec` 在 gateway 端执行；命令注册表 (`cli/commands.py`) 仍是单一真相源。
@@ -38,7 +38,7 @@
 
 DrSai CLI 是 DrSai 智能体框架的**本地交互式终端客户端**。它由两个进程协作组成：
 
-- **前端 (Node.js / Ink)**：`ui-tui/` 下的 React + Ink TUI，负责渲染、输入捕获、Tab 补全、覆盖层（pickers / model editor / setup screen）。
+- **前端 (Node.js / Ink)**：`apps/ui-tui/` 下的 React + Ink TUI，负责渲染、输入捕获、Tab 补全、覆盖层（pickers / model editor / setup screen）。
 - **后端 (Python / tui_gateway)**：`backend/tui_gateway/` 提供基于 stdin/stdout 的 JSON-RPC 服务，承载 `DrSaiCLIAssistant` 实例和所有工具。前端用 RPC（`session.*`、`prompt.*`、`slash.exec`、`model.*` 等）调用后端，后端用事件流（`message.delta`、`tool.start`、`session.info`、`approval.request` 等）反推 UI。
 
 也支持远程附加模式：`drsai chat --attach ws://host:8765/attach` 可以让本地 TUI 接到一台远程 gateway。
@@ -1086,10 +1086,10 @@ drsai --url http://localhost:42858/apiv2
 
 为了在 Windows PowerShell（特别是 Win10 的 PS 5.1 + 旧 `conhost.exe`）下保持流畅，TUI 采用了"流式期间纯文本、完成后再 Markdown"的渲染策略：
 
-- **流式中**：[streamingAssistant.tsx](../ui-tui/src/components/streamingAssistant.tsx) 把增量文本直接渲染为单个 `<Text>`，不做 Markdown 解析。这避免了 `MarkdownRenderer` 在每次 `message.delta` 时 O(n²) 重新解析整个 buffer，并且让 Ink 的 diff 只是单节点字符串更新，旧文本不会被重排——**滚动条也不会因重绘被弹回页面顶部**。
+- **流式中**：[streamingAssistant.tsx](../apps/ui-tui/src/components/streamingAssistant.tsx) 把增量文本直接渲染为单个 `<Text>`，不做 Markdown 解析。这避免了 `MarkdownRenderer` 在每次 `message.delta` 时 O(n²) 重新解析整个 buffer，并且让 Ink 的 diff 只是单节点字符串更新，旧文本不会被重排——**滚动条也不会因重绘被弹回页面顶部**。
 - **完成后**：turn 进入 `TranscriptPane` 的 `<Static>`，由 `MarkdownRenderer` 完整渲染**一次**，之后永不重绘，自然滚入终端的 scrollback 缓冲区。
 
-事件合并节流由 [createGatewayEventHandler.ts](../ui-tui/src/app/createGatewayEventHandler.ts) 完成：默认每 **80 ms** 把缓冲的文本批量 flush 到 store。可通过环境变量调节：
+事件合并节流由 [createGatewayEventHandler.ts](../apps/ui-tui/src/app/createGatewayEventHandler.ts) 完成：默认每 **80 ms** 把缓冲的文本批量 flush 到 store。可通过环境变量调节：
 
 ```bash
 DRSAI_TUI_FLUSH_MS=120 drsai chat      # 慢终端调宽
@@ -1104,7 +1104,7 @@ DRSAI_TUI_FLUSH_MS=32  drsai chat      # 快终端调紧（最低 16，最高 50
 - **legacy PowerShell 用 EncodedCommand**：检测到 `powershell.exe`（PS 5.x）时改用 `-EncodedCommand <base64-UTF16LE>`，绕开 `-Command` 的内联 tokenizer，启动速度和稳定性都显著提升。`pwsh` 仍保持 `-Command` 便于排查。
 - **解码容错**：`stdout.decode('utf-8', errors='replace')`，单字节坏数据不再导致整段输出消失。
 
-详见 [operater_funs.py](../python/packages/drsai/src/drsai/modules/agents/skills_agent/managers/operater_funs.py) 的 `_build_ps_command` 和 `_ps_args`。
+详见 [operater_funs.py](../cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/managers/operater_funs.py) 的 `_build_ps_command` 和 `_ps_args`。
 
 ### 16.3 前后端 RPC 映射
 
@@ -1152,7 +1152,7 @@ DRSAI_TUI_FLUSH_MS=32  drsai chat      # 快终端调紧（最低 16，最高 50
 2. 若子智能体为非流式（如某些远程 agent）→ 将最终文本作为一次性 delta 追加到 buffer
 3. 缓冲区文本进入 `TranscriptPane` 的 `<Static>`，由 `MarkdownRenderer` 完整渲染一次
 
-**事件处理代码路径**：`createGatewayEventHandler.ts:175-196` 中处理 `subagent.start`、`subagent.thinking`、`subagent.complete`、`subagent.tool`、`subagent.progress` 事件。详见 [createGatewayEventHandler.ts](../ui-tui/src/app/createGatewayEventHandler.ts)。
+**事件处理代码路径**：`createGatewayEventHandler.ts:175-196` 中处理 `subagent.start`、`subagent.thinking`、`subagent.complete`、`subagent.tool`、`subagent.progress` 事件。详见 [createGatewayEventHandler.ts](../apps/ui-tui/src/app/createGatewayEventHandler.ts)。
 
 ### 16.5 命令注册表与 `cli_only` 标记
 
@@ -1164,7 +1164,7 @@ DRSAI_TUI_FLUSH_MS=32  drsai chat      # 快终端调紧（最低 16，最高 50
 
 ## 17 Skill 管理
 
-> **实现状态**：已实现（2026-06）。相关文件：`tui_gateway/handlers/skills.py`、`ui-tui/src/components/skillsPane.tsx`、`composerPane.tsx`。
+> **实现状态**：已实现（2026-06）。相关文件：`tui_gateway/handlers/skills.py`、`apps/ui-tui/src/components/skillsPane.tsx`、`composerPane.tsx`。
 
 ### 17.1 概念
 

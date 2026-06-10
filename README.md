@@ -53,8 +53,8 @@ conda activate drsai
 git clone https://github.com/hepai-lab/drsai.git drsai # From Github
 git clone https://code.ihep.ac.cn/hepai/drsai drsai # or From IHEP
 
-cd python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
-cd python/packages/drsai_ui && pip install -e . # for DrSai-UI  human-computer interaction frontend
+cd cores/python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
+cd apps/webui/backend && pip install -e . # for DrSai-UI  human-computer interaction frontend
 ```
 
 #### venv 安装（无需 conda）
@@ -76,8 +76,8 @@ git clone https://code.ihep.ac.cn/hepai/drsai drsai    # or From IHEP
 
 # 安装 OpenDrSai
 cd drsai
-cd python/packages/drsai && pip install -e .
-cd python/packages/drsai_ui && pip install -e .
+cd cores/python/packages/drsai && pip install -e .
+cd apps/webui/backend && pip install -e .
 ```
 
 退出虚拟环境：
@@ -102,7 +102,7 @@ python -m pip install -U --no-cache-dir drsai drsai_ui
 # python -m pip install --force-reinstall --no-cache-dir drsai==<version> drsai_ui==<version>
 ```
 
-> 注意：PyPI 上同一个版本号的 wheel 不会被覆盖。若已安装环境升级后仍出现旧行为，请先确认发布时已更新 `python/packages/drsai/src/drsai/version.py` 中的版本号，然后在目标环境中使用 `python -m pip install -U --no-cache-dir drsai drsai_ui` 重新升级。
+> 注意：PyPI 上同一个版本号的 wheel 不会被覆盖。若已安装环境升级后仍出现旧行为，请先确认发布时已更新 `cores/python/packages/drsai/src/drsai/version.py` 中的版本号，然后在目标环境中使用 `python -m pip install -U --no-cache-dir drsai drsai_ui` 重新升级。
 >
 > 新版 TUI 前端打包在 `drsai` wheel 内的 `drsai/ui_tui/dist/entry.mjs` 中。如果 `/image` 等前端命令仍表现为旧版本，可用下面命令确认当前环境是否安装到了包含新版 bundle 的包：
 >
@@ -110,7 +110,7 @@ python -m pip install -U --no-cache-dir drsai drsai_ui
 > python -c "from pathlib import Path; import drsai; p=Path(drsai.__file__).resolve().parent/'ui_tui'/'dist'/'entry.mjs'; print('drsai:', drsai.__file__); print('bundle:', p); print('exists:', p.exists()); text=p.read_text(encoding='utf-8', errors='ignore') if p.exists() else ''; print('has /image client handler:', 'parseImageCommand' in text)"
 > ```
 >
-> 如果结果为 `False`，说明当前环境仍在使用旧 bundle；请升级到新的版本号，或检查是否设置了 `DRSAI_UI_TUI_DIR` 指向旧的本地 `ui-tui` 目录。
+> 如果结果为 `False`，说明当前环境仍在使用旧 bundle；请升级到新的版本号，或检查是否设置了 `DRSAI_UI_TUI_DIR` 指向旧的本地 `apps/ui-tui` 目录。
 
 #### 配置HepAI平台的API访问密钥
 
@@ -203,7 +203,7 @@ nvm install node # recommended node version ~ 22
 安装前端依赖
 
 ```shell
-cd your/path/to/drsai/frontend
+cd apps/webui/frontend
 npm install -g gatsby-cli
 npm install --global yarn
 yarn install
@@ -286,13 +286,13 @@ drsai gateway    # 启动 SSE 网关（供桌面客户端连接）
 
 - [ ] 状态管理系统：暂无进一步开发计划，欢迎提出需求。
 
-~~进一步支持长任务的状态管理，但是用户进一步开发智能体工具端、智能体长任务查询逻辑等，具体见python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py的_process_long_task_query函数~~
+~~进一步支持长任务的状态管理，但是用户进一步开发智能体工具端、智能体长任务查询逻辑等，具体见cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py的_process_long_task_query函数~~
 
 - [ ] 文件管理系统：正在进一步开发文件缓存和注入系统
 
 - [x] 智能体配置管理系统：暂无开发计划，欢迎提出需求。
 
-~~进一步优化智能体配置和基于组件化和快照回复的智能体配置管理，具体见python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py的_to_config、_from_config与save_state、load_state函数。~~
+~~进一步优化智能体配置和基于组件化和快照回复的智能体配置管理，具体见cores/python/packages/drsai/src/drsai/modules/baseagent/drsaiagent.py的_to_config、_from_config与save_state、load_state函数。~~
 
 - [ ] 智能体学习系统: 正在进一步开发智能体学习系统，在智能体回复结束后异步记录智能体根据聊天上下文任务回复的内容和策略，存入智能体知识库
 
@@ -334,7 +334,7 @@ drsai gateway    # 启动 SSE 网关（供桌面客户端连接）
 - [ ] 前端UI的长任务的展示交互
 - [ ] 默认登录系统开发
 - [ ] 非文本文件和大文件的上传与智能体接收机制开发，计划通过文件系统进行前后端大文件交互， 支持传入HepAI文件系统的url
-- [ ] 开放可链接RAGFlow知识库/记忆知识库和MCP远程函数的智能体调用，数据格式符合python/packages/drsai_ui/src/drsai_ui/configs/agent_config.yaml（尽快）
+- [ ] 开放可链接RAGFlow知识库/记忆知识库和MCP远程函数的智能体调用，数据格式符合apps/webui/backend/src/drsai_ui/configs/agent_config.yaml（尽快）
 
 
 ## 4.参与贡献

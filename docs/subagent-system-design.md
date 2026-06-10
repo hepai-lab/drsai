@@ -1,6 +1,6 @@
 # DrSai 子智能体系统设计文档
 
-> 代码文件：`python/packages/drsai/src/drsai/modules/agents/skills_agent/drsai_assistant.py`
+> 代码文件：`cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/drsai_assistant.py`
 > 总行数：~3100 行
 
 ---
@@ -526,8 +526,8 @@ on_messages_stream()                          L979
 
 ## 十二、Daemon 模式子智能体调用
 
-> 核心文件：`python/packages/drsai/src/drsai/backend/daemon/`
-> RPC 注册：`python/packages/drsai/src/drsai/backend/tui_gateway/handlers/daemon.py`
+> 核心文件：`cores/python/packages/drsai/src/drsai/backend/daemon/`
+> RPC 注册：`cores/python/packages/drsai/src/drsai/backend/tui_gateway/handlers/daemon.py`
 
 ### 12.1 架构概览
 
@@ -741,7 +741,7 @@ _execute_subagent(sub_agent_name="daemon:default")
 
 ### 14.4 DaemonSubagent 类
 
-**文件**：`python/packages/drsai/src/drsai/modules/agents/skills_agent/daemon_subagent.py`
+**文件**：`cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/daemon_subagent.py`
 
 轻量包装器，实现 `on_messages_stream()` 和 `close()` 接口。使用 `threading.Thread` + `asyncio.Queue` 桥接同步 WebSocket 和异步生成器。
 

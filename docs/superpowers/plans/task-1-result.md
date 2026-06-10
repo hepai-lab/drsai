@@ -20,7 +20,7 @@
 
 ## Files changed
 
-- **`python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py`**
+- **`cores/python/packages/drsai/src/drsai/backend/run_drsai_agent_factory.py`**
   - Added import: `from drsai.backend.cli.config import load_config, save_config`
   - Added `CONFIG_DIR` to the existing import from `drsai.configs.constant`
   - Added `DEFAULT_LLM_CONFIG_FILE` constant

@@ -53,8 +53,8 @@ conda create -n drsai python=>3.11
 conda activate drsai
 git clone https://code.ihep.ac.cn/hepai/drsai drsai
 
-cd your/path/to/drsai/python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
-cd your/path/to/drsai/python/packages/drsai_ui && pip install -e . # for DrSai-UI  human-computer interaction frontend
+cd your/path/to/drsai/cores/python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
+cd your/path/to/drsai/apps/webui/backend && pip install -e . # for DrSai-UI  human-computer interaction frontend
 ```
 #### pip 安装
 

@@ -28,9 +28,9 @@ git clone https://code.ihep.ac.cn/hepai/drsai drsai # Gitlab
 
 cd drsai
 
-cd python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
-cd python/packages/drsai_ui && pip install -e . # for DrSai-UI  human-computer interaction frontend
-cd python/packages/drsai_ext && pip install -e . # for extend functions
+cd cores/python/packages/drsai && pip install -e . # for OpenDrSai backend and agent components
+cd apps/webui/backend && pip install -e . # for DrSai-UI  human-computer interaction frontend
+cd cores/python/packages/drsai_ext && pip install -e . # for extend functions
 ```
 
 ## 3.配置HepAI平台的API访问密钥
