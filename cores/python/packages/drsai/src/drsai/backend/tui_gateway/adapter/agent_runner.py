@@ -503,6 +503,7 @@ class AgentSession:
             "workspace_enabled": bool(getattr(agent, "_only_in_workspace", True) if agent else True),
             "allow_dangerous_commands": bool(getattr(agent, "_allow_dangerous_commands", False) if agent else False),
             "default_subagent": self.get_state_value("default_subagent", ""),
+            "max_agent_concurrent": getattr(agent, "_max_agent_concurrent", 5) if agent else 5,
         }
         # Tool list (best effort) — coerce names to strings to keep payload JSON-safe.
         tools: list[str] = []
@@ -592,6 +593,15 @@ class AgentSession:
                         upm.clear_default_subagent(thread_id)
                 except Exception:
                     logger.exception("set_state_value: failed to sync default_subagent to THREAD_CONFIG.json")
+        elif key == "max_agent_concurrent":
+            if hasattr(self.agent, "_max_agent_concurrent"):
+                try:
+                    value = int(value)
+                    if value < 1:
+                        value = 1
+                    self.agent._max_agent_concurrent = value
+                except (ValueError, TypeError):
+                    pass
 
     # ── Shutdown ──────────────────────────────────────────────────
 

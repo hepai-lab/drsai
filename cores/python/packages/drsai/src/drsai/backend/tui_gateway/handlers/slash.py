@@ -765,6 +765,45 @@ def cmd_delegate(ctx: SlashContext) -> dict:
     return {"output": f"Delegating to {agent_type}…"}
 
 
+def cmd_max_concurrent(ctx: SlashContext) -> dict:
+    """Set max parallel subagent count or show current value (global, saved)."""
+    args = ctx.args.strip()
+    cfg = get_config_manager(ctx.user_id)
+
+    if not args or args.lower() == "status":
+        current = (
+            getattr(getattr(ctx.session, "agent", None), "_max_agent_concurrent", None)
+            if ctx.session else None
+        )
+        global_val = cfg.get("max_agent_concurrent", 5)
+        lines = [f"Max subagent concurrency: {current if current is not None else global_val}"]
+        if ctx.session and current is not None:
+            lines.append(f"Global default (cli_config.json): {global_val}")
+        return {"output": "\n".join(lines)}
+
+    try:
+        value = int(args)
+    except ValueError:
+        return {"output": f"Invalid value: '{args}'. Usage: /max_concurrent <1-256>"}
+
+    if value < 1:
+        value = 1
+    elif value > 256:
+        value = 256
+
+    # Apply to current session agent
+    if ctx.session and hasattr(ctx.session, "agent") and ctx.session.agent:
+        if hasattr(ctx.session.agent, "_max_agent_concurrent"):
+            ctx.session.agent._max_agent_concurrent = value
+
+    # Save globally
+    cfg["max_agent_concurrent"] = value
+    save_global_config(cfg)
+    ctx.refresh_info()
+
+    return {"output": f"Max subagent concurrency set to {value} (global, saved)"}
+
+
 # ── Session management (delegate to session.* RPCs via UI) ───────────────────
 
 def cmd_new(ctx: SlashContext) -> dict:
@@ -879,6 +918,7 @@ def cmd_status(ctx: SlashContext) -> str:
         f"  Plan mode:  {'on' if info.get('plan_mode') else 'off'}",
         f"  Workspace:  {'enforced' if info.get('workspace_enabled') else 'any-path'}",
         f"  Dangerous:  {'allowed' if info.get('allow_dangerous_commands') else 'blocked'}",
+        f"  Max concurrent subagents: {info.get('max_agent_concurrent', 5)}",
     ]
     return "\n".join(lines)
 
@@ -1164,6 +1204,8 @@ SLASH_HANDLERS: dict[str, Any] = {
     "agent": cmd_agent,
     "delegate": cmd_delegate,
     "sub": cmd_delegate,
+    "max_concurrent": cmd_max_concurrent,
+    "mc": cmd_max_concurrent,
     # ── Session management ────────────────────────────────────────────────
     "new": cmd_new,
     "switch": cmd_switch,

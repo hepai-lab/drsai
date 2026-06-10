@@ -102,6 +102,17 @@ class DrSaiCLIAssistant(DrSaiAssistant):
             raise ValueError(f"reasoning_effort must be one of {sorted(allowed)}")
         self._reasoning_effort = value
 
+    # ── Max agent concurrent ───────────────────────────────────────────────
+    @property
+    def max_agent_concurrent(self) -> int:
+        return self._max_agent_concurrent
+
+    @max_agent_concurrent.setter
+    def max_agent_concurrent(self, value: int) -> None:
+        if not isinstance(value, int) or value < 1:
+            raise ValueError("max_agent_concurrent must be a positive integer >= 1")
+        self._max_agent_concurrent = value
+
     # ── Session-local state persistence ─────────────────────────────────────
     # Override base class to persist session-local configuration alongside
     # llm_context.  This ensures model selection, injected prompts (including

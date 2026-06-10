@@ -241,6 +241,23 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         reasoning=ReasoningConfig(supported=True, effort_levels=["none", "low", "medium", "high", "xhigh"], param_type="reasoning_effort"),
         vision=True,            # GPT-5.x supports image input
     ),
+    # ── GIMINI ────────────────────────────────────────────────────
+    "gemini-3.1-pro-preview": ModelEntry(
+        model="google/gemini-3.1-pro-preview",
+        token_limit=1000000,     # context window: 1M (input+output shared)
+        max_tokens=64000,       # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+        vision=True,            # Claude Sonnet 4.6 supports image input
+    ),
+    "gemini-3-flash-preview": ModelEntry(
+        model="google/gemini-3-flash-preview",
+        token_limit=1000000,     # context window: 1M (input+output shared)
+        max_tokens=64000,       # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+        vision=True,            # Claude Sonnet 4.6 supports image input
+    ),
     # ── Zhipu GLM ────────────────────────────────────────────────────
     # Sources: litellm (zai/glm-5), OpenRouter
     "glm-5.1": ModelEntry(
@@ -282,6 +299,14 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
     ),
     "claude-opus-4-7": ModelEntry(
         model="anthropic/claude-opus-4-7",
+        token_limit=1000000,     # context window: 1M (input+output shared)
+        max_tokens=64000,      # max output per request
+        client_type="anthropic",
+        reasoning=ReasoningConfig(supported=True, effort_levels=[], param_type="adaptive"),
+        vision=True,            # Claude Opus 4.7 supports image input
+    ),
+    "claude-opus-4-8": ModelEntry(
+        model="anthropic/claude-opus-4-8",
         token_limit=1000000,     # context window: 1M (input+output shared)
         max_tokens=64000,      # max output per request
         client_type="anthropic",
@@ -774,6 +799,7 @@ def create_agent(
         only_system_message=False,
         allolow_dangrous_cmd=cli_cfg.get("dangerous_allowed", False),  # 从全局配置读取（/dg_global）
         allolow_basic_tools=None,
+        max_agent_concurrent=cli_cfg.get("max_agent_concurrent", 5),
         token_limit=int(token_limit * 0.7),
         rag_flow_url=rag_flow_url,
         rag_flow_token=rag_flow_token,

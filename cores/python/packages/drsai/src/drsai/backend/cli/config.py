@@ -31,6 +31,8 @@ DEFAULT_CONFIG: dict = {
     "workspace_enabled": True,
     # Dangerous command: 启用后允许 sudo/rm -rf/python/bash/sh 等危险命令
     "dangerous_allowed": False,
+    # Subagent concurrency: 子智能体并行执行的最大并发数
+    "max_agent_concurrent": 5,
     # ── API Keys (persisted for packaged app convenience) ─────────────────
     # In development mode, users typically set env vars:
     #   HEPAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
