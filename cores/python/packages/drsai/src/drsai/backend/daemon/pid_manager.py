@@ -20,10 +20,10 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from drsai.configs.constant import FS_DIR
+from drsai.configs.constant import FS_DIR, WORKSPACE_DIR
 from drsai.backend.wechat.wechat_login import is_credentials_valid, login_wechat_main
 
-DAEMONS_DIR = Path(FS_DIR) / "workspace" / "daemons"
+DAEMONS_DIR = Path(WORKSPACE_DIR) / "daemons"
 LOGS_DIR = Path(FS_DIR) / "logs" / "daemons"
 
 
@@ -228,7 +228,7 @@ def _cleanup_orphan_daemons(name: str) -> list[int]:
     for pid in orphans:
         try:
             os.kill(pid, signal.SIGTERM if sys.platform != "win32" else signal.SIGTERM)
-            logger.warning("Killed orphan daemon process: PID=%d (name=%s)", pid, name)
+            # logger.warning("Killed orphan daemon process: PID=%d (name=%s)", pid, name)
         except (OSError, ProcessLookupError):
             pass
 

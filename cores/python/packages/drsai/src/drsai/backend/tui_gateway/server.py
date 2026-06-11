@@ -30,7 +30,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
-from drsai.configs.constant import FS_DIR
+from drsai.configs.constant import FS_DIR, WORKSPACE_DIR
 
 from .transport import (
     StdioTransport,
@@ -325,7 +325,7 @@ def _get_db_manager():
             return _db_manager_singleton
         from drsai.modules.managers.database import DatabaseManager
 
-        workspace = Path(FS_DIR) / "workspace"
+        workspace = Path(WORKSPACE_DIR)
         dataset = workspace / "drsai"
         dataset.mkdir(parents=True, exist_ok=True)
         engine_uri = f"sqlite:///{dataset}/drsai.db"

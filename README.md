@@ -103,7 +103,8 @@ git clone https://code.ihep.ac.cn/hepai/drsai drsai    # or From IHEP
 # 安装 OpenDrSai
 cd drsai
 pip install -e cores/python/packages/drsai
-pip install -e apps/webui/backend
+# 可选，安装扩展包
+pip install -e cores/python/packages/drsai_ext && pip install -e apps/webui/backend
 ```
 
 > 同样需要 Node.js (≥20) + pnpm。安装过程会自动编译前端。
@@ -121,10 +122,10 @@ conda create -n drsai python=>3.11
 conda activate drsai
 
 # 首次安装
-python -m pip install -U drsai drsai_ui
+python -m pip install -U drsai 
 
 # 已安装环境升级推荐使用 --no-cache-dir，避免 pip 复用旧缓存包
-python -m pip install -U --no-cache-dir drsai drsai_ui
+python -m pip install -U --no-cache-dir drsai
 
 # 如需强制重装指定版本，可使用：
 # python -m pip install --force-reinstall --no-cache-dir drsai==<version> drsai_ui==<version>
