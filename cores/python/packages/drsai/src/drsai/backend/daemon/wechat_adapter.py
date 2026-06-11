@@ -180,8 +180,8 @@ async def start_wechat_bot(config: Any, sessions_dict: dict) -> None:
         or ""
     )
 
-    from drsai.configs.constant import FS_DIR
-    daemon_data_dir = Path(FS_DIR) / "workspace" / "daemons" / config.name
+    from drsai.configs.constant import WORKSPACE_DIR
+    daemon_data_dir = Path(WORKSPACE_DIR) / "daemons" / config.name
     daemon_data_dir.mkdir(parents=True, exist_ok=True)
     sessions_file = str(daemon_data_dir / "wechat_sessions.json")
 

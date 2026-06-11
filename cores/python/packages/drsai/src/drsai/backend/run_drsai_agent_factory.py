@@ -18,7 +18,7 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 
 from drsai.backend.cli.config import load_config, save_config
-from drsai.configs.constant import CONFIG_DIR, FS_DIR
+from drsai.configs.constant import CONFIG_DIR, FS_DIR, WORKSPACE_DIR, WORKSPACE_RUNS_DIR
 from drsai.modules.agents.skills_agent import DrSaiAssistant, DrSaiCLIAssistant
 from drsai.modules.components.model_client import (
     HepAIChatCompletionClient,
@@ -43,12 +43,10 @@ If a question can be answered by exploring the codebase, explore the codebase in
 
 # ── Workspace ────────────────────────────────────────────────────────────────
 
-WORKSPACE = Path(FS_DIR) / "workspace"
-WORKSPACE.mkdir(parents=True, exist_ok=True)
+WORKSPACE = Path(WORKSPACE_DIR)
 DATASET = WORKSPACE / "drsai"
 DATASET.mkdir(parents=True, exist_ok=True)
-WORKDIR = WORKSPACE / "runs"
-WORKDIR.mkdir(parents=True, exist_ok=True)
+WORKDIR = Path(WORKSPACE_RUNS_DIR)
 
 # Default path for llm_mode_config YAML (seed file)
 DEFAULT_LLM_CONFIG_FILE = str(Path(CONFIG_DIR) / "llm_mode_config.yaml")

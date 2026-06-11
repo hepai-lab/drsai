@@ -133,7 +133,7 @@ from drsai.backend.run_drsai_agent_factory import (
     _display_name_from_alias,
 )
 
-from drsai.configs.constant import FS_DIR
+from drsai.configs.constant import FS_DIR, WORKSPACE_DIR
 
 from drsai.modules.managers.database import DatabaseManager
 
@@ -207,7 +207,7 @@ DEFAULT_HOST = os.environ.get("DRSAI_API_HOST", "127.0.0.1")
 
 # ââ Database paths (aligned with run_cli.py conventions) âââââââââââââââââââââ
 
-_WORKSPACE = Path(FS_DIR) / "workspace"
+_WORKSPACE = Path(WORKSPACE_DIR)
 
 _WORKSPACE.mkdir(parents=True, exist_ok=True)
 

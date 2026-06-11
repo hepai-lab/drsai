@@ -46,10 +46,10 @@ _MAX_CONTENT_BYTES = 4 * 1024 * 1024  # 4 MB
 
 def _get_user_skills_dir(user_id: str) -> Path:
     """Return the user's skills directory path (may not yet exist)."""
-    from drsai.configs.constant import FS_DIR
+    from drsai.configs.constant import WORKSPACE_RUNS_DIR
     # Skills are stored under ~/.drsai/workspace/runs/<user_id>/configs/skills/
-    # NOT under ~/.drsai/runs/ (that's the old RUNS_DIR constant)
-    return Path(FS_DIR) / "workspace" / "runs" / user_id / "configs" / "skills"
+    # NOT under ~/.drsai/runs/ (that's the old RUNS_DIR constant, kept for legacy fallback only)
+    return Path(WORKSPACE_RUNS_DIR) / user_id / "configs" / "skills"
 
 
 def _ensure_skills_dir(user_id: str) -> Path:

@@ -8,17 +8,15 @@ from drsai.modules.components.model_client.anthropic import (
 )
 from drsai.modules.agents.skills_agent import DrSaiAssistant
 from drsai.modules.managers.database import DatabaseManager
-from drsai.configs.constant import FS_DIR
+from drsai.configs.constant import WORKSPACE_DIR, WORKSPACE_RUNS_DIR
 from drsai.backend.run_drsai_agent_factory import ModelEntry, ReasoningConfig, DEFAULT_LLM_MODE_CONFIG
 
 # HERE = Path(__file__).parent
 # fs_dir = Path()
-WORKSPACE = Path(FS_DIR) / "workspace"
-WORKSPACE.mkdir(parents=True, exist_ok=True)
+WORKSPACE = Path(WORKSPACE_DIR)
 DATASET = WORKSPACE / "drsai"
 DATASET.mkdir(parents=True, exist_ok=True)
-WORKDIR = WORKSPACE / "runs"
-WORKDIR.mkdir(parents=True, exist_ok=True)
+WORKDIR = Path(WORKSPACE_RUNS_DIR)
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -187,7 +185,7 @@ if __name__ == "__main__":
     asyncio.run(
         run_worker(
             # 智能体注册信息
-            agent_name="My Dr.Sai",
+            agent_name="My Dr.Sai 007",
             author = "xiongdb@ihep.ac.cn",
             # permission='groups: "drsai, payg"; users: admin, xiongdb@ihep.ac.cn, ddf_free, yqsun@ihep.ac.cn; owner: xiongdb@ihep.ac.cn',
             # permission={

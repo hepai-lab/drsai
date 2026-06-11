@@ -23,13 +23,22 @@ DEFAULT_USERNAME = "anonymous"  # for 创建assistant和获取assistant
 
 ## Paths
 REPO_ROOT = f'{here.parent.parent}'  # 项目根目录
-FS_DIR = f'{Path.home()}/.{APPNAME}'  # 文件系统目录
-RUNS_DIR = f'{FS_DIR}/runs'  # 运行目录
-CONFIG_DIR = f'{FS_DIR}/configs'  # 配置目录
-FILE_DIR = f'{FS_DIR}/files'   # 文件目录
-WECHAT_DIR = f'{FS_DIR}/wechat'   # 文件目录
+FS_DIR = f'{Path.home()}/.{APPNAME}'  # 文件系统根目录 (~/.drsai)
 
-directories = [FS_DIR, RUNS_DIR, CONFIG_DIR, FILE_DIR, WECHAT_DIR]
+# --- Legacy / fallback dirs (kept for backward compatibility) ---
+RUNS_DIR = f'{FS_DIR}/runs'  # 旧的 runs 兜底目录
+CONFIG_DIR = f'{FS_DIR}/configs'  # 全局应用配置 (LLM 默认配置 / CLI 配置)，非 per-user
+FILE_DIR = f'{FS_DIR}/files'   # 旧的 file 兜底目录 (DrSaiAgent 无 db_manager 时使用)
+WECHAT_DIR = f'{FS_DIR}/wechat'   # 微信模块数据目录
+
+# --- Workspace dirs ---
+WORKSPACE_DIR = f'{FS_DIR}/workspace'
+WORKSPACE_RUNS_DIR = f'{WORKSPACE_DIR}/runs'
+
+directories = [
+    FS_DIR, RUNS_DIR, CONFIG_DIR, FILE_DIR, WECHAT_DIR,
+    WORKSPACE_DIR, WORKSPACE_RUNS_DIR,
+]
 for directory in directories:
     path = Path(directory)
     if not path.exists():

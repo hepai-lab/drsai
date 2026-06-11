@@ -227,14 +227,26 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
             request_args["tools"] = self._last_used_tools
 
         # Optional parameters
-        for param in ["top_p", "top_k", "stop_sequences", "metadata", "cache_control"]:
+        for param in ["top_p", "top_k", "stop_sequences", "metadata"]:
             if param in create_args:
                 request_args[param] = create_args[param]
 
-        if "cache_control" not in request_args:
-            cache_control = self._model_info.get("anthropic_cache_control")
-            if cache_control:
-                request_args["cache_control"] = cache_control
+        # Prompt cache: Anthropic / Bedrock require cache_control to be attached
+        # to a content block (system text or message content), NOT at the top
+        # level of the request — the top-level field is silently ignored by
+        # Bedrock. Empirically:
+        #   top-level     → cache_creation_input_tokens == 0 (NOT cached)
+        #   on system[-1] → cache_creation_input_tokens == N (CACHED)
+        # So we attach the marker to the last cacheable block instead.
+        cache_control = create_args.get("cache_control") or self._model_info.get("anthropic_cache_control")
+        if cache_control:
+            cc_source = "extra_create_args" if "cache_control" in create_args else "model_info.anthropic_cache_control"
+            cc_ttl = cache_control.get("ttl") if isinstance(cache_control, Mapping) else None
+            logger.info(
+                "Anthropic prompt cache: applying %s ttl=%s (from %s)",
+                cache_control, cc_ttl, cc_source,
+            )
+            _apply_cache_control_to_last_block(request_args, cache_control)
 
         # Stream the response
         # NOTE: Some HepAI-style gateways wrap upstream Anthropic SSE events
@@ -505,96 +517,114 @@ class HepAIAnthropicChatCompletionClient(AnthropicChatCompletionClient):
         request_args: Dict[str, Any],
         cancellation_token: Optional[CancellationToken],
     ) -> AsyncGenerator[Any, None]:
-        """Stream the Anthropic /v1/messages SSE response with our own httpx
-        reader, unwrapping the HepAI ``message_metrics`` envelope. Yields
-        objects shaped like ``anthropic.types.RawMessageStreamEvent`` —
-        attribute access only (``chunk.type``, ``chunk.delta.text`` …), which
-        is all create_stream_tmp uses."""
+        """Stream Anthropic /v1/messages SSE while transparently unwrapping
+        the HepAI ``message_metrics`` envelope.
 
-        base_url = str(self._client.base_url).rstrip("/")
-        url = base_url + "/v1/messages"
+        Strategy: re-use the official ``anthropic`` SDK's own HTTP client
+        (auth headers, connection pool, proxy, retries, timeout) by calling
+        ``self._client.messages.with_raw_response.create(...)``. That returns
+        an unconsumed ``httpx.Response``. We then drive the SDK's own
+        ``SSEDecoder`` over the raw byte stream and dispatch on
+        ``ServerSentEvent.data`` (NOT ``.event``), which is where HepAI
+        smuggles the real Anthropic event payload.
 
-        # Honor the SDK's auth header, plus standard SSE expectations.
-        api_key = getattr(self._client, "api_key", None) or ""
-        headers = {
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-            "accept": "text/event-stream",
+        Yielded objects are attribute-namespaces shaped like
+        ``anthropic.types.RawMessageStreamEvent`` (``chunk.type``,
+        ``chunk.delta.text`` …) — the exact contract used by
+        ``create_stream_tmp``.
+        """
+
+        from anthropic._streaming import SSEDecoder  # private but stable
+
+        # Pull out fields the SDK accepts as kwargs; everything else goes via
+        # extra_body so it still reaches /v1/messages without breaking when
+        # the SDK adds/removes typed parameters.
+        sdk_kwargs: Dict[str, Any] = {}
+        extra_body: Dict[str, Any] = {}
+        _SDK_KWARGS = {
+            "max_tokens", "messages", "model", "metadata", "stop_sequences",
+            "system", "temperature", "thinking", "tool_choice", "tools",
+            "top_k", "top_p", "service_tier",
+            # NOTE: ``cache_control`` is intentionally routed through
+            # extra_body. Top-level cache_control is silently ignored by
+            # Bedrock; _apply_cache_control_to_last_block has already moved
+            # the marker into a content block before we get here.
         }
+        for key, val in request_args.items():
+            if val is None or key == "stream":
+                continue
+            if key in _SDK_KWARGS:
+                sdk_kwargs[key] = val
+            else:
+                extra_body[key] = val
 
-        # Strip non-JSON-serializable keys (cache_control passed as object
-        # already serializes fine).
-        payload = {k: v for k, v in request_args.items() if v is not None}
-        payload["stream"] = True
+        # Use the SDK's with_raw_response so we get the raw httpx.Response
+        # without the SDK trying to parse SSE itself (it dispatches by event
+        # name, which HepAI clobbers to "message_metrics").
+        #
+        # Mirror the standard SDK path (self._client.messages.create +
+        # cancellation_token.link_future): wrap the connection coroutine in a
+        # Task so the CancellationToken can cancel it before the first byte
+        # arrives.  Once the response is in hand the token is no longer
+        # checked — identical behaviour to the non-custom-SSE branch.
+        connect_future: asyncio.Task = asyncio.ensure_future(
+            self._client.messages.with_raw_response.create(
+                stream=True,
+                extra_body=extra_body if extra_body else None,
+                **sdk_kwargs,
+            )
+        )
+        if cancellation_token is not None:
+            cancellation_token.link_future(connect_future)  # type: ignore
 
-        timeout = httpx.Timeout(connect=30.0, read=600.0, write=60.0, pool=30.0)
+        raw_resp = await connect_future
+        http_response: httpx.Response = raw_resp.http_response
 
-        async with httpx.AsyncClient(timeout=timeout) as hc:
-            req_ctx = hc.stream("POST", url, headers=headers, json=payload)
-            try:
-                resp_cm = req_ctx.__aenter__()
-                if cancellation_token is not None:
-                    cancellation_token.link_future(asyncio.ensure_future(asyncio.sleep(0)))  # type: ignore
-                resp = await resp_cm
+        try:
+            content_type = (http_response.headers.get("content-type") or "").lower()
+            if "text/event-stream" not in content_type:
+                # Gateway returned aggregated JSON instead of SSE. Remember so
+                # we don't take this path again, and let create_stream_tmp's
+                # "empty events" fallback do non-stream replay.
+                self._remember_envelope_detection(False)
+                logger.warning(
+                    "Anthropic gateway returned %s instead of SSE; "
+                    "skipping custom SSE parser.",
+                    content_type or "<no content-type>",
+                )
+                return
 
-                if resp.status_code >= 400:
-                    body = (await resp.aread()).decode("utf-8", errors="replace")
-                    raise RuntimeError(
-                        f"Anthropic gateway returned HTTP {resp.status_code}: {body[:500]}"
-                    )
-
-                content_type = (resp.headers.get("content-type") or "").lower()
-                if "text/event-stream" not in content_type:
-                    # Gateway didn't actually stream — remember so future
-                    # requests skip this path. The caller's downstream
-                    # "no events" fallback will then handle it.
-                    self._remember_envelope_detection(False)
-                    logger.warning(
-                        "HepAI Anthropic gateway returned %s instead of SSE; "
-                        "skipping custom SSE parser.", content_type or "no content-type"
-                    )
-                    return
-
-                # Confirmed SSE. Whether the envelope is present we'll learn
-                # from the first event line.
-                envelope_confirmed: Optional[bool] = None
-
-                async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    if not line.startswith("data:"):
-                        # Skip event-name / comment lines
-                        continue
-                    data_str = line[len("data:"):].strip()
-                    if not data_str or data_str == "[DONE]":
-                        continue
-                    try:
-                        raw = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        logger.warning("Skipping non-JSON SSE data: %r", data_str[:120])
-                        continue
-
-                    # Detect envelope: {"event": "...", "data": {...}}
-                    is_envelope = (
-                        isinstance(raw, dict)
-                        and "event" in raw
-                        and isinstance(raw.get("data"), dict)
-                        and raw["data"].get("type") == raw.get("event")
-                    )
-                    if envelope_confirmed is None:
-                        envelope_confirmed = is_envelope
-                        self._remember_envelope_detection(is_envelope)
-
-                    payload_dict = raw["data"] if is_envelope else raw
-                    if not isinstance(payload_dict, dict):
-                        continue
-                    yield _to_attr_namespace(payload_dict)
-            finally:
+            envelope_confirmed: Optional[bool] = None
+            decoder = SSEDecoder()
+            async for sse in decoder.aiter_bytes(http_response.aiter_bytes()):
+                # ``sse.data`` is the JSON-encoded SSE data field. HepAI's
+                # envelope and the standard payload both live there; only the
+                # ``sse.event`` name is unreliable.
+                if not sse.data:
+                    continue
                 try:
-                    await req_ctx.__aexit__(None, None, None)
-                except Exception:
-                    pass
+                    raw = json.loads(sse.data)
+                except json.JSONDecodeError:
+                    logger.warning("Skipping non-JSON SSE data: %r", sse.data[:120])
+                    continue
+
+                # HepAI envelope: {"event": "...", "data": {...real payload...}}
+                is_envelope = (
+                    isinstance(raw, dict)
+                    and "event" in raw
+                    and isinstance(raw.get("data"), dict)
+                    and raw["data"].get("type") == raw.get("event")
+                )
+                if envelope_confirmed is None:
+                    envelope_confirmed = is_envelope
+                    self._remember_envelope_detection(is_envelope)
+
+                payload_dict = raw["data"] if is_envelope else raw
+                if not isinstance(payload_dict, dict):
+                    continue
+                yield _to_attr_namespace(payload_dict)
+        finally:
+            await http_response.aclose()
 
 
 def _to_attr_namespace(obj: Any) -> Any:
@@ -605,4 +635,130 @@ def _to_attr_namespace(obj: Any) -> Any:
         return SimpleNamespace(**{k: _to_attr_namespace(v) for k, v in obj.items()})
     if isinstance(obj, list):
         return [_to_attr_namespace(v) for v in obj]
+    return obj
+
+
+def _apply_cache_control_to_last_block(
+    request_args: Dict[str, Any],
+    cache_control: Mapping[str, Any],
+) -> None:
+    """Attach the Anthropic cache_control marker to the last content block of
+    the *most recently rolling* prefix — ``messages[-1].content[-1]``.
+
+    Rolling-marker policy (mirrors Anthropic's claude-code CLI):
+        On every request we move the single message-level marker to the
+        latest message. Anthropic's cache treats this marker as the cut
+        point of a cache prefix, so the *whole prefix up to that block*
+        (system + tools + all prior messages + current user msg) gets
+        written/read together. Next turn, the marker moves forward to the
+        new last message, the previous prefix is still a prefix of the new
+        one, so it reads from cache and we only write the delta — into the
+        SAME 1h bucket since the same ttl is reused.
+
+    Why not system[-1]?
+        We tried that first. Anthropic then auto-creates a *default* 5m
+        breakpoint at the end of every new turn's content (because the
+        prefix beyond `system` is unmarked), so multi-turn conversation
+        churn always lands in the 5m bucket and is evicted every turn.
+        Marker on messages[-1] avoids this.
+
+    Anthropic's top-level ``cache_control`` field is documented as
+    auto-applying the marker to the last cacheable block, but the Bedrock
+    backend used by HepAI gateway does NOT honor that shorthand —
+    cache_creation_input_tokens stays 0. Attaching the marker directly to a
+    block reliably works on both vanilla Anthropic and Bedrock.
+
+    Preference (the *first* hit gets the marker):
+        1) messages[-1].content[-1]  — the rolling prefix end (preferred)
+        2) tools[-1]                 — fallback when no messages
+        3) system[-1] text block     — last resort when neither exists
+
+    Mutates ``request_args`` in place. Skips silently if no candidate block.
+    """
+    marker = {k: v for k, v in dict(cache_control).items()}
+    if marker.get("type") != "ephemeral":
+        marker["type"] = "ephemeral"
+
+    # Promote system: str → [TextBlockParam] so cache_control can attach if
+    # we end up falling back to system.
+    sys_val = request_args.get("system")
+    if isinstance(sys_val, str):
+        if sys_val.strip():
+            request_args["system"] = [{"type": "text", "text": sys_val}]
+            sys_val = request_args["system"]
+        else:
+            sys_val = None
+
+    target_block: Optional[Dict[str, Any]] = None
+
+    # 1) Preferred: messages[-1].content[-1] — rolling marker, advances every
+    #    turn so the new content joins the cached prefix in the same bucket.
+    msgs = request_args.get("messages") or []
+    if msgs:
+        last_msg = msgs[-1]
+        if isinstance(last_msg, dict):
+            content = last_msg.get("content")
+            if isinstance(content, list) and content:
+                cand = content[-1]
+                if isinstance(cand, dict):
+                    target_block = cand
+            elif isinstance(content, str) and content:
+                last_msg["content"] = [{"type": "text", "text": content}]
+                target_block = last_msg["content"][-1]
+
+    # 2) Fallback: tools[-1] (no messages, e.g. validation request).
+    if target_block is None:
+        tools_val = request_args.get("tools")
+        if isinstance(tools_val, list) and tools_val:
+            cand = tools_val[-1]
+            if isinstance(cand, dict):
+                target_block = cand
+
+    # 3) Last resort: system[-1].
+    if target_block is None and isinstance(sys_val, list) and sys_val:
+        cand = sys_val[-1]
+        if isinstance(cand, dict):
+            target_block = cand
+
+    if target_block is None:
+        return
+
+    target_block["cache_control"] = marker
+
+
+def _jsonable(obj: Any) -> Any:
+    """Deep-convert Anthropic block models / pydantic BaseModel / dataclasses
+    to plain Python so that ``json.dumps`` (and hence ``httpx.json=``) can
+    serialize the full Anthropic /v1/messages payload.
+
+    Specifically handles values that the standard JSON encoder rejects:
+    - pydantic v2 BaseModel → ``model_dump(exclude_none=True)``
+    - pydantic v1 BaseModel → ``dict(exclude_none=True)``
+    - objects with ``to_dict`` / ``dict`` method
+    - dict / list / tuple / set are recursed
+    Everything else is returned as-is; the JSON encoder will fail loudly on
+    truly unsupported types, which is the right behavior.
+    """
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_jsonable(v) for v in obj]
+
+    # pydantic v2
+    model_dump = getattr(obj, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return _jsonable(model_dump(exclude_none=True))
+        except TypeError:
+            return _jsonable(model_dump())
+
+    # pydantic v1
+    if hasattr(obj, "dict") and callable(getattr(obj, "dict")) and obj.__class__.__module__.startswith("pydantic"):
+        try:
+            return _jsonable(obj.dict(exclude_none=True))  # type: ignore[call-arg]
+        except TypeError:
+            return _jsonable(obj.dict())  # type: ignore[call-arg]
+
     return obj
