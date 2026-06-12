@@ -5,7 +5,7 @@ import { verifyAuthSession } from "../utils/authSession";
 
 const PUBLIC_ROUTES = ["/login", "/auth", "/share"];
 
-const normalizePath = (path: string) => path.replace(/\/$/, "") || "/";
+const normalizePath = (path: string) => path.replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
 
 interface RouteGuardProps {
     children: React.ReactNode;
