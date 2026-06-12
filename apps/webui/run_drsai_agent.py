@@ -1,6 +1,6 @@
 from pathlib import Path
 import asyncio, os
-
+from loguru import logger
 from drsai.modules.components.model_client import  HepAIChatCompletionClient, ModelFamily
 from drsai.modules.components.model_client.anthropic import (
     HepAIAnthropicChatCompletionClient,
@@ -43,6 +43,36 @@ def _as_bool(value, default: bool = False) -> bool:
     if text in {"0", "false", "no", "n", "off", "disable", "disabled"}:
         return False
     return default
+
+
+def _build_gfs_tools(user_id: str | None) -> list:
+    """根据环境开关，为指定用户生成 GFS function-calling 工具列表。
+
+    环境变量：
+      - ``DRSAI_GFS_ENABLED`` (default false): 总开关
+      - ``GFS_OPENAPI_KEY``: admin api key（必需，由 GfsAdminClient 读取）
+
+    失败时仅记日志，不抛异常，避免影响 agent 创建。
+    """
+    if not _as_bool(os.getenv("DRSAI_GFS_ENABLED"), default=False):
+        return []
+    if not user_id:
+        return []
+    try:
+        # 懒导入：boto3 在某些精简环境里可能没装，应避免影响主流程
+        from drsai.modules.managers.gfs import make_gfs_tools
+    except ImportError as e:
+        logger.warning("DRSAI_GFS_ENABLED=true but gfs module import failed: %s", e)
+        return []
+    try:
+        tools = make_gfs_tools(user_id)
+        logger.info("GFS enabled for user %s: %d tools registered",
+                    user_id, len(tools))
+        return tools
+    except Exception as e:
+        logger.warning("make_gfs_tools(%s) failed: %s. Falling back to no GFS.",
+                       user_id, e)
+        return []
 
 llm_mode_config = DEFAULT_LLM_MODE_CONFIG
 
@@ -143,7 +173,11 @@ def create_agent(
 
     defult_config_name = defult_config_name or "hepai/deepseek-v4-flash"
     entry = llm_mode_config.get(defult_config_name)
-    token_limit = entry.token_limit if entry else 196608
+    token_limit = entry.token_limit if entry else 64000
+
+    # 可选：为该用户挂 GFS function-calling 工具
+    extra_tools = _build_gfs_tools(user_id)
+
     return DrSaiAssistant(
         name="Assistant",
         model_client=set_model_client(defult_config_name),
@@ -151,7 +185,7 @@ def create_agent(
         reflect_on_tool_use=False,
         model_client_stream=True,  # Enable streaming tokens from the model client.
         # model_context=long_memory_context,
-        # tools=[pdf_manual_search],
+        tools=extra_tools or None,
         # drsaiAgent specific
         thread_id=thread_id,
         db_manager=db_manager,
