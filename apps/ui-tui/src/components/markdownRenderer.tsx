@@ -19,6 +19,7 @@
 import { Box, Text } from 'ink'
 import type { ReactElement } from 'react'
 
+import { useTerminalWidth } from '../hooks/useTerminalWidth.js'
 import { theme } from '../theme.js'
 
 // ─── Props ────────────────────────────────────────────────────────
@@ -40,11 +41,13 @@ export function stripThinkBlocks(text: string): string {
     .replace(/^\s+|\s+$/g, m => (m.includes('\n') ? '\n' : ''))
 }
 
-// ─── Terminal width helper ────────────────────────────────────────
-
-function getTerminalWidth(): number {
-  return process.stdout.columns || 80
-}
+// ─── Terminal width ───────────────────────────────────────────────
+//
+// The terminal column count is reactive — components must read it via
+// ``useTerminalWidth()`` so a window resize triggers a re-render. We
+// deliberately do NOT export a non-reactive ``process.stdout.columns``
+// helper here, because past experience shows callers will quietly grab
+// the snapshot value and ship a regression.
 
 // ─── Block types ──────────────────────────────────────────────────
 
@@ -500,11 +503,14 @@ function renderTableAsKeyValue(rows: string[][], color?: string): ReactElement {
 /**
  * Render a table with Unicode box-drawing, adapted to terminal width.
  * For 2-column tables that would be too wide, falls back to vertical key-value.
+ *
+ * ``termWidth`` must be supplied by the caller (read via ``useTerminalWidth``)
+ * so this remains a pure function — re-rendering on resize is the React tree's
+ * responsibility.
  */
-function renderTable(rows: string[][], color?: string): ReactElement {
+function renderTable(rows: string[][], color: string | undefined, termWidth: number): ReactElement {
   if (rows.length === 0) return <></>
 
-  const termWidth = getTerminalWidth()
   // Leave some margin for prompt chars and padding
   const maxWidth = Math.max(termWidth - 6, 40)
   const colCount = Math.max(...rows.map(r => r.length))
@@ -604,6 +610,7 @@ function renderTable(rows: string[][], color?: string): ReactElement {
 
 export function MarkdownRenderer({ text, color }: MarkdownRendererProps) {
   const blocks = parseBlocks(text)
+  const termWidth = useTerminalWidth()
   if (blocks.length === 0) return null
 
   return (
@@ -644,14 +651,14 @@ export function MarkdownRenderer({ text, color }: MarkdownRendererProps) {
             return (
               <Box key={idx} marginBottom={1}>
                 <Text color={theme.border}>
-                  {'─'.repeat(Math.min(getTerminalWidth() - 4, 60))}
+                  {'─'.repeat(Math.min(termWidth - 4, 60))}
                 </Text>
               </Box>
             )
           }
           case 'table': {
             const rows = block.rows || []
-            return <Box key={idx}>{renderTable(rows, color)}</Box>
+            return <Box key={idx}>{renderTable(rows, color, termWidth)}</Box>
           }
           case 'blockquote': {
             // Apply inline parsing to blockquote content

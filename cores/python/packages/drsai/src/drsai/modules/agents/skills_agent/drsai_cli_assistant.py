@@ -84,6 +84,17 @@ class DrSaiCLIAssistant(DrSaiAssistant):
             func for func in self._basic_funcs if func.__name__ in _DANGEROUS_FUNC_NAMES
         ]
 
+        # Mirror the operater_funs closure flag onto an agent attribute so the
+        # tui_gateway's session.info() can surface the correct safe-cmd /
+        # any-cmd badge. Before this line ``self._allow_dangerous_commands``
+        # was undefined → ``getattr(agent, "_allow_dangerous_commands", False)``
+        # always returned False even when ``allolow_dangrous_cmd=True`` was
+        # passed in, so the status bar lied to the user. (Discovered while
+        # investigating "rm -rf ran without an approval prompt".)
+        self._allow_dangerous_commands: bool = bool(
+            kwargs.get("allolow_dangrous_cmd", False)
+        )
+
     # ── TODO: Reasoning effort ──────────────────────────────────────────────
     # 完整的 reasoning_effort 实现需要:
     # 1. 在此属性 setter 中验证并存储 reasoning_config

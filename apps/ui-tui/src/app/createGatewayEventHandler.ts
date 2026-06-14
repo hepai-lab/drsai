@@ -31,18 +31,38 @@ export function createGatewayEventHandler(
   // visible symptom is text fragments getting scattered across columns and
   // wrap positions going wonky during interruption.
   //
-  // We coalesce text deltas into a small buffer and flush every ~80 ms so
-  // Ink has time to fully reflow each frame. The user-visible streaming
-  // experience is unchanged (still "live"), just less wasteful. 80 ms is
-  // below the ~100 ms perceptual-update threshold, and on legacy conhost
-  // (Win10 PowerShell 5.1) it noticeably cuts the column-drift / scrollbar
-  // bounce that the 50 ms cadence triggered.
+  // We coalesce text deltas into a small buffer and flush every ~FLUSH_MS so
+  // Ink has time to fully reflow each frame.
+  //
+  // Why 160 ms (changed from 80 ms):
+  //   Every flush triggers Ink's eraseLines(previousLineCount) + write(new
+  //   frame). The eraseLines sequence is interpreted by most terminals
+  //   (iTerm2, Alacritty, kitty, Windows Terminal, VSCode, GNU screen) as
+  //   a "cursor moved into the visible region" event, which RESETS the
+  //   user's manual scroll-back to the bottom. So during a long streaming
+  //   answer, any attempt to scroll up is yanked back every FLUSH_MS.
+  //
+  //   80 ms → 12.5 flushes/sec → user gets ≤ 80 ms of scrollback time.
+  //   160 ms → 6.25 flushes/sec → user gets up to 160 ms (2x).
+  //
+  //   160 ms is still well below the 250 ms "feels laggy" threshold for
+  //   live-streaming text (per Doherty / Nielsen rule-of-thumb), and the
+  //   visible per-flush chunk on a fast LLM is roughly 1 line either way.
+  //   The user-perceptible loss is near-zero; the scrollback usability win
+  //   is real and measurable.
+  //
+  //   The PROPER fix (P1-01-followup) is to enter an alternate-screen
+  //   buffer (\x1b[?1049h) so the terminal stops conflating cursor moves
+  //   with viewport anchoring. That is tracked as P3-15 + alt-screen mode
+  //   and will be a larger change.
   //
   // Override with DRSAI_TUI_FLUSH_MS for tuning. Clamped to [16, 500].
+  // Power users on slow terminals can push it to 240+ for even better
+  // scrollback usability; speed-readers can drop it back to 80.
   const envFlush = Number.parseInt(process.env.DRSAI_TUI_FLUSH_MS || '', 10)
   const FLUSH_MS = Number.isFinite(envFlush)
     ? Math.max(16, Math.min(500, envFlush))
-    : 80
+    : 160
   let textBuf = ''
   let reasoningBuf = ''
   let flushTimer: ReturnType<typeof setTimeout> | null = null

@@ -20,6 +20,7 @@
 import { Box, Text, useInput } from 'ink'
 import { useState } from 'react'
 
+import { isTerminalFocusEvent } from '../app/focusEvents.js'
 import type { GatewayClient } from '../gatewayClient.js'
 import { theme } from '../theme.js'
 
@@ -77,6 +78,7 @@ export function SkillsPane({ gw, sessionId, onDismiss }: SkillsPaneProps) {
 
   // ── Input handler ──────────────────────────────────────────────────
   useInput((_input, key) => {
+    if (isTerminalFocusEvent(_input)) return
     // ── In list view ───────────────────────────────────────────────
     if (view.kind === 'list') {
       if (key.escape || _input === 'q') {

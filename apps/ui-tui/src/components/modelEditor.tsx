@@ -24,6 +24,7 @@
 import { Box, Text, useInput } from 'ink'
 import { useState } from 'react'
 
+import { isTerminalFocusEvent } from '../app/focusEvents.js'
 import { theme } from '../theme.js'
 
 type ClientType = 'auto' | 'openai' | 'anthropic'
@@ -231,6 +232,7 @@ export function ModelEditor(props: ModelEditorProps) {
   }
 
   useInput((input, key) => {
+    if (isTerminalFocusEvent(input)) return
     if (busy) return
     if (key.escape) {
       props.onCancel()

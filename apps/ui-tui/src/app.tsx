@@ -13,9 +13,10 @@ import { Box, Text, useApp, useInput } from 'ink'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { createGatewayEventHandler } from './app/createGatewayEventHandler.js'
+import { FOCUS_IN_INPUT, FOCUS_OUT_INPUT } from './app/focusEvents.js'
 import { TurnController } from './app/turnController.js'
-import { $current, $transcript } from './app/turnStore.js'
-import { $connectionError, $connectionStatus, $userId } from './app/uiStore.js'
+import { $current, $isStreaming, $transcript } from './app/turnStore.js'
+import { $connectionError, $connectionStatus, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
 import { AppLayout } from './components/appLayout.js'
 import { SetupScreen } from './components/setupScreen.js'
 import type { GatewayClient } from './gatewayClient.js'
@@ -41,32 +42,129 @@ export function App({ gw }: AppProps) {
   // needing the App's effect to re-run (which would recreate the controller).
   const setupCompleteHandlerRef = useRef<(() => Promise<void>) | null>(null)
 
-  // Graceful exit on Ctrl+D:
+  // Graceful exit on Ctrl+D / double Ctrl+C:
   //   1. Send gateway.shutdown RPC to trigger session save on the Python side.
   //   2. Wait up to 5 s for the gateway process to exit on its own.
   //   3. If it doesn't exit within 5 s, force-kill and exit anyway.
   // This prevents session history loss that occurred with the old `gw.kill(); exit()`.
   const isExitingRef = useRef(false)
+
+  function gracefulExit() {
+    if (isExitingRef.current) return
+    isExitingRef.current = true
+
+    // Fire-and-forget shutdown RPC; don't await (the gateway may die mid-flight).
+    gw.request('gateway.shutdown', {}).catch(() => {})
+
+    // Wait for gateway to exit gracefully, then hard-exit.
+    const TIMEOUT_MS = 5000
+    const deadline = setTimeout(() => {
+      gw.kill()
+      exit()
+    }, TIMEOUT_MS)
+
+    // If the gateway sends a gateway.exit event before the timeout, exit cleanly.
+    gw.onEvent('gateway.exit', () => {
+      clearTimeout(deadline)
+      exit()
+    })
+  }
+
+  // Ctrl+C semantics (P2-10):
+  //   - During streaming: cancel the current turn (handled in
+  //     composerPane.tsx, NOT here — its useInput sees the key first
+  //     because of nanostores subscription order doesn't matter; Ink
+  //     broadcasts to all).
+  //   - When idle: the FIRST Ctrl+C shows a transient "press again to
+  //     exit" status line. A SECOND Ctrl+C within 2 s triggers the
+  //     same gracefulExit() as Ctrl+D. After 2 s the prompt is
+  //     forgotten and the user starts fresh.
+  //
+  //   We don't try to clear the composer's TextInput value here — the
+  //   prompt text is enough feedback, and adding cross-component
+  //   "clear my buffer" wiring would require either a ref or another
+  //   atom. Easy to add later if user feedback asks for it.
+  const ctrlCArmedRef = useRef(false)
+  const ctrlCResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const CTRL_C_DOUBLE_PRESS_MS = 2000
+
   useInput((_input, key) => {
+    // ── Terminal focus reporting sniff ──────────────────────────────
+    //
+    // XTerm focus reporting (enabled in entry.tsx) makes the terminal
+    // send "\x1b[I" on focus-in and "\x1b[O" on focus-out. Ink's
+    // parseKeypress doesn't recognize these as a named key, so the
+    // `input` arg arrives as plain "[I" / "[O" (Ink strips the leading
+    // ESC byte). These two strings are not producible by a single
+    // human keypress (Alt+[ then I would be two separate useInput
+    // callbacks), so detection here is safe.
+    //
+    // This is the ONLY place that updates $terminalFocused. Other
+    // useInput sites just swallow the event via isTerminalFocusEvent
+    // so they don't mis-handle it as user input. See
+    // src/app/focusEvents.ts for the shared helper and rationale.
+    if (_input === FOCUS_IN_INPUT) {
+      $terminalFocused.set(true)
+      return
+    }
+    if (_input === FOCUS_OUT_INPUT) {
+      $terminalFocused.set(false)
+      return
+    }
+
     if (key.ctrl && _input === 'd') {
-      if (isExitingRef.current) return  // debounce double-press
-      isExitingRef.current = true
+      gracefulExit()
+      return
+    }
 
-      // Fire-and-forget shutdown RPC; don't await (the gateway may die mid-flight).
-      gw.request('gateway.shutdown', {}).catch(() => {})
+    // Ctrl+T: toggle tool-call detail mode (compact ↔ expanded).
+    // Surfaces full bash commands / grep patterns / file paths during
+    // debugging without permanently cluttering the transcript.
+    if (key.ctrl && _input === 't') {
+      const next = $toolDetail.get() === 'compact' ? 'expanded' : 'compact'
+      $toolDetail.set(next)
+      $statusLine.set(`Tool detail: ${next}`)
+      // Brief hint that fades on the next status update.
+      setTimeout(() => {
+        if ($statusLine.get() === `Tool detail: ${next}`) {
+          $statusLine.set('')
+        }
+      }, 2000)
+      return
+    }
 
-      // Wait for gateway to exit gracefully, then hard-exit.
-      const TIMEOUT_MS = 5000
-      const deadline = setTimeout(() => {
-        gw.kill()
-        exit()
-      }, TIMEOUT_MS)
+    if (key.ctrl && _input === 'c') {
+      // Don't interfere with streaming-cancel: composerPane handles
+      // Ctrl+C while $isStreaming === true. We only act when idle.
+      if ($isStreaming.get()) return
 
-      // If the gateway sends a gateway.exit event before the timeout, exit cleanly.
-      gw.onEvent('gateway.exit', () => {
-        clearTimeout(deadline)
-        exit()
-      })
+      if (ctrlCArmedRef.current) {
+        // Second press within the window → exit.
+        ctrlCArmedRef.current = false
+        if (ctrlCResetTimerRef.current) {
+          clearTimeout(ctrlCResetTimerRef.current)
+          ctrlCResetTimerRef.current = null
+        }
+        $statusLine.set('')
+        gracefulExit()
+        return
+      }
+      // First press → arm and show hint.
+      ctrlCArmedRef.current = true
+      $statusLine.set('Ctrl+C again within 2 s to exit · Ctrl+D also exits')
+      if (ctrlCResetTimerRef.current) {
+        clearTimeout(ctrlCResetTimerRef.current)
+      }
+      ctrlCResetTimerRef.current = setTimeout(() => {
+        ctrlCArmedRef.current = false
+        ctrlCResetTimerRef.current = null
+        // Only clear if our hint is still the active status line.
+        const cur = $statusLine.get()
+        if (cur && cur.startsWith('Ctrl+C again')) {
+          $statusLine.set('')
+        }
+      }, CTRL_C_DOUBLE_PRESS_MS)
+      return
     }
   })
 
