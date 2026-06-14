@@ -175,7 +175,7 @@ export class SessionAPI {
     }
 
     buildShareUrl(shareToken: string): string {
-        const prefix = process.env.GATSBY_PREFIX_PATH_VALUE || "";
+        const prefix = (process.env.GATSBY_PREFIX_PATH_VALUE || "").replace(/\/+$/, "");
         const origin =
             typeof window !== "undefined" ? window.location.origin : "";
         return `${origin}${prefix}/share?token=${encodeURIComponent(shareToken)}`;
