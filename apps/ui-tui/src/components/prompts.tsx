@@ -1,17 +1,44 @@
 /**
  * Approval / Clarify / Secret prompts — modal overlays consuming user input
  * via numeric choice or freetext, then responding via the gateway RPCs.
+ *
+ * Each sub-overlay declares its presence in $activeOverlay during its
+ * lifetime so that the composer's TextInput knows to unhook itself from
+ * stdin (otherwise pressing "1" to accept an approval would also insert
+ * "1" into the input box). See uiStore.ts:$activeOverlay for the
+ * full rationale.
  */
 
 import { useStore } from '@nanostores/react'
 import { Box, Text, useInput } from 'ink'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import type { GatewayClient } from '../gatewayClient.js'
 import { $approval, $clarify, $secret, $sudo } from '../app/overlayStore.js'
+import { isTerminalFocusEvent } from '../app/focusEvents.js'
+import { $activeOverlay, type ActiveOverlay } from '../app/uiStore.js'
 import { theme } from '../theme.js'
 
 import { TextInput } from './textInput.js'
+
+/**
+ * Set $activeOverlay to ``name`` while this hook is mounted, then
+ * restore it on unmount. Multiple overlays are currently impossible
+ * (PromptsOverlay enforces single-modal priority) so we just clear
+ * back to null.
+ */
+function useClaimActiveOverlay(name: ActiveOverlay): void {
+  useEffect(() => {
+    $activeOverlay.set(name)
+    return () => {
+      // Only clear if WE are still the owner. Two overlays mounting
+      // back-to-back should not race.
+      if ($activeOverlay.get() === name) {
+        $activeOverlay.set(null)
+      }
+    }
+  }, [name])
+}
 
 interface Props {
   gw: GatewayClient
@@ -34,9 +61,11 @@ export function PromptsOverlay({ gw }: Props) {
 function ApprovalOverlay({
   gw, payload,
 }: { gw: GatewayClient; payload: NonNullable<ReturnType<typeof $approval.get>> }) {
+  useClaimActiveOverlay('approval')
   const choices = payload.choices.length > 0 ? payload.choices : ['approve', 'deny']
 
   useInput((input, _key) => {
+    if (isTerminalFocusEvent(input)) return
     const idx = parseInt(input, 10)
     if (Number.isFinite(idx) && idx >= 1 && idx <= choices.length) {
       const choice = choices[idx - 1]
@@ -69,10 +98,12 @@ function ApprovalOverlay({
 function ClarifyOverlay({
   gw, payload,
 }: { gw: GatewayClient; payload: NonNullable<ReturnType<typeof $clarify.get>> }) {
+  useClaimActiveOverlay('clarify')
   const [text, setText] = useState('')
   const choices = payload.choices ?? []
 
   useInput((input, _key) => {
+    if (isTerminalFocusEvent(input)) return
     if (payload.is_freetext || choices.length === 0) return
     const idx = parseInt(input, 10)
     if (Number.isFinite(idx) && idx >= 1 && idx <= choices.length) {
@@ -125,13 +156,15 @@ function ClarifyOverlay({
 function SecretOverlay({
   gw, payload,
 }: { gw: GatewayClient; payload: NonNullable<ReturnType<typeof $secret.get>> }) {
+  useClaimActiveOverlay('secret')
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.warn} paddingX={1} marginTop={1}>
       <Text color={theme.warn} bold>🔑  Secret needed: {payload.env_var}</Text>
       <Text color={theme.text}>{payload.prompt || `Enter value for ${payload.env_var}:`}</Text>
       <TextInput
         prompt=" › "
-        placeholder="(input shown — terminal does not mask in this build)"
+        mask
+        placeholder="(input is masked; not stored in prompt history)"
         onSubmit={value => {
           $secret.set(null)
           gw.request('secret.respond', {
@@ -147,12 +180,14 @@ function SecretOverlay({
 function SudoOverlay({
   gw, payload,
 }: { gw: GatewayClient; payload: NonNullable<ReturnType<typeof $sudo.get>> }) {
+  useClaimActiveOverlay('sudo')
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.error} paddingX={1} marginTop={1}>
       <Text color={theme.error} bold>🔐  sudo password</Text>
       <TextInput
         prompt=" › "
-        placeholder="(input shown — terminal does not mask in this build)"
+        mask
+        placeholder="(input is masked; not stored in prompt history)"
         onSubmit={password => {
           $sudo.set(null)
           gw.request('sudo.respond', {

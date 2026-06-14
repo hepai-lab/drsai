@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import threading
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -44,14 +45,50 @@ _current_session_id: contextvars.ContextVar[Optional[str]] = contextvars.Context
     "drsai_current_session_id", default=None
 )
 
+# ContextVars do NOT propagate across raw ``threading.Thread`` boundaries
+# (only via ``contextvars.copy_context().run(...)``). The TUI gateway
+# runs each turn on a daemon thread spawned with plain ``threading.Thread``,
+# and tools may further hop threads via ``asyncio.to_thread``. To make sure
+# ``_resolve_sid`` still answers correctly in those deeper threads, we
+# also maintain a per-thread fallback map keyed by ``threading.get_ident()``.
+#
+# The map is updated by ``bind_thread_session`` (called from the daemon
+# thread when it starts), then cleared by ``unbind_thread_session`` after
+# the turn finishes. Look-ups walk: explicit arg → ContextVar → thread map.
+_thread_session_lock = threading.Lock()
+_thread_session_map: dict[int, str] = {}
+
 
 def bind_session(session_id: str):
-    """Bind *session_id* for the current context. Returns a reset token."""
+    """Bind *session_id* for the current contextvars context. Returns a reset token.
+
+    NOTE: this only covers code that runs in the SAME thread (or in a
+    context-copied descendant). Use :func:`bind_thread_session` from
+    inside a freshly-spawned daemon thread to also register the
+    per-thread fallback.
+    """
     return _current_session_id.set(session_id)
 
 
 def reset_session(token) -> None:
     _current_session_id.reset(token)
+
+
+def bind_thread_session(session_id: str) -> None:
+    """Register *session_id* as the active session for the CURRENT OS thread.
+
+    Call this at the top of any worker thread that will spawn / await
+    tools using ``approval_callback`` (etc.) so the look-up succeeds
+    even when ``asyncio.to_thread`` hops yet another thread later.
+    """
+    with _thread_session_lock:
+        _thread_session_map[threading.get_ident()] = session_id
+
+
+def unbind_thread_session() -> None:
+    """Forget the session binding for the current OS thread, if any."""
+    with _thread_session_lock:
+        _thread_session_map.pop(threading.get_ident(), None)
 
 
 def _resolve_sid(explicit: Optional[str]) -> str:
@@ -60,7 +97,11 @@ def _resolve_sid(explicit: Optional[str]) -> str:
     sid = _current_session_id.get()
     if sid:
         return sid
-    return ""
+    # Thread-map fallback for code paths that crossed a raw threading.Thread
+    # or asyncio.to_thread boundary, which contextvars don't traverse.
+    with _thread_session_lock:
+        sid = _thread_session_map.get(threading.get_ident(), "")
+    return sid or ""
 
 
 # ── Approval ─────────────────────────────────────────────────────────

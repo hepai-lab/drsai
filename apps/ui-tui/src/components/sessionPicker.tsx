@@ -18,6 +18,7 @@
 import { Box, Text, useInput } from 'ink'
 import { useState } from 'react'
 
+import { isTerminalFocusEvent } from '../app/focusEvents.js'
 import type { SessionInfo } from '../gatewayTypes.js'
 import { theme } from '../theme.js'
 
@@ -81,6 +82,7 @@ export function SessionPicker({ sessions, currentId, onSelect, onCancel }: Sessi
   }
 
   useInput((input, key) => {
+    if (isTerminalFocusEvent(input)) return
     if (key.escape) {
       onCancel()
       return

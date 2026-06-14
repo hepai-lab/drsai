@@ -8,6 +8,7 @@
 import { Box, Text, useInput } from 'ink'
 import { useState } from 'react'
 
+import { isTerminalFocusEvent } from '../app/focusEvents.js'
 import { theme } from '../theme.js'
 
 export interface ModelEntry {
@@ -47,6 +48,7 @@ export function ModelPicker({
   })
 
   useInput((input, key) => {
+    if (isTerminalFocusEvent(input)) return
     if (key.escape) {
       onCancel()
       return

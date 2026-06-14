@@ -25,13 +25,55 @@
  * `completions` (a flat list of `/command` strings) to drive Tab.
  */
 
+import { useStore } from '@nanostores/react'
 import { Box, Text, useInput } from 'ink'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
+import { isTerminalFocusEvent } from '../app/focusEvents.js'
+import { $terminalFocused } from '../app/uiStore.js'
 import { theme } from '../theme.js'
 
 const BRACKET_PASTE_RE = /\x1b?\[20[01]~/g
 const BRACKET_PASTE_DETECT_RE = /\x1b?\[20[01]~/
+
+// ── Cursor blink ──────────────────────────────────────────────────────
+//
+// Ink hides the real terminal cursor (`\x1b[?25l`) so we draw a fake one
+// using <Text inverse>. Without animation users can't tell whether the
+// TUI has focus — they keep typing speculatively. We toggle visibility
+// at ~530 ms, matching the default xterm blink rate.
+//
+// Pause conditions (cursor renders a steady block, no setState loop):
+//   - `active` arg is false (caller says "stop blinking right now")
+//   - The TextInput is disabled (caller passes `blink=false`)
+//   - The terminal window itself has lost focus (XTerm focus reporting;
+//     see entry.tsx + app.tsx for the wiring). This matches real
+//     terminal behavior: hardware cursor stops blinking when the window
+//     is in the background. Without this, users see a fake-looking
+//     pulse in the corner of an inactive window, which is more
+//     distracting than helpful.
+//
+// Caveats:
+//   - Every toggle triggers a re-render of the dynamic frame. We mitigate
+//     by only blinking when the input is enabled AND has focus.
+//   - When the input is disabled OR unfocused, we render a steady dim
+//     block so users can still see *where* the cursor lives.
+const CURSOR_BLINK_MS = 530
+
+function useCursorBlink(active: boolean): boolean {
+  const termFocused = useStore($terminalFocused)
+  const shouldBlink = active && termFocused
+  const [on, setOn] = useState(true)
+  useEffect(() => {
+    if (!shouldBlink) {
+      setOn(true)
+      return
+    }
+    const t = setInterval(() => setOn(o => !o), CURSOR_BLINK_MS)
+    return () => clearInterval(t)
+  }, [shouldBlink])
+  return on
+}
 
 function normalisePastedText(text: string): string {
   return text.replace(BRACKET_PASTE_RE, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
@@ -74,6 +116,15 @@ function cursorFromLineCol(lines: string[], line: number, col: number): number {
 export interface TextInputProps {
   prompt: string
   placeholder?: string
+  /**
+   * When ``true``:
+   *   - The cursor block renders dimmed and does not blink.
+   *   - All keypresses are silently dropped (the ``useInput`` hook still
+   *     consumes stdin so terminal-side characters are not echoed; this
+   *     is the fix for the "ghost typing" bug seen between turns).
+   *   - The cursor block is hidden so it does not look like the input is
+   *     ready to accept text.
+   */
   disabled?: boolean
   onSubmit: (text: string) => void
   /** When true, Enter on an empty input still fires onSubmit(""). Useful for "press Enter to skip" prompts. */
@@ -96,6 +147,44 @@ export interface TextInputProps {
    *   - ``undefined`` (or no callback) → fall back to literal insertion.
    */
   onPaste?: (text: string) => string | null | undefined
+  /**
+   * Whether the cursor block should blink. Default ``true``. Set to
+   * ``false`` when an overlay is consuming keys so we don't burn CPU
+   * re-rendering an off-focus cursor.
+   */
+  blink?: boolean
+  /**
+   * Whether this input is actively consuming keystrokes. When
+   * ``false``, the underlying ``useInput`` is NOT installed at all
+   * (Ink's native opt-out via ``{ isActive: false }``), so the input
+   * is invisible to Ink's stdin dispatch.
+   *
+   * Different from ``disabled``:
+   *   - ``disabled=true`` still keeps the ``useInput`` listener live;
+   *     it just drops every key on the floor. The reason is to soak
+   *     up stdin bytes during streaming so the terminal doesn't echo
+   *     "ghost" characters (see P1-02).
+   *   - ``isActive=false`` actually unhooks the listener. Use this
+   *     when another component owns the keyboard — e.g. an approval
+   *     overlay is asking the user to press a number. We don't want
+   *     that "1" to also land in the composer.
+   *
+   * Default ``true`` — i.e. existing callers see no change.
+   */
+  isActive?: boolean
+  /**
+   * Render each character as a mask (``true`` → ``●``, string → custom
+   * single-char mask). The actual value is still passed unchanged to
+   * ``onSubmit`` and to ``onHistoryChange`` — only the visible glyph is
+   * replaced.
+   *
+   * Used by the Secret / Sudo overlays so passwords / API tokens are
+   * not visible in the terminal scrollback (and don't get screenshotted
+   * in screen-share / pair-programming sessions).
+   *
+   * Default ``false`` — no masking, behaves like before.
+   */
+  mask?: boolean | string
 }
 
 export function TextInput({
@@ -108,10 +197,28 @@ export function TextInput({
   history: externalHistory,
   onHistoryChange,
   onPaste,
+  blink = true,
+  isActive = true,
+  mask = false,
 }: TextInputProps) {
   const [value, setValue] = useState('')
   const [cursor, setCursor] = useState(0)
   const pendingEscapeRef = useRef(false)
+
+  // Resolve the mask glyph once per render. ``true`` → ``●``; a single
+  // char string is used verbatim; anything else (false, '') → no mask.
+  const maskChar: string | null =
+    mask === true
+      ? '●'
+      : typeof mask === 'string' && mask.length > 0
+        ? mask[0]
+        : null
+
+  /** Apply the mask glyph to a visible string, preserving length. */
+  function masked(s: string): string {
+    if (maskChar === null) return s
+    return maskChar.repeat(s.length)
+  }
 
   // Internal history if caller didn't pass one. Stored in a ref so it survives
   // re-renders without triggering them.
@@ -167,6 +274,11 @@ export function TextInput({
   }
 
   useInput((input, key) => {
+    // XTerm focus reporting (\x1b[?1004) sends "\x1b[I" / "\x1b[O" on
+    // window focus changes; Ink strips the ESC, leaving "[I" / "[O".
+    // Without this guard we would insert that pair into the user's
+    // text every time they switched windows. See app/focusEvents.ts.
+    if (isTerminalFocusEvent(input)) return
     if (disabled) return
 
     // Bracketed-paste and many terminals deliver a paste as one multi-character
@@ -306,7 +418,15 @@ export function TextInput({
       if (trimmed || allowEmpty) {
         // Push non-empty entries into history (dedupe consecutive) before submit,
         // so the caller can persist it even if submit starts async work.
-        if (trimmed && (history.length === 0 || history[history.length - 1] !== trimmed)) {
+        //
+        // EXCEPT when masking: secrets / passwords must NEVER touch the
+        // on-disk prompt history. The whole point of mask=true is that
+        // the value never leaves volatile memory.
+        if (
+          trimmed &&
+          maskChar === null &&
+          (history.length === 0 || history[history.length - 1] !== trimmed)
+        ) {
           history.push(trimmed)
           onHistoryChange?.(history)
         }
@@ -376,7 +496,7 @@ export function TextInput({
     if (input && !key.ctrl && !key.meta) {
       insertText(input)
     }
-  })
+  }, { isActive })
 
   // ── Render ──────────────────────────────────────────────────────────────
   //
@@ -393,6 +513,28 @@ export function TextInput({
   // Continuation-line indent = same width as the prompt string
   const indent = ' '.repeat(prompt.length)
 
+  // Blink only when input is interactive AND parent has focus.
+  // Disabled state shows a steady dim block instead of a blinking one so
+  // users can still see *where* the cursor is during streaming, but it
+  // does not pretend to accept input.
+  const blinkOn = useCursorBlink(!disabled && blink)
+  const showCursorBlock = !disabled && blinkOn
+
+  // Pick the cursor's visible representation:
+  //   enabled + blink-on   → bright reverse block
+  //   enabled + blink-off  → invisible (rendered as a normal char so
+  //                          surrounding text doesn't shift)
+  //   disabled             → dim non-inverted block (steady)
+  function renderCursorAt(ch: string) {
+    if (disabled) {
+      return <Text color={theme.muted} dimColor>{ch}</Text>
+    }
+    if (showCursorBlock) {
+      return <Text color={theme.text} inverse>{ch}</Text>
+    }
+    return <Text color={theme.text}>{ch}</Text>
+  }
+
   return (
     <Box flexDirection="column">
       {showPlaceholder ? (
@@ -400,7 +542,7 @@ export function TextInput({
           <Text color={theme.primary}>{prompt}</Text>
           <Box flexGrow={1}>
             <Text>
-              {!disabled && <Text color={theme.text} inverse> </Text>}
+              {renderCursorAt(' ')}
               <Text> </Text>
               <Text color={theme.muted} dimColor>{placeholder}</Text>
             </Text>
@@ -421,13 +563,23 @@ export function TextInput({
             const at = line[cursorCol] ?? ' '
             const after = line.slice(cursorCol + 1)
 
+            // When masking, replace the visible characters with the mask
+            // glyph but keep the cursor block on a non-masked space so the
+            // user can still tell where their cursor is. The mask char
+            // itself is what appears in `before` / `after` segments.
+            const visBefore = masked(before)
+            // The cursor sits on top of a real character; replace with the
+            // mask glyph so it doesn't leak a single plaintext char.
+            const visAt = maskChar !== null && cursorCol < line.length ? maskChar : at
+            const visAfter = masked(after)
+
             return (
               <Box key={i}>
                 {prefix}
                 <Text>
-                  <Text color={theme.text}>{before}</Text>
-                  {!disabled && <Text color={theme.text} inverse>{at}</Text>}
-                  <Text color={theme.text}>{after}</Text>
+                  <Text color={theme.text}>{visBefore}</Text>
+                  {renderCursorAt(visAt)}
+                  <Text color={theme.text}>{visAfter}</Text>
                 </Text>
               </Box>
             )
@@ -436,7 +588,7 @@ export function TextInput({
           return (
             <Box key={i}>
               {prefix}
-              <Text color={theme.text}>{line || ' '}</Text>
+              <Text color={theme.text}>{masked(line) || ' '}</Text>
             </Box>
           )
         })

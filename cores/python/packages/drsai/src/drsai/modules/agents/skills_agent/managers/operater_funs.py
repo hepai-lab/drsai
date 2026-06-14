@@ -208,6 +208,57 @@ def get_operator_funcs(
     # Toggle from CLI via /dangerous on|off
     _dangerous_allowed = [allolow_dangrous_cmd]
 
+    async def _request_dangerous_approval(cmd: str, kind: str) -> bool:
+        """Block until the UI user approves / denies a flagged command.
+
+        ``kind`` is one of ``"dangerous"`` / ``"script"`` — only used to label
+        the prompt that the UI shows.
+
+        Returns ``True`` if the user explicitly approved this single
+        execution. Any other outcome (deny, timeout, no UI bound, callback
+        not available because we are running headless / under the legacy
+        REPL) returns ``False`` so the caller falls back to the previous
+        hard-block behavior.
+
+        The callback itself is a blocking ``threading.Event.wait`` call
+        inside ``server._block`` — we MUST wrap it in ``asyncio.to_thread``
+        so it does not freeze the agent's event loop while the user is
+        thinking about whether to approve.
+        """
+        # Lazy import — operater_funs is a generic module and must not
+        # hard-depend on the tui_gateway adapter. If the import fails we
+        # are running outside the TUI gateway (legacy REPL, unit test,
+        # standalone use); fall back to the original hard-block.
+        try:
+            from drsai.backend.tui_gateway.adapter.callbacks import (
+                approval_callback,
+            )
+        except Exception:
+            return False
+
+        label = (
+            "Dangerous shell command"
+            if kind == "dangerous"
+            else "Script execution"
+        )
+        try:
+            response = await asyncio.to_thread(
+                approval_callback,
+                command=cmd,
+                description=(
+                    f"{label} flagged by safety rules. Approve once to run "
+                    "this single command. To grant the agent blanket "
+                    "permission for the rest of this session, deny here "
+                    "and then run /dangerous on at the prompt."
+                ),
+                choices=["approve", "deny"],
+                timeout=300,
+            )
+        except Exception:
+            # Network drop, UI process exited, etc. — fail closed.
+            return False
+        return response == "approve"
+
     # Initialize persistence manager — use storage_dir for internal files if provided,
     # otherwise fall back to WORKDIR (the tool workspace).
     _persistence_dir = Path(storage_dir).resolve() if storage_dir else WORKDIR
@@ -569,13 +620,24 @@ def get_operator_funcs(
             2. If timeout → Use: run_bash_background("npm test", timeout=300)
         """
 
-        # Check dangerous patterns (unless explicitly allowed via /dangerous on)
+        # Check dangerous patterns. If matched, prompt the UI user for a
+        # single-shot approval before falling back to a hard block.
+        # (Was previously a hard "return Error" — that meant the agent
+        # never even got the chance to ask the user.)
         if not _dangerous_allowed[0] and _DANGEROUS_RE.search(cmd):
-            return "Error: Dangerous command detected. Use /dangerous on to authorize."
+            if not await _request_dangerous_approval(cmd, "dangerous"):
+                return (
+                    "Error: Dangerous command denied by user. "
+                    "Use /dangerous on to authorize for the rest of the session."
+                )
 
-        # Check script execution patterns (unless explicitly allowed via /dangerous on)
+        # Same for script-execution patterns.
         if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(cmd):
-            return "Error: Script execution command detected. Use /dangerous on to authorize."
+            if not await _request_dangerous_approval(cmd, "script"):
+                return (
+                    "Error: Script execution denied by user. "
+                    "Use /dangerous on to authorize for the rest of the session."
+                )
 
         # Check absolute paths referenced in command
         if _only_in_workspace[0]:
@@ -683,13 +745,21 @@ def get_operator_funcs(
             - Don't use sleep commands after launching background tasks
             - Use get_bash_task(task_id) to check status and retrieve output
         """
-        # Check dangerous patterns (unless explicitly allowed via /dangerous on)
+        # Check dangerous patterns. If matched, ask the user before falling
+        # back to a hard block (see run_bash for context).
         if not _dangerous_allowed[0] and _DANGEROUS_RE.search(cmd):
-            return "Error: Dangerous command detected. Use /dangerous on to authorize."
+            if not await _request_dangerous_approval(cmd, "dangerous"):
+                return (
+                    "Error: Dangerous command denied by user. "
+                    "Use /dangerous on to authorize for the rest of the session."
+                )
 
-        # Check script execution patterns (unless explicitly allowed via /dangerous on)
         if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(cmd):
-            return "Error: Script execution command detected. Use /dangerous on to authorize."
+            if not await _request_dangerous_approval(cmd, "script"):
+                return (
+                    "Error: Script execution denied by user. "
+                    "Use /dangerous on to authorize for the rest of the session."
+                )
 
         # Check absolute paths referenced in command
         if _only_in_workspace[0]:
@@ -1159,13 +1229,20 @@ Write-Host "__DRSAI_PS_CWD__:$(Get-Location)"
         if not ps_path:
             return "Error: PowerShell not found. Please install PowerShell Core (pwsh) or use run_bash for Unix commands."
 
-        # Check dangerous patterns (unless explicitly allowed via /dangerous on)
+        # Check dangerous patterns. Same approval flow as run_bash.
         if not _dangerous_allowed[0] and _DANGEROUS_RE.search(command):
-            return "Error: Dangerous command detected. Use /dangerous on to authorize."
+            if not await _request_dangerous_approval(command, "dangerous"):
+                return (
+                    "Error: Dangerous command denied by user. "
+                    "Use /dangerous on to authorize for the rest of the session."
+                )
 
-        # Check script execution patterns (unless explicitly allowed via /dangerous on)
         if not _dangerous_allowed[0] and _SCRIPT_EXEC_RE.search(command):
-            return "Error: Script execution command detected. Use /dangerous on to authorize."
+            if not await _request_dangerous_approval(command, "script"):
+                return (
+                    "Error: Script execution denied by user. "
+                    "Use /dangerous on to authorize for the rest of the session."
+                )
 
         # Check absolute paths referenced in command (both Unix and Windows style)
         if _only_in_workspace[0]:

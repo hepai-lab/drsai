@@ -656,24 +656,44 @@ def cmd_dangerous(ctx: SlashContext) -> dict:
 
 
 def cmd_dg_global(ctx: SlashContext) -> dict:
-    """Toggle dangerous command permission (session + global default)."""
+    """Toggle dangerous command permission (session + global default).
+
+    Persistence key normalisation (was the cause of "off then restart still
+    any-cmd"):
+      - ``run_drsai_agent_factory`` reads ``cli_cfg.get("dangerous_allowed")``
+        on every cold start. That is the SOURCE OF TRUTH for the next
+        process.
+      - This handler USED to write ``cfg["allow_dangerous_commands"]``,
+        which the factory ignored. So /dg_global off was a no-op across
+        restarts.
+      - We now write ``cfg["dangerous_allowed"]`` to match what the
+        factory reads, and drop the legacy ``allow_dangerous_commands``
+        key if it's lingering in the user's config.
+      - The session-state key ``allow_dangerous_commands`` is kept (that
+        is what ``session.info()`` surfaces, and what the AgentRunner's
+        set_state_value applies to the live closure). That is in-memory
+        and does not need to match the on-disk key.
+    """
     args = ctx.args.lower()
     cfg = get_config_manager(ctx.user_id)
 
     if not args or args == "status":
         dg = ctx.session.get_state_value("allow_dangerous_commands", False)
-        global_dg = cfg.get("allow_dangerous_commands", False)
+        # Read both for back-compat with older configs; prefer the factory key.
+        global_dg = cfg.get("dangerous_allowed", cfg.get("allow_dangerous_commands", False))
         return {"output": f"Dangerous: {'allowed' if dg else 'blocked'} (session)\nGlobal: {'allowed' if global_dg else 'blocked'}"}
 
     if args == "on":
         ctx.session.set_state_value("allow_dangerous_commands", True)
-        cfg["allow_dangerous_commands"] = True
+        cfg["dangerous_allowed"] = True
+        cfg.pop("allow_dangerous_commands", None)  # remove legacy/mismatched key if present
         save_global_config(cfg)
         ctx.refresh_info()
         return {"output": "Dangerous commands allowed (session + global, saved)"}
     elif args == "off":
         ctx.session.set_state_value("allow_dangerous_commands", False)
-        cfg["allow_dangerous_commands"] = False
+        cfg["dangerous_allowed"] = False
+        cfg.pop("allow_dangerous_commands", None)  # remove legacy/mismatched key if present
         save_global_config(cfg)
         ctx.refresh_info()
         return {"output": "Dangerous commands blocked (session + global, saved)"}

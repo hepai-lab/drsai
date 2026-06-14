@@ -48,6 +48,21 @@ def _run_turn_in_background(
     Enter immediately after a reply finishes would race the save and get a
     spurious "session busy" error.
     """
+    # ── Bind session context INSIDE the daemon thread ────────────────
+    #
+    # The caller (handle_prompt_submit) already called
+    # _callbacks.bind_session(session_id), but ContextVars do NOT
+    # propagate across raw ``threading.Thread`` boundaries — only via
+    # ``contextvars.copy_context().run(...)``. Without re-binding here,
+    # any approval_callback invoked from a tool would see ``_resolve_sid``
+    # return "" and silently auto-deny.
+    #
+    # We also register the per-thread fallback map so synchronous code
+    # paths that don't go through ``asyncio.to_thread`` (which DOES
+    # copy_context) can still resolve the sid.
+    _callbacks.bind_session(session_id)
+    _callbacks.bind_thread_session(session_id)
+
     running_cleared = False
 
     def _clear_running_once() -> None:
@@ -92,6 +107,10 @@ def _run_turn_in_background(
         # Belt and suspenders: ensure running is cleared even if no
         # message.complete event was emitted (e.g. agent crashed early).
         _clear_running_once()
+        # Drop the per-thread session binding we registered up top so the
+        # daemon thread doesn't leak it into a future turn (daemon threads
+        # are short-lived but the thread-id can be reused by Python).
+        _callbacks.unbind_thread_session()
 
 
 @method("prompt.submit")

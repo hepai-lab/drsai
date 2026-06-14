@@ -10,9 +10,10 @@ import { homedir } from 'node:os'
 import { useEffect, useRef, useState } from 'react'
 
 import { loadPromptHistory, savePromptHistory } from '../app/promptHistory.js'
+import { isTerminalFocusEvent } from '../app/focusEvents.js'
 import { $isStreaming } from '../app/turnStore.js'
 import type { ImageAttachment, TurnController } from '../app/turnController.js'
-import { $showReasoning } from '../app/uiStore.js'
+import { $activeOverlay, $showReasoning } from '../app/uiStore.js'
 import type { SessionInfo, SessionListResult } from '../gatewayTypes.js'
 import { theme } from '../theme.js'
 
@@ -207,6 +208,7 @@ function parseImageCommand(text: string): { paths: string[]; description: string
 export function ComposerPane({ sessionId, controller, switchSession }: ComposerPaneProps) {
   const { exit } = useApp()
   const isStreaming = useStore($isStreaming)
+  const activeOverlay = useStore($activeOverlay)
   const [slashOutput, setSlashOutput] = useState<string | null>(null)
   const slashOutputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [sessionPicker, setSessionPicker] = useState<SessionInfo[] | null>(null)
@@ -277,6 +279,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
 
   // While streaming, capture Ctrl+C to cancel without exiting the app.
   useInput((_input, key) => {
+    if (isTerminalFocusEvent(_input)) return
     if (isStreaming && key.ctrl && _input === 'c') {
       controller.cancel(sessionId)
     }
@@ -752,22 +755,36 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
           <Text color={theme.muted}>{slashOutput}</Text>
         </Box>
       )}
-      {isStreaming ? (
-        <Box>
-          <Text color={theme.warn}>⏳ </Text>
-          <Text color={theme.muted}>streaming… (Ctrl+C to cancel)</Text>
-        </Box>
-      ) : (
-        <TextInput
-          prompt=" › "
-          placeholder="type a message (Alt+Enter/Ctrl+O newline, / commands, Tab complete, ↑/↓ history)"
-          onSubmit={handleSubmit}
-          completions={completions}
-          history={historyRef.current}
-          onHistoryChange={savePromptHistory}
-          onPaste={maybeCollapsePaste}
-        />
-      )}
+      {/*
+        Always mount the TextInput, even while streaming. This:
+          1. Keeps useInput continuously consuming stdin so terminals
+             cannot echo "ghost" characters that the user typed at the
+             tail end of the previous turn (P1-02).
+          2. Avoids unmount/remount churn that adds an extra Ink frame
+             flush right after message.complete.
+        While streaming we set disabled=true: keypresses are dropped,
+        the cursor renders as a steady dim block (so users see *where*
+        they will type next), and the placeholder switches to a status
+        message. Ctrl+C is handled by the higher-level useInput above.
+      */}
+      <TextInput
+        prompt=" › "
+        disabled={isStreaming}
+        // When a modal overlay (approval / clarify / secret / sudo) is
+        // showing, unhook this TextInput from stdin so the user's "1" /
+        // "2" / Enter goes to the overlay only — not also into the
+        // composer's value buffer. See $activeOverlay in uiStore.ts for
+        // the rationale (Ink useInput is a broadcast, P1-05).
+        isActive={activeOverlay === null}
+        placeholder={isStreaming
+          ? '⏳ streaming… (Ctrl+C to cancel)'
+          : 'Send a message · Ctrl+O newline · / commands · Tab complete · ↑/↓ history'}
+        onSubmit={handleSubmit}
+        completions={completions}
+        history={historyRef.current}
+        onHistoryChange={savePromptHistory}
+        onPaste={maybeCollapsePaste}
+      />
     </Box>
   )
 }

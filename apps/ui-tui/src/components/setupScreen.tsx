@@ -17,6 +17,7 @@
 import { Box, Text, useInput } from 'ink'
 import { useMemo, useState } from 'react'
 
+import { isTerminalFocusEvent } from '../app/focusEvents.js'
 import type { GatewayClient } from '../gatewayClient.js'
 import { theme } from '../theme.js'
 
@@ -85,6 +86,7 @@ export function SetupScreen({ gw, configExists, onComplete }: SetupScreenProps) 
   // Provider selection (arrow keys + Enter + number shortcuts)
   useInput(
     (input, key) => {
+      if (isTerminalFocusEvent(input)) return
       if (step !== 'provider') return
       if (key.upArrow) {
         setCursor(c => Math.max(0, c - 1))

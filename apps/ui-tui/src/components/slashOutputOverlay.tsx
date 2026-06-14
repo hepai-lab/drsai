@@ -7,6 +7,7 @@
 
 import { Box, Text, useInput } from 'ink'
 
+import { isTerminalFocusEvent } from '../app/focusEvents.js'
 import { theme } from '../theme.js'
 
 export interface SlashOutputOverlayProps {
@@ -16,6 +17,7 @@ export interface SlashOutputOverlayProps {
 
 export function SlashOutputOverlay({ output, onDismiss }: SlashOutputOverlayProps) {
   useInput((_input, key) => {
+    if (isTerminalFocusEvent(_input)) return
     if (key.return || key.escape) {
       onDismiss()
     }

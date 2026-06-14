@@ -10,8 +10,8 @@ from typing import (
     Optional, 
     Tuple,
     Self,
-    Mapping,
-    TYPE_CHECKING,
+    # Mapping,
+    # TYPE_CHECKING,
     )
 import json, re, uuid, shutil, copy
 import asyncio, traceback
@@ -37,8 +37,7 @@ from drsai.modules.baseagent.drsaiagent import DrSaiAgentConfig
 from drsai.modules.baseagent import CodeExecutorAgent, CodeExecutor
 from drsai.modules.agents import RemoteAgent
 
-if TYPE_CHECKING:
-    from drsai.modules.agents import HepAIWorkerAgent
+from drsai.modules.agents import HepAIWorkerAgent
 from drsai.modules.components import (
     ComponentModel,
 )
