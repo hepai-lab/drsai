@@ -86,7 +86,7 @@ from drsai.utils.oai_stream_event import (
 
 import uuid
 
-from drsai.modules.managers.user_profile import UserApiKeyManager
+from drsai.modules.managers.user_profile import UserApiKeyManager, CredentialStore
 
 from dotenv import load_dotenv
 load_dotenv(dotenv_path = "drsai_test.env")
@@ -114,7 +114,12 @@ class DrSai:
         # API Key 管理器 (用于定时任务等后台服务)
         
         api_key_base_dir = Path(self.db_manager.schema_manager.base_dir) if self.db_manager else Path(CONST.FS_DIR)
+        self._credential_store = CredentialStore(base_dir=api_key_base_dir)
         self._api_key_manager = UserApiKeyManager(base_dir=api_key_base_dir)
+
+        # 将统一的 CredentialStore 注入 GfsProvisioner 单例
+        from drsai.modules.managers.gfs.provisioner import GfsProvisioner
+        GfsProvisioner.set_credential_store(self._credential_store)
 
         # 智能体管理
         self.agent_factory: callable = kwargs.pop('agent_factory', None)

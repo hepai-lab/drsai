@@ -22,7 +22,7 @@ import threading
 
 from .. import server
 from ..adapter import callbacks as _callbacks
-from ..server import _emit, _err, _ok, _resolve_user_id, _sessions, method
+from ..server import _emit, _err, _get_db_manager, _ok, _resolve_user_id, _sessions, method
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +138,22 @@ def _submit(rid, params: dict) -> dict:
     except Exception as exc:
         logger.exception("agent init failed")
         return _err(rid, 5032, f"agent init failed: {type(exc).__name__}: {exc}")
+
+    # Touch the Thread's updated_at immediately so the current session
+    # appears as "most recent" when the user runs /list mid-stream.
+    # Without this, updated_at is stale until save_state runs after the
+    # turn completes, so /list might not show the current session at top.
+    try:
+        from datetime import datetime
+        from drsai.modules.managers.datamodel.db import Thread
+        db = _get_db_manager()
+        resp = db.get(Thread, filters={"thread_id": session_id}, return_json=False)
+        if resp.status and resp.data:
+            thread = resp.data[0]
+            thread.updated_at = datetime.now()
+            db.upsert(thread)
+    except Exception:
+        logger.debug("touch updated_at failed (non-critical)", exc_info=True)
 
     state = _sessions[session_id]
     with state["history_lock"]:

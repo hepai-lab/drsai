@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ..server import _ok, _err, method, _emit
+from ..server import _ok, _err, method, _emit, _get_db_manager
 from ..adapter.agent_runner import AgentSession
 from . import session as session_module  # For _ensure_agent_session
 
@@ -313,11 +313,11 @@ def cmd_reasoning(ctx: SlashContext) -> dict:
         # UI-side toggle; gateway doesn't need to change agent state
         return {"output": f"Reasoning display: {args}", "ui_action": f"reasoning.{args}"}
 
-    if args in ("low", "medium", "high"):
+    if args in ("low", "medium", "high", "xhigh"):
         ctx.session.set_state_value("reasoning_effort", args)
         return {"output": f"Reasoning effort set to {args}"}
 
-    return {"output": "Usage: /reasoning show|hide|off|low|medium|high"}
+    return {"output": "Usage: /reasoning show|hide|off|low|medium|high|xhigh"}
 
 
 def cmd_verbose(ctx: SlashContext) -> dict:
@@ -388,9 +388,65 @@ def cmd_save(ctx: SlashContext) -> str:
 
 
 def cmd_history(ctx: SlashContext) -> dict:
-    """Show conversation history (delegate to session.history RPC)."""
-    # This should be handled by session.history RPC directly
-    return {"output": "Use session.history RPC for full history"}
+    """Show conversation history.
+    
+    Usage:
+        /history       — show last 10 messages
+        /history N     — show last N messages
+        /history all   — show all messages
+    """
+    if not ctx.session:
+        return {"output": "Error: no active session"}
+    
+    try:
+        from drsai.backend.cli.history import CLISessionStore
+        store = CLISessionStore(_get_db_manager(), ctx.user_id)
+        messages = store.load(ctx.session_id)
+        
+        # Parse limit
+        limit = 10  # default
+        if ctx.args:
+            arg = ctx.args.strip().lower()
+            if arg == "all":
+                limit = None
+            else:
+                try:
+                    limit = int(arg)
+                except ValueError:
+                    return {"output": f"Invalid argument: {ctx.args}\nUsage: /history [N|all]"}
+        
+        if limit is not None and limit > 0:
+            messages = messages[-limit:]
+        
+        if not messages:
+            return {"output": "No messages in this session"}
+        
+        # Format messages for display
+        lines = ["", f"  Conversation history ({len(messages)} messages):"]
+        lines.append("  " + "─" * 60)
+        
+        for i, msg in enumerate(messages, 1):
+            role = msg.get("role", msg.get("source", "unknown"))
+            content = msg.get("content", "")
+            
+            # Handle content that might be a list or dict
+            if isinstance(content, list):
+                content = str(content)
+            elif isinstance(content, dict):
+                content = str(content)
+            
+            # Truncate long messages
+            if len(content) > 200:
+                content = content[:197] + "..."
+            
+            lines.append(f"  [{i}] {role.upper()}: {content}")
+            lines.append("")
+        
+        return {"output": "\n".join(lines)}
+        
+    except Exception as exc:
+        logger.exception("cmd_history failed")
+        return {"output": f"Error loading history: {type(exc).__name__}: {exc}"}
 
 
 # ── Plan / Prompt ─────────────────────────────────────────────────────────────
@@ -734,7 +790,11 @@ def cmd_agent(ctx: SlashContext) -> dict:
     args = ctx.args.strip()
     args_lower = args.lower()
 
-    if not args or args_lower == "list":
+    if not args:
+        # No args → open interactive agent picker
+        return {"output": "", "ui_action": "agent.picker"}
+
+    if args_lower == "list":
         sub_agents = _get_fresh_sub_agents(ctx)
         if sub_agents:
             lines = [f"- {name}: {cfg.get('description', '')}" for name, cfg in sub_agents.items()]
@@ -846,10 +906,18 @@ def cmd_switch(ctx: SlashContext) -> dict:
 
 
 def cmd_list(ctx: SlashContext) -> dict:
-    """List sessions (opens picker)."""
+    """List sessions (opens picker).
+    
+    Usage:
+        /list          — list sessions in current workdir only
+        /list --all    — list all sessions across all workdirs
+    """
+    show_all = ctx.args.strip() == "--all"
+    
     return {
-        "output": "Opening session list…",
+        "output": f"Opening session list{'…' if not show_all else ' (all workdirs)…'}",
         "ui_action": "session.list",
+        "workdir_filter": None if show_all else str(Path.cwd().resolve()),
     }
 
 
@@ -861,7 +929,7 @@ def cmd_rename(ctx: SlashContext) -> dict:
         return {"output": "Error: no active session"}
     try:
         from drsai.backend.cli.history import CLISessionStore
-        store = CLISessionStore(ctx.user_id)
+        store = CLISessionStore(_get_db_manager(), ctx.user_id)
         ok = store.rename(ctx.session_id, ctx.args.strip())
         if ok:
             ctx.refresh_info()
@@ -878,7 +946,7 @@ def cmd_search(ctx: SlashContext) -> dict:
         return {"output": "Usage: /search <query>"}
     try:
         from drsai.backend.cli.history import CLISessionStore
-        store = CLISessionStore(ctx.user_id)
+        store = CLISessionStore(_get_db_manager(), ctx.user_id)
         results = store.list(limit=200)
         q = ctx.args.lower()
         hits = [s for s in results if q in (s.name or "").lower()]
@@ -891,6 +959,157 @@ def cmd_search(ctx: SlashContext) -> dict:
     except Exception as e:
         logger.exception("search failed")
         return {"output": f"Error: {e}"}
+
+
+def cmd_find(ctx: SlashContext) -> dict:
+    """Natural language search for sessions (semantic + keyword hybrid).
+
+    Usage:
+        /find <natural language query>
+        /find --cwd <query>  (restrict to current workdir)
+    """
+    if not ctx.args:
+        return {"output": "Usage: /find <query>  — natural language session search\n       /find --cwd <query>  — search in current workdir only"}
+    try:
+        from drsai.backend.cli.history import CLISessionStore
+        store = CLISessionStore(_get_db_manager(), ctx.user_id)
+
+        # Parse --cwd flag
+        workdir = None
+        query = ctx.args
+        if query.startswith("--cwd "):
+            workdir = str(Path.cwd().resolve())
+            query = query[6:].strip()
+        elif " --cwd" in query:
+            query = query.replace(" --cwd", "").strip()
+            workdir = str(Path.cwd().resolve())
+
+        results = store.smart_search(query, limit=10, workdir=workdir)
+        if not results:
+            return {"output": f"No sessions match '{query}'"}
+
+        lines = [f"Found {len(results)} session(s):"]
+        for s in results[:10]:
+            score = getattr(s, 'relevance_score', 0)
+            tags_str = ' '.join(f'#{t}' for t in (getattr(s, 'tags', []) or [])) if getattr(s, 'tags', None) else ''
+            pin_str = ' 📌' if getattr(s, 'pinned', False) else ''
+            lines.append(f"  [{s.thread_id[:8]}] {s.name} (msgs={s.message_count}, score={score:.2f}){pin_str} {tags_str}")
+            if s.preview:
+                lines.append(f"    \"{s.preview[:80]}\"")
+
+        # Return ui_action so TUI can open a smart search picker
+        return {
+            "output": "\n".join(lines),
+            "ui_action": "session.smart_search",
+            "query": query,
+            "results": [
+                {
+                    "session_id": s.thread_id,
+                    "name": s.name,
+                    "preview": s.preview,
+                    "relevance_score": getattr(s, 'relevance_score', 0),
+                }
+                for s in results[:10]
+            ],
+        }
+    except Exception as e:
+        logger.exception("find failed")
+        return {"output": f"Error: {e}"}
+
+
+def cmd_tag(ctx: SlashContext) -> dict:
+    """Manage session tags.
+
+    Usage:
+        /tag add <tag1> [tag2] ...
+        /tag remove <tag1> [tag2] ...
+        /tag list
+    """
+    if not ctx.session:
+        return {"output": "Error: no active session"}
+    parts = ctx.args.split(None, 1)
+    if not parts:
+        return {"output": "Usage: /tag add|remove|list [tags...]"}
+
+    from drsai.backend.cli.history import CLISessionStore
+    store = CLISessionStore(_get_db_manager(), ctx.user_id)
+
+    subcmd = parts[0].lower()
+    if subcmd == "list":
+        info = store.resolve(ctx.session_id)
+        if info:
+            tags = getattr(info, 'tags', []) or []
+            if tags:
+                return {"output": f"Tags: {' '.join('#' + t for t in tags)}"}
+            return {"output": "No tags set"}
+        return {"output": "Session not found"}
+
+    if subcmd in ("add", "remove") and len(parts) < 2:
+        return {"output": f"Usage: /tag {subcmd} <tag1> [tag2] ..."}
+
+    tags_str = parts[1] if len(parts) > 1 else ""
+    tags = [t.strip().lstrip('#') for t in tags_str.split() if t.strip()]
+
+    if subcmd == "add":
+        ok = store.tag_add(ctx.session_id, tags)
+        if ok:
+            ctx.refresh_info()
+            return {"output": f"Added tags: {' '.join('#' + t for t in tags)}", "ui_action": "session.refresh"}
+        return {"output": "Failed to add tags"}
+
+    if subcmd == "remove":
+        ok = store.tag_remove(ctx.session_id, tags)
+        if ok:
+            ctx.refresh_info()
+            return {"output": f"Removed tags: {' '.join('#' + t for t in tags)}", "ui_action": "session.refresh"}
+        return {"output": "Failed to remove tags"}
+
+    return {"output": f"Unknown subcommand: {subcmd}. Use add, remove, or list."}
+
+
+def cmd_pin(ctx: SlashContext) -> dict:
+    """Pin the current session to top of lists."""
+    if not ctx.session:
+        return {"output": "Error: no active session"}
+    from drsai.backend.cli.history import CLISessionStore
+    store = CLISessionStore(_get_db_manager(), ctx.user_id)
+    ok = store.set_meta_flag(ctx.session_id, "pinned", True)
+    if ok:
+        ctx.refresh_info()
+        return {"output": "📌 Session pinned", "ui_action": "session.refresh"}
+    return {"output": "Failed to pin session"}
+
+
+def cmd_unpin(ctx: SlashContext) -> dict:
+    """Unpin the current session."""
+    if not ctx.session:
+        return {"output": "Error: no active session"}
+    from drsai.backend.cli.history import CLISessionStore
+    store = CLISessionStore(_get_db_manager(), ctx.user_id)
+    ok = store.set_meta_flag(ctx.session_id, "pinned", False)
+    if ok:
+        ctx.refresh_info()
+        return {"output": "Session unpinned", "ui_action": "session.refresh"}
+    return {"output": "Failed to unpin session"}
+
+
+def cmd_archive(ctx: SlashContext) -> dict:
+    """Archive or unarchive the current session.
+
+    Usage:
+        /archive         — archive (hide from default list)
+        /archive off     — unarchive
+    """
+    if not ctx.session:
+        return {"output": "Error: no active session"}
+    from drsai.backend.cli.history import CLISessionStore
+    store = CLISessionStore(_get_db_manager(), ctx.user_id)
+    archived = ctx.args.strip().lower() != "off"
+    ok = store.set_meta_flag(ctx.session_id, "archived", archived)
+    if ok:
+        ctx.refresh_info()
+        return {"output": f"Session {'archived' if archived else 'unarchived'}", "ui_action": "session.refresh"}
+    return {"output": "Failed to archive session"}
 
 
 def cmd_resume(ctx: SlashContext) -> dict:
@@ -943,20 +1162,51 @@ def cmd_status(ctx: SlashContext) -> str:
     return "\n".join(lines)
 
 
-def cmd_setup(ctx: SlashContext) -> str:
-    """Setup wizard — point user at CLI command (TUI overlay TBD)."""
-    return (
-        "Setup wizard is not yet available inside the TUI.\n"
-        "Run from shell:  drsai config --show\n"
-        "Or edit ~/.drsai/cli_config.json directly."
-    )
+def cmd_setup(ctx: SlashContext) -> dict:
+    """Show setup status or re-run setup wizard.
+
+    Usage:
+        /setup           — show current config status
+        /setup wizard    — re-run the setup wizard
+        /setup show      — show full config (masked)
+    """
+    args = (ctx.args or "").strip().lower()
+
+    if args == "wizard":
+        return {"output": "", "ui_action": "setup.wizard"}
+
+    if args == "show":
+        # Show config with masked keys
+        from drsai.backend.cli import config as cli_config
+        if cli_config.CLI_CONFIG_PATH.exists():
+            cfg = cli_config.load_config()
+            lines = ["Configuration:"]
+            for k, v in sorted(cfg.items()):
+                if "key" in k.lower() or "token" in k.lower():
+                    masked = f"{str(v)[:6]}...{str(v)[-4:]}" if v and len(str(v)) > 10 else "***"
+                    lines.append(f"  {k}: {masked}")
+                else:
+                    lines.append(f"  {k}: {v}")
+            return {"output": "\n".join(lines)}
+        return {"output": "No config file found. Run /setup wizard to configure."}
+
+    # Default: show status
+    from .setup import _status
+    status = _status(0, {})
+    data = status.get("result", status)
+    if data.get("setup_required"):
+        return {
+            "output": "⚠  Setup required. Run /setup wizard to configure your API key and model.",
+            "ui_action": "setup.wizard",
+        }
+    return {"output": "✓ Configured. Use /setup show for details, /setup wizard to reconfigure."}
 
 
 def cmd_daemons(ctx: SlashContext) -> str:
     """List / manage background daemon processes.
 
     Usage:
-        /daemons              — list all daemons
+        /daemons              — list all daemons (opens interactive panel)
         /daemons <name>       — show daemon details
         /daemons logs <name>  — tail daemon logs
     """
@@ -970,7 +1220,7 @@ def cmd_daemons(ctx: SlashContext) -> str:
         name = args[5:].strip() or "default"
         log_path = daemon_log_file(name)
         if not log_path.exists():
-            return f"No log file for daemon '{name}'."
+            return "No log file for daemon '{name}'."
         lines = log_path.read_text(errors="replace").splitlines()
         recent = lines[-20:]
         header = f"Logs for daemon '{name}' (last {len(recent)} lines):\n{'-'*40}"
@@ -999,30 +1249,8 @@ def cmd_daemons(ctx: SlashContext) -> str:
             f"    /daemon-run {name} <task>  — run a one-off task"
         )
 
-    # /daemons (no args) → list all
-    daemons = list_daemons()
-    if not daemons:
-        return (
-            "No daemons configured.\n\n"
-            "Start one from shell:\n"
-            "  drsai daemon start --name <name>\n"
-        )
-    lines = []
-    for d in daemons:
-        status_icon = "●" if d.get("alive") else "○"
-        name = d.get("name", "?")
-        pid = d.get("pid", "?")
-        port = d.get("ws_port", "?")
-        uptime_s = d.get("uptime_seconds", 0)
-        h, m = int(uptime_s // 3600), int((uptime_s % 3600) // 60)
-        lines.append(
-            f"  {status_icon} daemon:{name}  pid={pid}  port={port}  uptime={h}h{m}m"
-        )
-    return (
-        "Daemons:\n" + "\n".join(lines) +
-        "\n\nUse /agent daemon:<name> to set as default, "
-        "or let the LLM Delegate to daemon:<name>."
-    )
+    # /daemons (no args) → open interactive panel via ui_action
+    return {"output": "", "ui_action": "daemon.panel"}
 
 
 def cmd_daemon_run(ctx: SlashContext) -> str:
@@ -1173,6 +1401,154 @@ def cmd_image(ctx: SlashContext) -> str:
     )
 
 
+def cmd_wechat(ctx: SlashContext) -> dict:
+    """WeChat integration status and management.
+
+    Usage:
+        /wechat              — show status (opens interactive panel)
+        /wechat status       — text status
+        /wechat sessions     — list wechat user sessions
+        /wechat login        — start QR login
+        /wechat logout       — logout and delete credentials
+    """
+    args = (ctx.args or "").strip()
+    sub = args.split(None, 1)[0].lower() if args else ""
+
+    if sub == "status":
+        # Return text status
+        from .wechat import _wechat_status
+        result = _wechat_status(0, {})  # rid=0 is unused for direct call
+        data = result.get("result", result)
+        lines = ["WeChat Status:"]
+        lines.append(f"  Configured: {'✓' if data.get('configured') else '✗'}")
+        lines.append(f"  Valid:      {'✓' if data.get('credentials_valid') else '✗'}")
+        if data.get("login_time"):
+            lines.append(f"  Login:      {data['login_time']}")
+        if data.get("expires_at"):
+            lines.append(f"  Expires:    {data['expires_at']}")
+        if data.get("account_id"):
+            lines.append(f"  Account:    {data['account_id']}")
+        if data.get("active_daemons"):
+            for d in data["active_daemons"]:
+                lines.append(f"  Daemon:     {d['name']} (port {d['port']})")
+        return {"output": "\n".join(lines)}
+
+    if sub == "sessions":
+        from .wechat import _wechat_sessions
+        result = _wechat_sessions(0, {})
+        sessions = result.get("result", result).get("sessions", [])
+        if not sessions:
+            return {"output": "No WeChat sessions."}
+        lines = ["WeChat Sessions:"]
+        for s in sessions:
+            lines.append(f"  {s.get('wechat_user_id', '?')} → session {s.get('agent_session_id', '?')[:8]}")
+        return {"output": "\n".join(lines)}
+
+    if sub == "logout":
+        from .wechat import _wechat_logout
+        _wechat_logout(0, {})
+        return {"output": "✓ WeChat logged out, credentials deleted."}
+
+    if sub == "login":
+        return {"output": "Starting WeChat login…", "ui_action": "wechat.login"}
+
+    # Default: open interactive panel
+    return {"output": "", "ui_action": "wechat.panel"}
+
+
+def cmd_schedule(ctx: SlashContext) -> dict:
+    """Manage scheduled tasks.
+
+    Usage:
+        /schedule                    — list all tasks
+        /schedule create <name> interval:N <prompt>
+        /schedule create <name> once <prompt>
+        /schedule cancel <id>
+        /schedule run <id>
+    """
+    parts = ctx.args.split(None, 1)
+    sub = parts[0] if parts else "list"
+    rest = parts[1] if len(parts) > 1 else ""
+
+    if sub == "list" or not sub:
+        from .scheduler import _scheduled_tasks
+        if not _scheduled_tasks:
+            return {"output": "No scheduled tasks. Use /schedule create to add one."}
+        lines = ["", "  Scheduled tasks:"]
+        for tid, info in _scheduled_tasks.items():
+            status_icon = {"scheduled": "⏰", "running": "🔄", "completed": "✅", "cancelled": "❌", "error": "⚠"}.get(info["status"], "?")
+            lines.append(f"    {status_icon} [{tid}] {info['name']} — {info['schedule']} — {info['status']}")
+            if info.get("last_run"):
+                lines.append(f"       last run: {info['last_run']}")
+        return {"output": "\n".join(lines)}
+
+    if sub == "create":
+        # Parse: /schedule create <name> interval:N <prompt>
+        # or:    /schedule create <name> once <prompt>
+        create_parts = rest.split(None, 2)
+        if len(create_parts) < 3:
+            return {"output": "Usage: /schedule create <name> <interval:N|once> <prompt>"}
+        name, schedule, prompt = create_parts
+        session_id = ctx.session_id if ctx.session else ""
+        # Call scheduler.create logic directly
+        from .scheduler import _scheduled_tasks, _start_scheduler_thread
+        import uuid as _uuid
+        tid = str(_uuid.uuid4())[:8]
+        from datetime import datetime as _dt
+        task_info = {
+            "id": tid,
+            "name": name,
+            "prompt": prompt,
+            "schedule": schedule,
+            "status": "scheduled",
+            "created_at": _dt.now().isoformat(),
+            "session_id": session_id,
+        }
+        _scheduled_tasks[tid] = task_info
+        _start_scheduler_thread(tid, task_info)
+        return {"output": f"✓ Task '{name}' created (id: {tid}, schedule: {schedule})"}
+
+    if sub == "cancel":
+        tid = rest.strip()
+        if not tid:
+            return {"output": "Usage: /schedule cancel <id>"}
+        from .scheduler import _scheduled_tasks
+        if tid not in _scheduled_tasks:
+            return {"output": f"Task '{tid}' not found"}
+        _scheduled_tasks[tid]["status"] = "cancelled"
+        _scheduled_tasks.pop(tid, None)
+        return {"output": f"✓ Task {tid} cancelled"}
+
+    if sub == "run":
+        tid = rest.strip()
+        if not tid:
+            return {"output": "Usage: /schedule run <id>"}
+        from .scheduler import _scheduled_tasks, _run_task_once
+        if tid not in _scheduled_tasks:
+            return {"output": f"Task '{tid}' not found"}
+        import threading as _th
+        _th.Thread(target=_run_task_once, args=(tid, _scheduled_tasks[tid]), daemon=True).start()
+        return {"output": f"✓ Task {tid} started"}
+
+    return {"output": "Usage: /schedule list|create|cancel|run"}
+
+
+def cmd_notify(ctx: SlashContext) -> dict:
+    """Toggle task completion notifications."""
+    args = ctx.args.lower().strip()
+    current = True
+    if ctx.session:
+        current = ctx.session.get_state_value("notify_on_complete", True)
+
+    if args in ("on", "off"):
+        if ctx.session:
+            ctx.session.set_state_value("notify_on_complete", args == "on")
+        return {"output": f"Notifications: {args}"}
+    if args == "status" or not args:
+        return {"output": f"Notifications: {'on' if current else 'off'}"}
+
+    return {"output": "Usage: /notify on|off|status"}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RPC method handlers
@@ -1233,6 +1609,11 @@ SLASH_HANDLERS: dict[str, Any] = {
     "ls": cmd_list,
     "rename": cmd_rename,
     "search": cmd_search,
+    "find": cmd_find,
+    "tag": cmd_tag,
+    "pin": cmd_pin,
+    "unpin": cmd_unpin,
+    "archive": cmd_archive,
     "resume": cmd_resume,
     "copy": cmd_copy,
     "status": cmd_status,
@@ -1248,6 +1629,11 @@ SLASH_HANDLERS: dict[str, Any] = {
     # ── Image (fallback — normally intercepted by TUI frontend) ──────────
     "image": cmd_image,
     "img": cmd_image,
+    # ── Scheduled tasks & notifications ──────────────────────────────────
+    "schedule": cmd_schedule,
+    "notify": cmd_notify,
+    # ── WeChat ───────────────────────────────────────────────────────────
+    "wechat": cmd_wechat,
 }
 
 

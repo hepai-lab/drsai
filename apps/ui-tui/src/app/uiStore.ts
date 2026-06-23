@@ -73,6 +73,8 @@ export type ActiveOverlay =
   | 'clarify'
   | 'secret'
   | 'sudo'
+  | 'smartSearch'
+  | 'quickSwitch'
 
 export const $activeOverlay = atom<ActiveOverlay | null>(null)
 
@@ -94,3 +96,36 @@ export const $activeOverlay = atom<ActiveOverlay | null>(null)
  */
 export type ToolDetailMode = 'compact' | 'expanded'
 export const $toolDetail = atom<ToolDetailMode>('compact')
+
+/**
+ * Latest token usage from the most recent assistant turn (Issue #8 fix).
+ *
+ * Updated by createGatewayEventHandler when message.complete arrives.
+ * Displayed in StatusBar so users can always see token consumption even
+ * when the turn's usage line scrolls out of view.
+ */
+export interface UsageInfo {
+  model: string
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+}
+
+export const $lastUsage = atom<UsageInfo | null>(null)
+
+/**
+ * "Copy mode" — when true the TUI temporarily disables mouse tracking so
+ * the user can select / copy text in the terminal with the mouse.
+ *
+ * Toggled via Ctrl+Y from <App>'s useInput. We do NOT exit the alternate
+ * screen buffer when entering copy mode: leaving alt-screen mid-session
+ * would discard everything Ink has rendered. Disabling mouse tracking is
+ * sufficient for selection on every modern terminal (iTerm2, kitty,
+ * Alacritty, Windows Terminal, GNOME Terminal, Konsole, VSCode, ...);
+ * users on terminals with native scrollback want
+ * ``DRSAI_TUI_DISABLE_ALT_SCREEN=1`` at startup, which is a separate knob.
+ *
+ * Visual indicator lives in StatusBar so the user always knows which
+ * mode they are in.
+ */
+export const $copyMode = atom<boolean>(false)

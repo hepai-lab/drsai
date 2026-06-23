@@ -13,10 +13,12 @@ import { Box, Text, useApp, useInput } from 'ink'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { createGatewayEventHandler } from './app/createGatewayEventHandler.js'
-import { FOCUS_IN_INPUT, FOCUS_OUT_INPUT } from './app/focusEvents.js'
+import { FOCUS_IN_INPUT, FOCUS_OUT_INPUT, parseMouseEvent } from './app/focusEvents.js'
+import { parseHistory } from './app/historyParser.js'
+import { disableMouseTracking, enableMouseTracking } from './app/terminalControl.js'
 import { TurnController } from './app/turnController.js'
 import { $current, $isStreaming, $transcript } from './app/turnStore.js'
-import { $connectionError, $connectionStatus, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
+import { $connectionError, $connectionStatus, $copyMode, $lastUsage, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
 import { AppLayout } from './components/appLayout.js'
 import { SetupScreen } from './components/setupScreen.js'
 import type { GatewayClient } from './gatewayClient.js'
@@ -112,6 +114,23 @@ export function App({ gw }: AppProps) {
       return
     }
 
+    // ── Mouse events ────────────────────────────────────────────────
+    // Mouse tracking is enabled in entry.tsx so wheel events arrive as
+    // SGR mouse events instead of fake arrow keys (which would otherwise
+    // be misinterpreted as composer history navigation, Issue #7).
+    //
+    // We do NOT intercept the wheel for in-TUI scroll. With the new
+    // <Static> based transcript (transcriptPane.tsx), completed turns
+    // live in the terminal's native scrollback — letting the terminal
+    // handle wheel scrolling natively gives the user a smoother and
+    // more familiar experience than a custom turn-stepping hack.
+    //
+    // We swallow the events here so they don't leak into composer.
+    const mouse = parseMouseEvent(_input)
+    if (mouse.isMouse) {
+      return
+    }
+
     if (key.ctrl && _input === 'd') {
       gracefulExit()
       return
@@ -130,6 +149,33 @@ export function App({ gw }: AppProps) {
           $statusLine.set('')
         }
       }, 2000)
+      return
+    }
+
+    // Ctrl+Y: toggle mouse tracking on / off.
+    //
+    // Mouse tracking is OFF by default — terminal owns the scrollback
+    // and selection UX (you can drag-select with the mouse and roll
+    // the wheel to view scrollback). This hotkey only matters if you
+    // started the TUI with DRSAI_TUI_ENABLE_MOUSE_TRACKING=1: pressing
+    // Ctrl+Y will release the mouse so you can copy, and pressing it
+    // again restores program-side mouse capture. In the default
+    // configuration the toggle is essentially a no-op (already off).
+    if (key.ctrl && _input === 'y') {
+      const next = !$copyMode.get()
+      $copyMode.set(next)
+      if (next) {
+        disableMouseTracking()
+        $statusLine.set('● Mouse released · drag to select / wheel to scroll · Ctrl+Y to recapture')
+      } else {
+        enableMouseTracking()
+        $statusLine.set('Mouse recaptured by program')
+        setTimeout(() => {
+          if ($statusLine.get() === 'Mouse recaptured by program') {
+            $statusLine.set('')
+          }
+        }, 2000)
+      }
       return
     }
 
@@ -177,9 +223,37 @@ export function App({ gw }: AppProps) {
         // the UI. (The DB-side history for the OLD session is untouched.)
         $transcript.set([])
         $current.set(null)
+        // Reset cached usage badge — otherwise the StatusBar would keep
+        // showing the previous session's token counts until the next turn
+        // completes in the new session. We refill it below from history.
+        $lastUsage.set(null)
         const result = await gw.request<SessionResumeResult>('session.resume', {
           session_id: sid,
         })
+
+        // Load history for the new session (Issue #2 fix)
+        if (result.history && result.history.length > 0) {
+          const turns = parseHistory(result.history)
+          $transcript.set(turns)
+
+          // Refill $lastUsage from the most recent assistant turn that
+          // carries usage metadata so the StatusBar reflects this session
+          // immediately after switching (instead of staying blank until
+          // the user sends a new message).
+          for (let i = turns.length - 1; i >= 0; i -= 1) {
+            const t = turns[i]
+            if (t.role === 'assistant' && t.usage) {
+              $lastUsage.set({
+                model: t.usage.model,
+                prompt_tokens: t.usage.prompt_tokens,
+                completion_tokens: t.usage.completion_tokens,
+                total_tokens: t.usage.total_tokens,
+              })
+              break
+            }
+          }
+        }
+
         const userId = (result as { user_id?: string }).user_id || $userId.get()
         if (userId) $userId.set(userId)
         setBoot(prev =>
@@ -249,6 +323,29 @@ export function App({ gw }: AppProps) {
         session_id: session.session_id,
       })
       if (cancelled) return
+      
+      // ADDED: Load history into transcript (Issue #2 fix)
+      if (result.history && result.history.length > 0) {
+        const turns = parseHistory(result.history)
+        $transcript.set(turns)
+
+        // Also seed $lastUsage from the most recent assistant turn that
+        // carries usage so the StatusBar token badge is correct on cold
+        // start, not just after the first message in this run.
+        for (let i = turns.length - 1; i >= 0; i -= 1) {
+          const t = turns[i]
+          if (t.role === 'assistant' && t.usage) {
+            $lastUsage.set({
+              model: t.usage.model,
+              prompt_tokens: t.usage.prompt_tokens,
+              completion_tokens: t.usage.completion_tokens,
+              total_tokens: t.usage.total_tokens,
+            })
+            break
+          }
+        }
+      }
+      
       const userId = (result as { user_id?: string }).user_id || $userId.get()
       if (userId) $userId.set(userId)
 

@@ -51,7 +51,7 @@ export function AppLayout({ gw, controller, sessionId, switchSession }: Props) {
       <Box>
         <Text color={theme.primary} bold>⚡ DrSai</Text>
       </Box>
-      <TranscriptPane />
+      <TranscriptPane sessionId={sessionId} />
       <PromptsOverlay gw={gw} />
       <StatusBar />
       <ComposerPane sessionId={sessionId} controller={controller} switchSession={switchSession} />

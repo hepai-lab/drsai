@@ -1,20 +1,41 @@
 /**
- * TranscriptPane — renders the locked-in turn history above the live streaming turn.
+ * TranscriptPane — renders completed turns above the live streaming turn.
  *
- * Completed turns go through Ink's <Static> component, which writes them to the
- * terminal *once* and never repaints them. This means:
- *   - Terminal resize doesn't trigger a full reflow that jumps the cursor to top
- *   - Streaming text in the live turn no longer competes with history repaints
- *   - History scrolls naturally into the terminal's scrollback buffer
+ * Architecture:
+ *   - Completed turns go into Ink's <Static>. Static is APPEND-ONLY:
+ *     once a turn is rendered, Ink writes it to stdout and never
+ *     repaints it. The terminal's scrollback owns it from then on, so
+ *     the user can scroll back through history with the terminal's
+ *     native scrollbar / wheel without Ink's eraseLines() yanking the
+ *     view back to the bottom (P1-01).
+ *   - The streaming assistant turn lives in the DYNAMIC frame (below
+ *     <Static>). Ink keeps repainting just that small region as deltas
+ *     arrive. When the turn finalizes, turnController moves it from
+ *     $current into $transcript, which lets <Static> commit it
+ *     permanently to scrollback in the next render.
  *
- * Only the in-flight streaming turn lives inside the regular dynamic render tree.
+ * Why we dropped the in-TUI virtual scroll (PageUp/PageDown turn
+ * stepping):
+ *   With <Static> the terminal already provides scrollback for every
+ *   completed turn. The old PageUp logic stepped by turn index inside
+ *   the dynamic frame which competed with terminal-native scroll and
+ *   confused users when both were active. Native scrolling is the
+ *   right primitive — the user already knows how to do it.
+ *
+ * Session switch:
+ *   The parent passes `sessionId` so we can key the wrapper. When the
+ *   user changes sessions, $transcript is replaced and Static remounts
+ *   (its internal `index` cursor resets) so the new session's history
+ *   appears clean rather than "appended" below the old one.
  */
 
+import { memo } from 'react'
+import { useStore } from '@nanostores/react'
 import { Box, Static, Text } from 'ink'
 
 import { stripTodoWriteArtifacts } from '../app/todoArtifacts.js'
 import type { AssistantTurn, Turn } from '../app/types.js'
-import { useVirtualHistory } from '../hooks/useVirtualHistory.js'
+import { $transcript } from '../app/turnStore.js'
 import { theme } from '../theme.js'
 
 import { MarkdownRenderer } from './markdownRenderer.js'
@@ -57,52 +78,45 @@ function AssistantBlock({ turn }: { turn: AssistantTurn }) {
   )
 }
 
-function TurnView({ turn }: { turn: Turn }) {
+/**
+ * TurnView is memoised so re-renders of the parent (when streaming
+ * deltas push transcript to a new array reference) don't re-parse
+ * markdown on every completed turn. Static already filters by index,
+ * but defence-in-depth keeps the cost flat.
+ */
+const TurnView = memo(function TurnView({ turn }: { turn: Turn }) {
   return turn.role === 'user'
     ? <UserBlock text={turn.text} />
     : <AssistantBlock turn={turn} />
+})
+
+interface TranscriptPaneProps {
+  /** Used to remount <Static> when the user switches sessions. */
+  sessionId?: string
 }
 
-export function TranscriptPane() {
-  const { visible, hidden } = useVirtualHistory(50)
-
-  // Static items: each must have a stable key tied to turn identity (not slice
-  // index), so that when the virtual window slides (older turns drop out) the
-  // remaining items keep the same keys and Ink doesn't re-print them.
-  // User turns are keyed by their timestamp; assistant turns by startedAt.
-  type StaticItem = { key: string; turn: Turn | null; isMarker?: boolean; hiddenCount?: number }
-  const items: StaticItem[] = []
-  // Only show the "hidden" marker once history actually has hidden items.
-  // Pin the key to a coarse bucket so it doesn't change every time `hidden` increments by 1.
-  if (hidden > 0) {
-    items.push({
-      key: 'hidden-marker',
-      turn: null,
-      isMarker: true,
-      hiddenCount: hidden,
-    })
-  }
-  visible.forEach(t => {
-    const stableId = t.role === 'user' ? t.ts : t.startedAt
-    items.push({ key: `turn-${t.role}-${stableId}`, turn: t })
-  })
+export function TranscriptPane({ sessionId }: TranscriptPaneProps) {
+  const transcript = useStore($transcript)
 
   return (
-    <Box flexDirection="column">
-      <Static items={items}>
-        {item => {
-          if (item.isMarker) {
-            return (
-              <Box key={item.key}>
-                <Text color={theme.muted} dimColor>
-                  ── {item.hiddenCount} earlier turn{item.hiddenCount! > 1 ? 's' : ''} hidden (scroll up in terminal) ──
-                </Text>
-              </Box>
-            )
-          }
-          return <TurnView key={item.key} turn={item.turn!} />
+    <Box flexDirection="column" key={sessionId ?? 'default'}>
+      {/*
+        Completed turns — flushed into terminal scrollback by Ink's
+        <Static>. Once written they are never re-rendered, which is
+        exactly what we want: the terminal's native scrollback now
+        owns the history and the user can scroll back without Ink's
+        eraseLines() pulling the viewport back down.
+      */}
+      <Static items={transcript}>
+        {(turn, index) => {
+          const stableId = turn.role === 'user' ? turn.ts : turn.startedAt
+          return <TurnView key={`turn-${turn.role}-${stableId}-${index}`} turn={turn} />
         }}
       </Static>
+
+      {/* Live streaming assistant turn — dynamic frame; finalized into
+          $transcript via turnController.finalize() once message.complete
+          arrives. */}
       <StreamingAssistant />
     </Box>
   )

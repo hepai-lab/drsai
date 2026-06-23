@@ -1,30 +1,31 @@
 """
-用户 API Key 管理器
-用于存储和检索用户的 API Key，供定时任务等后台服务使用
+用户 API Key 管理器（向后兼容层）
+
+.. deprecated::
+    请直接使用 ``CredentialStore`` 替代。本类保留仅为了不破坏现有调用方。
+    所有方法内部委托给 ``CredentialStore``。
+
+存储位置已迁移到统一路径：
+    ``<base_dir>/user_credentials/<user_id>/llm.json``
+
+首次读取旧路径 ``<base_dir>/user_configs/<user_id>.json`` 时会自动迁移。
 """
+
+from __future__ import annotations
 
 import json
 from pathlib import Path
 from typing import Optional
+
 from loguru import logger
+
+from .credential_store import CredentialStore, _migrate_legacy_user_config
 
 
 class UserApiKeyManager:
-    """
-    管理用户的 API Key 存储和读取
+    """管理用户的 LLM API Key 存储和读取（向后兼容层）.
 
-    存储结构:
-    <base_dir>/user_configs/
-        ├── user1@example.com.json
-        ├── user2@example.com.json
-        └── ...
-
-    每个用户配置文件内容:
-    {
-        "user_id": "user@example.com",
-        "api_key": "encrypted_or_plain_api_key",
-        "updated_at": "2026-04-09T20:00:00"
-    }
+    内部委托给 ``CredentialStore``，并自动迁移旧格式。
     """
 
     def __init__(self, base_dir: Path):
@@ -33,128 +34,83 @@ class UserApiKeyManager:
             base_dir: 基础目录路径
         """
         self.base_dir = Path(base_dir)
-        self.configs_dir = self.base_dir / "user_configs"
-        self.configs_dir.mkdir(exist_ok=True, parents=True)
+        self._store = CredentialStore(base_dir=self.base_dir)
+
+        # 旧目录（用于迁移）
+        self._legacy_configs_dir = self.base_dir / "user_configs"
+
+        # 首次初始化时尝试迁移旧数据
+        self._try_migrate()
+
+    def _try_migrate(self) -> None:
+        """扫描旧 user_configs 目录，迁移到 CredentialStore."""
+        if not self._legacy_configs_dir.is_dir():
+            return
+        try:
+            from .credential_store import migrate_all_legacy_user_configs
+            count = migrate_all_legacy_user_configs(self.base_dir, self._store)
+            if count > 0:
+                logger.info(
+                    "UserApiKeyManager migrated {} legacy config(s) to CredentialStore",
+                    count,
+                )
+        except Exception as e:
+            logger.warning("UserApiKeyManager legacy migration error: {}", e)
 
     def _get_config_file(self, user_id: str) -> Path:
-        """
-        获取用户配置文件路径
-
-        Args:
-            user_id: 用户ID
-
-        Returns:
-            配置文件路径
-        """
-        # 对用户ID进行清理，避免路径问题
+        """旧接口兼容：返回旧格式路径（用于迁移检查）."""
         safe_user_id = user_id.replace("/", "_").replace("\\", "_")
-        return self.configs_dir / f"{safe_user_id}.json"
+        return self._legacy_configs_dir / f"{safe_user_id}.json"
 
+    # ------------------------------------------------------------------ #
+    # 委托给 CredentialStore
+    # ------------------------------------------------------------------ #
     def save_api_key(self, user_id: str, api_key: str) -> bool:
-        """
-        保存用户的 API Key
-
-        Args:
-            user_id: 用户ID
-            api_key: API Key
-
-        Returns:
-            是否保存成功
-        """
-        try:
-            from datetime import datetime
-
-            config_file = self._get_config_file(user_id)
-
-            config = {
-                "user_id": user_id,
-                "api_key": api_key,
-                "updated_at": datetime.now().isoformat()
-            }
-
-            with open(config_file, 'w', encoding='utf-8') as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
-
-            logger.info(f"Saved API key for user: {user_id}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to save API key for user {user_id}: {e}")
-            return False
+        """保存用户的 API Key."""
+        return self._store.save_api_key(user_id, api_key)
 
     def get_api_key(self, user_id: str) -> Optional[str]:
+        """获取用户的 API Key.
+
+        先查 CredentialStore，若不存在则尝试从旧路径迁移后读取。
         """
-        获取用户的 API Key
+        result = self._store.get_api_key(user_id)
+        if result is not None:
+            return result
 
-        Args:
-            user_id: 用户ID
+        # 尝试从旧路径迁移
+        legacy_file = self._get_config_file(user_id)
+        if legacy_file.exists():
+            if _migrate_legacy_user_config(legacy_file, self._store):
+                return self._store.get_api_key(user_id)
 
-        Returns:
-            API Key，如果不存在则返回 None
-        """
-        try:
-            config_file = self._get_config_file(user_id)
-
-            if not config_file.exists():
-                logger.warning(f"API key config not found for user: {user_id}")
-                return None
-
-            with open(config_file, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-
-            return config.get("api_key")
-
-        except Exception as e:
-            logger.error(f"Failed to get API key for user {user_id}: {e}")
-            return None
+        return None
 
     def has_api_key(self, user_id: str) -> bool:
-        """
-        检查用户是否已保存 API Key
-
-        Args:
-            user_id: 用户ID
-
-        Returns:
-            是否已保存
-        """
-        config_file = self._get_config_file(user_id)
-        return config_file.exists()
+        """检查用户是否已保存 API Key."""
+        if self._store.has_api_key(user_id):
+            return True
+        return self._get_config_file(user_id).exists()
 
     def delete_api_key(self, user_id: str) -> bool:
-        """
-        删除用户的 API Key
-
-        Args:
-            user_id: 用户ID
-
-        Returns:
-            是否删除成功
-        """
-        try:
-            config_file = self._get_config_file(user_id)
-
-            if config_file.exists():
-                config_file.unlink()
-                logger.info(f"Deleted API key for user: {user_id}")
-                return True
-            else:
-                logger.warning(f"API key config not found for user: {user_id}")
-                return False
-
-        except Exception as e:
-            logger.error(f"Failed to delete API key for user {user_id}: {e}")
-            return False
+        """删除用户的 API Key."""
+        # 同时清理旧路径
+        legacy_file = self._get_config_file(user_id)
+        if legacy_file.exists():
+            try:
+                legacy_file.unlink()
+            except OSError:
+                pass
+        return self._store.delete_api_key(user_id)
 
     def update_api_key(self, user_id: str, api_key: str) -> bool:
-        """
-        更新用户的 API Key（如果存在则更新，不存在则创建）
+        """更新用户的 API Key（如果存在则更新，不存在则创建）."""
+        return self._store.update_api_key(user_id, api_key)
 
-        Args:
-            user_id: 用户ID
-            api_key: 新的 API Key
-
-        Returns:
-            是否更新成功
-        """
-        return self.save_api_key(user_id, api_key)
+    # ------------------------------------------------------------------ #
+    # 向后兼容：暴露内部 CredentialStore
+    # ------------------------------------------------------------------ #
+    @property
+    def credential_store(self) -> CredentialStore:
+        """获取内部的 ``CredentialStore`` 实例，供 ``GfsProvisioner`` 等共享."""
+        return self._store

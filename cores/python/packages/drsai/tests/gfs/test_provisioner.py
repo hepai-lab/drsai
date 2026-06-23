@@ -321,4 +321,141 @@ class TestSingleton:
         a = GfsProvisioner.get()
         GfsProvisioner.reset()
         b = GfsProvisioner.get()
-        assert a is not b
+
+
+# ---------------------------------------------------------------------- #
+# CredentialStore 集成测试
+# ---------------------------------------------------------------------- #
+class TestCredentialStoreIntegration:
+    """验证 GfsProvisioner 通过 CredentialStore 统一存储凭证."""
+
+    def test_set_credential_store_classmethod(self, tmp_cache, mock_admin, monkeypatch):
+        """set_credential_store() 注入 CredentialStore."""
+        monkeypatch.setenv("GFS_OPENAPI_KEY", "test")
+        from drsai.modules.managers.user_profile.credential_store import CredentialStore
+        cs = CredentialStore(base_dir=tmp_cache)
+        GfsProvisioner.set_credential_store(cs)
+
+        p = GfsProvisioner.get()
+        assert p._cred_store is cs
+
+    def test_save_and_load_via_credential_store(
+        self, tmp_cache, mock_admin, mock_user_client_factory, monkeypatch
+    ):
+        """通过 CredentialStore 持久化和读取 GFS 凭证."""
+        from drsai.modules.managers.user_profile.credential_store import CredentialStore
+        cs = CredentialStore(base_dir=tmp_cache)
+
+        cred = _cred("alice@ihep.ac.cn", ak="VIA_STORE_AK")
+        mock_admin.get_user_credential.return_value = cred
+        p = GfsProvisioner(admin=mock_admin, credential_store=cs)
+
+        # 第一次：调 admin → 存入 CredentialStore
+        c1 = p.get_user_client("alice@ihep.ac.cn")
+        assert c1.credential.access_key == "VIA_STORE_AK"
+
+        # 验证 CredentialStore 中有数据
+        stored = cs.get_credential("alice@ihep.ac.cn", "gfs")
+        assert stored is not None
+        assert stored["access_key"] == "VIA_STORE_AK"
+        assert stored["email"] == "alice@ihep.ac.cn"
+
+        # 模拟进程重启：新的 Provisioner + 同一个 CredentialStore → 不再调 admin
+        mock_admin.get_user_credential.reset_mock()
+        p2 = GfsProvisioner(admin=mock_admin, credential_store=cs)
+
+        c2 = p2.get_user_client("alice@ihep.ac.cn")
+        assert c2.credential.access_key == "VIA_STORE_AK"
+        mock_admin.get_user_credential.assert_not_called()
+
+    def test_evict_via_credential_store(
+        self, tmp_cache, mock_admin, mock_user_client_factory
+    ):
+        """evict 应该通过 CredentialStore 删除持久化凭证."""
+        from drsai.modules.managers.user_profile.credential_store import CredentialStore
+        cs = CredentialStore(base_dir=tmp_cache)
+
+        cred = _cred("a@b.c")
+        mock_admin.get_user_credential.return_value = cred
+        p = GfsProvisioner(admin=mock_admin, credential_store=cs)
+        p.get_user_client("a@b.c")
+
+        assert cs.has_credential("a@b.c", "gfs")
+
+        p.evict("a@b.c")
+
+        assert not cs.has_credential("a@b.c", "gfs")
+        assert "a@b.c" not in p._user_clients
+
+    def test_has_cached_via_credential_store(self, tmp_cache, mock_admin):
+        """has_cached 通过 CredentialStore 判断."""
+        from drsai.modules.managers.user_profile.credential_store import CredentialStore
+        from dataclasses import asdict
+        cs = CredentialStore(base_dir=tmp_cache)
+
+        # 直接写入 CredentialStore（不经过 provisioner）
+        cred = _cred("store@x.com", ak="PRELOADED")
+        cs.save_credential("store@x.com", "gfs", asdict(cred))
+
+        p = GfsProvisioner(admin=mock_admin, credential_store=cs)
+        assert p.has_cached("store@x.com")
+        assert not p.has_cached("unknown@x.com")
+
+    def test_fallback_without_credential_store(
+        self, tmp_cache, mock_admin, mock_user_client_factory
+    ):
+        """未注入 CredentialStore 时回退到旧文件缓存（向后兼容）."""
+        cred = _cred("fallback@x.com", ak="FALLBACK_AK")
+        mock_admin.get_user_credential.return_value = cred
+        p = GfsProvisioner(admin=mock_admin, cache_dir=tmp_cache)
+
+        c = p.get_user_client("fallback@x.com")
+        assert c.credential.access_key == "FALLBACK_AK"
+        assert p._cred_path("fallback@x.com").exists()
+
+    def test_shared_store_between_llm_and_gfs(
+        self, tmp_cache, mock_admin, mock_user_client_factory
+    ):
+        """同一个 CredentialStore 同时存 LLM Key 和 GFS 凭证."""
+        from drsai.modules.managers.user_profile.credential_store import CredentialStore
+        cs = CredentialStore(base_dir=tmp_cache)
+
+        # LLM 侧
+        cs.save_api_key("shared@x.com", "sk-llm")
+
+        # GFS 侧
+        cred = _cred("shared@x.com", ak="GFS_AK")
+        mock_admin.get_user_credential.return_value = cred
+        p = GfsProvisioner(admin=mock_admin, credential_store=cs)
+        p.get_user_client("shared@x.com")
+
+        # 验证两者在同一目录下
+        user_dir = cs.root_dir / "shared@x.com"
+        assert (user_dir / "llm.json").is_file()
+        assert (user_dir / "gfs.json").is_file()
+
+        # 互不干扰
+        assert cs.get_api_key("shared@x.com") == "sk-llm"
+        gfs_data = cs.get_credential("shared@x.com", "gfs")
+        assert gfs_data["access_key"] == "GFS_AK"
+
+    def test_corrupt_gfs_in_store_triggers_refresh(
+        self, tmp_cache, mock_admin, mock_user_client_factory
+    ):
+        """CredentialStore 中 GFS 凭证损坏 → 自动重取."""
+        from drsai.modules.managers.user_profile.credential_store import CredentialStore
+        cs = CredentialStore(base_dir=tmp_cache)
+
+        # 写入损坏的 gfs 数据（缺少必需字段导致 GfsCredential(**data) 失败）
+        cs.save_credential("corrupt@x.com", "gfs", {"foo": "bar"})
+
+        fresh = _cred("corrupt@x.com", ak="FRESH_AK")
+        mock_admin.get_user_credential.return_value = fresh
+        p = GfsProvisioner(admin=mock_admin, credential_store=cs)
+
+        c = p.get_user_client("corrupt@x.com")
+        assert c.credential.access_key == "FRESH_AK"
+        # 损坏数据应被清理并重写
+        stored = cs.get_credential("corrupt@x.com", "gfs")
+        assert stored is not None
+        assert stored["access_key"] == "FRESH_AK"

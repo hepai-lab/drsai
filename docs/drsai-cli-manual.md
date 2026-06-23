@@ -1,7 +1,7 @@
 # DrSai CLI 使用手册
 
 > 版本: 对应 Ink TUI (`apps/ui-tui/`) + `backend/tui_gateway/` + `cli/commands.py` 命令注册表
-> 最后更新: 2026-06（新增：Skill 管理、Ctrl+C/D 修复、Daemon 后台服务、微信接入自动扫码登录、Subagent 子智能体/Delegate）
+> 最后更新: 2026-06（新增：Session 搜索与组织 /find /tag /pin /archive、子智能体并发控制 /max_concurrent、Session FTS5 回填兼容）
 >
 > **架构提示**：从本次更新起，`drsai` / `drsai chat` 启动的是基于 React/Ink 的双进程 TUI（前端 = Node.js，后端 = Python JSON-RPC gateway）。旧的单进程 `run_cli.py` 已被保留为 `_deprecated/run_cli_legacy.py`，不再接入。下文记录的所有命令都通过 JSON-RPC 的 `slash.exec` 在 gateway 端执行；命令注册表 (`cli/commands.py`) 仍是单一真相源。
 
@@ -13,22 +13,23 @@
 2. [启动与配置](#2-启动与配置)
 3. [System Prompt 层级架构](#3-system-prompt-层级架构)
 4. [Session 管理](#4-session-管理)
-5. [模型与推理控制](#5-模型与推理控制)
-6. [项目指令 (DRSAI.md)](#6-项目指令-drsaimd)
-7. [记忆管理](#7-记忆管理)
-8. [Plan Mode 与 Prompt 注入](#8-plan-mode-与-prompt-注入)
-9. [状态与信息查看](#9-状态与信息查看)
-10. [安全控制](#10-安全控制)
-11. [图像多模态输入](#11-图像多模态输入-)
-12. [显示与交互控制](#12-显示与交互控制)
-13. [中断与退出](#13-中断与退出)
-14. [定时任务与通知推送](#14-定时任务与通知推送)
-15. [完整命令速查表](#15-完整命令速查表)
-16. [TUI 行为与调优](#16-tui-行为与调优)
-17. [Skill 管理](#17-skill-管理)
-18. [Daemon 后台常驻服务](#18-daemon-后台常驻服务)
-19. [微信接入](#19-微信接入)
-20. [Subagent / 子智能体 (Delegate)](#20-subagent子智能体-delegate)
+5. [Session 搜索与组织](#5-session-搜索与组织)
+6. [模型与推理控制](#6-模型与推理控制)
+7. [项目指令 (DRSAI.md)](#7-项目指令-drsaimd)
+8. [记忆管理](#8-记忆管理)
+9. [Plan Mode 与 Prompt 注入](#9-plan-mode-与-prompt-注入)
+10. [状态与信息查看](#10-状态与信息查看)
+11. [安全控制](#11-安全控制)
+12. [图像多模态输入](#12-图像多模态输入-)
+13. [显示与交互控制](#13-显示与交互控制)
+14. [中断与退出](#14-中断与退出)
+15. [定时任务与通知推送](#15-定时任务与通知推送)
+16. [完整命令速查表](#16-完整命令速查表)
+17. [TUI 行为与调优](#17-tui-行为与调优)
+18. [Skill 管理](#18-skill-管理)
+19. [Daemon 后台常驻服务](#19-daemon-后台常驻服务)
+20. [微信接入](#20-微信接入)
+21. [Subagent / 子智能体 (Delegate)](#21-subagent子智能体-delegate)
 
 ---
 
@@ -57,6 +58,8 @@ DrSai CLI 是 DrSai 智能体框架的**本地交互式终端客户端**。它�
 - **定时任务**: 配合 Worker 后端可创建后台定时任务，终端自动推送完成通知
 - **Workspace 限制**: 默认开启，将 AI 的文件操作和 Shell 命令限制在项目目录 + 内部存储目录内，防止越界访问
 - **危险命令控制**: 默认拦截 `sudo`、`rm -rf` 等系统级危险命令和 `python script.py`、`bash script.sh` 等脚本执行命令，可通过 `/dangerous on` 临时授权
+- **Session 搜索与组织**: 自然语言搜索 (`/find`)、标签管理 (`/tag`)、置顶 (`/pin`)、归档 (`/archive`)，让大量 Session 有序可查
+- **子智能体并发控制**: `/max_concurrent` 设置子智能体最大并行数，防止资源过载
 
 ### 1.2 特色功能详解
 
@@ -239,12 +242,17 @@ drsai
 |------|------|------|------|
 | `/new` | | `[name]` | 创建新 Session。可选指定名称，默认以 cwd 目录名命名 |
 | `/switch` | | `<id|name>` | 切换到另一个 Session。可用 ID 前缀或名称匹配 |
-| `/list` | `/ls` | | 列出所有 Session，标记当前 Session 和工作目录 |
+| `/list` | `/ls` | | 列出所有 Session（默认排除已归档），标记当前 Session 和工作目录 |
 | `/rename` | | `<name>` | 重命名当前 Session |
 | `/history` | | | 显示当前 Session 的对话历史（每条消息截断到 80 字符） |
 | `/save` | | | 手动保存（实际上每轮对话后自动保存，此命令为占位） |
 | `/resume` | | `<id|name>` | 恢复之前的 Session 并显示历史消息数 |
 | `/search` | | `<query>` | 在所有 Session 中搜索（子串匹配，大小写不敏感） |
+| `/find` | | `<query> [--cwd]` | 自然语言搜索 Session（语义+关键词混合，BM25 排名）。加 `--cwd` 限定当前目录 |
+| `/tag` | | `add\|remove\|list [tags...]` | 管理 Session 标签 |
+| `/pin` | | | 置顶当前 Session（在列表和快速访问中优先显示） |
+| `/unpin` | | | 取消置顶 |
+| `/archive` | | `[off]` | 归档当前 Session（从默认列表隐藏，可通过 `/find` 搜索恢复）；`off` 取消归档 |
 | `/copy` | | `[n]` | 复制第 n 条最近的助手回复到剪贴板（默认 n=1） |
 
 ### 4.3 Session 切换流程
@@ -268,9 +276,112 @@ drsai
 
 ---
 
-## 5 模型与推理控制
+## 5 Session 搜索与组织
 
-### 5.1 模型切换
+当 Session 数量增多时，传统的 `/list` 和 `/search`（子串匹配）难以快速定位目标会话。DrSai 提供了一套搜索与组织工具，让大量 Session 有序可查。
+
+### 5.1 `/find` — 自然语言搜索
+
+`/find` 使用 **语义+关键词混合搜索** 策略（三阶段）：
+
+1. **关键词预筛选**: name + preview + workdir 子串匹配（快）
+2. **FTS5 深度搜索**: 通过 `session_search_fts` 表 BM25 排名（中）
+3. **综合评分**: 时间衰减 + 工作目录相关性 + 置顶加成
+
+```bash
+# 按内容语义搜索
+/find 修复登录 bug 的那次会话
+→ 🎯 myapp-auth-fix (3 days ago, 42 msgs) 相关度: 0.87
+
+# 按项目+任务搜索
+/find drsai 项目的 session 管理
+→ 🎯 drsai-session-mgmt (current, 15 msgs) 相关度: 0.95
+
+# 限定工作目录
+/find --cwd 性能优化
+→ 仅在当前工作目录的 Session 中搜索
+```
+
+> **底层实现**: 搜索使用 `session_search_fts`（trigram 分词器，支持 CJK 和部分匹配），启动时自动回填历史 Thread 数据，确保旧 Session 也能被检索。
+
+### 5.2 `/tag` — 标签管理
+
+为 Session 添加自定义标签，便于分类和筛选：
+
+```bash
+# 添加标签
+/tag add bug urgent
+→ ✓ 添加标签: #bug #urgent
+
+# 查看标签
+/tag list
+→ Tags: bug, urgent, frontend
+
+# 移除标签
+/tag remove bug
+→ ✓ 移除标签: #bug
+```
+
+标签存储在 `Thread.meta.tags` 中，并同步到 `session_search_fts`，可被 `/find` 搜索。
+
+### 5.3 `/pin` / `/unpin` — 置顶
+
+置顶的 Session 在 `/list`、`session.quick_access`、`session.workspace_map` 中优先显示：
+
+```bash
+/pin       → 📌 当前 Session 已置顶
+/unpin     → 取消置顶
+```
+
+### 5.4 `/archive` — 归档
+
+归档的 Session 从默认列表中隐藏，但仍可通过 `/find` 搜索恢复：
+
+```bash
+/archive          → 归档当前 Session（从默认列表隐藏）
+/archive off      → 取消归档，重新出现在列表中
+```
+
+> **行为细节**: 归档后 `session.list` 默认排除该 Session，`session.most_recent` 也不会自动恢复归档 Session。`session.list` 支持 `include_archived=true` 参数包含归档项。
+
+### 5.5 新增 RPC 方法
+
+| 方法 | 说明 |
+|------|------|
+| `session.smart_search` | 语义+关键词混合搜索，返回 BM25 排名结果 |
+| `session.workspace_map` | 工作目录→Session 映射 + 推荐 |
+| `session.quick_access` | 优先级排序快速访问列表（workdir > pinned > recent） |
+| `session.tag_add` | 添加标签 |
+| `session.tag_remove` | 移除标签 |
+| `session.pin` | 置顶 |
+| `session.unpin` | 取消置顶 |
+| `session.archive` | 归档/取消归档 |
+
+### 5.6 SessionInfo 扩展字段
+
+`SessionInfo` 数据结构新增以下字段（旧 Session 自动填充默认值，完全兼容）：
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `tags` | `list[str]` | `[]` | 用户自定义标签 |
+| `pinned` | `bool` | `False` | 是否置顶 |
+| `archived` | `bool` | `False` | 是否归档 |
+| `relevance_score` | `float` | `0.0` | 搜索相关度评分 |
+
+### 5.7 数据库底层变更
+
+| 变更 | 说明 |
+|------|------|
+| `session_search_fts` FTS5 虚拟表 | Session 元数据搜索索引（trigram 分词） |
+| 3 个 `idx_thread_*` 索引 | `user+workdir`、`user+updated_at`、`user+archived` |
+| 3 个 `session_search_fts_*` 触发器 | INSERT/DELETE/UPDATE 自动同步 |
+| 启动时自动回填 | 确保 `session_search_fts` 包含所有历史 Thread |
+
+---
+
+## 6 模型与推理控制
+
+### 6.1 模型切换
 
 DrSai CLI 支持在会话内即时切换模型，有两种模式：
 
@@ -299,7 +410,7 @@ DrSai CLI 支持在会话内即时切换模型，有两种模式：
 | `d` | 删除光标行 |
 | `Esc` | 关闭 |
 
-### 5.2 模型库管理（add / edit / rm）
+### 6.2 模型库管理（add / edit / rm）
 
 模型目录持久化到 `cli_config.json` 中 `llm_config_file` 指向的 YAML 文件。修改后**无需重启**，新别名立即可用。
 
@@ -355,7 +466,7 @@ DrSai CLI 支持在会话内即时切换模型，有两种模式：
 - 删除的若是当前会话使用的模型，自动切到第一个剩余 alias
 - 删除的若是全局默认，自动改写默认指针到第一个剩余 alias
 
-### 5.3 模型列表
+### 6.3 模型列表
 
 ```
 /models               # 列出所有可用模型，显示推理支持信息
@@ -374,14 +485,14 @@ DrSai CLI 支持在会话内即时切换模型，有两种模式：
   ──────────────────────────────────────────────────────────────────────
 ```
 
-### 5.4 快速模式
+### 6.4 快速模式
 
 ```
 /fast                 # 切换到最快的模型别名（自动识别 highspeed/flash/haiku）
 /fast off             # 切换回默认模型
 ```
 
-### 5.5 推理控制
+### 6.5 推理控制
 
 ```
 /reasoning            # 切换推理框显示 (on/off)
@@ -397,13 +508,13 @@ DrSai CLI 支持在会话内即时切换模型，有两种模式：
 
 ---
 
-## 6 项目指令 (DRSAI.md)
+## 7 项目指令 (DRSAI.md)
 
-### 6.1 设计理念
+### 7.1 设计理念
 
 项目指令系统借鉴了 Claude Code 的 `CLAUDE.md` 机制，但适配了 DrSai 的架构。它让 AI 在每次会话开始时自动理解你的项目上下文——构建命令、编码标准、架构决策、常见工作流等。
 
-### 6.2 文件发现机制
+### 7.2 文件发现机制
 
 从当前工作目录 (`cwd`) **向上遍历**目录树，发现指令文件：
 
@@ -426,7 +537,7 @@ DrSai CLI 支持在会话内即时切换模型，有两种模式：
 - Linux: `/etc/drsai/DRSAI.md`
 - macOS: `/Library/Application Support/DrSai/DRSAI.md`
 
-### 6.3 @import 语法
+### 7.3 @import 语法
 
 DRSAI.md 支持 `@path/to/file` 导入语法，在加载时递归展开：
 
@@ -449,7 +560,7 @@ DRSAI.md 支持 `@path/to/file` 导入语法，在加载时递归展开：
 - 递归深度限制: 5 层
 - 文件大小限制: 100KB
 
-### 6.4 HTML 注释剥离
+### 7.4 HTML 注释剥离
 
 DRSAI.md 中非代码块区域的 HTML 注释 (`<!-- ... -->`) 在注入前被自动剥离，节省 context token。代码块内的注释保留不变：
 
@@ -464,7 +575,7 @@ def hello():
 ```
 ```
 
-### 6.5 项目指令命令
+### 7.5 项目指令命令
 
 | 命令 | 说明 |
 |------|------|
@@ -474,7 +585,7 @@ def hello():
 | `/memory reload` | 从磁盘重新加载项目指令并注入到当前会话（编辑 DRSAI.md 后立即生效） |
 | `/memory status` | 列出所有发现的项目指令文件（路径、scope、行数、KB） |
 
-### 6.6 /init 命令详解
+### 7.6 /init 命令详解
 
 `/init` 调用 `init_project_instructions(cwd)` 完成：
 
@@ -489,7 +600,7 @@ def hello():
 
 如果 DRSAI.md 已存在，`/init` 不会覆盖，提示"Already exists" 并附加 reload 指引。
 
-### 6.7 /memory status 输出示例
+### 7.7 /memory status 输出示例
 
 ```
   Project instruction files:
@@ -500,7 +611,7 @@ def hello():
   Total: 2 project file(s), 57 lines, 2.2 KB
 ```
 
-### 6.8 /memory reload 详解
+### 7.8 /memory reload 详解
 
 ```
 /memory reload
@@ -512,15 +623,15 @@ def hello():
 
 注意：reload 后**当前会话立即生效**，下一轮提问就会带上新指令。无需 `/clear` 或重启。
 
-### 6.9 项目指令的持久化
+### 7.9 项目指令的持久化
 
 项目指令在首次加载后通过 `save_state()` 持久化到 Session 状态中。下次恢复同一 Session 时，项目指令从状态中恢复而非重新从磁盘加载，除非用户显式使用 `/memory reload`。
 
 ---
 
-## 7 记忆管理
+## 8 记忆管理
 
-### 7.1 记忆层级
+### 8.1 记忆层级
 
 DrSai CLI 的记忆系统通过 `DrSaiSQLiteChatCompletionContext` 实现，内置两个核心工具：
 
@@ -530,7 +641,7 @@ DrSai CLI 的记忆系统通过 `DrSaiSQLiteChatCompletionContext` 实现，内�
 | `summry_conversation_to_memory` | 将对话总结存入长期记忆 | AI 自动调用或手动触发 |
 | `read_session_memory_by_index` | 按索引读取压缩前的原始消息 | 用于恢复被压缩的详细内容 |
 
-### 7.2 记忆检索
+### 8.2 记忆检索
 
 `retrieve_from_memory` 使用 BM25 排序的 FTS5 全文检索：
 
@@ -539,7 +650,7 @@ DrSai CLI 的记忆系统通过 `DrSaiSQLiteChatCompletionContext` 实现，内�
 - 支持元数据条件过滤（如按 thread_id）
 - 可调节相似度阈值和分页大小
 
-### 7.3 记忆与 Session 的关系
+### 8.3 记忆与 Session 的关系
 
 ```
 Session A (thread_id: aaa...)
@@ -557,9 +668,9 @@ Session B (thread_id: bbb...)
 
 ---
 
-## 8 Plan Mode 与 Prompt 注入
+## 9 Plan Mode 与 Prompt 注入
 
-### 8.1 Plan Mode
+### 9.1 Plan Mode
 
 Plan Mode 让 AI 在执行复杂任务前先访谈用户，逐个确认设计决策：
 
@@ -581,7 +692,7 @@ Plan Mode 让 AI 在执行复杂任务前先访谈用户，逐个确认设计决
 
 **运行时切换**：`/plan_mode on` 不仅会写 `agent._injected_prefix = PLAN_MODE_SYSTEM_PROMPT`，还会立刻调用 `agent.update_system_prompt()` 重建 system message，下一轮提问立即带上前缀。`off` 会清空 prefix 并重建。
 
-### 8.2 /inject 命令
+### 9.2 /inject 命令
 
 `/inject` 允许动态注入自定义提示词到 system prompt：
 
@@ -596,7 +707,7 @@ Plan Mode 让 AI 在执行复杂任务前先访谈用户，逐个确认设计决
 
 ---
 
-## 9 状态与信息查看
+## 10 状态与信息查看
 
 | 命令 | 说明 |
 |------|------|
@@ -638,9 +749,9 @@ Plan Mode 让 AI 在执行复杂任务前先访谈用户，逐个确认设计决
 
 ---
 
-## 10 安全控制
+## 11 安全控制
 
-### 10.1 Workspace 限制 (`/workspace`)
+### 11.1 Workspace 限制 (`/workspace`)
 
 Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围：
 
@@ -672,7 +783,7 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
     status   - Show current status (default)
 ```
 
-### 10.2 危险命令控制 (`/dangerous`)
+### 11.2 危险命令控制 (`/dangerous`)
 
 危险命令控制决定 AI 智能体的 `run_bash` / `run_bash_background` / `run_powershell` 是否拦截两类危险命令：
 
@@ -716,7 +827,7 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 
 被拦截的 tool call 返回错误字符串给 LLM，LLM 可继续对话并选择安全命令替代，不会中断整个对话流。
 
-### 10.3 状态持久化
+### 11.3 状态持久化
 
 `/workspace` 和 `/dangerous` 的状态通过 `save_state()` 持久化到 Session 数据库：
 
@@ -731,11 +842,11 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 - 重启 CLI 后，workspace 和 dangerous 状态从 Session 数据库恢复
 - 通过 `load_state()` 中的 toggle helpers 同步闭包变量 (`_only_in_workspace[0]`, `_dangerous_allowed[0]`)
 
-### 10.4 防篡改保护
+### 11.4 防篡改保护
 
 `set_workspace_restriction`、`get_workspace_status`、`set_dangerous_allowed`、`get_dangerous_status` 四个 toggle 辅助函数被列入 `_TOGGLE_FUNC_NAMES` 过滤集。LLM 无法自行调用这些函数解除限制——只有用户通过 `/workspace` 或 `/dangerous` 命令才能切换状态。
 
-### 10.5 底部工具栏指示
+### 11.5 底部工具栏指示
 
 底部工具栏实时显示 workspace 和 dangerous 状态，以及当前默认子智能体（设置后）：
 
@@ -755,11 +866,11 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 
 ---
 
-## 11 图像多模态输入 🆕
+## 12 图像多模态输入 🆕
 
 新版 TUI 支持在 CLI 中向视觉模型（如 Claude Sonnet、GPT-4o 等）传入图像。提供两种方式，可自由组合使用。
 
-### 11.1 `/image` 命令
+### 12.1 `/image` 命令
 
 直接发送一张或多张图像作为一轮对话：
 
@@ -790,7 +901,7 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 - 单次最多 10 张图像
 - 支持格式：`.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` `.svg`
 
-### 11.2 `@/path` 内联引用
+### 12.2 `@/path` 内联引用
 
 在普通对话文本中嵌入图像路径，用 `@` 标记：
 
@@ -810,7 +921,7 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 
 > ⚠️ 注意：`@` 引用只匹配带图像扩展名的路径。`@/tmp/readme.txt` 不会被识别为图像。
 
-### 11.3 工作原理
+### 12.3 工作原理
 
 ```
 用户输入 → TUI 解析 @/path 或 /image → 读取文件 → base64 编码
@@ -824,7 +935,7 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 - 非视觉模型（不支持 vision）时，Agent 内部的 `_get_compatible_context` 会自动调用 `remove_images()` 去除图像，不会报错。
 - 文件读取在 TUI（Node.js）端完成，因此 **attach 模式也能正常工作**——即使 gateway 在远程机器上，本地图像仍可传入。
 
-### 11.4 错误提示
+### 12.4 错误提示
 
 | 场景 | 提示 |
 |------|------|
@@ -835,7 +946,7 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 
 ---
 
-## 12 显示与交互控制
+## 13 显示与交互控制
 
 | 命令 | 说明 |
 |------|------|
@@ -866,9 +977,9 @@ Workspace 限制控制 AI 智能体的文件操作和 Shell 命令路径范围�
 
 ---
 
-## 13 中断与退出
+## 14 中断与退出
 
-### 13.1 Ctrl+C 中断
+### 14.1 Ctrl+C 中断
 
 新版 TUI 的 Ctrl+C 行为与旧版单进程 REPL **不同**，具体取决于当前状态：
 
@@ -900,7 +1011,7 @@ Ctrl+C (streaming)
 
 **Gateway 进程免疫 SIGINT**：Python gateway 子进程完全忽略终端 Ctrl+C 信号，取消只能通过 RPC `prompt.cancel` 发起。
 
-### 13.2 退出命令
+### 14.2 退出命令
 
 | 命令 | 别名 | 说明 |
 |------|------|------|
@@ -930,9 +1041,9 @@ Ctrl+D → App useInput 捕获 → isExitingRef 防重入
 
 ---
 
-## 14 定时任务与通知推送
+## 15 定时任务与通知推送
 
-### 14.1 远程 Worker 模式
+### 15.1 远程 Worker 模式
 
 配置了 Worker URL (`--url` 或 `cfg.url`) 时，CLI 启动远程定时任务管理：
 
@@ -951,7 +1062,7 @@ drsai --url http://localhost:42858/apiv2
     构建完成，所有测试通过
 ```
 
-### 14.2 本地模式
+### 15.2 本地模式
 
 无 Worker URL 时，定时任务推送不可用，终端提示：
 
@@ -961,7 +1072,7 @@ drsai --url http://localhost:42858/apiv2
 
 ---
 
-## 15 完整命令速查表
+## 16 完整命令速查表
 
 ### Session 管理
 
@@ -969,15 +1080,25 @@ drsai --url http://localhost:42858/apiv2
 |------|------|------|------|
 | `/new` | | `[name]` | 创建新 Session |
 | `/switch` | | `<id|name>` | 切换到另一个 Session |
-| `/list` | `/ls` | | 列出所有 Session |
+| `/list` | `/ls` | | 列出所有 Session（默认排除已归档） |
 | `/rename` | | `<name>` | 重命名当前 Session |
 | `/history` | | | 显示对话历史 |
 | `/save` | | | 保存（自动保存的占位命令） |
 | `/retry` | | | 重试上一条消息 |
 | `/resume` | | `<id|name>` | 恢复之前的 Session |
-| `/search` | | `<query>` | 搜索所有 Session |
+| `/search` | | `<query>` | 搜索所有 Session（子串匹配） |
 | `/copy` | | `[n]` | 复制助手回复到剪贴板 |
 | `/clear` | `/cls` | | 清屏 |
+
+### Session 搜索与组织
+
+| 命令 | 别名 | 参数 | 说明 |
+|------|------|------|------|
+| `/find` | | `<query> [--cwd]` | 自然语言搜索 Session（语义+关键词混合，BM25 排名） |
+| `/tag` | | `add\|remove\|list [tags...]` | 管理 Session 标签 |
+| `/pin` | | | 置顶当前 Session |
+| `/unpin` | | | 取消置顶 |
+| `/archive` | | `[off]` | 归档当前 Session（隐藏）；`off` 取消归档 |
 
 ### 模型与推理
 
@@ -1051,6 +1172,7 @@ drsai --url http://localhost:42858/apiv2
 |------|------|------|------|
 | `/agent` | | `<name>\|list\|clear` | 设置/清除默认子智能体，或列出所有可用子智能体 |
 | `/delegate` | `/sub` | `<agent_type> <prompt>` | 手动向子智能体委派任务 |
+| `/max_concurrent` | `/mc` | `<number|status>` | 设置子智能体最大并行数（全局持久化） |
 
 ### Daemon 管理 (CLI)
 
@@ -1080,9 +1202,9 @@ drsai --url http://localhost:42858/apiv2
 
 ---
 
-## 16 TUI 行为与调优
+## 17 TUI 行为与调优
 
-### 16.1 流式渲染策略
+### 17.1 流式渲染策略
 
 为了在 Windows PowerShell（特别是 Win10 的 PS 5.1 + 旧 `conhost.exe`）下保持流畅，TUI 采用了"流式期间纯文本、完成后再 Markdown"的渲染策略：
 
@@ -1096,7 +1218,7 @@ DRSAI_TUI_FLUSH_MS=120 drsai chat      # 慢终端调宽
 DRSAI_TUI_FLUSH_MS=32  drsai chat      # 快终端调紧（最低 16，最高 500）
 ```
 
-### 16.2 PowerShell 兼容性 (run_powershell 工具)
+### 17.2 PowerShell 兼容性 (run_powershell 工具)
 
 `run_powershell` 工具（在 `is_powershell=True` 时取代 `run_bash`）做了以下处理保证兼容旧版 PowerShell：
 
@@ -1106,7 +1228,7 @@ DRSAI_TUI_FLUSH_MS=32  drsai chat      # 快终端调紧（最低 16，最高 50
 
 详见 [operater_funs.py](../cores/python/packages/drsai/src/drsai/modules/agents/skills_agent/managers/operater_funs.py) 的 `_build_ps_command` 和 `_ps_args`。
 
-### 16.3 前后端 RPC 映射
+### 17.3 前后端 RPC 映射
 
 | RPC | 触发 | 用途 |
 |------|------|------|
@@ -1135,7 +1257,7 @@ DRSAI_TUI_FLUSH_MS=32  drsai chat      # 快终端调紧（最低 16，最高 50
 | `subagent.complete` (event) | 子智能体完成 | 清除 StatusBar，未流式的最终文本一次性追加 |
 | `subagent.delegate` (event) | `/delegate` 命令 | 手动委派时触发，携带 agent_type + prompt |
 
-### 16.4 子智能体 TUI 渲染行为
+### 17.4 子智能体 TUI 渲染行为
 
 子智能体（Delegate）的执行在 TUI 中有以下渲染行为：
 
@@ -1154,7 +1276,7 @@ DRSAI_TUI_FLUSH_MS=32  drsai chat      # 快终端调紧（最低 16，最高 50
 
 **事件处理代码路径**：`createGatewayEventHandler.ts:175-196` 中处理 `subagent.start`、`subagent.thinking`、`subagent.complete`、`subagent.tool`、`subagent.progress` 事件。详见 [createGatewayEventHandler.ts](../apps/ui-tui/src/app/createGatewayEventHandler.ts)。
 
-### 16.5 命令注册表与 `cli_only` 标记
+### 17.5 命令注册表与 `cli_only` 标记
 
 `backend/cli/commands.py` 中的 `COMMAND_REGISTRY` 是单一真相源，TUI 通过 `commands.catalog` RPC 拉取后用于 `/help` 和 Tab 补全。
 
@@ -1162,11 +1284,11 @@ DRSAI_TUI_FLUSH_MS=32  drsai chat      # 快终端调紧（最低 16，最高 50
 
 ---
 
-## 17 Skill 管理
+## 18 Skill 管理
 
 > **实现状态**：已实现（2026-06）。相关文件：`tui_gateway/handlers/skills.py`、`apps/ui-tui/src/components/skillsPane.tsx`、`composerPane.tsx`。
 
-### 17.1 概念
+### 18.1 概念
 
 **Skill** 是存储为 `SKILL.md` 文件的可复用技能包，Agent 在需要特定领域操作时按需加载。每个 Skill 占一个独立子目录：
 
@@ -1194,7 +1316,7 @@ description: 一句话描述，Agent 用此判断何时激活本技能。
 
 Agent 每次对话前自动扫描 skills 目录，按 `description` 字段决定是否激活对应技能；激活时将 SKILL.md 正文注入 system prompt（Layer 2 按需加载）。
 
-### 17.2 TUI Skill 管理面板
+### 18.2 TUI Skill 管理面板
 
 在 TUI 输入框输入 `/skills`（或 `/skill`）打开交互式管理面板：
 
@@ -1243,7 +1365,7 @@ This will permanently remove the skill directory.
 Press y to confirm, n / Esc to cancel.
 ```
 
-### 17.3 Gateway RPC：`skills.manage`
+### 18.3 Gateway RPC：`skills.manage`
 
 TUI 面板通过 `skills.manage` JSON-RPC 与 gateway 通信，支持以下 `action`：
 
@@ -1270,7 +1392,7 @@ TUI 面板通过 `skills.manage` JSON-RPC 与 gateway 通信，支持以下 `act
 }}
 ```
 
-### 17.4 热重载机制
+### 18.4 热重载机制
 
 `create` / `update` / `delete` / `reload` 操作会立即触发当前 session 的 Agent 调用 `agent.update_user_skills()`，效果等同于文件修改后的自动检测，**无需重启 TUI 或 gateway**。
 
@@ -1284,17 +1406,17 @@ skills.manage RPC
       → 下一轮对话时生效
 ```
 
-### 17.5 技能名称规范
+### 18.5 技能名称规范
 
 技能目录名（即 `name` 参数）只允许字母、数字、连字符和下划线（`^[a-zA-Z0-9_\-]+$`），长度不超过 64 字符。不合法名称会收到 `4002` 错误。
 
 ---
 
-## 18 Daemon 后台常驻服务
+## 19 Daemon 后台常驻服务
 
 > **实现状态**：已实现。代码位于 `backend/daemon/`。本章记录用户侧接口与行为规范。
 
-### 18.1 背景与动机
+### 19.1 背景与动机
 
 当前 TUI gateway 以**子进程模式**运行：TUI 启动时 spawn，TUI 退出时随之销毁。这导致：
 
@@ -1304,7 +1426,7 @@ skills.manage RPC
 
 **Daemon 模式**将 gateway 提升为独立后台进程，TUI 作为其管理终端，随时可 attach/detach。
 
-### 18.2 `drsai daemon` 命令
+### 19.2 `drsai daemon` 命令
 
 ```bash
 # 启动后台 daemon（首次启动或重启）
@@ -1362,7 +1484,7 @@ $ drsai daemon start --name research-bot --model claude-sonnet-4-5 --wechat
 
 > **微信自动登录**：当 `--wechat` 启用但凭据文件（`~/.drsai/workspace/wechat/credentials.json`）不存在或已过期（>7天）时，`start` 命令会在父进程中自动触发终端二维码扫码登录。登录成功后凭据被持久化，后续重启无需重新扫码。详见 [19 微信接入](#19-微信接入)。
 
-### 18.3 Daemon 运行状态
+### 19.3 Daemon 运行状态
 
 ```
 $ drsai daemon status
@@ -1381,7 +1503,7 @@ old-bot         —       8767     —                   —            —     
 | `stopped` | PID 文件不存在（正常退出） |
 | `stale pid` | PID 文件存在但进程已死（崩溃） |
 
-### 18.4 文件存储
+### 19.4 文件存储
 
 | 文件 | 路径 | 说明 |
 |------|------|------|
@@ -1404,7 +1526,7 @@ old-bot         —       8767     —                   —            —     
 }
 ```
 
-### 18.5 端口分配策略
+### 19.5 端口分配策略
 
 | 参数 | 默认值 | 说明 |
 |------|-------|------|
@@ -1413,7 +1535,7 @@ old-bot         —       8767     —                   —            —     
 
 如未指定 `--port`，daemon 自动扫描 `[42500, 43000)` 区间内第一个未被占用的端口；`--wechat-port` 自动扫描 `[9000, 9100)` 区间。多 daemon 实例互不冲突。
 
-### 18.6 TUI 内 Daemon 管理面板（`/daemons`）
+### 19.6 TUI 内 Daemon 管理面板（`/daemons`）
 
 在 TUI 中输入 `/daemons` 打开 daemon 管理面板：
 
@@ -1437,7 +1559,7 @@ old-bot         —       8767     —                   —            —     
 | `l` | 显示最近 50 条日志（实时更新） |
 | `q` / `Esc` | 关闭面板 |
 
-### 18.7 WebSocket 协议兼容性
+### 19.7 WebSocket 协议兼容性
 
 Daemon 的 WebSocket 服务使用与现有 stdio 管道**完全相同**的 JSON-RPC 协议，所有现有 RPC 方法（`session.*`、`prompt.*`、`slash.exec`、`model.*` 等）均可通过 WebSocket 调用，TUI 无需修改业务逻辑。
 
@@ -1450,7 +1572,7 @@ Daemon Process (独立进程，常驻后台)
   └── SQLite 持久化
 ```
 
-### 18.8 作为子智能体被调用
+### 19.8 作为子智能体被调用
 
 > 关于子智能体系统的完整说明（内置类型、自定义配置、默认路由、委派深度限制等），请参见专门的 **[20 Subagent / 子智能体](#20-subagent-子智能体delegate)** 章节。本节仅说明 daemon 作为子智能体的调用方式。
 
@@ -1471,7 +1593,7 @@ TUI 可将后台 daemon 作为子智能体，通过 `subagent.invoke` RPC 调用
 
 调用后 daemon 将结果通过 `subagent.delta` / `subagent.complete` 事件流式推回 TUI，显示效果与本地子智能体相同。
 
-### 18.9 Daemon 模型独立配置
+### 19.9 Daemon 模型独立配置
 
 Daemon 可以独立于主智能体使用不同的模型。Daemon 的模型配置优先级为：
 
@@ -1513,18 +1635,18 @@ drsai daemon start --name coder --model claude-haiku
 
 ---
 
-## 19 微信接入
+## 20 微信接入
 
 > **实现状态**：ilink Bot 长轮询模式已实现（`backend/wechat/`）。企业微信 Webhook 模式待实现。
 
-### 19.1 两种接入模式
+### 20.1 两种接入模式
 
 | 模式 | 技术方案 | 适用场景 | 实现状态 |
 |------|---------|---------|---------|
 | **微信个人号**（ilink） | ilink Bot 长轮询 API（`ilinkai.weixin.qq.com`） | 个人开发者，无需服务器公网 IP | ✅ 已实现 |
 | **企业微信 Bot** | Webhook 推送（需公网可达） | 团队/企业内部部署 | ⏳ 待实现 |
 
-### 19.2 启动微信接入
+### 20.2 启动微信接入
 
 ```bash
 # 启动支持微信的 daemon（首次会触发自动扫码登录）
@@ -1554,7 +1676,7 @@ drsai daemon start --name my-bot --wechat
 
 > **注意**：扫码在 CLI 父进程中完成（有终端交互），而非在后台 daemon 进程中。这确保了二维码能正常显示在用户的终端上。
 
-### 19.3 凭据生命周期
+### 20.3 凭据生命周期
 
 | 阶段 | 说明 |
 |------|------|
@@ -1576,7 +1698,7 @@ drsai daemon start --name my-bot --wechat
 }
 ```
 
-### 19.4 消息流架构
+### 20.4 消息流架构
 
 ```
 微信用户发消息到 ilink Bot
@@ -1596,7 +1718,7 @@ WeChatBot.handle_message()
 - WeChatBot 运行在 daemon 进程内，不依赖外部端口暴露
 - `--wechat-port` 参数当前仅用于端口占用检测，ilink 模式不需要本地端口
 
-### 19.5 多用户会话隔离
+### 20.5 多用户会话隔离
 
 每个微信用户（`from_user_id`）自动映射到独立的 AgentSession：
 
@@ -1607,7 +1729,7 @@ wechat_user_id → chat_id (微信用户 ID)
 
 **Session 持久化**：daemon 将微信会话映射保存到 `~/.drsai/workspace/daemons/<name>/wechat_sessions.json`，daemon 重启后不会丢失。
 
-### 19.6 消息格式规范
+### 20.6 消息格式规范
 
 | 微信消息类型 | 处理方式 |
 |------------|---------|
@@ -1632,7 +1754,7 @@ wechat_user_id → chat_id (微信用户 ID)
 | `/agent <name>` | 设置默认子智能体 |
 | `/agent clear` | 取消默认子智能体 |
 
-### 19.7 配置参数
+### 20.7 配置参数
 
 | 参数 | 说明 | 默认值 |
 |------|------|-------|
@@ -1646,13 +1768,15 @@ wechat_user_id → chat_id (微信用户 ID)
 
 | 文件 | 路径 | 说明 |
 |------|------|------|
-| CLI 配置 | `~/.drsai/configs/cli_config.json` | API Key、模型、Plan Mode 等 |
-| Session 存储 | SQLite `Thread` 表 | 对话历史、状态、元数据 |
+| CLI 配置 | `~/.drsai/configs/cli_config.json` | API Key、模型、Plan Mode、max_agent_concurrent 等 |
+| Session 存储 | SQLite `Thread` 表 | 对话历史、状态、元数据（含 tags/pinned/archived） |
 | Agent Workspace | `~/.drsai/workspace/runs/<user_id>/` | Agent 工作目录 |
 | Agent 配置 | `~/.drsai/workspace/runs/<user_id>/configs/` | AGENTS.md、TOOLS_CONFIG.json 等 |
 | **子智能体配置** | `~/.drsai/workspace/runs/<user_id>/configs/SUBAGENT_CONFIG.json` | 用户自定义子智能体定义 |
 | **线程配置** | `~/.drsai/workspace/runs/<user_id>/configs/THREAD_CONFIG.json` | 线程级默认子智能体持久化 |
 | **Skills 目录** | `~/.drsai/workspace/runs/<user_id>/configs/skills/` | 用户安装的 Skill（每个子目录含 SKILL.md） |
+| **Session 搜索索引** | SQLite `session_search_fts` 表 | Session 元数据 FTS5 全文搜索索引（trigram） |
+| **Session 索引** | SQLite `idx_thread_user_*` | workdir/updated_at/archived 复合索引 |
 | 项目指令 | `.drsai/DRSAI.md` (项目目录下) | 项目级指令 |
 | 组织指令 | `/etc/drsai/DRSAI.md` (Linux) | 组织级策略 |
 | **Daemon PID** | `~/.drsai/workspace/daemons/<name>.pid` | Daemon 进程 PID |
@@ -1705,11 +1829,11 @@ wechat_user_id → chat_id (微信用户 ID)
 ```
 ---
 
-## 20 Subagent（子智能体 / Delegate）
+## 21 Subagent（子智能体 / Delegate）
 
 > **实现状态**：核心功能已实现（2026-06）。相关文件：`drsai_assistant.py:_execute_subagent`、`managers/get_managers_tools.py:get_subagent_tools`、`daemon_subagent.py`、`slash.py:cmd_agent/cmd_delegate`、`createGatewayEventHandler.ts:subagent.*`。
 
-### 20.1 概念
+### 21.1 概念
 
 **Subagent（子智能体）** 是 DrSai CLI 的分层任务委派机制。当主智能体遇到复杂任务时，可将子任务委派给专门的子智能体执行。子智能体具有以下特性：
 
@@ -1726,7 +1850,7 @@ wechat_user_id → chat_id (微信用户 ID)
 | **Delegate 工具** | LLM 自动调用 `Delegate` tool | AI 自主判断何时委派、选择哪个子智能体类型 |
 | **默认路由** | `/agent <name>` 设置 + 用户提问 | 所有用户消息直接路由到指定的默认子智能体 |
 
-### 20.2 内置子智能体类型
+### 21.2 内置子智能体类型
 
 系统内置两种子智能体类型（定义在 `drsai_assistant.py:BUILTIN_SUBAGENTS`）：
 
@@ -1746,7 +1870,7 @@ wechat_user_id → chat_id (微信用户 ID)
 
 > ⚠️ **安全机制**：所有内置子智能体默认禁止使用 `Delegate` 工具，防止子智能体继续委派导致无限递归。叶节点角色（`role: "leaf"`）强制追加 `Delegate` 到黑名单。
 
-### 20.3 自定义子智能体（SUBAGENT_CONFIG.json）
+### 21.3 自定义子智能体（SUBAGENT_CONFIG.json）
 
 用户可通过 `SUBAGENT_CONFIG.json` 自定义子智能体，配置文件路径：
 
@@ -1823,7 +1947,7 @@ wechat_user_id → chat_id (微信用户 ID)
 - daemon:research-bot: 运行中的后台 daemon (port=8765, type=DaemonAgent)
 ```
 
-### 20.4 命令
+### 21.4 命令
 
 #### `/agent` — 设置/清除默认子智能体
 
@@ -1869,7 +1993,21 @@ wechat_user_id → chat_id (微信用户 ID)
 
 手动委派触发 `subagent.delegate` 事件，由 TUI 前端处理。
 
-### 20.5 Delegate 工具（LLM 自动调用）
+#### `/max_concurrent` (别名 `/mc`) — 子智能体并发控制
+
+```
+/max_concurrent             # 查看当前并发设置
+/max_concurrent 3           # 设置最大并行数为 3
+/mc status                  # 查看状态（别名）
+```
+
+设置子智能体的最大并行执行数量，**全局持久化**（保存到 `cli_config.json`）。默认值为 5。
+
+- 值范围：1–256
+- 同时影响当前 session 的 agent 和全局默认配置
+- 在 `/status` 中可查看当前值
+
+### 21.5 Delegate 工具（LLM 自动调用）
 
 子智能体系统通过 `Delegate` 工具暴露给 LLM，使 AI 能够**自主判断**何时委派子任务。
 
@@ -1884,7 +2022,7 @@ wechat_user_id → chat_id (微信用户 ID)
 
 **工具描述**包含所有可用子智能体类型的说明，使 LLM 能够正确选择合适的子智能体。
 
-### 20.6 执行流程
+### 21.6 执行流程
 
 #### Delegate 工具调用流程
 
@@ -1915,7 +2053,7 @@ _execute_subagent(sub_agent_name="explore", prompt="...", context="...")
 - **结果合并**：`asyncio.Queue` 按到达顺序流式输出，每条消息标记来源
 - **独立取消**：每个子智能体拥有独立 `CancellationToken`，父取消时通过 watcher 传播
 
-### 20.7 委派深度限制
+### 21.7 委派深度限制
 
 为防止无限递归委派，系统实施了委派深度检查：
 
@@ -1933,7 +2071,7 @@ _execute_subagent(sub_agent_name="explore", prompt="...", context="...")
 
 `Delegate` 工具被列入 `_DEFAULT_DISALLOWED_FOR_SUBAGENTS` 黑名单，所有子智能体默认禁止再委派。
 
-### 20.8 工具过滤
+### 21.8 工具过滤
 
 子智能体的工具列表通过以下机制确定：
 
@@ -1950,7 +2088,7 @@ _execute_subagent(sub_agent_name="explore", prompt="...", context="...")
      explore / plan → _READONLY_DISALLOWED_TOOLS（禁止所有写入/执行工具）
 ```
 
-### 20.9 TUI 状态栏集成
+### 21.9 TUI 状态栏集成
 
 子智能体执行时，TUI 底部状态栏实时显示子智能体信息：
 
@@ -1963,7 +2101,7 @@ _execute_subagent(sub_agent_name="explore", prompt="...", context="...")
 
 详见 [16.4 子智能体 TUI 渲染行为](#164-子智能体-tui-渲染行为)。
 
-### 20.10 Daemon 作为子智能体
+### 21.10 Daemon 作为子智能体
 
 运行中的 daemon 会自动注入为子智能体类型（`daemon:<name>`），可以通过以下方式调用：
 
@@ -1995,7 +2133,7 @@ Daemon Process (独立进程)
 
 详见 [18.8 作为子智能体被调用](#188-作为子智能体被调用)。
 
-### 20.11 配置参考
+### 21.11 配置参考
 
 | 参数 | 位置 | 说明 |
 |------|------|------|

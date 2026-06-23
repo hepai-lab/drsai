@@ -56,9 +56,10 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         "list",
-        "List all saved sessions",
+        "List sessions (current workdir by default, use --all for all workdirs)",
         "Session",
         aliases=("ls",),
+        args_hint="[--all]",
         handler="async",
     ),
     CommandDef(
@@ -77,8 +78,9 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         "history",
-        "Show conversation history",
+        "Show conversation history (default: last 10 messages)",
         "Session",
+        args_hint="[N|all]",
         handler="async",
     ),
     CommandDef(
@@ -120,7 +122,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
         "reasoning",
         "Toggle or tune the reasoning box",
         "Display",
-        args_hint="show|hide|off|low|medium|high",
+        args_hint="show|hide|off|low|medium|high|xhigh",
         handler="async",
     ),
     CommandDef(
@@ -302,6 +304,41 @@ COMMAND_REGISTRY: list[CommandDef] = [
         handler="async",
     ),
 
+    # ── Session Search & Organization ───────────────────────────────────────
+    CommandDef(
+        "find",
+        "Natural language search across sessions (semantic + keyword hybrid)",
+        "Search & Organize",
+        args_hint="<query> [--cwd]",
+        handler="async",
+    ),
+    CommandDef(
+        "tag",
+        "Add/remove/list tags on the current session",
+        "Search & Organize",
+        args_hint="add|remove|list [tags...]",
+        handler="async",
+    ),
+    CommandDef(
+        "pin",
+        "Pin the current session (shows at top of lists)",
+        "Search & Organize",
+        handler="async",
+    ),
+    CommandDef(
+        "unpin",
+        "Unpin the current session",
+        "Search & Organize",
+        handler="async",
+    ),
+    CommandDef(
+        "archive",
+        "Archive or unarchive the current session (hide from default list)",
+        "Search & Organize",
+        args_hint="[off]",
+        handler="async",
+    ),
+
 
     # ── Multimedia ──────────────────────────────────────────────────────
     CommandDef(
@@ -348,6 +385,31 @@ COMMAND_REGISTRY: list[CommandDef] = [
         handler="async",
     ),
 
+    # ── Scheduled tasks & notifications ──────────────────────────────────────
+    CommandDef(
+        "schedule",
+        "Manage scheduled tasks",
+        "Tasks",
+        args_hint="list|create <name> <interval:N|once> <prompt>|cancel <id>|run <id>",
+        handler="async",
+    ),
+    CommandDef(
+        "notify",
+        "Toggle task completion notifications",
+        "Tasks",
+        args_hint="on|off|status",
+        handler="async",
+    ),
+
+    # ── WeChat integration ───────────────────────────────────────────────────
+    CommandDef(
+        "wechat",
+        "WeChat integration status and management",
+        "WeChat",
+        args_hint="status|sessions|login|logout",
+        handler="async",
+    ),
+
     # ── Meta ─────────────────────────────────────────────────────────────────
     CommandDef(
         "help",
@@ -388,7 +450,7 @@ def resolve_command(name: str) -> Optional[CommandDef]:
 
 def commands_by_category() -> dict[str, list[CommandDef]]:
     """Return commands grouped by category, in fixed category order."""
-    order = ["Session", "Display", "Configuration", "Plan", "Project", "Workspace", "Subagent", "Multimedia", "Daemon", "Skills", "Info"]
+    order = ["Session", "Search & Organize", "Display", "Configuration", "Plan", "Project", "Workspace", "Subagent", "Multimedia", "Daemon", "Skills", "Info"]
     groups: dict[str, list[CommandDef]] = {cat: [] for cat in order}
     for cmd in COMMAND_REGISTRY:
         if cmd.category in groups:
@@ -409,3 +471,51 @@ def format_help() -> str:
             lines.append(f"    /{cmd.name}{hint:<22} — {cmd.description}{alias_part}")
         lines.append("")
     return "\n".join(lines)
+
+
+def validate_registry() -> list[str]:
+    """Validate COMMAND_REGISTRY consistency with SLASH_HANDLERS.
+
+    Call at gateway startup to catch missing handler registrations.
+    Returns a list of error messages (empty if all good).
+    """
+    import logging
+    _logger = logging.getLogger(__name__)
+
+    errors: list[str] = []
+
+    try:
+        from ..tui_gateway.handlers.slash import SLASH_HANDLERS
+    except ImportError:
+        # Handlers not loaded yet — skip validation
+        return errors
+
+    # Collect all names/aliases from registry
+    registry_names: set[str] = set()
+    for cmd in COMMAND_REGISTRY:
+        registry_names.add(cmd.name)
+        registry_names.update(cmd.aliases)
+
+    # Check: async commands should have a handler
+    for cmd in COMMAND_REGISTRY:
+        if cmd.handler == "async" and cmd.name not in SLASH_HANDLERS:
+            # Check if any alias maps to a handler
+            found = any(alias in SLASH_HANDLERS for alias in cmd.aliases)
+            if not found:
+                errors.append(
+                    f"Command '{cmd.name}' has handler='async' but no SLASH_HANDLERS entry"
+                )
+
+    # Check: handlers not in registry
+    for handler_name in SLASH_HANDLERS:
+        if handler_name not in registry_names:
+            errors.append(
+                f"SLASH_HANDLERS has '{handler_name}' but COMMAND_REGISTRY doesn't"
+            )
+
+    if errors:
+        _logger.warning(
+            "Command registry inconsistencies:\n  " + "\n  ".join(errors)
+        )
+
+    return errors

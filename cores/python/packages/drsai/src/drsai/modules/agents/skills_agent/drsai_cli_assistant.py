@@ -34,6 +34,10 @@ class SessionInfo:
     message_count: int
     preview: str  # short excerpt from the last user turn
     workdir: str = ""  # working directory where session was created
+    tags: list[str] = field(default_factory=list)  # user-assigned tags
+    pinned: bool = False  # pinned to top of lists
+    archived: bool = False  # archived (hidden from default list)
+    relevance_score: float = 0.0  # search relevance score (populated by smart_search)
 
 
 @dataclass
@@ -384,6 +388,9 @@ def _thread_to_info(row: Thread) -> SessionInfo:
     meta = row.meta or {}
     name = meta.get("name") if isinstance(meta, dict) else None
     workdir = meta.get("workdir") if isinstance(meta, dict) else None
+    tags = meta.get("tags", []) if isinstance(meta, dict) else []
+    pinned = meta.get("pinned", False) if isinstance(meta, dict) else False
+    archived = meta.get("archived", False) if isinstance(meta, dict) else False
     ts = row.updated_at.isoformat() if hasattr(row.updated_at, "isoformat") else str(row.updated_at)
     return SessionInfo(
         thread_id=row.thread_id or "",
@@ -392,4 +399,7 @@ def _thread_to_info(row: Thread) -> SessionInfo:
         message_count=len(msgs),
         preview=preview,
         workdir=workdir or "",
+        tags=tags if isinstance(tags, list) else [],
+        pinned=bool(pinned),
+        archived=bool(archived),
     )

@@ -29,7 +29,7 @@ import { useStore } from '@nanostores/react'
 import { Box, Text, useInput } from 'ink'
 import { useEffect, useRef, useState } from 'react'
 
-import { isTerminalFocusEvent } from '../app/focusEvents.js'
+import { isTerminalFocusEvent, parseMouseEvent } from '../app/focusEvents.js'
 import { $terminalFocused } from '../app/uiStore.js'
 import { theme } from '../theme.js'
 
@@ -279,6 +279,18 @@ export function TextInput({
     // Without this guard we would insert that pair into the user's
     // text every time they switched windows. See app/focusEvents.ts.
     if (isTerminalFocusEvent(input)) return
+    
+    // Mouse tracking (\x1b[?1000h\x1b[?1006h) sends SGR mouse events.
+    // Without this guard, wheel-up/down would be misinterpreted as
+    // arrow keys and trigger unwanted prompt history navigation (Issue #7).
+    // See app/focusEvents.ts for details.
+    const mouse = parseMouseEvent(input)
+    if (mouse.isMouse) {
+      // Swallow all mouse events in the input area.
+      // Future: could dispatch wheel events to scroll transcript.
+      return
+    }
+    
     if (disabled) return
 
     // Bracketed-paste and many terminals deliver a paste as one multi-character
@@ -354,6 +366,16 @@ export function TextInput({
     }
 
     // ── Up/Down: line-aware navigation + command history ────────────────
+    //
+    // With mouse tracking OFF by default (so the terminal owns the
+    // scrollback / selection UX), we go back to the standard readline
+    // behavior: arrow keys move the cursor between lines in a multi-line
+    // draft, and at the edge they browse command history.
+    //
+    // If your terminal translates wheel events into fake arrow keys
+    // AND you want the program to swallow them, opt in via
+    // DRSAI_TUI_ENABLE_MOUSE_TRACKING=1 — but be aware that re-enables
+    // mouse capture and disables native scroll / selection.
     if (key.upArrow) {
       const allLines = value.split('\n')
       const [curLine, curCol] = getLineAndCol(value, cursor)
@@ -364,9 +386,8 @@ export function TextInput({
         setCursor(newCursor)
         resetCompletion()
       } else if (history.length > 0) {
-        // Already on first line → browse history
+        // Already on first line → browse history backward
         if (historyIdx === -1) {
-          // Start browsing — snapshot current draft
           draftRef.current = value
           const last = history.length - 1
           setHistoryIdx(last)
@@ -393,10 +414,38 @@ export function TextInput({
           setHistoryIdx(historyIdx + 1)
           setText(history[historyIdx + 1])
         } else {
-          // Past the end — restore draft
           setHistoryIdx(-1)
           setText(draftRef.current)
         }
+      }
+      return
+    }
+
+    // ── Ctrl+P / Ctrl+N: readline-style history aliases ─────────────────
+    // Kept as alternatives for users on terminals that DO send wheel
+    // events as fake arrow keys (rare; opt in to mouse tracking and the
+    // program will swallow them, but these shortcuts still work then).
+    if (key.ctrl && input === 'p') {
+      if (history.length === 0) return
+      if (historyIdx === -1) {
+        draftRef.current = value
+        const last = history.length - 1
+        setHistoryIdx(last)
+        setText(history[last])
+      } else if (historyIdx > 0) {
+        setHistoryIdx(historyIdx - 1)
+        setText(history[historyIdx - 1])
+      }
+      return
+    }
+    if (key.ctrl && input === 'n') {
+      if (historyIdx === -1) return
+      if (historyIdx < history.length - 1) {
+        setHistoryIdx(historyIdx + 1)
+        setText(history[historyIdx + 1])
+      } else {
+        setHistoryIdx(-1)
+        setText(draftRef.current)
       }
       return
     }

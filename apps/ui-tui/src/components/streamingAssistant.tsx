@@ -1,23 +1,36 @@
 /**
  * StreamingAssistant — renders the in-flight assistant turn from $current.
  *
- * Uses MarkdownRenderer for incremental formatting. Incomplete markdown
- * structures (e.g. a table with only a header row) gracefully fall back
- * to paragraph rendering until the structure is complete.
+ * ── Height-clipping (P1-01 root cause fix) ──────────────────────────
  *
- * The rendering "snaps" into place once closing markers arrive (e.g. the
- * `|---|---|` separator line makes a table appear). This is much better
- * than showing raw markdown source for the entire streaming duration.
+ * Ink has a "fullscreen" branch (see ink.js): when the dynamic frame
+ * height ever reaches or exceeds the terminal row count, every render
+ * thereafter writes ``clearTerminal + fullStaticOutput + output``,
+ * which:
+ *   1. clears the entire screen including the user's scroll position,
+ *   2. re-emits the whole <Static> history (so the terminal scrollback
+ *      ends up with the same turn duplicated dozens of times during
+ *      one long answer),
+ *   3. anchors the viewport firmly at the bottom — manual scroll-up is
+ *      ripped back immediately.
+ *
+ * The only way out is to keep the dynamic frame STRICTLY shorter than
+ * the terminal. We clip the streaming text to the last N visual lines
+ * where N is computed from the current terminal size minus a budget
+ * reserved for the status bar, composer, banner, etc. Older lines have
+ * already been seen by the user and are accessible after finalize via
+ * the terminal's scrollback (the completed turn flows into <Static>
+ * which writes a clean copy at end-of-turn).
+ *
+ * We also wrap long logical lines to terminal width before counting so
+ * a single 500-character line still gets clipped correctly.
  *
  * "Thinking" hint:
- *   When the turn has started but no text / tool call has happened yet
- *   (typical for reasoning models — GPT-5, Claude thinking, etc., that
- *   take 10-60 s before the first token), we show an animated spinner
- *   plus a wall-clock elapsed counter so the user can tell the agent is
- *   working vs. wedged. We DELIBERATELY stop the animation once any
- *   content arrives — that way the dynamic frame stops repainting at
- *   the spinner's cadence and we don't fight the P1-01 scroll-anchor
- *   issue while text streams.
+ *   When the turn has started but no text / tool call has happened yet,
+ *   we show an animated spinner plus elapsed seconds so the user can
+ *   tell the agent is working (especially for reasoning models that
+ *   take 10-60 s before first token). The animation stops once any
+ *   content arrives so we don't fight the streaming repaints.
  */
 
 import { useStore } from '@nanostores/react'
@@ -27,6 +40,7 @@ import { useEffect, useState } from 'react'
 import { stripTodoWriteArtifacts } from '../app/todoArtifacts.js'
 import { $current } from '../app/turnStore.js'
 import { $showReasoning, $terminalFocused } from '../app/uiStore.js'
+import { useTerminalSize } from '../hooks/useTerminalSize.js'
 import { theme } from '../theme.js'
 
 import { stripThinkBlocks } from './markdownRenderer.js'
@@ -35,20 +49,18 @@ import { ToolCallLine } from './toolCallLine.js'
 // Braille rotor — 10 frames is a typical xterm spinner; tick every 100 ms.
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 const SPINNER_TICK_MS = 100
-// Re-render the elapsed counter at 1 s granularity — anything finer
-// adds repaints with no user-visible benefit.
 const ELAPSED_TICK_MS = 1000
 
+// Rows we reserve for non-streaming UI: banner (1) + transcript margins
+// (2) + status bar divider+row (2) + statusLine (1) + composer prompt (1-2)
+// + safety margin (1). 8 is a conservative budget that holds even when
+// the status bar is in its multi-row narrow layout.
+const RESERVED_ROWS = 8
+const MIN_STREAM_ROWS = 3
+
 /**
- * Combined spinner + elapsed-seconds hook.
- *
- * Returns ``{ frame, elapsed }`` while ``active`` is true. When
- * ``active`` flips to false the interval is torn down and the values
- * freeze, so the consumer should simply stop rendering them.
- *
- * ``active`` is passed in so the parent can pause the animation when
- * the terminal window loses focus (saves CPU + stops emitting Ink
- * frames into a window the user isn't looking at).
+ * Spinner + elapsed-seconds hook. ``active`` gates the timers so an
+ * unfocused window doesn't burn CPU.
  */
 function useThinkingPulse(active: boolean, startedAt: number) {
   const [frame, setFrame] = useState(0)
@@ -62,8 +74,6 @@ function useThinkingPulse(active: boolean, startedAt: number) {
     const tick = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startedAt) / 1000))
     }, ELAPSED_TICK_MS)
-    // Prime the elapsed counter immediately so the first render doesn't
-    // sit on "0s" for a full second.
     setElapsed(Math.floor((Date.now() - startedAt) / 1000))
     return () => {
       clearInterval(spin)
@@ -74,18 +84,74 @@ function useThinkingPulse(active: boolean, startedAt: number) {
   return { glyph: SPINNER_FRAMES[frame], elapsed }
 }
 
+/**
+ * Soft-wrap a logical line to `cols` columns and return the wrapped
+ * lines. Naïve character-count wrap — no CJK width awareness — but the
+ * count only needs to be a (slight) overestimate of visual lines, so
+ * this is good enough for the clip threshold. Returns ``['']`` for an
+ * empty string so the count matches the visual reality (one blank row).
+ */
+function visualWrap(line: string, cols: number): string[] {
+  if (cols <= 0) return [line]
+  if (line.length === 0) return ['']
+  const out: string[] = []
+  for (let i = 0; i < line.length; i += cols) {
+    out.push(line.slice(i, i + cols))
+  }
+  return out
+}
+
+/**
+ * Clip ``text`` to the last ``maxRows`` visual rows (after wrapping at
+ * ``cols``). If clipped, prepend a marker line so the user knows older
+ * content is in scrollback (will appear once the turn finalizes).
+ */
+function clipToLastRows(text: string, maxRows: number, cols: number): {
+  clipped: string
+  hiddenLines: number
+} {
+  if (!text) return { clipped: '', hiddenLines: 0 }
+  const logicalLines = text.split('\n')
+  const visualLines: string[] = []
+  for (const ll of logicalLines) {
+    visualLines.push(...visualWrap(ll, cols))
+  }
+  if (visualLines.length <= maxRows) {
+    return { clipped: text, hiddenLines: 0 }
+  }
+  const kept = visualLines.slice(visualLines.length - maxRows)
+  return {
+    clipped: kept.join('\n'),
+    hiddenLines: visualLines.length - maxRows,
+  }
+}
+
 export function StreamingAssistant() {
   const cur = useStore($current)
   const showReasoning = useStore($showReasoning)
   const termFocused = useStore($terminalFocused)
+  const { cols, rows } = useTerminalSize()
 
   const cleanText = cur?.text ? stripTodoWriteArtifacts(stripThinkBlocks(cur.text)) : ''
+
+  // Compute the row budget for streaming text. Subtract:
+  //   - RESERVED_ROWS for the rest of the dynamic frame
+  //   - 1 row for the "● assistant" header
+  //   - 1 row per tool call already shown
+  //   - "+N earlier lines" marker (if we end up clipping)
+  const toolRows = cur?.tools.length ?? 0
+  const reasoningRows = showReasoning && cur?.reasoning?.trim() ? 4 : 0
+  const budget = Math.max(
+    MIN_STREAM_ROWS,
+    rows - RESERVED_ROWS - 1 /* header */ - toolRows - reasoningRows - 1 /* marker */,
+  )
+
+  const { clipped, hiddenLines } = clipToLastRows(cleanText, budget, Math.max(20, cols - 4))
 
   // "Thinking" pulse runs only:
   //   - turn is in flight (status === 'streaming')
   //   - no visible content yet (no text, no tool call started)
-  //   - terminal window has focus (don't burn CPU repainting an
-  //     invisible window — see P1-17)
+  //   - terminal window has focus
   const showThinking =
     !!cur &&
     cur.status === 'streaming' &&
@@ -97,7 +163,8 @@ export function StreamingAssistant() {
 
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Text color={theme.primary} bold>● assistant</Text>
+      {/* ▎ prefix acts as a left-edge progress indicator (like ChatGPT/Copilot sidebar) */}
+      <Text color={theme.primary} bold>▎ ● assistant</Text>
 
       {cur.tools.map(tool => (
         <ToolCallLine key={tool.id} tool={tool} />
@@ -116,16 +183,27 @@ export function StreamingAssistant() {
         Reasons:
           1. MarkdownRenderer re-parses the entire growing buffer on every
              flush — O(n²) and the largest source of jank on slow terminals.
-          2. Plain text grows monotonically: Ink's diff is a single string
-             update on one node, so the terminal does not reflow earlier
-             lines. On legacy conhost (Win10 PowerShell 5.1), that means
-             the viewport stays put when the user scrolls up mid-stream.
+          2. Plain text grows monotonically so Ink's diff is a single string
+             update on one node.
         The completed turn moves into TranscriptPane's <Static>, which
-        renders the full MarkdownRenderer exactly once and never repaints.
+        renders the full MarkdownRenderer exactly once.
+
+        Height-clipping note: we hand Ink the already-clipped string so
+        the dynamic frame stays strictly below `terminal rows`, avoiding
+        Ink's full-clear branch (see ink.js fullscreen path). The hidden
+        content reappears in <Static> at finalize and is then permanently
+        in the terminal's scrollback.
       */}
-      {cleanText && (
+      {hiddenLines > 0 && (
+        <Box>
+          <Text color={theme.muted} dimColor>
+            {`  ↑ ${hiddenLines} earlier line${hiddenLines > 1 ? 's' : ''} (will appear in scrollback when turn ends)`}
+          </Text>
+        </Box>
+      )}
+      {clipped && (
         <Box marginTop={1}>
-          <Text color={theme.assistant}>{cleanText}</Text>
+          <Text color={theme.assistant}>{clipped}</Text>
         </Box>
       )}
 

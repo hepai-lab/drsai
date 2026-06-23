@@ -1,5 +1,5 @@
 
-__version__ = "1.3.8.7"
+__version__ = "1.3.8.8"
 __appname__ = 'drsai'
 __author__ = 'hepai'
 __email__ = 'xiongdb@ihep.ac.cn/hepai@ihep.ac.cn'

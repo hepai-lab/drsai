@@ -3,56 +3,44 @@
  * DrSai TUI — Phase 2 entry point.
  *
  * Spawns the Python gateway, mounts the React/Ink app, waits for shutdown.
+ *
+ * Terminal-mode helpers (alt-screen / mouse tracking / focus reporting) live
+ * in ``app/terminalControl.ts`` so the runtime "copy mode" toggle (Ctrl+Y)
+ * can flip mouse tracking on / off mid-session without re-implementing the
+ * write logic. See that module for the full rationale.
  */
 
 import { render } from 'ink'
 
 import { App } from './app.js'
 import { GatewayClient } from './gatewayClient.js'
+import {
+  disableAltScreen,
+  disableFocusReporting,
+  disableMouseTracking,
+  enableAltScreen,
+  enableFocusReporting,
+  enableMouseTracking,
+} from './app/terminalControl.js'
 
-// ── Terminal focus reporting (XTerm \x1b[?1004) ───────────────────────
+// ── Terminal focus reporting ───────────────────────────────────────────
+// Enabled so the app can pause cursor blink when the user switches windows.
+// Restored on exit to avoid smearing "\e[I" / "\e[O" into the next shell prompt.
+
+// ── Alternate screen buffer (opt-in) ───────────────────────────────────
+// Default OFF — the TUI runs in the PRIMARY buffer so the user's terminal
+// keeps its native scroll-back and selection, and TUI output flows into
+// scrollback instead of being discarded on exit (which is what alt-screen
+// does, vim/less style).
 //
-// We enable focus reporting so the app can pause cursor-blink and other
-// "look alive" effects when the user switches away from the terminal.
-// When enabled, the terminal sends ``\x1b[I`` on focus-in and ``\x1b[O``
-// on focus-out. We sniff these inside <App> via useInput (Ink delivers
-// the raw ESC sequence as the `input` arg).
-//
-// Restoration: ``\x1b[?1004l`` must be written on exit, otherwise the
-// next shell prompt sees garbage characters every time the user switches
-// windows. We wire it into the same restoreTerminal() path that already
-// shows the cursor back.
-//
-// Compatibility: silently ignored by terminals that don't support it
-// (macOS Terminal.app, ancient Linux consoles). In that case the focus
-// state stays "true" forever — i.e. behavior degrades back to "always
-// blinking", which is what we used to have.
-const FOCUS_REPORTING_ENABLE = '\x1b[?1004h'
-const FOCUS_REPORTING_DISABLE = '\x1b[?1004l'
+// Opt-in with DRSAI_TUI_USE_ALT_SCREEN=1 if you want the clean-exit
+// behaviour at the cost of losing scrollback once the TUI quits.
 
-let focusReportingEnabled = false
-
-function enableFocusReporting(): void {
-  if (focusReportingEnabled) return
-  try {
-    if (process.stdout.isTTY) {
-      process.stdout.write(FOCUS_REPORTING_ENABLE)
-      focusReportingEnabled = true
-    }
-  } catch {
-    // best-effort
-  }
-}
-
-function disableFocusReporting(): void {
-  if (!focusReportingEnabled) return
-  try {
-    process.stdout.write(FOCUS_REPORTING_DISABLE)
-  } catch {
-    // ignore
-  }
-  focusReportingEnabled = false
-}
+// ── Mouse tracking (Issue #7 fix) ──────────────────────────────────────
+// The terminal sends actual mouse events instead of translating wheel
+// scrolls into fake arrow keys (which would otherwise trigger the
+// composer's prompt history). Toggleable at runtime via Ctrl+Y so users
+// can select / copy text with the mouse natively.
 
 const gw = new GatewayClient()
 
@@ -61,10 +49,16 @@ let terminalRestored = false
 function restoreTerminal(): void {
   if (terminalRestored) return
   terminalRestored = true
+  // Disable mouse tracking FIRST (before switching buffers)
+  disableMouseTracking()
   // Turn off focus reporting BEFORE the next shell sees stdin again,
   // otherwise switching windows would smear "\e[I" / "\e[O" into the
   // shell prompt forever.
   disableFocusReporting()
+  // Switch back to the primary screen buffer so the user's shell
+  // history and previous output reappear. The alternate buffer is
+  // discarded on exit — this is expected (same as vim/less/htop).
+  disableAltScreen()
   try {
     inkInstance?.clear()
   } catch {
@@ -137,24 +131,43 @@ if (!process.stdin.isTTY) {
   // fresh prompt row on every blink (530 ms). The composer ended up
   // with 6+ stacked prompt rows within seconds.
   //
-  // Root cause: the cursor block is rendered as a Text node with
-  // `inverse` toggling. Toggling the ANSI inverse flag changes byte-
-  // identity of the line string, so incremental sees `prevLines[i] !==
-  // nextLines[i]` and writes the line — but its cursor accounting
-  // (cursorNextLine + cursorTo(0)) does not always land on the same
-  // row when other dynamic-frame heights have changed in the same
-  // tick. The end-state is that subsequent renders write below the
-  // previous tick's last line instead of overwriting it.
-  //
   // Until either (a) we restructure the cursor as a separate React
   // node that doesn't ripple up to the parent's line strings, or
   // (b) Ink upstream fixes its diff/cursor accounting, we MUST keep
   // the legacy `createStandard` path. That is the default — i.e. we
   // simply don't pass `incrementalRendering`.
+
+  // Default to PRIMARY buffer — the user's terminal stays a workbench:
+  // native scroll-back, native selection, and the TUI's own output flows
+  // into terminal scrollback instead of vanishing on exit.
   //
-  // The relief we still ship for P1-01:
-  //   - DRSAI_TUI_FLUSH_MS bumped 80 → 160 (see createGatewayEventHandler)
-  //   - The full fix (alt-screen mode) is tracked under P3-15.
+  // Trade-off: Ink's eraseLines() during streaming can momentarily reset
+  // the terminal's auto-scroll anchor. We mitigate that with the existing
+  // FLUSH_MS coalescing and PageUp/PageDown internal scroll. Set
+  // DRSAI_TUI_USE_ALT_SCREEN=1 if you want the vim/less-style alternate
+  // page (clean exit, no scrollback after quit).
+  const altScreenRequested = process.env.DRSAI_TUI_USE_ALT_SCREEN === '1'
+  if (altScreenRequested) {
+    enableAltScreen()
+  }
+
+  // Mouse tracking — DEFAULT OFF.
+  //
+  // Why off by default: the user expects the terminal to behave like any
+  // other CLI tool — wheel-scroll the scrollback, drag-select to copy.
+  // With mouse tracking ON the terminal hands every wheel/click/drag to
+  // the program instead of the terminal's native handler, which means
+  // selection breaks and scrollback freezes. We choose user agency over
+  // a (rare) edge case where some terminals translate wheel events into
+  // fake arrow keys.
+  //
+  // Opt-in via DRSAI_TUI_ENABLE_MOUSE_TRACKING=1 if your terminal does
+  // the wheel-as-arrow-key translation and you want the program to
+  // intercept those events instead.
+  const mouseTrackingRequested = process.env.DRSAI_TUI_ENABLE_MOUSE_TRACKING === '1'
+  if (mouseTrackingRequested) {
+    enableMouseTracking()
+  }
 
   // Tell the terminal to send focus-in / focus-out events on stdin.
   // The App component sniffs them via useInput to drive the cursor blink.

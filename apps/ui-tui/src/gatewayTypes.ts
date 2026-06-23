@@ -64,6 +64,11 @@ export interface SessionInfo {
   message_count: number
   preview: string
   workdir: string
+  // New fields for session management optimization
+  tags?: string[]
+  pinned?: boolean
+  archived?: boolean
+  relevance_score?: number
 }
 
 export interface SessionListResult {
@@ -88,6 +93,8 @@ export interface SessionMetadata {
   allow_dangerous_commands?: boolean
   default_subagent?: string
   tools: string[]
+  has_injected_prefix?: boolean
+  has_injected_suffix?: boolean
 }
 
 export interface SessionCreateResult {
@@ -104,6 +111,33 @@ export interface UsagePayload {
   total_tokens: number
   model: string
   status: 'complete' | 'interrupted' | 'error' | string
+}
+
+// ── Scheduler / background tasks ──────────────────────────────────────
+
+export interface BackgroundCompletePayload {
+  task_id: string
+  task_name: string
+  status: 'success' | 'error' | 'timeout'
+  result_preview: string
+  duration_ms: number
+  session_id?: string
+}
+
+export interface ScheduledTask {
+  id: string
+  name: string
+  prompt: string
+  schedule: string
+  status: 'scheduled' | 'running' | 'cancelled' | 'completed' | 'error'
+  created_at: string
+  last_run?: string | null
+  next_run?: string | null
+  session_id?: string
+}
+
+export interface SchedulerListResult {
+  tasks: ScheduledTask[]
 }
 
 // ── Tool payloads ────────────────────────────────────────────────────
@@ -179,9 +213,9 @@ export type GatewayEvent =
   | (BaseEvent & { type: 'subagent.spawn_requested'; payload: { source?: string; goal?: string } })
   | (BaseEvent & { type: 'subagent.start'; payload: { source?: string; goal?: string } })
   | (BaseEvent & { type: 'subagent.thinking'; payload: { source?: string; text: string } })
-  | (BaseEvent & { type: 'subagent.tool'; payload: { source?: string; name?: string } })
-  | (BaseEvent & { type: 'subagent.progress'; payload: { source?: string; text?: string } })
-  | (BaseEvent & { type: 'subagent.complete'; payload: { source?: string; text?: string } })
+  | (BaseEvent & { type: 'subagent.tool'; payload: { source?: string; tool_id?: string; name?: string; args?: Record<string, unknown>; preview?: string; result?: string; status?: string } })
+  | (BaseEvent & { type: 'subagent.progress'; payload: { source?: string; text?: string; percent?: number } })
+  | (BaseEvent & { type: 'subagent.complete'; payload: { source?: string; text?: string; success?: boolean } })
   // Interactive prompts
   | (BaseEvent & { type: 'approval.request'; payload: ApprovalRequestPayload })
   | (BaseEvent & { type: 'clarify.request'; payload: ClarifyRequestPayload })
@@ -189,7 +223,7 @@ export type GatewayEvent =
   | (BaseEvent & { type: 'sudo.request'; payload: SudoRequestPayload })
   // Status
   | (BaseEvent & { type: 'status.update'; payload: { kind: string; text: string } })
-  | (BaseEvent & { type: 'background.complete'; payload: { task_id: string; text: string } })
+  | (BaseEvent & { type: 'background.complete'; payload: BackgroundCompletePayload })
   | (BaseEvent & { type: 'error'; payload: { message: string } })
   // Catch-all so forward-compatible event types don't break the union.
   | (BaseEvent & { type: string; payload?: unknown })

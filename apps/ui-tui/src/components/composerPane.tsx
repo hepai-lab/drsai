@@ -20,7 +20,13 @@ import { theme } from '../theme.js'
 import { ModelEditor, type ModelEditorValues } from './modelEditor.js'
 import { ModelPicker, type ModelEntry } from './modelPicker.js'
 import { SessionPicker } from './sessionPicker.js'
+import { SmartSearchPane } from './smartSearchPane.js'
+import { QuickSwitchPanel } from './quickSwitchPanel.js'
 import { SkillsPane } from './skillsPane.js'
+import { DaemonPanel } from './daemonPanel.js'
+import { AgentPicker } from './agentPicker.js'
+import { SchedulerPanel } from './schedulerPanel.js'
+import { WeChatPanel } from './wechatPanel.js'
 import { SlashOutputOverlay } from './slashOutputOverlay.js'
 import { TextInput } from './textInput.js'
 
@@ -212,7 +218,16 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   const [slashOutput, setSlashOutput] = useState<string | null>(null)
   const slashOutputTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [sessionPicker, setSessionPicker] = useState<SessionInfo[] | null>(null)
+  const [smartSearch, setSmartSearch] = useState<{
+    query: string
+    results: Array<{ session_id: string; name: string; preview: string; relevance_score: number }>
+  } | null>(null)
+  const [quickSwitch, setQuickSwitch] = useState<SessionInfo[] | null>(null)
   const [showSkillsPane, setShowSkillsPane] = useState(false)
+  const [daemonPanelOpen, setDaemonPanelOpen] = useState(false)
+  const [agentPickerOpen, setAgentPickerOpen] = useState(false)
+  const [schedulerPanelOpen, setSchedulerPanelOpen] = useState(false)
+  const [wechatPanelOpen, setWechatPanelOpen] = useState(false)
   const [modelPicker, setModelPicker] = useState<
     { models: ModelEntry[]; currentAlias?: string } | null
   >(null)
@@ -227,6 +242,9 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   const [completions, setCompletions] = useState<string[]>([])
   const [initialHistory] = useState(() => loadPromptHistory())
   const historyRef = useRef<string[]>(initialHistory)
+
+  // Fix 4.4: Concurrent request lock
+  const isProcessingRef = useRef<boolean>(false)
 
   // Long-paste collapsing: when a paste exceeds the threshold we insert a
   // ``[[ Pasted #N: ... → /path/to/paste.txt ]]`` token into the visible input
@@ -283,12 +301,45 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     if (isStreaming && key.ctrl && _input === 'c') {
       controller.cancel(sessionId)
     }
+    // Ctrl+W: quick switch panel for current workdir sessions
+    if (key.ctrl && _input === 'w') {
+      controller.gw.request<{ sessions: SessionInfo[]; current_workdir_count: number }>(
+        'session.quick_access',
+        { limit: 10 },
+      ).then(result => {
+        setQuickSwitch(result.sessions || [])
+      }).catch(err => {
+        showSlashOutput(`Error loading quick access: ${err instanceof Error ? err.message : String(err)}`, 5000)
+      })
+      return
+    }
   })
 
-  async function openSessionPicker() {
+  async function openSessionPicker(workdirFilter?: string | null) {
     try {
       const result = await controller.gw.request<SessionListResult>('session.list', { limit: 50 })
-      setSessionPicker(result.sessions || [])
+      let sessions = result.sessions || []
+      
+      // Filter by workdir if specified:
+      //   undefined (default) → filter to current workdir (same as /list default)
+      //   null → show all sessions (--all flag)
+      //   string → filter to that specific workdir
+      if (workdirFilter === undefined) {
+        const currentWorkdir = process.env.DRSAI_USER_CWD?.trim() || process.cwd()
+        sessions = sessions.filter(s => s.workdir === currentWorkdir)
+      } else if (workdirFilter !== null) {
+        sessions = sessions.filter(s => s.workdir === workdirFilter)
+      }
+      
+      // ADDED: Sort by last_interaction_ts descending (Issue #4 fix)
+      // Most recently used sessions appear first
+      sessions.sort((a, b) => {
+        const tsA = a.last_interaction_ts || a.created_at || 0
+        const tsB = b.last_interaction_ts || b.created_at || 0
+        return tsB - tsA  // Descending order (newest first)
+      })
+      
+      setSessionPicker(sessions)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       showSlashOutput(`Error loading sessions: ${msg}`, 5000)
@@ -447,10 +498,33 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
   }
 
   async function handleSubmit(text: string) {
+    // Fix 4.4: Prevent concurrent requests
+    if (isProcessingRef.current) {
+      showSlashOutput('Please wait for current request to complete', 2000)
+      return
+    }
+    
     const expanded = expandSnips(text)
     const displayText = displaySnips(text)
     resetPasteSnips()
     const trimmed = expanded.trim()
+
+    // ── Input validation (Health Check fixes) ────────────────────────
+    // Fix 4.1: Empty input validation
+    if (!trimmed) {
+      showSlashOutput('Please enter a message', 2000)
+      return
+    }
+    
+    // Fix 4.3: Input length limit (prevent API errors and performance issues)
+    const MAX_INPUT_LENGTH = 100000 // ~100KB
+    if (trimmed.length > MAX_INPUT_LENGTH) {
+      showSlashOutput(
+        `Input too long (${trimmed.length.toLocaleString()} chars). Max: ${MAX_INPUT_LENGTH.toLocaleString()}`,
+        4000
+      )
+      return
+    }
 
     // ── Detect /image command ────────────────────────────────────────
     const imageCmd = parseImageCommand(trimmed)
@@ -482,9 +556,77 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
       return
     }
 
+    // ── /help — show available commands and shortcuts ──────────────────
+    // Fix 5.3: Improve feature discoverability
+    if (/^\/help(?:\s|$)/i.test(trimmed)) {
+      const helpText = `
+╔══════════════════════════════════════════════════════════════════╗
+║                    DrSai TUI - Quick Help                        ║
+╚══════════════════════════════════════════════════════════════════╝
+
+📋 Slash Commands:
+  /help           - Show this help
+  /list [--all]   - List sessions (current workdir or all)
+  /new [name]     - Create new session
+  /switch         - Switch to another session
+  /model          - Change AI model
+  /skills         - Open skills manager
+  /image <path>   - Attach image(s)
+  /search <query> - Search sessions by content
+  /export         - Export current session
+
+⌨️  Keyboard Shortcuts:
+  Ctrl+P / Ctrl+N - Previous / next command history
+  ↑/↓             - Move cursor between lines (multi-line input)
+  Ctrl+T          - Toggle tool details (compact/expanded)
+  Ctrl+Y          - Toggle copy mode (mouse selection)
+  Ctrl+C (2x)     - Exit TUI
+  Ctrl+D          - Exit TUI
+  Tab             - Autocomplete slash commands
+
+🖱️  Mouse:
+  Scroll wheel    - Native terminal scrollback
+  Drag select     - In copy mode (Ctrl+Y) to copy text
+
+💡 Tips:
+  • Completed turns flow into terminal scrollback (scroll natively)
+  • Token usage shown in status bar
+  • History loads automatically on restart
+  • Use /export to save full conversation
+
+For more info: https://github.com/yourusername/drsai
+`
+      showSlashOutput(helpText) // No timer — full-screen takeover until user dismisses
+      return
+    }
+
     // ── /skills — open the skills manager pane ────────────────────────
     if (/^\/skills?(?:\s|$)/i.test(trimmed)) {
       setShowSkillsPane(true)
+      return
+    }
+
+    // ── /daemons or /dm (no args) — open daemon panel ────────────────
+    if (/^\/(?:daemons|dm)$/i.test(trimmed)) {
+      setDaemonPanelOpen(true)
+      return
+    }
+
+    // ── /agent (no args) — open agent picker ─────────────────────────
+    if (/^\/agent$/i.test(trimmed)) {
+      setAgentPickerOpen(true)
+      return
+    }
+
+    // ── /schedule (no args) — open scheduler panel ──────────────────
+    if (/^\/schedule$/i.test(trimmed)) {
+      setSchedulerPanelOpen(true)
+      return
+    }
+
+    // ── /wechat (no args) — open wechat panel ───────────────────────
+    if (/^\/wechat$/i.test(trimmed)) {
+      setWechatPanelOpen(true)
       return
     }
 
@@ -518,6 +660,12 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
       if (command === 'quit' || command === 'exit' || command === 'q') {
         controller.gw.kill()
         exit()
+        return
+      }
+
+      // /find without args: open empty smart search
+      if (command === 'find' && !args) {
+        setSmartSearch({ query: '', results: [] })
         return
       }
 
@@ -571,8 +719,21 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
               }
               return
             }
-            // Otherwise pop the picker
-            await openSessionPicker()
+            // Otherwise pop the picker with optional workdir filter
+            const workdirFilter = (result as any).workdir_filter !== undefined 
+              ? (result as any).workdir_filter 
+              : undefined
+            await openSessionPicker(workdirFilter)
+            return
+          }
+          case 'session.smart_search': {
+            const searchResult = result as { results?: Array<{ session_id: string; name: string; preview: string; relevance_score: number }>; query?: string }
+            if (searchResult.results && searchResult.results.length > 0) {
+              setSmartSearch({
+                query: searchResult.query || '',
+                results: searchResult.results,
+              })
+            }
             return
           }
           case 'copy.reply': {
@@ -616,6 +777,27 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
             }
             return
           }
+          case 'session.refresh': {
+            // Session metadata changed (pin/archive/tag) — show output and refresh if picker is open
+            if (output) showSlashOutput(output, 3000)
+            return
+          }
+          case 'daemon.panel': {
+            setDaemonPanelOpen(true)
+            return
+          }
+          case 'agent.picker': {
+            setAgentPickerOpen(true)
+            return
+          }
+          case 'wechat.panel': {
+            setWechatPanelOpen(true)
+            return
+          }
+          case 'wechat.login': {
+            setWechatPanelOpen(true)
+            return
+          }
         }
 
         // Keep informational slash-command output visible until the user dismisses it.
@@ -633,12 +815,20 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     if (imgErrors.length > 0) {
       showSlashOutput(`⚠ Image errors:\n  ${imgErrors.join('\n  ')}`, 5000)
     }
-    await controller.submit({
-      sessionId,
-      text: cleanText.trim(),
-      displayText: displayText.trim(),
-      images: images.length > 0 ? images : undefined,
-    })
+    
+    // Fix 4.4: Set processing lock
+    isProcessingRef.current = true
+    try {
+      await controller.submit({
+        sessionId,
+        text: cleanText.trim(),
+        displayText: displayText.trim(),
+        images: images.length > 0 ? images : undefined,
+      })
+    } finally {
+      // Always release lock, even if submit fails
+      isProcessingRef.current = false
+    }
   }
 
   // Skills manager overlay
@@ -652,12 +842,87 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
     )
   }
 
+  // Daemon panel overlay
+  if (daemonPanelOpen) {
+    return (
+      <DaemonPanel
+        gw={controller.gw}
+        onDismiss={() => setDaemonPanelOpen(false)}
+      />
+    )
+  }
+
+  // Agent picker overlay
+  if (agentPickerOpen) {
+    return (
+      <AgentPicker
+        gw={controller.gw}
+        onSelect={async (agentType) => {
+          try {
+            if (agentType) {
+              await controller.gw.request('slash.exec', { session_id: sessionId, command: 'agent', args: agentType })
+              showSlashOutput(`Default subagent set to: ${agentType}`, 3000)
+            } else {
+              await controller.gw.request('slash.exec', { session_id: sessionId, command: 'agent', args: 'clear' })
+              showSlashOutput('Default subagent cleared', 3000)
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            showSlashOutput(`Error: ${msg}`, 5000)
+          }
+          setAgentPickerOpen(false)
+        }}
+        onDismiss={() => setAgentPickerOpen(false)}
+      />
+    )
+  }
+
+  // Scheduler panel overlay
+  if (schedulerPanelOpen) {
+    return (
+      <SchedulerPanel
+        gw={controller.gw}
+        sessionId={sessionId}
+        onDismiss={() => setSchedulerPanelOpen(false)}
+      />
+    )
+  }
+
+  // WeChat panel overlay
+  if (wechatPanelOpen) {
+    return (
+      <WeChatPanel
+        gw={controller.gw}
+        onDismiss={() => setWechatPanelOpen(false)}
+      />
+    )
+  }
+
   // Session picker overlay
   if (sessionPicker) {
     return (
       <SessionPicker
         sessions={sessionPicker}
         currentId={sessionId}
+        enableFilter={true}
+        groupByWorkdir={true}
+        currentWorkdir={process.env.DRSAI_USER_CWD}
+        gw={controller.gw}
+        onSessionsChanged={async () => {
+          // Refresh the session list in-place
+          try {
+            const result = await controller.gw.request<SessionListResult>('session.list', { limit: 50 })
+            let sessions = result.sessions || []
+            const currentWorkdir = process.env.DRSAI_USER_CWD?.trim() || process.cwd()
+            sessions = sessions.filter(s => s.workdir === currentWorkdir)
+            sessions.sort((a, b) => {
+              const tsA = a.last_interaction_ts || a.created_at || 0
+              const tsB = b.last_interaction_ts || b.created_at || 0
+              return tsB - tsA
+            })
+            setSessionPicker(sessions)
+          } catch { /* ignore refresh errors */ }
+        }}
         onSelect={async sid => {
           setSessionPicker(null)
           try {
@@ -669,6 +934,56 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
           }
         }}
         onCancel={() => setSessionPicker(null)}
+      />
+    )
+  }
+
+  // Smart search overlay
+  if (smartSearch) {
+    return (
+      <SmartSearchPane
+        query={smartSearch.query}
+        results={smartSearch.results}
+        onSelect={async (sid) => {
+          setSmartSearch(null)
+          await switchSession(sid)
+        }}
+        onCancel={() => setSmartSearch(null)}
+        onSearch={async (query) => {
+          try {
+            const result = await controller.gw.request<{
+              sessions: SessionInfo[]
+              total: number
+            }>('session.smart_search', { query, limit: 10 })
+            const results = (result.sessions || []).map(s => ({
+              session_id: s.session_id,
+              name: s.name,
+              preview: s.preview,
+              relevance_score: s.relevance_score || 0,
+            }))
+            setSmartSearch({ query, results })
+          } catch (err) {
+            // Silently fail — user can retry
+          }
+        }}
+      />
+    )
+  }
+
+  // Quick switch overlay
+  if (quickSwitch) {
+    return (
+      <QuickSwitchPanel
+        sessions={quickSwitch}
+        currentId={sessionId}
+        currentWorkdir={process.env.DRSAI_USER_CWD}
+        onSelect={async (sid) => {
+          setQuickSwitch(null)
+          if (sid !== sessionId) {
+            await switchSession(sid)
+          }
+        }}
+        onCancel={() => setQuickSwitch(null)}
       />
     )
   }
@@ -778,7 +1093,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
         isActive={activeOverlay === null}
         placeholder={isStreaming
           ? '⏳ streaming… (Ctrl+C to cancel)'
-          : 'Send a message · Ctrl+O newline · / commands · Tab complete · ↑/↓ history'}
+          : 'Send a message · Ctrl+O newline · / commands · Tab complete · Ctrl+P/N history'}
         onSubmit={handleSubmit}
         completions={completions}
         history={historyRef.current}

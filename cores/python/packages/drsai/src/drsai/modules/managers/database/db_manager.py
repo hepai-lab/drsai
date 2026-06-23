@@ -309,6 +309,178 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
         except Exception as e:
             logger.warning(f"Failed to initialize FTS5 tables: {e}")
 
+        # ------------------------------------------------------------------
+        # Session management indexes (for TUI session smart search)
+        # ------------------------------------------------------------------
+        
+        # Fix old buggy triggers that used FTS5 'delete' command incorrectly.
+        # The old triggers used INSERT INTO...VALUES('delete',...) which causes
+        # "SQL logic error" on non-external-content FTS5 tables. Replace them
+        # with standard DELETE FROM statements.
+        try:
+            with self.engine.connect() as conn:
+                raw_conn = conn.connection
+                # Check if old buggy triggers exist
+                cursor = raw_conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='session_search_fts_update'"
+                )
+                row = cursor.fetchone()
+                if row and row[0] and "VALUES('delete'" in row[0]:
+                    logger.info("Dropping old buggy FTS triggers and recreating")
+                    raw_conn.execute("DROP TRIGGER IF EXISTS session_search_fts_insert")
+                    raw_conn.execute("DROP TRIGGER IF EXISTS session_search_fts_delete")
+                    raw_conn.execute("DROP TRIGGER IF EXISTS session_search_fts_update")
+                    raw_conn.commit()
+        except Exception as e:
+            logger.warning(f"Failed to check/drop old FTS triggers: {e}")
+        
+        session_indexes_sql = """
+        -- Composite index: user_id + workdir (fast workdir lookup)
+        CREATE INDEX IF NOT EXISTS idx_thread_user_workdir
+        ON thread(user_id, json_extract(meta, '$.workdir'));
+
+        -- Composite index: user_id + updated_at (recent sessions query)
+        CREATE INDEX IF NOT EXISTS idx_thread_user_updated
+        ON thread(user_id, updated_at DESC);
+
+        -- Index: user_id + archived (filter out archived sessions)
+        CREATE INDEX IF NOT EXISTS idx_thread_user_archived
+        ON thread(user_id, json_extract(meta, '$.archived'));
+
+        -- Session FTS5 search table (name + preview + workdir + tags)
+        CREATE VIRTUAL TABLE IF NOT EXISTS session_search_fts USING fts5(
+            thread_id UNINDEXED,
+            user_id UNINDEXED,
+            name,
+            preview,
+            workdir,
+            tags,
+            tokenize='trigram'
+        );
+
+        -- Triggers to keep session_search_fts in sync
+        CREATE TRIGGER IF NOT EXISTS session_search_fts_insert
+            AFTER INSERT ON thread
+        BEGIN
+            INSERT INTO session_search_fts(thread_id, user_id, name, preview, workdir, tags)
+            VALUES (
+                NEW.thread_id,
+                NEW.user_id,
+                COALESCE(json_extract(NEW.meta, '$.name'), ''),
+                '',
+                COALESCE(json_extract(NEW.meta, '$.workdir'), ''),
+                COALESCE(json_extract(NEW.meta, '$.tags'), '[]')
+            );
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS session_search_fts_delete
+            AFTER DELETE ON thread
+        BEGIN
+            DELETE FROM session_search_fts WHERE rowid = OLD.id;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS session_search_fts_update
+            AFTER UPDATE ON thread
+        BEGIN
+            DELETE FROM session_search_fts WHERE rowid = OLD.id;
+            INSERT INTO session_search_fts(thread_id, user_id, name, preview, workdir, tags)
+            VALUES (
+                NEW.thread_id,
+                NEW.user_id,
+                COALESCE(json_extract(NEW.meta, '$.name'), ''),
+                '',
+                COALESCE(json_extract(NEW.meta, '$.workdir'), ''),
+                COALESCE(json_extract(NEW.meta, '$.tags'), '[]')
+            );
+        END;
+        """
+        # Use raw sqlite3 executescript — same pattern as fts_sql above.
+        # executescript handles semicolons inside trigger bodies correctly
+        # (unlike split(';') which truncates CREATE TRIGGER ... BEGIN ... END).
+        # It also performs an implicit commit, so no conn.commit() is needed.
+        try:
+            with self.engine.connect() as conn:
+                raw_conn = conn.connection
+                raw_conn.executescript(session_indexes_sql)
+            logger.info("Session search indexes initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize session search indexes: {e}")
+
+        # ------------------------------------------------------------------
+        # Backfill: populate session_search_fts with existing Thread rows
+        # ------------------------------------------------------------------
+        # The INSERT trigger only fires on NEW inserts; the 95+ historical
+        # Thread rows that existed BEFORE session_search_fts was created are
+        # missing from the FTS index. We must backfill them once so that
+        # /find and smart_search can discover old sessions.
+        #
+        # The backfill is idempotent — it INSERT OR REPLACEs by rowid (Thread.id),
+        # so running it again on subsequent startups is safe.
+        try:
+            with self.engine.connect() as conn:
+                # Check how many rows are missing
+                count_fts = conn.execute(
+                    text("SELECT COUNT(*) FROM session_search_fts")
+                ).scalar() or 0
+                count_thread = conn.execute(
+                    text("SELECT COUNT(*) FROM thread")
+                ).scalar() or 0
+
+                if count_fts < count_thread:
+                    logger.info(
+                        f"Backfilling session_search_fts: {count_fts}/{count_thread} rows indexed"
+                    )
+                    conn.execute(text("""
+                        INSERT OR REPLACE INTO session_search_fts(rowid, thread_id, user_id, name, preview, workdir, tags)
+                        SELECT
+                            t.id,
+                            t.thread_id,
+                            t.user_id,
+                            COALESCE(json_extract(t.meta, '$.name'), ''),
+                            '',
+                            COALESCE(json_extract(t.meta, '$.workdir'), ''),
+                            COALESCE(json_extract(t.meta, '$.tags'), '[]')
+                        FROM thread t
+                    """))
+                    conn.commit()
+                    new_count = conn.execute(
+                        text("SELECT COUNT(*) FROM session_search_fts")
+                    ).scalar() or 0
+                    logger.info(f"Backfill complete: {new_count}/{count_thread} rows indexed")
+                else:
+                    logger.info("session_search_fts already fully indexed, no backfill needed")
+        except Exception as e:
+            logger.warning(f"Failed to backfill session_search_fts: {e}")
+
+        # ------------------------------------------------------------------
+        # Data migration: Set updated_at for old rows with NULL updated_at
+        # ------------------------------------------------------------------
+        # Legacy Thread rows created before updated_at tracking may have NULL
+        # values, which breaks ORDER BY updated_at DESC. Backfill them with:
+        # 1. created_at if available
+        # 2. CURRENT_TIMESTAMP as fallback for very old rows without timestamps
+        try:
+            with self.engine.connect() as conn:
+                # First, try to use created_at
+                result1 = conn.execute(text("""
+                    UPDATE thread 
+                    SET updated_at = created_at 
+                    WHERE updated_at IS NULL AND created_at IS NOT NULL
+                """))
+                # Then, use current time for rows with both NULL
+                result2 = conn.execute(text("""
+                    UPDATE thread 
+                    SET updated_at = CURRENT_TIMESTAMP,
+                        created_at = CURRENT_TIMESTAMP
+                    WHERE updated_at IS NULL
+                """))
+                conn.commit()
+                total = result1.rowcount + result2.rowcount
+                if total > 0:
+                    logger.info(f"Migrated {total} Thread rows to set updated_at/created_at")
+        except Exception as e:
+            logger.warning(f"Failed to migrate Thread.updated_at: {e}")
+
     # ------------------------------------------------------------------
 
     def reset_db(self, recreate_tables: bool = True) -> Response:
@@ -391,9 +563,12 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
                     select(model_class).where(model_class.id == model.id)
                 ).first()
                 if existing_model:
-                    model.updated_at = datetime.now()
+                    # Update all fields except timestamps (which are auto-managed)
                     for key, value in model.model_dump().items():
-                        setattr(existing_model, key, value)
+                        if key not in ('created_at', 'id'):  # Preserve id and creation time
+                            setattr(existing_model, key, value)
+                    # Always update the timestamp on any modification
+                    existing_model.updated_at = datetime.now()
                     model = existing_model  # Use the updated existing model
                     session.add(model)
                 else:
@@ -426,8 +601,17 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
         filters: dict[str, Any] | None = None,
         return_json: bool = False,
         order: str = "desc",
+        order_by: str = "created_at",
     ) -> Response:
-        """List entities"""
+        """List entities
+        
+        Args:
+            model_class: The model class to query
+            filters: Dictionary of field=value filters
+            return_json: If True, returns dicts; if False, returns SQLModel instances
+            order: Sort direction - "asc" or "desc"
+            order_by: Field name to sort by (default: "created_at")
+        """
         with Session(self.engine) as session:
             result = []
             status = True
@@ -442,9 +626,9 @@ class DatabaseManager(ComponentBase[BaseModel], Component[DatabaseManagerConfig]
                     ]
                     statement = statement.where(and_(*conditions))
 
-                if hasattr(model_class, "created_at") and order:
+                if hasattr(model_class, order_by) and order:
                     order_by_clause = getattr(
-                        model_class.created_at, order
+                        getattr(model_class, order_by), order
                     )()  # Dynamically apply asc/desc
                     statement = statement.order_by(order_by_clause)
 
