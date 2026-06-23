@@ -1,3 +1,4 @@
+
 # syntax=docker/dockerfile:1
 # 使用官方 Python 3.12 基础镜像
 FROM python:3.12-slim
@@ -92,21 +93,19 @@ EXPOSE 22 42858 8086 8080
 WORKDIR /app
 
 # 创建启动脚本
-RUN cat > /app/start-services.sh << 'EOF'
-#!/bin/bash
-
-# 启动 SSH 服务
-service ssh start
-
-# 启动 code-server
-code-server --config /root/.config/code-server/config.yaml &
-
-# 启动 drsai 服务（即使失败也保持容器运行）
-python run_drsai_agent.py || true
-
-# 保持容器运行
-tail -f /dev/null
-EOF
+RUN printf '#!/bin/bash\n\
+\n\
+# 启动 SSH 服务\n\
+service ssh start\n\
+\n\
+# 启动 code-server\n\
+code-server --config /root/.config/code-server/config.yaml &\n\
+\n\
+# 启动 drsai 服务（即使失败也保持容器运行）\n\
+python run_drsai_agent.py || true\n\
+\n\
+# 保持容器运行\n\
+tail -f /dev/null\n' > /app/start-services.sh
 
 RUN chmod +x /app/start-services.sh
 

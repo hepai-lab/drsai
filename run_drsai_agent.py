@@ -48,30 +48,84 @@ def _as_bool(value, default: bool = False) -> bool:
 def _build_gfs_tools(user_id: str | None) -> list:
     """根据环境开关，为指定用户生成 GFS function-calling 工具列表。
 
-    环境变量：
-      - ``DRSAI_GFS_ENABLED`` (default false): 总开关
-      - ``GFS_OPENAPI_KEY``: admin api key（必需，由 GfsAdminClient 读取）
+    支持两种模式（自动选择，互斥）：
+
+    模式 A — Admin 模式（多用户服务）::
+
+        DRSAI_GFS_ENABLED=true
+        GFS_OPENAPI_KEY=<管理员 X-API-Key>
+
+      Worker 持管理员 key，按 ``user_id`` (邮箱) 自动为每个用户拿 AKSK。
+      原始用法，向后兼容。
+
+    模式 B — Personal 模式（单用户本地实例）::
+
+        DRSAI_GFS_ENABLED=true
+        DRSAI_GFS_MODE=personal           # 显式声明（可选，缺省时按下面的优先级自动判定）
+        GFS_ACCESS_KEY=<个人 AK>
+        GFS_SECRET_KEY=<个人 SK>
+        GFS_BUCKET=<完整桶名 e.g. 20235-xiongdb>
+        GFS_USER_EMAIL=<可选，仅日志用>
+
+      用户提供自己的 AKSK，**不需要** ``GFS_OPENAPI_KEY``。
+      适合个人本地启动 / 拿不到 admin key 的场景。
+
+    自动判定优先级：
+      1. 显式 ``DRSAI_GFS_MODE=personal`` → 走 personal
+      2. 显式 ``DRSAI_GFS_MODE=admin``    → 走 admin
+      3. 同时配置了个人 AKSK 和 admin key → 走 personal（个人配置更具体）
+      4. 仅配置 ``GFS_ACCESS_KEY`` 等     → 走 personal
+      5. 其它情况                          → 走 admin
 
     失败时仅记日志，不抛异常，避免影响 agent 创建。
     """
     if not _as_bool(os.getenv("DRSAI_GFS_ENABLED"), default=False):
         return []
-    if not user_id:
-        return []
+
+    mode = (os.getenv("DRSAI_GFS_MODE") or "").strip().lower()
+    has_personal_creds = bool(
+        os.getenv("GFS_ACCESS_KEY")
+        and os.getenv("GFS_SECRET_KEY")
+        and os.getenv("GFS_BUCKET")
+    )
+
+    if mode == "personal":
+        use_personal = True
+    elif mode == "admin":
+        use_personal = False
+    else:
+        # 自动判定：有完整个人配置就用 personal
+        use_personal = has_personal_creds
+
     try:
-        # 懒导入：boto3 在某些精简环境里可能没装，应避免影响主流程
+        if use_personal:
+            from drsai.modules.managers.gfs import make_gfs_tools_personal
+            tools = make_gfs_tools_personal(email=user_id or None)
+            logger.info(
+                f"GFS personal mode enabled: {len(tools)} tools registered "
+                f"(user={user_id or 'personal@local'})"
+            )
+            return tools
+
+        # admin 模式：必须有 user_id
+        if not user_id:
+            logger.info("GFS admin mode requires user_id; skipping.")
+            return []
         from drsai.modules.managers.gfs import make_gfs_tools
-    except ImportError as e:
-        logger.warning("DRSAI_GFS_ENABLED=true but gfs module import failed: %s", e)
-        return []
-    try:
         tools = make_gfs_tools(user_id)
-        logger.info("GFS enabled for user %s: %d tools registered",
-                    user_id, len(tools))
+        logger.info(
+            f"GFS admin mode enabled for user {user_id}: {len(tools)} tools registered"
+        )
         return tools
+    except ImportError as e:
+        logger.warning(f"DRSAI_GFS_ENABLED=true but gfs module import failed: {e}")
+        return []
     except Exception as e:
-        logger.warning("make_gfs_tools(%s) failed: %s. Falling back to no GFS.",
-                       user_id, e)
+        mode_label = "personal" if use_personal else "admin"
+        logger.warning(
+            f"GFS tool init failed (mode={mode_label}, user={user_id}): {e}. "
+            "Falling back to no GFS."
+        )
         return []
 
 llm_mode_config = DEFAULT_LLM_MODE_CONFIG

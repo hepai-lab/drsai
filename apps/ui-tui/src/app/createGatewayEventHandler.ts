@@ -10,7 +10,7 @@ import type { GatewayEvent } from '../gatewayTypes.js'
 
 import { $approval, $clarify, $secret, $sudo } from './overlayStore.js'
 import type { TurnController } from './turnController.js'
-import { $connectionError, $connectionStatus, $sessionMeta, $skin, $statusLine, $userId } from './uiStore.js'
+import { $connectionError, $connectionStatus, $lastUsage, $sessionMeta, $skin, $statusLine, $userId } from './uiStore.js'
 import {
   applyToolComplete,
   toolFromStart,
@@ -34,7 +34,7 @@ export function createGatewayEventHandler(
   // We coalesce text deltas into a small buffer and flush every ~FLUSH_MS so
   // Ink has time to fully reflow each frame.
   //
-  // Why 160 ms (changed from 80 ms):
+  // Why 80 ms (default, reduced from 160 ms since alt-screen resolves P1-01):
   //   Every flush triggers Ink's eraseLines(previousLineCount) + write(new
   //   frame). The eraseLines sequence is interpreted by most terminals
   //   (iTerm2, Alacritty, kitty, Windows Terminal, VSCode, GNU screen) as
@@ -42,30 +42,33 @@ export function createGatewayEventHandler(
   //   user's manual scroll-back to the bottom. So during a long streaming
   //   answer, any attempt to scroll up is yanked back every FLUSH_MS.
   //
-  //   80 ms → 12.5 flushes/sec → user gets ≤ 80 ms of scrollback time.
-  //   160 ms → 6.25 flushes/sec → user gets up to 160 ms (2x).
+  //   80 ms → ~12 fps flushes → responsive streaming, smooth text flow.
   //
-  //   160 ms is still well below the 250 ms "feels laggy" threshold for
-  //   live-streaming text (per Doherty / Nielsen rule-of-thumb), and the
-  //   visible per-flush chunk on a fast LLM is roughly 1 line either way.
-  //   The user-perceptible loss is near-zero; the scrollback usability win
-  //   is real and measurable.
-  //
-  //   The PROPER fix (P1-01-followup) is to enter an alternate-screen
-  //   buffer (\x1b[?1049h) so the terminal stops conflating cursor moves
-  //   with viewport anchoring. That is tracked as P3-15 + alt-screen mode
-  //   and will be a larger change.
+  //   With alternate-screen buffer mode enabled (entry.tsx \x1b[?1049h),
+  //   the scroll-anchor issue (P1-01) is fully resolved — the TUI runs in
+  //   its own terminal page so eraseLines() no longer resets the user's
+  //   scrollback. This means we can safely use a lower FLUSH_MS for more
+  //   responsive streaming without the scroll-jank penalty. 80 ms is a
+  //   good balance: ~12 fps updates feel smooth while still coalescing
+  //   token-level bursts.
   //
   // Override with DRSAI_TUI_FLUSH_MS for tuning. Clamped to [16, 500].
-  // Power users on slow terminals can push it to 240+ for even better
-  // scrollback usability; speed-readers can drop it back to 80.
   const envFlush = Number.parseInt(process.env.DRSAI_TUI_FLUSH_MS || '', 10)
   const FLUSH_MS = Number.isFinite(envFlush)
     ? Math.max(16, Math.min(500, envFlush))
-    : 160
+    : 80
   let textBuf = ''
   let reasoningBuf = ''
   let flushTimer: ReturnType<typeof setTimeout> | null = null
+
+  // ── Subagent visual distinction ─────────────────────────────────────────
+  //
+  // When a subagent streams text via `subagent.thinking`, we wrap its output
+  // in a visual box so the user can tell which part came from the subagent
+  // vs. the main agent. We track whether we're currently inside a subagent
+  // block so we know when to emit the opening/closing separators.
+  let isSubagentActive = false
+  let subagentSource = ''
 
   function flushBuffers() {
     flushTimer = null
@@ -128,14 +131,42 @@ export function createGatewayEventHandler(
       case 'message.delta': {
         const text = (ev.payload as { text?: string } | undefined)?.text || ''
         if (!text) return
+        // If we were inside a subagent block, close it before main agent resumes
+        if (isSubagentActive) {
+          flushBuffers()
+          textBuf += '\n└───────────────────────────────\n'
+          isSubagentActive = false
+          subagentSource = ''
+        }
         textBuf += text
         scheduleFlush()
         return
       }
       case 'message.complete': {
+        // Close any active subagent block before finalizing
+        if (isSubagentActive) {
+          flushBuffers()
+          textBuf += '\n└───────────────────────────────\n'
+          isSubagentActive = false
+          subagentSource = ''
+        }
         // Make sure all buffered deltas land in the turn before we close it.
         flushBuffers()
         const p = ev.payload as { usage?: unknown; status?: string; reasoning?: string } | undefined
+        
+        // ADDED: Store the latest usage in $lastUsage for StatusBar display (Issue #8 fix)
+        if (p?.usage) {
+          const usage = p.usage as AssistantTurn['usage']
+          if (usage) {
+            $lastUsage.set({
+              model: usage.model,
+              prompt_tokens: usage.prompt_tokens,
+              completion_tokens: usage.completion_tokens,
+              total_tokens: usage.total_tokens,
+            })
+          }
+        }
+        
         updateCurrent(t => ({
           ...t,
           usage: (p?.usage as AssistantTurn['usage']) ?? t.usage,
@@ -192,6 +223,13 @@ export function createGatewayEventHandler(
         return
 
       // ── Subagent streaming ───────────────────────────────────
+      case 'subagent.spawn_requested': {
+        // 子智能体被请求启动 — 短暂显示提示
+        const p = ev.payload as { source?: string; goal?: string } | undefined
+        const name = p?.source?.replace(/^sub:/, '') ?? 'subagent'
+        $statusLine.set(`⚡ Starting ${name}…`)
+        return
+      }
       case 'subagent.start': {
         // 子智能体开始工作 — 在状态栏显示提示
         const p = ev.payload as { source?: string; goal?: string } | undefined
@@ -200,24 +238,88 @@ export function createGatewayEventHandler(
         return
       }
       case 'subagent.thinking': {
-        // 子智能体流式 token — 追加到当前 turn 的 text（与 message.delta 同等处理）
+        // 子智能体流式 token — 追加到当前 turn 的 text，带视觉区分标记
         const text = (ev.payload as { text?: string } | undefined)?.text || ''
         if (!text) return
+
+        // 如果之前不在子智能体模式，先 flush 主缓冲区并插入开始标记
+        if (!isSubagentActive) {
+          flushBuffers()
+          isSubagentActive = true
+          const source = (ev.payload as { source?: string } | undefined)?.source?.replace(/^sub:/, '') ?? 'subagent'
+          subagentSource = source
+          textBuf += `\n\n┌─ 🤖 ${source} ─────────────────\n`
+        }
+
         textBuf += text
         scheduleFlush()
         return
       }
+      case 'subagent.tool': {
+        // 子智能体的工具调用 — 追加到当前 turn 的工具列表，带 sub: 前缀区分来源
+        const p = ev.payload as { tool_id?: string; name?: string; args?: Record<string, unknown>; preview?: string; result?: string; status?: string } | undefined
+        if (!p?.name) return
+
+        const toolId = p.tool_id || `sub-${Date.now()}`
+        const existing = $current.get()
+        if (existing) {
+          const existingTool = existing.tools.find(t => t.id === toolId)
+          if (existingTool) {
+            // 更新已有工具（完成状态）
+            updateCurrent(c => ({
+              ...c,
+              tools: c.tools.map(t =>
+                t.id === toolId
+                  ? { ...t, status: 'complete' as const, result: p.result, durationMs: Date.now() - t.startedAt }
+                  : t,
+              ),
+            }))
+          } else {
+            // 新工具调用
+            const subTool = toolFromStart({
+              tool_id: toolId,
+              name: `sub:${p.name}`,
+              args: p.args || {},
+              preview: p.preview,
+            })
+            updateCurrent(c => ({
+              ...c,
+              tools: [...c.tools, subTool],
+            }))
+          }
+        }
+        return
+      }
+      case 'subagent.progress': {
+        // 子智能体进度更新 — 显示在状态栏（不追加到 transcript）
+        const p = ev.payload as { text?: string; percent?: number } | undefined
+        if (p?.text) {
+          const pct = p.percent != null ? ` (${p.percent}%)` : ''
+          $statusLine.set(`⚡ ${subagentSource || 'subagent'}: ${p.text.slice(0, 80)}${pct}`)
+        }
+        return
+      }
       case 'subagent.complete': {
-        // 子智能体完成 — 如有最终 text 且尚未流式输出则补充，然后清除状态栏
+        // 子智能体完成 — 如有流式输出则添加结束标记
+        if (isSubagentActive) {
+          flushBuffers()
+          textBuf += '\n└───────────────────────────────\n'
+          scheduleFlush()
+          isSubagentActive = false
+          subagentSource = ''
+        }
+
         const p = ev.payload as { text?: string; source?: string } | undefined
         const finalText = p?.text || ''
         // 如果没有经过 subagent.thinking 流式传输（非流式子智能体），
-        // 则把最终文本作为一次性 delta 追加
+        // 则把最终文本作为一次性 delta 追加（带视觉标记）
         if (finalText) {
           const cur = $current.get()
           if (cur && !cur.text && !textBuf) {
-            // 没有已流式的内容，把最终答案全量追加
+            const source = p?.source?.replace(/^sub:/, '') ?? 'subagent'
+            textBuf += `\n\n┌─ 🤖 ${source} ─────────────────\n`
             textBuf += finalText
+            textBuf += '\n└───────────────────────────────\n'
             scheduleFlush()
           }
         }
@@ -232,7 +334,14 @@ export function createGatewayEventHandler(
         return
       }
       case 'error': {
-        // Flush so the partial answer up to the error is preserved.
+        // Close any active subagent block, then flush so the partial answer
+        // up to the error is preserved.
+        if (isSubagentActive) {
+          flushBuffers()
+          textBuf += '\n└───────────────────────────────\n'
+          isSubagentActive = false
+          subagentSource = ''
+        }
         flushBuffers()
         const msg = (ev.payload as { message?: string } | undefined)?.message || 'unknown error'
         const cur = $current.get()
@@ -242,6 +351,41 @@ export function createGatewayEventHandler(
           controller?.finalize()
         } else {
           $statusLine.set(`error: ${msg}`)
+        }
+        return
+      }
+
+      // ── Background task completion ───────────────────────────
+      case 'background.complete': {
+        flushBuffers()
+        const p = ev.payload as {
+          task_id?: string
+          task_name?: string
+          status?: string
+          result_preview?: string
+          duration_ms?: number
+        } | undefined
+        const taskName = p?.task_name || p?.task_id || 'task'
+        const icon = p?.status === 'success' ? '✅' : p?.status === 'error' ? '❌' : '⏱'
+        const dur = p?.duration_ms ? ` (${(p.duration_ms / 1000).toFixed(1)}s)` : ''
+        $statusLine.set(`${icon} Task "${taskName}" ${p?.status || 'complete'}${dur}`)
+        // Auto-clear status after 5 seconds
+        setTimeout(() => {
+          const cur = $statusLine.get()
+          if (cur?.includes(taskName)) $statusLine.set('')
+        }, 5000)
+        return
+      }
+
+      // ── Reasoning availability notification ──────────────────
+      case 'reasoning.available': {
+        const p = ev.payload as { available?: boolean; levels?: string[] } | undefined
+        if (p?.available) {
+          $statusLine.set(`💡 Reasoning available: ${(p.levels || []).join(', ')}`)
+          setTimeout(() => {
+            const cur = $statusLine.get()
+            if (cur?.includes('Reasoning available')) $statusLine.set('')
+          }, 3000)
         }
         return
       }

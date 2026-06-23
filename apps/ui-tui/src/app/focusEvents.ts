@@ -41,3 +41,55 @@ export const FOCUS_OUT_INPUT = '[O'
 export function isTerminalFocusEvent(input: string): boolean {
   return input === FOCUS_IN_INPUT || input === FOCUS_OUT_INPUT
 }
+
+/**
+ * Mouse event detection (Issue #7 fix).
+ *
+ * When mouse tracking is enabled (\x1b[?1000h\x1b[?1006h), the terminal
+ * sends SGR-format mouse events instead of translating wheel scrolls into
+ * fake arrow keys. Format: \x1b[<button;col;rowM (press) or m (release)
+ *
+ * Ink strips the leading \x1b, so we receive: "[<button;col;rowM"
+ *
+ * Button codes:
+ *   64 = wheel up
+ *   65 = wheel down
+ *   0-2 = left/middle/right click
+ *
+ * Without this guard, mouse events would be interpreted as text input or
+ * trigger unintended actions (e.g., wheel up = arrow up = browse history).
+ *
+ * Usage in every useInput callback:
+ *
+ *   useInput((input, key) => {
+ *     if (isTerminalFocusEvent(input)) return
+ *     const mouse = parseMouseEvent(input)
+ *     if (mouse.isMouse) {
+ *       // Optionally handle wheel-up/wheel-down for scrolling
+ *       return
+ *     }
+ *     // ...rest of the handler
+ *   })
+ */
+
+export type MouseEvent =
+  | { isMouse: true; type: 'wheel-up' | 'wheel-down' | 'click' | 'other' }
+  | { isMouse: false }
+
+export function parseMouseEvent(input: string): MouseEvent {
+  // SGR mode: starts with '[<' (Ink strips the leading \x1b)
+  if (!input.startsWith('[<')) {
+    return { isMouse: false }
+  }
+  
+  const match = input.match(/^\[<(\d+);(\d+);(\d+)([Mm])$/)
+  if (!match) {
+    return { isMouse: false }
+  }
+  
+  const button = parseInt(match[1], 10)
+  if (button === 64) return { isMouse: true, type: 'wheel-up' }
+  if (button === 65) return { isMouse: true, type: 'wheel-down' }
+  if (button < 4) return { isMouse: true, type: 'click' }
+  return { isMouse: true, type: 'other' }
+}

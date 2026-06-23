@@ -123,10 +123,7 @@ _stdout_lock = threading.Lock()
 _LONG_HANDLERS = frozenset({
     "prompt.submit",
     "session.resume",
-    "session.compress",
-    "session.branch",
     "slash.exec",
-    "shell.exec",
     "skills.manage",
     "gateway.shutdown",
 })

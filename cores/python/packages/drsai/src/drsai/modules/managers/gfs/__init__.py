@@ -41,10 +41,16 @@ from .admin_client import (
     GfsCredential,
     get_admin_client,
 )
-from .agent_tools import make_gfs_tools
+from .agent_tools import make_gfs_tools, make_gfs_tools_personal
 from .provisioner import (
     ENV_CACHE_DIR,
+    ENV_PERSONAL_ACCESS_KEY,
+    ENV_PERSONAL_BUCKET,
+    ENV_PERSONAL_EMAIL,
+    ENV_PERSONAL_SECRET_KEY,
     GfsProvisioner,
+    credential_from_env,
+    get_personal_user_client,
     get_user_client,
 )
 from .user_client import (
@@ -70,9 +76,16 @@ __all__ = [
     "get_admin_client",
     # agent_tools
     "make_gfs_tools",
+    "make_gfs_tools_personal",
     # provisioner
     "ENV_CACHE_DIR",
+    "ENV_PERSONAL_ACCESS_KEY",
+    "ENV_PERSONAL_BUCKET",
+    "ENV_PERSONAL_EMAIL",
+    "ENV_PERSONAL_SECRET_KEY",
     "GfsProvisioner",
+    "credential_from_env",
+    "get_personal_user_client",
     "get_user_client",
     # user_client
     "GfsObjectInfo",

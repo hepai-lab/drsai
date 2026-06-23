@@ -16,17 +16,29 @@
  */
 
 import { Box, Text, useInput } from 'ink'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { isTerminalFocusEvent } from '../app/focusEvents.js'
+import type { GatewayClient } from '../gatewayClient.js'
 import type { SessionInfo } from '../gatewayTypes.js'
 import { theme } from '../theme.js'
+import { TextInput } from './textInput.js'
 
 export interface SessionPickerProps {
   sessions: SessionInfo[]
   currentId?: string
   onSelect: (sessionId: string) => void
   onCancel: () => void
+  // New: enable filter mode
+  enableFilter?: boolean
+  // New: show grouping by workdir
+  groupByWorkdir?: boolean
+  // New: current workdir for highlighting
+  currentWorkdir?: string
+  // New: gateway client for pin/archive/tag operations
+  gw?: GatewayClient
+  // New: callback to refresh sessions after an operation
+  onSessionsChanged?: () => void
 }
 
 const WINDOW_SIZE = 10
@@ -47,7 +59,26 @@ function trimWorkdir(wd: string, max: number): string {
   return '…' + wd.slice(-(max - 1))
 }
 
-export function SessionPicker({ sessions, currentId, onSelect, onCancel }: SessionPickerProps) {
+export function SessionPicker({ sessions, currentId, onSelect, onCancel, enableFilter, groupByWorkdir, currentWorkdir, gw, onSessionsChanged }: SessionPickerProps) {
+  const [filterText, setFilterText] = useState('')
+
+  // Tag input mode: null = not active, { sessionId, sessionName, action } = active
+  const [tagMode, setTagMode] = useState<{ sessionId: string; sessionName: string; action: 'add' | 'remove' } | null>(null)
+  const [tagInput, setTagInput] = useState('')
+  const [statusMsg, setStatusMsg] = useState('')
+
+  const filteredSessions = useMemo(() => {
+    if (!filterText) return sessions
+    const needle = filterText.toLowerCase()
+    return sessions.filter(s =>
+      s.name.toLowerCase().includes(needle) ||
+      s.preview.toLowerCase().includes(needle) ||
+      s.workdir.toLowerCase().includes(needle) ||
+      s.session_id.startsWith(needle) ||
+      (s.tags || []).some(t => t.toLowerCase().includes(needle))
+    )
+  }, [sessions, filterText])
+
   const [cursor, setCursor] = useState(() => {
     if (currentId) {
       const idx = sessions.findIndex(s => s.session_id === currentId)
@@ -83,12 +114,57 @@ export function SessionPicker({ sessions, currentId, onSelect, onCancel }: Sessi
 
   useInput((input, key) => {
     if (isTerminalFocusEvent(input)) return
+
+    // Tag input mode: capture all input for tag entry
+    if (tagMode) {
+      if (key.escape) {
+        setTagMode(null)
+        setTagInput('')
+        return
+      }
+      if (key.return) {
+        const tags = tagInput.split(/\s+/).filter(Boolean)
+        if (tags.length > 0 && gw) {
+          gw.request(`session.tag_${tagMode.action}`, {
+            session_id: tagMode.sessionId,
+            tags,
+          })
+            .then(() => {
+              setStatusMsg(`${tagMode.action === 'add' ? 'Added' : 'Removed'} tags: ${tags.map(t => '#' + t).join(' ')}`)
+              onSessionsChanged?.()
+            })
+            .catch((e: Error) => setStatusMsg(`Error: ${e.message}`))
+        }
+        setTagMode(null)
+        setTagInput('')
+        return
+      }
+      if (key.backspace) {
+        setTagInput(prev => prev.slice(0, -1))
+        return
+      }
+      if (input && !key.ctrl && !key.meta) {
+        setTagInput(prev => prev + input)
+      }
+      return
+    }
+
+    // Filter mode: typing updates filter text (exclude nav + org keys)
+    if (enableFilter && !key.return && !key.escape && !key.upArrow && !key.downArrow && !key.pageUp && !key.pageDown && !(key.ctrl && input === 'p') && !(key.ctrl && input === 'n') && !(key.ctrl && input === 'a') && !(key.ctrl && input === 'e') && input !== 'g' && input !== 'G' && !(input >= '1' && input <= '9') && input !== 'p' && input !== 'a' && input !== 't' && input !== 'T') {
+      if (key.backspace) {
+        setFilterText(prev => prev.slice(0, -1))
+      } else if (input && !key.ctrl && !key.meta) {
+        setFilterText(prev => prev + input)
+      }
+      return
+    }
+
     if (key.escape) {
       onCancel()
       return
     }
     if (key.return) {
-      const selected = sessions[cursor]
+      const selected = filteredSessions[cursor]
       if (selected) onSelect(selected.session_id)
       return
     }
@@ -97,7 +173,7 @@ export function SessionPicker({ sessions, currentId, onSelect, onCancel }: Sessi
       return
     }
     if (key.downArrow || (key.ctrl && input === 'n')) {
-      adjustWindow(Math.min(sessions.length - 1, cursor + 1))
+      adjustWindow(Math.min(filteredSessions.length - 1, cursor + 1))
       return
     }
     if (key.pageUp) {
@@ -105,7 +181,7 @@ export function SessionPicker({ sessions, currentId, onSelect, onCancel }: Sessi
       return
     }
     if (key.pageDown) {
-      adjustWindow(Math.min(sessions.length - 1, cursor + WINDOW_SIZE))
+      adjustWindow(Math.min(filteredSessions.length - 1, cursor + WINDOW_SIZE))
       return
     }
     // Ctrl+Home / Ctrl+End — first/last
@@ -114,38 +190,90 @@ export function SessionPicker({ sessions, currentId, onSelect, onCancel }: Sessi
       return
     }
     if ((key.ctrl && input === 'e') || input === 'G') {
-      adjustWindow(sessions.length - 1)
+      adjustWindow(filteredSessions.length - 1)
       return
     }
     // Numeric jump: 1-9 → row within the visible window
     if (input >= '1' && input <= '9') {
       const rowInWindow = parseInt(input, 10) - 1
       const target = offset + rowInWindow
-      if (target < sessions.length) {
+      if (target < filteredSessions.length) {
         setCursor(target)
-        onSelect(sessions[target].session_id)
+        onSelect(filteredSessions[target].session_id)
       }
+      return
+    }
+
+    // ── Session organization shortcuts (require gw) ────────────────
+    if (!gw) return
+    const selectedSession = filteredSessions[cursor]
+    if (!selectedSession) return
+
+    // p = toggle pin
+    if (input === 'p') {
+      const action = selectedSession.pinned ? 'unpin' : 'pin'
+      gw.request(`session.${action}`, { session_id: selectedSession.session_id })
+        .then(() => {
+          setStatusMsg(`${action === 'pin' ? '📌 Pinned' : 'Unpinned'}: ${selectedSession.name}`)
+          onSessionsChanged?.()
+        })
+        .catch((e: Error) => setStatusMsg(`Error: ${e.message}`))
+      return
+    }
+
+    // a = toggle archive
+    if (input === 'a') {
+      const archive = !selectedSession.archived
+      gw.request('session.archive', { session_id: selectedSession.session_id, archived: archive })
+        .then(() => {
+          setStatusMsg(`${archive ? '📦 Archived' : 'Unarchived'}: ${selectedSession.name}`)
+          onSessionsChanged?.()
+        })
+        .catch((e: Error) => setStatusMsg(`Error: ${e.message}`))
+      return
+    }
+
+    // t = add tag (enter tag input mode)
+    if (input === 't') {
+      setTagMode({ sessionId: selectedSession.session_id, sessionName: selectedSession.name, action: 'add' })
+      setTagInput('')
+      return
+    }
+
+    // T = remove tag (enter tag input mode)
+    if (input === 'T') {
+      setTagMode({ sessionId: selectedSession.session_id, sessionName: selectedSession.name, action: 'remove' })
+      setTagInput('')
+      return
     }
   })
 
-  if (sessions.length === 0) {
+  if (filteredSessions.length === 0) {
     return (
       <Box borderStyle="round" borderColor={theme.border} paddingX={1} flexDirection="column">
-        <Text color={theme.warn}>No sessions found</Text>
+        <Text color={theme.warn}>{filterText ? 'No sessions match filter' : 'No sessions found'}</Text>
         <Text color={theme.muted} dimColor>Press Esc to dismiss</Text>
       </Box>
     )
   }
 
-  const visible = sessions.slice(offset, offset + WINDOW_SIZE)
-  const showingTo = Math.min(offset + WINDOW_SIZE, sessions.length)
+  const visible = filteredSessions.slice(offset, offset + WINDOW_SIZE)
+  const showingTo = Math.min(offset + WINDOW_SIZE, filteredSessions.length)
 
   return (
     <Box borderStyle="round" borderColor={theme.primary} paddingX={1} flexDirection="column">
       <Box>
         <Text color={theme.primary} bold>Select session</Text>
-        <Text color={theme.muted} dimColor>  ({offset + 1}-{showingTo} of {sessions.length})</Text>
+        <Text color={theme.muted} dimColor>  ({offset + 1}-{showingTo} of {filteredSessions.length})</Text>
       </Box>
+
+      {enableFilter && (
+        <Box>
+          <Text color={theme.muted}>🔍 Filter: </Text>
+          <Text color={theme.accent}>{filterText || '(type to filter)'}</Text>
+          <Text color={theme.muted}> ({filteredSessions.length}/{sessions.length})</Text>
+        </Box>
+      )}
 
       {offset > 0 && (
         <Box>
@@ -167,13 +295,19 @@ export function SessionPicker({ sessions, currentId, onSelect, onCancel }: Sessi
           const previewLine = s.preview && s.message_count > 0
             ? truncate(s.preview, PREVIEW_MAX)
             : ''
+          const pinIcon = s.pinned ? '📌 ' : ''
+          const archiveIcon = s.archived ? '📦 ' : ''
+          const tagsStr = (s.tags || []).length > 0
+            ? ` ${s.tags!.map(t => `#${t}`).join(' ')}`
+            : ''
           return (
             <Box key={s.session_id} flexDirection="column">
               <Text color={color}>
                 {prefix}
-                {idx} {name} [{s.session_id.slice(0, 8)}] msgs={s.message_count}
+                {idx} {pinIcon}{archiveIcon}{name} [{s.session_id.slice(0, 8)}] msgs={s.message_count}
                 {isCurrent && ' ← current'}
               </Text>
+              {tagsStr && <Text color="yellow">   {tagsStr}</Text>}
               {(previewLine || wd) && (
                 <Box paddingLeft={6}>
                   <Text color={theme.muted} dimColor>
@@ -188,15 +322,31 @@ export function SessionPicker({ sessions, currentId, onSelect, onCancel }: Sessi
         })}
       </Box>
 
-      {showingTo < sessions.length && (
+      {showingTo < filteredSessions.length && (
         <Box>
-          <Text color={theme.muted} dimColor>  ↓ ({sessions.length - showingTo} more below)</Text>
+          <Text color={theme.muted} dimColor>  ↓ ({filteredSessions.length - showingTo} more below)</Text>
+        </Box>
+      )}
+
+      {statusMsg && (
+        <Box marginTop={1}>
+          <Text color={theme.warn}>{statusMsg}</Text>
+        </Box>
+      )}
+
+      {tagMode && (
+        <Box marginTop={1} borderStyle="round" paddingX={1}>
+          <Text color={theme.accent}>
+            {tagMode.action === 'add' ? 'Add tags' : 'Remove tags'} for "{tagMode.sessionName}":
+          </Text>
+          <Text color={theme.text}> {tagInput || '(type tags separated by spaces)'}</Text>
+          <Text color={theme.muted} dimColor>  Enter confirm · Esc cancel</Text>
         </Box>
       )}
 
       <Box marginTop={1}>
         <Text color={theme.muted} dimColor>
-          ↑/↓ scroll · PgUp/PgDn page · 1-9 select row in view · Enter open · Esc cancel
+          ↑/↓ scroll · PgUp/PgDn page · 1-9 select{enableFilter ? ' · type to filter' : ''} · Enter open{gw ? ' · p pin · a archive · t tag · T untag' : ''} · Esc cancel
         </Text>
       </Box>
     </Box>

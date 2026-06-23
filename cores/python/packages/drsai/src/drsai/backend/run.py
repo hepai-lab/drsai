@@ -31,7 +31,7 @@ from drsai.modules.managers.messages import (
 )
 from drsai.modules.managers.database import DatabaseManager
 from drsai.modules.agents.skills_agent.managers import ScheduledTaskManager, TaskNotification
-from drsai.modules.managers.user_profile import UserApiKeyManager
+from drsai.modules.managers.user_profile import UserApiKeyManager, CredentialStore
 from autogen_agentchat.base import (
     ChatAgent,
     Team,)
@@ -142,7 +142,12 @@ async def run_backend(agent_factory: callable, **kwargs):
     task_work_dir.mkdir(parents=True, exist_ok=True)
 
     # 创建 API Key 管理器
+    credential_store = CredentialStore(base_dir=Path(base_dir))
     api_key_manager = UserApiKeyManager(base_dir=Path(base_dir))
+
+    # 将统一的 CredentialStore 注入 GfsProvisioner 单例
+    from drsai.modules.managers.gfs.provisioner import GfsProvisioner
+    GfsProvisioner.set_credential_store(credential_store)
 
     # 创建 agent_executor 函数（流式写入版本）
     async def agent_executor(user_id: str, session_id: str, prompt: str, output_file: Path, execution_context: dict = None) -> str:
@@ -761,7 +766,12 @@ async def run_worker(agent_factory: callable, **kwargs):
     task_work_dir.mkdir(parents=True, exist_ok=True)
 
     # 创建 API Key 管理器
+    credential_store = CredentialStore(base_dir=Path(base_dir))
     api_key_manager = UserApiKeyManager(base_dir=Path(base_dir))
+
+    # 将统一的 CredentialStore 注入 GfsProvisioner 单例
+    from drsai.modules.managers.gfs.provisioner import GfsProvisioner
+    GfsProvisioner.set_credential_store(credential_store)
 
     # 创建 agent_executor 函数（流式写入版本）
     async def agent_executor(user_id: str, session_id: str, prompt: str, output_file: Path, execution_context: dict = None) -> str:

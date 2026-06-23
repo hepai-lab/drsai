@@ -101,6 +101,11 @@ export class GatewayClient extends EventEmitter {
 
   /** Start the gateway (subprocess or WebSocket). Returns immediately; await ``ready()`` to block. */
   start(): void {
+    // ADDED: Check for orphaned gateway process (Issue #3 fix)
+    this.cleanupOrphanedGateway().catch(() => {
+      // Best-effort cleanup; don't block startup on failure
+    })
+    
     // Detect attach mode via environment variable
     const attachUrl = process.env.DRSAI_TUI_ATTACH_URL?.trim()
     if (attachUrl) {
@@ -109,6 +114,54 @@ export class GatewayClient extends EventEmitter {
     } else {
       this.mode = 'stdio'
       this.startSubprocess()
+    }
+  }
+
+  /**
+   * Clean up orphaned gateway process from previous crashed TUI sessions (Issue #3 fix).
+   * 
+   * When the TUI crashes or is force-killed, the gateway subprocess may remain running.
+   * This method checks for a stale PID file and kills any orphaned process before
+   * starting a new gateway.
+   */
+  private async cleanupOrphanedGateway(): Promise<void> {
+    // Import fs dynamically to avoid issues if not available
+    const fs = await import('node:fs/promises')
+    const os = await import('node:os')
+    const path = await import('node:path')
+    
+    const pidFile = path.join(os.homedir(), '.drsai', 'tui_gateway.pid')
+    
+    try {
+      const pidStr = await fs.readFile(pidFile, 'utf-8')
+      const pid = parseInt(pidStr.trim(), 10)
+      
+      if (pid && !isNaN(pid)) {
+        try {
+          // Check if process exists (signal 0 = check only, no kill)
+          process.kill(pid, 0)
+          
+          // Process exists, try to kill it gracefully
+          process.kill(pid, 'SIGTERM')
+          
+          // Wait briefly for graceful shutdown
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          
+          try {
+            // If still alive, force kill
+            process.kill(pid, 'SIGKILL')
+          } catch {
+            // Already dead, that's fine
+          }
+        } catch {
+          // Process doesn't exist, just remove stale PID file
+        }
+        
+        // Clean up PID file
+        await fs.unlink(pidFile).catch(() => {})
+      }
+    } catch {
+      // No PID file or can't read it, proceed normally
     }
   }
 
@@ -286,11 +339,48 @@ export class GatewayClient extends EventEmitter {
     return [...this.logs]
   }
 
-  /** Kill the gateway subprocess or close WebSocket connection. */
+  /** 
+   * Kill the gateway subprocess or close WebSocket connection (Issue #3 improved).
+   * 
+   * Uses a graceful shutdown approach:
+   * 1. Try SIGTERM first (allows gateway to cleanup)
+   * 2. Wait up to 2 seconds
+   * 3. If still alive, force SIGKILL
+   */
   kill(): void {
     if (this.mode === 'stdio') {
-      if (this.proc && !this.proc.killed && this.proc.exitCode === null) {
+      if (!this.proc) return
+      
+      try {
+        // Try graceful SIGTERM first
         this.proc.kill('SIGTERM')
+        
+        // Set a timeout to send SIGKILL if SIGTERM doesn't work
+        const forceKillTimeout = setTimeout(() => {
+          if (this.proc && !this.proc.killed) {
+            this.proc.kill('SIGKILL')
+          }
+        }, 2000)
+        
+        // Clean up timeout when process actually exits
+        this.proc.once('exit', () => {
+          clearTimeout(forceKillTimeout)
+          this.proc = null
+        })
+      } catch (err) {
+        // If kill fails, try SIGKILL directly
+        try {
+          this.proc.kill('SIGKILL')
+        } catch {
+          // Last resort: process.kill with PID
+          if (this.proc.pid) {
+            try {
+              process.kill(this.proc.pid, 'SIGKILL')
+            } catch {
+              // Nothing more we can do
+            }
+          }
+        }
       }
     } else if (this.mode === 'websocket') {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {

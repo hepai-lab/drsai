@@ -95,5 +95,8 @@ export class TurnController {
       setCurrent(null)
     }
     $isStreaming.set(false)
+    // No manual scroll-to-bottom: with <Static> in TranscriptPane the
+    // terminal's native scroll position is the source of truth, and a
+    // freshly written turn naturally appears at the bottom.
   }
 }

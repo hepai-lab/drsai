@@ -342,9 +342,15 @@ def translate(message: Any, state: TurnState) -> list[tuple[str, dict]]:
     # ── AgentLogEvent ────────────────────────────────────────────────
     if AgentLogEvent is not None and isinstance(message, AgentLogEvent):
         content = getattr(message, "content", None) or getattr(message, "message", None)
+        log_text = _safe_str(content)
+        # Truncate long log texts (e.g. FunctionCall with big arguments)
+        # to avoid flooding the TUI status bar.  Max ~3 terminal lines ≈ 300 chars.
+        MAX_LOG_CHARS = 300
+        if len(log_text) > MAX_LOG_CHARS:
+            log_text = log_text[:MAX_LOG_CHARS - 1] + "…"
         out.append(("status.update", {
             "kind": "log",
-            "text": _safe_str(content),
+            "text": log_text,
         }))
         return out
 

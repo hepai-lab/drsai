@@ -24,7 +24,8 @@ interface Props {
 
 const COMPACT_ARG_LIMIT = 60
 const COMPACT_RESULT_LIMIT = 80
-const EXPANDED_RESULT_LINES = 5
+const EXPANDED_RESULT_LINES = 3  // Reduced from 5 to minimize screen clutter
+const MAX_RESULT_LINE_LENGTH = 120  // Max chars per result line
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + '…' : s
@@ -62,15 +63,19 @@ function expandedArgLines(args: Record<string, unknown>): string[] {
 /**
  * Up to ``EXPANDED_RESULT_LINES`` non-empty lines, with a trailing
  * "…+N more" marker if the result was longer.
+ * Also truncates each line to MAX_RESULT_LINE_LENGTH to prevent horizontal overflow.
  */
 function expandedResultLines(text?: string): { lines: string[]; truncated: number } {
   if (!text) return { lines: [], truncated: 0 }
   const all = text.split('\n')
   if (all.length <= EXPANDED_RESULT_LINES) {
-    return { lines: all, truncated: 0 }
+    return { 
+      lines: all.map(line => truncate(line, MAX_RESULT_LINE_LENGTH)), 
+      truncated: 0 
+    }
   }
   return {
-    lines: all.slice(0, EXPANDED_RESULT_LINES),
+    lines: all.slice(0, EXPANDED_RESULT_LINES).map(line => truncate(line, MAX_RESULT_LINE_LENGTH)),
     truncated: all.length - EXPANDED_RESULT_LINES,
   }
 }

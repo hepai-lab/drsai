@@ -77,6 +77,54 @@ def make_gfs_tools(email: str | None) -> list[Callable[..., Any]]:
         # 每次工具调用时再取 client（保证 cache miss / refresh 生效）
         return provisioner.get_user_client(email)
 
+    tools = _build_tools(_client)
+    logger.info("Mounted %d GFS tools for user %s (admin mode)", len(tools), email)
+    return tools
+
+
+def make_gfs_tools_personal(
+    *,
+    client: GfsUserClient | None = None,
+    email: str | None = None,
+    s3_endpoint: str | None = None,
+) -> list[Callable[..., Any]]:
+    """个人模式：用用户自己的 AKSK 生成 GFS 工具，**不依赖** ``GFS_OPENAPI_KEY``.
+
+    与 :func:`make_gfs_tools` 的区别：
+      - 不走 admin OpenAPI；凭证直接来自调用方传入或环境变量。
+      - 同一个进程一份 client，工具调用都共享。
+
+    Args:
+        client: 已经构造好的 ``GfsUserClient``。若为 ``None``，则调
+            :func:`get_personal_user_client` 从环境变量构造。
+        email: 透传给 ``get_personal_user_client``（仅 ``client=None`` 时生效）.
+        s3_endpoint: 透传给 ``get_personal_user_client``（仅 ``client=None`` 时生效）.
+
+    Raises:
+        RuntimeError: ``client`` 未提供且环境变量缺失（由 ``credential_from_env`` 抛出）。
+    """
+    if client is None:
+        from .provisioner import get_personal_user_client
+        client = get_personal_user_client(email=email, s3_endpoint=s3_endpoint)
+
+    # 个人模式：client 在进程生命周期内不变，直接闭包绑死
+    def _client() -> GfsUserClient:
+        return client
+
+    tools = _build_tools(_client)
+    logger.info(
+        "Mounted %d GFS tools for personal user %s (bucket=%s)",
+        len(tools), client.email, client.bucket,
+    )
+    return tools
+
+
+def _build_tools(
+    client_factory: Callable[[], GfsUserClient],
+) -> list[Callable[..., Any]]:
+    """共用的工具构造逻辑。``client_factory`` 决定每次调用怎么拿到 client。"""
+    _client = client_factory
+
     # ------------------------------------------------------------------ #
     # 工具定义
     # ------------------------------------------------------------------ #
@@ -198,5 +246,4 @@ def make_gfs_tools(email: str | None) -> list[Callable[..., Any]]:
         gfs_ls, gfs_stat, gfs_read, gfs_write,
         gfs_upload, gfs_download, gfs_delete, gfs_share_url,
     ]
-    logger.info("Mounted %d GFS tools for user %s", len(tools), email)
     return tools

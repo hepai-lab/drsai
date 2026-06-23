@@ -210,6 +210,7 @@ class AgentSession:
         return _run_coro(self._loop, self._async_save_state(), timeout=30.0)
 
     async def _async_save_state(self) -> Optional[dict]:
+        from datetime import datetime
         from drsai.modules.managers.datamodel.db import Thread, RunStatus
         from drsai.utils.utils import compress_state
 
@@ -225,7 +226,7 @@ class AgentSession:
         if resp.status and resp.data:
             thread = resp.data[0]
             thread.state = compress_state(state_dict)
-            thread.updated_at = time.time()
+            thread.updated_at = datetime.now()
             save_resp = self.db_manager.upsert(thread)
             if not save_resp.status:
                 logger.warning("save_state upsert failed: %s", save_resp.message)
@@ -504,6 +505,8 @@ class AgentSession:
             "allow_dangerous_commands": bool(getattr(agent, "_allow_dangerous_commands", False) if agent else False),
             "default_subagent": self.get_state_value("default_subagent", ""),
             "max_agent_concurrent": getattr(agent, "_max_agent_concurrent", 5) if agent else 5,
+            "has_injected_prefix": bool(self.get_state_value("inject_prefix", "")),
+            "has_injected_suffix": bool(self.get_state_value("inject_suffix", "")),
         }
         # Tool list (best effort) — coerce names to strings to keep payload JSON-safe.
         tools: list[str] = []
