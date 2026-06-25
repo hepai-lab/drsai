@@ -65,6 +65,7 @@ from __future__ import annotations
 
 
 import asyncio
+import inspect
 
 import json
 
@@ -670,21 +671,20 @@ class AgentManager:
 
                 # 1. Create agent (sync â run in thread)
 
-                agent = await asyncio.to_thread(
-
-                    create_agent,
-
+                create_agent_kwargs = dict(
                     thread_id=tid,
-
                     user_id=uid,
-
                     db_manager=_get_db(),
-
                     defult_config_name=model_alias or "hepai/minimax-m2.7-highspeed",
-
                     work_dir=work_dir or os.getcwd(),
-
                 )
+                if inspect.iscoroutinefunction(create_agent):
+                    agent = await create_agent(**create_agent_kwargs)
+                else:
+                    agent = await asyncio.to_thread(
+                        create_agent,
+                        **create_agent_kwargs,
+                    )
 
 
 

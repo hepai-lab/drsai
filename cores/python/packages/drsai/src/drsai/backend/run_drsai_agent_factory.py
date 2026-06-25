@@ -573,6 +573,10 @@ def create_agent(
     cli_cfg: Optional[dict[str, Any]] = None,
     assistant_cls: type[DrSaiAssistant] = DrSaiCLIAssistant,
     work_dir: Optional[str] = None,
+    # ── New params (design-20260623 §6.2) ──
+    sub_agent_config: Optional[dict] = None,
+    extra_tools: Optional[list] = None,
+    enable_security: bool = False,
 ) -> DrSaiAssistant:
     """Build a local DrSai assistant from CLI config.
 
@@ -775,6 +779,24 @@ def create_agent(
 
     cwd_prompt = _build_cwd_prompt(cli_cfg, work_dir=cwd)
 
+    # ── Security mode (design-20260623 §6.2) ──
+    # enable_security=False: CLI mode (personal use, all tools open)
+    # enable_security=True:  server mode (permission tiers + Skill elevation)
+    if enable_security:
+        allow_basic_tools = ["run_read"]  # user: read-only (Skill elevation adds more)
+        only_in_workspace_sec = True
+        allow_dangerous = False
+    else:
+        allow_basic_tools = None           # CLI: full access
+        only_in_workspace_sec = cli_cfg.get("workspace_enabled", True)
+        allow_dangerous = cli_cfg.get("dangerous_allowed", False)
+
+    # ── Merge extra_tools with existing tools ──
+    final_tools = list(extra_tools) if extra_tools else None
+
+    # ── Sub-agent config ──
+    final_sub_agent_config = sub_agent_config or {}
+
     return assistant_cls(
         name="Assistant",
         model_client=set_model_client(resolved_config_name),
@@ -792,11 +814,13 @@ def create_agent(
         # ── Plan-C workspace strategy ──
         work_dir=cwd,                    # Primary tool workspace = user's cwd
         storage_dir=user_storage_dir,     # Internal configs/memories stored separately
-        only_in_workspace=cli_cfg.get("workspace_enabled", True),  # 从全局配置读取（/ws_global）
+        only_in_workspace=only_in_workspace_sec,  # CLI: from config; server: True
         extra_work_dirs=[user_storage_dir],  # Allow access to internal storage
         only_system_message=False,
-        allolow_dangrous_cmd=cli_cfg.get("dangerous_allowed", False),  # 从全局配置读取（/dg_global）
-        allolow_basic_tools=None,
+        allolow_dangrous_cmd=allow_dangerous,  # CLI: from config; server: False
+        allolow_basic_tools=allow_basic_tools,  # CLI: None (full); server: ["run_read"]
+        tools=final_tools,                # Extra tools (MCP, knowledge, GFS, etc.)
+        sub_agent_config=final_sub_agent_config,
         max_agent_concurrent=cli_cfg.get("max_agent_concurrent", 5),
         token_limit=int(token_limit * 0.7),
         rag_flow_url=rag_flow_url,

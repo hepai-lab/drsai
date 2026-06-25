@@ -138,6 +138,7 @@ def create_agent(
         defult_config_name: str|None = "hepai/deepseek-v4-flash",
         anthropic_cache_enabled: bool | None = None,
         anthropic_cache_ttl: str | None = None,
+        **extra_kwargs
 ) -> DrSaiAssistant:
     if anthropic_cache_enabled is None:
         anthropic_cache_enabled = _as_bool(os.getenv("DRSAI_ANTHROPIC_CACHE_ENABLED"), default=True)

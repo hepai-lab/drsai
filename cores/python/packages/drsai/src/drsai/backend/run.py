@@ -169,13 +169,26 @@ async def run_backend(agent_factory: callable, **kwargs):
                 return error_msg
 
             # 使用 agent_factory 创建专用的 agent 实例
-            agent = await agent_factory(
+            # ── Pass through execution_context as extra_params (design-20260623 §4.3.3) ──
+            extra_params = {
+                k: v for k, v in ctx.items()
+                if k != "defult_config_name" and v is not None
+            }
+            agent_factory_params = dict(
                 api_key=api_key,
                 thread_id=session_id,
                 user_id=user_id,
                 db_manager=db_manager,
                 defult_config_name=ctx.get("defult_config_name"),
             )
+            # Merge non-protected extra params (inspect.signature filtering)
+            if extra_params:
+                sig = inspect.signature(agent_factory)
+                factory_params_set = set(sig.parameters.keys())
+                for k, v in extra_params.items():
+                    if k in factory_params_set and k not in agent_factory_params:
+                        agent_factory_params[k] = v
+            agent = await agent_factory(**agent_factory_params) if inspect.iscoroutinefunction(agent_factory) else agent_factory(**agent_factory_params)
 
             # 加载历史状态（继承记忆）
             response = db_manager.get(
@@ -441,12 +454,17 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         try:
             agent: Team|ChatAgent = self.drsai.agent_instance.get(chat_id, None)
             if agent is None:
+                extra_params = {
+                    k: v for k, v in kwargs.items()
+                    if k != "defult_config_name" and v is not None
+                }
                 agent = await self.drsai._create_agent_instance(
                     api_key=api_key, 
                     thread_id=chat_id, 
                     user_id=run_info.get("email"), 
                     stream=stream,
                     defult_config_name=kwargs.get("defult_config_name", None),
+                    extra_params=extra_params if extra_params else None,
                     )
             message = await agent.lazy_init(api_key=api_key, thread_id=chat_id, run_info=run_info, **kwargs)
             return {"status": True, "message": message}
@@ -811,6 +829,10 @@ async def run_worker(agent_factory: callable, **kwargs):
             config_name = ctx.get("defult_config_name", defult_config_name)
 
             # 使用 agent_factory 创建专用的 agent 实例
+            extra_params = {
+                k: v for k, v in ctx.items()
+                if k != "defult_config_name" and v is not None
+            }
             params = dict(
                 api_key=api_key,
                 thread_id=session_id,
@@ -818,6 +840,13 @@ async def run_worker(agent_factory: callable, **kwargs):
                 db_manager=db_manager,
                 defult_config_name=config_name,
             )
+            # Merge non-protected extra params (inspect.signature filtering)
+            if extra_params:
+                sig = inspect.signature(agent_factory)
+                factory_params_set = set(sig.parameters.keys())
+                for k, v in extra_params.items():
+                    if k in factory_params_set and k not in params:
+                        params[k] = v
             agent: ChatAgent | Team = (
                 await agent_factory(**params)
                 if inspect.iscoroutinefunction(agent_factory)

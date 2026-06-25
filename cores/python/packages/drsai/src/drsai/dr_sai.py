@@ -177,6 +177,22 @@ class DrSai:
             print(f"Error closing DrSai resources: {e}")
             raise
 
+    # ── Framework-protected params: never inject from extra_params (design-20260623 §4.3.2) ──
+    _FRAMEWORK_PROTECTED_PARAMS = frozenset({
+        "db_manager",
+        "allolow_dangrous_cmd",
+        "allolow_basic_tools",
+        "only_in_workspace",
+        "skills_dir",
+        "work_dir",
+        "storage_dir",
+    })
+
+    # ── Framework standard params: explicitly passed, highest priority ──
+    _FRAMEWORK_STANDARD_PARAMS = frozenset({
+        "api_key", "thread_id", "user_id", "stream", "defult_config_name",
+    })
+
     async def _create_agent_instance(
         self,
         api_key: str|None = None,
@@ -184,9 +200,19 @@ class DrSai:
         user_id: str|None = None,
         stream: bool = True,
         defult_config_name: str|None = None,
+        extra_params: dict|None = None,
         ) -> Union[ChatAgent, Team] :
         """
         创建智能体/多智能体系统实例，加载状态
+
+        参数优先级（高 → 低）:
+            1. 框架标准参数（api_key, thread_id, user_id, db_manager, stream, defult_config_name）
+            2. extra_params 中的非保护参数（前端传入的扩展参数）
+            3. create_agent 的默认值
+
+        安全保护:
+            - _FRAMEWORK_PROTECTED_PARAMS 中的参数永远不从 extra_params 注入
+            - api_key 受 use_api_key_mode 控制
         """
 
         # 保存用户的 API Key (如果提供且非空)
@@ -201,6 +227,7 @@ class DrSai:
         params = sig.parameters
         if len(params) > 0:
             kwargs = {}
+            # ── Step 1: Framework standard params (explicit, highest priority) ──
             if 'api_key' in params and self.use_api_key_mode == "frontend":
                 kwargs['api_key'] = api_key
             if 'thread_id' in params:
@@ -213,6 +240,21 @@ class DrSai:
                 kwargs['stream'] = stream
             if 'defult_config_name' in params:
                 kwargs['defult_config_name'] = defult_config_name
+
+            # ── Step 2: Frontend extension params (extra_params pass-through) ──
+            # Only pass params declared in create_agent signature,
+            # and never overwrite already-set standard params or protected params.
+            if extra_params:
+                for key, value in extra_params.items():
+                    if key in params and key not in kwargs:
+                        if key not in self._FRAMEWORK_PROTECTED_PARAMS:
+                            kwargs[key] = value
+                        else:
+                            logger.warning(
+                                f"_create_agent_instance: rejected frontend "
+                                f"injection of protected param '{key}'"
+                            )
+
             agent: ChatAgent | Team = (
                 await self.agent_factory(**kwargs)
                 if inspect.iscoroutinefunction(self.agent_factory)
@@ -377,7 +419,11 @@ class DrSai:
             if thread_id in self.agent_instance:
                 agent = self.agent_instance[thread_id]
             else:
-                agent = await self._create_agent_instance(api_key=api_key, thread_id=thread_id, user_id=user_id, stream=stream)
+                agent = await self._create_agent_instance(
+                    api_key=api_key, thread_id=thread_id, user_id=user_id, stream=stream,
+                    defult_config_name=user_input.extra_requests.get("defult_config_name") if user_input.extra_requests else None,
+                    extra_params=user_input.extra_requests,
+                )
                 
             ## 将前端传入的BaseChatMessage.model_dump(mode="json")消息整理为BaseChatMessage格式
             task: list[BaseChatMessage] = []
@@ -517,7 +563,11 @@ class DrSai:
             if thread_id in self.agent_instance:
                 agent = self.agent_instance[thread_id]
             else:
-                agent = await self._create_agent_instance(api_key=api_key, thread_id=thread_id, user_id=user_id, stream=stream)
+                agent = await self._create_agent_instance(
+                    api_key=api_key, thread_id=thread_id, user_id=user_id, stream=stream,
+                    defult_config_name=user_input.extra_requests.get("defult_config_name") if user_input.extra_requests else None,
+                    extra_params=user_input.extra_requests,
+                )
             
             # 创建或者更新thread
             thread: Thread|None = None

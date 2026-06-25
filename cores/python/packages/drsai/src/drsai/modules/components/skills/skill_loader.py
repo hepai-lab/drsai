@@ -88,10 +88,23 @@ class SkillLoader(Component[SkillLoaderConfig], ComponentBase[BaseModel]):
         if "name" not in metadata or "description" not in metadata:
             return None
 
+        # Parse required_tools — supports both list format "[a, b]" and
+        # comma-separated string "a, b".
+        required_tools_raw = metadata.get("required_tools", "")
+        if required_tools_raw:
+            # Strip surrounding brackets if present (YAML inline list format)
+            cleaned = required_tools_raw.strip().strip("[]")
+            required_tools = [
+                t.strip().strip("\"'") for t in cleaned.split(",") if t.strip()
+            ]
+        else:
+            required_tools = []
+
         return {
             "name": metadata["name"],
             "description": metadata["description"],
             "compatibility": metadata.get("compatibility"),
+            "required_tools": required_tools,
             "body": body.strip(),
             "path": path,
             "dir": path.parent,
@@ -147,6 +160,8 @@ class SkillLoader(Component[SkillLoaderConfig], ComponentBase[BaseModel]):
             line = f"- {name}: {skill['description']}"
             if skill.get("compatibility"):
                 line += f" [requires: {skill['compatibility']}]"
+            if skill.get("required_tools"):
+                line += f" [tools: {', '.join(skill['required_tools'])}]"
             lines.append(line)
         return "\n".join(lines)
 
