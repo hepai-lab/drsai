@@ -35,7 +35,7 @@ import { Box, Static, Text } from 'ink'
 
 import { stripTodoWriteArtifacts } from '../app/todoArtifacts.js'
 import type { AssistantTurn, Turn } from '../app/types.js'
-import { $transcript } from '../app/turnStore.js'
+import { $transcript, $transcriptGeneration } from '../app/turnStore.js'
 import { theme } from '../theme.js'
 
 import { MarkdownRenderer } from './markdownRenderer.js'
@@ -97,9 +97,10 @@ interface TranscriptPaneProps {
 
 export function TranscriptPane({ sessionId }: TranscriptPaneProps) {
   const transcript = useStore($transcript)
+  const generation = useStore($transcriptGeneration)
 
   return (
-    <Box flexDirection="column" key={sessionId ?? 'default'}>
+    <Box flexDirection="column" key={`${sessionId ?? 'default'}-gen${generation}`}>
       {/*
         Completed turns — flushed into terminal scrollback by Ink's
         <Static>. Once written they are never re-rendered, which is

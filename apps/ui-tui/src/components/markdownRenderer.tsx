@@ -17,6 +17,7 @@
  */
 
 import { Box, Text } from 'ink'
+import { memo } from 'react'
 import type { ReactElement } from 'react'
 
 import { useTerminalWidth } from '../hooks/useTerminalWidth.js'
@@ -608,7 +609,7 @@ function renderTable(rows: string[][], color: string | undefined, termWidth: num
 
 // ─── Main component ───────────────────────────────────────────────
 
-export function MarkdownRenderer({ text, color }: MarkdownRendererProps) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ text, color }: MarkdownRendererProps) {
   const blocks = parseBlocks(text)
   const termWidth = useTerminalWidth()
   if (blocks.length === 0) return null
@@ -711,4 +712,4 @@ export function MarkdownRenderer({ text, color }: MarkdownRendererProps) {
       })}
     </Box>
   )
-}
+})

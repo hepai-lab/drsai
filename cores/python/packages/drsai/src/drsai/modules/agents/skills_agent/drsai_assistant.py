@@ -357,27 +357,47 @@ Current Session_ID is {self._thread_id}"""
             self._is_powershell = bool(_detect_powershell())
         else:
             self._is_powershell = is_powershell
-        self._basic_funcs: List[Callable] = get_operator_funcs(
-            work_dir, 
+
+        # ── Skill-Scoped Tool Elevation (design-20260623 §2.2) ──
+        # Keep ALL basic functions; visibility is controlled dynamically
+        # rather than by hard-filtering in __init__.
+        self._all_basic_funcs: List[Callable] = get_operator_funcs(
+            work_dir,
             thread_id=self._thread_id,
             only_in_workspace=self._only_in_workspace,
-            extra_dirs = self._extra_work_dirs,
+            extra_dirs=self._extra_work_dirs,
             is_powershell=self._is_powershell,
             allolow_dangrous_cmd=allolow_dangrous_cmd,
             storage_dir=storage_dir,
-            )
-        if allolow_basic_tools is not None:
-            self._basic_funcs = [func for func in self._basic_funcs if func.__name__ in allolow_basic_tools]
-        # self._basic_funcs_names = [func.__name__ for func in self._basic_funcs]
+        )
         # Names of toggle helper functions that should NOT be registered as LLM tools
         _TOGGLE_FUNC_NAMES = {"set_workspace_restriction", "get_workspace_status", "set_dangerous_allowed", "get_dangerous_status"}
         # Store toggle helpers separately for CLI access (not registered as LLM tools)
         self._workspace_toggle_funcs = [
-            func for func in self._basic_funcs if func.__name__ in _TOGGLE_FUNC_NAMES
+            func for func in self._all_basic_funcs if func.__name__ in _TOGGLE_FUNC_NAMES
         ]
-        for func in self._basic_funcs:
-            if func.__name__ not in _TOGGLE_FUNC_NAMES:
-                self._tools.append(FunctionTool(func, description=func.__doc__))
+        # All basic tools (full set, always available for Skill elevation)
+        self._all_basic_tools: List[FunctionTool] = [
+            FunctionTool(func, description=func.__doc__)
+            for func in self._all_basic_funcs
+            if func.__name__ not in _TOGGLE_FUNC_NAMES
+        ]
+
+        # Default visible set: None = full access (admin), list = whitelist (user)
+        if allolow_basic_tools is None:
+            self._default_visible_tools: List[FunctionTool] = list(self._all_basic_tools)
+        else:
+            self._default_visible_tools = [
+                t for t in self._all_basic_tools if t.name in allolow_basic_tools
+            ]
+
+        # Skill elevation state (populated at runtime by _process_model_result)
+        self._elevated_tools: List[FunctionTool] = []
+        self._elevated_tool_names: set = set()
+        self._allolow_basic_tools_config = allolow_basic_tools
+
+        # Initialize self._tools with the default visible set
+        self._tools.extend(self._default_visible_tools)
 
         # === model context ===
         self._token_limit = token_limit
@@ -1144,13 +1164,62 @@ Current Session_ID is {self._thread_id}"""
                     # Skip the model client streaming chunk events.
                     continue
                 output_messages.append(message)
-                
+
+    # ── Skill-Scoped Tool Elevation helpers (design-20260623 §2.2) ──────────
+    def _clear_elevated_tools(self):
+        """Clear Skill-elevated tools and restore default permission level.
+
+        Called at:
+        - on_messages_stream entry: clears residual tools from previous turn
+        - pure-text response: task turn ended, downgrade permissions
+        """
+        if not self._elevated_tools:
+            return
+        for tool in self._elevated_tools:
+            # Remove from workbench tools if present
+            if hasattr(self, '_workbench') and self._workbench is not None:
+                if tool in self._workbench._tools:
+                    self._workbench._tools.remove(tool)
+            # Remove from self._tools if present
+            if tool in self._tools:
+                self._tools.remove(tool)
+        self._elevated_tools.clear()
+        self._elevated_tool_names.clear()
+        logger.debug("Skill elevated tools cleared — default permission restored")
+
+    def _elevate_tools_for_skill(self, required_tools: list, skill_name: str = ""):
+        """Elevate basic tools required by a Skill.
+
+        Only operates in restricted mode (allolow_basic_tools is not None).
+        In admin mode (allolow_basic_tools=None) all tools are already visible.
+        """
+        if self._allolow_basic_tools_config is None:
+            # Admin mode: all tools already visible, no elevation needed
+            return
+        if not required_tools:
+            return
+        for tool in self._all_basic_tools:
+            if tool.name in required_tools and tool.name not in self._elevated_tool_names:
+                self._elevated_tools.append(tool)
+                self._elevated_tool_names.add(tool.name)
+                if hasattr(self, '_workbench') and self._workbench is not None:
+                    self._workbench._tools.append(tool)
+                else:
+                    self._tools.append(tool)
+        if self._elevated_tools:
+            logger.info(
+                f"Skill '{skill_name}' elevated tools: "
+                f"{[t.name for t in self._elevated_tools]}"
+            )
+
     async def on_messages_stream(
         self, messages: Sequence[BaseChatMessage], cancellation_token: CancellationToken
     ) -> AsyncGenerator[BaseAgentEvent | BaseChatMessage | Response, None]:
         """
         Process the incoming messages with the assistant agent and yield events/responses as they happen.
         """
+        # ── Entry security check: clear residual elevated tools from previous turn ──
+        self._clear_elevated_tools()
 
         # monitor the pause event
         if self.is_paused:
@@ -1399,6 +1468,8 @@ Current Session_ID is {self._thread_id}"""
                 
                 # If direct text response (string)
                 if isinstance(model_result.content, str):
+                    # ── Pure-text reply = task turn ended → downgrade elevated tools ──
+                    self._clear_elevated_tools()
                     # At this point non-empty strings already passed the retry check above
                     reponse = await self.handle_str_reponse(
                         model_result = model_result,
@@ -2033,6 +2104,14 @@ Current Session_ID is {self._thread_id}"""
                     if skills_loader is None:
                         raise ValueError("Skills loader not available")
                     skill_content = skills_loader.run_skill(arguments["skill"])
+
+                    # ── Skill-Scoped Tool Elevation (design-20260623 §2.2.3) ──
+                    # Elevate basic tools declared in SKILL.md required_tools
+                    skill_meta = skills_loader.skills.get(arguments["skill"], {})
+                    required_tools = skill_meta.get("required_tools", [])
+                    if required_tools:
+                        self._elevate_tools_for_skill(required_tools, arguments["skill"])
+
                     exec_results.append(FunctionExecutionResult(
                         content=f"Skill for {arguments['skill']}:\n\n {skill_content}",
                         name=tool_name,

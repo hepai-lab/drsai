@@ -85,7 +85,7 @@ class DrSaiCLIAssistant(DrSaiAssistant):
         # NOT registered as LLM tools — only accessible via CLI slash commands.
         _DANGEROUS_FUNC_NAMES = {"set_dangerous_allowed", "get_dangerous_status"}
         self._dangerous_toggle_funcs = [
-            func for func in self._basic_funcs if func.__name__ in _DANGEROUS_FUNC_NAMES
+            func for func in self._all_basic_funcs if func.__name__ in _DANGEROUS_FUNC_NAMES
         ]
 
         # Mirror the operater_funs closure flag onto an agent attribute so the

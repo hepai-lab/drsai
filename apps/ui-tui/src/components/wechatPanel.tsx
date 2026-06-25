@@ -8,7 +8,7 @@
  */
 
 import { Box, Text, useInput } from 'ink'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { GatewayClient } from '../gatewayClient.js'
 import { theme } from '../theme.js'
@@ -33,6 +33,18 @@ export function WeChatPanel({ gw, onDismiss }: Props) {
   const [message, setMessage] = useState('')
   const [loginPending, setLoginPending] = useState(false)
   const [qrUrl, setQrUrl] = useState('')
+
+  // Refs for login-poll timers so we can clean them up on unmount.
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Clear any active polling timers when the panel unmounts.
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current)
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -60,12 +72,14 @@ export function WeChatPanel({ gw, onDismiss }: Props) {
           const pollRes = await gw.request<{ status: string; account_id?: string }>('wechat.login_status', { qr_id: res.qr_id })
           if (pollRes.status === 'confirmed') {
             clearInterval(pollId)
+            pollRef.current = null
             setLoginPending(false)
             setQrUrl('')
             setMessage(`✓ Login confirmed! Account: ${pollRes.account_id || 'N/A'}`)
             refresh()
           } else if (pollRes.status === 'expired') {
             clearInterval(pollId)
+            pollRef.current = null
             setLoginPending(false)
             setQrUrl('')
             setMessage('❌ QR code expired. Press l to try again.')
@@ -74,8 +88,12 @@ export function WeChatPanel({ gw, onDismiss }: Props) {
           // Ignore polling errors
         }
       }, 3000)
+      pollRef.current = pollId
       // Auto-stop polling after 2 minutes
-      setTimeout(() => clearInterval(pollId), 120000)
+      pollTimeoutRef.current = setTimeout(() => {
+        clearInterval(pollId)
+        pollRef.current = null
+      }, 120000)
     } catch (e) {
       setLoginPending(false)
       setMessage(`Error: ${(e as Error).message}`)

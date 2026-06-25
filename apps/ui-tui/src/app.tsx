@@ -17,7 +17,7 @@ import { FOCUS_IN_INPUT, FOCUS_OUT_INPUT, parseMouseEvent } from './app/focusEve
 import { parseHistory } from './app/historyParser.js'
 import { disableMouseTracking, enableMouseTracking } from './app/terminalControl.js'
 import { TurnController } from './app/turnController.js'
-import { $current, $isStreaming, $transcript } from './app/turnStore.js'
+import { $current, $isStreaming, $transcript, setTranscript } from './app/turnStore.js'
 import { $connectionError, $connectionStatus, $copyMode, $lastUsage, $statusLine, $terminalFocused, $toolDetail, $userId } from './app/uiStore.js'
 import { AppLayout } from './components/appLayout.js'
 import { SetupScreen } from './components/setupScreen.js'
@@ -66,8 +66,9 @@ export function App({ gw }: AppProps) {
     }, TIMEOUT_MS)
 
     // If the gateway sends a gateway.exit event before the timeout, exit cleanly.
-    gw.onEvent('gateway.exit', () => {
+    const offExit = gw.onEvent('gateway.exit', () => {
       clearTimeout(deadline)
+      offExit()
       exit()
     })
   }
@@ -234,7 +235,7 @@ export function App({ gw }: AppProps) {
         // Load history for the new session (Issue #2 fix)
         if (result.history && result.history.length > 0) {
           const turns = parseHistory(result.history)
-          $transcript.set(turns)
+          setTranscript(turns)
 
           // Refill $lastUsage from the most recent assistant turn that
           // carries usage metadata so the StatusBar reflects this session
@@ -327,7 +328,7 @@ export function App({ gw }: AppProps) {
       // ADDED: Load history into transcript (Issue #2 fix)
       if (result.history && result.history.length > 0) {
         const turns = parseHistory(result.history)
-        $transcript.set(turns)
+        setTranscript(turns)
 
         // Also seed $lastUsage from the most recent assistant turn that
         // carries usage so the StatusBar token badge is correct on cold

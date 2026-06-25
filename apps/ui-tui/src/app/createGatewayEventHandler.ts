@@ -13,7 +13,9 @@ import type { TurnController } from './turnController.js'
 import { $connectionError, $connectionStatus, $lastUsage, $sessionMeta, $skin, $statusLine, $userId } from './uiStore.js'
 import {
   applyToolComplete,
+  MAX_TOOL_RESULT_CHARS,
   toolFromStart,
+  TOOL_TRUNC_SUFFIX,
   type AssistantTurn,
 } from './types.js'
 import { $current, setCurrent, updateCurrent } from './turnStore.js'
@@ -266,11 +268,16 @@ export function createGatewayEventHandler(
           const existingTool = existing.tools.find(t => t.id === toolId)
           if (existingTool) {
             // 更新已有工具（完成状态）
+            // Cap result size to prevent heap growth from large subagent tool outputs.
+            let subResult = p.result
+            if (subResult && subResult.length > MAX_TOOL_RESULT_CHARS) {
+              subResult = subResult.slice(0, MAX_TOOL_RESULT_CHARS) + TOOL_TRUNC_SUFFIX
+            }
             updateCurrent(c => ({
               ...c,
               tools: c.tools.map(t =>
                 t.id === toolId
-                  ? { ...t, status: 'complete' as const, result: p.result, durationMs: Date.now() - t.startedAt }
+                  ? { ...t, status: 'complete' as const, result: subResult, durationMs: Date.now() - t.startedAt }
                   : t,
               ),
             }))
