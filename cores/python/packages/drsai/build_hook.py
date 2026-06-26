@@ -113,10 +113,19 @@ class BuildTuiHook(BuildHookInterface):
         # Fallback manual search (covers edge-cases where shutil.which
         # misses, e.g. newly-installed binaries not yet in PATH cache)
         path_env = os.environ.get("PATH", os.defpath)
-        exts = [""]
         if platform.system() == "Windows":
-            exts += os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";")
-            exts += [".cmd", ".exe", ".bat", ""]  # ensure coverage
+            # On Windows, check PATHEXT extensions FIRST so that
+            # ``pnpm.cmd`` is found before ``pnpm`` (a POSIX shell
+            # script that cannot be executed by CreateProcess).
+            exts = os.environ.get(
+                "PATHEXT", ".COM;.EXE;.BAT;.CMD"
+            ).split(";")
+            exts += [".cmd", ".exe", ".bat", ".ps1"]
+            # Check extensionless files LAST — they are often POSIX
+            # shell scripts that cannot be run directly on Windows.
+            exts.append("")
+        else:
+            exts = [""]
         for directory in path_env.split(os.pathsep):
             if not directory:
                 continue
@@ -156,20 +165,44 @@ class BuildTuiHook(BuildHookInterface):
         # Also try PATH (the companion might be installed elsewhere)
         return self._which(name)
 
+    @staticmethod
+    def _prepare_cmd(cmd: list[str]) -> list[str]:
+        """Prepare a command list for :func:`subprocess.run`.
+
+        On Windows, ``CreateProcess`` can only execute ``.exe`` files
+        directly.  Files with ``.cmd``/``.bat`` extensions — or
+        extensionless shell scripts — must be wrapped with
+        ``cmd.exe /c``.
+
+        This is a no-op on non-Windows platforms.
+        """
+        if not cmd:
+            return cmd
+        if platform.system() == "Windows":
+            suffix = Path(cmd[0]).suffix.lower()
+            if suffix in (".cmd", ".bat") or suffix == "":
+                return ["cmd.exe", "/c"] + cmd
+        return cmd
+
     def _run_cmd(
         self, cmd: list[str], cwd: Path | None = None
     ) -> bool:
         """Run *cmd*, streaming output.  Returns ``True`` on success."""
         print(f"  [build-tui] {' '.join(cmd)}  (cwd={cwd})", file=sys.stderr)
+        run_cmd = self._prepare_cmd(cmd)
         try:
             subprocess.run(
-                cmd,
+                run_cmd,
                 cwd=str(cwd) if cwd else None,
                 check=True,
                 stdout=sys.stderr.fileno(),
                 stderr=sys.stderr.fileno(),
             )
-        except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        except (
+            subprocess.CalledProcessError,
+            FileNotFoundError,
+            OSError,
+        ) as exc:
             print(f"  [build-tui] ❌ command failed: {exc}", file=sys.stderr)
             return False
         return True
@@ -385,7 +418,9 @@ class BuildTuiHook(BuildHookInterface):
         )
         try:
             subprocess.run(
-                [conda, "install", "-y", "-c", "conda-forge", "nodejs"],
+                self._prepare_cmd(
+                    [conda, "install", "-y", "-c", "conda-forge", "nodejs"]
+                ),
                 check=True,
                 timeout=300,
                 stdout=sys.stderr.fileno(),
@@ -639,7 +674,7 @@ class BuildTuiHook(BuildHookInterface):
             )
             try:
                 subprocess.run(
-                    [corepack, "enable", "pnpm"],
+                    self._prepare_cmd([corepack, "enable", "pnpm"]),
                     check=True,
                     timeout=30,
                     stdout=sys.stderr.fileno(),
@@ -669,7 +704,7 @@ class BuildTuiHook(BuildHookInterface):
             )
             try:
                 subprocess.run(
-                    [npm, "install", "-g", "pnpm"],
+                    self._prepare_cmd([npm, "install", "-g", "pnpm"]),
                     check=True,
                     timeout=120,
                     stdout=sys.stderr.fileno(),
