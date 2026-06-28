@@ -434,8 +434,8 @@ function BootScreen({ text }: { text: string }) {
   const err = useStore($connectionError)
   return (
     <Box flexDirection="column" paddingX={1}>
+      {/* Banner is pre-printed in entry.tsx; only show "· starting" here */}
       <Box>
-        <Text color={theme.primary} bold>⚡ DrSai </Text>
         <Text color={theme.muted} dimColor>· starting</Text>
       </Box>
       <Box marginTop={1}>

@@ -1,7 +1,7 @@
 # DrSai CLI 使用手册
 
 > 版本: 对应 Ink TUI (`apps/ui-tui/`) + `backend/tui_gateway/` + `cli/commands.py` 命令注册表
-> 最后更新: 2026-06（新增：Session 搜索与组织 /find /tag /pin /archive、子智能体并发控制 /max_concurrent、Session FTS5 回填兼容）
+> 最后更新: 2026-06（新增：`/compress` 手动记忆压缩命令、Session 搜索与组织 /find /tag /pin /archive、子智能体并发控制 /max_concurrent、Session FTS5 回填兼容）
 >
 > **架构提示**：从本次更新起，`drsai` / `drsai chat` 启动的是基于 React/Ink 的双进程 TUI（前端 = Node.js，后端 = Python JSON-RPC gateway）。旧的单进程 `run_cli.py` 已被保留为 `_deprecated/run_cli_legacy.py`，不再接入。下文记录的所有命令都通过 JSON-RPC 的 `slash.exec` 在 gateway 端执行；命令注册表 (`cli/commands.py`) 仍是单一真相源。
 
@@ -50,7 +50,7 @@ DrSai CLI 是 DrSai 智能体框架的**本地交互式终端客户端**。它�
 - **连续多轮对话**: 流式输出、工具调用、思考过程可视化
 - **多 Session 管理**: 创建、切换、搜索、恢复多个独立会话，每个会话有独立的状态和对话历史
 - **项目指令系统**: 自动发现并加载项目目录中的 `DRSAI.md` / `CLAUDE.md`，让 AI 理解你的项目上下文
-- **记忆管理**: 通过 SQLite/RAGFlow 实现短期对话记忆 + 长期学习记忆，支持跨会话检索
+- **记忆管理**: 通过 SQLite/RAGFlow 实现短期对话记忆 + 长期学习记忆，支持跨会话检索和手动 LLM 摘要压缩 (`/compress`)
 - **动态模型切换**: 在会话内即时切换 LLM 模型，支持 session-local 和 global 两种模式
 - **Plan Mode**: 启用后 AI 会先访谈用户确认计划再执行，适合复杂任务规划
 - **Prompt 注入**: 可动态注入 prefix/suffix 到 system prompt，灵活控制 AI 行为
@@ -69,7 +69,7 @@ DrSai CLI 的记忆系统分为两层：
 
 | 层级 | 实现 | 作用 | 生命周期 |
 |------|------|------|----------|
-| 短期对话记忆 | `DrSaiSQLiteChatCompletionContext` | 当前会话的完整对话历史，支持 token 压缩 | session 级 |
+| 短期对话记忆 | `DrSaiSQLiteChatCompletionContext` | 当前会话的完整对话历史，支持自动 token 压缩和手动 `/compress` 压缩 | session 级 |
 | 长期学习记忆 | SQLite FTS5 (`session_messages_fts`) | 跨会话的知识存储，支持 BM25 全文检索 | user 级 |
 
 用户可通过内置工具 `retrieve_from_memory` 和 `summry_conversation_to_memory` 进行记忆的检索和总结。系统在每个对话轮次结束时自动保存状态。
@@ -641,7 +641,47 @@ DrSai CLI 的记忆系统通过 `DrSaiSQLiteChatCompletionContext` 实现，内�
 | `summry_conversation_to_memory` | 将对话总结存入长期记忆 | AI 自动调用或手动触发 |
 | `read_session_memory_by_index` | 按索引读取压缩前的原始消息 | 用于恢复被压缩的详细内容 |
 
-### 8.2 记忆检索
+### 8.2 手动压缩 (`/compress`)
+
+`/compress` 命令主动触发 LLM 摘要压缩，无需等待 token 超限自动触发。
+
+**语法**：
+
+```
+/compress                    使用默认 keep_recent=6 压缩
+/compress keep_recent=N      保留最近 N 条消息，压缩更早的消息
+/compress 10                 等价于 keep_recent=10
+/cmp                         别名
+/compress status             查看 token 使用情况（不执行压缩）
+```
+
+**压缩流程**（三层）：
+
+1. **Layer 0 — flush**：将内存中待写的消息刷新到 `SessionMessage` 表
+2. **Layer 1 — 工具结果清除**：`_compress_tool_results()` 将旧的工具调用结果替换为占位符（原始内容仍在 DB 中，可通过 `read_session_memory_by_index` 取回）
+3. **Layer 2 — LLM 摘要**：`_incremental_compress()` 将 `keep_recent` 之前的消息发给 LLM 生成摘要，用一条 `UserMessage("[Compressed conversation history]\n{摘要}")` 替换旧消息；摘要同时写入 `SessionSummary` 表供 FTS5 检索
+
+**压缩效果示例**：
+
+```
+✅ Memory compressed successfully!
+  Messages:  28 → 7 (compressed 21)
+  Tokens:    18500 → 3200 (saved 15300, 82.7%)
+
+  Summary preview:
+  用户讨论了 DrSai 项目的两个 bug 修复：SYSTEM_SKILLS_DIR 路径转义问题和 TUI banner 重复打印…
+```
+
+**进度反馈**：压缩期间（LLM 调用通常 10–60 秒），TUI 底部状态栏显示旋转 spinner 动画 `⠋ 正在压缩记忆 (保留最近 N 条)…`，完成后自动清除。
+
+**注意事项**：
+
+- 压缩仅修改内存中的 `_messages`，**不会删除** `SessionMessage` 表中的原始消息行
+- 压缩后的状态通过 `save_state()` 持久化到 `Thread.state`，下次回溯时加载的是压缩后的消息列表
+- 原始消息可通过 `retrieve_from_memory`（FTS5 检索）或 `read_session_memory_by_index`（按索引取回）访问
+- 如果消息数 ≤ `keep_recent`，压缩不会执行（无需压缩）
+
+### 8.3 记忆检索
 
 `retrieve_from_memory` 使用 BM25 排序的 FTS5 全文检索：
 
@@ -650,7 +690,7 @@ DrSai CLI 的记忆系统通过 `DrSaiSQLiteChatCompletionContext` 实现，内�
 - 支持元数据条件过滤（如按 thread_id）
 - 可调节相似度阈值和分页大小
 
-### 8.3 记忆与 Session 的关系
+### 8.4 记忆与 Session 的关系
 
 ```
 Session A (thread_id: aaa...)
@@ -1127,6 +1167,12 @@ drsai --url http://localhost:42858/apiv2
 |------|------|------|
 | `/init` | | 创建 DRSAI.md |
 | `/memory` | `show|reload|status` | 项目指令管理 |
+
+### 记忆管理
+
+| 命令 | 别名 | 参数 | 说明 |
+|------|------|------|------|
+| `/compress` | `/cmp` | `[keep_recent=N\|status]` | 手动压缩对话记忆（LLM 摘要），默认保留最近 6 条；`status` 查看 token 使用情况 |
 
 ### 状态与信息
 

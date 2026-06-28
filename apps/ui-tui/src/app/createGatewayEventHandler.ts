@@ -338,6 +338,7 @@ export function createGatewayEventHandler(
       case 'status.update': {
         const p = ev.payload as { kind?: string; text?: string } | undefined
         if (p?.text) $statusLine.set(`${p.kind ?? 'status'}: ${p.text}`)
+        else $statusLine.set('')
         return
       }
       case 'error': {

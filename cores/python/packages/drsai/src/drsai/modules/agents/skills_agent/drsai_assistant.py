@@ -664,7 +664,7 @@ Current Session_ID is {self._thread_id}"""
         """Check if a file/dir has been modified since last check, updating the cached mtime."""
         try:
             mtime = path.stat().st_mtime
-        except FileNotFoundError:
+        except OSError as e:
             return True
         key = str(path)
         if self._config_mtimes.get(key) != mtime:
