@@ -236,6 +236,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="show|reload|status",
         handler="async",
     ),
+    CommandDef(
+        "compress",
+        "Manually compress conversation memory (LLM summarization of older messages)",
+        "Memory",
+        aliases=("cmp",),
+        args_hint="[keep_recent=N]",
+        handler="async",
+    ),
 
     # ── Workspace ──────────────────────────────────────────────────────
     CommandDef(

@@ -1,7 +1,7 @@
 /**
  * AppLayout — top-level layout:
  *   ┌────────────────────────────────┐
- *   │ Banner                         │
+ *   │ (Banner — pre-printed)         │
  *   │ TranscriptPane (scrollable)    │
  *   │ ─────────                      │
  *   │ Prompts overlay (conditional)  │
@@ -9,29 +9,20 @@
  *   │ ComposerPane                   │
  *   └────────────────────────────────┘
  *
- * Note on the banner:
- *   The banner lives in the dynamic frame (NOT inside <Static>). An earlier
- *   experiment moved it into <Static> to avoid a "multiple banners" artifact
- *   seen while dragging the window wider — but <Static> means "append-only,
- *   never repainted", so after a resize the banner just *disappeared* and
- *   never came back. That was strictly worse.
- *
- *   The "multiple banners" artifact is the price of Ink 6's resize handling:
- *   on width increase, Ink calls onRender() without log.clear(), so the
- *   previous frame's banner row can linger until the next re-render. Any
- *   subsequent React update (cursor blink at 530 ms, streaming delta, status
- *   change, etc.) overwrites the duplicates. In practice the artifact is
- *   only visible *during* rapid drag-resize and resolves within ~0.5 s.
- *
- *   Do NOT put banner-like content into <Static> unless you also accept
- *   that it will be invisible after the first reflow.
+ * Banner note:
+ *   The "⚡ DrSai" banner is now pre-printed via process.stdout.write in
+ *   entry.tsx BEFORE Ink starts rendering.  This keeps it outside Ink's
+ *   dynamic frame so it is never re-rendered.  Previously it lived inside
+ *   the dynamic frame, which caused duplicate banner lines during the
+ *   "thinking" phase (every 100ms spinner tick triggered a re-render, and
+ *   on some terminals Ink's eraseLines() didn't fully clear the previous
+ *   frame, causing the banner to accumulate).
  */
 
-import { Box, Text } from 'ink'
+import { Box } from 'ink'
 
 import type { GatewayClient } from '../gatewayClient.js'
 import type { TurnController } from '../app/turnController.js'
-import { theme } from '../theme.js'
 
 import { ComposerPane } from './composerPane.js'
 import { PromptsOverlay } from './prompts.js'
@@ -48,9 +39,15 @@ interface Props {
 export function AppLayout({ gw, controller, sessionId, switchSession }: Props) {
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Box>
-        <Text color={theme.primary} bold>⚡ DrSai</Text>
-      </Box>
+      {/*
+        Banner ("⚡ DrSai") is now pre-printed in entry.tsx BEFORE Ink
+        starts rendering.  This keeps it outside Ink's dynamic frame so
+        it is NOT re-rendered on every spinner tick / streaming flush.
+        Previously it lived here as:
+          <Box><Text color={theme.primary} bold>⚡ DrSai</Text></Box>
+        which caused duplicate banner lines during the "thinking" phase
+        on terminals where Ink's eraseLines() doesn't fully clear frames.
+      */}
       <TranscriptPane sessionId={sessionId} />
       <PromptsOverlay gw={gw} />
       <StatusBar />
