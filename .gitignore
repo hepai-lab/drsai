@@ -236,6 +236,7 @@ OAI_CONFIG_LIST
 src/magentic_ui/backend/web/workdir/*
 src/magentic_ui/backend/web/ui/*
 python/packages/drsai_ui/src/drsai_ui/ui_backend/backend/web/ui/
+apps/webui/backend/src/drsai_ui/ui_backend/backend/web/ui/
 src/magentic_ui/backend/web/skills/user/*
 .release.sh
 .nightly.sh
@@ -248,3 +249,10 @@ notebooks/test.db
 ########################
 **/memory_bank/
 **/pagelogs/
+
+########################
+# Large/generated artifacts
+########################
+core.*
+my_ragflow/
+*_page/
