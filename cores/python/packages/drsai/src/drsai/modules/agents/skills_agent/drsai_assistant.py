@@ -1177,9 +1177,8 @@ Current Session_ID is {self._thread_id}"""
             return
         for tool in self._elevated_tools:
             # Remove from workbench tools if present
-            if hasattr(self, '_workbench') and self._workbench is not None:
-                if tool in self._workbench._tools:
-                    self._workbench._tools.remove(tool)
+            if tool in self._workbench._tools:
+                self._workbench._tools.remove(tool)
             # Remove from self._tools if present
             if tool in self._tools:
                 self._tools.remove(tool)
@@ -1202,10 +1201,9 @@ Current Session_ID is {self._thread_id}"""
             if tool.name in required_tools and tool.name not in self._elevated_tool_names:
                 self._elevated_tools.append(tool)
                 self._elevated_tool_names.add(tool.name)
-                if hasattr(self, '_workbench') and self._workbench is not None:
-                    self._workbench._tools.append(tool)
-                else:
-                    self._tools.append(tool)
+                self._tools.append(tool)
+                self._workbench._tools.append(tool)
+                    
         if self._elevated_tools:
             logger.info(
                 f"Skill '{skill_name}' elevated tools: "

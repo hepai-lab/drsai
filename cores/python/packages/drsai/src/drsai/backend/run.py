@@ -406,37 +406,50 @@ class DrSaiWorkerConfig(HWorkerConfig):
 
 
 class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from HRModel.
+    # _info 默认值，缺省时自动填充
+    _DEFAULT_INFO: dict = {
+        "logo": "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
+        "examples": [],
+        "agent_config": {},
+        "defult_config_name": None,
+    }
+
     def __init__(
-            self, 
+            self,
             config: DrSaiModelConfig,
             worker_config: DrSaiWorkerConfig,
-            logo: str = "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview",
-            examples: List[str] = [],
-            agent_config: Dict[str, Any] = {},
-            defult_config_name: str|None = None,
+            worker_info: Dict[str, Any] | None = None,
             close_agent_on_finish: bool = True,
-            drsaiapp: DrSaiAPP = None # 传入DrSaiAPP实例
+            drsaiapp: DrSaiAPP = None,  # 传入DrSaiAPP实例
             ):
         super().__init__(config=config)
 
-        # if drsaiapp is not None and isinstance(drsaiapp, type):
-        #     self.drsai = drsaiapp()  # Instantiate the DrSaiAPP instance.
-        # else:
-        #     self.drsai = drsaiapp or DrSaiAPP()  # Instantiate the DrSaiAPP instance.
-        # pass
         self.drsai: DrSaiAPP = drsaiapp
-        self._info = {
-            "name": config.name, 
-            "description": worker_config.description, 
-            "version": config.version, 
-            "author": worker_config.author, 
-            "logo": logo,
-            "examples": examples,
-            "agent_config": agent_config,
-            "defult_config_name": defult_config_name,
-            } 
-        self.drsai._info = self._info
 
+        # 构建 _info：以 worker_info 为主，缺省字段从 config/worker_config/_DEFAULT_INFO 补齐
+        self._info: Dict[str, Any] = {
+            "name": config.name,
+            "description": worker_config.description,
+            "version": config.version,
+            "author": worker_config.author,
+        }
+        if worker_info:
+            self._info.update(worker_info)
+        # 用默认值补齐未提供的字段
+        for k, v in self._DEFAULT_INFO.items():
+            self._info.setdefault(k, v)
+        # 同步 worker_info 中的 name/description/version/author 回 config/worker_config（以防只传了 worker_info）
+        if worker_info:
+            if "name" in worker_info:
+                config.name = worker_info["name"]
+            if "version" in worker_info:
+                config.version = worker_info["version"]
+            if "description" in worker_info:
+                worker_config.description = worker_info["description"]
+            if "author" in worker_info:
+                worker_config.author = worker_info["author"]
+
+        self.drsai._info = self._info
         self._close_agent_on_finish = close_agent_on_finish
 
         
@@ -663,42 +676,123 @@ class DrSaiWorkerModel(HRModel):  # Define a custom worker model inheriting from
         return self.drsai.a_start_chat_completions(*args, **kwargs)
 
 
-async def run_worker(agent_factory: callable, **kwargs):
+async def run_worker(
+    agent_factory: callable,
+    *,
+    # ── Worker 展示信息（→ DrSaiWorkerModel._info）──
+    # 传入 dict 后，下面的旧参数(agent_name/description/version/logo/examples/
+    # agent_config/defult_config_name/author/permission) 将被忽略
+    worker_info: Dict[str, Any] | None = None,
+    # ── 服务配置 ──
+    host: str | None = None,
+    port: int | None = None,
+    no_register: bool | None = None,
+    controller_address: str = "https://aiapi.ihep.ac.cn",
+    # ── DB 配置 ──
+    drsai_dir: str | None = None,
+    engine_uri: str | None = None,
+    base_dir: str | None = None,
+    auto_upgrade: bool = False,
+    # ── 功能开关 ──
+    close_agent_on_finish: bool = True,
+    enable_openwebui_pipeline: bool = False,
+    link_wechat: bool = False,
+    join_topics: List[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+    close_kwargs: dict[str, Any] | None = None,
+    # ── 透传给 DrSaiAPP / agent_factory ──
+    **kwargs,
+):
     '''
     启动HepAI-Worker-Style-API后端服务
-    args:
+
+    Args:
         agent_factory: 工厂函数，用于创建AssistantAgent/BaseGroupChat实例
-        agent_name: str = , "Dr.Sai" ,  # 智能体的名称
-        description: str = , "Dr.Sai is a helpful assistant." ,  # 智能体的描述
-        examples: List[str] = [],  # 智能体的示例
-        llm_mode_config: Dict[str, Any] = {},# LLM模式配置
-        version: str = , "0.1.0" ,  # 智能体的版本
-        logo: str = , "https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview" ,  # 智能体的logo
-        host: str = , "0.0.0.0" ,  # 后端服务host
-        port: int = 42801,  # 后端服务port
-        no_register: bool = False,  # 是否注册到控制器
-        controller_address: str = "https://aiapi.ihep.ac.cn",  # 控制器地址
-        engine_uri: str = "sqlite:///~/drsai/drsai.db" # 智能体数据库地址
-        base_dir: str = "~/drsai", # 数据库目录
-        history_mode: str = "backend",  # 历史消息的加载模式，可选值：backend、frontend 默认backend
-        use_api_key_mode: str = "frontend",  # api key的使用模式，可选值：frontend、backend 默认frontend， 调试模式下建议设置为backend
-        enable_pipeline: bool = False,  # 是否启动openwebui pipelines
-        join_topics: List[str] = [],  # 是否为智能体添加默认的join_topics
-        close_kwargs: 
+
+        worker_info: dict, Worker 展示/元信息，直接流入 DrSaiWorkerModel._info。
+            支持的 key（均可选，缺省时从 config/worker_config 或默认值补齐）::
+
+                {
+                    "name": "My Dr.Sai",            # 智能体名称（→ model_args.name）
+                    "description": "...",           # 描述（→ worker_args.description）
+                    "version": "0.1.0",             # 版本（→ model_args.version）
+                    "author": "user@ihep.ac.cn",    # 作者（→ worker_args.author）
+                    "logo": "https://...",          # logo URL 或本地文件路径
+                    "examples": [...],              # 示例列表
+                    "agent_config": {...},          # LLM 模式配置
+                    "defult_config_name": "...",    # 默认模型名
+                    # 可自由扩展，所有 key 都会进入 _info
+                }
+
+            向后兼容：如果 worker_info 为 None，则自动从 kwargs 中 pop 旧参数
+            (agent_name / description / version / logo / examples / agent_config /
+            defult_config_name / author / permission) 构建 worker_info。
+
+        host: 后端服务 host
+        port: 后端服务 port
+        no_register: 是否不注册到控制器
+        controller_address: 控制器地址
+        drsai_dir: 数据库目录
+        engine_uri: 数据库 URI
+        base_dir: 基础目录
+        auto_upgrade: 是否自动升级数据库
+        close_agent_on_finish: 会话结束后是否关闭 agent
+        enable_openwebui_pipeline: 是否启动 OpenWebUI pipelines
+        link_wechat: 是否启动微信 Bot
+        join_topics: join_topics 列表
+        metadata: worker 额外 metadata
+        close_kwargs: agent close 时的额外参数
+        **kwargs: 透传给 DrSaiAPP / agent_factory
     '''
     model_args_obj: DrSaiModelConfig = DrSaiModelConfig
     worker_args_obj: DrSaiWorkerConfig = DrSaiWorkerConfig
     model_args, worker_args = hepai.parse_args((model_args_obj, worker_args_obj))
 
-    agent_name: str = kwargs.pop("agent_name", None)
-    if agent_name is not None:
-        model_args.name = agent_name
-        os.environ['AGNET_NAME'] = agent_name
-    
-    author: str = kwargs.pop("author", None)
-    worker_args.author = author
+    # ════════════════════════════════════════════════════════════════════
+    # 1. 构建 worker_info（向后兼容旧参数）
+    # ════════════════════════════════════════════════════════════════════
+    if worker_info is None:
+        # ── 旧模式：从 kwargs 中逐个 pop ──
+        worker_info = {}
 
-    permission: str|dict = kwargs.pop("permission", None)
+        agent_name: str = kwargs.pop("agent_name", None)
+        if agent_name is not None:
+            worker_info["name"] = agent_name
+
+        author: str = kwargs.pop("author", None)
+        if author is not None:
+            worker_info["author"] = author
+
+        description: str = kwargs.pop("description", None)
+        if description is not None:
+            worker_info["description"] = description
+
+        version: str = kwargs.pop("version", None)
+        if version is not None:
+            worker_info["version"] = version
+
+        logo: str = kwargs.pop("logo", None)
+        if logo is not None:
+            worker_info["logo"] = logo
+
+        examples: List[str] = kwargs.pop("examples", None)
+        if examples is not None:
+            worker_info["examples"] = examples
+
+        agent_config: Dict[str, Any] = kwargs.pop("agent_config", None)
+        if agent_config is not None:
+            worker_info["agent_config"] = agent_config
+
+        defult_config_name: str | None = kwargs.pop("defult_config_name", None)
+        if defult_config_name is not None:
+            worker_info["defult_config_name"] = defult_config_name
+
+        logger.debug("run_worker: worker_info built from legacy kwargs (backward compat)")
+    else:
+        logger.debug(f"run_worker: worker_info provided explicitly, keys={list(worker_info.keys())}")
+
+    # ── permission 特殊处理（不进入 _info，写入 worker_args.permissions）──
+    permission: str | dict = kwargs.pop("permission", None)
     if permission is not None:
         if isinstance(permission, dict):
             groups = "groups: " + permission.get('groups', "default")
@@ -707,67 +801,73 @@ async def run_worker(agent_factory: callable, **kwargs):
             worker_args.permissions = "; ".join([groups, users, owner])
         else:
             worker_args.permissions = permission
-    
-    description: str = kwargs.pop("description", "A Dr.Sai multi agents system")
-    worker_args.description = description
 
-    version: str = kwargs.pop("version", None)
-    if version is not None:
-        model_args.version = version
-    
-    logo: str = kwargs.pop("logo", 'https://aiapi.ihep.ac.cn/apiv2/files/file-8572b27d093f4e15913bebfac3645e20/preview')
-    if os.path.exists(logo):
-        logo_path = Path(logo)
+    # ════════════════════════════════════════════════════════════════════
+    # 2. 同步 worker_info → model_args / worker_args / env
+    # ════════════════════════════════════════════════════════════════════
+    if "name" in worker_info and worker_info["name"] is not None:
+        model_args.name = worker_info["name"]
+        os.environ['AGNET_NAME'] = worker_info["name"]
+
+    if "version" in worker_info and worker_info["version"] is not None:
+        model_args.version = worker_info["version"]
+
+    if "author" in worker_info and worker_info["author"] is not None:
+        worker_args.author = worker_info["author"]
+
+    if "description" in worker_info and worker_info["description"] is not None:
+        worker_args.description = worker_info["description"]
+    else:
+        worker_args.description = "A Dr.Sai multi agents system"
+
+    # logo 本地文件上传
+    logo_val = worker_info.get("logo")
+    if logo_val and os.path.exists(str(logo_val)):
+        logo_path = Path(logo_val)
         if logo_path.is_file():
             file_obj = upload_to_hepai_filesystem(str(logo_path))
-            logo = file_obj["url"]
-    examples: List[str] = kwargs.pop("examples", [])
-    agent_config: Dict[str, Any] = kwargs.pop("agent_config", {})
-    defult_config_name: str|None = kwargs.pop("defult_config_name", None)
-    
-    host: str =  kwargs.pop("host", None)
+            worker_info["logo"] = file_obj["url"]
+
+    # ════════════════════════════════════════════════════════════════════
+    # 3. 服务配置
+    # ════════════════════════════════════════════════════════════════════
     if host is not None:
         worker_args.host = host
 
-    port: int =  kwargs.pop("port", None)
     if port is not None:
         worker_args.port = port
         os.environ['BACKEND_PORT'] = str(port)
-    
-    drsai_dir = kwargs.pop('drsai_dir', None) or CONST.FS_DIR
-    engine_uri = kwargs.pop('engine_uri', None) or f"sqlite:///{drsai_dir}/drsai.db"
-    base_dir = kwargs.pop('base_dir', None) or drsai_dir
+
+    if no_register is not None:
+        worker_args.no_register = no_register
+
+    worker_args.controller_address = controller_address
+
+    # ════════════════════════════════════════════════════════════════════
+    # 4. DB 配置
+    # ════════════════════════════════════════════════════════════════════
+    drsai_dir = drsai_dir or CONST.FS_DIR
+    engine_uri = engine_uri or f"sqlite:///{drsai_dir}/drsai.db"
+    base_dir = base_dir or drsai_dir
     db_manager = DatabaseManager(
-        engine_uri = engine_uri,
-        base_dir = base_dir
+        engine_uri=engine_uri,
+        base_dir=base_dir
     )
-    auto_upgrade = kwargs.pop('auto_upgrade', False)
     init_response = db_manager.initialize_database(auto_upgrade=auto_upgrade)
     assert init_response.status, init_response.message
     kwargs.update({"db_manager": db_manager})
 
-    no_register: bool =  kwargs.pop("no_register", None)
-    if no_register is not None:
-        worker_args.no_register = no_register
+    # ════════════════════════════════════════════════════════════════════
+    # 5. metadata / join_topics
+    # ════════════════════════════════════════════════════════════════════
+    if metadata is not None:
+        worker_args._metadata.update(metadata)
 
-    controller_address: str =  kwargs.pop("controller_address", "https://aiapi.ihep.ac.cn")
-    worker_args.controller_address = controller_address
-
-    close_agent_on_finish: bool = kwargs.pop("close_agent_on_finish", True)
-
-    # TODO: ADD METADATA for worker config
-    _metadata: dict[str, Any] = kwargs.pop("metadata", None)
-    if _metadata is not None:
-       worker_args._metadata.update(_metadata)
-
-    join_topics: List[str]|None = kwargs.pop("join_topics", None)
     if join_topics is not None:
         worker_args._metadata.update({"join_topics": join_topics})
-    
-    close_kwargs: dict[str, Any] = kwargs.pop("close_kwargs", {})
 
-    # WeChat
-    link_wechat = kwargs.pop("link_wechat", False)
+    if close_kwargs is None:
+        close_kwargs = {}
 
     print(model_args)
     print()
@@ -825,8 +925,8 @@ async def run_worker(agent_factory: callable, **kwargs):
 
                 return error_msg
 
-            # 从 execution_context 获取 per-task 配置，fallback 到全局值
-            config_name = ctx.get("defult_config_name", defult_config_name)
+            # 从 execution_context 获取 per-task 配置，fallback 到全局 worker_info
+            config_name = ctx.get("defult_config_name", worker_info.get("defult_config_name"))
 
             # 使用 agent_factory 创建专用的 agent 实例
             extra_params = {
@@ -1019,14 +1119,12 @@ async def run_worker(agent_factory: callable, **kwargs):
     drsaiapp._task_manager = task_manager
 
     model = DrSaiWorkerModel(
-        config=model_args, 
-        worker_config=worker_args, 
-        logo=logo, 
-        examples=examples,
-        agent_config = agent_config,
-        defult_config_name = defult_config_name,
-        close_agent_on_finish = close_agent_on_finish,
-        drsaiapp=drsaiapp)
+        config=model_args,
+        worker_config=worker_args,
+        worker_info=worker_info,
+        close_agent_on_finish=close_agent_on_finish,
+        drsaiapp=drsaiapp,
+    )
 
     # ── WeChat Bot 集成 ────────────────────────────────────────────────────────
     _wechat_tasks: list[asyncio.Task] = []
@@ -1073,7 +1171,7 @@ async def run_worker(agent_factory: callable, **kwargs):
         _notification_channels.append(wechat_push_channel)
         print("微信 Bot 已启动，发送 /help 查看命令列表。")
 
-    enable_pipeline: bool = kwargs.pop("enable_openwebui_pipeline", False)
+    enable_pipeline: bool = enable_openwebui_pipeline
     if enable_pipeline:
         pipelines_dir = kwargs.pop("pipelines_dir", None)
         if pipelines_dir is not None:

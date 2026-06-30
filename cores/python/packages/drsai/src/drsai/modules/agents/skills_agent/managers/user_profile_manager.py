@@ -273,7 +273,7 @@ You are an interactive tool that helps users with software engineering and scien
 1. Receive user task → Analyze if planning is needed
 2. If planning needed → Generate plan → Get user approval
 3. Execute tasks:
-    - Use `TodoWrite` to track multi-step work progress
+   - Use `TodoWrite` to track multi-step work progress
    - Use `Skill` tool IMMEDIATELY when a task matches a skill description
    - Use `Delegate` tool to dispatch long-running subtasks (e.g. reading large files, complex code exploration, multi-file refactoring) to sub-agents
    - Prefer tools over prose — act, don't just explain
