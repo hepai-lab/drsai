@@ -787,6 +787,10 @@ async def run_worker(
         if defult_config_name is not None:
             worker_info["defult_config_name"] = defult_config_name
 
+        announcements: List[str] = kwargs.pop("announcements", None)
+        if announcements is not None:
+            worker_info["announcements"] = announcements
+
         logger.debug("run_worker: worker_info built from legacy kwargs (backward compat)")
     else:
         logger.debug(f"run_worker: worker_info provided explicitly, keys={list(worker_info.keys())}")
@@ -1211,7 +1215,7 @@ async def run_worker(
     # 在现有事件循环中启动服务
     worker_address = auto_worker_address(worker_address='auto', host=worker_args.host, port=worker_args.port)
     print(f"#####################Your Agent Server is ready!######################")
-    print(f"Enable HepAI worker `{agent_name}` with URL: `{worker_address}/apiv2`")
+    print(f"Enable HepAI worker `{worker_info.get('name', 'unknown')}` with URL: `{worker_address}/apiv2`")
     if enable_pipeline:
         print(f"Enable OpenWebUI pipelines URL: `{worker_address}/pipelines` with API-KEY: `{owebui_pipeline_app.api_key}`")
     print(f"#####################################################################")

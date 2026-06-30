@@ -312,6 +312,7 @@ async def get_ddf_agents(user_id: str, authorization: str = Header(...), is_refr
                     )
                 if isinstance(agent_info, WorkerInfo):
                     return None
+                logger.info(f"get_ddf_agents: worker.get_info() for '{model_id}' = {json.dumps(agent_info, ensure_ascii=False)}")
                 agent_info.update({"mode": "ddf"})
                 agent_info.update({"owner": agent_info.get("author")})
                 if agent_info.get("name") in agents_name_old:

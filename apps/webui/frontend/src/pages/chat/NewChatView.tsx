@@ -92,6 +92,7 @@ export default function NewChatView({
     const [isSubmitting, setIsSubmitting] = React.useState(false);
     const [hasInputValue, setHasInputValue] = React.useState(false);
     const [hideSampleTasks, setHideSampleTasks] = React.useState(false);
+    const [showAnnouncement, setShowAnnouncement] = React.useState(true);
 
     React.useEffect(() => {
         if (hasInputValue) {
@@ -108,6 +109,7 @@ export default function NewChatView({
         [rawDescription, lang]
     );
     const logoSrc = agentInfo?.logo ?? agent?.logo;
+    const announcements = (agentInfo as any)?.announcements ?? (agent as any)?.announcements;
 
     const handleSubmit = async (
         query: string,
@@ -149,6 +151,30 @@ export default function NewChatView({
             >
                 <div className="absolute left-1/2 top-[8%] h-48 w-[min(480px,85vw)] -translate-x-1/2 rounded-full bg-accent/[0.08] blur-3xl dark:bg-accent/[0.12]" />
             </div>
+
+            {showAnnouncement && announcements && announcements.length > 0 && (
+                <div className="mb-3 mt-4 flex w-full items-center gap-2 overflow-hidden">
+                    <div className="flex flex-1 overflow-hidden">
+                        <p
+                            className="font-agent-mono animate-marquee-x ml-auto whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.22em] text-accent"
+                            style={{ '--marquee-duration': '16s' } as React.CSSProperties}
+                        >
+                            {announcements.map((a) => parseAgentText(a, lang)).join('  ·  ')}
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setShowAnnouncement(false)}
+                        className="relative z-10 shrink-0 rounded p-2 text-accent/60 transition hover:text-accent hover:bg-accent/10 bg-bg-primary -mr-1"
+                        aria-label="关闭公告"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                    </button>
+                </div>
+            )}
 
             <div className="hide-scrollbar relative flex flex-1 items-start justify-center overflow-y-auto pt-10 sm:pt-14 md:pt-[9vh]">
                 <div className="w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
