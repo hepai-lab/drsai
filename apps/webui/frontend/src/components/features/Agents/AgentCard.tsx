@@ -2,6 +2,7 @@ import { Network, Pencil, X, Star } from "lucide-react";
 import React from "react";
 import { useModeConfigStore } from "@/store/modeConfig";
 import { useLang } from "../../../i18n/useLang";
+import { getLocalizedDescription } from "../../utils";
 import { DRSAI_RECENT_AGENTS_KEY } from "@/utils/recentAgentsStorage";
 import type { AgentMode } from "@/types/common";
 
@@ -70,7 +71,7 @@ const pushRecentAgent = (agentId?: string) => {
 
 const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
   const { setAgentId, setMode } = useModeConfigStore();
-  const { t } = useLang();
+  const { t, lang } = useLang();
 
   const handleTryClick = async () => {
     setAgentId(agent.id || "");
@@ -218,7 +219,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, onEdit }) => {
 
       {/* 描述区 */}
       <p className="mt-2 line-clamp-2 text-left text-[clamp(8px,0.94vw,12px)] leading-[1.42] text-[#404e67] dark:text-[#c7d0e6] mb-2">
-        {agent.description}
+        {getLocalizedDescription(agent.description, lang)}
       </p>
 
       {/* 操作区：只保留一个开始试用主按钮，默认星标固定在右上 */}
