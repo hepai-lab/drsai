@@ -837,6 +837,7 @@ export class AgentWorkerAPI {
         stored_default_agent_id: string | null;
         auto_load_default_agent?: boolean;
         default_agent_name?: string | null;
+        science_default_agent_name?: string | null;
     }> {
         const url = `${this.getBaseUrl()}/agentworker/user_default_agent?user_id=${encodeURIComponent(userId)}`;
         const response = await fetch(url, {

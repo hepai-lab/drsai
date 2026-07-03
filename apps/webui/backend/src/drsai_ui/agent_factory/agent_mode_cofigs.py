@@ -59,6 +59,15 @@ def get_platform_default_agent_name() -> str | None:
     return name or None
 
 
+def get_science_default_agent_name() -> str | None:
+    """Science user 专用默认智能体名称 — 无视 auto_load 开关，存在即生效。"""
+    raw = os.getenv("DRSCIENCE_DEFAULT_AGENT_NAME")
+    if raw is None:
+        return None
+    name = raw.strip()
+    return name or None
+
+
 def find_agent_by_name(agents: List[Dict[str, Any]], name: str | None) -> Dict[str, Any] | None:
     target = (name or "").strip()
     if not target:
@@ -73,6 +82,7 @@ def get_platform_agent_policy() -> Dict[str, Any]:
     return {
         "auto_load_default_agent": get_platform_auto_load_default_agent(),
         "default_agent_name": get_platform_default_agent_name(),
+        "science_default_agent_name": get_science_default_agent_name(),
     }
 
 
@@ -180,7 +190,10 @@ def get_agent_mode_config(
     return []
 
 
-def get_default_agent_mode_config(user_id: str) -> List[Dict[str, Any]]:
+def get_default_agent_mode_config(
+    user_id: str, user_source: str | None = None
+) -> List[Dict[str, Any]]:
+    """Return the default agent list for a user."""
     agents_list = []
     DEFAULT_REMOTE_AGENTS = os.getenv("DEFAULT_REMOTE_AGENTS", None)
     loaded_default_remote_agents = False
@@ -228,14 +241,18 @@ def get_default_agent_mode_config(user_id: str) -> List[Dict[str, Any]]:
         agents_list.extend(default_agents_mode)
     return agents_list
 
-async def get_agents_mode(user_id: str, db:DatabaseManager) -> Dict:
+async def get_agents_mode(
+    user_id: str, db: DatabaseManager, user_source: str | None = None
+) -> Dict:
     '''
     获取侧边栏的 mode 配置
     '''
     response = db.get(AgentModeSettings, filters={"user_id": user_id})
     if not response.status or not response.data:
         # create a default agents_mode
-        default_agents_mode = get_default_agent_mode_config(user_id=user_id)
+        default_agents_mode = get_default_agent_mode_config(
+            user_id=user_id, user_source=user_source
+        )
         for agent_mode in default_agents_mode:
             if not agent_mode.get("id"):
                 agent_mode["id"] = str(uuid.uuid4())
@@ -246,7 +263,9 @@ async def get_agents_mode(user_id: str, db:DatabaseManager) -> Dict:
 
     stored = [dict(a) for a in (settings.agents_mode or []) if isinstance(a, dict)]
     by_id: Dict[str, Dict[str, Any]] = {}
-    for agent in get_default_agent_mode_config(user_id=user_id):
+    for agent in get_default_agent_mode_config(
+        user_id=user_id, user_source=user_source
+    ):
         if isinstance(agent, dict) and agent.get("id"):
             by_id[str(agent["id"])] = dict(agent)
     for agent in stored:
@@ -379,7 +398,13 @@ async def get_user_remote_agents(user_id: str, db: DatabaseManager = None) -> Di
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-async def get_user_agents(user_id: str, authorization: str = Header(...), is_refresh: bool = False, db: DatabaseManager = None) -> Dict:
+async def get_user_agents(
+    user_id: str,
+    authorization: str = Header(...),
+    is_refresh: bool = False,
+    db: DatabaseManager = None,
+    user_source: str | None = None,
+) -> Dict:
     '''
     获取用户保存的智能体列表，统一的数据格式为agent_mode_config：
     {
@@ -443,7 +468,9 @@ async def get_user_agents(user_id: str, authorization: str = Header(...), is_ref
     
     agents_list = []
     # 获取默认的远程智能体
-    agents_list.extend(get_default_agent_mode_config(user_id=user_id))
+    agents_list.extend(
+        get_default_agent_mode_config(user_id=user_id, user_source=user_source)
+    )
 
     # 获取用户的DDF智能体
     agents = await get_ddf_agents(user_id = user_id, authorization = authorization, is_refresh = is_refresh, db=db)

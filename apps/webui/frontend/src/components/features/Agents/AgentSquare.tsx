@@ -445,6 +445,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         const platformPolicy = {
           auto_load_default_agent: userDefault?.auto_load_default_agent,
           default_agent_name: userDefault?.default_agent_name ?? null,
+          science_default_agent_name: userDefault?.science_default_agent_name ?? null,
         };
         const target = pickAgentForSessionStart(
           agentList as Agent[],
@@ -505,7 +506,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   };
 
   const baseList = agentList.filter(
-    (agent) => agent.mode !== "magentic-one" && agent.mode !== "besiii"
+    (agent) => agent.mode !== "magentic-one"
   );
 
   /** 主推位：仅展示用户设置的默认智能体 */

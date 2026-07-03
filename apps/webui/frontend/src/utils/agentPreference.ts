@@ -11,7 +11,7 @@ export function pickPreferredAgentFromList<
 >(agents: T[]): T | undefined {
   if (!agents?.length) return undefined;
   const baseList = agents.filter(
-    (a) => a.mode !== "magentic-one" && a.mode !== "besiii",
+    (a) => a.mode !== "magentic-one",
   );
   const byDefault = baseList.find((a) => a.is_default);
   if (byDefault?.id) return byDefault;
@@ -23,6 +23,7 @@ export function pickPreferredAgentFromList<
 export interface PlatformAgentPolicy {
   auto_load_default_agent?: boolean;
   default_agent_name?: string | null;
+  science_default_agent_name?: string | null;
 }
 
 /**
@@ -66,7 +67,8 @@ export function pickLoginDefaultAgent<
 }
 
 /**
- * 会话启动时的智能体选择：个人默认 > 平台为新用户配置的默认智能体（按 name 匹配）。
+ * 会话启动时的智能体选择：
+ * 个人默认 > science 专用默认（无视 auto_load 开关）> 平台新用户默认（受 auto_load 控制）。
  */
 export function pickAgentForSessionStart<
   T extends {
@@ -83,6 +85,12 @@ export function pickAgentForSessionStart<
 ): T | undefined {
   const personal = pickLoginDefaultAgent(agents, userDefaultAgentId);
   if (personal) return personal;
+
+  // Science user 专用默认：存在即生效，无视 auto_load_default_agent
+  const scienceTarget = (platformPolicy?.science_default_agent_name || "").trim();
+  if (scienceTarget) {
+    return agents.find((a) => (a.name || "").trim() === scienceTarget);
+  }
 
   if (!platformPolicy?.auto_load_default_agent) return undefined;
 
