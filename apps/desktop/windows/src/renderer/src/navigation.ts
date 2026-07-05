@@ -16,16 +16,21 @@ export const MENU_IDS = {
 
 export type NavId = (typeof MENU_IDS)[keyof typeof MENU_IDS];
 
-export type RightTab = "overview" | "files" | "history" | "templates";
+export type RightTab =
+  | "overview"
+  | "files"
+  | "history"
+  | "templates"
+  | "terminal";
 export type AppLanguage = "en" | "zh";
 
 export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
   zh: {
     [MENU_IDS.currentSession]: "当前会话",
     [MENU_IDS.myAgents]: "我的智能体",
-    [MENU_IDS.agentSquare]: "智能体广场",
+    [MENU_IDS.agentSquare]: "智能体",
     [MENU_IDS.savedPlan]: "已保存计划",
-    [MENU_IDS.skillsSquare]: "技能广场",
+    [MENU_IDS.skillsSquare]: "技能",
     [MENU_IDS.plugins]: "插件",
     [MENU_IDS.library]: "资料库",
     [MENU_IDS.profile]: "设置",
@@ -105,7 +110,6 @@ const navDefinitions: Array<{
     id: "workspace",
     items: [
       { id: MENU_IDS.library, enabled: false },
-      { id: MENU_IDS.channels, enabled: false },
       { id: MENU_IDS.logs, enabled: false },
     ],
   },
@@ -113,6 +117,7 @@ const navDefinitions: Array<{
     id: "admin",
     items: [
       { id: MENU_IDS.usageAnalytics, enabled: false },
+      { id: MENU_IDS.channels, enabled: false },
       { id: MENU_IDS.agentManagement, enabled: false },
       { id: MENU_IDS.userManagement, enabled: false },
     ],
@@ -140,7 +145,7 @@ export function getNavItems(language: AppLanguage): NavItem[] {
   );
 }
 
-const rightTabLabels: Record<AppLanguage, Record<RightTab, string>> = {
+const rightTabLabels: Record<AppLanguage, Record<string, string>> = {
   zh: {
     files: "文件",
     overview: "概览",
@@ -155,13 +160,19 @@ const rightTabLabels: Record<AppLanguage, Record<RightTab, string>> = {
   },
 };
 
-export function getRightTabs(language: AppLanguage): Array<{ id: RightTab; label: string }> {
-  return (["files", "overview", "history", "templates"] as RightTab[]).map((id) => ({
+export function getRightTabs(
+  language: AppLanguage,
+): Array<{ id: RightTab; label: string }> {
+  return (
+    ["files", "overview", "history", "templates", "terminal"] as RightTab[]
+  ).map((id) => ({
     id,
-    label: rightTabLabels[language][id],
+    label:
+      rightTabLabels[language][id] ?? (language === "zh" ? "终端" : "Terminal"),
   }));
 }
 
 export const navSections: NavSection[] = getNavSections("zh");
 export const navItems: NavItem[] = getNavItems("zh");
-export const rightTabs: Array<{ id: RightTab; label: string }> = getRightTabs("zh");
+export const rightTabs: Array<{ id: RightTab; label: string }> =
+  getRightTabs("zh");

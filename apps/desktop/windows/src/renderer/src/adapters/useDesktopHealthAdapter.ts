@@ -16,8 +16,6 @@ export interface DesktopHealthAdapter {
   startGateway: () => Promise<void>;
   stopGateway: () => Promise<void>;
   checkUpdates: () => Promise<void>;
-  downloadUpdate: () => Promise<void>;
-  installUpdate: () => Promise<void>;
   saveApiKey: () => Promise<void>;
 }
 
@@ -166,34 +164,6 @@ export function useDesktopHealthAdapter(language: "en" | "zh" = "zh"): DesktopHe
     }
   }
 
-  async function downloadUpdate(): Promise<void> {
-    setBusy(true);
-    setActionMessage(null);
-    try {
-      const update = await desktopApi.downloadUpdate();
-      setHealth((current) =>
-        current ? { ...current, update } : { ...createFallbackHealth(), update },
-      );
-      setActionMessage(
-        update.downloaded
-          ? zh ? "更新已下载，可安装。" : "Update downloaded and ready to install."
-          : zh ? "更新下载已开始。" : "Update download started.",
-      );
-    } catch (error) {
-      setActionMessage(error instanceof Error ? error.message : zh ? "更新下载失败。" : "Update download failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function installUpdate(): Promise<void> {
-    try {
-      await desktopApi.installUpdate();
-    } catch (error) {
-      setActionMessage(error instanceof Error ? error.message : zh ? "更新安装失败。" : "Update install failed.");
-    }
-  }
-
   async function saveApiKey(): Promise<void> {
     setBusy(true);
     try {
@@ -224,8 +194,6 @@ export function useDesktopHealthAdapter(language: "en" | "zh" = "zh"): DesktopHe
     startGateway,
     stopGateway,
     checkUpdates,
-    downloadUpdate,
-    installUpdate,
     saveApiKey,
   };
 }

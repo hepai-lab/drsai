@@ -71,41 +71,6 @@ export async function checkForUpdates(): Promise<UpdateStatus> {
   return updateStatus;
 }
 
-export async function downloadUpdate(): Promise<UpdateStatus> {
-  if (!app.isPackaged) {
-    setStatus({
-      ...updateStatus,
-      checking: false,
-      downloading: false,
-      error: "Updates are only downloaded in packaged builds.",
-    });
-    return updateStatus;
-  }
-  registerUpdateListeners();
-  setStatus({ ...updateStatus, downloading: true, progress: 0, error: null });
-  try {
-    await autoUpdater.downloadUpdate();
-  } catch (error) {
-    setStatus({
-      ...updateStatus,
-      downloading: false,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-  return updateStatus;
-}
-
-export function installUpdate(): void {
-  if (!updateStatus.downloaded) {
-    setStatus({
-      ...updateStatus,
-      error: "No downloaded update is ready to install.",
-    });
-    return;
-  }
-  autoUpdater.quitAndInstall(false, true);
-}
-
 function registerUpdateListeners(): void {
   if (listenersRegistered) return;
   listenersRegistered = true;

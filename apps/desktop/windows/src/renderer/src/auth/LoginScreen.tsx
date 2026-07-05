@@ -1,37 +1,24 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useState } from "react";
 import drsaiLogo from "../assets/drsai-transparent.png";
-import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
 import { useAuth } from "./AuthProvider";
 
-type LoginMode = "wechat" | "sso" | "api_key" | "password";
+type LoginMode = "oidc" | "api_key" | "password";
 
 export function LoginScreen(): React.JSX.Element {
   const auth = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("zh");
-  const [mode, setMode] = useState<LoginMode>("wechat");
+  const [mode, setMode] = useState<LoginMode>("oidc");
   const [apiKey, setApiKey] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(true);
-  const [deviceCode, setDeviceCode] = useState<string | null>(null);
-  const [polling, setPolling] = useState(false);
-  const pollTimer = useRef<number | null>(null);
   const zh = language === "zh";
-
-  useEffect(() => {
-    return () => {
-      if (pollTimer.current) window.clearTimeout(pollTimer.current);
-      if (deviceCode) void auth.cancelDesktopSsoLogin(deviceCode);
-    };
-  }, [deviceCode]);
 
   async function handleSubmit(event: FormEvent): Promise<void> {
     event.preventDefault();
-    if (mode === "wechat") {
-      await startBrowserTicketLogin(await auth.startWechatDesktopLogin());
-    } else if (mode === "sso") {
-      await startBrowserTicketLogin(await auth.startDesktopSsoLogin());
+    if (mode === "oidc") {
+      await auth.startOidcLogin({ rememberMe });
     } else if (mode === "api_key") {
       await auth.login({ apiKey, rememberMe });
     } else {
@@ -40,74 +27,37 @@ export function LoginScreen(): React.JSX.Element {
   }
 
   const canSubmit =
-    mode === "wechat" || mode === "sso"
-      ? !polling
+    mode === "oidc"
+      ? true
       : mode === "api_key"
         ? Boolean(apiKey.trim())
         : Boolean(email.trim() && password);
 
-  async function startBrowserTicketLogin(result: Awaited<ReturnType<typeof auth.startDesktopSsoLogin>>): Promise<void> {
-    if (!result.ok || !result.deviceCode || !result.loginUrl) return;
-    setDeviceCode(result.deviceCode);
-    setPolling(true);
-    await desktopApi.openExternal(result.loginUrl);
-    schedulePoll(result.deviceCode, Math.max(result.intervalSeconds ?? 2, 1));
-  }
-
-  function schedulePoll(nextDeviceCode: string, intervalSeconds: number): void {
-    if (pollTimer.current) window.clearTimeout(pollTimer.current);
-    pollTimer.current = window.setTimeout(async () => {
-      const result = await auth.pollDesktopSsoLogin(nextDeviceCode);
-      if (result.state === "authorized") {
-        setPolling(false);
-        return;
-      }
-      if (result.state === "expired" || result.state === "cancelled" || result.state === "error") {
-        setPolling(false);
-        setDeviceCode(null);
-        return;
-      }
-      schedulePoll(nextDeviceCode, intervalSeconds);
-    }, intervalSeconds * 1000);
-  }
-
-  function switchMode(nextMode: LoginMode): void {
-    auth.clearMessage();
-    setMode(nextMode);
-    setPolling(false);
-    if (pollTimer.current) window.clearTimeout(pollTimer.current);
-    if (deviceCode) void auth.cancelDesktopSsoLogin(deviceCode);
-    setDeviceCode(null);
-  }
-
-  function nextMode(): LoginMode {
-    if (mode === "wechat") return "sso";
-    if (mode === "sso") return "api_key";
-    if (mode === "api_key") return "password";
-    return "wechat";
-  }
-
   function getSubmitLabel(): string {
-    if (mode === "wechat") {
-      return polling
-        ? zh ? "正在等待微信扫码..." : "Waiting for WeChat scan..."
-        : zh ? "使用微信扫码登录" : "Continue with WeChat";
+    if (auth.loginBusy) {
+      if (mode === "oidc") return zh ? "正在等待浏览器登录..." : "Waiting for browser sign-in...";
+      return zh ? "正在继续..." : "Continuing...";
     }
-    if (mode === "sso") {
-      return polling
-        ? zh ? "正在等待浏览器登录..." : "Waiting for browser sign-in..."
-        : zh ? "使用 IHEP SSO 登录" : "Continue with IHEP SSO";
-    }
-    if (auth.loginBusy) return zh ? "正在继续..." : "Continuing...";
+    if (mode === "oidc") return zh ? "使用 IHEP SSO 登录" : "Continue with IHEP SSO";
     if (mode === "api_key") return zh ? "使用 API key 登录" : "Continue with API key";
     return zh ? "继续" : "Continue";
   }
 
   function getModeLinkLabel(): string {
-    if (mode === "wechat") return zh ? "使用 IHEP SSO 登录" : "Continue with IHEP SSO";
-    if (mode === "sso") return zh ? "改用 API key" : "Use API key instead";
+    if (mode === "oidc") return zh ? "改用 API key" : "Use API key instead";
     if (mode === "api_key") return zh ? "使用账号登录" : "Continue with account";
-    return zh ? "使用微信扫码登录" : "Continue with WeChat";
+    return zh ? "使用 IHEP SSO 登录" : "Continue with IHEP SSO";
+  }
+
+  function nextMode(): LoginMode {
+    if (mode === "oidc") return "api_key";
+    if (mode === "api_key") return "password";
+    return "oidc";
+  }
+
+  function switchMode(next: LoginMode): void {
+    auth.clearMessage();
+    setMode(next);
   }
 
   return (
@@ -143,7 +93,7 @@ export function LoginScreen(): React.JSX.Element {
         </div>
 
         <form className="login-form" onSubmit={handleSubmit}>
-          {mode === "wechat" || mode === "sso" ? null : mode === "api_key" ? (
+          {mode === "oidc" ? null : mode === "api_key" ? (
             <label className="login-field">
               <input
                 type="password"
@@ -179,6 +129,12 @@ export function LoginScreen(): React.JSX.Element {
           <button className="login-submit" type="submit" disabled={auth.loginBusy || !canSubmit}>
             {getSubmitLabel()}
           </button>
+
+          {mode === "oidc" && auth.loginBusy && (
+            <button className="login-mode-link" type="button" onClick={() => auth.cancelOidcLogin()}>
+              {zh ? "取消登录" : "Cancel sign-in"}
+            </button>
+          )}
 
           <div className="login-divider">
             <span>{zh ? "或" : "OR"}</span>

@@ -15,6 +15,8 @@ CORE_VERSION = ROOT / "cores/python/packages/drsai/src/drsai/version.py"
 WEBUI_VERSION = ROOT / "apps/webui/backend/src/drsai_ui/ui_backend/version.py"
 DESKTOP_PACKAGE = ROOT / "apps/desktop/drsai-desktop/package.json"
 DESKTOP_LOCK = ROOT / "apps/desktop/drsai-desktop/package-lock.json"
+WINDOWS_DESKTOP_PACKAGE = ROOT / "apps/desktop/windows/package.json"
+WINDOWS_DESKTOP_LOCK = ROOT / "apps/desktop/windows/package-lock.json"
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 
@@ -36,7 +38,7 @@ def replace(path: Path, pattern: str, replacement: str, expected: int = 1) -> No
     new_text, count = re.subn(pattern, replacement, text, count=expected, flags=re.MULTILINE)
     if count != expected:
         raise SystemExit(f"Expected {expected} replacement(s) in {path}, got {count}")
-    path.write_text(new_text, encoding="utf-8", newline="\n")
+    path.write_text(new_text, encoding="utf-8")
 
 
 def update_json_version(path: Path, version: str) -> None:
@@ -45,7 +47,7 @@ def update_json_version(path: Path, version: str) -> None:
 
 def main(argv: list[str]) -> int:
     version = read_target_version(argv)
-    VERSION_FILE.write_text(version + "\n", encoding="utf-8", newline="\n")
+    VERSION_FILE.write_text(version + "\n", encoding="utf-8")
 
     replace(
         CORE_VERSION,
@@ -64,6 +66,8 @@ def main(argv: list[str]) -> int:
     )
     update_json_version(DESKTOP_PACKAGE, version)
     replace(DESKTOP_LOCK, r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"', expected=2)
+    update_json_version(WINDOWS_DESKTOP_PACKAGE, version)
+    replace(WINDOWS_DESKTOP_LOCK, r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{version}"', expected=2)
 
     print(f"Synchronized DrSai version to {version}")
     return 0

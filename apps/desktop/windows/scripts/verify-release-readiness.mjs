@@ -14,6 +14,7 @@ const steps = [
   ["Packaged app E2E agent run", npmScript("verify:e2e-agent-run"), true, {}],
   ["Packaged app E2E agent run failures", npmScript("verify:e2e-agent-run-failures"), true, {}],
   ["Packaged app E2E threads", npmScript("verify:e2e-threads"), true, {}],
+  ["Packaged app E2E OIDC login", npmScript("verify:e2e-oidc-login"), true, {}],
   ["Backend installer check-only", npmScript("verify:install-check"), true, {}],
   ["Backend source archive install mode", npmScript("verify:install-source"), true, {}],
   ["Bundled backend source", npmScript("verify:backend-bundle"), true, {}],

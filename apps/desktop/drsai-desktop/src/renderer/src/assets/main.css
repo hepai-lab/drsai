@@ -124,9 +124,9 @@
   --transition: 150ms ease;
   --font-sans:
     "Google Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
-    "WenQuanYi Micro Hei", "Hiragino Sans GB",
-    "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+    "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei",
+    "Hiragino Sans GB", "Noto Color Emoji", "Apple Color Emoji",
+    "Segoe UI Emoji", sans-serif;
   --font-mono:
     "SF Mono", "Fira Code", "JetBrains Mono", Menlo, Consolas,
     "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", monospace;
@@ -999,9 +999,137 @@ body {
 
 .content {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.workspace-shell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+.terminal-rail-button {
+  width: 42px;
+  flex: 0 0 42px;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 14px;
+  cursor: pointer;
+  transition:
+    background var(--transition),
+    color var(--transition);
+}
+
+.terminal-rail-button:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.terminal-panel {
+  width: min(420px, 38vw);
+  min-width: 320px;
+  max-width: 520px;
+  flex: 0 0 auto;
+  border-left: 1px solid var(--border);
+  background: #0f1115;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.terminal-panel-header {
+  height: 44px;
+  flex: 0 0 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #151922;
+  color: #eef2f7;
+}
+
+.terminal-panel-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.terminal-panel-title span {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.terminal-panel-title small {
+  color: #9ca3af;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.terminal-panel-actions button {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #aab2c0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background var(--transition),
+    color var(--transition);
+}
+
+.terminal-panel-actions button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.terminal-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 8px 0 8px 8px;
+}
+
+.terminal-panel-body .xterm {
+  height: 100%;
+}
+
+.terminal-panel-body .xterm-viewport {
+  background: #0f1115 !important;
+}
+
+@media (max-width: 960px) {
+  .terminal-panel {
+    width: min(360px, 46vw);
+    min-width: 300px;
+  }
 }
 
 /* ========================================================================
@@ -5341,7 +5469,9 @@ body {
   flex-direction: column;
   gap: 6px;
   cursor: grab;
-  transition: border-color var(--transition), opacity var(--transition);
+  transition:
+    border-color var(--transition),
+    opacity var(--transition);
 }
 
 .kanban-card:hover {
@@ -5545,4 +5675,3 @@ body {
   font-size: 11px;
   color: var(--text-muted);
 }
-

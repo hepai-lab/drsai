@@ -1,5 +1,5 @@
-import { dirname } from "path";
-import { mkdirSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import type { BrowserWindow } from "electron";
 
 interface SmokeResult {
@@ -18,7 +18,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     process.env.OPENDRSAI_E2E_CHAT_FAILURES !== "1" &&
     process.env.OPENDRSAI_E2E_AGENT_RUN !== "1" &&
     process.env.OPENDRSAI_E2E_AGENT_RUN_FAILURES !== "1" &&
-    process.env.OPENDRSAI_E2E_THREADS !== "1"
+    process.env.OPENDRSAI_E2E_THREADS !== "1" &&
+    process.env.OPENDRSAI_E2E_OIDC !== "1"
   ) return;
   const resultPath = process.env.OPENDRSAI_E2E_RESULT;
   if (!resultPath) {
@@ -55,6 +56,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runAgentRunSmoke
       : process.env.OPENDRSAI_E2E_THREADS === "1"
         ? runThreadsSmoke
+      : process.env.OPENDRSAI_E2E_OIDC === "1"
+        ? runOidcSmoke
       : process.env.OPENDRSAI_E2E_CHAT === "1"
         ? runChatSmoke
         : runSmoke;
@@ -785,6 +788,138 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
 
   const ok = Object.values(result.checks).every(Boolean);
   return { ok, checks: result.checks, details: result.details };
+}
+
+async function runOidcSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const result = (await window.webContents.executeJavaScript(`
+    (async () => {
+      const checks = {};
+      const details = {};
+      async function waitForDomReady() {
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          if (document.body.innerText.includes("OpenDrSai") && document.querySelector("button")) return true;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return false;
+      }
+      function publicSessionLooksOidc(session) {
+        return Boolean(
+          session &&
+          session.authenticated === true &&
+          session.authMode === "oidc" &&
+          session.authProvider === "hai" &&
+          session.user &&
+          session.user.id === "e2e-hai-user" &&
+          session.user.email === "e2e-hai-user@ihep.ac.cn" &&
+          session.refreshable === true &&
+          !("accessToken" in session) &&
+          !("refreshToken" in session) &&
+          !("idToken" in session)
+        );
+      }
+
+      const api = window.openDrSai;
+      checks.bridge = Boolean(api);
+      checks.domReady = await waitForDomReady();
+      details.domTextSample = document.body.innerText.slice(0, 300);
+      if (!api) return { checks, details };
+
+      const login = await api.startOidcLogin({ rememberMe: true });
+      details.login = {
+        ok: login && login.ok,
+        message: login && login.message,
+        session: login && login.session,
+      };
+      checks.oidcLoginOk = Boolean(login && login.ok);
+      checks.oidcPublicSession = publicSessionLooksOidc(login && login.session);
+
+      const restored = await api.getAuthSession();
+      details.restored = restored;
+      checks.restoredSession = publicSessionLooksOidc(restored);
+
+      const refreshed = await api.refreshAuthSession();
+      details.refreshed = refreshed;
+      checks.refreshSession = publicSessionLooksOidc(refreshed);
+
+      return { checks, details };
+    })()
+  `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+
+  const storage = readOidcSessionStorageForSmoke();
+  result.details.storage = storage.details;
+  result.checks.sessionFileExists = storage.checks.exists;
+  result.checks.sessionUsesEncryptedTokens = storage.checks.usesEncryptedTokens;
+  result.checks.sessionOmitsPlainTokens = storage.checks.omitsPlainTokens;
+
+  const logout = (await window.webContents.executeJavaScript(`
+    (async () => {
+      const api = window.openDrSai;
+      const logout = await api.logout({ clearLocalData: false });
+      const afterLogout = await api.getAuthSession();
+      return {
+        logout,
+        afterLogout,
+        logoutOk: Boolean(logout && logout.ok),
+        afterLogoutAnonymous: Boolean(afterLogout && afterLogout.authenticated === false),
+      };
+    })()
+  `)) as {
+    logout?: unknown;
+    afterLogout?: unknown;
+    logoutOk?: boolean;
+    afterLogoutAnonymous?: boolean;
+  };
+  result.details.logout = logout.logout;
+  result.details.afterLogout = logout.afterLogout;
+  result.checks.logoutOk = Boolean(logout.logoutOk);
+  result.checks.afterLogoutAnonymous = Boolean(logout.afterLogoutAnonymous);
+
+  const afterLogoutStorage = readOidcSessionStorageForSmoke();
+  result.details.afterLogoutStorage = afterLogoutStorage.details;
+  result.checks.logoutClearsSessionFile = !afterLogoutStorage.checks.exists;
+
+  const ok = Object.values(result.checks).every(Boolean);
+  return { ok, checks: result.checks, details: result.details };
+}
+
+function readOidcSessionStorageForSmoke(): {
+  checks: { exists: boolean; usesEncryptedTokens: boolean; omitsPlainTokens: boolean };
+  details: Record<string, unknown>;
+} {
+  const sessionPath = join(process.env.DRSAI_HOME || "", "auth", "session.json");
+  if (!process.env.DRSAI_HOME || !existsSync(sessionPath)) {
+    return {
+      checks: { exists: false, usesEncryptedTokens: false, omitsPlainTokens: false },
+      details: { sessionPath, exists: false },
+    };
+  }
+  const parsed = JSON.parse(readFileSync(sessionPath, "utf8")) as Record<string, unknown>;
+  const keys = Object.keys(parsed).sort();
+  return {
+    checks: {
+      exists: true,
+      usesEncryptedTokens: Boolean(
+        parsed.encryptedAccessToken &&
+          parsed.encryptedRefreshToken &&
+          parsed.encryptedIdToken,
+      ),
+      omitsPlainTokens: !("accessToken" in parsed) && !("refreshToken" in parsed) && !("idToken" in parsed),
+    },
+    details: {
+      sessionPath,
+      exists: true,
+      keys,
+      authMode: parsed.authMode,
+      authProvider: parsed.authProvider,
+      hasEncryptedAccessToken: Boolean(parsed.encryptedAccessToken),
+      hasEncryptedRefreshToken: Boolean(parsed.encryptedRefreshToken),
+      hasEncryptedIdToken: Boolean(parsed.encryptedIdToken),
+      hasPlainAccessToken: "accessToken" in parsed,
+      hasPlainRefreshToken: "refreshToken" in parsed,
+      hasPlainIdToken: "idToken" in parsed,
+    },
+  };
 }
 
 async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {

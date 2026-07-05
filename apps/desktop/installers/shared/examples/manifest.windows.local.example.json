@@ -1,0 +1,22 @@
+{
+  "version": "1.4.0",
+  "channel": "dev",
+  "protocolVersion": "2026-07",
+  "minimumBootstrapperVersion": "0.1.0",
+  "platforms": {
+    "windows-x64": {
+      "desktop": {
+        "url": "file:///C:/path/to/OpenDrSai-desktop-win-x64.zip",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "sizeBytes": 1,
+        "executableRelativePath": "OpenDrSai.exe"
+      },
+      "backend": {
+        "url": "file:///C:/path/to/opendrsai-backend-source.zip",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "sizeBytes": 1,
+        "installMode": "source-archive"
+      }
+    }
+  }
+}

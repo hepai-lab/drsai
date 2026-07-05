@@ -13,6 +13,45 @@ const electronAPI = {
 };
 
 const drsaiAPI = {
+  // Terminal
+  createTerminal: (options?: {
+    cols?: number;
+    rows?: number;
+    cwd?: string;
+  }): Promise<{ id: string; pid: number; shell: string; cwd: string }> =>
+    ipcRenderer.invoke("terminal-create", options),
+  writeTerminal: (id: string, data: string): Promise<boolean> =>
+    ipcRenderer.invoke("terminal-write", id, data),
+  resizeTerminal: (id: string, cols: number, rows: number): Promise<boolean> =>
+    ipcRenderer.invoke("terminal-resize", id, cols, rows),
+  killTerminal: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke("terminal-kill", id),
+  onTerminalData: (
+    callback: (event: { id: string; data: string }) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: unknown,
+    ): void => callback(payload as { id: string; data: string });
+    ipcRenderer.on("terminal-data", handler);
+    return () => ipcRenderer.removeListener("terminal-data", handler);
+  },
+  onTerminalExit: (
+    callback: (event: {
+      id: string;
+      exitCode: number;
+      signal?: number;
+    }) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: unknown,
+    ): void =>
+      callback(payload as { id: string; exitCode: number; signal?: number });
+    ipcRenderer.on("terminal-exit", handler);
+    return () => ipcRenderer.removeListener("terminal-exit", handler);
+  },
+
   // Installation
   checkInstall: (): Promise<{
     installed: boolean;
@@ -60,10 +99,8 @@ const drsaiAPI = {
     ipcRenderer.invoke("refresh-drsai-version"),
   refreshDrsaiVersion: (): Promise<string | null> =>
     ipcRenderer.invoke("refresh-drsai-version"),
-  runDrSaiDoctor: (): Promise<string> =>
-    ipcRenderer.invoke("run-drsai-doctor"),
-  runDrsaiDoctor: (): Promise<string> =>
-    ipcRenderer.invoke("run-drsai-doctor"),
+  runDrSaiDoctor: (): Promise<string> => ipcRenderer.invoke("run-drsai-doctor"),
+  runDrsaiDoctor: (): Promise<string> => ipcRenderer.invoke("run-drsai-doctor"),
   runDrSaiUpdate: (): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke("run-drsai-update"),
   runDrsaiUpdate: (): Promise<{ success: boolean; error?: string }> =>
@@ -110,7 +147,11 @@ const drsaiAPI = {
       model: string;
       token_limit: number;
       max_tokens: number;
-      reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+      reasoning?: {
+        supported: boolean;
+        effort_levels: string[];
+        param_type: string;
+      };
     }>;
   }> => ipcRenderer.invoke("get-model-catalog"),
 
@@ -124,7 +165,8 @@ const drsaiAPI = {
 
   // Connection mode (local / remote / ssh)
   isRemoteMode: (): Promise<boolean> => ipcRenderer.invoke("is-remote-mode"),
-  isRemoteOnlyMode: (): Promise<boolean> => ipcRenderer.invoke("is-remote-only-mode"),
+  isRemoteOnlyMode: (): Promise<boolean> =>
+    ipcRenderer.invoke("is-remote-only-mode"),
   getConnectionConfig: (): Promise<{
     mode: "local" | "remote" | "ssh";
     remoteUrl: string;
@@ -154,7 +196,15 @@ const drsaiAPI = {
     remotePort: number,
     localPort: number,
   ): Promise<boolean> =>
-    ipcRenderer.invoke("set-ssh-config", host, port, username, keyPath, remotePort, localPort),
+    ipcRenderer.invoke(
+      "set-ssh-config",
+      host,
+      port,
+      username,
+      keyPath,
+      remotePort,
+      localPort,
+    ),
 
   testRemoteConnection: (url: string, apiKey?: string): Promise<boolean> =>
     ipcRenderer.invoke("test-remote-connection", url, apiKey),
@@ -166,7 +216,14 @@ const drsaiAPI = {
     keyPath: string,
     remotePort: number,
   ): Promise<boolean> =>
-    ipcRenderer.invoke("test-ssh-connection", host, port, username, keyPath, remotePort),
+    ipcRenderer.invoke(
+      "test-ssh-connection",
+      host,
+      port,
+      username,
+      keyPath,
+      remotePort,
+    ),
 
   isSshTunnelActive: (): Promise<boolean> =>
     ipcRenderer.invoke("is-ssh-tunnel-active"),
@@ -174,8 +231,7 @@ const drsaiAPI = {
   startSshTunnel: (): Promise<boolean> =>
     ipcRenderer.invoke("start-ssh-tunnel"),
 
-  stopSshTunnel: (): Promise<boolean> =>
-    ipcRenderer.invoke("stop-ssh-tunnel"),
+  stopSshTunnel: (): Promise<boolean> => ipcRenderer.invoke("stop-ssh-tunnel"),
 
   // ── User identity ──────────────────────────────────────
   getUserName: (): Promise<string> => ipcRenderer.invoke("get-user-name"),
@@ -388,8 +444,11 @@ const drsaiAPI = {
     config: Record<string, unknown>;
     name?: string | null;
     enabled?: boolean;
-  }): Promise<{ index: number; type: string; config: Record<string, unknown> }> =>
-    ipcRenderer.invoke("create-tool", entry),
+  }): Promise<{
+    index: number;
+    type: string;
+    config: Record<string, unknown>;
+  }> => ipcRenderer.invoke("create-tool", entry),
   updateTool: (
     index: number,
     entry: {
@@ -398,8 +457,11 @@ const drsaiAPI = {
       name?: string | null;
       enabled?: boolean;
     },
-  ): Promise<{ index: number; type: string; config: Record<string, unknown> }> =>
-    ipcRenderer.invoke("update-tool", index, entry),
+  ): Promise<{
+    index: number;
+    type: string;
+    config: Record<string, unknown>;
+  }> => ipcRenderer.invoke("update-tool", index, entry),
   deleteTool: (index: number): Promise<boolean> =>
     ipcRenderer.invoke("delete-tool", index),
 
@@ -461,7 +523,10 @@ const drsaiAPI = {
   updateSessionTitle: (sessionId: string, title: string): Promise<boolean> =>
     ipcRenderer.invoke("update-session-title", sessionId, title),
 
-  updateSessionTitleAsync: (sessionId: string, title: string): Promise<boolean> =>
+  updateSessionTitleAsync: (
+    sessionId: string,
+    title: string,
+  ): Promise<boolean> =>
     ipcRenderer.invoke("update-session-title-async", sessionId, title),
 
   // Session search
@@ -500,18 +565,28 @@ const drsaiAPI = {
       model: string;
       token_limit: number;
       max_tokens: number;
-      reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+      reasoning?: {
+        supported: boolean;
+        effort_levels: string[];
+        param_type: string;
+      };
     }>;
   }> => ipcRenderer.invoke("list-models"),
 
-  getModelDetail: (alias: string): Promise<{
+  getModelDetail: (
+    alias: string,
+  ): Promise<{
     alias: string;
     display_name: string;
     client_type: string;
     model: string;
     token_limit: number;
     max_tokens: number;
-    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+    reasoning?: {
+      supported: boolean;
+      effort_levels: string[];
+      param_type: string;
+    };
   }> => ipcRenderer.invoke("get-model-detail", alias),
 
   addModel: (body: {
@@ -520,7 +595,11 @@ const drsaiAPI = {
     token_limit?: number;
     max_tokens?: number;
     client_type?: string;
-    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+    reasoning?: {
+      supported: boolean;
+      effort_levels: string[];
+      param_type: string;
+    };
   }): Promise<{
     alias: string;
     display_name: string;
@@ -528,7 +607,11 @@ const drsaiAPI = {
     model: string;
     token_limit: number;
     max_tokens: number;
-    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+    reasoning?: {
+      supported: boolean;
+      effort_levels: string[];
+      param_type: string;
+    };
   }> => ipcRenderer.invoke("add-model", body),
 
   updateModel: (
@@ -538,7 +621,11 @@ const drsaiAPI = {
       token_limit?: number;
       max_tokens?: number;
       client_type?: string;
-      reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+      reasoning?: {
+        supported: boolean;
+        effort_levels: string[];
+        param_type: string;
+      };
       new_alias?: string;
     },
   ): Promise<{
@@ -548,10 +635,16 @@ const drsaiAPI = {
     model: string;
     token_limit: number;
     max_tokens: number;
-    reasoning?: { supported: boolean; effort_levels: string[]; param_type: string };
+    reasoning?: {
+      supported: boolean;
+      effort_levels: string[];
+      param_type: string;
+    };
   }> => ipcRenderer.invoke("update-model", alias, body),
 
-  removeModel: (alias: string): Promise<{ ok: boolean; new_default_alias: string }> =>
+  removeModel: (
+    alias: string,
+  ): Promise<{ ok: boolean; new_default_alias: string }> =>
     ipcRenderer.invoke("remove-model", alias),
 
   setDefaultModel: (alias: string): Promise<{ default_alias: string }> =>
@@ -653,8 +746,10 @@ const drsaiAPI = {
   },
 
   onUpdateError: (callback: (message: string) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, message: unknown): void =>
-      callback(String(message));
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      message: unknown,
+    ): void => callback(String(message));
     ipcRenderer.on("update-error", handler);
     return () => ipcRenderer.removeListener("update-error", handler);
   },
@@ -748,18 +843,8 @@ const drsaiAPI = {
     switchAfter?: boolean,
     profile?: string,
   ) =>
-    ipcRenderer.invoke(
-      "kanban-create-board",
-      slug,
-      name,
-      switchAfter,
-      profile,
-    ),
-  kanbanRemoveBoard: (
-    slug: string,
-    hardDelete?: boolean,
-    profile?: string,
-  ) =>
+    ipcRenderer.invoke("kanban-create-board", slug, name, switchAfter, profile),
+  kanbanRemoveBoard: (slug: string, hardDelete?: boolean, profile?: string) =>
     ipcRenderer.invoke("kanban-remove-board", slug, hardDelete, profile),
   kanbanListTasks: (filters?: {
     status?: string;
@@ -801,11 +886,8 @@ const drsaiAPI = {
     ipcRenderer.invoke("kanban-archive-task", taskId, profile),
   kanbanSpecifyTask: (taskId: string, profile?: string) =>
     ipcRenderer.invoke("kanban-specify-task", taskId, profile),
-  kanbanReclaimTask: (
-    taskId: string,
-    reason?: string,
-    profile?: string,
-  ) => ipcRenderer.invoke("kanban-reclaim-task", taskId, reason, profile),
+  kanbanReclaimTask: (taskId: string, reason?: string, profile?: string) =>
+    ipcRenderer.invoke("kanban-reclaim-task", taskId, reason, profile),
   kanbanCommentTask: (taskId: string, body: string, profile?: string) =>
     ipcRenderer.invoke("kanban-comment-task", taskId, body, profile),
   kanbanDispatchOnce: (dryRun?: boolean, profile?: string) =>

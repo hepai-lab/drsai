@@ -1,3 +1,3 @@
-VERSION = "1.3.9"
-__version__ = "1.3.9"
+VERSION = "1.4.0"
+__version__ = "1.4.0"
 APP_NAME = "Dr.Sai-UI"

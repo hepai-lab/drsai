@@ -10,7 +10,7 @@
   "compilerOptions": {
     "composite": true,
     "jsx": "react-jsx",
-    "types": ["vitest/globals"],
+    "types": ["vitest/globals", "@testing-library/jest-dom/vitest"],
     "baseUrl": ".",
     "paths": {
       "@renderer/*": ["src/renderer/src/*"]

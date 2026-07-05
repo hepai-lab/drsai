@@ -147,6 +147,7 @@ function validateChatRequest(rawRequest: unknown): ChatRequest {
     sessionId: request.sessionId?.trim() || undefined,
     runId: request.runId?.trim() || undefined,
     attachments,
+    metadata: isRecord(request.metadata) ? request.metadata : undefined,
     messages,
   };
 }
@@ -238,6 +239,7 @@ async function runChat(
         thread_id: sessionId,
         work_dir: request.workspacePath,
         metadata: {
+          ...(request.metadata || {}),
           auth_mode: auth.authMode,
           run_id: runId,
           desktop_request_id: requestId,
@@ -287,6 +289,10 @@ async function runChat(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function deriveThreadTitle(messages: ChatMessage[]): string {

@@ -73,8 +73,6 @@ check("preload exposes install, gateway, update, and chat APIs", () => {
     "getInstallStatus",
     "getGatewayStatus",
     "checkForUpdates",
-    "downloadUpdate",
-    "installUpdate",
     "cancelInstall",
     "startChat",
     "abortChat",
@@ -86,6 +84,23 @@ check("preload exposes install, gateway, update, and chat APIs", () => {
     "onChatEvent",
     "onAgentRunEvent",
   ].every((name) => preload.includes(name));
+});
+
+check("desktop OIDC login flow is protected by a focused verifier", () => {
+  const packageJson = read("package.json");
+  const verifier = read("scripts/verify-oidc-login.mjs");
+  const auth = read("src/main/auth.ts");
+  const login = read("src/renderer/src/auth/LoginScreen.tsx");
+  return (
+    packageJson.includes('"verify:oidc-login": "node scripts/verify-oidc-login.mjs"') &&
+    verifier.includes("OIDC login verification passed") &&
+    verifier.includes("Authorization Code + PKCE") &&
+    verifier.includes("HAI OIDC upstream login preserves backend root path") &&
+    verifier.includes("Electron OIDC E2E smoke exercises the real main-process login path") &&
+    auth.includes("validateOidcClaims") &&
+    auth.includes("createLoopbackCallback(state)") &&
+    login.includes('useState<LoginMode>("oidc")')
+  );
 });
 
 check("main process gates privileged IPC to the trusted desktop renderer", () => {
@@ -215,21 +230,22 @@ check("desktop persists local thread metadata through main IPC", () => {
   );
 });
 
-check("auto update flow can check, download, and install", () => {
+check("auto update flow only exposes update checks", () => {
   const api = read("src/shared/desktopApi.ts");
   const updates = read("src/main/updates.ts");
   const main = read("src/main/index.ts");
   const app = read("src/renderer/src/App.tsx");
   return (
-    api.includes("downloadUpdate(): Promise<UpdateStatus>") &&
-    api.includes("installUpdate(): Promise<void>") &&
-    updates.includes("autoUpdater.downloadUpdate()") &&
-    updates.includes("autoUpdater.quitAndInstall") &&
-    updates.includes("download-progress") &&
-    main.includes("desktop:download-update") &&
-    main.includes("desktop:install-update") &&
-    app.includes("Download Update") &&
-    app.includes("Install Update")
+    api.includes("checkForUpdates(): Promise<UpdateStatus>") &&
+    updates.includes("autoUpdater.checkForUpdates()") &&
+    main.includes("desktop:check-for-updates") &&
+    app.includes("Check Updates") &&
+    !api.includes("downloadUpdate") &&
+    !api.includes("installUpdate") &&
+    !main.includes("desktop:download-update") &&
+    !main.includes("desktop:install-update") &&
+    !app.includes("Download Update") &&
+    !app.includes("Install Update")
   );
 });
 
@@ -483,7 +499,7 @@ check("gateway readiness validates DrSai-compatible endpoints", () => {
   const main = read("src/main/index.ts");
   const api = read("src/shared/desktopApi.ts");
   const app = read("src/renderer/src/App.tsx");
-  const devScript = read("../windows-desktop-dev.ps1");
+  const devScript = read("../scripts/windows-desktop-dev.ps1");
   return (
     gateway.includes("/health") &&
     gateway.includes("/v1/models") &&
@@ -792,7 +808,8 @@ check("renderer blocks chat submission until gateway is ready", () => {
   const chatAdapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
   const chatWorkspace = read("src/renderer/src/components/ChatWorkspace.tsx");
   return (
-    app.includes("canChat: Boolean(health?.installed && health?.gatewayReady)") &&
+    app.includes("canChat: Boolean(") &&
+    app.includes("health?.installed && health?.gatewayReady && workspaceTrusted") &&
     app.includes("!chat.activeRequestId") &&
     chatAdapter.includes("submit(attachments: ChatAttachment[] = [])") &&
     chatAdapter.includes("attachments,") &&
@@ -977,7 +994,9 @@ check("renderer has mock desktop API for browser visual verification", () => {
   return (
     main.includes("installMockDesktopApi();") &&
     mock.includes("if (window.openDrSai) return;") &&
-    mock.includes("downloadUpdate") &&
+    mock.includes("checkForUpdates") &&
+    !mock.includes("downloadUpdate") &&
+    !mock.includes("installUpdate") &&
     mock.includes("startChat") &&
     mock.includes("saveApiKey")
   );
@@ -1040,6 +1059,7 @@ check("packaged app smoke verifies real main, preload, and IPC", () => {
   const e2eAgentRun = read("scripts/verify-e2e-agent-run.mjs");
   const e2eAgentRunFailures = read("scripts/verify-e2e-agent-run-failures.mjs");
   const e2eThreads = read("scripts/verify-e2e-threads.mjs");
+  const e2eOidc = read("scripts/verify-e2e-oidc-login.mjs");
   const readiness = read("scripts/verify-release-readiness.mjs");
   return (
     packageJson.includes('"verify:packaged": "node scripts/verify-packaged-app-smoke.mjs"') &&
@@ -1048,6 +1068,7 @@ check("packaged app smoke verifies real main, preload, and IPC", () => {
     packageJson.includes('"verify:e2e-agent-run": "node scripts/verify-e2e-agent-run.mjs"') &&
     packageJson.includes('"verify:e2e-agent-run-failures": "node scripts/verify-e2e-agent-run-failures.mjs"') &&
     packageJson.includes('"verify:e2e-threads": "node scripts/verify-e2e-threads.mjs"') &&
+    packageJson.includes('"verify:e2e-oidc-login": "node scripts/verify-e2e-oidc-login.mjs"') &&
     main.includes("maybeRunE2eSmoke(mainWindow)") &&
     smokeHook.includes("OPENDRSAI_E2E_SMOKE") &&
     smokeHook.includes("OPENDRSAI_E2E_CHAT") &&
@@ -1055,7 +1076,11 @@ check("packaged app smoke verifies real main, preload, and IPC", () => {
     smokeHook.includes("OPENDRSAI_E2E_AGENT_RUN") &&
     smokeHook.includes("OPENDRSAI_E2E_AGENT_RUN_FAILURES") &&
     smokeHook.includes("OPENDRSAI_E2E_THREADS") &&
+    smokeHook.includes("OPENDRSAI_E2E_OIDC") &&
     smokeHook.includes("OPENDRSAI_E2E_THREADS_PHASE") &&
+    smokeHook.includes("api.startOidcLogin") &&
+    smokeHook.includes("sessionUsesEncryptedTokens") &&
+    smokeHook.includes("logoutClearsSessionFile") &&
     smokeHook.includes("api.createThread") &&
     smokeHook.includes("api.listThreads") &&
     smokeHook.includes("window.openDrSai") &&
@@ -1163,13 +1188,21 @@ check("packaged app smoke verifies real main, preload, and IPC", () => {
     e2eThreads.includes("thread_id") &&
     e2eThreads.includes("desktop_request_id") &&
     e2eThreads.includes("E2E threads passed with restart persistence") &&
+    e2eOidc.includes("startFakeOidcIssuer") &&
+    e2eOidc.includes("OPENDRSAI_OIDC_ISSUER") &&
+    e2eOidc.includes("OPENDRSAI_E2E_OIDC_AUTO_CALLBACK") &&
+    e2eOidc.includes("resolveElectronRuntime") &&
+    e2eOidc.includes("assertOidcDiagnostics") &&
+    e2eOidc.includes("E2E OIDC login passed with Electron main process + fake OIDC issuer") &&
     readiness.includes("Packaged app IPC smoke") &&
+    readiness.includes("Packaged app E2E OIDC login") &&
     readiness.includes("verify:packaged") &&
     readiness.includes("verify:e2e-chat") &&
     readiness.includes("verify:e2e-chat-failures") &&
     readiness.includes("verify:e2e-agent-run") &&
     readiness.includes("verify:e2e-agent-run-failures") &&
-    readiness.includes("verify:e2e-threads")
+    readiness.includes("verify:e2e-threads") &&
+    readiness.includes("verify:e2e-oidc-login")
   );
 });
 

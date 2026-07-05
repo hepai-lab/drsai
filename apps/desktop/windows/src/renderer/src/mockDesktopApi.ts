@@ -7,6 +7,7 @@ import type {
   DesktopThread,
   InstallProgress,
   UpdateStatus,
+  WorkspaceProject,
 } from "@shared/desktopApi";
 
 type Listener<T> = (value: T) => void;
@@ -74,6 +75,8 @@ export function installMockDesktopApi(): void {
   let authSession = structuredClone(anonymousSession);
   let pendingAuthProvider: AuthSession["authProvider"] = "ihep";
   let threads: DesktopThread[] = [];
+  let workspaces: WorkspaceProject[] = [];
+  let terminalCounter = 0;
   const chatListeners = new Set<Listener<ChatEvent>>();
   const agentRunListeners = new Set<Listener<AgentRunEvent>>();
   const installListeners = new Set<Listener<InstallProgress>>();
@@ -127,6 +130,24 @@ export function installMockDesktopApi(): void {
       }
       return { ok: true, session: authSession, message: "Mock sign-in complete." };
     },
+    startOidcLogin: async () => {
+      authSession = {
+        authenticated: true,
+        user: {
+          id: "mock-hai-user",
+          email: "mock-sso@ihep.ac.cn",
+          name: "Mock HAI User",
+          role: "user",
+        },
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        refreshable: true,
+        authMode: "oidc",
+        authProvider: "hai",
+      };
+      return { ok: true, session: authSession, message: "Mock HAI OIDC sign-in complete." };
+    },
+    cancelOidcLogin: async () => true,
     startDesktopSsoLogin: async () => {
       pendingAuthProvider = "ihep";
       return {
@@ -199,32 +220,6 @@ export function installMockDesktopApi(): void {
       emit(updateListeners, health.update);
       return health.update;
     },
-    downloadUpdate: async () => {
-      for (const progress of [20, 55, 100]) {
-        health = {
-          ...health,
-          update: {
-            checking: false,
-            available: true,
-            downloading: progress < 100,
-            downloaded: progress === 100,
-            progress,
-            version: "0.1.1",
-            error: null,
-          },
-        };
-        emit(updateListeners, health.update);
-        await delay(120);
-      }
-      return health.update;
-    },
-    installUpdate: async () => {
-      health = {
-        ...health,
-        update: { ...health.update, error: "Mock install requested." },
-      };
-      emit(updateListeners, health.update);
-    },
     startInstall: async (options) => {
       emit(installListeners, {
         phase: "complete",
@@ -252,6 +247,52 @@ export function installMockDesktopApi(): void {
     stopGateway: async () => {
       health = { ...health, gatewayReady: false, gateway: { ...health.gateway, ready: false } };
       return true;
+    },
+    listWorkspaces: async () => workspaces,
+    createWorkspace: async (request) => {
+      const now = new Date().toISOString();
+      const source = request.source ?? "existing";
+      const path = source === "existing"
+        ? request.path || "C:\\Users\\Demo\\Documents\\research-folder"
+        : `${request.parentPath || "C:\\Users\\Demo\\Projects"}\\${request.name || "workspace"}`;
+      const workspace: WorkspaceProject = {
+        id: `workspace-${crypto.randomUUID()}`,
+        name: request.name || path.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace",
+        path,
+        type: "local",
+        description: request.description,
+        createdAt: now,
+        updatedAt: now,
+        lastOpenedAt: now,
+        trusted: request.trusted ?? false,
+        pinned: request.pinned,
+        hasAgentInstructions: false,
+        metadata: { ...(request.metadata || {}), source, repoUrl: request.repoUrl },
+      };
+      workspaces = [workspace, ...workspaces.filter((item) => item.path !== workspace.path)];
+      return workspace;
+    },
+    updateWorkspace: async (request) => {
+      const existing = workspaces.find((workspace) => workspace.id === request.id);
+      if (!existing) throw new Error("Workspace not found.");
+      const workspace: WorkspaceProject = {
+        ...existing,
+        name: request.name ?? existing.name,
+        description: request.description ?? existing.description,
+        trusted: request.trusted ?? existing.trusted,
+        pinned: request.pinned ?? existing.pinned,
+        lastOpenedAt: request.lastOpenedAt ?? existing.lastOpenedAt,
+        metadata: request.metadata ?? existing.metadata,
+        updatedAt: new Date().toISOString(),
+      };
+      workspaces = [workspace, ...workspaces.filter((item) => item.id !== workspace.id)];
+      return workspace;
+    },
+    deleteWorkspace: async (id) => {
+      const next = workspaces.filter((workspace) => workspace.id !== id);
+      const deleted = next.length !== workspaces.length;
+      workspaces = next;
+      return deleted;
     },
     listThreads: async () => threads,
     createThread: async (request) => {
@@ -357,10 +398,24 @@ export function installMockDesktopApi(): void {
     }),
     openExternal: async () => undefined,
     openPath: async () => "",
+    createTerminal: async (options) => {
+      terminalCounter += 1;
+      return {
+        id: `mock-terminal-${terminalCounter}`,
+        pid: 1000 + terminalCounter,
+        shell: "mock-shell",
+        cwd: options?.cwd || "C:\\Users\\Demo",
+      };
+    },
+    writeTerminal: async () => true,
+    resizeTerminal: async () => true,
+    killTerminal: async () => true,
     onInstallProgress: (callback) => subscribe(installListeners, callback),
     onChatEvent: (callback) => subscribe(chatListeners, callback),
     onAgentRunEvent: (callback) => subscribe(agentRunListeners, callback),
     onUpdateStatus: (callback) => subscribe(updateListeners, callback),
+    onTerminalData: () => () => undefined,
+    onTerminalExit: () => () => undefined,
   };
 
   window.openDrSai = api;

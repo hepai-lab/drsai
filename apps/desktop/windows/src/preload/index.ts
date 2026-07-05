@@ -7,6 +7,7 @@ import type {
   AuthSession,
   ChatEvent,
   ChatRequest,
+  CreateWorkspaceRequest,
   CreateThreadRequest,
   DesktopHealth,
   DesktopSsoPollResult,
@@ -21,6 +22,7 @@ import type {
   StartInstallOptions,
   UpdateThreadRequest,
   UpdateStatus,
+  UpdateWorkspaceRequest,
 } from "../shared/desktopApi";
 
 const api: DesktopApi = {
@@ -28,6 +30,10 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:get-auth-session"),
   login: (request: LoginRequest): Promise<LoginResult> =>
     ipcRenderer.invoke("desktop:login", request),
+  startOidcLogin: (request?: { rememberMe?: boolean }): Promise<LoginResult> =>
+    ipcRenderer.invoke("desktop:start-oidc-login", request),
+  cancelOidcLogin: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:cancel-oidc-login"),
   startDesktopSsoLogin: (): Promise<DesktopSsoStartResult> =>
     ipcRenderer.invoke("desktop:start-desktop-sso-login"),
   startWechatDesktopLogin: (): Promise<DesktopSsoStartResult> =>
@@ -36,25 +42,35 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:poll-desktop-sso-login", deviceCode),
   cancelDesktopSsoLogin: (deviceCode: string): Promise<boolean> =>
     ipcRenderer.invoke("desktop:cancel-desktop-sso-login", deviceCode),
-  logout: (options?: LogoutOptions): Promise<{ ok: boolean; message: string }> =>
+  logout: (
+    options?: LogoutOptions,
+  ): Promise<{ ok: boolean; message: string }> =>
     ipcRenderer.invoke("desktop:logout", options),
   refreshAuthSession: (): Promise<AuthSession> =>
     ipcRenderer.invoke("desktop:refresh-auth-session"),
-  getHealth: (): Promise<DesktopHealth> => ipcRenderer.invoke("desktop:get-health"),
+  getHealth: (): Promise<DesktopHealth> =>
+    ipcRenderer.invoke("desktop:get-health"),
   getInstallStatus: (): Promise<InstallStatus> =>
     ipcRenderer.invoke("desktop:get-install-status"),
   getGatewayStatus: (): Promise<GatewayStatus> =>
     ipcRenderer.invoke("desktop:get-gateway-status"),
   checkForUpdates: (): Promise<UpdateStatus> =>
     ipcRenderer.invoke("desktop:check-for-updates"),
-  downloadUpdate: (): Promise<UpdateStatus> =>
-    ipcRenderer.invoke("desktop:download-update"),
-  installUpdate: (): Promise<void> => ipcRenderer.invoke("desktop:install-update"),
   startInstall: (options?: StartInstallOptions): Promise<void> =>
     ipcRenderer.invoke("desktop:start-install", options),
-  cancelInstall: (): Promise<boolean> => ipcRenderer.invoke("desktop:cancel-install"),
-  startGateway: (): Promise<boolean> => ipcRenderer.invoke("desktop:start-gateway"),
-  stopGateway: (): Promise<boolean> => ipcRenderer.invoke("desktop:stop-gateway"),
+  cancelInstall: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:cancel-install"),
+  startGateway: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:start-gateway"),
+  stopGateway: (): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:stop-gateway"),
+  listWorkspaces: () => ipcRenderer.invoke("desktop:list-workspaces"),
+  createWorkspace: (request: CreateWorkspaceRequest) =>
+    ipcRenderer.invoke("desktop:create-workspace", request),
+  updateWorkspace: (request: UpdateWorkspaceRequest) =>
+    ipcRenderer.invoke("desktop:update-workspace", request),
+  deleteWorkspace: (id: string) =>
+    ipcRenderer.invoke("desktop:delete-workspace", id),
   listThreads: () => ipcRenderer.invoke("desktop:list-threads"),
   createThread: (request: CreateThreadRequest) =>
     ipcRenderer.invoke("desktop:create-thread", request),
@@ -78,12 +94,22 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:open-external", url),
   openPath: (path: string): Promise<string> =>
     ipcRenderer.invoke("desktop:open-path", path),
-  onInstallProgress: (callback: (progress: InstallProgress) => void): (() => void) => {
+  createTerminal: (options) =>
+    ipcRenderer.invoke("desktop:terminal-create", options),
+  writeTerminal: (id, data) =>
+    ipcRenderer.invoke("desktop:terminal-write", id, data),
+  resizeTerminal: (id, cols, rows) =>
+    ipcRenderer.invoke("desktop:terminal-resize", id, cols, rows),
+  killTerminal: (id) => ipcRenderer.invoke("desktop:terminal-kill", id),
+  onInstallProgress: (
+    callback: (progress: InstallProgress) => void,
+  ): (() => void) => {
     const listener = (_event: IpcRendererEvent, progress: InstallProgress) => {
       callback(progress);
     };
     ipcRenderer.on("desktop:install-progress", listener);
-    return () => ipcRenderer.removeListener("desktop:install-progress", listener);
+    return () =>
+      ipcRenderer.removeListener("desktop:install-progress", listener);
   },
   onChatEvent: (callback: (event: ChatEvent) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, event: ChatEvent) => {
@@ -97,7 +123,8 @@ const api: DesktopApi = {
       callback(event);
     };
     ipcRenderer.on("desktop:agent-run-event", listener);
-    return () => ipcRenderer.removeListener("desktop:agent-run-event", listener);
+    return () =>
+      ipcRenderer.removeListener("desktop:agent-run-event", listener);
   },
   onUpdateStatus: (callback: (status: UpdateStatus) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, status: UpdateStatus) => {
@@ -105,6 +132,20 @@ const api: DesktopApi = {
     };
     ipcRenderer.on("desktop:update-status", listener);
     return () => ipcRenderer.removeListener("desktop:update-status", listener);
+  },
+  onTerminalData: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event) => {
+      callback(event);
+    };
+    ipcRenderer.on("desktop:terminal-data", listener);
+    return () => ipcRenderer.removeListener("desktop:terminal-data", listener);
+  },
+  onTerminalExit: (callback): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event) => {
+      callback(event);
+    };
+    ipcRenderer.on("desktop:terminal-exit", listener);
+    return () => ipcRenderer.removeListener("desktop:terminal-exit", listener);
   },
 };
 

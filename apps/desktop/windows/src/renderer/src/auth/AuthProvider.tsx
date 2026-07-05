@@ -9,6 +9,8 @@ interface AuthContextValue {
   message: string | null;
   session: AuthSession;
   login: (request: LoginRequest) => Promise<boolean>;
+  startOidcLogin: (request?: { rememberMe?: boolean }) => Promise<boolean>;
+  cancelOidcLogin: () => Promise<void>;
   startDesktopSsoLogin: () => Promise<DesktopSsoStartResult>;
   startWechatDesktopLogin: () => Promise<DesktopSsoStartResult>;
   pollDesktopSsoLogin: (deviceCode: string) => Promise<DesktopSsoPollResult>;
@@ -64,6 +66,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       return false;
     } finally {
       setLoginBusy(false);
+    }
+  }
+
+  async function startOidcLogin(request?: { rememberMe?: boolean }): Promise<boolean> {
+    setLoginBusy(true);
+    setMessage(null);
+    try {
+      const result = await desktopApi.startOidcLogin(request);
+      setMessage(result.message);
+      if (result.ok && result.session) {
+        setSession(result.session);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "OIDC sign-in failed.");
+      return false;
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
+  async function cancelOidcLogin(): Promise<void> {
+    try {
+      const cancelled = await desktopApi.cancelOidcLogin();
+      if (cancelled) {
+        setMessage("Browser sign-in cancelled.");
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not cancel browser sign-in.");
     }
   }
 
@@ -139,6 +171,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       message,
       session,
       login,
+      startOidcLogin,
+      cancelOidcLogin,
       startDesktopSsoLogin,
       startWechatDesktopLogin,
       pollDesktopSsoLogin,

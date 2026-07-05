@@ -15,6 +15,7 @@ import Schedules from "../Schedules/Schedules";
 import Kanban from "../Kanban/Kanban";
 import RemoteNotice from "../../components/RemoteNotice";
 import VerifyWarningBanner from "../../components/VerifyWarningBanner";
+import TerminalPanel from "../../components/TerminalPanel";
 import DrSaiLogo from "../../assets/DrSai.png";
 import {
   ChatBubble,
@@ -34,6 +35,7 @@ import {
   Download,
 } from "../../assets/icons";
 import type { LucideIcon } from "lucide-react";
+import { Terminal as TerminalIcon } from "lucide-react";
 import { useI18n } from "../../components/useI18n";
 
 type View =
@@ -86,6 +88,7 @@ function Layout({
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [activeProfile, setActiveProfile] = useState("default");
   const [sessionsSearchFocusNonce, setSessionsSearchFocusNonce] = useState(0);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   // Tabs lazy-mount on first visit, then stay mounted (display:none toggle).
   // Keeps IPC refetch / DOM rebuild off the tab-switch hot path.
   const [visitedViews, setVisitedViews] = useState<Set<View>>(
@@ -126,11 +129,9 @@ function Layout({
       setUpdateError(null);
       setDownloadPercent(0);
     });
-    const cleanupProgress = window.drsaiAPI.onUpdateDownloadProgress(
-      (info) => {
-        setDownloadPercent(info.percent);
-      },
-    );
+    const cleanupProgress = window.drsaiAPI.onUpdateDownloadProgress((info) => {
+      setDownloadPercent(info.percent);
+    });
     const cleanupDownloaded = window.drsaiAPI.onUpdateDownloaded(() => {
       setUpdateState("ready");
       setUpdateError(null);
@@ -197,7 +198,13 @@ function Layout({
   /** Map backend role strings to the desktop's MessageRole. */
   function toMessageRole(r: string): ChatMessage["role"] {
     if (r === "assistant") return "agent";
-    if (r === "user" || r === "tool" || r === "tool_request" || r === "thinking") return r;
+    if (
+      r === "user" ||
+      r === "tool" ||
+      r === "tool_request" ||
+      r === "thinking"
+    )
+      return r;
     return "agent";
   }
 
@@ -273,156 +280,169 @@ function Layout({
         </div>
       </aside>
 
-      <main className="content">
-        {verifyWarning && onReinstall && onDismissVerifyWarning && (
-          <VerifyWarningBanner
-            onReinstall={onReinstall}
-            onDismiss={onDismissVerifyWarning}
-          />
-        )}
-        <div style={paneStyle("chat")}>
-          <Chat
-            messages={messages}
-            setMessages={setMessages}
-            sessionId={currentSessionId}
-            profile={activeProfile}
-            onNewChat={handleNewChat}
-          />
-        </div>
-
-        {visitedViews.has("sessions") && (
-          <div style={paneStyle("sessions")}>
-            {remoteMode ? (
-              <RemoteNotice feature="Sessions" />
-            ) : (
-              <Sessions
-                onResumeSession={handleResumeSession}
-                onNewChat={handleNewChat}
-                currentSessionId={currentSessionId}
-                visible={view === "sessions"}
-                focusSearchNonce={sessionsSearchFocusNonce}
-              />
-            )}
+      <div className="workspace-shell">
+        <main className="content">
+          {verifyWarning && onReinstall && onDismissVerifyWarning && (
+            <VerifyWarningBanner
+              onReinstall={onReinstall}
+              onDismiss={onDismissVerifyWarning}
+            />
+          )}
+          <div style={paneStyle("chat")}>
+            <Chat
+              messages={messages}
+              setMessages={setMessages}
+              sessionId={currentSessionId}
+              profile={activeProfile}
+              onNewChat={handleNewChat}
+            />
           </div>
-        )}
 
-        {visitedViews.has("agents") && (
-          <div style={paneStyle("agents")}>
-            {remoteMode ? (
-              <RemoteNotice feature="Profiles" />
-            ) : (
-              <Agents
-                activeProfile={activeProfile}
-                onSelectProfile={handleSelectProfile}
-                onChatWith={(name: string) => {
-                  handleSelectProfile(name);
-                  goTo("chat");
-                }}
-              />
-            )}
-          </div>
-        )}
+          {visitedViews.has("sessions") && (
+            <div style={paneStyle("sessions")}>
+              {remoteMode ? (
+                <RemoteNotice feature="Sessions" />
+              ) : (
+                <Sessions
+                  onResumeSession={handleResumeSession}
+                  onNewChat={handleNewChat}
+                  currentSessionId={currentSessionId}
+                  visible={view === "sessions"}
+                  focusSearchNonce={sessionsSearchFocusNonce}
+                />
+              )}
+            </div>
+          )}
 
-        {visitedViews.has("office") && (
-          <div style={paneStyle("office")}>
-            <Office visible={view === "office"} />
-          </div>
-        )}
+          {visitedViews.has("agents") && (
+            <div style={paneStyle("agents")}>
+              {remoteMode ? (
+                <RemoteNotice feature="Profiles" />
+              ) : (
+                <Agents
+                  activeProfile={activeProfile}
+                  onSelectProfile={handleSelectProfile}
+                  onChatWith={(name: string) => {
+                    handleSelectProfile(name);
+                    goTo("chat");
+                  }}
+                />
+              )}
+            </div>
+          )}
 
-        {visitedViews.has("models") && (
-          <div style={paneStyle("models")}>
-            <Models />
-          </div>
-        )}
+          {visitedViews.has("office") && (
+            <div style={paneStyle("office")}>
+              <Office visible={view === "office"} />
+            </div>
+          )}
 
-        {visitedViews.has("providers") && (
-          <div style={paneStyle("providers")}>
-            {remoteMode ? (
-              <RemoteNotice feature="Providers" />
-            ) : (
-              <Providers
-                profile={activeProfile}
-                visible={view === "providers"}
-              />
-            )}
-          </div>
-        )}
+          {visitedViews.has("models") && (
+            <div style={paneStyle("models")}>
+              <Models />
+            </div>
+          )}
 
-        {visitedViews.has("skills") && (
-          <div style={paneStyle("skills")}>
-            {remoteMode ? (
-              <RemoteNotice feature="Skills" />
-            ) : (
-              <Skills profile={activeProfile} />
-            )}
-          </div>
-        )}
+          {visitedViews.has("providers") && (
+            <div style={paneStyle("providers")}>
+              {remoteMode ? (
+                <RemoteNotice feature="Providers" />
+              ) : (
+                <Providers
+                  profile={activeProfile}
+                  visible={view === "providers"}
+                />
+              )}
+            </div>
+          )}
 
-        {visitedViews.has("soul") && (
-          <div style={paneStyle("soul")}>
-            {remoteMode ? (
-              <RemoteNotice feature="Persona" />
-            ) : (
-              <Soul profile={activeProfile} />
-            )}
-          </div>
-        )}
+          {visitedViews.has("skills") && (
+            <div style={paneStyle("skills")}>
+              {remoteMode ? (
+                <RemoteNotice feature="Skills" />
+              ) : (
+                <Skills profile={activeProfile} />
+              )}
+            </div>
+          )}
 
-        {visitedViews.has("memory") && (
-          <div style={paneStyle("memory")}>
-            {remoteMode ? (
-              <RemoteNotice feature="Memory" />
-            ) : (
-              <Memory profile={activeProfile} />
-            )}
-          </div>
-        )}
+          {visitedViews.has("soul") && (
+            <div style={paneStyle("soul")}>
+              {remoteMode ? (
+                <RemoteNotice feature="Persona" />
+              ) : (
+                <Soul profile={activeProfile} />
+              )}
+            </div>
+          )}
 
-        {visitedViews.has("tools") && (
-          <div style={paneStyle("tools")}>
-            {remoteMode ? (
-              <RemoteNotice feature="Tools" />
-            ) : (
-              <Tools profile={activeProfile} />
-            )}
-          </div>
-        )}
+          {visitedViews.has("memory") && (
+            <div style={paneStyle("memory")}>
+              {remoteMode ? (
+                <RemoteNotice feature="Memory" />
+              ) : (
+                <Memory profile={activeProfile} />
+              )}
+            </div>
+          )}
 
-        {visitedViews.has("schedules") && (
-          <div style={paneStyle("schedules")}>
-            <Schedules profile={activeProfile} />
-          </div>
-        )}
+          {visitedViews.has("tools") && (
+            <div style={paneStyle("tools")}>
+              {remoteMode ? (
+                <RemoteNotice feature="Tools" />
+              ) : (
+                <Tools profile={activeProfile} />
+              )}
+            </div>
+          )}
 
-        {visitedViews.has("kanban") && (
-          <div style={paneStyle("kanban")}>
-            {remoteMode ? (
-              <RemoteNotice feature="Kanban" />
-            ) : (
-              <Kanban
-                profile={activeProfile}
-                visible={view === "kanban"}
-              />
-            )}
-          </div>
-        )}
+          {visitedViews.has("schedules") && (
+            <div style={paneStyle("schedules")}>
+              <Schedules profile={activeProfile} />
+            </div>
+          )}
 
-        {visitedViews.has("gateway") && (
-          <div style={paneStyle("gateway")}>
-            {remoteMode ? (
-              <RemoteNotice feature="Gateway" />
-            ) : (
-              <Gateway profile={activeProfile} />
-            )}
-          </div>
-        )}
+          {visitedViews.has("kanban") && (
+            <div style={paneStyle("kanban")}>
+              {remoteMode ? (
+                <RemoteNotice feature="Kanban" />
+              ) : (
+                <Kanban profile={activeProfile} visible={view === "kanban"} />
+              )}
+            </div>
+          )}
 
-        {visitedViews.has("settings") && (
-          <div style={paneStyle("settings")}>
-            <Settings profile={activeProfile} />
-          </div>
+          {visitedViews.has("gateway") && (
+            <div style={paneStyle("gateway")}>
+              {remoteMode ? (
+                <RemoteNotice feature="Gateway" />
+              ) : (
+                <Gateway profile={activeProfile} />
+              )}
+            </div>
+          )}
+
+          {visitedViews.has("settings") && (
+            <div style={paneStyle("settings")}>
+              <Settings profile={activeProfile} />
+            </div>
+          )}
+        </main>
+
+        {terminalOpen ? (
+          <TerminalPanel onClose={() => setTerminalOpen(false)} />
+        ) : (
+          <button
+            type="button"
+            className="terminal-rail-button"
+            onClick={() => setTerminalOpen(true)}
+            title="Open terminal"
+            aria-label="Open terminal"
+          >
+            <TerminalIcon size={18} />
+          </button>
         )}
-      </main>
+      </div>
     </div>
   );
 }

@@ -53,7 +53,7 @@ Useful variants:
 
 Use the `.cmd` wrapper for double-click or normal terminal startup. If you run
 the PowerShell file directly, invoke it from a PowerShell terminal with
-`powershell -ExecutionPolicy Bypass -File .\apps\desktop\windows-desktop-dev.ps1`.
+`powershell -ExecutionPolicy Bypass -File .\apps\desktop\scripts\windows-desktop-dev.ps1`.
 
 From the desktop app directory, the same flow is available as npm scripts:
 

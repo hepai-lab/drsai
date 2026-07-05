@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opendrsai.local/schemas/desktop-installer-manifest.schema.json",
+  "title": "OpenDrSai Desktop Installer Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "channel", "minimumBootstrapperVersion", "platforms"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["stable", "beta", "dev"]
+    },
+    "protocolVersion": {
+      "type": "string"
+    },
+    "minimumBootstrapperVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "platforms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["windows-x64"],
+      "properties": {
+        "windows-x64": {
+          "$ref": "#/$defs/platformPayload"
+        },
+        "macos-arm64": {
+          "$ref": "#/$defs/platformPayload"
+        },
+        "macos-x64": {
+          "$ref": "#/$defs/platformPayload"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "sha256", "sizeBytes"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "desktopArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "sha256", "sizeBytes"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "executableRelativePath": {
+          "type": "string",
+          "default": "OpenDrSai.exe"
+        }
+      }
+    },
+    "backendArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "sha256", "sizeBytes"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        },
+        "sizeBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "installMode": {
+          "type": "string",
+          "enum": ["source-archive"],
+          "default": "source-archive"
+        }
+      }
+    },
+    "platformPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["desktop", "backend"],
+      "properties": {
+        "desktop": {
+          "$ref": "#/$defs/desktopArtifact"
+        },
+        "backend": {
+          "$ref": "#/$defs/backendArtifact"
+        }
+      }
+    }
+  }
+}

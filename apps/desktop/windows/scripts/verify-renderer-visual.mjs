@@ -525,8 +525,6 @@ contextBridge.exposeInMainWorld("openDrSai", {
     emit(updateListeners, health.update);
     return health.update;
   },
-  downloadUpdate: async () => health.update,
-  installUpdate: async () => undefined,
   startInstall: async () => {
     emit(installListeners, { phase: "complete", message: "Mock installation complete.", log: "", exitCode: 0 });
   },

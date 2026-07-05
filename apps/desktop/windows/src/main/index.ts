@@ -1,37 +1,79 @@
-import { existsSync, realpathSync } from "fs";
-import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from "electron";
-import { isAbsolute, join, relative, resolve } from "path";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "fs";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  shell,
+  type IpcMainInvokeEvent,
+} from "electron";
+import { dirname, isAbsolute, join, relative, resolve } from "path";
 import { is } from "@electron-toolkit/utils";
 import { cancelInstall, startInstall } from "./install";
-import { getGatewayStatus, shutdownGateway, startGateway, stopGateway } from "./gateway";
+import {
+  getGatewayStatus,
+  shutdownGateway,
+  startGateway,
+  stopGateway,
+} from "./gateway";
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { DRSAI_HOME } from "./paths";
 import {
   checkForUpdates,
-  downloadUpdate,
-  installUpdate,
   subscribeUpdateStatus,
 } from "./updates";
 import { abortChat, startChat } from "./chat";
 import { abortAgentRun, startAgentRun } from "./agentRuns";
 import { createThread, listThreads, updateThread } from "./threads";
+import {
+  createWorkspace,
+  deleteWorkspace,
+  listWorkspaces,
+  updateWorkspace,
+} from "./workspaces";
 import { saveApiKey } from "./settings";
 import {
+  cancelOidcLogin,
   cancelDesktopSsoLogin,
   getAuthSession,
   login,
   logout,
   pollDesktopSsoLogin,
   refreshAuthSession,
+  requireAuthContext,
   startDesktopSsoLogin,
+  startOidcLogin,
   startWechatDesktopLogin,
 } from "./auth";
 import { maybeRunE2eSmoke } from "./e2eSmoke";
+import {
+  createTerminalSession,
+  killAllTerminalSessions,
+  killTerminalSession,
+  resizeTerminalSession,
+  writeTerminalSession,
+} from "./terminal";
+import type { TerminalCreateOptions } from "./terminal";
 
 let mainWindow: BrowserWindow | null = null;
 
 const rendererHtmlPath = join(__dirname, "../renderer/index.html");
 const TRUSTED_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+
+if (process.env.OPENDRSAI_E2E_DISABLE_GPU === "1") {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("disable-gpu");
+  app.commandLine.appendSwitch("disable-gpu-compositing");
+  app.commandLine.appendSwitch("disable-gpu-sandbox");
+  app.commandLine.appendSwitch("disable-software-rasterizer");
+  app.commandLine.appendSwitch("disable-features", "VizDisplayCompositor");
+}
 
 function createWindow(): void {
   const windowIcon = getWindowIconPath();
@@ -83,7 +125,9 @@ function createWindow(): void {
 
   if (is.dev && process.env.ELECTRON_RENDERER_URL) {
     if (!isAllowedDevRendererUrl(process.env.ELECTRON_RENDERER_URL)) {
-      throw new Error("ELECTRON_RENDERER_URL must point at localhost in development.");
+      throw new Error(
+        "ELECTRON_RENDERER_URL must point at localhost in development.",
+      );
     }
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
@@ -163,16 +207,40 @@ function isAllowedLocalPath(rawPath: unknown): boolean {
   );
 }
 
+async function isAllowedOpenPath(rawPath: unknown): Promise<boolean> {
+  if (isAllowedLocalPath(rawPath)) return true;
+  if (typeof rawPath !== "string" || !rawPath || !existsSync(rawPath))
+    return false;
+  const target = realpathSync.native(resolve(rawPath));
+  const workspaces = await listWorkspaces();
+  return workspaces.some((workspace) => {
+    if (!existsSync(workspace.path)) return false;
+    const root = realpathSync.native(resolve(workspace.path));
+    const relativePath = relative(root, target);
+    return (
+      relativePath === "" ||
+      (!relativePath.startsWith("..") && !isAbsolute(relativePath))
+    );
+  });
+}
+
 function registerIpc(): void {
   secureHandle("desktop:get-auth-session", () => getAuthSession());
   secureHandle("desktop:login", (_event, request) => login(request));
+  secureHandle("desktop:start-oidc-login", (_event, request) =>
+    startOidcLogin(request),
+  );
+  secureHandle("desktop:cancel-oidc-login", () => cancelOidcLogin());
   secureHandle("desktop:start-desktop-sso-login", () => startDesktopSsoLogin());
-  secureHandle("desktop:start-wechat-desktop-login", () => startWechatDesktopLogin());
+  secureHandle("desktop:start-wechat-desktop-login", () =>
+    startWechatDesktopLogin(),
+  );
   secureHandle("desktop:poll-desktop-sso-login", (_event, deviceCode: string) =>
     pollDesktopSsoLogin(deviceCode),
   );
-  secureHandle("desktop:cancel-desktop-sso-login", (_event, deviceCode: string) =>
-    cancelDesktopSsoLogin(deviceCode),
+  secureHandle(
+    "desktop:cancel-desktop-sso-login",
+    (_event, deviceCode: string) => cancelDesktopSsoLogin(deviceCode),
   );
   secureHandle("desktop:logout", (_event, options) => {
     stopGateway();
@@ -186,11 +254,6 @@ function registerIpc(): void {
     subscribeUpdateStatus(event.sender);
     return checkForUpdates();
   });
-  secureHandle("desktop:download-update", (event) => {
-    subscribeUpdateStatus(event.sender);
-    return downloadUpdate();
-  });
-  secureHandle("desktop:install-update", () => installUpdate());
 
   secureHandle("desktop:open-external", async (_event, rawUrl: string) => {
     if (!isAllowedExternalUrl(rawUrl)) return;
@@ -198,8 +261,8 @@ function registerIpc(): void {
   });
 
   secureHandle("desktop:open-path", async (_event, rawPath: string) => {
-    if (!isAllowedLocalPath(rawPath)) {
-      return "Path is outside DrSai home.";
+    if (!(await isAllowedOpenPath(rawPath))) {
+      return "Path is not registered as a DrSai or workspace path.";
     }
     return shell.openPath(rawPath);
   });
@@ -211,9 +274,39 @@ function registerIpc(): void {
 
   secureHandle("desktop:start-gateway", () => startGateway());
   secureHandle("desktop:stop-gateway", () => stopGateway());
+  secureHandle(
+    "desktop:terminal-create",
+    (event, options: TerminalCreateOptions | undefined) =>
+      createTerminalSession(event, options),
+  );
+  secureHandle("desktop:terminal-write", (event, id: string, data: string) =>
+    writeTerminalSession(event, id, data),
+  );
+  secureHandle(
+    "desktop:terminal-resize",
+    (event, id: string, cols: number, rows: number) =>
+      resizeTerminalSession(event, id, cols, rows),
+  );
+  secureHandle("desktop:terminal-kill", (event, id: string) =>
+    killTerminalSession(event, id),
+  );
+  secureHandle("desktop:list-workspaces", () => listWorkspaces());
+  secureHandle("desktop:create-workspace", (_event, request) =>
+    createWorkspace(request),
+  );
+  secureHandle("desktop:update-workspace", (_event, request) =>
+    updateWorkspace(request),
+  );
+  secureHandle("desktop:delete-workspace", (_event, id: string) =>
+    deleteWorkspace(id),
+  );
   secureHandle("desktop:list-threads", () => listThreads());
-  secureHandle("desktop:create-thread", (_event, request) => createThread(request));
-  secureHandle("desktop:update-thread", (_event, request) => updateThread(request));
+  secureHandle("desktop:create-thread", (_event, request) =>
+    createThread(request),
+  );
+  secureHandle("desktop:update-thread", (_event, request) =>
+    updateThread(request),
+  );
   secureHandle("desktop:start-chat", (event, request) =>
     startChat(event.sender, request),
   );
@@ -261,6 +354,10 @@ async function autoStartGatewayWhenInstalled(): Promise<void> {
 }
 
 app.whenReady().then(() => {
+  if (process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1") {
+    void runHeadlessOidcSmoke();
+    return;
+  }
   registerIpc();
   createWindow();
   void autoStartGatewayWhenInstalled();
@@ -273,10 +370,130 @@ app.whenReady().then(() => {
   });
 });
 
+async function runHeadlessOidcSmoke(): Promise<void> {
+  const resultPath = process.env.OPENDRSAI_E2E_RESULT;
+  if (!resultPath) {
+    app.exit(1);
+    return;
+  }
+  const result: {
+    ok: boolean;
+    checks: Record<string, boolean>;
+    details: Record<string, unknown>;
+    error?: string;
+  } = { ok: false, checks: {}, details: {} };
+  try {
+    const loginResult = await startOidcLogin({ rememberMe: true });
+    result.details.login = {
+      ok: loginResult.ok,
+      message: loginResult.message,
+      session: loginResult.session,
+    };
+    result.checks.oidcLoginOk = Boolean(loginResult.ok);
+    result.checks.oidcPublicSession = publicSessionLooksHeadlessOidc(loginResult.session);
+
+    const restored = await getAuthSession();
+    result.details.restored = restored;
+    result.checks.restoredSession = publicSessionLooksHeadlessOidc(restored);
+
+    const refreshed = await refreshAuthSession();
+    result.details.refreshed = refreshed;
+    result.checks.refreshSession = publicSessionLooksHeadlessOidc(refreshed);
+
+    const authContext = await requireAuthContext();
+    result.details.authContext = {
+      userId: authContext.userId,
+      authMode: authContext.authMode,
+      hasAccessToken: Boolean(authContext.accessToken),
+      publicSession: authContext.session,
+    };
+    result.checks.authContextUsesOidc = authContext.authMode === "oidc";
+    result.checks.authContextHasBearerToken = Boolean(authContext.accessToken);
+    result.checks.authContextPublicSession = publicSessionLooksHeadlessOidc(authContext.session);
+
+    const storage = readHeadlessOidcStorage();
+    result.details.storage = storage.details;
+    result.checks.sessionFileExists = storage.checks.exists;
+    result.checks.sessionUsesEncryptedTokens = storage.checks.usesEncryptedTokens;
+    result.checks.sessionOmitsPlainTokens = storage.checks.omitsPlainTokens;
+
+    const logoutResult = await logout({ clearLocalData: false });
+    result.details.logout = logoutResult;
+    result.checks.logoutOk = Boolean(logoutResult.ok);
+    const afterLogout = await getAuthSession();
+    result.details.afterLogout = afterLogout;
+    result.checks.afterLogoutAnonymous = Boolean(afterLogout.authenticated === false);
+    result.checks.logoutClearsSessionFile = !existsSync(join(DRSAI_HOME, "auth", "session.json"));
+
+    result.ok = Object.values(result.checks).every(Boolean);
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
+  }
+  mkdirSync(dirname(resultPath), { recursive: true });
+  writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+  app.exit(result.ok ? 0 : 1);
+}
+
+function publicSessionLooksHeadlessOidc(session: Awaited<ReturnType<typeof getAuthSession>> | null): boolean {
+  if (!session) return false;
+  const asRecord = session as unknown as Record<string, unknown>;
+  return Boolean(
+    session.authenticated === true &&
+      session.authMode === "oidc" &&
+      session.authProvider === "hai" &&
+      session.user &&
+      session.user.id === "e2e-hai-user" &&
+      session.user.email === "e2e-hai-user@ihep.ac.cn" &&
+      session.refreshable === true &&
+      !("accessToken" in asRecord) &&
+      !("refreshToken" in asRecord) &&
+      !("idToken" in asRecord),
+  );
+}
+
+function readHeadlessOidcStorage(): {
+  checks: { exists: boolean; usesEncryptedTokens: boolean; omitsPlainTokens: boolean };
+  details: Record<string, unknown>;
+} {
+  const sessionPath = join(DRSAI_HOME, "auth", "session.json");
+  if (!existsSync(sessionPath)) {
+    return {
+      checks: { exists: false, usesEncryptedTokens: false, omitsPlainTokens: false },
+      details: { sessionPath, exists: false },
+    };
+  }
+  const parsed = JSON.parse(readFileSync(sessionPath, "utf8")) as Record<string, unknown>;
+  return {
+    checks: {
+      exists: true,
+      usesEncryptedTokens: Boolean(
+        parsed.encryptedAccessToken &&
+          parsed.encryptedRefreshToken &&
+          parsed.encryptedIdToken,
+      ),
+      omitsPlainTokens: !("accessToken" in parsed) && !("refreshToken" in parsed) && !("idToken" in parsed),
+    },
+    details: {
+      sessionPath,
+      exists: true,
+      keys: Object.keys(parsed).sort(),
+      authMode: parsed.authMode,
+      authProvider: parsed.authProvider,
+      hasEncryptedAccessToken: Boolean(parsed.encryptedAccessToken),
+      hasEncryptedRefreshToken: Boolean(parsed.encryptedRefreshToken),
+      hasEncryptedIdToken: Boolean(parsed.encryptedIdToken),
+      hasPlainAccessToken: "accessToken" in parsed,
+      hasPlainRefreshToken: "refreshToken" in parsed,
+      hasPlainIdToken: "idToken" in parsed,
+    },
+  };
+}
+
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
 app.on("before-quit", () => {
+  killAllTerminalSessions();
   shutdownGateway();
 });

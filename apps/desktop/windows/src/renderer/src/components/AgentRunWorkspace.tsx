@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Bot, Play, Square } from "lucide-react";
-import type { AgentRunEvent, DesktopHealth } from "@shared/desktopApi";
+import type { AgentRunEvent, DesktopHealth, WorkspaceInstructionSummary } from "@shared/desktopApi";
 import type { AppLanguage } from "../navigation";
 import { desktopApi } from "../desktopApi";
 
@@ -8,7 +8,9 @@ interface AgentRunWorkspaceProps {
   health: DesktopHealth | null;
   language: AppLanguage;
   threadId?: string;
+  workspaceInstructions?: WorkspaceInstructionSummary[];
   workspacePath?: string;
+  workspaceTrusted?: boolean;
 }
 
 interface AgentRunLine {
@@ -21,10 +23,12 @@ export function AgentRunWorkspace({
   health,
   language,
   threadId,
+  workspaceInstructions,
   workspacePath,
+  workspaceTrusted = true,
 }: AgentRunWorkspaceProps): React.JSX.Element {
   const zh = language === "zh";
-  const canRun = Boolean(health?.installed && health?.gatewayReady);
+  const canRun = Boolean(health?.installed && health?.gatewayReady && workspaceTrusted);
   const [task, setTask] = useState("");
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -62,16 +66,20 @@ export function AgentRunWorkspace({
     setTask("");
 
     try {
+      const workspaceInstructionText = buildWorkspaceInstructionText(workspaceInstructions);
       await desktopApi.startAgentRun({
         requestId,
         runId,
         threadId,
         sessionId: threadId || requestId,
-        task: text,
+        task: workspaceInstructionText ? `${workspaceInstructionText}\n\nTask:\n${text}` : text,
         workspacePath,
         files: [],
         teamConfig: { preset: "general-collaboration" },
-        metadata: { source: "windows-agent-run-workspace" },
+        metadata: {
+          source: "windows-agent-run-workspace",
+          workspace_instructions: workspaceInstructions || [],
+        },
       });
     } catch (error) {
       delete outputByRequest.current[requestId];
@@ -142,6 +150,8 @@ export function AgentRunWorkspace({
           <p>
             {canRun
               ? zh ? "在当前工作区启动一次可停止的智能体任务。" : "Run a stoppable agent task in the current workspace."
+              : !workspaceTrusted
+                ? zh ? "请先在工作区详情中信任该工作区，再运行智能体任务。" : "Trust this workspace in workspace details before running an agent task."
               : zh ? "请先完成本地运行时和网关准备。" : "Prepare the local runtime and gateway before running an agent."}
           </p>
         </div>
@@ -180,4 +190,14 @@ export function AgentRunWorkspace({
       </form>
     </div>
   );
+}
+
+function buildWorkspaceInstructionText(workspaceInstructions: WorkspaceInstructionSummary[] | undefined): string {
+  if (!workspaceInstructions?.length) return "";
+  return [
+    "Workspace instructions for this project:",
+    ...workspaceInstructions.map((instruction) =>
+      `# ${instruction.name}\n${instruction.content}${instruction.truncated ? "\n[truncated]" : ""}`,
+    ),
+  ].join("\n\n");
 }

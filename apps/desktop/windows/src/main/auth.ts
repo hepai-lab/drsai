@@ -1,6 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { createHash, randomUUID } from "crypto";
+import {
+  createHash,
+  createPublicKey,
+  createVerify,
+  randomBytes,
+  randomUUID,
+  type JsonWebKey,
+} from "crypto";
+import { createServer, type Server } from "http";
 import { dirname, join } from "path";
+import { safeStorage, shell } from "electron";
 import { is } from "@electron-toolkit/utils";
 import type {
   AuthSession,
@@ -22,13 +31,36 @@ const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 const DESKTOP_AUTH_BASE_URL =
   process.env.OPENDRSAI_AUTH_BASE_URL?.replace(/\/+$/, "") ||
   "https://opendrsai.ihep.ac.cn";
+const OIDC_ISSUER =
+  process.env.OPENDRSAI_OIDC_ISSUER?.replace(/\/+$/, "") ||
+  process.env.HAI_OIDC_ISSUER?.replace(/\/+$/, "") ||
+  "https://aidev.ihep.ac.cn/backend";
+const OIDC_CLIENT_ID = process.env.OPENDRSAI_OIDC_CLIENT_ID || "opendrsai-desktop";
+const OIDC_BASE_SCOPE = "openid email profile roles groups hai_api";
+const OIDC_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
 
 interface StoredAuthSession extends AuthSession {
   sessionId: string;
   createdAt: string;
+  issuer?: string;
+  clientId?: string;
+  idToken?: string;
   accessToken?: string;
   refreshToken?: string;
 }
+
+interface SerializedStoredAuthSession extends Omit<StoredAuthSession, "accessToken" | "refreshToken" | "idToken"> {
+  accessToken?: string;
+  refreshToken?: string;
+  idToken?: string;
+  encryptedAccessToken?: string;
+  encryptedRefreshToken?: string;
+  encryptedIdToken?: string;
+}
+
+let pendingOidcLogin: Awaited<ReturnType<typeof createLoopbackCallback>> | null = null;
+let oidcJwksCache: { keys: JsonWebKey[]; fetchedAt: number } | null = null;
+let oidcMetadataCache: { metadata: OidcProviderMetadata; fetchedAt: number } | null = null;
 
 export interface AuthContext {
   session: AuthSession;
@@ -57,7 +89,7 @@ export async function refreshAuthSession(): Promise<AuthSession> {
   }
   const refreshedSso = await refreshSsoSessionIfNeeded(stored, true);
   if (!refreshedSso) return anonymousSession();
-  if (refreshedSso.authMode === "sso") {
+  if (refreshedSso.authMode === "sso" || refreshedSso.authMode === "oidc") {
     return toPublicSession(refreshedSso);
   }
   const refreshed = {
@@ -134,6 +166,60 @@ export function login(rawRequest: unknown): LoginResult {
     session: null,
     message: "Enter an API key, or an email and password.",
   };
+}
+
+export async function startOidcLogin(rawRequest?: unknown): Promise<LoginResult> {
+  const rememberMe = normalizeRememberMe(rawRequest);
+  const verifier = generateTokenPart(64);
+  const challenge = createPkceChallenge(verifier);
+  const state = generateTokenPart(32);
+  const nonce = generateTokenPart(32);
+  let callback: Awaited<ReturnType<typeof createLoopbackCallback>> | null = null;
+
+  try {
+    pendingOidcLogin?.cancel("A new browser sign-in was started.");
+    callback = await createLoopbackCallback(state);
+    pendingOidcLogin = callback;
+    const metadata = await getOidcMetadata();
+    const url = new URL(metadata.authorization_endpoint);
+    url.searchParams.set("client_id", OIDC_CLIENT_ID);
+    url.searchParams.set("redirect_uri", callback.redirectUri);
+    url.searchParams.set("response_type", "code");
+    url.searchParams.set("scope", rememberMe ? `${OIDC_BASE_SCOPE} offline_access` : OIDC_BASE_SCOPE);
+    url.searchParams.set("code_challenge", challenge);
+    url.searchParams.set("code_challenge_method", "S256");
+    url.searchParams.set("state", state);
+    url.searchParams.set("nonce", nonce);
+
+    await openOidcAuthorizeUrl(url.toString());
+    const code = await callback.waitForCode();
+    const token = await exchangeOidcAuthorizationCode(code, callback.redirectUri, verifier);
+    const session = await createOidcSession(token, rememberMe, { nonce });
+    writeStoredSession(session);
+    return {
+      ok: true,
+      session: toPublicSession(session),
+      message: "Signed in with HAI OIDC.",
+    };
+  } catch (error) {
+    callback?.close();
+    return {
+      ok: false,
+      session: null,
+      message: error instanceof Error ? error.message : "OIDC sign-in failed.",
+    };
+  } finally {
+    if (pendingOidcLogin === callback) {
+      pendingOidcLogin = null;
+    }
+  }
+}
+
+export function cancelOidcLogin(): boolean {
+  if (!pendingOidcLogin) return false;
+  pendingOidcLogin.cancel("Browser sign-in cancelled.");
+  pendingOidcLogin = null;
+  return true;
 }
 
 export async function startDesktopSsoLogin(): Promise<DesktopSsoStartResult> {
@@ -251,8 +337,12 @@ export async function cancelDesktopSsoLogin(deviceCode: unknown): Promise<boolea
   }
 }
 
-export function logout(rawOptions?: unknown): { ok: boolean; message: string } {
+export async function logout(rawOptions?: unknown): Promise<{ ok: boolean; message: string }> {
   const options = normalizeLogoutOptions(rawOptions);
+  const stored = readStoredSession();
+  if (stored?.authMode === "oidc" && stored.refreshToken) {
+    await revokeOidcRefreshToken(stored.refreshToken);
+  }
   clearStoredSession(Boolean(options.clearLocalData));
   return {
     ok: true,
@@ -338,7 +428,7 @@ function createSsoSession(
   accessToken: string,
   refreshToken?: string | null,
   options: {
-    authProvider?: "ihep" | "wechat" | "local" | null;
+    authProvider?: AuthSession["authProvider"];
     name?: string | null;
     avatarUrl?: string | null;
   } = {},
@@ -363,6 +453,48 @@ function createSsoSession(
       name: options.name || userId,
       avatarUrl: options.avatarUrl || undefined,
       role: "user",
+    },
+  };
+}
+
+async function createOidcSession(
+  token: OidcTokenResponse,
+  rememberMe = true,
+  validation: { nonce?: string } = {},
+): Promise<StoredAuthSession> {
+  await verifyOidcTokenSignature(token.id_token);
+  await verifyOidcTokenSignature(token.access_token);
+  const idClaims = decodeJwtPayload<OidcIdTokenClaims>(token.id_token);
+  const accessClaims = decodeJwtPayload<OidcAccessTokenClaims>(token.access_token);
+  validateOidcClaims(idClaims, accessClaims, validation);
+  const userId = idClaims?.sub || accessClaims?.sub;
+  if (!userId) {
+    throw new Error("OIDC token response is missing a user subject.");
+  }
+  const now = new Date().toISOString();
+  const accessTokenExpiresAt = getJwtExpiry(token.access_token);
+  return {
+    authenticated: true,
+    sessionId: randomUUID(),
+    createdAt: now,
+    expiresAt: token.refresh_token && rememberMe
+      ? getExpiryDate(SESSION_DAYS)
+      : accessTokenExpiresAt || getExpiryDate(1),
+    issuer: OIDC_ISSUER,
+    clientId: OIDC_CLIENT_ID,
+    accessToken: token.access_token,
+    idToken: token.id_token,
+    refreshToken: rememberMe ? token.refresh_token : undefined,
+    accessTokenExpiresAt,
+    refreshable: Boolean(rememberMe && token.refresh_token),
+    authMode: "oidc",
+    authProvider: "hai",
+    user: {
+      id: userId,
+      email: idClaims?.email || userId,
+      name: idClaims?.name || idClaims?.email || userId,
+      avatarUrl: idClaims?.picture || undefined,
+      role: Array.isArray(accessClaims?.roles) && accessClaims.roles.includes("admin") ? "admin" : "user",
     },
   };
 }
@@ -397,8 +529,13 @@ function getExpiryDate(days: number): string {
 function readStoredSession(): StoredAuthSession | null {
   if (!existsSync(AUTH_SESSION_FILE)) return null;
   try {
-    const parsed = JSON.parse(readFileSync(AUTH_SESSION_FILE, "utf8")) as StoredAuthSession;
+    const parsed = deserializeStoredSession(
+      JSON.parse(readFileSync(AUTH_SESSION_FILE, "utf8")) as SerializedStoredAuthSession,
+    );
     if (!parsed.authenticated || !parsed.user || !parsed.expiresAt || !parsed.sessionId) {
+      return null;
+    }
+    if ((parsed.authMode === "oidc" || parsed.authMode === "sso") && !parsed.accessToken) {
       return null;
     }
     return parsed;
@@ -410,7 +547,61 @@ function readStoredSession(): StoredAuthSession | null {
 
 function writeStoredSession(session: StoredAuthSession): void {
   mkdirSync(dirname(AUTH_SESSION_FILE), { recursive: true });
-  writeFileSync(AUTH_SESSION_FILE, JSON.stringify(session, null, 2), "utf8");
+  writeFileSync(AUTH_SESSION_FILE, JSON.stringify(serializeStoredSession(session), null, 2), "utf8");
+}
+
+function serializeStoredSession(session: StoredAuthSession): SerializedStoredAuthSession {
+  const serialized: SerializedStoredAuthSession = { ...session };
+  if (session.accessToken) {
+    const encrypted = encryptSecret(session.accessToken);
+    if (encrypted) {
+      serialized.encryptedAccessToken = encrypted;
+      delete serialized.accessToken;
+    }
+  }
+  if (session.refreshToken) {
+    const encrypted = encryptSecret(session.refreshToken);
+    if (encrypted) {
+      serialized.encryptedRefreshToken = encrypted;
+      delete serialized.refreshToken;
+    }
+  }
+  if (session.idToken) {
+    const encrypted = encryptSecret(session.idToken);
+    if (encrypted) {
+      serialized.encryptedIdToken = encrypted;
+      delete serialized.idToken;
+    }
+  }
+  return serialized;
+}
+
+function deserializeStoredSession(serialized: SerializedStoredAuthSession): StoredAuthSession {
+  return {
+    ...serialized,
+    accessToken: serialized.accessToken ?? decryptSecret(serialized.encryptedAccessToken),
+    refreshToken: serialized.refreshToken ?? decryptSecret(serialized.encryptedRefreshToken),
+    idToken: serialized.idToken ?? decryptSecret(serialized.encryptedIdToken),
+  };
+}
+
+function encryptSecret(secret: string): string | undefined {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return undefined;
+    return safeStorage.encryptString(secret).toString("base64");
+  } catch {
+    return undefined;
+  }
+}
+
+function decryptSecret(encrypted: string | undefined): string | undefined {
+  if (!encrypted) return undefined;
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return undefined;
+    return safeStorage.decryptString(Buffer.from(encrypted, "base64"));
+  } catch {
+    return undefined;
+  }
 }
 
 function clearStoredSession(clearLocalData: boolean): void {
@@ -489,6 +680,47 @@ interface DesktopAuthRefreshPayload {
   };
 }
 
+interface OidcTokenResponse {
+  access_token: string;
+  id_token: string;
+  refresh_token?: string;
+  token_type: "Bearer" | string;
+  expires_in?: number;
+  scope?: string;
+}
+
+interface OidcProviderMetadata {
+  issuer: string;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  jwks_uri: string;
+  revocation_endpoint?: string;
+}
+
+interface OidcIdTokenClaims {
+  iss?: string;
+  sub?: string;
+  aud?: string | string[];
+  exp?: number;
+  nonce?: string;
+  email?: string;
+  name?: string;
+  picture?: string;
+}
+
+interface OidcAccessTokenClaims {
+  iss?: string;
+  sub?: string;
+  aud?: string | string[];
+  exp?: number;
+  roles?: string[];
+}
+
+interface OidcJwtHeader {
+  alg?: string;
+  kid?: string;
+}
+
 function readPayloadMessage(payload: { message?: string; detail?: string }, fallback: string): string {
   return payload.detail || payload.message || fallback;
 }
@@ -500,21 +732,15 @@ function formatPollState(state: "pending" | "expired" | "cancelled"): string {
 }
 
 function getJwtExpiry(token: string): string | null {
-  try {
-    const payload = token.split(".")[1];
-    if (!payload) return null;
-    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const parsed = JSON.parse(Buffer.from(normalized, "base64").toString("utf8")) as { exp?: number };
-    return typeof parsed.exp === "number" ? new Date(parsed.exp * 1000).toISOString() : null;
-  } catch {
-    return null;
-  }
+  const parsed = decodeJwtPayload<{ exp?: number }>(token);
+  return typeof parsed?.exp === "number" ? new Date(parsed.exp * 1000).toISOString() : null;
 }
 
 async function refreshSsoSessionIfNeeded(
   stored: StoredAuthSession,
   force: boolean,
 ): Promise<StoredAuthSession | null> {
+  if (stored.authMode === "oidc") return refreshOidcSessionIfNeeded(stored, force);
   if (stored.authMode !== "sso") return stored;
   if (!stored.refreshToken) return stored;
 
@@ -557,4 +783,399 @@ async function refreshSsoSessionIfNeeded(
     clearStoredSession(false);
     return null;
   }
+}
+
+async function refreshOidcSessionIfNeeded(
+  stored: StoredAuthSession,
+  force: boolean,
+): Promise<StoredAuthSession | null> {
+  if (!stored.refreshToken) return stored;
+
+  const accessExpiryMs = stored.accessTokenExpiresAt
+    ? new Date(stored.accessTokenExpiresAt).getTime()
+    : 0;
+  const shouldRefresh =
+    force || !accessExpiryMs || accessExpiryMs <= Date.now() + ACCESS_TOKEN_REFRESH_WINDOW_MS;
+  if (!shouldRefresh) return stored;
+
+  try {
+    const token = await exchangeOidcRefreshToken(stored.refreshToken);
+    const refreshed = await createOidcSession(
+      {
+        ...token,
+        refresh_token: token.refresh_token || stored.refreshToken,
+      },
+      true,
+    );
+    writeStoredSession(refreshed);
+    return refreshed;
+  } catch {
+    if (accessExpiryMs && accessExpiryMs > Date.now()) return stored;
+    clearStoredSession(false);
+    return null;
+  }
+}
+
+async function exchangeOidcAuthorizationCode(
+  code: string,
+  redirectUri: string,
+  verifier: string,
+): Promise<OidcTokenResponse> {
+  return postOidcToken({
+    grant_type: "authorization_code",
+    client_id: OIDC_CLIENT_ID,
+    redirect_uri: redirectUri,
+    code,
+    code_verifier: verifier,
+  });
+}
+
+async function exchangeOidcRefreshToken(refreshToken: string): Promise<OidcTokenResponse> {
+  return postOidcToken({
+    grant_type: "refresh_token",
+    client_id: OIDC_CLIENT_ID,
+    refresh_token: refreshToken,
+  });
+}
+
+async function revokeOidcRefreshToken(refreshToken: string): Promise<void> {
+  try {
+    const metadata = await getOidcMetadata();
+    const endpoint = metadata.revocation_endpoint || `${OIDC_ISSUER}/oauth2/revoke`;
+    await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        token: refreshToken,
+        token_type_hint: "refresh_token",
+      }).toString(),
+    });
+  } catch {
+    // Sign-out must still clear local credentials if the network or server is unavailable.
+  }
+}
+
+async function postOidcToken(params: Record<string, string>): Promise<OidcTokenResponse> {
+  const metadata = await getOidcMetadata();
+  const response = await fetch(metadata.token_endpoint, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams(params).toString(),
+  });
+  const payload = await response.json().catch(() => ({})) as Partial<OidcTokenResponse> & {
+    error?: string;
+    error_description?: string;
+    detail?: unknown;
+  };
+  if (
+    !response.ok ||
+    !payload.access_token ||
+    !payload.id_token ||
+    payload.token_type?.toLowerCase() !== "bearer"
+  ) {
+    const detail = readOidcErrorMessage(payload);
+    throw new Error(`${detail} Auth service: ${OIDC_ISSUER}`);
+  }
+  return payload as OidcTokenResponse;
+}
+
+function readOidcErrorMessage(payload: {
+  error?: string;
+  error_description?: string;
+  detail?: unknown;
+}): string {
+  if (typeof payload.detail === "string") return payload.detail;
+  if (payload.detail && typeof payload.detail === "object") {
+    const detail = payload.detail as { error?: unknown; error_description?: unknown };
+    if (typeof detail.error_description === "string") return detail.error_description;
+    if (typeof detail.error === "string") return detail.error;
+  }
+  return payload.error_description || payload.error || "OIDC token request failed.";
+}
+
+function normalizeRememberMe(rawRequest: unknown): boolean {
+  if (!rawRequest || typeof rawRequest !== "object") return true;
+  return (rawRequest as Record<string, unknown>).rememberMe !== false;
+}
+
+function generateTokenPart(bytes: number): string {
+  return randomBytes(bytes).toString("base64url");
+}
+
+function createPkceChallenge(verifier: string): string {
+  return createHash("sha256").update(verifier).digest("base64url");
+}
+
+async function getOidcMetadata(): Promise<OidcProviderMetadata> {
+  const cacheMaxAgeMs = 5 * 60 * 1000;
+  if (oidcMetadataCache && Date.now() - oidcMetadataCache.fetchedAt <= cacheMaxAgeMs) {
+    return oidcMetadataCache.metadata;
+  }
+  const discoveryUrl = `${OIDC_ISSUER}/.well-known/openid-configuration`;
+  const response = await fetch(discoveryUrl, {
+    headers: { Accept: "application/json" },
+  });
+  const payload = await response.json().catch(() => ({})) as Partial<OidcProviderMetadata>;
+  if (!response.ok) {
+    throw new Error(`Could not load OIDC discovery from ${discoveryUrl}.`);
+  }
+  if (payload.issuer !== OIDC_ISSUER) {
+    throw new Error("OIDC discovery issuer does not match the configured auth service.");
+  }
+  if (
+    typeof payload.authorization_endpoint !== "string" ||
+    typeof payload.token_endpoint !== "string" ||
+    typeof payload.jwks_uri !== "string"
+  ) {
+    throw new Error("OIDC discovery is missing required endpoints.");
+  }
+  const metadata = {
+    issuer: payload.issuer,
+    authorization_endpoint: payload.authorization_endpoint,
+    token_endpoint: payload.token_endpoint,
+    jwks_uri: payload.jwks_uri,
+    revocation_endpoint: typeof payload.revocation_endpoint === "string"
+      ? payload.revocation_endpoint
+      : undefined,
+  };
+  oidcMetadataCache = { metadata, fetchedAt: Date.now() };
+  return metadata;
+}
+
+function decodeJwtPayload<T extends object>(token: string): T | null {
+  return decodeJwtPart<T>(token, 1);
+}
+
+function decodeJwtHeader(token: string): OidcJwtHeader | null {
+  return decodeJwtPart<OidcJwtHeader>(token, 0);
+}
+
+function decodeJwtPart<T extends object>(token: string, index: number): T | null {
+  try {
+    const part = token.split(".")[index];
+    if (!part) return null;
+    return JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function verifyOidcTokenSignature(token: string): Promise<void> {
+  const [encodedHeader, encodedPayload, encodedSignature] = token.split(".");
+  if (!encodedHeader || !encodedPayload || !encodedSignature) {
+    throw new Error("OIDC token response contains a malformed JWT.");
+  }
+  const header = decodeJwtHeader(token);
+  if (!header || header.alg !== "RS256") {
+    throw new Error("OIDC token response must be signed with RS256.");
+  }
+  const jwk = await getOidcSigningJwk(header.kid);
+  const verifier = createVerify("RSA-SHA256");
+  verifier.update(`${encodedHeader}.${encodedPayload}`);
+  verifier.end();
+  const valid = verifier.verify(
+    createPublicKey({ key: jwk, format: "jwk" }),
+    Buffer.from(encodedSignature, "base64url"),
+  );
+  if (!valid) {
+    throw new Error("OIDC token signature verification failed.");
+  }
+}
+
+async function getOidcSigningJwk(kid: string | undefined): Promise<JsonWebKey> {
+  const cacheMaxAgeMs = 5 * 60 * 1000;
+  if (!oidcJwksCache || Date.now() - oidcJwksCache.fetchedAt > cacheMaxAgeMs) {
+    oidcJwksCache = await fetchOidcJwks();
+  }
+  let key = findOidcJwk(oidcJwksCache.keys, kid);
+  if (!key && kid) {
+    oidcJwksCache = await fetchOidcJwks();
+    key = findOidcJwk(oidcJwksCache.keys, kid);
+  }
+  if (!key) {
+    throw new Error("OIDC signing key was not found in JWKS.");
+  }
+  return key;
+}
+
+async function fetchOidcJwks(): Promise<{ keys: JsonWebKey[]; fetchedAt: number }> {
+  const metadata = await getOidcMetadata();
+  const response = await fetch(metadata.jwks_uri, {
+    headers: { Accept: "application/json" },
+  });
+  const payload = await response.json().catch(() => ({})) as { keys?: JsonWebKey[] };
+  if (!response.ok || !Array.isArray(payload.keys) || payload.keys.length === 0) {
+    throw new Error(`Could not load OIDC signing keys from ${metadata.jwks_uri}.`);
+  }
+  return { keys: payload.keys, fetchedAt: Date.now() };
+}
+
+function findOidcJwk(keys: JsonWebKey[], kid: string | undefined): JsonWebKey | undefined {
+  return kid
+    ? keys.find((item) => item.kid === kid)
+    : keys.find((item) => item.kty === "RSA");
+}
+
+function validateOidcClaims(
+  idClaims: OidcIdTokenClaims | null,
+  accessClaims: OidcAccessTokenClaims | null,
+  validation: { nonce?: string },
+): void {
+  if (!idClaims) throw new Error("OIDC token response has an invalid ID token.");
+  if (!accessClaims) throw new Error("OIDC token response has an invalid access token.");
+  if (idClaims.iss !== OIDC_ISSUER || accessClaims.iss !== OIDC_ISSUER) {
+    throw new Error("OIDC token issuer does not match the configured auth service.");
+  }
+  if (!audienceIncludes(idClaims.aud, OIDC_CLIENT_ID)) {
+    throw new Error("OIDC ID token was not issued for this desktop client.");
+  }
+  if (!audienceIncludes(accessClaims.aud, "hai-api")) {
+    throw new Error("OIDC access token was not issued for the HAI API.");
+  }
+  if (validation.nonce && idClaims.nonce !== validation.nonce) {
+    throw new Error("OIDC ID token nonce does not match the sign-in request.");
+  }
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (!idClaims.exp || idClaims.exp <= nowSeconds || !accessClaims.exp || accessClaims.exp <= nowSeconds) {
+    throw new Error("OIDC token response is already expired.");
+  }
+}
+
+function audienceIncludes(audience: string | string[] | undefined, expected: string): boolean {
+  return Array.isArray(audience) ? audience.includes(expected) : audience === expected;
+}
+
+async function openOidcAuthorizeUrl(url: string): Promise<void> {
+  if (process.env.OPENDRSAI_E2E_OIDC_AUTO_CALLBACK === "1") {
+    await followOidcAuthorizeRedirectForE2e(url);
+    return;
+  }
+  await shell.openExternal(url);
+}
+
+async function followOidcAuthorizeRedirectForE2e(url: string): Promise<void> {
+  const authorize = await fetch(url, { redirect: "manual" });
+  const callbackUrl = authorize.headers.get("location");
+  if (!callbackUrl) {
+    throw new Error("E2E OIDC issuer did not return a callback redirect.");
+  }
+  const callback = await fetch(callbackUrl, { redirect: "manual" });
+  if (!callback.ok) {
+    throw new Error(`E2E OIDC callback failed with HTTP ${callback.status}.`);
+  }
+}
+
+async function createLoopbackCallback(expectedState: string): Promise<{
+  redirectUri: string;
+  waitForCode: () => Promise<string>;
+  close: () => void;
+  cancel: (message?: string) => void;
+}> {
+  let settled = false;
+  let timeout: NodeJS.Timeout | null = null;
+  let resolveCode: (code: string) => void = () => undefined;
+  let rejectCode: (error: Error) => void = () => undefined;
+
+  const waitForCode = new Promise<string>((resolve, reject) => {
+    resolveCode = resolve;
+    rejectCode = reject;
+  });
+
+  const server = createServer((request, response) => {
+    try {
+      const requestUrl = new URL(request.url || "/", "http://127.0.0.1");
+      if (requestUrl.pathname !== "/callback") {
+        response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        response.end("Not found");
+        return;
+      }
+      const error = requestUrl.searchParams.get("error");
+      const errorDescription = requestUrl.searchParams.get("error_description");
+      const state = requestUrl.searchParams.get("state");
+      const code = requestUrl.searchParams.get("code");
+      if (error) {
+        throw new Error(errorDescription || error);
+      }
+      if (!state || state !== expectedState) {
+        throw new Error("OIDC sign-in returned an invalid state.");
+      }
+      if (!code) {
+        throw new Error("OIDC sign-in did not return an authorization code.");
+      }
+      settled = true;
+      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      response.end(successHtml());
+      resolveCode(code);
+    } catch (error) {
+      settled = true;
+      response.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+      response.end(failureHtml(error instanceof Error ? error.message : "OIDC sign-in failed."));
+      rejectCode(error instanceof Error ? error : new Error("OIDC sign-in failed."));
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      safeCloseServer(server);
+    }
+  });
+
+  server.once("error", (error) => rejectCode(error));
+  timeout = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    safeCloseServer(server);
+    rejectCode(new Error("Browser sign-in timed out. Please try again."));
+  }, OIDC_AUTH_TIMEOUT_MS);
+
+  const address = await new Promise<ReturnType<typeof server.address>>((resolve, reject) => {
+    server.once("listening", () => resolve(server.address()));
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1");
+  });
+  if (!address || typeof address === "string") {
+    safeCloseServer(server);
+    throw new Error("Could not start desktop sign-in callback server.");
+  }
+
+  return {
+    redirectUri: `http://127.0.0.1:${address.port}/callback`,
+    waitForCode: () => waitForCode,
+    close: () => {
+      if (timeout) clearTimeout(timeout);
+      safeCloseServer(server);
+    },
+    cancel: (message = "Browser sign-in cancelled.") => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      safeCloseServer(server);
+      rejectCode(new Error(message));
+    },
+  };
+}
+
+function safeCloseServer(server: Server): void {
+  try {
+    server.close();
+  } catch {
+    // The callback server may already be closed by the success/error path.
+  }
+}
+
+function successHtml(): string {
+  return "<!doctype html><title>Signed in</title><body style=\"font:16px sans-serif;text-align:center;padding:48px\"><h1>Signed in</h1><p>You can return to OpenDrSai Desktop.</p></body>";
+}
+
+function failureHtml(message: string): string {
+  const safeMessage = message.replace(/[<>&"]/g, (char) => ({
+    "<": "&lt;",
+    ">": "&gt;",
+    "&": "&amp;",
+    "\"": "&quot;",
+  })[char] || char);
+  return `<!doctype html><title>Sign-in failed</title><body style="font:16px sans-serif;text-align:center;padding:48px"><h1>Sign-in failed</h1><p>${safeMessage}</p></body>`;
 }

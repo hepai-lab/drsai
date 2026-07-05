@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatAttachment, ChatEvent } from "@shared/desktopApi";
+import type { ChatAttachment, ChatEvent, ChatMessage, WorkspaceInstructionSummary } from "@shared/desktopApi";
 import type { UiMessage } from "../components/ChatWorkspace";
 import { desktopApi } from "../desktopApi";
 
@@ -27,6 +27,7 @@ export function useDesktopChatAdapter({
   onThreadUpdated,
   threadId,
   threadSnapshot,
+  workspaceInstructions,
   workspacePath,
 }: {
   canChat: boolean;
@@ -35,6 +36,7 @@ export function useDesktopChatAdapter({
   onThreadUpdated?: (snapshot: ChatThreadSnapshot) => void;
   threadId: string;
   threadSnapshot?: ChatThreadSnapshot | null;
+  workspaceInstructions?: WorkspaceInstructionSummary[];
   workspacePath?: string;
 }): DesktopChatAdapter {
   const [input, setInput] = useState("");
@@ -89,15 +91,22 @@ export function useDesktopChatAdapter({
     setActiveRequestId(requestId);
 
     try {
+      const requestMessages = buildRequestMessages(
+        [...messages, userMessage]
+          .filter((message) => !message.error)
+          .map(({ role, content }) => ({ role, content })),
+        workspaceInstructions,
+      );
       await desktopApi.startChat({
         requestId,
         sessionId: threadIdRef.current,
         runId: requestId,
         workspacePath,
         attachments,
-        messages: [...messages, userMessage]
-          .filter((message) => !message.error)
-          .map(({ role, content }) => ({ role, content })),
+        metadata: {
+          workspace_instructions: workspaceInstructions || [],
+        },
+        messages: requestMessages,
       });
       return true;
     } catch (error) {
@@ -211,6 +220,20 @@ export function useDesktopChatAdapter({
     submit,
     abort,
   };
+}
+
+function buildRequestMessages(
+  messages: ChatMessage[],
+  workspaceInstructions: WorkspaceInstructionSummary[] | undefined,
+): ChatMessage[] {
+  if (!workspaceInstructions?.length) return messages;
+  const content = [
+    "Workspace instructions for this project:",
+    ...workspaceInstructions.map((instruction) =>
+      `# ${instruction.name}\n${instruction.content}${instruction.truncated ? "\n[truncated]" : ""}`,
+    ),
+  ].join("\n\n");
+  return [{ role: "system", content }, ...messages];
 }
 
 function createWelcomeMessage(language: "en" | "zh"): UiMessage {

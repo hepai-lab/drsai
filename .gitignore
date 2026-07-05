@@ -6,6 +6,11 @@
 ########################
 # 项目特定文件
 ########################
+.pnpm-store
+.tmp-gateway.pid
+.tmp/
+**/.tmp/
+%SystemDrive%/
 examples/requests/zulip_python/.zuliprc
 examples/docker/browser/docker_test_dir*
 drsai/backend/owebui_pipeline/pipelines/pipelines/drsai_pipeline/*.json
