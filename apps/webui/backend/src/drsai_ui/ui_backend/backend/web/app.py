@@ -4,7 +4,7 @@ import re
 import yaml
 from dotenv import load_dotenv
 
-from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, docmaster, files, local_login, models, plans, runs, sessions, settingsroute, skills, teams, users, validation
+from .routes import access_compat, admin_analytics, agent_mode, agent_worker, auth, desktop_auth, docmaster, files, local_login, models, plans, runs, sessions, settingsroute, skills, teams, users, validation
 load_dotenv()
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -274,6 +274,13 @@ api.include_router(
     auth.router,
     prefix="/auth",
     tags=["auth"],
+    responses={401: {"description": "Unauthorized"}},
+)
+
+api.include_router(
+    desktop_auth.router,
+    prefix="/desktop-auth",
+    tags=["desktop-auth"],
     responses={401: {"description": "Unauthorized"}},
 )
 

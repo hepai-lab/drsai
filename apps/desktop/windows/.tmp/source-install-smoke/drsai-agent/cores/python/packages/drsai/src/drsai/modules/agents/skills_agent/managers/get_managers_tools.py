@@ -1,0 +1,127 @@
+from drsai.modules.components.tool import (
+    ToolSchema,
+    ParametersSchema,
+    )
+from drsai.modules.baseagent import (
+    # DockerCommandLineCodeExecutor,
+    LocalCommandLineCodeExecutor,
+)
+from pathlib import Path
+import venv
+def get_agent_skills_tool(descriptions: str, strict: bool = False,) -> ToolSchema:
+    """Get the skills' tools available to this agent."""
+    
+    parameters = ParametersSchema(
+        type="object",
+        properties={
+            "skill": {
+                    "type": "string",
+                    "description": "Name of the skill to load"
+                }
+        },
+        required=["skill"],
+        additionalProperties=False,
+    )
+    tool_schema = ToolSchema(
+        name="Skill",
+        description=f"""Load a skill to gain specialized knowledge for a task.
+
+Available skills:
+{descriptions}
+
+When to use:
+- IMMEDIATELY when user task matches a skill description
+- Before attempting domain-specific work (PDF, MCP, etc.)
+
+The skill content will be injected into the conversation, giving you
+detailed instructions and access to resources.""",
+        parameters=parameters,
+        strict=strict,
+    )
+    
+    return tool_schema
+
+def get_todo_manager_tool(strict: bool = False,) -> ToolSchema:
+    parameters = ParametersSchema(
+        type="object",
+        properties={
+            "items": {
+                "type": "array",
+                "description": "To-do list, must contain complete information for all tasks",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["pending", "in_progress", "completed"]
+                        },
+                        # "activeForm": {"type": "string"},
+                    },
+                    "required": ["content", "status"], # , "activeForm"
+                },
+            },
+        },
+        required=["items"],
+        additionalProperties=False,
+    )
+    tool_schema = ToolSchema(
+        name="TodoWrite",
+        description="Create/Update task list.",
+        parameters=parameters,
+        strict=strict,
+    )
+    return tool_schema
+
+def get_subagent_tools(sub_agents: list[str], description: str, strict: bool = False,) -> ToolSchema:
+    parameters = ParametersSchema(
+        type="object",
+        properties={
+            "description": {
+                "type": "string",
+                "description": "Short task description (3-5 words)"
+            },
+            "prompt": {
+                "type": "string",
+                "description": "The specific task. Include all necessary code, file paths, constraints. If code blocks or files need to be executed, include them in full."
+            },
+            "agent_type": {
+                "type": "string",
+                "enum": sub_agents,
+                "description": "Which subagent type to use (explore=read-only search, plan=architecture design, general=full toolkit, or a custom type)."
+            },
+            "context": {
+                "type": "string",
+                "description": "Optional background context for the subagent: relevant file paths, error messages, project structure, constraints. Not the parent conversation history."
+            },
+            # "mode": {
+            #     "type": "string",
+            #     "enum": ["single", "multi"],
+            #     "description": "Execution mode: 'single' = one LLM round (fast, for simple tasks), 'multi' = iterate until done (for complex multi-step tasks). Default: depends on subagent type."
+            # },
+        },
+        required=["description", "prompt", "agent_type"],
+        additionalProperties=False,
+    )
+    tool_schema = ToolSchema(
+        name="Delegate",
+        description=(
+            f"Delegate a subtask to a specialized subagent. Use this when you need focused work by an agent with specific capabilities.\n\n"
+            f"IMPORTANT: The subagent has its own isolated context. It CANNOT see the parent conversation history. "
+            f"Provide all necessary information in the 'prompt' and 'context' fields.\n\n"
+            f"Available agent types:\n{description}"
+        ),
+        parameters=parameters,
+        strict=strict,
+    )
+    return tool_schema
+
+
+def create_local_venv(work_dir: str|Path) -> LocalCommandLineCodeExecutor:
+    work_dir = Path(work_dir)
+    work_dir.mkdir(exist_ok=True)
+    venv_dir = Path(work_dir) / ".venv"
+    venv_builder = venv.EnvBuilder(with_pip=True)
+    venv_builder.create(venv_dir)
+    venv_context = venv_builder.ensure_directories(venv_dir)
+    return LocalCommandLineCodeExecutor(work_dir=work_dir, virtual_env_context=venv_context)

@@ -10,7 +10,7 @@ import secrets
 from urllib.parse import urlencode
 from authlib.integrations.starlette_client import OAuth, OAuthError
 from fastapi import FastAPI, Depends, Request, HTTPException, APIRouter, status
-from starlette.responses import RedirectResponse
+from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 import uvicorn
 import httpx
@@ -25,6 +25,10 @@ from datetime import timedelta
 from drsai_ui.ui_backend.backend.web.deps import get_db
 from drsai_ui.ui_backend.backend.web.auth_cookies import clear_refresh_cookie, set_refresh_cookie
 from drsai_ui.ui_backend.backend.web.auth_source import record_auth_source
+from drsai_ui.ui_backend.backend.web.routes.desktop_auth import (
+    authorize_desktop_state,
+    make_desktop_sso_state,
+)
 from drsai_ui.ui_backend.backend.datamodel.db import AgentModeSettings, AgentModeConfig, UserAgents
 from drsai_ui.agent_factory.agent_mode_cofigs import (
     get_agent_mode_config, 
@@ -153,6 +157,7 @@ async def logout(request: Request):
 async def auth(request: Request, db=Depends(get_db)):
     # ③ 统一认证回调
     code = request.query_params.get('code')
+    state = request.query_params.get('state')
     if code is None:
         error = request.query_params.get('error_description')
         raise HTTPException(status_code=400, detail=f"Failed to fetch code, error: {error}")
@@ -187,6 +192,16 @@ async def auth(request: Request, db=Depends(get_db)):
     user_id = user.email
     access_token = create_jwt_token(data={"sub": user_id}, expires_delta=access_token_expires)
 
+    if authorize_desktop_state(state, user_id, db):
+        record_auth_source(db, user_id, "sso")
+        response_agent = db.get(AgentModeSettings, filters={"user_id": user_id})
+        if not response_agent.status or not response_agent.data:
+            agents_list = get_default_agent_mode_config(user_id)
+            db.upsert(AgentModeSettings(user_id=user_id, agents_mode=agents_list))
+            db.upsert(UserAgents(user_id=user_id, agents=agents_list))
+        success_url = f"{str(request.base_url).rstrip('/')}/umt/desktop-auth/success"
+        return RedirectResponse(url=success_url)
+
     redirect_url = f"{request.base_url}auth?token={access_token.access_token}&username={user_id}"
     response = RedirectResponse(url=redirect_url)
 
@@ -215,7 +230,7 @@ async def auth(request: Request, db=Depends(get_db)):
     # return RedirectResponse(url='/umt/')  # 回调首页，可以自己改回调页面
 
 @router.get('/login')
-async def login():
+async def login(request: Request, db=Depends(get_db)):
     """Initiate IHEP SSO login — redirects user to IHEP authorization page"""
     if not oauth_config.client_id or oauth_config.client_id == "<enter your key here>":
         raise HTTPException(
@@ -223,14 +238,83 @@ async def login():
             detail="IHEP SSO is not configured. Please set IHEP_SSO_APP_KEY and IHEP_SSO_APP_SECRET.",
         )
 
+    desktop_device_code = request.query_params.get("desktop_device_code")
+    state = (
+        make_desktop_sso_state(desktop_device_code, db)
+        if desktop_device_code
+        else _make_state()
+    )
     params = {
         "client_id": oauth_config.client_id,
         "redirect_uri": oauth_config.redirect_uri,
         "response_type": "code",
-        "state": _make_state(),
+        "state": state,
     }
     auth_url = f"{oauth_config.authorize_url}?{urlencode(params)}"
     return RedirectResponse(url=auth_url)
+
+
+@router.get("/desktop-auth/success", response_class=HTMLResponse)
+async def desktop_auth_success():
+    return """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenDrSai Desktop signed in</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f1fb;
+        --ink: #29212f;
+        --muted: #74677d;
+        --accent: #8e6cc3;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: var(--bg);
+        color: var(--ink);
+        font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        width: min(420px, calc(100vw - 48px));
+        text-align: center;
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 24px;
+        font-weight: 650;
+        letter-spacing: 0;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .mark {
+        width: 48px;
+        height: 48px;
+        margin: 0 auto 22px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: #fff;
+        color: var(--accent);
+        box-shadow: 0 18px 45px rgba(76, 49, 107, 0.12);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark">OK</div>
+      <h1>Signed in</h1>
+      <p>You can return to OpenDrSai Desktop.</p>
+    </main>
+  </body>
+</html>"""
 
 
 

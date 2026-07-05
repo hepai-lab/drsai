@@ -30,6 +30,13 @@ import { WeChatPanel } from './wechatPanel.js'
 import { SlashOutputOverlay } from './slashOutputOverlay.js'
 import { TextInput } from './textInput.js'
 
+function sessionSortTimestamp(session: SessionInfo): number {
+  const raw = session.last_interaction_ts ?? session.updated_at ?? session.created_at ?? 0
+  if (typeof raw === 'number') return raw
+  const parsed = Date.parse(raw)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 export interface ComposerPaneProps {
   sessionId: string
   controller: TurnController
@@ -334,9 +341,7 @@ export function ComposerPane({ sessionId, controller, switchSession }: ComposerP
       // ADDED: Sort by last_interaction_ts descending (Issue #4 fix)
       // Most recently used sessions appear first
       sessions.sort((a, b) => {
-        const tsA = a.last_interaction_ts || a.created_at || 0
-        const tsB = b.last_interaction_ts || b.created_at || 0
-        return tsB - tsA  // Descending order (newest first)
+        return sessionSortTimestamp(b) - sessionSortTimestamp(a)
       })
       
       setSessionPicker(sessions)
@@ -916,9 +921,7 @@ For more info: https://github.com/yourusername/drsai
             const currentWorkdir = process.env.DRSAI_USER_CWD?.trim() || process.cwd()
             sessions = sessions.filter(s => s.workdir === currentWorkdir)
             sessions.sort((a, b) => {
-              const tsA = a.last_interaction_ts || a.created_at || 0
-              const tsB = b.last_interaction_ts || b.created_at || 0
-              return tsB - tsA
+              return sessionSortTimestamp(b) - sessionSortTimestamp(a)
             })
             setSessionPicker(sessions)
           } catch { /* ignore refresh errors */ }

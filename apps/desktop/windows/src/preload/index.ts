@@ -1,0 +1,111 @@
+import { contextBridge, ipcRenderer } from "electron";
+import type { IpcRendererEvent } from "electron";
+import type {
+  DesktopApi,
+  AgentRunEvent,
+  AgentRunRequest,
+  AuthSession,
+  ChatEvent,
+  ChatRequest,
+  CreateThreadRequest,
+  DesktopHealth,
+  DesktopSsoPollResult,
+  DesktopSsoStartResult,
+  GatewayStatus,
+  InstallStatus,
+  InstallProgress,
+  LoginRequest,
+  LoginResult,
+  LogoutOptions,
+  SaveApiKeyResult,
+  StartInstallOptions,
+  UpdateThreadRequest,
+  UpdateStatus,
+} from "../shared/desktopApi";
+
+const api: DesktopApi = {
+  getAuthSession: (): Promise<AuthSession> =>
+    ipcRenderer.invoke("desktop:get-auth-session"),
+  login: (request: LoginRequest): Promise<LoginResult> =>
+    ipcRenderer.invoke("desktop:login", request),
+  startDesktopSsoLogin: (): Promise<DesktopSsoStartResult> =>
+    ipcRenderer.invoke("desktop:start-desktop-sso-login"),
+  startWechatDesktopLogin: (): Promise<DesktopSsoStartResult> =>
+    ipcRenderer.invoke("desktop:start-wechat-desktop-login"),
+  pollDesktopSsoLogin: (deviceCode: string): Promise<DesktopSsoPollResult> =>
+    ipcRenderer.invoke("desktop:poll-desktop-sso-login", deviceCode),
+  cancelDesktopSsoLogin: (deviceCode: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:cancel-desktop-sso-login", deviceCode),
+  logout: (options?: LogoutOptions): Promise<{ ok: boolean; message: string }> =>
+    ipcRenderer.invoke("desktop:logout", options),
+  refreshAuthSession: (): Promise<AuthSession> =>
+    ipcRenderer.invoke("desktop:refresh-auth-session"),
+  getHealth: (): Promise<DesktopHealth> => ipcRenderer.invoke("desktop:get-health"),
+  getInstallStatus: (): Promise<InstallStatus> =>
+    ipcRenderer.invoke("desktop:get-install-status"),
+  getGatewayStatus: (): Promise<GatewayStatus> =>
+    ipcRenderer.invoke("desktop:get-gateway-status"),
+  checkForUpdates: (): Promise<UpdateStatus> =>
+    ipcRenderer.invoke("desktop:check-for-updates"),
+  downloadUpdate: (): Promise<UpdateStatus> =>
+    ipcRenderer.invoke("desktop:download-update"),
+  installUpdate: (): Promise<void> => ipcRenderer.invoke("desktop:install-update"),
+  startInstall: (options?: StartInstallOptions): Promise<void> =>
+    ipcRenderer.invoke("desktop:start-install", options),
+  cancelInstall: (): Promise<boolean> => ipcRenderer.invoke("desktop:cancel-install"),
+  startGateway: (): Promise<boolean> => ipcRenderer.invoke("desktop:start-gateway"),
+  stopGateway: (): Promise<boolean> => ipcRenderer.invoke("desktop:stop-gateway"),
+  listThreads: () => ipcRenderer.invoke("desktop:list-threads"),
+  createThread: (request: CreateThreadRequest) =>
+    ipcRenderer.invoke("desktop:create-thread", request),
+  updateThread: (request: UpdateThreadRequest) =>
+    ipcRenderer.invoke("desktop:update-thread", request),
+  startChat: (request: ChatRequest): Promise<string> =>
+    ipcRenderer.invoke("desktop:start-chat", request),
+  abortChat: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:abort-chat", requestId),
+  startAgentRun: (
+    request: AgentRunRequest,
+  ): Promise<{ requestId: string; sessionId: string; runId: string }> =>
+    ipcRenderer.invoke("desktop:start-agent-run", request),
+  abortAgentRun: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:abort-agent-run", requestId),
+  saveApiKey: (apiKey: string): Promise<SaveApiKeyResult> =>
+    ipcRenderer.invoke("desktop:save-api-key", apiKey),
+  pickFiles: () => ipcRenderer.invoke("desktop:pick-files"),
+  pickFolder: () => ipcRenderer.invoke("desktop:pick-folder"),
+  openExternal: (url: string): Promise<void> =>
+    ipcRenderer.invoke("desktop:open-external", url),
+  openPath: (path: string): Promise<string> =>
+    ipcRenderer.invoke("desktop:open-path", path),
+  onInstallProgress: (callback: (progress: InstallProgress) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, progress: InstallProgress) => {
+      callback(progress);
+    };
+    ipcRenderer.on("desktop:install-progress", listener);
+    return () => ipcRenderer.removeListener("desktop:install-progress", listener);
+  },
+  onChatEvent: (callback: (event: ChatEvent) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: ChatEvent) => {
+      callback(event);
+    };
+    ipcRenderer.on("desktop:chat-event", listener);
+    return () => ipcRenderer.removeListener("desktop:chat-event", listener);
+  },
+  onAgentRunEvent: (callback: (event: AgentRunEvent) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: AgentRunEvent) => {
+      callback(event);
+    };
+    ipcRenderer.on("desktop:agent-run-event", listener);
+    return () => ipcRenderer.removeListener("desktop:agent-run-event", listener);
+  },
+  onUpdateStatus: (callback: (status: UpdateStatus) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, status: UpdateStatus) => {
+      callback(status);
+    };
+    ipcRenderer.on("desktop:update-status", listener);
+    return () => ipcRenderer.removeListener("desktop:update-status", listener);
+  },
+};
+
+contextBridge.exposeInMainWorld("openDrSai", api);

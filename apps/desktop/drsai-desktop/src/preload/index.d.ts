@@ -264,9 +264,11 @@ interface DrSaiAPI {
   getSessionMessages: (sessionId: string) => Promise<
     Array<{
       id: number;
-      role: "user" | "assistant";
+      role: "user" | "assistant" | "tool" | "tool_request" | "thinking";
       content: string;
       timestamp: number;
+      msgType?: string;
+      toolName?: string;
     }>
   >;
 

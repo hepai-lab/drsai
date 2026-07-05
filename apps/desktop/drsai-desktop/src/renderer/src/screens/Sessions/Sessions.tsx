@@ -26,6 +26,7 @@ interface SessionsProps {
   onNewChat: () => void;
   currentSessionId: string | null;
   visible: boolean;
+  focusSearchNonce?: number;
 }
 
 function formatTime(ts: number): string {
@@ -153,6 +154,7 @@ function Sessions({
   onNewChat,
   currentSessionId,
   visible,
+  focusSearchNonce = 0,
 }: SessionsProps): React.JSX.Element {
   const { t } = useI18n();
   const [sessions, setSessions] = useState<CachedSession[]>([]);
@@ -200,6 +202,12 @@ function Sessions({
       loadSessions();
     }
   }, [visible, loadSessions]);
+
+  useEffect(() => {
+    if (visible && focusSearchNonce > 0) {
+      searchRef.current?.focus();
+    }
+  }, [visible, focusSearchNonce]);
 
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);

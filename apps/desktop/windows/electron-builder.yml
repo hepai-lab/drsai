@@ -1,0 +1,50 @@
+appId: com.hepai.opendrsai.windows
+productName: OpenDrSai
+directories:
+  buildResources: build
+  output: release
+files:
+  - out/**
+  - resources/**
+  - package.json
+  - "!src/**"
+  - "!bootstrapper/**"
+  - "!electron.vite.config.{js,ts,mjs,cjs}"
+  - "!tsconfig*.json"
+asarUnpack:
+  - resources/**
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+extraResources:
+  - from: ../../../scripts/install.ps1
+    to: install/install.ps1
+  - from: build/icon.png
+    to: icon.png
+win:
+  executableName: OpenDrSai
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  artifactName: OpenDrSai-${version}-setup.${ext}
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  shortcutName: OpenDrSai
+  uninstallDisplayName: OpenDrSai
+  createDesktopShortcut: always
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+publish:
+  provider: github
+  owner: hepai-lab
+  repo: drsai

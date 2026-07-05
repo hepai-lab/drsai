@@ -18,6 +18,32 @@
 
 import type { AssistantTurn, Turn, UserTurn } from './types.js'
 
+function asNumber(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return fallback
+}
+
+function asArgs(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      return { _raw: value }
+    }
+  }
+  return {}
+}
+
 export function parseHistoryMessage(msg: Record<string, unknown>): Turn | null {
   const role = msg.role as string
   
@@ -25,18 +51,18 @@ export function parseHistoryMessage(msg: Record<string, unknown>): Turn | null {
     return {
       role: 'user',
       text: (msg.content as string) || '',
-      timestamp: Date.now(),
-    } as UserTurn
+      ts: asNumber(msg.created_at ?? msg.timestamp, Date.now()),
+    } satisfies UserTurn
   }
   
   if (role === 'assistant') {
     const turn: AssistantTurn = {
       role: 'assistant',
       text: (msg.content as string) || '',
-      timestamp: Date.now(),
+      startedAt: asNumber(msg.created_at ?? msg.timestamp, Date.now()),
       tools: [],
       reasoning: '',
-      status: 'completed',
+      status: 'complete',
     }
     
     // Parse tool calls if present
@@ -44,12 +70,11 @@ export function parseHistoryMessage(msg: Record<string, unknown>): Turn | null {
       turn.tools = msg.tool_calls.map((tc: any) => ({
         id: tc.id || tc.tool_id || '',
         name: tc.function?.name || tc.name || '',
-        args: typeof tc.function?.arguments === 'string' 
-          ? tc.function.arguments 
-          : JSON.stringify(tc.function?.arguments || tc.args || {}),
+        args: asArgs(tc.function?.arguments ?? tc.args),
+        status: 'complete',
         result: tc.result || '',
-        duration_ms: tc.duration_ms || 0,
-        completed: true,
+        durationMs: tc.duration_ms || tc.durationMs || 0,
+        startedAt: asNumber(tc.started_at ?? tc.startedAt, Date.now()),
       }))
     }
     
@@ -61,6 +86,7 @@ export function parseHistoryMessage(msg: Record<string, unknown>): Turn | null {
         prompt_tokens: (usage.prompt_tokens as number) || 0,
         completion_tokens: (usage.completion_tokens as number) || 0,
         total_tokens: (usage.total_tokens as number) || 0,
+        status: (usage.status as string) || 'complete',
       }
     }
     

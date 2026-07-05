@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/hepai-lab/drsai/schemas/latest-windows.json",
+  "title": "OpenDrSai Windows release manifest",
+  "type": "object",
+  "required": ["version", "channel", "minimumBootstrapperVersion", "installer", "sha256", "sizeBytes"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Full desktop application version."
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["stable", "beta", "dev"]
+    },
+    "minimumBootstrapperVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "installer": {
+      "type": "string",
+      "format": "uri",
+      "description": "HTTPS URL for the full OpenDrSai installer."
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[A-Fa-f0-9]{64}$"
+    },
+    "sizeBytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "releaseNotes": {
+      "type": "string",
+      "format": "uri"
+    }
+  },
+  "additionalProperties": false
+}

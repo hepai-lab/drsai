@@ -455,6 +455,21 @@ class AgentManager:
 
         return f"{user_id}:{thread_id}"
 
+    def _fake_stream(self, task: str):
+        """Deterministic stream used only for desktop/API smoke tests."""
+
+        async def _stream():
+            from autogen_agentchat.messages import ModelClientStreamingChunkEvent
+            from autogen_agentchat.base import TaskResult
+
+            yield ModelClientStreamingChunkEvent(
+                content=f"fake-agent: {task}",
+                source="assistant",
+            )
+            yield TaskResult(messages=[], stop_reason="fake-agent-complete")
+
+        return _stream()
+
 
 
     async def _get_lock(self, key: str) -> asyncio.Lock:
@@ -747,6 +762,11 @@ class AgentManager:
         uid = user_id or _get_user_id()
 
         tid = thread_id or "__default__"
+
+        if os.environ.get("DRSAI_GATEWAY_FAKE_AGENT") == "1":
+            async for event in self._fake_stream(task):
+                yield event
+            return
 
         key = self._make_key(uid, tid)
 
@@ -1321,6 +1341,7 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
         """Generate SSE events from agent.run_stream()."""
 
         has_content = False
+        sent_done = False
 
 
 
@@ -1346,11 +1367,17 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
                 if sse:
 
+                    if "[DONE]" in sse:
+                        sent_done = True
+
                     if sse.startswith("data:") and "[DONE]" not in sse:
 
                         has_content = True
 
                     yield sse
+
+            if not sent_done:
+                yield "data: [DONE]\n\n"
 
 
 

@@ -8,6 +8,10 @@ __pycache__/
 drsai-desktop/node_modules/
 drsai-desktop/out/
 drsai-desktop/dist/
+windows/node_modules/
+windows/out/
+windows/dist/
+windows/release/
 
 # IDE
 .idea/

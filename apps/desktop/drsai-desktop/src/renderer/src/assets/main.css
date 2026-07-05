@@ -1034,6 +1034,58 @@ body {
   gap: 4px;
 }
 
+.chat-searchbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+}
+
+.chat-searchbar-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.chat-searchbar-input {
+  flex: 1;
+  min-width: 120px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-sans);
+}
+
+.chat-searchbar-input::placeholder {
+  color: var(--text-muted);
+}
+
+.chat-searchbar-count {
+  min-width: 72px;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-searchbar-step,
+.chat-searchbar-close {
+  padding: 4px 6px;
+}
+
+.chat-searchbar-step:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.chat-searchbar-up {
+  transform: rotate(180deg);
+}
+
 .chat-clear-btn {
   opacity: 0.6;
 }
@@ -1408,6 +1460,23 @@ body {
   max-width: 100%;
   overflow-x: auto;
   user-select: text;
+}
+
+.chat-message-search-match .chat-bubble {
+  outline: 1px solid rgba(245, 158, 11, 0.45);
+  outline-offset: 2px;
+}
+
+.chat-message-search-active .chat-bubble {
+  outline: 2px solid var(--warning);
+  outline-offset: 3px;
+}
+
+.chat-search-mark {
+  background: rgba(245, 158, 11, 0.38);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
 }
 
 .chat-bubble-user {

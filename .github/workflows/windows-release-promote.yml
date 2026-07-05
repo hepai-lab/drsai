@@ -1,0 +1,87 @@
+name: Windows Release Promote
+
+env:
+  OPENDRSAI_RELEASE_REPOSITORY: hepai-lab/drsai
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Draft release tag to verify and publish"
+        required: true
+      promote:
+        description: "Publish the draft release after verification"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  verify-and-promote-windows-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: apps/desktop/windows
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/windows/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify release tag matches package version
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json | ConvertFrom-Json
+          $expectedTag = "v$($package.version)"
+          if ("${{ inputs.release_tag }}" -ne $expectedTag) {
+            throw "Release tag ${{ inputs.release_tag }} must match package version tag $expectedTag."
+          }
+
+      - name: Download draft release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ inputs.release_tag }}"
+          $release = gh release view $tag --repo $env:OPENDRSAI_RELEASE_REPOSITORY --json isDraft,isPrerelease,tagName | ConvertFrom-Json
+          if (-not $release.isDraft) {
+            throw "Release $tag is not a draft. Use windows-public-release-verify.yml for already published releases."
+          }
+
+          New-Item -ItemType Directory -Force -Path release, release\bootstrapper | Out-Null
+          gh release download $tag --repo $env:OPENDRSAI_RELEASE_REPOSITORY --dir release --clobber `
+            --pattern "OpenDrSai-*-setup.exe" `
+            --pattern "OpenDrSai-*-setup.exe.blockmap" `
+            --pattern "latest.yml" `
+            --pattern "latest-windows.json" `
+            --pattern "release-summary.json"
+          gh release download $tag --repo $env:OPENDRSAI_RELEASE_REPOSITORY --dir release\bootstrapper --clobber `
+            --pattern "OpenDrSai Installer.exe"
+
+      - name: Verify draft release artifacts
+        env:
+          EXPECTED_WINDOWS_SIGNER_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+          EXPECTED_WINDOWS_SIGNER_SUBJECT: ${{ vars.WINDOWS_CERTIFICATE_SUBJECT }}
+          REQUIRE_SIGNED_WINDOWS_ARTIFACTS: "1"
+        run: |
+          npm run verify:manifest
+          npm run verify:artifacts
+          npm run verify:signatures
+
+      - name: Publish draft release
+        if: inputs.promote
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${{ inputs.release_tag }}" --repo $env:OPENDRSAI_RELEASE_REPOSITORY --draft=false

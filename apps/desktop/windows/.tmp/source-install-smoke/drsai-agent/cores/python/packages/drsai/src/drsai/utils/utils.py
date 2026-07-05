@@ -1,0 +1,575 @@
+import base64
+import os
+from typing import Any, List, Sequence, Dict, Union
+import json
+from autogen_agentchat.messages import ChatMessage, MultiModalMessage, TextMessage
+from autogen_core import Image
+from loguru import logger
+import shutil
+from typing import Optional
+import zlib
+from openai import OpenAI
+import requests
+import re
+
+def upload_to_hepai_filesystem(file_path: str, api_key: str|None = None) -> Dict[str, Any]:
+ 
+    client = OpenAI(
+        base_url="https://aiapi.ihep.ac.cn/apiv2",
+        api_key= api_key or os.environ.get("HEPAI_API_KEY")
+    )
+
+    file_obj = client.files.create(
+        file=open(file_path, "rb"),
+        purpose="user_data"
+    )
+    url = f"https://aiapi.ihep.ac.cn/apiv2/files/{file_obj.id}/preview"
+    file_obj = file_obj.model_dump()
+    file_obj["url"] = url
+    return file_obj
+
+def construct_task(
+    query: str, 
+    files: List[Dict[str, Any]] | None = None,
+    metadata: Dict[str, Any] = {},
+) -> Sequence[ChatMessage]:
+    """
+    Construct a task from a query string and list of files.
+    Returns a list of ChatMessages that combines all files and the query.
+    Args:
+        query (str): The text query from the user
+        files (List[Dict[str, Any]]): List of file objects with properties name, content, and type
+
+    Returns:
+        Sequence[ChatMessage]: A list of ChatMessages that combines all files and the query.
+    """
+    if files is None:
+        files = []
+
+    images: List[Image] = []
+    text_parts: List[str] = []
+    messages_return: Sequence[ChatMessage] = []
+    attached_files: List[Dict[str, str]] = []
+    # Process each file based on its type
+    for file in files:
+        try:
+            if file.get("type", "").startswith("image/"):
+                image = Image.from_file(file["path"])
+                images.append(image)
+                text_parts.append(f"Attached image: {file.get('name', 'unknown.img')}")
+                # name and type
+                attached_files.append(
+                    {
+                        "name": file.get("name", "unknown.img"),
+                        "type": file.get("type", "image"),
+                        "size": file.get("size", 0),
+                        "url": file.get("url", ""),
+                    }
+                )
+            else:
+                # Handle all other files as text
+                try:
+                    # text_content = base64.b64decode(file["content"]).decode("utf-8")
+                    with open(file["path"], "r", encoding="utf-8") as f:
+                        text_content = f.read()
+                    text_parts.append(
+                        f"Attached file: {file.get('name', 'unknown.file')}\n{text_content}"
+                    )
+                    attached_files.append(
+                        {
+                            "name": file.get("name", "unknown.file"),
+                            "type": file.get("type", "text"),
+                            "size": file.get("size", 0),
+                            "url": file.get("url", ""),
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Error processing file content: {str(e)}")
+                    text_parts.append(
+                        f"Attached file: {file.get('name', 'unknown.file')} (failed to process content)"
+                    )
+                    attached_files.append(
+                        {
+                            "name": file.get("name", "unknown.file"),
+                            "type": file.get("type", "text"),
+                            "size": file.get("size", 0),
+                            "url": file.get("url", ""),
+                        }
+                    )
+
+        except Exception as e:
+            logger.error(f"Error processing file {file.get('name')}: {str(e)}")
+
+    # Add the user query at the end
+    combined_text = "\n\n".join(text_parts)
+    attached_files_json = json.dumps(attached_files)
+    metadata.update({"attached_files": attached_files_json})
+    # Return a MultiModalMessage if there are images, otherwise a TextMessage
+    if len(text_parts) > 0:
+        messages_return.append(
+            TextMessage(
+                source="user", content=combined_text, metadata={"internal": "yes"}
+            )
+        )
+    if images:
+        messages_return.append(
+            MultiModalMessage(
+                source="user",
+                content=[query, *images],
+                metadata=metadata,
+            )
+        )
+    else:
+        messages_return.append(
+            TextMessage(
+                source="user",
+                content=query,
+                metadata=metadata,
+            )
+        )
+
+    return messages_return
+
+
+# def construct_task(
+#     query: str, files: List[Dict[str, Any]] | None = None
+# ) -> Sequence[ChatMessage]:
+#     """
+#     Construct a task from a query string and list of files.
+#     Returns a list of ChatMessages that combines all files and the query.
+#     Args:
+#         query (str): The text query from the user
+#         files (List[Dict[str, Any]]): List of file objects with properties name, content, and type
+
+#     Returns:
+#         Sequence[ChatMessage]: A list of ChatMessages that combines all files and the query.
+#     """
+#     if files is None:
+#         files = []
+
+#     images: List[Image] = []
+#     text_parts: List[str] = []
+#     messages_return: Sequence[ChatMessage] = []
+#     attached_files: List[Dict[str, str]] = []
+#     # Process each file based on its type
+#     for file in files:
+#         try:
+#             if file.get("type", "").startswith("image/"):
+#                 # Handle image file using from_base64 method
+#                 image = Image.from_base64(file["content"])
+#                 images.append(image)
+#                 text_parts.append(f"Attached image: {file.get('name', 'unknown.img')}")
+#                 # name and type
+#                 attached_files.append(
+#                     {
+#                         "name": file.get("name", "unknown.img"),
+#                         "type": file.get("type", "image"),
+#                     }
+#                 )
+#             else:
+#                 # Handle all other files as text
+#                 try:
+#                     text_content = base64.b64decode(file["content"]).decode("utf-8")
+#                     text_parts.append(
+#                         f"Attached file: {file.get('name', 'unknown.file')}\n{text_content}"
+#                     )
+#                     attached_files.append(
+#                         {
+#                             "name": file.get("name", "unknown.file"),
+#                             "type": file.get("type", "text"),
+#                         }
+#                     )
+#                 except Exception as e:
+#                     logger.error(f"Error processing file content: {str(e)}")
+#                     text_parts.append(
+#                         f"Attached file: {file.get('name', 'unknown.file')} (failed to process content)"
+#                     )
+#                     attached_files.append(
+#                         {
+#                             "name": file.get("name", "unknown.file"),
+#                             "type": file.get("type", "text"),
+#                         }
+#                     )
+#         except Exception as e:
+#             logger.error(f"Error processing file {file.get('name')}: {str(e)}")
+
+#     # Add the user query at the end
+#     combined_text = "\n\n".join(text_parts)
+#     attached_files_json = json.dumps(attached_files)
+#     # Return a MultiModalMessage if there are images, otherwise a TextMessage
+#     if len(text_parts) > 0:
+#         messages_return.append(
+#             TextMessage(
+#                 source="user", content=combined_text, metadata={"internal": "yes"}
+#             )
+#         )
+#     if images:
+#         messages_return.append(
+#             MultiModalMessage(
+#                 source="user",
+#                 content=[query, *images],
+#                 metadata={"attached_files": attached_files_json},
+#             )
+#         )
+#     else:
+#         messages_return.append(
+#             TextMessage(
+#                 source="user",
+#                 content=query,
+#                 metadata={"attached_files": attached_files_json},
+#             )
+#         )
+
+#     return messages_return
+
+
+def get_file_type(file_path: str) -> str:
+    """
+    Get file type determined by the file extension. If the file extension is not
+    recognized, 'unknown' will be used as the file type.
+
+    Args:
+        file_path (str): The path to the file to be serialized.
+    Returns:
+        str: A string containing the file type.
+    """
+
+    # Extended list of file extensions for code and text files
+    CODE_EXTENSIONS = {
+        ".py",
+        ".python",
+        ".js",
+        ".jsx",
+        ".java",
+        ".c",
+        ".cpp",
+        ".cs",
+        ".ts",
+        ".tsx",
+        ".html",
+        ".css",
+        ".scss",
+        ".less",
+        ".json",
+        ".xml",
+        ".yaml",
+        ".yml",
+        ".md",
+        ".rst",
+        ".tex",
+        ".sh",
+        ".bat",
+        ".ps1",
+        ".php",
+        ".rb",
+        ".go",
+        ".swift",
+        ".kt",
+        ".hs",
+        ".scala",
+        ".lua",
+        ".pl",
+        ".sql",
+        ".config",
+    }
+
+    # Supported spreadsheet extensions
+    CSV_EXTENSIONS = {".csv", ".xlsx"}
+
+    # Supported image extensions
+    IMAGE_EXTENSIONS = {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".tiff",
+        ".svg",
+        ".webp",
+    }
+    # Supported (web) video extensions
+    VIDEO_EXTENSIONS = {".mp4", ".webm", ".ogg", ".mov", ".avi", ".wmv"}
+
+    # Supported PDF extension
+    PDF_EXTENSION = ".pdf"
+
+    # Determine the file extension
+    _, file_extension = os.path.splitext(file_path)
+
+    # Determine the file type based on the extension
+    if file_extension in CODE_EXTENSIONS:
+        file_type = "code"
+    elif file_extension in CSV_EXTENSIONS:
+        file_type = "csv"
+    elif file_extension in IMAGE_EXTENSIONS:
+        file_type = "image"
+    elif file_extension == PDF_EXTENSION:
+        file_type = "pdf"
+    elif file_extension in VIDEO_EXTENSIONS:
+        file_type = "video"
+    else:
+        file_type = "unknown"
+
+    return file_type
+
+
+def get_modified_files(
+    start_timestamp: float, end_timestamp: float, source_dir: str
+) -> List[Dict[str, str]]:
+    """
+    Identify files from source_dir that were modified within a specified timestamp range.
+    The function excludes files with certain file extensions and names.
+
+    Args:
+        start_timestamp (float): The floating-point number representing the start timestamp to filter modified files.
+        end_timestamp (float): The floating-point number representing the end timestamp to filter modified files.
+        source_dir (str): The directory to search for modified files.
+    Returns:
+        List[Dict[str, str]]: A list of dictionaries with details of relative file paths that were modified.
+            Dictionary format: {path: "", name: "", extension: "", type: ""}
+             Files with extensions "__pycache__", "*.pyc", "__init__.py", and "*.cache"
+             are ignored.
+    """
+    modified_files: List[Dict[str, str]] = []
+    ignore_extensions = {".pyc", ".cache"}
+    ignore_files = {"__pycache__", "__init__.py"}
+
+    # Walk through the directory tree
+    for root, dirs, files in os.walk(source_dir):
+        # Update directories and files to exclude those to be ignored
+        dirs[:] = [d for d in dirs if d not in ignore_files]
+        files[:] = [
+            f
+            for f in files
+            if f not in ignore_files and os.path.splitext(f)[1] not in ignore_extensions
+        ]
+
+        for file in files:
+            file_path = os.path.join(root, file)
+            file_mtime = os.path.getmtime(file_path)
+
+            # Verify if the file was modified within the given timestamp range
+            if start_timestamp <= file_mtime <= end_timestamp:
+                file_relative_path = (
+                    "files/user" + file_path.split("files/user", 1)[1]
+                    if "files/user" in file_path
+                    else ""
+                )
+                file_type = get_file_type(file_path)
+
+                file_dict = {
+                    "path": file_relative_path,
+                    "short_path": file_relative_path,
+                    "name": os.path.basename(file),
+                    # Remove the dot
+                    "extension": os.path.splitext(file)[1].lstrip("."),
+                    "type": file_type,
+                }
+                modified_files.append(file_dict)
+
+    # Sort the modified files by extension
+    modified_files.sort(key=lambda x: x["extension"])
+    return modified_files
+
+
+def copy_files_to_run_directory(
+    new_files: List[Dict[str, Any]],
+    run_path: str,
+    source_dir: str = "./debug",
+    app_dir: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Copy multiple files to the user's run directory.
+
+    Args:
+        new_files (List[Dict[str, Any]]): List of dictionaries containing file information (path, name)
+        run_path (str): Path segment containing user_id/run_id
+        source_dir (str, optional): Directory where source files are located if path is not specified. Default: `./debug`
+        app_dir (str, optional): Base application directory, defaults to ~/.drsai_ui if None. Default: None
+
+    Returns:
+        List[Dict[str, Any]]: List of file info dictionaries with updated paths
+    """
+    # Determine app directory if not provided
+    if app_dir is None:
+        app_dir = os.path.join(os.path.expanduser("~"), ".drsai_ui")
+
+    # Create the destination directory if it doesn't exist
+    dest_dir = os.path.join(app_dir, "files", run_path)
+    os.makedirs(dest_dir, exist_ok=True)
+
+    copied_files: List[Dict[str, Any]] = []
+
+    for file_info in new_files:
+        try:
+            # Source file path
+            src_path = file_info.get("path", "")
+            if not src_path:
+                # If no path is specified, look in the source directory
+                src_path = os.path.join(source_dir, file_info.get("name", ""))
+
+            # Destination file path
+            dest_path = os.path.join(dest_dir, file_info.get("name", ""))
+
+            # Copy the file
+            if os.path.exists(src_path):
+                shutil.copy2(src_path, dest_path)
+
+                # Create a copy of the file info with updated path
+                updated_file_info = file_info.copy()
+                updated_file_info["path"] = dest_path
+                updated_file_info["short_path"] = os.path.join(
+                    run_path, file_info.get("name", "")
+                )
+                copied_files.append(updated_file_info)
+            else:
+                print(f"Warning: Source file not found: {src_path}")
+        except Exception as e:
+            print(f"Failed to copy file {file_info.get('name')}: {e}")
+
+    return copied_files
+
+
+def compress_state(state: Dict[Any, Any]) -> str:
+    """Compress state dictionary to a base64 encoded string"""
+    state_json = json.dumps(state)
+    compressed = zlib.compress(state_json.encode("utf-8"))
+    return base64.b64encode(compressed).decode("utf-8")
+
+
+def decompress_state(compressed_state: str) -> Dict[Any, Any]:
+    """Decompress base64 encoded string back to state dictionary.
+    
+    If decompression fails (e.g. the string is a plain JSON string from legacy data),
+    fall back to parsing it directly as JSON.
+    """
+    try:
+        compressed = base64.b64decode(compressed_state.encode("utf-8"))
+        decompressed = zlib.decompress(compressed)
+        return json.loads(decompressed.decode("utf-8"))
+    except Exception:
+        return json.loads(compressed_state)
+
+def auto_worker_address(worker_address, host, port):
+    import socket
+    if worker_address != 'auto':
+        return worker_address
+    if host in ['localhost', '127.0.0.1']:
+        return f'http://{host}:{port}'
+    elif host == '0.0.0.0':
+        ## TODO，此处需要改进，获取本机ip
+        # 获取本机的外部 IP 地址是使用一个与外部世界的连接
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            ip = s.getsockname()[0]
+        return f'http://{ip}:{port}'
+    else:
+        raise ValueError(f'host {host} is not supported')
+    
+
+
+def download_file_from_url_or_base64(file_info: dict, save_path: str) -> str:
+    """
+    根据文件的URL或base64编码下载文件到指定路径
+    
+    Args:
+        file_info (dict): 包含文件信息的字典，应包含'url'或'base64'键
+        save_path (str): 文件保存的完整路径（包括文件名）
+        
+    Returns:
+        str: 下载成功返回保存的文件路径，失败返回None
+    """
+    url = file_info.get("url")
+    base64_data = file_info.get("base64")
+    filename = file_info.get("name", "unknown.file")
+    # 创建目录（如果不存在）
+    directory = os.path.dirname(save_path)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory, exist_ok=True)
+    
+    try:
+        if url:
+            # 从URL下载文件
+            response = requests.get(url)
+            response.raise_for_status()  # 检查请求是否成功
+            
+            with open(save_path, 'wb') as file:
+                file.write(response.content)
+                
+            logger.info(f"{filename} has been saved into: {save_path}")
+            return save_path
+            
+        elif base64_data:
+            # 解码base64数据并保存为文件
+            # 如果base64字符串包含data前缀，需要先移除
+            if ',' in base64_data:
+                header, base64_data = base64_data.split(',', 1)
+            
+            # 解码base64并写入文件
+            file_data = base64.b64decode(base64_data)
+            with open(save_path, 'wb') as file:
+                file.write(file_data)
+                
+            logger.info(f"{filename} has been saved into: {save_path}")
+            return save_path
+        else:
+            pass
+            
+    except requests.RequestException as e:
+        logger.debug(f"An error occurred while saving the file {filename}: {e}")
+        return None
+    except Exception as e:
+        logger.debug(f"An error occurred while saving the file {filename}: {e}")
+        return None
+
+def fix_and_parse_json(json_str: str, debug: bool = True) -> Union[Dict[str, Any], str]:
+    """
+    修复 AI 生成的不标准 JSON 并解析
+    成功：返回 dict
+    失败：返回 【完整报错 + 原始字符串】，绝不会丢失现场！
+    
+    支持修复：
+    1. 无引号字符串（status: in_progress → "status": "in_progress"）
+    2. 单引号转双引号
+    3. 多余转义符 \
+    4. AI 返回的 ```json 代码块
+    5. 首尾空白、换行
+    """
+    original_str = json_str  # 永远保留原始字符串，报错时返回
+    
+    if not json_str or not isinstance(json_str, str):
+        return f"[JSON解析失败] 输入为空或非字符串 | 原始内容：{original_str}"
+
+    try:
+        # 1. 尝试直接解析（合法JSON直接返回）
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        if debug:
+            print(f"[初次解析失败] {str(e)}")
+
+    try:
+        # 2. 开始自动修复
+        json_str = json_str.strip()
+        json_str = re.sub(r'```json|```', '', json_str)  # 移除代码块
+        json_str = json_str.replace("'", '"')            # 单引号→双引号
+        json_str = json_str.replace('\\"', '"')          # 移除多余转义
+
+        # 修复无引号的 key
+        json_str = re.sub(r'([a-zA-Z0-9_]+)\s*:', r'"\1":', json_str)
+        # 修复无引号的 value（你的 in_progress 问题）
+        json_str = re.sub(r':\s*([a-zA-Z_]+)([,}])', r': "\1"\2', json_str)
+
+        # 3. 修复后再次解析
+        return json.loads(json_str)
+
+    except Exception as e:
+        # 最终失败：返回【完整报错 + 位置 + 原始字符串】
+        error_msg = (
+            f"[JSON最终解析失败]\n"
+            f"错误类型：{type(e).__name__}\n"
+            f"错误信息：{str(e)}\n"
+            f"原始字符串：{original_str}"
+        )
+        if debug:
+            print(error_msg)
+        return error_msg

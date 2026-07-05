@@ -85,6 +85,7 @@ function Layout({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [activeProfile, setActiveProfile] = useState("default");
+  const [sessionsSearchFocusNonce, setSessionsSearchFocusNonce] = useState(0);
   // Tabs lazy-mount on first visit, then stay mounted (display:none toggle).
   // Keeps IPC refetch / DOM rebuild off the tab-switch hot path.
   const [visitedViews, setVisitedViews] = useState<Set<View>>(
@@ -179,6 +180,7 @@ function Layout({
     });
     const cleanupSearch = window.drsaiAPI.onMenuSearchSessions(() => {
       goTo("sessions");
+      setSessionsSearchFocusNonce((n) => n + 1);
     });
     return () => {
       cleanupNewChat();
@@ -298,6 +300,7 @@ function Layout({
                 onNewChat={handleNewChat}
                 currentSessionId={currentSessionId}
                 visible={view === "sessions"}
+                focusSearchNonce={sessionsSearchFocusNonce}
               />
             )}
           </div>

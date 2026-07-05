@@ -236,7 +236,7 @@ export async function verifyInstall(): Promise<boolean> {
   return new Promise((resolve) => {
     execFile(
       DRSAI_PYTHON,
-      drsaiCliArgs(["--version"]),
+      drsaiCliArgs(["version"]),
       {
         cwd: DRSAI_REPO,
         env: {
@@ -279,7 +279,7 @@ export async function getDrsaiVersion(): Promise<string | null> {
   return new Promise((resolve) => {
     execFile(
       DRSAI_PYTHON,
-      drsaiCliArgs(["--version"]),
+      drsaiCliArgs(["version"]),
       {
         cwd: DRSAI_REPO,
         env: {
