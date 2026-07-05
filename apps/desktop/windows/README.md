@@ -33,7 +33,7 @@ windows/
 
 ```powershell
 cd C:\path\to\drsai
-.\scripts\windows-desktop-dev.cmd
+.\apps\desktop\windows-desktop-dev.cmd
 ```
 
 That command links `%USERPROFILE%\.drsai\drsai-agent` to the current checkout,
@@ -45,15 +45,15 @@ reuse the healthy linked backend and go straight to the desktop startup path.
 Useful variants:
 
 ```powershell
-.\scripts\windows-desktop-dev.cmd -InstallOnly
-.\scripts\windows-desktop-dev.cmd -InstallOnly -ForceInstall
-.\scripts\windows-desktop-dev.cmd -InstallPrerequisites
-.\scripts\windows-desktop-dev.cmd -SkipNpmInstall
+.\apps\desktop\windows-desktop-dev.cmd -InstallOnly
+.\apps\desktop\windows-desktop-dev.cmd -InstallOnly -ForceInstall
+.\apps\desktop\windows-desktop-dev.cmd -InstallPrerequisites
+.\apps\desktop\windows-desktop-dev.cmd -SkipNpmInstall
 ```
 
 Use the `.cmd` wrapper for double-click or normal terminal startup. If you run
 the PowerShell file directly, invoke it from a PowerShell terminal with
-`powershell -ExecutionPolicy Bypass -File .\scripts\windows-desktop-dev.ps1`.
+`powershell -ExecutionPolicy Bypass -File .\apps\desktop\windows-desktop-dev.ps1`.
 
 From the desktop app directory, the same flow is available as npm scripts:
 

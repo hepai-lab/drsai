@@ -483,7 +483,7 @@ check("gateway readiness validates DrSai-compatible endpoints", () => {
   const main = read("src/main/index.ts");
   const api = read("src/shared/desktopApi.ts");
   const app = read("src/renderer/src/App.tsx");
-  const devScript = read("../../../scripts/windows-desktop-dev.ps1");
+  const devScript = read("../windows-desktop-dev.ps1");
   return (
     gateway.includes("/health") &&
     gateway.includes("/v1/models") &&
