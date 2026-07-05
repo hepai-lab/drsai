@@ -127,9 +127,51 @@ export interface ChatMessage {
 }
 
 export interface ChatAttachment {
-  kind: "file" | "folder";
+  kind: "file" | "folder" | "browser" | "terminal";
   path: string;
   name: string;
+  url?: string;
+  title?: string;
+  visibleText?: string;
+  screenshotDataUrl?: string;
+  note?: string;
+}
+
+export interface BrowserUrlCheck {
+  allowed: boolean;
+  reason: string;
+  normalizedUrl?: string;
+  scope: "local" | "workspace-file" | "public" | "blocked";
+}
+
+export interface BrowserActionRequest {
+  action:
+    | "open"
+    | "snapshot"
+    | "screenshot"
+    | "read_text"
+    | "eval_readonly"
+    | "click"
+    | "type"
+    | "select"
+    | "key_press"
+    | "wait_for"
+    | "assert_text";
+  url?: string;
+  selector?: string;
+  text?: string;
+  value?: string;
+  key?: string;
+  script?: string;
+  timeoutMs?: number;
+  approved?: boolean;
+}
+
+export interface BrowserActionResult {
+  ok: boolean;
+  action: BrowserActionRequest["action"];
+  message: string;
+  url?: string;
 }
 
 export interface ChatRequest {
@@ -187,7 +229,7 @@ export interface WorkspaceGitStatus {
 }
 
 export interface WorkspaceInstructionSummary {
-  name: "AGENTS.md" | "DRSAI.md";
+  name: "AGENTS.md" | "DRSAI.md" | "CLAUDE.md" | "project.md";
   path: string;
   content: string;
   truncated: boolean;
@@ -208,6 +250,108 @@ export interface WorkspaceProject {
   hasAgentInstructions?: boolean;
   instructions?: WorkspaceInstructionSummary[];
   metadata?: Record<string, unknown>;
+}
+
+export type WorkspacePreviewKind =
+  | "text"
+  | "code"
+  | "markdown"
+  | "json"
+  | "structured"
+  | "table"
+  | "image"
+  | "pdf"
+  | "office"
+  | "binary"
+  | "large"
+  | "unknown";
+
+export type WorkspaceFileGitStatus =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "untracked"
+  | "clean";
+
+export interface WorkspaceContextOverview {
+  workspacePath: string;
+  trusted: boolean;
+  git?: WorkspaceGitStatus & {
+    changedFiles: Array<{
+      path: string;
+      status: WorkspaceFileGitStatus;
+    }>;
+  };
+  instructions: WorkspaceInstructionSummary[];
+  stats: {
+    instructionCount: number;
+    changedFileCount: number;
+  };
+}
+
+export interface WorkspaceFileNode {
+  name: string;
+  path: string;
+  relativePath: string;
+  type: "file" | "directory";
+  extension?: string;
+  size?: number;
+  modifiedAt?: string;
+  gitStatus?: WorkspaceFileGitStatus;
+  previewKind?: WorkspacePreviewKind;
+  children?: WorkspaceFileNode[];
+  truncated?: boolean;
+}
+
+export interface WorkspaceFileTreeRequest {
+  workspacePath: string;
+  query?: string;
+  maxDepth?: number;
+  maxEntries?: number;
+}
+
+export interface WorkspaceFileTreeResult {
+  workspacePath: string;
+  nodes: WorkspaceFileNode[];
+  totalEntries: number;
+  truncated: boolean;
+}
+
+export interface WorkspaceFilePreviewRequest {
+  workspacePath: string;
+  path: string;
+  maxBytes?: number;
+}
+
+export interface WorkspaceFilePreview {
+  workspacePath: string;
+  path: string;
+  relativePath: string;
+  name: string;
+  kind: WorkspacePreviewKind;
+  mime: string;
+  size: number;
+  modifiedAt: string;
+  truncated: boolean;
+  content?: string;
+  dataUrl?: string;
+  rows?: string[][];
+  columns?: string[];
+  message?: string;
+}
+
+export interface WorkspaceGitDiffRequest {
+  workspacePath: string;
+  path?: string;
+  maxChars?: number;
+}
+
+export interface WorkspaceGitDiffResult {
+  workspacePath: string;
+  path?: string;
+  diff: string;
+  truncated: boolean;
 }
 
 export interface CreateWorkspaceRequest {
@@ -272,13 +416,27 @@ export interface TerminalCreateOptions {
   cols?: number;
   rows?: number;
   cwd?: string;
+  workspaceKey?: string;
+  title?: string;
+  shellProfile?: TerminalShellProfile;
 }
+
+export type TerminalShellProfile =
+  | "powershell"
+  | "pwsh"
+  | "cmd"
+  | "git-bash"
+  | "wsl";
 
 export interface TerminalSessionInfo {
   id: string;
   pid: number;
   shell: string;
+  shellProfile: TerminalShellProfile;
   cwd: string;
+  title: string;
+  workspaceKey: string;
+  createdAt: string;
 }
 
 export interface TerminalDataEvent {
@@ -315,6 +473,10 @@ export interface DesktopApi {
   createWorkspace(request: CreateWorkspaceRequest): Promise<WorkspaceProject>;
   updateWorkspace(request: UpdateWorkspaceRequest): Promise<WorkspaceProject>;
   deleteWorkspace(id: string): Promise<boolean>;
+  getWorkspaceContextOverview(workspacePath: string): Promise<WorkspaceContextOverview>;
+  listWorkspaceFiles(request: WorkspaceFileTreeRequest): Promise<WorkspaceFileTreeResult>;
+  previewWorkspaceFile(request: WorkspaceFilePreviewRequest): Promise<WorkspaceFilePreview>;
+  getWorkspaceGitDiff(request: WorkspaceGitDiffRequest): Promise<WorkspaceGitDiffResult>;
   listThreads(): Promise<DesktopThread[]>;
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;
   updateThread(request: UpdateThreadRequest): Promise<DesktopThread>;
@@ -327,9 +489,19 @@ export interface DesktopApi {
   saveApiKey(apiKey: string): Promise<SaveApiKeyResult>;
   pickFiles(): Promise<PickDialogResult>;
   pickFolder(): Promise<PickDialogResult>;
+  checkBrowserUrl(url: string): Promise<BrowserUrlCheck>;
+  requestBrowserAction(
+    request: BrowserActionRequest,
+  ): Promise<BrowserActionResult>;
   openExternal(url: string): Promise<void>;
   openPath(path: string): Promise<string>;
   createTerminal(options?: TerminalCreateOptions): Promise<TerminalSessionInfo>;
+  listTerminalSessions(workspaceKey?: string): Promise<TerminalSessionInfo[]>;
+  getTerminalBuffer(id: string): Promise<string>;
+  renameTerminal(
+    id: string,
+    title: string,
+  ): Promise<TerminalSessionInfo | null>;
   writeTerminal(id: string, data: string): Promise<boolean>;
   resizeTerminal(id: string, cols: number, rows: number): Promise<boolean>;
   killTerminal(id: string): Promise<boolean>;

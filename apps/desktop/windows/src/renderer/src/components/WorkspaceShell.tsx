@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  ArrowDownAZ,
   ArrowLeft,
   ArrowRight,
   CalendarClock,
@@ -53,6 +54,7 @@ interface WorkspaceShellProps {
   sessionScope: "workspace" | "all";
   sidebarCollapsed: boolean;
   user: AuthUser | null;
+  workspaceSortMode: "recent" | "name" | "created";
   workspaces: WorkspaceProject[];
   onGoBack: () => void;
   onGoForward: () => void;
@@ -74,6 +76,7 @@ interface WorkspaceShellProps {
   onToggleSidebar: () => void;
   onUpdateWorkspace: (id: string, updates: Partial<Pick<WorkspaceProject, "name" | "description" | "trusted" | "pinned">>) => void | Promise<void>;
   onWorkspaceChange: (workspaceId: string) => void;
+  onWorkspaceSortModeChange: (mode: "recent" | "name" | "created") => void;
 }
 
 export function WorkspaceShell({
@@ -96,6 +99,7 @@ export function WorkspaceShell({
   sessionScope,
   sidebarCollapsed,
   user,
+  workspaceSortMode,
   workspaces,
   onGoBack,
   onGoForward,
@@ -117,6 +121,7 @@ export function WorkspaceShell({
   onToggleSidebar,
   onUpdateWorkspace,
   onWorkspaceChange,
+  onWorkspaceSortModeChange,
 }: WorkspaceShellProps): React.JSX.Element {
   const [desktopStatusOpen, setDesktopStatusOpen] = useState(false);
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
@@ -539,6 +544,18 @@ export function WorkspaceShell({
             >
               <span className="workspace-section-title">{zh ? "工作区" : "Workspace"}</span>
               <div className="workspace-section-actions">
+                <button
+                  className={`workspace-sort-button ${workspaceSortMode !== "recent" ? "active" : ""}`}
+                  type="button"
+                  aria-label={getWorkspaceSortButtonLabel(workspaceSortMode, zh)}
+                  title={getWorkspaceSortButtonLabel(workspaceSortMode, zh)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onWorkspaceSortModeChange(getNextWorkspaceSortMode(workspaceSortMode));
+                  }}
+                >
+                  <ArrowDownAZ size={15} />
+                </button>
                 <button
                   className="workspace-create-button"
                   type="button"
@@ -982,6 +999,27 @@ function WorkspaceTypeButton({
       </span>
     </button>
   );
+}
+
+function getNextWorkspaceSortMode(
+  mode: "recent" | "name" | "created",
+): "recent" | "name" | "created" {
+  if (mode === "recent") return "name";
+  if (mode === "name") return "created";
+  return "recent";
+}
+
+function getWorkspaceSortButtonLabel(
+  mode: "recent" | "name" | "created",
+  zh: boolean,
+): string {
+  if (mode === "recent") {
+    return zh ? "工作区按最近打开排序，点击切换为按名称排序" : "Workspaces sorted by recent use. Click to sort by name.";
+  }
+  if (mode === "name") {
+    return zh ? "工作区按名称排序，点击切换为按创建时间排序" : "Workspaces sorted by name. Click to sort by created time.";
+  }
+  return zh ? "工作区按创建时间排序，点击切换为按最近打开排序" : "Workspaces sorted by created time. Click to sort by recent use.";
 }
 
 function getEnabledNavItems(navSections: NavSection[], sectionId: NavSection["id"]): NavSection["items"] {

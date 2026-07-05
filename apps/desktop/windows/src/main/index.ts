@@ -24,10 +24,7 @@ import {
 } from "./gateway";
 import { getDesktopHealth, getInstallStatus } from "./status";
 import { DRSAI_HOME } from "./paths";
-import {
-  checkForUpdates,
-  subscribeUpdateStatus,
-} from "./updates";
+import { checkForUpdates, subscribeUpdateStatus } from "./updates";
 import { abortChat, startChat } from "./chat";
 import { abortAgentRun, startAgentRun } from "./agentRuns";
 import { createThread, listThreads, updateThread } from "./threads";
@@ -37,6 +34,12 @@ import {
   listWorkspaces,
   updateWorkspace,
 } from "./workspaces";
+import {
+  getWorkspaceContextOverview,
+  getWorkspaceGitDiff,
+  listWorkspaceFiles,
+  previewWorkspaceFile,
+} from "./workspaceContext";
 import { saveApiKey } from "./settings";
 import {
   cancelOidcLogin,
@@ -54,17 +57,22 @@ import {
 import { maybeRunE2eSmoke } from "./e2eSmoke";
 import {
   createTerminalSession,
+  getTerminalBuffer,
   killAllTerminalSessions,
   killTerminalSession,
+  listTerminalSessions,
+  renameTerminalSession,
   resizeTerminalSession,
   writeTerminalSession,
 } from "./terminal";
 import type { TerminalCreateOptions } from "./terminal";
 
 let mainWindow: BrowserWindow | null = null;
+let browserWebContentsPolicyRegistered = false;
 
 const rendererHtmlPath = join(__dirname, "../renderer/index.html");
 const TRUSTED_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const TRUSTED_BROWSER_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
 if (process.env.OPENDRSAI_E2E_DISABLE_GPU === "1") {
   app.disableHardwareAcceleration();
@@ -99,6 +107,7 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      webviewTag: true,
     },
   });
 
@@ -117,9 +126,23 @@ function createWindow(): void {
       event.preventDefault();
     }
   });
-  mainWindow.webContents.on("will-attach-webview", (event) => {
-    event.preventDefault();
-  });
+  mainWindow.webContents.on(
+    "will-attach-webview",
+    (event, webPreferences, params) => {
+      const check = checkBrowserUrlSync(params.src);
+      if (!check.allowed) {
+        event.preventDefault();
+        return;
+      }
+      delete webPreferences.preload;
+      webPreferences.nodeIntegration = false;
+      webPreferences.contextIsolation = true;
+      webPreferences.sandbox = true;
+      webPreferences.webSecurity = true;
+      webPreferences.allowRunningInsecureContent = false;
+    },
+  );
+  registerBrowserWebContentsPolicy();
 
   maybeRunE2eSmoke(mainWindow);
 
@@ -133,6 +156,29 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(rendererHtmlPath);
   }
+}
+
+function registerBrowserWebContentsPolicy(): void {
+  if (browserWebContentsPolicyRegistered) return;
+  browserWebContentsPolicyRegistered = true;
+  app.on("web-contents-created", (_event, contents) => {
+    if (contents.getType() !== "webview") return;
+    contents.setWindowOpenHandler(() => ({ action: "deny" }));
+    contents.on("will-navigate", (event, url) => {
+      if (!checkBrowserUrlSync(url).allowed) event.preventDefault();
+    });
+    contents.on("will-redirect", (event, url) => {
+      if (!checkBrowserUrlSync(url).allowed) event.preventDefault();
+    });
+    contents.session.setPermissionRequestHandler(
+      (_webContents, _permission, callback) => {
+        callback(false);
+      },
+    );
+    contents.session.on("will-download", (event) => {
+      event.preventDefault();
+    });
+  });
 }
 
 function getWindowIconPath(): string | undefined {
@@ -167,6 +213,76 @@ function isAllowedDevRendererUrl(rawUrl: string): boolean {
     );
   } catch {
     return false;
+  }
+}
+
+function checkBrowserUrlSync(rawUrl: unknown): {
+  allowed: boolean;
+  reason: string;
+  normalizedUrl?: string;
+  scope: "local" | "workspace-file" | "public" | "blocked";
+} {
+  if (typeof rawUrl !== "string" || !rawUrl.trim()) {
+    return {
+      allowed: false,
+      reason: "Enter a URL to preview.",
+      scope: "blocked",
+    };
+  }
+
+  try {
+    const url = new URL(rawUrl.trim());
+    if (url.username || url.password) {
+      return {
+        allowed: false,
+        reason: "Browser preview does not allow credentials in URLs.",
+        scope: "blocked",
+      };
+    }
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      if (TRUSTED_BROWSER_HOSTS.has(url.hostname)) {
+        return {
+          allowed: true,
+          reason: "Local development URL allowed.",
+          normalizedUrl: url.toString(),
+          scope: "local",
+        };
+      }
+      if (url.protocol === "https:") {
+        return {
+          allowed: true,
+          reason: "Public HTTPS URL allowed.",
+          normalizedUrl: url.toString(),
+          scope: "public",
+        };
+      }
+      return {
+        allowed: false,
+        reason: "Public browser preview requires HTTPS.",
+        normalizedUrl: url.toString(),
+        scope: "public",
+      };
+    }
+    if (url.protocol === "file:") {
+      return {
+        allowed: false,
+        reason:
+          "Use workspace file previews through the OpenDrSai file preview flow.",
+        normalizedUrl: url.toString(),
+        scope: "workspace-file",
+      };
+    }
+    return {
+      allowed: false,
+      reason: "Only http, https, and workspace file previews are supported.",
+      scope: "blocked",
+    };
+  } catch {
+    return {
+      allowed: false,
+      reason: "The browser URL is not valid.",
+      scope: "blocked",
+    };
   }
 }
 
@@ -279,6 +395,15 @@ function registerIpc(): void {
     (event, options: TerminalCreateOptions | undefined) =>
       createTerminalSession(event, options),
   );
+  secureHandle("desktop:terminal-list", (event, workspaceKey?: string) =>
+    listTerminalSessions(event, workspaceKey),
+  );
+  secureHandle("desktop:terminal-buffer", (event, id: string) =>
+    getTerminalBuffer(event, id),
+  );
+  secureHandle("desktop:terminal-rename", (event, id: string, title: string) =>
+    renameTerminalSession(event, id, title),
+  );
   secureHandle("desktop:terminal-write", (event, id: string, data: string) =>
     writeTerminalSession(event, id, data),
   );
@@ -299,6 +424,18 @@ function registerIpc(): void {
   );
   secureHandle("desktop:delete-workspace", (_event, id: string) =>
     deleteWorkspace(id),
+  );
+  secureHandle("desktop:workspace-context-overview", (_event, workspacePath: string) =>
+    getWorkspaceContextOverview(workspacePath),
+  );
+  secureHandle("desktop:workspace-files", (_event, request) =>
+    listWorkspaceFiles(request),
+  );
+  secureHandle("desktop:workspace-file-preview", (_event, request) =>
+    previewWorkspaceFile(request),
+  );
+  secureHandle("desktop:workspace-git-diff", (_event, request) =>
+    getWorkspaceGitDiff(request),
   );
   secureHandle("desktop:list-threads", () => listThreads());
   secureHandle("desktop:create-thread", (_event, request) =>
@@ -337,6 +474,114 @@ function registerIpc(): void {
       properties: ["openDirectory"],
     });
     return { canceled: result.canceled, paths: result.filePaths };
+  });
+  secureHandle("desktop:browser-check-url", (_event, rawUrl: string) =>
+    checkBrowserUrlSync(rawUrl),
+  );
+  secureHandle("desktop:browser-action-request", (_event, request) => {
+    if (!request || typeof request !== "object") {
+      return {
+        ok: false,
+        action: "snapshot",
+        message: "Invalid browser action request.",
+      };
+    }
+    const action = String(
+      (request as { action?: unknown }).action || "snapshot",
+    );
+    const allowedActions = new Set([
+      "open",
+      "snapshot",
+      "screenshot",
+      "read_text",
+      "eval_readonly",
+      "click",
+      "type",
+      "select",
+      "key_press",
+      "wait_for",
+      "assert_text",
+    ]);
+    if (!allowedActions.has(action)) {
+      return { ok: false, action, message: "Unsupported browser action." };
+    }
+    if (action === "open") {
+      const check = checkBrowserUrlSync((request as { url?: unknown }).url);
+      return {
+        ok: check.allowed,
+        action,
+        message: check.reason,
+        url: check.normalizedUrl,
+      };
+    }
+    if (
+      action === "click" ||
+      action === "type" ||
+      action === "select" ||
+      action === "key_press"
+    ) {
+      const typedRequest = request as {
+        approved?: unknown;
+        selector?: unknown;
+        text?: unknown;
+        value?: unknown;
+        key?: unknown;
+      };
+      if (typedRequest.approved !== true) {
+        return {
+          ok: false,
+          action,
+          message: "Interactive browser actions require explicit approval.",
+        };
+      }
+      const selector = typedRequest.selector;
+      if (
+        action !== "key_press" &&
+        (typeof selector !== "string" ||
+          !selector.trim() ||
+          selector.length > 500 ||
+          /[\r\n]/.test(selector))
+      ) {
+        return {
+          ok: false,
+          action,
+          message: "Interactive browser action selector is invalid.",
+        };
+      }
+      if (
+        (action === "type" || action === "select") &&
+        (typeof typedRequest.text !== "string" ||
+          typedRequest.text.length > 4000)
+      ) {
+        return {
+          ok: false,
+          action,
+          message: "Interactive browser action text is invalid.",
+        };
+      }
+      if (
+        action === "key_press" &&
+        (typeof typedRequest.key !== "string" ||
+          !typedRequest.key.trim() ||
+          typedRequest.key.length > 80)
+      ) {
+        return {
+          ok: false,
+          action,
+          message: "Interactive browser action key is invalid.",
+        };
+      }
+      return {
+        ok: true,
+        action,
+        message: `Approved browser ${action} action accepted by the desktop bridge.`,
+      };
+    }
+    return {
+      ok: true,
+      action,
+      message: "Browser action accepted by the desktop bridge.",
+    };
   });
 }
 
@@ -390,7 +635,9 @@ async function runHeadlessOidcSmoke(): Promise<void> {
       session: loginResult.session,
     };
     result.checks.oidcLoginOk = Boolean(loginResult.ok);
-    result.checks.oidcPublicSession = publicSessionLooksHeadlessOidc(loginResult.session);
+    result.checks.oidcPublicSession = publicSessionLooksHeadlessOidc(
+      loginResult.session,
+    );
 
     const restored = await getAuthSession();
     result.details.restored = restored;
@@ -409,12 +656,15 @@ async function runHeadlessOidcSmoke(): Promise<void> {
     };
     result.checks.authContextUsesOidc = authContext.authMode === "oidc";
     result.checks.authContextHasBearerToken = Boolean(authContext.accessToken);
-    result.checks.authContextPublicSession = publicSessionLooksHeadlessOidc(authContext.session);
+    result.checks.authContextPublicSession = publicSessionLooksHeadlessOidc(
+      authContext.session,
+    );
 
     const storage = readHeadlessOidcStorage();
     result.details.storage = storage.details;
     result.checks.sessionFileExists = storage.checks.exists;
-    result.checks.sessionUsesEncryptedTokens = storage.checks.usesEncryptedTokens;
+    result.checks.sessionUsesEncryptedTokens =
+      storage.checks.usesEncryptedTokens;
     result.checks.sessionOmitsPlainTokens = storage.checks.omitsPlainTokens;
 
     const logoutResult = await logout({ clearLocalData: false });
@@ -422,8 +672,12 @@ async function runHeadlessOidcSmoke(): Promise<void> {
     result.checks.logoutOk = Boolean(logoutResult.ok);
     const afterLogout = await getAuthSession();
     result.details.afterLogout = afterLogout;
-    result.checks.afterLogoutAnonymous = Boolean(afterLogout.authenticated === false);
-    result.checks.logoutClearsSessionFile = !existsSync(join(DRSAI_HOME, "auth", "session.json"));
+    result.checks.afterLogoutAnonymous = Boolean(
+      afterLogout.authenticated === false,
+    );
+    result.checks.logoutClearsSessionFile = !existsSync(
+      join(DRSAI_HOME, "auth", "session.json"),
+    );
 
     result.ok = Object.values(result.checks).every(Boolean);
   } catch (error) {
@@ -434,44 +688,60 @@ async function runHeadlessOidcSmoke(): Promise<void> {
   app.exit(result.ok ? 0 : 1);
 }
 
-function publicSessionLooksHeadlessOidc(session: Awaited<ReturnType<typeof getAuthSession>> | null): boolean {
+function publicSessionLooksHeadlessOidc(
+  session: Awaited<ReturnType<typeof getAuthSession>> | null,
+): boolean {
   if (!session) return false;
   const asRecord = session as unknown as Record<string, unknown>;
   return Boolean(
     session.authenticated === true &&
-      session.authMode === "oidc" &&
-      session.authProvider === "hai" &&
-      session.user &&
-      session.user.id === "e2e-hai-user" &&
-      session.user.email === "e2e-hai-user@ihep.ac.cn" &&
-      session.refreshable === true &&
-      !("accessToken" in asRecord) &&
-      !("refreshToken" in asRecord) &&
-      !("idToken" in asRecord),
+    session.authMode === "oidc" &&
+    session.authProvider === "hai" &&
+    session.user &&
+    session.user.id === "e2e-hai-user" &&
+    session.user.email === "e2e-hai-user@ihep.ac.cn" &&
+    session.refreshable === true &&
+    !("accessToken" in asRecord) &&
+    !("refreshToken" in asRecord) &&
+    !("idToken" in asRecord),
   );
 }
 
 function readHeadlessOidcStorage(): {
-  checks: { exists: boolean; usesEncryptedTokens: boolean; omitsPlainTokens: boolean };
+  checks: {
+    exists: boolean;
+    usesEncryptedTokens: boolean;
+    omitsPlainTokens: boolean;
+  };
   details: Record<string, unknown>;
 } {
   const sessionPath = join(DRSAI_HOME, "auth", "session.json");
   if (!existsSync(sessionPath)) {
     return {
-      checks: { exists: false, usesEncryptedTokens: false, omitsPlainTokens: false },
+      checks: {
+        exists: false,
+        usesEncryptedTokens: false,
+        omitsPlainTokens: false,
+      },
       details: { sessionPath, exists: false },
     };
   }
-  const parsed = JSON.parse(readFileSync(sessionPath, "utf8")) as Record<string, unknown>;
+  const parsed = JSON.parse(readFileSync(sessionPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
   return {
     checks: {
       exists: true,
       usesEncryptedTokens: Boolean(
         parsed.encryptedAccessToken &&
-          parsed.encryptedRefreshToken &&
-          parsed.encryptedIdToken,
+        parsed.encryptedRefreshToken &&
+        parsed.encryptedIdToken,
       ),
-      omitsPlainTokens: !("accessToken" in parsed) && !("refreshToken" in parsed) && !("idToken" in parsed),
+      omitsPlainTokens:
+        !("accessToken" in parsed) &&
+        !("refreshToken" in parsed) &&
+        !("idToken" in parsed),
     },
     details: {
       sessionPath,

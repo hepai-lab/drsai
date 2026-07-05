@@ -2,11 +2,11 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   Bot,
   FileText,
+  Globe2,
   History,
   Library,
   Lightbulb,
   MessageSquare,
-  PanelRight,
   Plug,
   Settings,
   Sparkles,
@@ -15,10 +15,12 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type {
   AuthUser,
+  ChatAttachment,
   CreateWorkspaceRequest,
   DesktopHealth,
   DesktopThread,
   InstallProgress,
+  WorkspaceFilePreview,
   WorkspaceProject,
 } from "@shared/desktopApi";
 import { desktopApi } from "./desktopApi";
@@ -27,7 +29,12 @@ import { useAuth } from "./auth/AuthProvider";
 import { AgentSquareView } from "./components/AgentSquareView";
 import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
 import { ChatWorkspace } from "./components/ChatWorkspace";
+import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
+import {
+  WorkspaceContextPanel,
+  WorkspaceFilePreviewPane,
+} from "./components/WorkspaceContextPanel";
 import {
   WorkspaceShell,
   type WorkspaceThread,
@@ -65,15 +72,16 @@ const navIcons: Record<NavId, LucideIcon> = {
 
 const rightTabIcons: Record<RightTab, LucideIcon> = {
   files: FileText,
-  overview: PanelRight,
-  history: History,
   templates: Sparkles,
+  browser: Globe2,
   terminal: TerminalIcon,
 };
 
 const WORKSPACE_STORAGE_KEY = "opendrsai.workspaces";
 const WORKSPACE_MIGRATION_KEY = "opendrsai.workspaces.migrated";
 const THREAD_SNAPSHOT_STORAGE_KEY = "opendrsai.threadSnapshots";
+const WORKSPACE_SORT_STORAGE_KEY = "opendrsai.workspaceSortMode";
+type WorkspaceSortMode = "recent" | "name" | "created";
 
 function App(): React.JSX.Element {
   const auth = useAuth();
@@ -102,7 +110,7 @@ function AuthenticatedApp({
     MENU_IDS.currentSession,
   ]);
   const [navHistoryIndex, setNavHistoryIndex] = useState(0);
-  const [activeRightTab, setActiveRightTab] = useState<RightTab>("overview");
+  const [activeRightTab, setActiveRightTab] = useState<RightTab>("files");
   const [activeWorkspaceId, setActiveWorkspaceId] = useState("current");
   const [storedWorkspaces, setStoredWorkspaces] = useState<WorkspaceProject[]>(
     [],
@@ -114,10 +122,19 @@ function AuthenticatedApp({
   const [threadSnapshots, setThreadSnapshots] = useState<
     Record<string, ChatThreadSnapshot>
   >(() => loadThreadSnapshots());
+  const [workspaceSortMode, setWorkspaceSortMode] = useState<WorkspaceSortMode>(
+    () => loadWorkspaceSortMode(),
+  );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [sessionScope, setSessionScope] = useState<"workspace" | "all">("workspace");
   const [chatSearchRequestNonce, setChatSearchRequestNonce] = useState(0);
+  const [terminalAgentTask, setTerminalAgentTask] = useState("");
+  const [terminalCommandProposal, setTerminalCommandProposal] = useState("");
+  const [browserPanelUrl, setBrowserPanelUrl] = useState<string | undefined>();
+  const [browserAttachments, setBrowserAttachments] = useState<ChatAttachment[]>([]);
+  const [workspaceContextAttachments, setWorkspaceContextAttachments] = useState<ChatAttachment[]>([]);
+  const [workspaceFilePreview, setWorkspaceFilePreview] = useState<WorkspaceFilePreview | null>(null);
   const desktop = useDesktopHealthAdapter(language);
   const navSections = getNavSections(language);
   const navItems = getNavItems(language);
@@ -146,6 +163,7 @@ function AuthenticatedApp({
       (workspace) => workspace.path !== currentWorkspace.path,
     ),
   ];
+  const sortedWorkspaces = sortWorkspacesForSidebar(workspaces, workspaceSortMode);
   const activeWorkspace =
     workspaces.find((workspace) => workspace.id === activeWorkspaceId) ??
     currentWorkspace;
@@ -185,6 +203,12 @@ function AuthenticatedApp({
     workspaceTrusted &&
     !chat.activeRequestId,
   );
+  const externalChatAttachments = [
+    ...browserAttachments,
+    ...workspaceContextAttachments,
+  ];
+  const filesWorkspacePath =
+    activeWorkspace.id === "current" ? "Local workspace" : activeWorkspace.path;
 
   useEffect(() => {
     void refreshWorkspaces();
@@ -198,8 +222,17 @@ function AuthenticatedApp({
   }, [threadSnapshots]);
 
   useEffect(() => {
+    window.localStorage.setItem(WORKSPACE_SORT_STORAGE_KEY, workspaceSortMode);
+  }, [workspaceSortMode]);
+
+  useEffect(() => {
     void refreshThreads();
   }, []);
+
+  useEffect(() => {
+    setWorkspaceContextAttachments([]);
+    setWorkspaceFilePreview(null);
+  }, [activeWorkspace.path]);
 
   async function handleSaveApiKey(event: FormEvent): Promise<void> {
     event.preventDefault();
@@ -406,6 +439,12 @@ function AuthenticatedApp({
     setChatSearchRequestNonce((current) => current + 1);
   }, [navigateTo]);
 
+  const openPreviewBrowser = useCallback((url?: string): void => {
+    if (url) setBrowserPanelUrl(url);
+    setActiveRightTab("browser");
+    setRightPanelCollapsed(false);
+  }, []);
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
       if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey)
@@ -424,7 +463,13 @@ function AuthenticatedApp({
   }, [goBack, goForward]);
 
   const mainContent =
-    activeNav === MENU_IDS.currentSession ? (
+    activeNav === MENU_IDS.currentSession && activeRightTab === "files" ? (
+      <WorkspaceFilePreviewPane
+        language={language}
+        preview={workspaceFilePreview}
+        workspaceName={activeWorkspace.name}
+      />
+    ) : activeNav === MENU_IDS.currentSession ? (
       <ChatWorkspace
         activeRequestId={chat.activeRequestId}
         canChat={canChat}
@@ -433,9 +478,23 @@ function AuthenticatedApp({
         language={language}
         messages={chat.messages}
         searchRequestNonce={chatSearchRequestNonce}
+        externalAttachments={externalChatAttachments}
         onAbort={chat.abort}
+        onClearExternalAttachments={() => {
+          setBrowserAttachments([]);
+          setWorkspaceContextAttachments([]);
+        }}
         onInputChange={chat.setInput}
         onOpenExternal={(url) => desktopApi.openExternal(url)}
+        onOpenPreviewBrowser={openPreviewBrowser}
+        onRemoveExternalAttachment={(index) =>
+          removeExternalAttachment(
+            index,
+            browserAttachments.length,
+            setBrowserAttachments,
+            setWorkspaceContextAttachments,
+          )
+        }
         onSubmit={chat.submit}
       />
     ) : activeNav === MENU_IDS.agentSquare ? (
@@ -454,7 +513,13 @@ function AuthenticatedApp({
     ) : activeNav === MENU_IDS.myAgents ? (
       <AgentRunWorkspace
         health={health}
+        initialTask={terminalAgentTask}
         language={language}
+        onProposeTerminalCommand={(command) => {
+          setTerminalCommandProposal(command);
+          setActiveRightTab("terminal");
+          setRightPanelCollapsed(false);
+        }}
         threadId={activeThreadId}
         workspaceInstructions={activeWorkspace.instructions}
         workspacePath={activeWorkspace.path}
@@ -499,7 +564,40 @@ function AuthenticatedApp({
 
   const rightPanelContent =
     activeRightTab === "terminal" ? (
-      <TerminalPanel cwd={activeWorkspace.path} language={language} />
+      <TerminalPanel
+        cwd={activeWorkspace.path}
+        language={language}
+        onCommandResult={(attachment) => {
+          setBrowserAttachments((current) => [attachment, ...current].slice(0, 6));
+        }}
+        proposedCommand={terminalCommandProposal}
+        onSendOutputToAgent={(text) => {
+          setTerminalAgentTask(`Analyze this terminal output:\n\n${text}`);
+          navigateTo(MENU_IDS.myAgents);
+        }}
+      />
+    ) : activeRightTab === "browser" ? (
+      <PreviewBrowserPanel
+        initialUrl={browserPanelUrl}
+        language={language}
+        onAttachContext={(attachment) =>
+          setBrowserAttachments((current) => [...current, attachment])
+        }
+        onClose={() => setActiveRightTab("files")}
+      />
+    ) : activeRightTab === "files" ? (
+      <WorkspaceContextPanel
+        basket={workspaceContextAttachments}
+        language={language}
+        workspacePath={filesWorkspacePath}
+        workspaceTrusted={workspaceTrusted}
+        onBasketChange={setWorkspaceContextAttachments}
+        onPreviewFile={setWorkspaceFilePreview}
+        onInsertPath={(path) => {
+          const current = chat.input.trimEnd();
+          chat.setInput(current ? `${current}\n\n${path}` : path);
+        }}
+      />
     ) : (
       <SidePlaceholder language={language} tab={activeRightTab} />
     );
@@ -525,7 +623,8 @@ function AuthenticatedApp({
       sessionScope={sessionScope}
       sidebarCollapsed={sidebarCollapsed}
       user={user}
-      workspaces={workspaces}
+      workspaceSortMode={workspaceSortMode}
+      workspaces={sortedWorkspaces}
       onCreateWorkspace={handleCreateWorkspace}
       onGoBack={goBack}
       onGoForward={goForward}
@@ -553,6 +652,7 @@ function AuthenticatedApp({
       onToggleSidebar={() => setSidebarCollapsed((current) => !current)}
       onUpdateWorkspace={handleUpdateWorkspace}
       onWorkspaceChange={handleWorkspaceChange}
+      onWorkspaceSortModeChange={setWorkspaceSortMode}
     />
   );
 }
@@ -589,6 +689,34 @@ function loadThreadSnapshots(): Record<string, ChatThreadSnapshot> {
   } catch {
     return {};
   }
+}
+
+function loadWorkspaceSortMode(): WorkspaceSortMode {
+  const value = window.localStorage.getItem(WORKSPACE_SORT_STORAGE_KEY);
+  return value === "name" || value === "created" || value === "recent"
+    ? value
+    : "recent";
+}
+
+function sortWorkspacesForSidebar(
+  workspaces: WorkspaceProject[],
+  mode: WorkspaceSortMode,
+): WorkspaceProject[] {
+  return [...workspaces].sort((left, right) => {
+    if (Boolean(left.pinned) !== Boolean(right.pinned)) {
+      return left.pinned ? -1 : 1;
+    }
+    if (mode === "name") {
+      return left.name.localeCompare(right.name, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+    }
+    if (mode === "created") {
+      return right.createdAt.localeCompare(left.createdAt);
+    }
+    return right.lastOpenedAt.localeCompare(left.lastOpenedAt);
+  });
 }
 
 function createLocalThreadId(): string {
@@ -1025,6 +1153,24 @@ function SidePlaceholder({
           : "Reserved for shared WebUI panel content."}
       </span>
     </div>
+  );
+}
+
+function removeExternalAttachment(
+  index: number,
+  browserCount: number,
+  setBrowserAttachments: React.Dispatch<React.SetStateAction<ChatAttachment[]>>,
+  setWorkspaceContextAttachments: React.Dispatch<React.SetStateAction<ChatAttachment[]>>,
+): void {
+  if (index < browserCount) {
+    setBrowserAttachments((current) =>
+      current.filter((_attachment, itemIndex) => itemIndex !== index),
+    );
+    return;
+  }
+  const workspaceIndex = index - browserCount;
+  setWorkspaceContextAttachments((current) =>
+    current.filter((_attachment, itemIndex) => itemIndex !== workspaceIndex),
   );
 }
 

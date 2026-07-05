@@ -7,6 +7,9 @@ import type {
   AuthSession,
   ChatEvent,
   ChatRequest,
+  BrowserActionRequest,
+  BrowserActionResult,
+  BrowserUrlCheck,
   CreateWorkspaceRequest,
   CreateThreadRequest,
   DesktopHealth,
@@ -23,6 +26,13 @@ import type {
   UpdateThreadRequest,
   UpdateStatus,
   UpdateWorkspaceRequest,
+  WorkspaceContextOverview,
+  WorkspaceFilePreview,
+  WorkspaceFilePreviewRequest,
+  WorkspaceFileTreeRequest,
+  WorkspaceFileTreeResult,
+  WorkspaceGitDiffRequest,
+  WorkspaceGitDiffResult,
 } from "../shared/desktopApi";
 
 const api: DesktopApi = {
@@ -90,12 +100,39 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:save-api-key", apiKey),
   pickFiles: () => ipcRenderer.invoke("desktop:pick-files"),
   pickFolder: () => ipcRenderer.invoke("desktop:pick-folder"),
+  getWorkspaceContextOverview: (
+    workspacePath: string,
+  ): Promise<WorkspaceContextOverview> =>
+    ipcRenderer.invoke("desktop:workspace-context-overview", workspacePath),
+  listWorkspaceFiles: (
+    request: WorkspaceFileTreeRequest,
+  ): Promise<WorkspaceFileTreeResult> =>
+    ipcRenderer.invoke("desktop:workspace-files", request),
+  previewWorkspaceFile: (
+    request: WorkspaceFilePreviewRequest,
+  ): Promise<WorkspaceFilePreview> =>
+    ipcRenderer.invoke("desktop:workspace-file-preview", request),
+  getWorkspaceGitDiff: (
+    request: WorkspaceGitDiffRequest,
+  ): Promise<WorkspaceGitDiffResult> =>
+    ipcRenderer.invoke("desktop:workspace-git-diff", request),
+  checkBrowserUrl: (url: string): Promise<BrowserUrlCheck> =>
+    ipcRenderer.invoke("desktop:browser-check-url", url),
+  requestBrowserAction: (
+    request: BrowserActionRequest,
+  ): Promise<BrowserActionResult> =>
+    ipcRenderer.invoke("desktop:browser-action-request", request),
   openExternal: (url: string): Promise<void> =>
     ipcRenderer.invoke("desktop:open-external", url),
   openPath: (path: string): Promise<string> =>
     ipcRenderer.invoke("desktop:open-path", path),
   createTerminal: (options) =>
     ipcRenderer.invoke("desktop:terminal-create", options),
+  listTerminalSessions: (workspaceKey) =>
+    ipcRenderer.invoke("desktop:terminal-list", workspaceKey),
+  getTerminalBuffer: (id) => ipcRenderer.invoke("desktop:terminal-buffer", id),
+  renameTerminal: (id, title) =>
+    ipcRenderer.invoke("desktop:terminal-rename", id, title),
   writeTerminal: (id, data) =>
     ipcRenderer.invoke("desktop:terminal-write", id, data),
   resizeTerminal: (id, cols, rows) =>

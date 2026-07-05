@@ -1,12 +1,18 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Bot, Play, Square } from "lucide-react";
-import type { AgentRunEvent, DesktopHealth, WorkspaceInstructionSummary } from "@shared/desktopApi";
+import type {
+  AgentRunEvent,
+  DesktopHealth,
+  WorkspaceInstructionSummary,
+} from "@shared/desktopApi";
 import type { AppLanguage } from "../navigation";
 import { desktopApi } from "../desktopApi";
 
 interface AgentRunWorkspaceProps {
   health: DesktopHealth | null;
+  initialTask?: string;
   language: AppLanguage;
+  onProposeTerminalCommand?: (command: string) => void;
   threadId?: string;
   workspaceInstructions?: WorkspaceInstructionSummary[];
   workspacePath?: string;
@@ -21,7 +27,9 @@ interface AgentRunLine {
 
 export function AgentRunWorkspace({
   health,
+  initialTask,
   language,
+  onProposeTerminalCommand,
   threadId,
   workspaceInstructions,
   workspacePath,
@@ -36,12 +44,14 @@ export function AgentRunWorkspace({
     {
       id: "welcome",
       role: "system",
-      content: zh
-        ? "选择一个任务，让 OpenDrSai 智能体在当前工作区中运行。"
-        : "Describe a task and run an OpenDrSai agent in the current workspace.",
+      content: "Describe a task and run an OpenDrSai agent in the current workspace.",
     },
   ]);
   const outputByRequest = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    if (initialTask) setTask(initialTask);
+  }, [initialTask]);
 
   useEffect(() => {
     return desktopApi.onAgentRunEvent((event) => {
@@ -61,7 +71,7 @@ export function AgentRunWorkspace({
     setLines((current) => [
       ...current,
       { id: `task-${requestId}`, role: "system", content: text },
-      { id: `agent-${requestId}`, role: "agent", content: zh ? "正在启动智能体..." : "Starting agent..." },
+      { id: `agent-${requestId}`, role: "agent", content: "Starting agent..." },
     ]);
     setTask("");
 
@@ -72,7 +82,9 @@ export function AgentRunWorkspace({
         runId,
         threadId,
         sessionId: threadId || requestId,
-        task: workspaceInstructionText ? `${workspaceInstructionText}\n\nTask:\n${text}` : text,
+        task: workspaceInstructionText
+          ? `${workspaceInstructionText}\n\nTask:\n${text}`
+          : text,
         workspacePath,
         files: [],
         teamConfig: { preset: "general-collaboration" },
@@ -91,7 +103,7 @@ export function AgentRunWorkspace({
         {
           id: `error-${requestId}`,
           role: "error",
-          content: error instanceof Error ? error.message : zh ? "智能体运行未能启动。" : "Agent run failed to start.",
+          content: error instanceof Error ? error.message : "Agent run failed to start.",
         },
       ]);
     }
@@ -107,7 +119,7 @@ export function AgentRunWorkspace({
     if (event.type === "start") {
       setActiveRequestId(event.requestId);
       setActiveRunId(event.runId);
-      replaceAgentLine(event.requestId, zh ? "智能体已启动，等待输出..." : "Agent started. Waiting for output...");
+      replaceAgentLine(event.requestId, "Agent started. Waiting for output...");
       return;
     }
     if (event.type === "chunk") {
@@ -121,7 +133,7 @@ export function AgentRunWorkspace({
       setActiveRequestId((current) => (current === event.requestId ? null : current));
       setActiveRunId((current) => (current === event.runId ? null : current));
       if (event.type === "aborted") {
-        replaceAgentLine(event.requestId, zh ? "智能体运行已停止。" : "Agent run stopped.");
+        replaceAgentLine(event.requestId, "Agent run stopped.");
       }
       return;
     }
@@ -129,11 +141,15 @@ export function AgentRunWorkspace({
       delete outputByRequest.current[event.requestId];
       setActiveRequestId((current) => (current === event.requestId ? null : current));
       setActiveRunId((current) => (current === event.runId ? null : current));
-      replaceAgentLine(event.requestId, event.error || (zh ? "智能体运行失败。" : "Agent run failed."), "error");
+      replaceAgentLine(event.requestId, event.error || "Agent run failed.", "error");
     }
   }
 
-  function replaceAgentLine(requestId: string, content: string, role: AgentRunLine["role"] = "agent"): void {
+  function replaceAgentLine(
+    requestId: string,
+    content: string,
+    role: AgentRunLine["role"] = "agent",
+  ): void {
     setLines((current) =>
       current.map((line) =>
         line.id === `agent-${requestId}` ? { ...line, role, content } : line,
@@ -146,44 +162,61 @@ export function AgentRunWorkspace({
       <section className="agent-run-header">
         <Bot size={22} />
         <div>
-          <h2>{zh ? "智能体运行" : "Agent Run"}</h2>
+          <h2>{zh ? "Agent Run" : "Agent Run"}</h2>
           <p>
             {canRun
-              ? zh ? "在当前工作区启动一次可停止的智能体任务。" : "Run a stoppable agent task in the current workspace."
+              ? "Run a stoppable agent task in the current workspace."
               : !workspaceTrusted
-                ? zh ? "请先在工作区详情中信任该工作区，再运行智能体任务。" : "Trust this workspace in workspace details before running an agent task."
-              : zh ? "请先完成本地运行时和网关准备。" : "Prepare the local runtime and gateway before running an agent."}
+                ? "Trust this workspace in workspace details before running an agent task."
+                : "Prepare the local runtime and gateway before running an agent."}
           </p>
         </div>
       </section>
 
       <div className="agent-run-output" aria-live="polite">
-        {lines.map((line) => (
-          <article className={`agent-run-line ${line.role}`} key={line.id}>
-            <strong>{line.role === "system" ? (zh ? "任务" : "Task") : "OpenDrSai"}</strong>
-            <p>{line.content}</p>
-          </article>
-        ))}
+        {lines.map((line) => {
+          const terminalCommand =
+            line.role === "agent" ? extractTerminalCommand(line.content) : "";
+          return (
+            <article className={`agent-run-line ${line.role}`} key={line.id}>
+              <strong>{line.role === "system" ? "Task" : "OpenDrSai"}</strong>
+              <p>{line.content}</p>
+              {terminalCommand && onProposeTerminalCommand ? (
+                <button
+                  type="button"
+                  className="agent-run-terminal-proposal"
+                  onClick={() => onProposeTerminalCommand(terminalCommand)}
+                >
+                  Preview in terminal
+                </button>
+              ) : null}
+            </article>
+          );
+        })}
       </div>
 
       <form className="agent-run-composer" onSubmit={submit}>
         <textarea
           value={task}
           onChange={(event) => setTask(event.target.value)}
-          placeholder={zh ? "描述要智能体完成的任务..." : "Describe the task for the agent..."}
+          placeholder={zh ? "Describe the task for the agent..." : "Describe the task for the agent..."}
           rows={4}
         />
         <div className="agent-run-actions">
-          <span>{activeRunId ? `${zh ? "运行中" : "Running"}: ${activeRunId.slice(0, 8)}` : workspacePath || "Local workspace"}</span>
+          <span>
+            {activeRunId
+              ? `Running: ${activeRunId.slice(0, 8)}`
+              : workspacePath || "Local workspace"}
+          </span>
           {activeRequestId ? (
             <button type="button" className="composer-submit stop" onClick={abort}>
               <Square size={16} />
-              {zh ? "停止" : "Stop"}
+              {zh ? "Stop" : "Stop"}
             </button>
           ) : (
             <button type="submit" className="composer-submit" disabled={!task.trim() || !canRun}>
               <Play size={16} />
-              {zh ? "运行" : "Run"}
+              {zh ? "Run" : "Run"}
             </button>
           )}
         </div>
@@ -192,7 +225,9 @@ export function AgentRunWorkspace({
   );
 }
 
-function buildWorkspaceInstructionText(workspaceInstructions: WorkspaceInstructionSummary[] | undefined): string {
+function buildWorkspaceInstructionText(
+  workspaceInstructions: WorkspaceInstructionSummary[] | undefined,
+): string {
   if (!workspaceInstructions?.length) return "";
   return [
     "Workspace instructions for this project:",
@@ -200,4 +235,17 @@ function buildWorkspaceInstructionText(workspaceInstructions: WorkspaceInstructi
       `# ${instruction.name}\n${instruction.content}${instruction.truncated ? "\n[truncated]" : ""}`,
     ),
   ].join("\n\n");
+}
+
+function extractTerminalCommand(content: string): string {
+  const fenceMatch = content.match(
+    /```(?:powershell|ps1|pwsh|shell|bash|cmd|sh)?\s*\n([\s\S]*?)```/i,
+  );
+  if (fenceMatch?.[1]?.trim()) return fenceMatch[1].trim();
+  const promptLines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^(?:PS>|>|\$)\s+/.test(line))
+    .map((line) => line.replace(/^(?:PS>|>|\$)\s+/, ""));
+  return promptLines.join("\n").trim();
 }

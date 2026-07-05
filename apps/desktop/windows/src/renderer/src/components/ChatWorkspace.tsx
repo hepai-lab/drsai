@@ -14,11 +14,13 @@ import {
   ChevronDown,
   FilePlus,
   FolderPlus,
+  Globe2,
   Paperclip,
   Plus,
   Search,
   Send,
   Square,
+  Terminal,
   X,
 } from "lucide-react";
 import type { ChatMessage, DesktopHealth } from "@shared/desktopApi";
@@ -46,9 +48,13 @@ interface ChatWorkspaceProps {
   language: AppLanguage;
   messages: UiMessage[];
   searchRequestNonce?: number;
+  externalAttachments?: ChatAttachment[];
   onAbort: () => void;
+  onClearExternalAttachments?: () => void;
   onInputChange: (value: string) => void;
   onOpenExternal: (url: string) => void;
+  onOpenPreviewBrowser?: (url?: string) => void;
+  onRemoveExternalAttachment?: (index: number) => void;
   onSubmit: (attachments?: ChatAttachment[]) => Promise<boolean>;
 }
 
@@ -60,9 +66,13 @@ export function ChatWorkspace({
   language,
   messages,
   searchRequestNonce = 0,
+  externalAttachments = [],
   onAbort,
+  onClearExternalAttachments,
   onInputChange,
   onOpenExternal,
+  onOpenPreviewBrowser,
+  onRemoveExternalAttachment,
   onSubmit,
 }: ChatWorkspaceProps): React.JSX.Element {
   const [toolsOpen, setToolsOpen] = useState(false);
@@ -178,9 +188,15 @@ export function ChatWorkspace({
   }
 
   async function submitWithAttachments(): Promise<void> {
-    const submitted = await onSubmit(attachments.map(({ kind, path, name }) => ({ kind, path, name })));
+    const submitted = await onSubmit(
+      [
+        ...attachments.map(({ id: _id, ...attachment }) => attachment),
+        ...externalAttachments,
+      ],
+    );
     if (submitted) {
       setAttachments([]);
+      onClearExternalAttachments?.();
     }
   }
 
@@ -219,6 +235,20 @@ export function ChatWorkspace({
     setAttachments((current) => current.filter((item) => item.id !== id));
   }
 
+  function openPreviewBrowser(url?: string): void {
+    onOpenPreviewBrowser?.(url);
+    setToolsOpen(false);
+  }
+
+  function handleMarkdownLink(href: string | undefined): void {
+    if (!href) return;
+    if (isPreviewBrowserUrl(href)) {
+      openPreviewBrowser(href);
+      return;
+    }
+    onOpenExternal(href);
+  }
+
   const gatewayLabel = health?.gateway.externalConflict
     ? zh ? "网关冲突" : "Gateway conflict"
     : health?.gatewayReady
@@ -230,6 +260,7 @@ export function ChatWorkspace({
 
   return (
     <div className="chat-workspace">
+      <div className="chat-primary-pane">
       {searchOpen && (
         <div className="chat-search-strip">
           <Search size={15} aria-hidden />
@@ -309,7 +340,7 @@ export function ChatWorkspace({
                       <button
                         className="markdown-link"
                         type="button"
-                        onClick={() => href && onOpenExternal(href)}
+                        onClick={() => handleMarkdownLink(href)}
                       >
                         {children}
                       </button>
@@ -327,9 +358,41 @@ export function ChatWorkspace({
       </div>
       <form className="composer" onSubmit={handleSubmit}>
         <div className="composer-shell">
+          {externalAttachments.some((attachment) => attachment.kind === "terminal") && (
+            <div className="composer-terminal-cards">
+              {externalAttachments.map((attachment, index) =>
+                attachment.kind === "terminal" ? (
+                  <article
+                    className="composer-terminal-card"
+                    key={`terminal-card-${index}-${attachment.path}`}
+                  >
+                    <Terminal size={15} />
+                    <div>
+                      <strong>{attachment.name}</strong>
+                      <span>{attachment.title || attachment.path}</span>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${attachment.name}`}
+                      onClick={() => onRemoveExternalAttachment?.(index)}
+                    >
+                      <X size={13} />
+                    </button>
+                  </article>
+                ) : null,
+              )}
+            </div>
+          )}
           <div className="composer-attachments" aria-live="polite">
             {attachments.map((attachment) => {
-              const Icon = attachment.kind === "folder" ? FolderPlus : Paperclip;
+              const Icon =
+                attachment.kind === "folder"
+                  ? FolderPlus
+                  : attachment.kind === "terminal"
+                    ? Terminal
+                  : attachment.kind === "browser"
+                    ? Globe2
+                    : Paperclip;
               return (
                 <span className="composer-attachment-chip" key={attachment.id} title={attachment.path}>
                   <Icon size={14} />
@@ -338,6 +401,37 @@ export function ChatWorkspace({
                     type="button"
                     aria-label={zh ? `移除 ${attachment.name}` : `Remove ${attachment.name}`}
                     onClick={() => removeAttachment(attachment.id)}
+                  >
+                    <X size={13} />
+                  </button>
+                </span>
+              );
+            })}
+            {externalAttachments.map((attachment, index) => {
+              if (attachment.kind === "terminal") return null;
+              const name =
+                attachment.title ||
+                attachment.name ||
+                attachment.url ||
+                "Browser context";
+              const Icon =
+                attachment.kind === "folder"
+                  ? FolderPlus
+                  : attachment.kind === "browser"
+                    ? Globe2
+                    : Paperclip;
+              return (
+                <span
+                  className="composer-attachment-chip"
+                  key={`external-browser-${index}-${attachment.path}`}
+                  title={attachment.path}
+                >
+                  <Icon size={14} />
+                  {name}
+                  <button
+                    type="button"
+                    aria-label={zh ? `移除 ${name}` : `Remove ${name}`}
+                    onClick={() => onRemoveExternalAttachment?.(index)}
                   >
                     <X size={13} />
                   </button>
@@ -361,6 +455,10 @@ export function ChatWorkspace({
                 </button>
                 {toolsOpen && (
                   <div className="composer-tool-menu">
+                    <button type="button" onClick={() => openPreviewBrowser()}>
+                      <Globe2 size={15} />
+                      {zh ? "打开预览浏览器" : "Open Preview"}
+                    </button>
                     <button type="button" onClick={addFiles}>
                       <Paperclip size={15} />
                       {zh ? "添加文件" : "Add File"}
@@ -427,6 +525,7 @@ export function ChatWorkspace({
           </div>
         </div>
       </form>
+      </div>
     </div>
   );
 }
@@ -489,4 +588,16 @@ function highlightPlainText(text: string, query: string): React.ReactNode {
 function getPathName(path: string): string {
   const normalized = path.replace(/\\/g, "/");
   return normalized.split("/").filter(Boolean).pop() ?? path;
+}
+
+function isPreviewBrowserUrl(href: string): boolean {
+  try {
+    const url = new URL(href);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      ["localhost", "127.0.0.1", "::1"].includes(url.hostname)
+    );
+  } catch {
+    return false;
+  }
 }
