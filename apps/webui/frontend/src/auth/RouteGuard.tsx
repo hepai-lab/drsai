@@ -58,8 +58,12 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                 (route) => normalizePath(route) === normalizedPath
             );
 
+            // 用户主动退出后带 ?logout=1，跳过 verifyAuthSession 避免
+            // refreshAccessToken 自动重新登录（httpOnly cookie 可能未清除）。
+            const isLogout = searchParams.get("logout") === "1";
+
             if (isPublicRoute) {
-                if (normalizedPath === "/login") {
+                if (normalizedPath === "/login" && !isLogout) {
                     const session = await verifyAuthSession();
                     if (!cancelled && session.ok) {
                         setUser({ email: session.userEmail, name: session.userEmail });
@@ -69,6 +73,14 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
                 }
                 if (!cancelled) {
                     setChecked(true);
+                }
+                return;
+            }
+
+            if (isLogout) {
+                // 退出后从 /umt/logout 跳回 /，直接放行到 /login
+                if (!cancelled) {
+                    navigate("/login?logout=1", { replace: true });
                 }
                 return;
             }
@@ -85,7 +97,14 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
             }
 
             if (normalizedPath !== normalizePath("/login")) {
-                navigate("/login", { replace: true });
+                // 保存原始 URL 参数（agentId/agentName），登录后恢复
+                // 用 cookie — 跨域重定向后不丢，max-age=600s 自动过期
+                const search = location.search;
+                console.log("[agentLink] RouteGuard: saving pending_search =", search);
+                if (search) {
+                    try { document.cookie = "drsai_pending_search=" + encodeURIComponent(search) + "; path=/; max-age=600; SameSite=Lax"; } catch {}
+                }
+                navigate("/login?logout=1", { replace: true });
             }
         };
 

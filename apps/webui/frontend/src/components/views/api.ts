@@ -1197,6 +1197,20 @@ export class AuthAPI {
         }
         return data;
     }
+
+    async scienceUserLogin(tokenId: string): Promise<{ access_token: string; user_id: string }> {
+        const params = new URLSearchParams({ token_id: tokenId });
+        const response = await fetch(`${this.getBaseUrl()}/auth/science-user/token?${params.toString()}`, {
+            method: "POST",
+            headers: this.getHeaders(),
+            credentials: "include",
+        });
+        const data = await response.json();
+        if (!response.ok || !data.status) {
+            throw new Error(data.detail || data.message || `science_user_auth_failed`);
+        }
+        return data.data as { access_token: string; user_id: string };
+    }
 }
 
 export const authAPI = new AuthAPI();

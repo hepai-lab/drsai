@@ -444,6 +444,15 @@ const dict = {
   "besiiiPanel.waiting":         { zh: "等待中",                en: "Waiting" },
   "besiiiPanel.noLogs":          { zh: "暂无日志",              en: "No logs" },
   "besiiiPanel.logCount":        { zh: "共 %1 条日志条目",      en: "%1 log entries" },
+
+  // ===== Science User Auth (iframe embed) =====
+  "scienceAuth.verifying":        { zh: "正在验证身份，请稍候...", en: "Verifying identity, please wait..." },
+  "scienceAuth.error.title":      { zh: "身份验证失败",           en: "Authentication Failed" },
+  "scienceAuth.error.invalidToken": { zh: "访问令牌无效或已过期，请联系系统管理员重新获取链接。", en: "The access token is invalid or has expired. Please contact the system administrator for a new link." },
+  "scienceAuth.error.networkError": { zh: "网络连接失败，请检查网络后刷新页面重试。", en: "Network error. Please check your connection and reload the page." },
+  "scienceAuth.error.missingToken": { zh: "缺少访问令牌参数，请使用正确的访问链接。", en: "Missing access token parameter. Please use the correct access link." },
+  "scienceAuth.error.retry":      { zh: "刷新重试",               en: "Retry" },
+  "scienceAuth.error.contact":    { zh: "联系管理员",             en: "Contact Admin" },
 } as const;
 
 type TranslationKey = keyof typeof dict;
