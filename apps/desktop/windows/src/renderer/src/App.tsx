@@ -20,7 +20,6 @@ import type {
   DesktopHealth,
   DesktopThread,
   InstallProgress,
-  WorkspaceFilePreview,
   WorkspaceProject,
 } from "@shared/desktopApi";
 import { desktopApi } from "./desktopApi";
@@ -31,10 +30,12 @@ import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
 import { ChatWorkspace } from "./components/ChatWorkspace";
 import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
+import { FilesContextPanel } from "./components/files/FilesContextPanel";
 import {
-  WorkspaceContextPanel,
-  WorkspaceFilePreviewPane,
-} from "./components/WorkspaceContextPanel";
+  createAgentRunContextTraceEvents,
+  createTraceEventFromAgentFileEvent,
+  type AgentFileTraceEvent,
+} from "./components/files/AgentFileActivityPanel";
 import {
   WorkspaceShell,
   type WorkspaceThread,
@@ -133,8 +134,12 @@ function AuthenticatedApp({
   const [terminalCommandProposal, setTerminalCommandProposal] = useState("");
   const [browserPanelUrl, setBrowserPanelUrl] = useState<string | undefined>();
   const [browserAttachments, setBrowserAttachments] = useState<ChatAttachment[]>([]);
-  const [workspaceContextAttachments, setWorkspaceContextAttachments] = useState<ChatAttachment[]>([]);
-  const [workspaceFilePreview, setWorkspaceFilePreview] = useState<WorkspaceFilePreview | null>(null);
+  const [workspaceContextAttachmentsByThread, setWorkspaceContextAttachmentsByThread] = useState<
+    Record<string, ChatAttachment[]>
+  >({});
+  const [workspaceFileTraceByThread, setWorkspaceFileTraceByThread] = useState<
+    Record<string, AgentFileTraceEvent[]>
+  >({});
   const desktop = useDesktopHealthAdapter(language);
   const navSections = getNavSections(language);
   const navItems = getNavItems(language);
@@ -205,8 +210,12 @@ function AuthenticatedApp({
   );
   const externalChatAttachments = [
     ...browserAttachments,
-    ...workspaceContextAttachments,
+    ...(workspaceContextAttachmentsByThread[activeThreadId] ?? []),
   ];
+  const workspaceContextAttachments =
+    workspaceContextAttachmentsByThread[activeThreadId] ?? [];
+  const workspaceFileTraceEvents =
+    workspaceFileTraceByThread[activeThreadId] ?? [];
   const filesWorkspacePath =
     activeWorkspace.id === "current" ? "Local workspace" : activeWorkspace.path;
 
@@ -230,8 +239,8 @@ function AuthenticatedApp({
   }, []);
 
   useEffect(() => {
-    setWorkspaceContextAttachments([]);
-    setWorkspaceFilePreview(null);
+    setWorkspaceContextAttachmentsByThread({});
+    setWorkspaceFileTraceByThread({});
   }, [activeWorkspace.path]);
 
   async function handleSaveApiKey(event: FormEvent): Promise<void> {
@@ -445,6 +454,24 @@ function AuthenticatedApp({
     setRightPanelCollapsed(false);
   }, []);
 
+  function setActiveThreadWorkspaceContextAttachments(
+    attachments: ChatAttachment[],
+  ): void {
+    setWorkspaceContextAttachmentsByThread((current) => ({
+      ...current,
+      [activeThreadId]: attachments,
+    }));
+  }
+
+  function setActiveThreadFileTraceEvents(
+    events: AgentFileTraceEvent[],
+  ): void {
+    setWorkspaceFileTraceByThread((current) => ({
+      ...current,
+      [activeThreadId]: events,
+    }));
+  }
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
       if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey)
@@ -463,13 +490,7 @@ function AuthenticatedApp({
   }, [goBack, goForward]);
 
   const mainContent =
-    activeNav === MENU_IDS.currentSession && activeRightTab === "files" ? (
-      <WorkspaceFilePreviewPane
-        language={language}
-        preview={workspaceFilePreview}
-        workspaceName={activeWorkspace.name}
-      />
-    ) : activeNav === MENU_IDS.currentSession ? (
+    activeNav === MENU_IDS.currentSession ? (
       <ChatWorkspace
         activeRequestId={chat.activeRequestId}
         canChat={canChat}
@@ -482,7 +503,8 @@ function AuthenticatedApp({
         onAbort={chat.abort}
         onClearExternalAttachments={() => {
           setBrowserAttachments([]);
-          setWorkspaceContextAttachments([]);
+          setActiveThreadWorkspaceContextAttachments([]);
+          setActiveThreadFileTraceEvents([]);
         }}
         onInputChange={chat.setInput}
         onOpenExternal={(url) => desktopApi.openExternal(url)}
@@ -492,7 +514,8 @@ function AuthenticatedApp({
             index,
             browserAttachments.length,
             setBrowserAttachments,
-            setWorkspaceContextAttachments,
+            workspaceContextAttachments,
+            setActiveThreadWorkspaceContextAttachments,
           )
         }
         onSubmit={chat.submit}
@@ -512,9 +535,32 @@ function AuthenticatedApp({
       />
     ) : activeNav === MENU_IDS.myAgents ? (
       <AgentRunWorkspace
+        fileContextAttachments={workspaceContextAttachments}
         health={health}
         initialTask={terminalAgentTask}
         language={language}
+        onAgentFileEvent={({ fileEvent, requestId, runId }) => {
+          setActiveThreadFileTraceEvents([
+            createTraceEventFromAgentFileEvent({
+              event: fileEvent,
+              requestId,
+              runId,
+              scopeId: activeThreadId,
+            }),
+            ...workspaceFileTraceEvents,
+          ]);
+        }}
+        onFileContextSent={({ attachments, requestId, runId }) => {
+          setActiveThreadFileTraceEvents([
+            ...createAgentRunContextTraceEvents({
+              attachments,
+              requestId,
+              runId,
+              scopeId: activeThreadId,
+            }),
+            ...workspaceFileTraceEvents,
+          ]);
+        }}
         onProposeTerminalCommand={(command) => {
           setTerminalCommandProposal(command);
           setActiveRightTab("terminal");
@@ -586,13 +632,15 @@ function AuthenticatedApp({
         onClose={() => setActiveRightTab("files")}
       />
     ) : activeRightTab === "files" ? (
-      <WorkspaceContextPanel
+      <FilesContextPanel
         basket={workspaceContextAttachments}
+        fileTraceEvents={workspaceFileTraceEvents}
         language={language}
+        scopeId={activeThreadId}
         workspacePath={filesWorkspacePath}
         workspaceTrusted={workspaceTrusted}
-        onBasketChange={setWorkspaceContextAttachments}
-        onPreviewFile={setWorkspaceFilePreview}
+        onBasketChange={setActiveThreadWorkspaceContextAttachments}
+        onFileTraceChange={setActiveThreadFileTraceEvents}
         onInsertPath={(path) => {
           const current = chat.input.trimEnd();
           chat.setInput(current ? `${current}\n\n${path}` : path);
@@ -1160,7 +1208,8 @@ function removeExternalAttachment(
   index: number,
   browserCount: number,
   setBrowserAttachments: React.Dispatch<React.SetStateAction<ChatAttachment[]>>,
-  setWorkspaceContextAttachments: React.Dispatch<React.SetStateAction<ChatAttachment[]>>,
+  workspaceContextAttachments: ChatAttachment[],
+  setWorkspaceContextAttachments: (attachments: ChatAttachment[]) => void,
 ): void {
   if (index < browserCount) {
     setBrowserAttachments((current) =>
@@ -1169,8 +1218,10 @@ function removeExternalAttachment(
     return;
   }
   const workspaceIndex = index - browserCount;
-  setWorkspaceContextAttachments((current) =>
-    current.filter((_attachment, itemIndex) => itemIndex !== workspaceIndex),
+  setWorkspaceContextAttachments(
+    workspaceContextAttachments.filter(
+      (_attachment, itemIndex) => itemIndex !== workspaceIndex,
+    ),
   );
 }
 

@@ -1,3 +1,30 @@
+import type {
+  BrowserActionRequest,
+  BrowserActionResult,
+  BrowserTaskApprovalRequest,
+  BrowserTaskEvent,
+  BrowserTaskStartRequest,
+  BrowserTaskStopRequest,
+  BrowserUrlCheck,
+} from "./browser/types";
+
+export type {
+  BrowserActionLogEntry,
+  BrowserActionName,
+  BrowserActionOptions,
+  BrowserActionRequest,
+  BrowserActionResult,
+  BrowserPageState,
+  BrowserScreenshot,
+  BrowserSnapshot,
+  BrowserTaskEvent,
+  BrowserTaskApprovalRequest,
+  BrowserTaskStartRequest,
+  BrowserTaskStopRequest,
+  BrowserUrlCheck,
+  BrowserWaitTarget,
+} from "./browser/types";
+
 export interface DesktopHealth {
   installed: boolean;
   gatewayReady: boolean;
@@ -135,43 +162,7 @@ export interface ChatAttachment {
   visibleText?: string;
   screenshotDataUrl?: string;
   note?: string;
-}
-
-export interface BrowserUrlCheck {
-  allowed: boolean;
-  reason: string;
-  normalizedUrl?: string;
-  scope: "local" | "workspace-file" | "public" | "blocked";
-}
-
-export interface BrowserActionRequest {
-  action:
-    | "open"
-    | "snapshot"
-    | "screenshot"
-    | "read_text"
-    | "eval_readonly"
-    | "click"
-    | "type"
-    | "select"
-    | "key_press"
-    | "wait_for"
-    | "assert_text";
-  url?: string;
-  selector?: string;
-  text?: string;
-  value?: string;
-  key?: string;
-  script?: string;
-  timeoutMs?: number;
-  approved?: boolean;
-}
-
-export interface BrowserActionResult {
-  ok: boolean;
-  action: BrowserActionRequest["action"];
-  message: string;
-  url?: string;
+  fileHash?: string;
 }
 
 export interface ChatRequest {
@@ -256,12 +247,16 @@ export type WorkspacePreviewKind =
   | "text"
   | "code"
   | "markdown"
+  | "html"
   | "json"
+  | "config"
   | "structured"
   | "table"
   | "image"
+  | "notebook"
   | "pdf"
   | "office"
+  | "media"
   | "binary"
   | "large"
   | "unknown";
@@ -322,6 +317,7 @@ export interface WorkspaceFilePreviewRequest {
   workspacePath: string;
   path: string;
   maxBytes?: number;
+  mode?: "auto" | "head" | "tail" | "outline";
 }
 
 export interface WorkspaceFilePreview {
@@ -334,24 +330,71 @@ export interface WorkspaceFilePreview {
   size: number;
   modifiedAt: string;
   truncated: boolean;
+  fileHash?: string;
   content?: string;
   dataUrl?: string;
   rows?: string[][];
   columns?: string[];
   message?: string;
+  metadata?: Record<string, string | number | boolean | null>;
+  mode?: "auto" | "head" | "tail" | "outline";
+  outline?: string[];
 }
 
 export interface WorkspaceGitDiffRequest {
   workspacePath: string;
   path?: string;
   maxChars?: number;
+  staged?: boolean;
 }
 
 export interface WorkspaceGitDiffResult {
   workspacePath: string;
   path?: string;
   diff: string;
+  diffHash?: string;
   truncated: boolean;
+  staged?: boolean;
+}
+
+export interface WorkspaceRevertFileRequest {
+  workspacePath: string;
+  path: string;
+  expectedDiffHash: string;
+}
+
+export interface WorkspaceRevertFileResult {
+  workspacePath: string;
+  path: string;
+  reverted: boolean;
+  message: string;
+}
+
+export interface WorkspaceStageFileRequest {
+  workspacePath: string;
+  path: string;
+  expectedDiffHash: string;
+}
+
+export interface WorkspaceStageFileResult {
+  workspacePath: string;
+  path: string;
+  staged: boolean;
+  message: string;
+}
+
+export interface WorkspaceHunkActionRequest {
+  workspacePath: string;
+  path: string;
+  expectedDiffHash: string;
+  patch: string;
+}
+
+export interface WorkspaceHunkActionResult {
+  workspacePath: string;
+  path: string;
+  applied: boolean;
+  message: string;
 }
 
 export interface CreateWorkspaceRequest {
@@ -397,9 +440,21 @@ export interface AgentRunEvent {
   requestId: string;
   sessionId: string;
   runId: string;
-  type: "start" | "chunk" | "done" | "error" | "aborted";
+  type: "start" | "chunk" | "file_event" | "done" | "error" | "aborted";
   content?: string;
   error?: string;
+  fileEvent?: AgentRunFileEvent;
+}
+
+export interface AgentRunFileEvent {
+  action: "read" | "create" | "modify" | "delete" | "rename" | "patch" | "artifact";
+  path: string;
+  name?: string;
+  hash?: string;
+  diff?: string;
+  source?: string;
+  targetPath?: string;
+  timestamp?: string;
 }
 
 export interface SaveApiKeyResult {
@@ -410,6 +465,11 @@ export interface SaveApiKeyResult {
 export interface PickDialogResult {
   canceled: boolean;
   paths: string[];
+}
+
+export interface DesktopFileIconResult {
+  path: string;
+  dataUrl: string | null;
 }
 
 export interface TerminalCreateOptions {
@@ -477,6 +537,10 @@ export interface DesktopApi {
   listWorkspaceFiles(request: WorkspaceFileTreeRequest): Promise<WorkspaceFileTreeResult>;
   previewWorkspaceFile(request: WorkspaceFilePreviewRequest): Promise<WorkspaceFilePreview>;
   getWorkspaceGitDiff(request: WorkspaceGitDiffRequest): Promise<WorkspaceGitDiffResult>;
+  revertWorkspaceFile(request: WorkspaceRevertFileRequest): Promise<WorkspaceRevertFileResult>;
+  stageWorkspaceFile(request: WorkspaceStageFileRequest): Promise<WorkspaceStageFileResult>;
+  stageWorkspaceHunk(request: WorkspaceHunkActionRequest): Promise<WorkspaceHunkActionResult>;
+  revertWorkspaceHunk(request: WorkspaceHunkActionRequest): Promise<WorkspaceHunkActionResult>;
   listThreads(): Promise<DesktopThread[]>;
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;
   updateThread(request: UpdateThreadRequest): Promise<DesktopThread>;
@@ -493,8 +557,12 @@ export interface DesktopApi {
   requestBrowserAction(
     request: BrowserActionRequest,
   ): Promise<BrowserActionResult>;
+  startBrowserTask(request: BrowserTaskStartRequest): Promise<{ taskId: string }>;
+  stopBrowserTask(request: BrowserTaskStopRequest): Promise<boolean>;
+  approveBrowserTaskAction(request: BrowserTaskApprovalRequest): Promise<boolean>;
   openExternal(url: string): Promise<void>;
   openPath(path: string): Promise<string>;
+  getFileIcon(path: string): Promise<DesktopFileIconResult>;
   createTerminal(options?: TerminalCreateOptions): Promise<TerminalSessionInfo>;
   listTerminalSessions(workspaceKey?: string): Promise<TerminalSessionInfo[]>;
   getTerminalBuffer(id: string): Promise<string>;
@@ -511,4 +579,5 @@ export interface DesktopApi {
   onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;
   onTerminalData(callback: (event: TerminalDataEvent) => void): () => void;
   onTerminalExit(callback: (event: TerminalExitEvent) => void): () => void;
+  onBrowserTaskEvent(callback: (event: BrowserTaskEvent) => void): () => void;
 }

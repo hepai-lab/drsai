@@ -13,6 +13,7 @@ windows/out/
 windows/dist/
 windows/release/
 windows/.tmp/
+windows/.tmp-browser-use-cli/
 windows/electron.vite.config.*.mjs
 
 # IDE

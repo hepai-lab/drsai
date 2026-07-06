@@ -1,7 +1,9 @@
 import { execFile } from "child_process";
-import { existsSync } from "fs";
+import { createReadStream, existsSync } from "fs";
 import { readdir, readFile, realpath, stat } from "fs/promises";
+import { createHash } from "crypto";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "path";
+import { inflateRawSync } from "zlib";
 import type {
   WorkspaceContextOverview,
   WorkspaceFileGitStatus,
@@ -13,8 +15,14 @@ import type {
   WorkspaceGitDiffRequest,
   WorkspaceGitDiffResult,
   WorkspaceGitStatus,
+  WorkspaceHunkActionRequest,
+  WorkspaceHunkActionResult,
   WorkspaceInstructionSummary,
   WorkspacePreviewKind,
+  WorkspaceRevertFileRequest,
+  WorkspaceRevertFileResult,
+  WorkspaceStageFileRequest,
+  WorkspaceStageFileResult,
 } from "../shared/desktopApi";
 
 const DEFAULT_MAX_DEPTH = 4;
@@ -68,6 +76,17 @@ const TEXT_EXTENSIONS = new Set([
   ".yml",
 ]);
 
+const CONFIG_EXTENSIONS = new Set([
+  ".conf",
+  ".config",
+  ".env",
+  ".ini",
+  ".properties",
+  ".toml",
+  ".yaml",
+  ".yml",
+]);
+
 const CODE_EXTENSIONS = new Set([
   ".c",
   ".cpp",
@@ -94,6 +113,17 @@ const IMAGE_MIME: Record<string, string> = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".webp": "image/webp",
+};
+
+const MEDIA_MIME: Record<string, string> = {
+  ".aac": "audio/aac",
+  ".flac": "audio/flac",
+  ".m4a": "audio/mp4",
+  ".mp3": "audio/mpeg",
+  ".mp4": "video/mp4",
+  ".ogg": "audio/ogg",
+  ".wav": "audio/wav",
+  ".webm": "video/webm",
 };
 
 const OFFICE_EXTENSIONS = new Set([".docx", ".pptx", ".xlsx", ".doc", ".ppt", ".xls"]);
@@ -211,10 +241,12 @@ export async function previewWorkspaceFile(
   if (!fileStat.isFile()) throw new Error("Workspace preview target must be a file.");
 
   const maxBytes = clampInt(request.maxBytes, 8_000, 500_000, DEFAULT_PREVIEW_BYTES);
+  const mode = request.mode ?? "auto";
   const extension = extname(target).toLowerCase();
   const relativePath = normalizeRel(relative(workspacePath, target));
   const name = basename(target);
   const kind = classifyPreviewKind(target, fileStat.size);
+  const fileHash = await hashFile(target);
   const base: WorkspaceFilePreview = {
     workspacePath,
     path: target,
@@ -225,6 +257,8 @@ export async function previewWorkspaceFile(
     size: fileStat.size,
     modifiedAt: fileStat.mtime.toISOString(),
     truncated: fileStat.size > maxBytes,
+    fileHash,
+    mode,
   };
 
   if (kind === "image") {
@@ -233,6 +267,7 @@ export async function previewWorkspaceFile(
       return {
         ...base,
         dataUrl: `data:${base.mime};base64,${buffer.toString("base64")}`,
+        metadata: readImageMetadata(buffer, extension),
       };
     }
     return {
@@ -241,9 +276,64 @@ export async function previewWorkspaceFile(
     };
   }
 
+  if (kind === "media") {
+    return {
+      ...base,
+      message: "Media preview is rendered directly in the file preview pane.",
+    };
+  }
+
+  if (mode === "outline") {
+    const buffer = await readFileSlice(target, Math.min(fileStat.size, maxBytes));
+    const content = buffer.toString("utf8").replace(/\u0000/g, "");
+    return {
+      ...base,
+      kind: kind === "large" ? "text" : kind,
+      outline: createTextOutline(content),
+      content: undefined,
+      message: "Outline preview generated from file headings and symbols.",
+    };
+  }
+
+  if (kind === "large" && (mode === "head" || mode === "tail")) {
+    const buffer = mode === "tail"
+      ? await readFileTail(target, Math.min(fileStat.size, maxBytes))
+      : await readFileSlice(target, Math.min(fileStat.size, maxBytes));
+    const content = buffer.toString("utf8").replace(/\u0000/g, "");
+    return {
+      ...base,
+      kind: "text",
+      content,
+      truncated: true,
+      message: mode === "tail" ? "Showing file tail only." : "Showing file head only.",
+    };
+  }
+
+  if (kind === "pdf") {
+    const pdfText = await extractPdfText(target, Math.min(fileStat.size, maxBytes));
+    return {
+      ...base,
+      content: pdfText || undefined,
+      message: pdfText
+        ? "Extracted a basic text preview from the PDF."
+        : getMetadataOnlyMessage(kind),
+    };
+  }
+
   if (
-    kind === "pdf" ||
-    kind === "office" ||
+    kind === "office"
+  ) {
+    const officeText = await extractOfficeText(target, extension, Math.min(fileStat.size, maxBytes));
+    return {
+      ...base,
+      content: officeText || undefined,
+      message: officeText
+        ? "Extracted a basic text preview from the Office document."
+        : getMetadataOnlyMessage(kind),
+    };
+  }
+
+  if (
     kind === "binary" ||
     kind === "large" ||
     kind === "unknown"
@@ -256,6 +346,16 @@ export async function previewWorkspaceFile(
 
   const buffer = await readFileSlice(target, Math.min(fileStat.size, maxBytes));
   const content = buffer.toString("utf8").replace(/\u0000/g, "");
+
+  if (kind === "notebook") {
+    return {
+      ...base,
+      content: createNotebookCellPreview(content),
+      outline: createNotebookOutline(content),
+      message: "Notebook cell preview generated from ipynb JSON.",
+    };
+  }
+
   if (looksBinary(buffer)) {
     return {
       ...base,
@@ -299,7 +399,7 @@ export async function getWorkspaceGitDiff(
   const request = validateDiffRequest(rawRequest);
   const workspacePath = await resolveWorkspaceRoot(request.workspacePath);
   const maxChars = clampInt(request.maxChars, 4_000, 300_000, DEFAULT_DIFF_CHARS);
-  const args = ["diff", "--"];
+  const args = request.staged ? ["diff", "--cached", "--"] : ["diff", "--"];
   let safeRelativePath: string | undefined;
   if (request.path) {
     const target = await resolvePossiblyMissingInsideWorkspace(workspacePath, request.path);
@@ -311,7 +411,93 @@ export async function getWorkspaceGitDiff(
     workspacePath,
     path: safeRelativePath,
     diff: diff.slice(0, maxChars),
+    diffHash: hashString(diff),
     truncated: diff.length > maxChars,
+    staged: request.staged === true,
+  };
+}
+
+export async function revertWorkspaceFile(
+  rawRequest: unknown,
+): Promise<WorkspaceRevertFileResult> {
+  const request = validateRevertRequest(rawRequest);
+  const workspacePath = await resolveWorkspaceRoot(request.workspacePath);
+  const target = await resolvePossiblyMissingInsideWorkspace(workspacePath, request.path);
+  const safeRelativePath = normalizeRel(relative(workspacePath, target));
+  const currentDiff = (await runGit(workspacePath, ["diff", "--", safeRelativePath], 8000)) ?? "";
+  const currentHash = hashString(currentDiff);
+  if (!currentDiff.trim()) {
+    return {
+      workspacePath,
+      path: safeRelativePath,
+      reverted: false,
+      message: "No unstaged diff exists for this file.",
+    };
+  }
+  if (currentHash !== request.expectedDiffHash) {
+    throw new Error("File diff changed since review; refresh before reverting.");
+  }
+  await runGit(workspacePath, ["restore", "--worktree", "--", safeRelativePath], 8000);
+  return {
+    workspacePath,
+    path: safeRelativePath,
+    reverted: true,
+    message: "Reverted unstaged file changes.",
+  };
+}
+
+export async function stageWorkspaceFile(
+  rawRequest: unknown,
+): Promise<WorkspaceStageFileResult> {
+  const request = validateStageRequest(rawRequest);
+  const workspacePath = await resolveWorkspaceRoot(request.workspacePath);
+  const target = await resolvePossiblyMissingInsideWorkspace(workspacePath, request.path);
+  const safeRelativePath = normalizeRel(relative(workspacePath, target));
+  const currentDiff = (await runGit(workspacePath, ["diff", "--", safeRelativePath], 8000)) ?? "";
+  const currentHash = hashString(currentDiff);
+  if (!currentDiff.trim()) {
+    return {
+      workspacePath,
+      path: safeRelativePath,
+      staged: false,
+      message: "No unstaged diff exists for this file.",
+    };
+  }
+  if (currentHash !== request.expectedDiffHash) {
+    throw new Error("File diff changed since review; refresh before approving.");
+  }
+  await runGit(workspacePath, ["add", "--", safeRelativePath], 8000);
+  return {
+    workspacePath,
+    path: safeRelativePath,
+    staged: true,
+    message: "Approved file changes by staging them.",
+  };
+}
+
+export async function stageWorkspaceHunk(
+  rawRequest: unknown,
+): Promise<WorkspaceHunkActionResult> {
+  const { request, safeRelativePath, workspacePath } = await prepareHunkAction(rawRequest);
+  const applied = await runGitWithInput(workspacePath, ["apply", "--cached", "--"], request.patch, 8000);
+  return {
+    workspacePath,
+    path: safeRelativePath,
+    applied,
+    message: applied ? "Approved hunk by staging it." : "Could not apply this hunk to the index.",
+  };
+}
+
+export async function revertWorkspaceHunk(
+  rawRequest: unknown,
+): Promise<WorkspaceHunkActionResult> {
+  const { request, safeRelativePath, workspacePath } = await prepareHunkAction(rawRequest);
+  const applied = await runGitWithInput(workspacePath, ["apply", "--reverse", "--"], request.patch, 8000);
+  return {
+    workspacePath,
+    path: safeRelativePath,
+    applied,
+    message: applied ? "Rejected hunk by reverting it from the worktree." : "Could not revert this hunk.",
   };
 }
 
@@ -396,6 +582,9 @@ function validatePreviewRequest(rawRequest: unknown): WorkspaceFilePreviewReques
     workspacePath: String(request.workspacePath ?? ""),
     path: String(request.path ?? ""),
     maxBytes: typeof request.maxBytes === "number" ? request.maxBytes : undefined,
+    mode: ["auto", "head", "tail", "outline"].includes(String(request.mode))
+      ? request.mode
+      : undefined,
   };
 }
 
@@ -406,7 +595,79 @@ function validateDiffRequest(rawRequest: unknown): WorkspaceGitDiffRequest {
     workspacePath: String(request.workspacePath ?? ""),
     path: typeof request.path === "string" ? request.path : undefined,
     maxChars: typeof request.maxChars === "number" ? request.maxChars : undefined,
+    staged: request.staged === true,
   };
+}
+
+function validateRevertRequest(rawRequest: unknown): WorkspaceRevertFileRequest {
+  if (!rawRequest || typeof rawRequest !== "object") throw new Error("Workspace revert request is invalid.");
+  const request = rawRequest as WorkspaceRevertFileRequest;
+  if (typeof request.workspacePath !== "string") throw new Error("Workspace path is required.");
+  if (typeof request.path !== "string" || !request.path.trim()) throw new Error("File path is required.");
+  if (typeof request.expectedDiffHash !== "string" || !request.expectedDiffHash.trim()) {
+    throw new Error("Expected diff hash is required.");
+  }
+  return request;
+}
+
+function validateStageRequest(rawRequest: unknown): WorkspaceStageFileRequest {
+  if (!rawRequest || typeof rawRequest !== "object") throw new Error("Workspace stage request is invalid.");
+  const request = rawRequest as WorkspaceStageFileRequest;
+  if (typeof request.workspacePath !== "string") throw new Error("Workspace path is required.");
+  if (typeof request.path !== "string" || !request.path.trim()) throw new Error("File path is required.");
+  if (typeof request.expectedDiffHash !== "string" || !request.expectedDiffHash.trim()) {
+    throw new Error("Expected diff hash is required.");
+  }
+  return request;
+}
+
+async function prepareHunkAction(rawRequest: unknown): Promise<{
+  request: WorkspaceHunkActionRequest;
+  safeRelativePath: string;
+  workspacePath: string;
+}> {
+  const request = validateHunkActionRequest(rawRequest);
+  const workspacePath = await resolveWorkspaceRoot(request.workspacePath);
+  const target = await resolvePossiblyMissingInsideWorkspace(workspacePath, request.path);
+  const safeRelativePath = normalizeRel(relative(workspacePath, target));
+  ensurePatchOnlyTargets(request.patch, safeRelativePath);
+  const currentDiff = (await runGit(workspacePath, ["diff", "--", safeRelativePath], 8000)) ?? "";
+  if (!currentDiff.trim()) throw new Error("No unstaged diff exists for this file.");
+  if (hashString(currentDiff) !== request.expectedDiffHash) {
+    throw new Error("File diff changed since review; refresh before applying this hunk.");
+  }
+  return { request, safeRelativePath, workspacePath };
+}
+
+function validateHunkActionRequest(rawRequest: unknown): WorkspaceHunkActionRequest {
+  if (!rawRequest || typeof rawRequest !== "object") throw new Error("Workspace hunk request is invalid.");
+  const request = rawRequest as WorkspaceHunkActionRequest;
+  if (typeof request.workspacePath !== "string") throw new Error("Workspace path is required.");
+  if (typeof request.path !== "string" || !request.path.trim()) throw new Error("File path is required.");
+  if (typeof request.expectedDiffHash !== "string" || !request.expectedDiffHash.trim()) {
+    throw new Error("Expected diff hash is required.");
+  }
+  if (typeof request.patch !== "string" || !request.patch.includes("@@") || request.patch.length > 120_000) {
+    throw new Error("Hunk patch is invalid.");
+  }
+  return request;
+}
+
+function ensurePatchOnlyTargets(patch: string, safeRelativePath: string): void {
+  const allowed = new Set([safeRelativePath, `/dev/null`]);
+  const pathMatches = [
+    ...patch.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm),
+    ...patch.matchAll(/^(?:---|\+\+\+) (?:a|b)\/(.+)$/gm),
+  ];
+  if (pathMatches.length === 0) throw new Error("Hunk patch is missing file headers.");
+  for (const match of pathMatches) {
+    const paths = match.slice(1).filter(Boolean);
+    for (const item of paths) {
+      if (!allowed.has(normalizeRel(item))) {
+        throw new Error("Hunk patch targets a different file.");
+      }
+    }
+  }
 }
 
 async function resolveWorkspaceRoot(rawWorkspacePath: unknown): Promise<string> {
@@ -472,11 +733,14 @@ function classifyPreviewKind(filePath: string, size: number): WorkspacePreviewKi
   if (size > 2_000_000) return "large";
   const extension = extname(filePath).toLowerCase();
   if (extension in IMAGE_MIME) return "image";
+  if (extension in MEDIA_MIME) return "media";
   if (extension === ".pdf") return "pdf";
   if (OFFICE_EXTENSIONS.has(extension)) return "office";
+  if (extension === ".ipynb") return "notebook";
   if (extension === ".md" || extension === ".mdx") return "markdown";
+  if (extension === ".html" || extension === ".htm") return "html";
   if (extension === ".json") return "json";
-  if (extension === ".yaml" || extension === ".yml" || extension === ".toml") return "structured";
+  if (CONFIG_EXTENSIONS.has(extension) || basename(filePath).toLowerCase().startsWith(".env")) return "config";
   if (extension === ".csv" || extension === ".tsv") return "table";
   if (CODE_EXTENSIONS.has(extension)) return "code";
   if (TEXT_EXTENSIONS.has(extension) || extension === "") return "text";
@@ -485,8 +749,11 @@ function classifyPreviewKind(filePath: string, size: number): WorkspacePreviewKi
 
 function getMime(extension: string, kind: WorkspacePreviewKind): string {
   if (extension in IMAGE_MIME) return IMAGE_MIME[extension];
+  if (extension in MEDIA_MIME) return MEDIA_MIME[extension];
   if (kind === "json") return "application/json";
+  if (kind === "notebook") return "application/x-ipynb+json";
   if (kind === "markdown") return "text/markdown";
+  if (kind === "html") return "text/html";
   if (kind === "pdf") return "application/pdf";
   if (kind === "office") return "application/vnd.openxmlformats-officedocument";
   if (kind === "binary") return "application/octet-stream";
@@ -503,6 +770,291 @@ function getMetadataOnlyMessage(kind: WorkspacePreviewKind): string {
 async function readFileSlice(filePath: string, bytes: number): Promise<Buffer> {
   const buffer = await readFile(filePath);
   return buffer.subarray(0, bytes);
+}
+
+async function readFileTail(filePath: string, bytes: number): Promise<Buffer> {
+  const buffer = await readFile(filePath);
+  return buffer.subarray(Math.max(0, buffer.length - bytes));
+}
+
+function hashFile(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(`sha256:${hash.digest("hex")}`));
+  });
+}
+
+function hashString(input: string): string {
+  return `sha256:${createHash("sha256").update(input).digest("hex")}`;
+}
+
+function createTextOutline(content: string): string[] {
+  const outline = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) =>
+      /^#{1,6}\s+/.test(line) ||
+      /^(export\s+)?(class|function|interface|type|const|let|var)\s+\w+/.test(line) ||
+      /^def\s+\w+/.test(line) ||
+      /^class\s+\w+/.test(line),
+    )
+    .slice(0, 120);
+  return outline.length > 0 ? outline : content.split(/\r?\n/).slice(0, 40);
+}
+
+function createNotebookCellPreview(content: string): string {
+  const notebook = parseNotebook(content);
+  if (!notebook) return content.slice(0, 20_000);
+  const cells = Array.isArray(notebook.cells) ? notebook.cells : [];
+  return [
+    `Notebook cells: ${cells.length}`,
+    ...cells.slice(0, 40).map((cell, index) => {
+      const cellRecord = isRecord(cell) ? cell : {};
+      const cellType = typeof cellRecord.cell_type === "string" ? cellRecord.cell_type : "unknown";
+      const source = normalizeNotebookSource(cellRecord.source);
+      const firstLine = source.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "";
+      const outputCount = Array.isArray(cellRecord.outputs) ? cellRecord.outputs.length : 0;
+      const outputSuffix = outputCount > 0 ? `, ${outputCount} outputs` : "";
+      return `${index + 1}. ${cellType}, ${countLines(source)} lines${outputSuffix}: ${firstLine}`;
+    }),
+    cells.length > 40 ? "[truncated]" : "",
+  ].filter(Boolean).join("\n");
+}
+
+function createNotebookOutline(content: string): string[] {
+  const notebook = parseNotebook(content);
+  if (!notebook) return createTextOutline(content);
+  const cells = Array.isArray(notebook.cells) ? notebook.cells : [];
+  return cells.slice(0, 80).flatMap((cell, index) => {
+    const cellRecord = isRecord(cell) ? cell : {};
+    const cellType = typeof cellRecord.cell_type === "string" ? cellRecord.cell_type : "unknown";
+    const source = normalizeNotebookSource(cellRecord.source);
+    const headings = source
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => /^#{1,6}\s+/.test(line) || /^(def|class)\s+\w+/.test(line))
+      .slice(0, 4);
+    return headings.length > 0 ? headings.map((heading) => `cell ${index + 1}: ${heading}`) : [`cell ${index + 1}: ${cellType}`];
+  });
+}
+
+function parseNotebook(content: string): { cells?: unknown[] } | null {
+  try {
+    const parsed = JSON.parse(content);
+    return isRecord(parsed) ? parsed as { cells?: unknown[] } : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeNotebookSource(source: unknown): string {
+  if (Array.isArray(source)) return source.map((item) => String(item)).join("");
+  if (typeof source === "string") return source;
+  return "";
+}
+
+function countLines(content: string): number {
+  if (!content) return 0;
+  return content.split(/\r?\n/).length;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readImageMetadata(
+  buffer: Buffer,
+  extension: string,
+): Record<string, string | number | boolean | null> {
+  const dimensions = readImageDimensions(buffer, extension);
+  return {
+    format: extension.replace(/^\./, "").toUpperCase(),
+    width: dimensions?.width ?? null,
+    height: dimensions?.height ?? null,
+  };
+}
+
+function readImageDimensions(
+  buffer: Buffer,
+  extension: string,
+): { width: number; height: number } | null {
+  if (extension === ".png" && buffer.length >= 24) {
+    return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+  }
+  if (extension === ".gif" && buffer.length >= 10) {
+    return { width: buffer.readUInt16LE(6), height: buffer.readUInt16LE(8) };
+  }
+  if (extension === ".jpg" || extension === ".jpeg") return readJpegDimensions(buffer);
+  if (extension === ".webp") return readWebpDimensions(buffer);
+  if (extension === ".svg") return readSvgDimensions(buffer.toString("utf8", 0, Math.min(buffer.length, 4096)));
+  return null;
+}
+
+function readJpegDimensions(buffer: Buffer): { width: number; height: number } | null {
+  if (buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 9 < buffer.length) {
+    if (buffer[offset] !== 0xff) return null;
+    const marker = buffer[offset + 1];
+    const size = buffer.readUInt16BE(offset + 2);
+    if (size < 2) return null;
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+      return { height: buffer.readUInt16BE(offset + 5), width: buffer.readUInt16BE(offset + 7) };
+    }
+    offset += 2 + size;
+  }
+  return null;
+}
+
+function readWebpDimensions(buffer: Buffer): { width: number; height: number } | null {
+  const riff = buffer.subarray(0, 4).toString("ascii");
+  const webp = buffer.subarray(8, 12).toString("ascii");
+  if (riff !== "RIFF" || webp !== "WEBP") return null;
+  const vp8xOffset = buffer.indexOf("VP8X");
+  if (vp8xOffset >= 0 && vp8xOffset + 18 < buffer.length) {
+    return {
+      width: 1 + buffer.readUIntLE(vp8xOffset + 12, 3),
+      height: 1 + buffer.readUIntLE(vp8xOffset + 15, 3),
+    };
+  }
+  const vp8Offset = buffer.indexOf("VP8 ");
+  if (vp8Offset >= 0 && vp8Offset + 30 < buffer.length) {
+    return {
+      width: buffer.readUInt16LE(vp8Offset + 14) & 0x3fff,
+      height: buffer.readUInt16LE(vp8Offset + 16) & 0x3fff,
+    };
+  }
+  return null;
+}
+
+function readSvgDimensions(svg: string): { width: number; height: number } | null {
+  const width = Number.parseFloat(svg.match(/\bwidth=["']?([\d.]+)/i)?.[1] ?? "");
+  const height = Number.parseFloat(svg.match(/\bheight=["']?([\d.]+)/i)?.[1] ?? "");
+  if (Number.isFinite(width) && Number.isFinite(height)) return { width, height };
+  const viewBox = svg.match(/\bviewBox=["']?[\d.\-]+\s+[\d.\-]+\s+([\d.]+)\s+([\d.]+)/i);
+  if (!viewBox) return null;
+  const viewBoxWidth = Number.parseFloat(viewBox[1] ?? "");
+  const viewBoxHeight = Number.parseFloat(viewBox[2] ?? "");
+  return Number.isFinite(viewBoxWidth) && Number.isFinite(viewBoxHeight)
+    ? { width: viewBoxWidth, height: viewBoxHeight }
+    : null;
+}
+
+async function extractPdfText(filePath: string, bytes: number): Promise<string> {
+  const buffer = await readFileSlice(filePath, bytes);
+  const raw = buffer.toString("latin1");
+  const matches = [...raw.matchAll(/\(([^()]*)\)\s*T[jJ]/g)]
+    .map((match) => decodePdfString(match[1] ?? ""))
+    .filter(Boolean);
+  return matches.join("\n").trim().slice(0, bytes);
+}
+
+async function extractOfficeText(
+  filePath: string,
+  extension: string,
+  bytes: number,
+): Promise<string> {
+  if (![".docx", ".pptx", ".xlsx"].includes(extension)) return "";
+  const buffer = await readFileSlice(filePath, Math.min(bytes, 8_000_000));
+  const entries = extractZipEntries(buffer);
+  const xmlParts = selectOfficeXmlParts(entries, extension);
+  const text = xmlParts.map(extractXmlText).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return text.slice(0, bytes);
+}
+
+type ZipEntry = {
+  name: string;
+  data: Buffer;
+};
+
+function extractZipEntries(buffer: Buffer): ZipEntry[] {
+  const entries: ZipEntry[] = [];
+  let offset = 0;
+  while (offset + 30 < buffer.length) {
+    if (buffer.readUInt32LE(offset) !== 0x04034b50) {
+      offset += 1;
+      continue;
+    }
+    const flags = buffer.readUInt16LE(offset + 6);
+    const method = buffer.readUInt16LE(offset + 8);
+    const compressedSize = buffer.readUInt32LE(offset + 18);
+    const nameLength = buffer.readUInt16LE(offset + 26);
+    const extraLength = buffer.readUInt16LE(offset + 28);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLength + extraLength;
+    const dataEnd = dataStart + compressedSize;
+    if ((flags & 0x08) !== 0 || compressedSize === 0 || dataEnd > buffer.length) {
+      offset = Math.max(offset + 4, dataStart);
+      continue;
+    }
+
+    const name = buffer.subarray(nameStart, nameStart + nameLength).toString("utf8");
+    const compressedData = buffer.subarray(dataStart, dataEnd);
+    const data = inflateZipEntry(compressedData, method);
+    if (data) entries.push({ name, data });
+    offset = dataEnd;
+  }
+  return entries;
+}
+
+function inflateZipEntry(data: Buffer, method: number): Buffer | null {
+  try {
+    if (method === 0) return data;
+    if (method === 8) return inflateRawSync(data);
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function selectOfficeXmlParts(entries: ZipEntry[], extension: string): string[] {
+  return entries
+    .filter((entry) => {
+      if (extension === ".docx") {
+        return /^word\/(document|footnotes|endnotes|comments|header\d*|footer\d*)\.xml$/.test(entry.name);
+      }
+      if (extension === ".pptx") return /^ppt\/slides\/slide\d+\.xml$/.test(entry.name);
+      if (extension === ".xlsx") {
+        return entry.name === "xl/sharedStrings.xml" || /^xl\/worksheets\/sheet\d+\.xml$/.test(entry.name);
+      }
+      return false;
+    })
+    .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }))
+    .map((entry) => entry.data.toString("utf8"));
+}
+
+function extractXmlText(xml: string): string {
+  const textRuns = [...xml.matchAll(/<(?:w:t|a:t|t)(?:\s[^>]*)?>([\s\S]*?)<\/(?:w:t|a:t|t)>/g)]
+    .map((match) => decodeXmlEntities(match[1] ?? "").trim())
+    .filter(Boolean);
+  if (textRuns.length > 0) return textRuns.join("\n");
+  return decodeXmlEntities(xml.replace(/<[^>]+>/g, " ")).replace(/[ \t]+/g, " ").trim();
+}
+
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, decimal: string) => String.fromCodePoint(Number.parseInt(decimal, 10)));
+}
+
+function decodePdfString(value: string): string {
+  return value
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\t/g, "\t")
+    .replace(/\\\(/g, "(")
+    .replace(/\\\)/g, ")")
+    .replace(/\\\\/g, "\\")
+    .trim();
 }
 
 function looksBinary(buffer: Buffer): boolean {
@@ -559,5 +1111,19 @@ function runGit(cwd: string, args: string[], timeout: number): Promise<string | 
       }
       resolve(stdout.trim() || null);
     });
+  });
+}
+
+function runGitWithInput(
+  cwd: string,
+  args: string[],
+  input: string,
+  timeout: number,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = execFile("git", args, { cwd, timeout, windowsHide: true }, (error) => {
+      resolve(!error);
+    });
+    child.stdin?.end(input);
   });
 }

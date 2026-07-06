@@ -2,6 +2,8 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { Bot, Play, Square } from "lucide-react";
 import type {
   AgentRunEvent,
+  AgentRunFileEvent,
+  ChatAttachment,
   DesktopHealth,
   WorkspaceInstructionSummary,
 } from "@shared/desktopApi";
@@ -10,8 +12,19 @@ import { desktopApi } from "../desktopApi";
 
 interface AgentRunWorkspaceProps {
   health: DesktopHealth | null;
+  fileContextAttachments?: ChatAttachment[];
   initialTask?: string;
   language: AppLanguage;
+  onAgentFileEvent?: (event: {
+    fileEvent: AgentRunFileEvent;
+    requestId: string;
+    runId: string;
+  }) => void;
+  onFileContextSent?: (event: {
+    attachments: ChatAttachment[];
+    requestId: string;
+    runId: string;
+  }) => void;
   onProposeTerminalCommand?: (command: string) => void;
   threadId?: string;
   workspaceInstructions?: WorkspaceInstructionSummary[];
@@ -27,8 +40,11 @@ interface AgentRunLine {
 
 export function AgentRunWorkspace({
   health,
+  fileContextAttachments = [],
   initialTask,
   language,
+  onAgentFileEvent,
+  onFileContextSent,
   onProposeTerminalCommand,
   threadId,
   workspaceInstructions,
@@ -86,13 +102,18 @@ export function AgentRunWorkspace({
           ? `${workspaceInstructionText}\n\nTask:\n${text}`
           : text,
         workspacePath,
-        files: [],
+        files: fileContextAttachments.map(serializeAgentRunFileContext),
         teamConfig: { preset: "general-collaboration" },
         metadata: {
           source: "windows-agent-run-workspace",
+          file_context_count: fileContextAttachments.length,
+          file_context_paths: fileContextAttachments.map((attachment) => attachment.path),
           workspace_instructions: workspaceInstructions || [],
         },
       });
+      if (fileContextAttachments.length > 0) {
+        onFileContextSent?.({ attachments: fileContextAttachments, requestId, runId });
+      }
     } catch (error) {
       delete outputByRequest.current[requestId];
       setActiveRequestId(null);
@@ -126,6 +147,14 @@ export function AgentRunWorkspace({
       const next = `${outputByRequest.current[event.requestId] || ""}${event.content || ""}`;
       outputByRequest.current[event.requestId] = next;
       replaceAgentLine(event.requestId, next);
+      return;
+    }
+    if (event.type === "file_event" && event.fileEvent) {
+      onAgentFileEvent?.({
+        fileEvent: event.fileEvent,
+        requestId: event.requestId,
+        runId: event.runId,
+      });
       return;
     }
     if (event.type === "done" || event.type === "aborted") {
@@ -206,7 +235,7 @@ export function AgentRunWorkspace({
           <span>
             {activeRunId
               ? `Running: ${activeRunId.slice(0, 8)}`
-              : workspacePath || "Local workspace"}
+              : `${workspacePath || "Local workspace"} · ${fileContextAttachments.length} file context`}
           </span>
           {activeRequestId ? (
             <button type="button" className="composer-submit stop" onClick={abort}>
@@ -223,6 +252,20 @@ export function AgentRunWorkspace({
       </form>
     </div>
   );
+}
+
+function serializeAgentRunFileContext(
+  attachment: ChatAttachment,
+): Record<string, unknown> {
+  return {
+    kind: attachment.kind,
+    name: attachment.name,
+    path: attachment.path,
+    file_hash: attachment.fileHash,
+    note: attachment.note,
+    visible_text: attachment.visibleText,
+    title: attachment.title,
+  };
 }
 
 function buildWorkspaceInstructionText(

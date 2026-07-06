@@ -5,6 +5,7 @@ import type {
   DesktopApi,
   DesktopHealth,
   DesktopThread,
+  BrowserTaskEvent,
   InstallProgress,
   TerminalSessionInfo,
   UpdateStatus,
@@ -91,6 +92,7 @@ export function installMockDesktopApi(): void {
   const agentRunListeners = new Set<Listener<AgentRunEvent>>();
   const installListeners = new Set<Listener<InstallProgress>>();
   const updateListeners = new Set<Listener<UpdateStatus>>();
+  const browserTaskListeners = new Set<Listener<BrowserTaskEvent>>();
 
   const api: DesktopApi = {
     getAuthSession: async () => authSession,
@@ -425,6 +427,19 @@ export function installMockDesktopApi(): void {
       const sessionId = request.sessionId || requestId;
       const runId = request.runId || requestId;
       emit(agentRunListeners, { requestId, sessionId, runId, type: "start" });
+      emit(agentRunListeners, {
+        requestId,
+        sessionId,
+        runId,
+        type: "file_event",
+        fileEvent: {
+          action: "read",
+          path: `${request.workspacePath || "C:\\Mock"}\\src\\App.tsx`,
+          name: "src/App.tsx",
+          hash: "sha256:mock-src-app",
+          source: "mock-agent-run",
+        },
+      });
       for (const content of [
         "Mock agent run started.\n\n",
         request.task,
@@ -439,6 +454,19 @@ export function installMockDesktopApi(): void {
           content,
         });
       }
+      emit(agentRunListeners, {
+        requestId,
+        sessionId,
+        runId,
+        type: "file_event",
+        fileEvent: {
+          action: "artifact",
+          path: `${request.workspacePath || "C:\\Mock"}\\reports\\agent-output.md`,
+          name: "reports/agent-output.md",
+          hash: "sha256:mock-artifact",
+          source: "mock-agent-run",
+        },
+      });
       emit(agentRunListeners, { requestId, sessionId, runId, type: "done" });
       return { requestId, sessionId, runId };
     },
@@ -485,9 +513,33 @@ export function installMockDesktopApi(): void {
     listWorkspaceFiles: async (request) =>
       createMockWorkspaceFiles(request.workspacePath, request.query),
     previewWorkspaceFile: async (request) =>
-      createMockWorkspacePreview(request.workspacePath, request.path),
+      createMockWorkspacePreview(request.workspacePath, request.path, request.mode),
     getWorkspaceGitDiff: async (request) =>
-      createMockWorkspaceDiff(request.workspacePath, request.path),
+      createMockWorkspaceDiff(request.workspacePath, request.path, request.staged),
+    revertWorkspaceFile: async (request) => ({
+      workspacePath: request.workspacePath,
+      path: request.path,
+      reverted: request.expectedDiffHash.length > 0,
+      message: "Mock reverted unstaged file changes.",
+    }),
+    stageWorkspaceFile: async (request) => ({
+      workspacePath: request.workspacePath,
+      path: request.path,
+      staged: request.expectedDiffHash.length > 0,
+      message: "Mock staged file changes.",
+    }),
+    stageWorkspaceHunk: async (request) => ({
+      workspacePath: request.workspacePath,
+      path: request.path,
+      applied: request.patch.includes("@@"),
+      message: "Mock staged hunk.",
+    }),
+    revertWorkspaceHunk: async (request) => ({
+      workspacePath: request.workspacePath,
+      path: request.path,
+      applied: request.patch.includes("@@"),
+      message: "Mock reverted hunk.",
+    }),
     checkBrowserUrl: async (rawUrl) => {
       try {
         const url = new URL(rawUrl);
@@ -522,8 +574,25 @@ export function installMockDesktopApi(): void {
           : "Mock browser action accepted.",
       url: request.url,
     }),
+    startBrowserTask: async (request) => {
+      const taskId = request.taskId || `mock-browser-task-${Date.now()}`;
+      emit(browserTaskListeners, {
+        type: "task.started",
+        taskId,
+        engine: "browser-use",
+        timestamp: new Date().toISOString(),
+      });
+      return { taskId };
+    },
+    stopBrowserTask: async () => true,
+    approveBrowserTaskAction: async () => true,
     openExternal: async () => undefined,
     openPath: async () => "",
+    getFileIcon: async (path) => ({
+      path,
+      dataUrl:
+        "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjQiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0IiByeD0iNiIgZmlsbD0iI2Y4ZmFmYyIvPjxwYXRoIGQ9Ik04IDVoNmw0IDR2MTBIOHoiIGZpbGw9IiNmZmYiIHN0cm9rZT0iIzY0NzQ4YiIvPjxwYXRoIGQ9Ik0xNCA1djRoNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNjQ3NDhiIi8+PC9zdmc+",
+    }),
     createTerminal: async (options) => {
       terminalCounter += 1;
       const session: TerminalSessionInfo = {
@@ -567,6 +636,8 @@ export function installMockDesktopApi(): void {
     onUpdateStatus: (callback) => subscribe(updateListeners, callback),
     onTerminalData: () => () => undefined,
     onTerminalExit: () => () => undefined,
+    onBrowserTaskEvent: (callback) =>
+      subscribe(browserTaskListeners, callback),
   };
 
   window.openDrSai = api;
@@ -688,6 +759,28 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
           gitStatus: "clean",
           previewKind: "json",
         },
+        {
+          name: ".env",
+          path: `${workspacePath}\\src\\.env`,
+          relativePath: "src/.env",
+          type: "file",
+          extension: ".env",
+          size: 180,
+          modifiedAt: now,
+          gitStatus: "clean",
+          previewKind: "config",
+        },
+        {
+          name: "index.html",
+          path: `${workspacePath}\\src\\index.html`,
+          relativePath: "src/index.html",
+          type: "file",
+          extension: ".html",
+          size: 720,
+          modifiedAt: now,
+          gitStatus: "clean",
+          previewKind: "html",
+        },
       ],
     },
     {
@@ -708,6 +801,17 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
           modifiedAt: now,
           gitStatus: "added",
           previewKind: "table",
+        },
+        {
+          name: "analysis.ipynb",
+          path: `${workspacePath}\\data\\analysis.ipynb`,
+          relativePath: "data/analysis.ipynb",
+          type: "file",
+          extension: ".ipynb",
+          size: 12_400,
+          modifiedAt: now,
+          gitStatus: "modified",
+          previewKind: "notebook",
         },
       ],
     },
@@ -741,6 +845,17 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
           gitStatus: "clean",
           previewKind: "pdf",
         },
+        {
+          name: "brief.docx",
+          path: `${workspacePath}\\docs\\brief.docx`,
+          relativePath: "docs/brief.docx",
+          type: "file",
+          extension: ".docx",
+          size: 14_200,
+          modifiedAt: now,
+          gitStatus: "clean",
+          previewKind: "office",
+        },
       ],
     },
     {
@@ -762,6 +877,17 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
           gitStatus: "clean",
           previewKind: "image",
         },
+        {
+          name: "demo.mp4",
+          path: `${workspacePath}\\assets\\demo.mp4`,
+          relativePath: "assets/demo.mp4",
+          type: "file",
+          extension: ".mp4",
+          size: 2_420_000,
+          modifiedAt: now,
+          gitStatus: "clean",
+          previewKind: "media",
+        },
       ],
     },
   ];
@@ -770,6 +896,7 @@ function createMockWorkspaceNodes(workspacePath: string): WorkspaceFileNode[] {
 function createMockWorkspacePreview(
   workspacePath: string,
   path: string,
+  mode?: "auto" | "head" | "tail" | "outline",
 ): WorkspaceFilePreview {
   const relativePath = path.replace(workspacePath, "").replace(/^[/\\]+/, "").replace(/\\/g, "/");
   const name = relativePath.split("/").filter(Boolean).at(-1) || path;
@@ -781,7 +908,28 @@ function createMockWorkspacePreview(
     size: 920,
     modifiedAt: new Date().toISOString(),
     truncated: false,
+    fileHash: `sha256:mock-${name.replace(/[^a-z0-9]/gi, "-").toLowerCase()}`,
+    mode: mode ?? "auto",
   };
+  if (mode === "outline") {
+    return {
+      ...base,
+      kind: "text",
+      mime: "text/plain",
+      outline: ["# Workspace context", "function WorkspaceContextPanel", "const previewKinds"],
+      message: "Outline preview generated from mock file.",
+    };
+  }
+  if (mode === "head" || mode === "tail") {
+    return {
+      ...base,
+      kind: "text",
+      mime: "text/plain",
+      content: mode === "head" ? "Mock file head\nline 2\nline 3" : "Mock file tail\nlast line",
+      truncated: true,
+      message: `Showing file ${mode} only.`,
+    };
+  }
   if (name.endsWith(".tsx")) {
     return {
       ...base,
@@ -799,6 +947,22 @@ function createMockWorkspacePreview(
       content: JSON.stringify({ mode: "context-controller", version: 2 }, null, 2),
     };
   }
+  if (name.endsWith(".env") || name.endsWith(".toml") || name.endsWith(".yml")) {
+    return {
+      ...base,
+      kind: "config",
+      mime: "text/plain",
+      content: "DRSAI_MODE=desktop\nPREVIEW_ENABLED=true\n",
+    };
+  }
+  if (name.endsWith(".html")) {
+    return {
+      ...base,
+      kind: "html",
+      mime: "text/html",
+      content: "<main><h1>Preview</h1><p>HTML renders inside a sandboxed frame.</p></main>",
+    };
+  }
   if (name.endsWith(".csv")) {
     return {
       ...base,
@@ -812,6 +976,17 @@ function createMockWorkspacePreview(
       content: "run,metric,value\nbaseline,accuracy,0.91\ncandidate,accuracy,0.94\n",
     };
   }
+  if (name.endsWith(".ipynb")) {
+    return {
+      ...base,
+      kind: "notebook",
+      mime: "application/x-ipynb+json",
+      content:
+        "Notebook cells: 3\n1. markdown, 2 lines: # Experiment\n2. code, 4 lines, 1 outputs: import pandas as pd\n3. code, 3 lines: def train_model():",
+      outline: ["cell 1: # Experiment", "cell 3: def train_model()"],
+      message: "Notebook cell preview generated from ipynb JSON.",
+    };
+  }
   if (name.endsWith(".svg")) {
     return {
       ...base,
@@ -819,6 +994,7 @@ function createMockWorkspacePreview(
       mime: "image/svg+xml",
       dataUrl:
         "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNDAiIGhlaWdodD0iMTIwIj48cmVjdCB3aWR0aD0iMjQwIiBoZWlnaHQ9IjEyMCIgZmlsbD0iI2Y4ZmFmYyIvPjxwb2x5bGluZSBwb2ludHM9IjIwLDkwIDgwLDYwIDEzMCw3MCAyMDAsMzAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzI1NjNlYiIgc3Ryb2tlLXdpZHRoPSI2Ii8+PC9zdmc+",
+      metadata: { format: "SVG", width: 240, height: 120 },
     };
   }
   if (name.endsWith(".pdf")) {
@@ -827,7 +1003,26 @@ function createMockWorkspacePreview(
       kind: "pdf",
       mime: "application/pdf",
       size: 1_240_000,
-      message: "PDF preview is metadata-only in this version.",
+      content: "Mock extracted PDF text preview.",
+      message: "Extracted a basic text preview from the PDF.",
+    };
+  }
+  if (name.endsWith(".mp4") || name.endsWith(".mp3")) {
+    return {
+      ...base,
+      kind: "media",
+      mime: name.endsWith(".mp4") ? "video/mp4" : "audio/mpeg",
+      size: 2_420_000,
+      message: "Media preview is rendered directly in the file preview pane.",
+    };
+  }
+  if (name.endsWith(".docx") || name.endsWith(".pptx") || name.endsWith(".xlsx")) {
+    return {
+      ...base,
+      kind: "office",
+      mime: "application/vnd.openxmlformats-officedocument",
+      content: "Mock extracted Office text preview.",
+      message: "Extracted a basic text preview from the Office document.",
     };
   }
   return {
@@ -842,22 +1037,35 @@ function createMockWorkspacePreview(
 function createMockWorkspaceDiff(
   workspacePath: string,
   path?: string,
+  staged = false,
 ): WorkspaceGitDiffResult {
   const target = path?.replace(workspacePath, "").replace(/^[/\\]+/, "").replace(/\\/g, "/") || "src/App.tsx";
+  const diff = [
+    `diff --git a/${target} b/${target}`,
+    "index 1a2b3c4..5d6e7f8 100644",
+    `--- a/${target}`,
+    `+++ b/${target}`,
+    "@@ -12,6 +12,8 @@",
+    "+ const contextMode = 'human-visible-agent-ready';",
+    "+ const previewKinds = ['code', 'markdown', 'table', 'image'];",
+  ].join("\n");
   return {
     workspacePath,
     path: target,
     truncated: false,
-    diff: [
-      `diff --git a/${target} b/${target}`,
-      "index 1a2b3c4..5d6e7f8 100644",
-      `--- a/${target}`,
-      `+++ b/${target}`,
-      "@@ -12,6 +12,8 @@",
-      "+ const contextMode = 'human-visible-agent-ready';",
-      "+ const previewKinds = ['code', 'markdown', 'table', 'image'];",
-    ].join("\n"),
+    staged,
+    diff,
+    diffHash: hashMockString(diff),
   };
+}
+
+function hashMockString(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `h${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 function filterMockNodes(

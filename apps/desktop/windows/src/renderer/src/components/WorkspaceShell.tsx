@@ -12,7 +12,9 @@ import {
   HelpCircle,
   IdCard,
   LogOut,
+  Maximize2,
   MessageSquarePlus,
+  Minimize2,
   MoreHorizontal,
   RefreshCw,
   Search,
@@ -141,6 +143,7 @@ export function WorkspaceShell({
   const [workspaceCreateError, setWorkspaceCreateError] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(248);
   const [rightPanelWidth, setRightPanelWidth] = useState(420);
+  const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
   const helpMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const zh = language === "zh";
@@ -151,6 +154,13 @@ export function WorkspaceShell({
   const workspaceItems = getEnabledNavItems(navSections, "workspace");
   const settingsItems = getEnabledNavItems(navSections, "settings");
   const workspaceDetails = workspaces.find((workspace) => workspace.id === workspaceDetailsId) ?? null;
+  const isRightPanelExpanded = rightPanelExpanded && !rightPanelCollapsed;
+  const rightPanelExpandLabel = isRightPanelExpanded
+    ? zh ? "还原聊天视图" : "Restore chat view"
+    : zh ? "展开上下文环境" : "Expand context environment";
+  const rightPanelClassName = `right-panel context-right-panel ${
+    activeRightTab === "browser" ? "browser-right-panel" : ""
+  }`;
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent): void {
@@ -171,6 +181,7 @@ export function WorkspaceShell({
       if (event.key === "Escape") {
         setDesktopStatusOpen(false);
         setHelpMenuOpen(false);
+        setRightPanelExpanded(false);
         closeWorkspaceDetails();
       }
     }
@@ -178,6 +189,12 @@ export function WorkspaceShell({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
+
+  useEffect(() => {
+    if (rightPanelCollapsed) {
+      setRightPanelExpanded(false);
+    }
+  }, [rightPanelCollapsed]);
 
   function startSidebarResize(event: React.PointerEvent<HTMLDivElement>): void {
     event.preventDefault();
@@ -593,12 +610,11 @@ export function WorkspaceShell({
                       type="button"
                       className="workspace-item"
                       onClick={() => onWorkspaceChange(workspace.id)}
-                      title={workspace.path}
+                      title={[workspace.name, workspace.description, workspace.path].filter(Boolean).join("\n")}
                     >
                       <FolderCode size={15} />
                       <span>
                         <strong>{workspace.name}</strong>
-                        {workspace.description && <small>{workspace.description}</small>}
                       </span>
                     </button>
                     <button
@@ -714,9 +730,13 @@ export function WorkspaceShell({
       )}
 
       <main className="workspace">
-        <section className={`content-grid ${rightPanelCollapsed ? "right-collapsed" : ""}`}>
+        <section
+          className={`content-grid ${rightPanelCollapsed ? "right-collapsed" : ""} ${
+            isRightPanelExpanded ? "right-expanded" : ""
+          }`}
+        >
           <section className="conversation-panel">{main}</section>
-          {!rightPanelCollapsed && (
+          {!rightPanelCollapsed && !isRightPanelExpanded && (
             <div
               className="right-resize-handle"
               role="separator"
@@ -727,7 +747,7 @@ export function WorkspaceShell({
           )}
 
           {!rightPanelCollapsed && (
-            <aside className="right-panel">
+            <aside className={rightPanelClassName}>
               <div className="right-tabs">
                 {rightTabs.map(({ id, label }) => {
                   const Icon = rightTabIcons[id];
@@ -744,6 +764,16 @@ export function WorkspaceShell({
                     </button>
                   );
                 })}
+                <button
+                  type="button"
+                  className="right-panel-expand-button"
+                  onClick={() => setRightPanelExpanded((expanded) => !expanded)}
+                  title={rightPanelExpandLabel}
+                  aria-label={rightPanelExpandLabel}
+                  aria-pressed={isRightPanelExpanded}
+                >
+                  {isRightPanelExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+                </button>
               </div>
               {rightPanel}
             </aside>

@@ -114,7 +114,99 @@ desktop/
 
 页面采用 lazy-mount：首次访问后保持挂载，通过 `display:none` 切换，减少频繁切换 tab 时的 IPC 重拉取和 DOM 重建。
 
-### 4.3 Chat
+### 4.3 右侧栏：智能体上下文环境
+
+右侧栏定位为智能体的 **上下文环境**（Context Environment），用于承载当前会话、当前任务和当前工作区中可被智能体观察、引用和操作的外部环境。它不是普通的辅助工具集合，而是智能体运行时上下文的一部分：文件、浏览器、终端等能力都以独立上下文环境的形式存在，并作为 App 内的一等组件参与交互。
+
+上下文环境的基本原则：
+
+- 每个上下文环境都是一个独立 App 组件，拥有自己的 UI、状态、生命周期、持久化策略和错误边界。
+- 每个上下文环境都有自己的文件或资源集合，例如文件上下文管理工作区文件，浏览器上下文管理页面、截图、DOM/文本快照和浏览历史，终端上下文管理 shell 会话、命令记录和输出。
+- 上下文环境需要能够向 Chat/Agent Run 暴露结构化上下文，例如选中文件、页面摘要、截图、终端输出、命令结果和错误日志。
+- 智能体可以读取上下文环境提供的只读信息；涉及副作用的操作，例如写文件、点击网页、提交表单、执行命令等，必须进入显式授权或风险分级流程。
+- 右侧栏本身只负责承载和切换上下文环境，不应把文件、浏览器、终端的领域逻辑写成一个单体面板。
+
+首批上下文环境包括：
+
+- 文件上下文：展示和管理当前工作区文件、会话附件、生成产物、文件预览和选中文件上下文。
+- 浏览器上下文：提供本地预览/网页浏览、页面上下文捕获、截图、DOM/文本快照，以及未来可接入 `browser-use` 的受控浏览器操作。
+- 终端上下文：提供可见 shell 会话、命令预览、命令执行、输出选择、运行状态和命令结果回传。
+
+浏览器上下文采用三阶段递进路线，详细实现规划见 `apps/desktop/windows/docs/preview-browser-roadmap.md`。App 总规划层面的约束如下：
+
+1. V1：Preview Browser。
+   - 目标：在右侧栏提供一个轻量、稳定、不会自动加载页面的浏览器上下文，用于本地开发页面预览和网页上下文采集。
+   - 核心功能：`Browser` tab、地址栏显式打开、local/loopback URL 与公共 `https:` URL 支持、危险 URL 拦截、多标签、历史、收藏、持久 session partition、页面加载/崩溃/不响应状态展示。
+   - 安全边界：嵌入页面关闭 Node integration，启用 sandbox/contextIsolation/webSecurity，默认禁用权限、弹窗、下载和非预期导航；所有 `webview` 方法必须等 DOM 挂载并触发 `dom-ready` 后才能调用。
+   - 上下文能力：用户可以把页面可见文本、结构化 DOM 摘要、console/network 线索和可选截图显式加入下一条 Chat/Agent 消息。
+
+2. V2：Browser Controller 与 Agent 工具表面。
+   - 目标：把浏览器从“可见预览面板”升级为“受控上下文工具”，但不绑定最终自动化引擎。
+   - 核心抽象：定义共享 `BrowserController`、`BrowserPageState`、`BrowserSnapshot`、`BrowserScreenshot`、`BrowserActionRequest`、`BrowserActionResult`、`BrowserActionLogEntry`。
+   - 只读动作：`open`、`snapshot`、`screenshot`、`read_text`、`eval_readonly`。
+   - 受控交互动作：`click`、`type`、`select`、`key_press`、`wait_for`、`assert_text`。
+   - 授权模型：Agent 可以读取只读页面快照；点击、输入、选择、按键、提交等有副作用动作必须经过用户显式确认，并记录 URL、selector/target、结果、审批状态和失败原因。
+   - 连接方式：Renderer 只调用 preload 暴露的 typed API；主进程负责 URL policy、action policy、IPC 校验和 controller registry。
+
+3. V3：`browser-use` Agent Browser。
+   - 目标：接入 `browser-use` 作为复杂多步骤浏览器任务的执行引擎，同时复用 V1/V2 的 UI、上下文附件、审批、日志和类型边界。
+   - 运行形态：主进程通过 `BrowserUseController` 启动 Python `browser-use` worker；worker 使用窄协议返回 `task.started`、`page.observed`、`action.proposed`、`action.completed`、`screenshot`、`task.completed`、`task.failed`、`task.cancelled` 等事件。
+   - 用户驾驶舱：右侧 Browser 面板显示当前任务、URL、截图预览、action log、pending approval、最终结果和停止/取消入口。
+   - 复用契约：V3 可以替换浏览器引擎、页面观察方式、截图实现和多步骤规划逻辑，但不能重写右侧栏 shell、Chat 附件 schema、用户授权模型或 V1/V2 action schema。
+   - 隔离策略：`browser-use` profile 默认与 App session 和用户日常浏览器 profile 分离；复用 profile 必须显式 opt-in。
+
+浏览器上下文的代码边界：
+
+```text
+renderer/src/components/PreviewBrowserPanel.tsx
+renderer/src/components/previewBrowser/
+  BrowserPanelErrorBoundary.tsx
+  state.ts
+  scripts.ts
+  types.ts
+
+shared/browser/
+  types.ts
+  actionPolicy.ts
+  snapshotSchema.ts
+
+main/browser/
+  urlPolicy.ts
+  actionApproval.ts
+  browserController.ts
+  browserControllerRegistry.ts
+  adapters/
+    electronWebviewController.ts
+    browserUseController.ts
+  browserUse/
+    protocol.ts
+    processManager.ts
+    workerClient.ts
+
+python/browser_use_worker/
+  worker.py
+  protocol.py
+  requirements.txt
+```
+
+浏览器上下文的验证要求：
+
+- 静态契约：`npm run verify:preview-browser` 检查右侧栏入口、URL policy、安全配置、错误边界、懒加载、上下文附件、截图、action API、审批边界、`dom-ready` gate 和 V3 worker/IPC 骨架。
+- Controller 契约：`npm run verify:browser-controller` 检查共享类型、action policy、snapshot schema、controller registry 和 adapter 可替换性。
+- Worker 契约：`npm run verify:browser-use-worker` 检查 Python worker 协议、process manager、worker client、browser-use adapter 和 IPC 暴露。
+- Worker smoke：`npm run verify:browser-use-worker-smoke` 检查 Python 运行时可导入 `browser-use`、Playwright Chromium runtime 存在、无 API key fallback 可解释失败、fake-real 事件流完整。
+- 构建门禁：任何浏览器上下文变更都必须通过 `npm run typecheck` 和 `npm run build`。
+
+推荐命名：
+
+- UI 标题：`上下文环境`
+- 右侧栏组件：`ContextEnvironmentPanel`
+- 环境类型：`ContextEnvironmentTab`
+- 单个环境组件：`FileContextEnvironment`、`BrowserContextEnvironment`、`TerminalContextEnvironment`
+
+该设计使右侧栏成为智能体的环境窗口：主聊天区负责对话和决策表达，右侧栏负责呈现智能体可接触的上下文表面，并把这些表面以结构化、可授权、可追踪的方式连接回 Agent 工作流。
+
+### 4.4 Chat
 
 Chat 是桌面端最核心链路：
 
@@ -135,13 +227,13 @@ Chat 是桌面端最核心链路：
 - 停止生成：渲染进程调用 `abortChat()`，主进程通过 AbortController 取消当前 HTTP 请求。
 - Thread 控制：pause/resume/stop 调用 `/v1/threads/{thread_id}/{action}`。
 
-### 4.4 会话与线程
+### 4.5 会话与线程
 
 - `sessions.ts` 通过 `/v1/threads`、`/v1/threads/{thread_id}`、`/v1/threads/search` 读取后端线程。
 - 返回数据在主进程归一化为 renderer 需要的 `SessionSummary` / `SessionMessage`。
 - 标题更新通过 session-cache 或 Gateway rename 相关接口衔接。
 
-### 4.5 模型与 Provider
+### 4.6 模型与 Provider
 
 - 模型列表和 CRUD 走 `/v1/models/config*`：
   - `GET /v1/models/config`
@@ -153,25 +245,26 @@ Chat 是桌面端最核心链路：
 - Gateway 负责读写 DrSai 的 LLM mode config，并在配置变更后让下一轮对话使用新模型配置。
 - Provider/API Key、平台开关和 CLI config 相关设置走 `/v1/config/env`、`/v1/config/cli`、`/v1/config/platforms`。
 
-### 4.6 Memory / Soul / Tools / Skills
+### 4.7 Memory / Soul / Tools / Skills
 
 - Memory：`/v1/memory*` 管理 `MEMORY.md` 和 `USER.md`，包括条目增删改、用户画像写入和字符限制。
 - Soul：通过 `/v1/config/agents-md`、`/v1/config/user-md` 等配置类接口管理 Agent persona/user markdown。
 - Tools：`/v1/config/tools*` 管理 `TOOLS_CONFIG.json`，支持 MCP server 和本地工具描述。
 - Skills：`/v1/skills*` 管理已安装技能、内置可用技能、技能内容、安装和卸载。
 
-### 4.7 Schedules 与 Kanban
+### 4.8 Schedules 与 Kanban
 
 - Schedules：`cronjobs.ts` 走 `/v1/cronjobs*`，Gateway 包装 DrSai ScheduledTaskManager；计划任务触发后进入与交互聊天相同的 Agent 执行管线。
 - Kanban：`kanban.ts` 走 `/v1/kanban/*`，当前说明为 per-user JSON store，便于 desktop/future TUI/future CLI 共享同一 Gateway 的任务状态。
 
-### 4.8 安全与 WebView
+### 4.9 安全与 WebView
 
 - BrowserWindow 启用 `contextIsolation`，renderer 通过 preload API 调用主进程。
 - `security.ts` 限制：
   - 外链仅允许 `http:`、`https:`、`mailto:`，并通过 `shell.openExternal` 打开。
   - 应用自身导航只允许开发服务器 origin 或打包后的本地 `index.html`。
-  - webview 仅允许本机 `http://localhost|127.0.0.1|::1:<1024-65535>`，并关闭 Node integration、启用 sandbox/contextIsolation/webSecurity。
+  - 右侧栏浏览器默认允许本机开发 URL（`localhost`、`127.0.0.1`、`::1`）和公共 `https:` URL；默认拦截公共 `http:`、携带凭据的 URL、弹窗、下载和敏感权限，并关闭 Node integration、启用 sandbox/contextIsolation/webSecurity。
+  - `webview` 相关操作必须经过生命周期 gate：节点挂载并触发 `dom-ready` 后才允许调用 `canGoBack`、`getURL`、`executeJavaScript`、`capturePage` 等方法。
 
 ## 5. 与后端通信方案
 

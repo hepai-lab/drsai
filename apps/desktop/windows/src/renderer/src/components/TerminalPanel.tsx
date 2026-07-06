@@ -70,6 +70,7 @@ export function TerminalPanel({
   const [statusNote, setStatusNote] = useState("Loading...");
   const [terminalBuffer, setTerminalBuffer] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [selectedShellProfile, setSelectedShellProfile] =
     useState<TerminalShellProfile>("powershell");
   const [commandDraft, setCommandDraft] = useState("");
@@ -103,6 +104,7 @@ export function TerminalPanel({
     }
     return count;
   }, [searchQuery, terminalBuffer]);
+  const showToolDrawer = toolsOpen || Boolean(commandProposal) || Boolean(runningCommand);
 
   useEffect(() => {
     try {
@@ -160,6 +162,7 @@ export function TerminalPanel({
     if (!command) return;
     const risk = classifyCommandRisk(command);
     setCommandDraft(command);
+    setToolsOpen(true);
     setCommandProposal({
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       command,
@@ -266,6 +269,7 @@ export function TerminalPanel({
     const command = commandDraft.trim();
     if (!command) return;
     const risk = classifyCommandRisk(command);
+    setToolsOpen(true);
     setCommandProposal({
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       command,
@@ -377,10 +381,11 @@ export function TerminalPanel({
       lineHeight: 1.2,
       scrollback: 5000,
       theme: {
-        background: "#0f1115",
-        foreground: "#d7dde8",
-        cursor: "#ffffff",
-        selectionBackground: "#31415f",
+        background: "#ffffff",
+        foreground: "#1f2937",
+        cursor: "#111827",
+        selectionBackground: "#bfdbfe",
+        selectionForeground: "#111827",
       },
     });
     const fitAddon = new FitAddon();
@@ -568,7 +573,7 @@ export function TerminalPanel({
           <span>
             {statusNote ||
               (activeSession
-                ? `${shellDisplayName(activeSession.shell)} | PID ${activeSession.pid} | Running`
+                ? `${shellDisplayName(activeSession.shell)} | PID ${activeSession.pid} | ${activeSession.cwd}`
                 : "No session")}
           </span>
         </div>
@@ -609,6 +614,14 @@ export function TerminalPanel({
           <button type="button" onClick={clear} title="Clear terminal">
             <Trash2 size={15} />
           </button>
+          <button
+            type="button"
+            className={showToolDrawer ? "active" : ""}
+            onClick={() => setToolsOpen((open) => !open)}
+            title="Terminal tools"
+          >
+            <Search size={15} />
+          </button>
         </div>
       </div>
       <div className="terminal-session-tabs">
@@ -638,105 +651,106 @@ export function TerminalPanel({
           </button>
         ))}
       </div>
-      <div className="terminal-side-cwd" title={activeSession?.cwd ?? cwd}>
-        {activeSession?.cwd || cwd || "Default user directory"}
-      </div>
-      <div className="terminal-search-row">
-        <Search size={14} />
-        <input
-          value={searchQuery}
-          onChange={(event) => setSearchQuery(event.target.value)}
-          placeholder="Search output"
-        />
-        <span>{searchQuery.trim() ? `${searchMatches} matches` : " "}</span>
-      </div>
-      <form
-        className="terminal-agent-command"
-        onSubmit={(event) => {
-          event.preventDefault();
-          previewCommand();
-        }}
-      >
-        <div className="terminal-agent-command-main">
-          <ShieldAlert size={14} />
-          <input
-            value={commandDraft}
-            onChange={(event) => setCommandDraft(event.target.value)}
-            placeholder="Agent command proposal"
-          />
-          <button type="submit" disabled={!commandDraft.trim()}>
-            Preview
-          </button>
-          {runningCommand ? (
-            <button type="button" className="stop" onClick={stopRunningCommand}>
-              <Square size={13} />
-              Stop
-            </button>
-          ) : null}
-          {onSendOutputToAgent ? (
-            <button type="button" onClick={sendSelectionToAgent}>
-              Send selection
-            </button>
-          ) : null}
-        </div>
-        {commandProposal ? (
-          <div className={`terminal-command-preview ${commandProposal.risk}`}>
-            <div>
-              <strong>{riskLabel(commandProposal.risk)}</strong>
-              <span>{commandProposal.reason}</span>
-            </div>
-            <code>{commandProposal.command}</code>
-            <div className="terminal-command-preview-actions">
-              <button
-                type="button"
-                onClick={() => setCommandProposal(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={commandProposal.risk === "destructive"}
-                onClick={() => void runProposedCommand()}
-              >
-                <Play size={13} />
-                Run visibly
-              </button>
-            </div>
+      {showToolDrawer ? (
+        <div className="terminal-tool-drawer">
+          <div className="terminal-search-row">
+            <Search size={14} />
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search output"
+            />
+            <span>{searchQuery.trim() ? `${searchMatches} matches` : " "}</span>
           </div>
-        ) : null}
-        {commandRuns.length > 0 || commandHistory.length > 0 ? (
-          <div className="terminal-command-history">
-            {commandRuns.slice(0, 3).map((run) => (
-              <button
-                type="button"
-                key={run.id}
-                onClick={() => setCommandDraft(run.command)}
-                title={run.command}
-              >
-                <span className={run.status}>{run.status}</span>
-                {run.command}
+          <form
+            className="terminal-agent-command"
+            onSubmit={(event) => {
+              event.preventDefault();
+              previewCommand();
+            }}
+          >
+            <div className="terminal-agent-command-main">
+              <ShieldAlert size={14} />
+              <input
+                value={commandDraft}
+                onChange={(event) => setCommandDraft(event.target.value)}
+                placeholder="Agent command proposal"
+              />
+              <button type="submit" disabled={!commandDraft.trim()}>
+                Preview
               </button>
-            ))}
-            {commandHistory
-              .filter(
-                (command) =>
-                  !commandRuns.some((run) => run.command === command),
-              )
-              .slice(0, 3)
-              .map((command) => (
-                <button
-                  type="button"
-                  key={command}
-                  onClick={() => setCommandDraft(command)}
-                  title={command}
-                >
-                  <span>recent</span>
-                  {command}
+              {runningCommand ? (
+                <button type="button" className="stop" onClick={stopRunningCommand}>
+                  <Square size={13} />
+                  Stop
                 </button>
-              ))}
-          </div>
-        ) : null}
-      </form>
+              ) : null}
+              {onSendOutputToAgent ? (
+                <button type="button" onClick={sendSelectionToAgent}>
+                  Send selection
+                </button>
+              ) : null}
+            </div>
+            {commandProposal ? (
+              <div className={`terminal-command-preview ${commandProposal.risk}`}>
+                <div>
+                  <strong>{riskLabel(commandProposal.risk)}</strong>
+                  <span>{commandProposal.reason}</span>
+                </div>
+                <code>{commandProposal.command}</code>
+                <div className="terminal-command-preview-actions">
+                  <button
+                    type="button"
+                    onClick={() => setCommandProposal(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={commandProposal.risk === "destructive"}
+                    onClick={() => void runProposedCommand()}
+                  >
+                    <Play size={13} />
+                    Run visibly
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {commandRuns.length > 0 || commandHistory.length > 0 ? (
+              <div className="terminal-command-history">
+                {commandRuns.slice(0, 3).map((run) => (
+                  <button
+                    type="button"
+                    key={run.id}
+                    onClick={() => setCommandDraft(run.command)}
+                    title={run.command}
+                  >
+                    <span className={run.status}>{run.status}</span>
+                    {run.command}
+                  </button>
+                ))}
+                {commandHistory
+                  .filter(
+                    (command) =>
+                      !commandRuns.some((run) => run.command === command),
+                  )
+                  .slice(0, 3)
+                  .map((command) => (
+                    <button
+                      type="button"
+                      key={command}
+                      onClick={() => setCommandDraft(command)}
+                      title={command}
+                    >
+                      <span>recent</span>
+                      {command}
+                    </button>
+                  ))}
+              </div>
+            ) : null}
+          </form>
+        </div>
+      ) : null}
       <div
         className="terminal-side-body"
         ref={containerRef}

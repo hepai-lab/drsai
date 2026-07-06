@@ -10,6 +10,8 @@ import {
   Globe2,
   Keyboard,
   Loader2,
+  Minus,
+  MoreVertical,
   MousePointerClick,
   Plus,
   RefreshCw,
@@ -19,168 +21,20 @@ import {
   Type,
   X,
 } from "lucide-react";
-import { Component, FormEvent, ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import type { ChatAttachment } from "@shared/desktopApi";
-import type { AppLanguage } from "../navigation";
+import { type CSSProperties, FormEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from "react";
 import { desktopApi } from "../desktopApi";
-
-interface PreviewBrowserPanelProps {
-  initialUrl?: string;
-  language: AppLanguage;
-  onAttachContext: (attachment: ChatAttachment) => void;
-  onClose: () => void;
-}
-
-interface BrowserPanelErrorBoundaryProps {
-  children: ReactNode;
-}
-
-interface BrowserPanelErrorBoundaryState {
-  error: string | null;
-}
-
-interface BrowserTab {
-  id: string;
-  title: string;
-  url: string;
-  draftUrl: string;
-  loading: boolean;
-}
-
-interface BrowserHistoryItem {
-  url: string;
-  title: string;
-  visitedAt: string;
-}
-
-interface BrowserBookmark {
-  url: string;
-  title: string;
-  createdAt: string;
-}
-
-interface PageSnapshot {
-  title: string;
-  url: string;
-  viewport: { width: number; height: number; scrollX: number; scrollY: number };
-  visibleText: string;
-  structure: {
-    headings: string[];
-    buttons: string[];
-    links: string[];
-    inputs: string[];
-    elements: Array<{
-      selector: string;
-      tag: string;
-      role: string;
-      text: string;
-      rect: { x: number; y: number; width: number; height: number };
-      styles: {
-        display: string;
-        visibility: string;
-        color: string;
-        backgroundColor: string;
-        fontSize: string;
-      };
-    }>;
-  };
-  resources: Array<{ name: string; type: string; duration: number }>;
-}
-
-type BrowserActionMode =
-  | "click"
-  | "type"
-  | "select"
-  | "key_press"
-  | "wait_for"
-  | "assert_text";
-
-const DEFAULT_URL = "http://localhost:3000/";
-const STORAGE_KEY = "opendrsai.previewBrowser.state";
-const MAX_HISTORY = 80;
-
-const READ_TEXT_SCRIPT = [
-  "(() => {",
-  '  const text = document.body?.innerText || "";',
-  '  return text.replace(/\\n{3,}/g, "\\n\\n").trim().slice(0, 12000);',
-  "})()",
-].join("\n");
-
-const SNAPSHOT_SCRIPT = [
-  "(() => {",
-  "  const textOf = (node) => (node?.innerText || node?.textContent || node?.getAttribute?.('aria-label') || '').trim();",
-  "  const cssEscape = (value) => window.CSS?.escape ? window.CSS.escape(value) : String(value).replace(/\"/g, '\\\\\"');",
-  "  const selectorFor = (node) => {",
-  "    if (node.id) return '#' + cssEscape(node.id);",
-  "    const name = node.getAttribute('name');",
-  "    if (name) return node.tagName.toLowerCase() + '[name=\"' + cssEscape(name) + '\"]';",
-  "    const label = node.getAttribute('aria-label');",
-  "    if (label) return node.tagName.toLowerCase() + '[aria-label=\"' + cssEscape(label) + '\"]';",
-  "    const parts = [];",
-  "    let current = node;",
-  "    while (current && current.nodeType === Node.ELEMENT_NODE && parts.length < 4) {",
-  "      const parent = current.parentElement;",
-  "      const tag = current.tagName.toLowerCase();",
-  "      if (!parent) { parts.unshift(tag); break; }",
-  "      const index = Array.from(parent.children).filter((item) => item.tagName === current.tagName).indexOf(current) + 1;",
-  "      parts.unshift(tag + ':nth-of-type(' + index + ')');",
-  "      current = parent;",
-  "    }",
-  "    return parts.join(' > ');",
-  "  };",
-  "  const values = (selector) => Array.from(document.querySelectorAll(selector)).map(textOf).filter(Boolean).slice(0, 60);",
-  "  const elements = Array.from(document.querySelectorAll('a[href],button,[role=button],input,textarea,select,[contenteditable=true],h1,h2,h3')).slice(0, 80).map((node) => {",
-  "    const rect = node.getBoundingClientRect();",
-  "    const style = getComputedStyle(node);",
-  "    return { selector: selectorFor(node), tag: node.tagName.toLowerCase(), role: node.getAttribute('role') || node.getAttribute('type') || '', text: textOf(node).slice(0, 180), rect: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }, styles: { display: style.display, visibility: style.visibility, color: style.color, backgroundColor: style.backgroundColor, fontSize: style.fontSize } };",
-  "  });",
-  "  return {",
-  "    title: document.title || '',",
-  "    url: location.href,",
-  "    viewport: { width: innerWidth, height: innerHeight, scrollX, scrollY },",
-  "    visibleText: (document.body?.innerText || '').replace(/\\n{3,}/g, '\\n\\n').trim().slice(0, 16000),",
-  "    structure: {",
-  "      headings: values('h1,h2,h3,[role=heading]'),",
-  "      buttons: values('button,[role=button]'),",
-  "      links: Array.from(document.querySelectorAll('a[href]')).map((node) => { const label = textOf(node); const href = node.getAttribute('href') || ''; return label ? label + ' (' + href + ')' : href; }).filter(Boolean).slice(0, 60),",
-  "      inputs: Array.from(document.querySelectorAll('input,textarea,select,[contenteditable=true]')).map((node) => { const label = node.getAttribute('aria-label') || node.getAttribute('placeholder') || node.getAttribute('name') || node.id || node.tagName.toLowerCase(); const type = node.getAttribute('type') || node.tagName.toLowerCase(); return label + ' [' + type + '] ' + selectorFor(node); }).filter(Boolean).slice(0, 60),",
-  "      elements,",
-  "    },",
-  "    resources: performance.getEntriesByType('resource').slice(-40).map((item) => ({ name: item.name, type: item.initiatorType || 'resource', duration: Math.round(item.duration) })),",
-  "  };",
-  "})()",
-].join("\n");
-
-const PICK_ELEMENT_SCRIPT = [
-  "new Promise((resolve) => {",
-  "  const previous = { outline: null, node: null };",
-  "  const cssEscape = (value) => window.CSS?.escape ? window.CSS.escape(value) : String(value).replace(/\"/g, '\\\\\"');",
-  "  const selectorFor = (node) => {",
-  "    if (node.id) return '#' + cssEscape(node.id);",
-  "    const name = node.getAttribute('name');",
-  "    if (name) return node.tagName.toLowerCase() + '[name=\"' + cssEscape(name) + '\"]';",
-  "    const label = node.getAttribute('aria-label');",
-  "    if (label) return node.tagName.toLowerCase() + '[aria-label=\"' + cssEscape(label) + '\"]';",
-  "    const parts = [];",
-  "    let current = node;",
-  "    while (current && current.nodeType === Node.ELEMENT_NODE && parts.length < 4) {",
-  "      const parent = current.parentElement;",
-  "      const tag = current.tagName.toLowerCase();",
-  "      if (!parent) { parts.unshift(tag); break; }",
-  "      const index = Array.from(parent.children).filter((item) => item.tagName === current.tagName).indexOf(current) + 1;",
-  "      parts.unshift(tag + ':nth-of-type(' + index + ')');",
-  "      current = parent;",
-  "    }",
-  "    return parts.join(' > ');",
-  "  };",
-  "  const cleanup = () => { document.removeEventListener('mouseover', over, true); document.removeEventListener('click', click, true); if (previous.node) previous.node.style.outline = previous.outline || ''; };",
-  "  const over = (event) => { const node = event.target; if (previous.node && previous.node !== node) previous.node.style.outline = previous.outline || ''; previous.node = node; previous.outline = node.style.outline; node.style.outline = '2px solid #8b5cf6'; };",
-  "  const click = (event) => { event.preventDefault(); event.stopPropagation(); const selector = selectorFor(event.target); cleanup(); resolve(selector); };",
-  "  document.addEventListener('mouseover', over, true);",
-  "  document.addEventListener('click', click, true);",
-  "  setTimeout(() => { cleanup(); resolve(''); }, 15000);",
-  "})",
-].join("\n");
+import { BrowserPanelErrorBoundary } from "./previewBrowser/BrowserPanelErrorBoundary";
+import { LINK_NAVIGATION_MESSAGE, LINK_NAVIGATION_SCRIPT, PICK_ELEMENT_SCRIPT, READ_TEXT_SCRIPT, SNAPSHOT_SCRIPT, createActionScript } from "./previewBrowser/scripts";
+import { DEFAULT_URL, MAX_HISTORY, STORAGE_KEY, createTab, loadState, normalizeUrlInput } from "./previewBrowser/state";
+import type { BrowserTaskEvent } from "@shared/desktopApi";
+import type {
+  BrowserActionMode,
+  BrowserBookmark,
+  BrowserHistoryItem,
+  BrowserTab,
+  PageSnapshot,
+  PreviewBrowserPanelProps,
+} from "./previewBrowser/types";
 
 export function PreviewBrowserPanel({
   initialUrl,
@@ -204,13 +58,17 @@ function PreviewBrowserPanelContent({
   initialUrl,
   language,
   onAttachContext,
-  onClose,
 }: PreviewBrowserPanelProps): React.JSX.Element {
   const isZh = language === "zh";
   const webviewRefs = useRef(new Map<string, OpenDrSaiWebviewTag>());
   const webviewRefCallbacks = useRef(new Map<string, (node: OpenDrSaiWebviewTag | null) => void>());
+  const webviewReadyRef = useRef(new Set<string>());
+  const panelRef = useRef<HTMLElement | null>(null);
+  const toolsResizeCleanupRef = useRef<(() => void) | null>(null);
   const stagedInitialUrlRef = useRef<string | undefined>(undefined);
   const initialState = useRef(loadState()).current;
+  const activeTabIdRef = useRef<string>(initialState.activeTabId);
+  const zoomPercentRef = useRef(100);
   const [tabs, setTabs] = useState<BrowserTab[]>(initialState.tabs);
   const [activeTabId, setActiveTabId] = useState(initialState.activeTabId);
   const [history, setHistory] = useState<BrowserHistoryItem[]>(initialState.history);
@@ -226,6 +84,20 @@ function PreviewBrowserPanelContent({
   const [actionText, setActionText] = useState("");
   const [actionKey, setActionKey] = useState("Enter");
   const [actionLog, setActionLog] = useState<string[]>([]);
+  const [taskInstruction, setTaskInstruction] = useState("");
+  const [browserTaskId, setBrowserTaskId] = useState<string | null>(null);
+  const [browserTaskEvents, setBrowserTaskEvents] = useState<BrowserTaskEvent[]>([]);
+  const [pendingTaskApprovals, setPendingTaskApprovals] = useState<
+    Array<Extract<BrowserTaskEvent, { type: "action.proposed" }>>
+  >([]);
+  const [taskScreenshotDataUrl, setTaskScreenshotDataUrl] = useState<string | null>(null);
+  const [taskResult, setTaskResult] = useState<string | null>(null);
+  const [readyTabIds, setReadyTabIds] = useState<Set<string>>(new Set());
+  const [toolsHeight, setToolsHeight] = useState(168);
+  const [browserMenuOpen, setBrowserMenuOpen] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [zoomPercent, setZoomPercent] = useState(100);
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
   const statusTone = status.toLowerCase().includes("blocked") || status.toLowerCase().includes("not allowed") ? "warning" : "normal";
@@ -235,15 +107,241 @@ function PreviewBrowserPanelContent({
     setTabs((current) => current.map((tab) => (tab.id === id ? { ...tab, ...update } : tab)));
   }, []);
 
-  const activeWebview = useCallback((): OpenDrSaiWebviewTag | undefined => {
-    return activeTab ? webviewRefs.current.get(activeTab.id) : undefined;
-  }, [activeTab]);
+  const activeWebviewReady = Boolean(activeTab && readyTabIds.has(activeTab.id));
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
+
+  useEffect(() => {
+    return () => {
+      toolsResizeCleanupRef.current?.();
+    };
+  }, []);
+
+  function setWebviewReady(tabId: string, ready: boolean): void {
+    if (ready) webviewReadyRef.current.add(tabId);
+    else webviewReadyRef.current.delete(tabId);
+    setReadyTabIds(new Set(webviewReadyRef.current));
+  }
+
+  function getReadyActiveWebview(): OpenDrSaiWebviewTag {
+    if (!activeTab || !webviewReadyRef.current.has(activeTab.id)) {
+      throw new Error("Browser preview is still loading. Wait for the page to be ready.");
+    }
+    const webview = webviewRefs.current.get(activeTab.id);
+    if (!webview) throw new Error("Browser preview is not ready.");
+    return webview;
+  }
+
+  function runWhenActiveWebviewReady(action: (webview: OpenDrSaiWebviewTag) => void): void {
+    try {
+      action(getReadyActiveWebview());
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function refreshNavigationStateFor(tabId: string, webview = webviewRefs.current.get(tabId)): void {
+    if (tabId !== activeTabIdRef.current || !webviewReadyRef.current.has(tabId)) {
+      setCanGoBack(false);
+      setCanGoForward(false);
+      return;
+    }
+    try {
+      setCanGoBack(Boolean(webview?.canGoBack()));
+      setCanGoForward(Boolean(webview?.canGoForward()));
+    } catch {
+      setCanGoBack(false);
+      setCanGoForward(false);
+    }
+  }
 
   const refreshNavigationState = useCallback((): void => {
-    const webview = activeWebview();
-    setCanGoBack(Boolean(webview?.canGoBack()));
-    setCanGoForward(Boolean(webview?.canGoForward()));
-  }, [activeWebview]);
+    const tabId = activeTabIdRef.current;
+    refreshNavigationStateFor(tabId);
+  }, [activeTab]);
+
+  function completeWebviewLoad(tabId: string, node: OpenDrSaiWebviewTag, options: { ready: boolean }): void {
+    if (options.ready) setWebviewReady(tabId, true);
+    const url = node.getURL();
+    const title = node.getTitle();
+    if (url) rememberHistory(url, title);
+    setTab(tabId, {
+      loading: false,
+      url,
+      draftUrl: url || DEFAULT_URL,
+      title: title || url || DEFAULT_URL,
+    });
+    installLinkNavigationRouter(tabId, node);
+    void applyBrowserZoom(node, zoomPercentRef.current);
+    refreshNavigationStateFor(tabId, node);
+    if (tabId === activeTabIdRef.current) setStatus("");
+  }
+
+  function installLinkNavigationRouter(tabId: string, node: OpenDrSaiWebviewTag): void {
+    node.executeJavaScript(LINK_NAVIGATION_SCRIPT, false).catch((error: unknown) => {
+      const message = `Link navigation bridge failed: ${error instanceof Error ? error.message : String(error)}`;
+      setNetworkEvents((current) => [message, ...current].slice(0, 30));
+      if (tabId === activeTabIdRef.current) setStatus(message);
+    });
+  }
+
+  function runBrowserNavigation(action: "back" | "forward" | "reload" | "stop"): void {
+    runWhenActiveWebviewReady((webview) => {
+      if (!activeTab) return;
+      if (action === "back") webview.goBack();
+      if (action === "forward") webview.goForward();
+      if (action === "reload") webview.reload();
+      if (action === "stop") webview.stop();
+      setTab(activeTab.id, { loading: action !== "stop" });
+      setStatus(action === "stop" ? "" : "Loading page...");
+      window.setTimeout(() => refreshNavigationStateFor(activeTab.id, webview), 120);
+    });
+  }
+
+  function setBrowserZoom(nextPercent: number): void {
+    const normalized = Math.min(200, Math.max(25, nextPercent));
+    runWhenActiveWebviewReady((webview) => {
+      zoomPercentRef.current = normalized;
+      setZoomPercent(normalized);
+      void applyBrowserZoom(webview, normalized);
+    });
+  }
+
+  async function applyBrowserZoom(webview: OpenDrSaiWebviewTag, percent: number): Promise<void> {
+    const factor = percent / 100;
+    const zoomLevel = Math.log(factor) / Math.log(1.2);
+    const zoomValue = `${percent}%`;
+    try {
+      await Promise.resolve(webview.setZoomFactor(factor));
+      await Promise.resolve(webview.setZoomLevel(zoomLevel));
+      await webview.executeJavaScript(
+        [
+          "(() => {",
+          `  const value = ${JSON.stringify(zoomValue)};`,
+          "  document.documentElement.style.zoom = value;",
+          "  document.body.style.zoom = '';",
+          "  return value;",
+          "})()",
+        ].join("\n"),
+        false,
+      );
+      setStatus(`Zoom ${percent}%`);
+    } catch (error) {
+      setStatus(`Zoom failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  function forceReload(): void {
+    runWhenActiveWebviewReady((webview) => {
+      webview.reloadIgnoringCache();
+      if (activeTab) setTab(activeTab.id, { loading: true });
+      setStatus("Force reloading page...");
+      setBrowserMenuOpen(false);
+    });
+  }
+
+  function clearBrowsingData(): void {
+    setHistory([]);
+    setBookmarks([]);
+    runWhenActiveWebviewReady((webview) => {
+      webview.clearHistory();
+      void webview.executeJavaScript("localStorage.clear(); sessionStorage.clear();", false);
+    });
+    setStatus("Browsing data cleared.");
+    setBrowserMenuOpen(false);
+  }
+
+  function showBrowserDevTools(): void {
+    runWhenActiveWebviewReady((webview) => {
+      webview.openDevTools();
+      setStatus("Device tools opened.");
+      setBrowserMenuOpen(false);
+    });
+  }
+
+  function runFindInPage(): void {
+    const query = findQuery.trim();
+    if (!query) return;
+    runWhenActiveWebviewReady((webview) => {
+      webview.findInPage(query);
+      setStatus(`Finding "${query}"`);
+    });
+  }
+
+  function closeFindInPage(): void {
+    runWhenActiveWebviewReady((webview) => {
+      webview.stopFindInPage("clearSelection");
+    });
+    setFindOpen(false);
+    setFindQuery("");
+  }
+
+  async function openInNewTab(rawUrl: string): Promise<void> {
+    const candidate = normalizeUrlInput(rawUrl);
+    const check = await desktopApi.checkBrowserUrl(candidate);
+    if (!check.allowed || !check.normalizedUrl) {
+      setStatus(check.reason);
+      return;
+    }
+    const openResult = await desktopApi.requestBrowserAction({
+      action: "open",
+      url: check.normalizedUrl,
+    });
+    if (!openResult.ok) {
+      setStatus(openResult.message);
+      return;
+    }
+    const tab = createTab(check.normalizedUrl, check.normalizedUrl);
+    tab.loading = true;
+    setTabs((current) => [...current, tab]);
+    setActiveTabId(tab.id);
+    setStatus("Opening page in new tab...");
+  }
+
+  function handleLinkNavigationMessage(message: string): boolean {
+    if (!message.startsWith(LINK_NAVIGATION_MESSAGE)) return false;
+    try {
+      const payload = JSON.parse(message.slice(LINK_NAVIGATION_MESSAGE.length)) as {
+        url?: unknown;
+        disposition?: unknown;
+      };
+      if (payload.disposition === "new-tab" && typeof payload.url === "string") {
+        void openInNewTab(payload.url);
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+    return true;
+  }
+
+  function startToolsResize(event: ReactPointerEvent<HTMLDivElement>): void {
+    const panel = panelRef.current;
+    if (!panel) return;
+    event.preventDefault();
+    const rect = panel.getBoundingClientRect();
+    const minHeight = 96;
+    const maxHeight = Math.max(140, Math.floor(rect.height * 0.65));
+    const resize = (clientY: number): void => {
+      setToolsHeight(Math.min(maxHeight, Math.max(minHeight, Math.round(rect.bottom - clientY))));
+    };
+    const handlePointerMove = (moveEvent: PointerEvent): void => {
+      resize(moveEvent.clientY);
+    };
+    const stopResize = (): void => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopResize);
+      document.body.classList.remove("preview-browser-resizing-tools");
+      toolsResizeCleanupRef.current = null;
+    };
+    toolsResizeCleanupRef.current?.();
+    toolsResizeCleanupRef.current = stopResize;
+    document.body.classList.add("preview-browser-resizing-tools");
+    resize(event.clientY);
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopResize);
+  }
 
   useEffect(() => {
     if (!initialUrl) return;
@@ -263,58 +361,117 @@ function PreviewBrowserPanelContent({
     refreshNavigationState();
   }, [activeTabId, tabs.length, refreshNavigationState]);
 
+  useEffect(() => {
+    return desktopApi.onBrowserTaskEvent((event) => {
+      setBrowserTaskEvents((current) => [event, ...current].slice(0, 30));
+      if (event.type === "task.started") {
+        setBrowserTaskId(event.taskId);
+        setStatus("browser-use task started.");
+      } else if (event.type === "task.failed") {
+        setBrowserTaskId(null);
+        setPendingTaskApprovals((current) => current.filter((item) => item.taskId !== event.taskId));
+        setStatus(event.error);
+      } else if (event.type === "task.completed") {
+        setBrowserTaskId(null);
+        setPendingTaskApprovals((current) => current.filter((item) => item.taskId !== event.taskId));
+        setTaskResult(event.result);
+        setStatus(event.result);
+      } else if (event.type === "task.cancelled") {
+        setBrowserTaskId(null);
+        setPendingTaskApprovals((current) => current.filter((item) => item.taskId !== event.taskId));
+        setStatus("browser-use task cancelled.");
+      } else if (event.type === "page.observed") {
+        setStatus(`browser-use observed ${event.url}`);
+      } else if (event.type === "action.proposed") {
+        if (event.requiresApproval) {
+          setPendingTaskApprovals((current) => [
+            event,
+            ...current.filter((item) => item.actionId !== event.actionId),
+          ]);
+        }
+        setStatus(`browser-use proposed ${event.action}: ${event.target || event.actionId}`);
+      } else if (event.type === "action.completed") {
+        setPendingTaskApprovals((current) => current.filter((item) => item.actionId !== event.actionId));
+      } else if (event.type === "screenshot") {
+        setTaskScreenshotDataUrl(event.dataUrl);
+      }
+    });
+  }, []);
+
   function bindWebview(tabId: string): (node: OpenDrSaiWebviewTag | null) => void {
     const existing = webviewRefCallbacks.current.get(tabId);
     if (existing) return existing;
     const callback = (node: OpenDrSaiWebviewTag | null): void => {
       if (!node) {
         webviewRefs.current.delete(tabId);
+        setWebviewReady(tabId, false);
         return;
       }
       if (webviewRefs.current.get(tabId) === node) return;
       webviewRefs.current.set(tabId, node);
+      setWebviewReady(tabId, false);
+      node.addEventListener("dom-ready", () => {
+        completeWebviewLoad(tabId, node, { ready: true });
+      });
       node.addEventListener("did-start-loading", () => {
+        setWebviewReady(tabId, false);
         setTab(tabId, { loading: true });
-        setStatus("Loading page...");
+        if (tabId === activeTabIdRef.current) setStatus("Loading page...");
+      });
+      node.addEventListener("did-finish-load", () => {
+        completeWebviewLoad(tabId, node, { ready: true });
       });
       node.addEventListener("did-stop-loading", () => {
         const url = node.getURL();
-        const title = node.getTitle();
-        setTab(tabId, { loading: false, url, draftUrl: url || DEFAULT_URL, title });
-        rememberHistory(url, title);
-        refreshNavigationState();
-        setStatus("Page ready.");
+        if (url) {
+          completeWebviewLoad(tabId, node, { ready: webviewReadyRef.current.has(tabId) });
+          return;
+        }
+        setTab(tabId, { loading: false, url: "", draftUrl: DEFAULT_URL, title: DEFAULT_URL });
+        refreshNavigationStateFor(tabId, node);
+        if (tabId === activeTabIdRef.current) setStatus("Page stopped before it became ready.");
       });
       const updateTitle = (): void => {
+        if (!webviewReadyRef.current.has(tabId)) return;
         const url = node.getURL();
         setTab(tabId, { url, draftUrl: url || DEFAULT_URL, title: node.getTitle() || url });
-        refreshNavigationState();
+        refreshNavigationStateFor(tabId, node);
+        if (url && tabId === activeTabIdRef.current) setStatus("");
       };
       node.addEventListener("did-navigate", updateTitle);
       node.addEventListener("did-navigate-in-page", updateTitle);
       node.addEventListener("page-title-updated", updateTitle);
       node.addEventListener("did-fail-load", (event) => {
         const detail = event as Event & { errorCode?: number; errorDescription?: string; validatedURL?: string };
+        if (detail.errorCode === -3) {
+          setTab(tabId, { loading: false });
+          if (tabId === activeTabIdRef.current) setStatus("");
+          refreshNavigationStateFor(tabId, node);
+          return;
+        }
+        setWebviewReady(tabId, false);
         const message = `${detail.errorCode ?? ""} ${detail.errorDescription ?? "Load failed"} ${detail.validatedURL ?? ""}`.trim();
         setNetworkEvents((current) => [message, ...current].slice(0, 30));
-        setStatus(message);
+        if (tabId === activeTabIdRef.current) setStatus(message);
         setTab(tabId, { loading: false });
       });
       node.addEventListener("render-process-gone", (event) => {
+        setWebviewReady(tabId, false);
         const detail = event as Event & { reason?: string; exitCode?: number };
         const message = `Browser preview process stopped${detail.reason ? `: ${detail.reason}` : ""}${typeof detail.exitCode === "number" ? ` (${detail.exitCode})` : ""}.`;
         setNetworkEvents((current) => [message, ...current].slice(0, 30));
-        setStatus(message);
+        if (tabId === activeTabIdRef.current) setStatus(message);
         setTab(tabId, { url: "", loading: false });
       });
       node.addEventListener("unresponsive", () => {
         const message = "Browser preview became unresponsive.";
         setNetworkEvents((current) => [message, ...current].slice(0, 30));
-        setStatus(message);
+        if (tabId === activeTabIdRef.current) setStatus(message);
         setTab(tabId, { loading: false });
       });
       node.addEventListener("console-message", (event) => {
         const detail = event as Event & { message?: string; line?: number; sourceId?: string };
+        if (detail.message && handleLinkNavigationMessage(detail.message)) return;
         const message = `${detail.message ?? "console message"}${detail.sourceId ? ` (${detail.sourceId}:${detail.line ?? 0})` : ""}`;
         setConsoleMessages((current) => [message, ...current].slice(0, 30));
       });
@@ -329,6 +486,7 @@ function PreviewBrowserPanelContent({
     setTab(tabId, {
       draftUrl: candidate,
       title: candidate,
+      srcUrl: "",
       url: "",
       loading: false,
     });
@@ -353,6 +511,7 @@ function PreviewBrowserPanelContent({
     }
     setTab(tabId, {
       draftUrl: check.normalizedUrl,
+      srcUrl: check.normalizedUrl,
       url: check.normalizedUrl,
       title: check.normalizedUrl,
       loading: true,
@@ -401,8 +560,7 @@ function PreviewBrowserPanelContent({
   }
 
   async function readSnapshot(): Promise<PageSnapshot> {
-    const webview = activeWebview();
-    if (!webview) throw new Error("Browser preview is not ready.");
+    const webview = getReadyActiveWebview();
     await desktopApi.requestBrowserAction({ action: "snapshot" });
     return webview.executeJavaScript<PageSnapshot>(SNAPSHOT_SCRIPT, false);
   }
@@ -413,7 +571,7 @@ function PreviewBrowserPanelContent({
       let screenshotDataUrl: string | undefined;
       if (mode === "screenshot") {
         await desktopApi.requestBrowserAction({ action: "screenshot" });
-        screenshotDataUrl = (await activeWebview()?.capturePage())?.toDataURL();
+        screenshotDataUrl = (await getReadyActiveWebview().capturePage()).toDataURL();
       } else {
         await desktopApi.requestBrowserAction({ action: "read_text" });
       }
@@ -458,7 +616,7 @@ function PreviewBrowserPanelContent({
         setStatus(result.message);
         return;
       }
-      const visibleText = await activeWebview()?.executeJavaScript<string>(READ_TEXT_SCRIPT, false);
+      const visibleText = await getReadyActiveWebview().executeJavaScript<string>(READ_TEXT_SCRIPT, false);
       setStatus(
         visibleText
           ? `Read-only check complete: ${visibleText.length} characters.`
@@ -472,7 +630,7 @@ function PreviewBrowserPanelContent({
   async function pickElement(): Promise<void> {
     try {
       setStatus("Click an element in the page to generate a selector.");
-      const selector = await activeWebview()?.executeJavaScript<string>(PICK_ELEMENT_SCRIPT, true);
+      const selector = await getReadyActiveWebview().executeJavaScript<string>(PICK_ELEMENT_SCRIPT, true);
       if (selector) {
         setActionSelector(selector);
         setStatus(`Selected: ${selector}`);
@@ -514,7 +672,7 @@ function PreviewBrowserPanelContent({
         return;
       }
       const script = createActionScript(mode, selector, text, actionKey);
-      const executed = await activeWebview()?.executeJavaScript<string>(script, needsApproval);
+      const executed = await getReadyActiveWebview().executeJavaScript<string>(script, needsApproval);
       const message = executed || approval.message;
       setActionLog((current) => [`${new Date().toLocaleTimeString()} ${mode}: ${message}`, ...current].slice(0, 12));
       setStatus(message);
@@ -524,17 +682,149 @@ function PreviewBrowserPanelContent({
     }
   }
 
+  async function startBrowserUseTask(): Promise<void> {
+    const instruction = taskInstruction.trim();
+    if (!instruction) {
+      setStatus("Enter a browser-use task instruction.");
+      return;
+    }
+    try {
+      const result = await desktopApi.startBrowserTask({
+        instruction,
+        url: activeTab?.draftUrl || activeTab?.url,
+        engine: "browser-use",
+      });
+      setBrowserTaskId(result.taskId);
+      setBrowserTaskEvents([]);
+      setPendingTaskApprovals([]);
+      setTaskScreenshotDataUrl(null);
+      setTaskResult(null);
+      setStatus(`browser-use task queued: ${result.taskId}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function approveBrowserUseAction(actionId: string, approved: boolean): Promise<void> {
+    const taskId = browserTaskId || pendingTaskApprovals.find((item) => item.actionId === actionId)?.taskId;
+    if (!taskId) return;
+    try {
+      const accepted = await desktopApi.approveBrowserTaskAction({
+        taskId,
+        actionId,
+        approved,
+      });
+      if (accepted) {
+        setPendingTaskApprovals((current) => current.filter((item) => item.actionId !== actionId));
+        setStatus(approved ? "browser-use action approved." : "browser-use action rejected.");
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function stopBrowserUseTask(): Promise<void> {
+    if (!browserTaskId) return;
+    try {
+      const stopped = await desktopApi.stopBrowserTask({ taskId: browserTaskId });
+      if (stopped) {
+        setStatus("Stopping browser-use task...");
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   return (
-    <aside className="preview-browser-panel" aria-label={isZh ? "Preview Browser" : "Preview Browser"}>
-      <div className="preview-browser-header">
-        <div>
-          <h2>Browser</h2>
-          <p>{activeTab?.title || activeTab?.draftUrl || "Local and HTTPS page preview"}</p>
-        </div>
-        <button type="button" onClick={onClose} aria-label="Close Browser" title="Close">
-          <X size={16} />
+    <aside
+      ref={panelRef}
+      className="preview-browser-panel"
+      aria-label={isZh ? "Preview Browser" : "Preview Browser"}
+      style={{ "--preview-browser-tools-height": `${toolsHeight}px` } as CSSProperties}
+    >
+      <form className="preview-browser-topbar" onSubmit={submitUrl}>
+        <strong title={activeTab?.title || activeTab?.draftUrl || "Browser"}>Browser</strong>
+        <button type="button" disabled={!canGoBack} onClick={() => runBrowserNavigation("back")} title="Back" aria-label="Back">
+          <ChevronLeft size={15} />
         </button>
-      </div>
+        <button type="button" disabled={!canGoForward} onClick={() => runBrowserNavigation("forward")} title="Forward" aria-label="Forward">
+          <ChevronRight size={15} />
+        </button>
+        <button type="button" disabled={!activeWebviewReady} onClick={() => runBrowserNavigation(activeTab?.loading ? "stop" : "reload")} title={activeTab?.loading ? "Stop" : "Reload"} aria-label={activeTab?.loading ? "Stop" : "Reload"}>
+          {activeTab?.loading ? <Square size={13} /> : <RefreshCw size={14} />}
+        </button>
+        <div className="preview-browser-address">
+          <Globe2 size={14} />
+          <input value={activeTab?.draftUrl ?? ""} onChange={(event) => activeTab && setTab(activeTab.id, { draftUrl: event.target.value })} placeholder="https://example.com or http://localhost:3000/" />
+        </div>
+        <button type="submit" className="preview-browser-go" title="Open" aria-label="Open URL">
+          {activeTab?.loading ? <Loader2 size={14} className="spin" /> : <Send size={14} />}
+        </button>
+        <div className="preview-browser-menu-wrap">
+          <button
+            type="button"
+            className="preview-browser-menu-button"
+            onClick={() => setBrowserMenuOpen((open) => !open)}
+            aria-label={isZh ? "浏览器菜单" : "Browser menu"}
+            aria-expanded={browserMenuOpen}
+            title={isZh ? "浏览器菜单" : "Browser menu"}
+          >
+            <MoreVertical size={16} />
+          </button>
+          {browserMenuOpen && (
+            <div className="preview-browser-menu" role="menu">
+              <button type="button" role="menuitem" onClick={clearBrowsingData}>
+                <span>{isZh ? "清除浏览数据" : "Clear browsing data"}</span>
+                <ChevronRight size={14} />
+              </button>
+              <div className="preview-browser-menu-zoom">
+                <span>{isZh ? "缩放" : "Zoom"}</span>
+                <button type="button" onClick={() => setBrowserZoom(zoomPercentRef.current - 10)} aria-label={isZh ? "缩小" : "Zoom out"}>
+                  <Minus size={13} />
+                </button>
+                <strong>{zoomPercent}%</strong>
+                <button type="button" onClick={() => setBrowserZoom(zoomPercentRef.current + 10)} aria-label={isZh ? "放大" : "Zoom in"}>
+                  <Plus size={13} />
+                </button>
+                <button type="button" onClick={() => setBrowserZoom(100)} aria-label={isZh ? "重置缩放" : "Reset zoom"}>
+                  <RefreshCw size={13} />
+                </button>
+              </div>
+              <button type="button" role="menuitem" onClick={forceReload}>
+                <span>{isZh ? "强制重新加载" : "Force reload"}</span>
+              </button>
+              <button type="button" role="menuitem" onClick={() => setFindOpen((open) => !open)}>
+                <span>{isZh ? "在页面中查找" : "Find in page"}</span>
+              </button>
+              {findOpen && (
+                <div className="preview-browser-find">
+                  <input
+                    value={findQuery}
+                    onChange={(event) => setFindQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") runFindInPage();
+                      if (event.key === "Escape") closeFindInPage();
+                    }}
+                    placeholder={isZh ? "查找" : "Find"}
+                    autoFocus
+                  />
+                  <button type="button" onClick={runFindInPage}>{isZh ? "查找" : "Find"}</button>
+                  <button type="button" onClick={closeFindInPage}>
+                    <X size={13} />
+                  </button>
+                </div>
+              )}
+              <button type="button" role="menuitem" onClick={showBrowserDevTools}>
+                <span>{isZh ? "显示设备工具栏" : "Show device toolbar"}</span>
+              </button>
+              <div className="preview-browser-menu-separator" />
+              <button type="button" role="menuitem" onClick={() => { setStatus("Browser settings are available from this menu."); setBrowserMenuOpen(false); }}>
+                <span>{isZh ? "浏览器设置" : "Browser settings"}</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </form>
 
       <div className="preview-browser-tabs">
         {tabs.map((tab) => (
@@ -549,74 +839,13 @@ function PreviewBrowserPanelContent({
         </button>
       </div>
 
-      <form className="preview-browser-toolbar" onSubmit={submitUrl}>
-        <button type="button" disabled={!canGoBack} onClick={() => activeWebview()?.goBack()} title="Back" aria-label="Back">
-          <ChevronLeft size={16} />
-        </button>
-        <button type="button" disabled={!canGoForward} onClick={() => activeWebview()?.goForward()} title="Forward" aria-label="Forward">
-          <ChevronRight size={16} />
-        </button>
-        <button type="button" onClick={() => (activeTab?.loading ? activeWebview()?.stop() : activeWebview()?.reload())} title={activeTab?.loading ? "Stop" : "Reload"} aria-label={activeTab?.loading ? "Stop" : "Reload"}>
-          {activeTab?.loading ? <Square size={14} /> : <RefreshCw size={15} />}
-        </button>
-        <div className="preview-browser-address">
-          <Globe2 size={15} />
-          <input value={activeTab?.draftUrl ?? ""} onChange={(event) => activeTab && setTab(activeTab.id, { draftUrl: event.target.value })} placeholder="https://example.com or http://localhost:3000/" />
-        </div>
-        <button type="submit" className="preview-browser-go">
-          {activeTab?.loading ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
-          Open
-        </button>
-      </form>
-
-      <div className={`preview-browser-status ${statusTone}`}>
-        {statusTone === "warning" ? <ShieldAlert size={14} /> : <Code2 size={14} />}
-        <span>{status}</span>
-        {attachedCount > 0 && <strong>{attachedCount}</strong>}
-      </div>
-
-      <div className="preview-browser-actions">
-        <button type="button" onClick={() => void attachContext("summary")} disabled={!activeTab?.url}><FileText size={15} />Attach Context</button>
-        <button type="button" onClick={() => void attachContext("screenshot")} disabled={!activeTab?.url}><Camera size={15} />Attach Screenshot</button>
-        <button type="button" onClick={() => void runReadonlyCheck()} disabled={!activeTab?.url}><MousePointerClick size={15} />Read-only Check</button>
-        <button type="button" onClick={toggleBookmark} disabled={!activeTab?.url}><Bookmark size={15} />{bookmarked ? "Unbookmark" : "Bookmark"}</button>
-        <button type="button" onClick={() => setShowLibrary(showLibrary === "history" ? null : "history")}><Clock size={15} />History</button>
-        <button type="button" onClick={() => setShowLibrary(showLibrary === "bookmarks" ? null : "bookmarks")}><Bookmark size={15} />Bookmarks</button>
-      </div>
-
-      {showLibrary && (
-        <div className="preview-browser-library">
-          {(showLibrary === "history" ? history : bookmarks).map((item) => (
-            <button key={`${item.url}-${"visitedAt" in item ? item.visitedAt : item.createdAt}`} type="button" onClick={() => void navigate(item.url)}>
-              <strong>{item.title || item.url}</strong>
-              <span>{item.url}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
-      <div className="preview-browser-control">
-        <input value={actionSelector} onChange={(event) => setActionSelector(event.target.value)} placeholder="CSS selector" disabled={!activeTab?.url} />
-        <input value={actionText} onChange={(event) => setActionText(event.target.value)} placeholder="Text / value / assertion" disabled={!activeTab?.url} />
-        <input value={actionKey} onChange={(event) => setActionKey(event.target.value)} placeholder="Enter" disabled={!activeTab?.url} />
-        <button type="button" onClick={() => void pickElement()} disabled={!activeTab?.url}><Crosshair size={15} />Pick</button>
-        <button type="button" onClick={() => void runControlledAction("click")} disabled={!activeTab?.url}><MousePointerClick size={15} />Click</button>
-        <button type="button" onClick={() => void runControlledAction("type")} disabled={!activeTab?.url}><Type size={15} />Type</button>
-        <button type="button" onClick={() => void runControlledAction("select")} disabled={!activeTab?.url}><Send size={15} />Select</button>
-        <button type="button" onClick={() => void runControlledAction("key_press")} disabled={!activeTab?.url}><Keyboard size={15} />Key</button>
-        <button type="button" onClick={() => void runControlledAction("wait_for")} disabled={!activeTab?.url}><Clock size={15} />Wait</button>
-        <button type="button" onClick={() => void runControlledAction("assert_text")} disabled={!activeTab?.url}><Code2 size={15} />Assert</button>
-      </div>
-
-      {actionLog.length > 0 && <div className="preview-browser-action-log">{actionLog.map((item) => <span key={item}>{item}</span>)}</div>}
-
       <div className="preview-browser-surface">
         {tabs.map((tab) =>
-          tab.url ? (
-            <webview key={tab.id} ref={bindWebview(tab.id)} src={tab.url} partition="persist:opendrsai-preview" webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=yes" style={{ display: tab.id === activeTabId ? "flex" : "none" }} />
+          tab.srcUrl ? (
+            <webview key={tab.id} ref={bindWebview(tab.id)} src={tab.srcUrl} partition="persist:opendrsai-preview" webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=yes" style={{ display: tab.id === activeTabId ? "flex" : "none" }} />
           ) : null,
         )}
-        {!activeTab?.url && (
+        {!activeTab?.srcUrl && (
           <div className="preview-browser-empty">
             <Globe2 size={28} />
             <h3>Enter a URL and click Open</h3>
@@ -624,110 +853,135 @@ function PreviewBrowserPanelContent({
           </div>
         )}
       </div>
+
+      <div
+        className="preview-browser-tools-resize"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label={isZh ? "调整浏览器页面和工具区大小" : "Resize browser page and tools"}
+        onPointerDown={startToolsResize}
+      />
+
+      <div className="preview-browser-tools">
+        {(status || attachedCount > 0) && (
+          <div className={`preview-browser-status ${statusTone}`}>
+            {statusTone === "warning" ? <ShieldAlert size={14} /> : <Code2 size={14} />}
+            <span>{status}</span>
+            {attachedCount > 0 && <strong>{attachedCount}</strong>}
+          </div>
+        )}
+
+        <div className="preview-browser-context-strip">
+          <span><FileText size={14} />Context</span>
+          <button type="button" onClick={() => void attachContext("summary")} disabled={!activeTab?.url || !activeWebviewReady}><FileText size={14} />Text</button>
+          <button type="button" onClick={() => void attachContext("screenshot")} disabled={!activeTab?.url || !activeWebviewReady}><Camera size={14} />Shot</button>
+          <button type="button" onClick={() => void runReadonlyCheck()} disabled={!activeTab?.url || !activeWebviewReady}><MousePointerClick size={14} />Read</button>
+          <button type="button" onClick={toggleBookmark} disabled={!activeTab?.url}><Bookmark size={14} />{bookmarked ? "Saved" : "Save"}</button>
+          <button type="button" onClick={() => setShowLibrary(showLibrary === "history" ? null : "history")}><Clock size={14} />History</button>
+          <button type="button" onClick={() => setShowLibrary(showLibrary === "bookmarks" ? null : "bookmarks")}><Bookmark size={14} />Marks</button>
+        </div>
+
+        {showLibrary && (
+          <div className="preview-browser-library">
+            {(showLibrary === "history" ? history : bookmarks).map((item) => (
+              <button key={`${item.url}-${"visitedAt" in item ? item.visitedAt : item.createdAt}`} type="button" onClick={() => void navigate(item.url)}>
+                <strong>{item.title || item.url}</strong>
+                <span>{item.url}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <details className="preview-browser-tool-group">
+          <summary>
+            <Crosshair size={14} />
+            <span>Page Actions</span>
+          </summary>
+          <div className="preview-browser-control">
+            <input value={actionSelector} onChange={(event) => setActionSelector(event.target.value)} placeholder="CSS selector" disabled={!activeTab?.url || !activeWebviewReady} />
+            <input value={actionText} onChange={(event) => setActionText(event.target.value)} placeholder="Text / value / assertion" disabled={!activeTab?.url || !activeWebviewReady} />
+            <input value={actionKey} onChange={(event) => setActionKey(event.target.value)} placeholder="Enter" disabled={!activeTab?.url || !activeWebviewReady} />
+            <button type="button" onClick={() => void pickElement()} disabled={!activeTab?.url || !activeWebviewReady} title="Pick"><Crosshair size={14} /></button>
+            <button type="button" onClick={() => void runControlledAction("click")} disabled={!activeTab?.url || !activeWebviewReady} title="Click"><MousePointerClick size={14} /></button>
+            <button type="button" onClick={() => void runControlledAction("type")} disabled={!activeTab?.url || !activeWebviewReady} title="Type"><Type size={14} /></button>
+            <button type="button" onClick={() => void runControlledAction("select")} disabled={!activeTab?.url || !activeWebviewReady} title="Select"><Send size={14} /></button>
+            <button type="button" onClick={() => void runControlledAction("key_press")} disabled={!activeTab?.url || !activeWebviewReady} title="Key"><Keyboard size={14} /></button>
+            <button type="button" onClick={() => void runControlledAction("wait_for")} disabled={!activeTab?.url || !activeWebviewReady} title="Wait"><Clock size={14} /></button>
+            <button type="button" onClick={() => void runControlledAction("assert_text")} disabled={!activeTab?.url || !activeWebviewReady} title="Assert"><Code2 size={14} /></button>
+          </div>
+          {actionLog.length > 0 && <div className="preview-browser-action-log">{actionLog.map((item) => <span key={item}>{item}</span>)}</div>}
+        </details>
+
+        <details className="preview-browser-tool-group">
+          <summary>
+            <Keyboard size={14} />
+            <span>Agent Task</span>
+          </summary>
+          <div className="preview-browser-task">
+            <div className="preview-browser-task-input">
+              <input
+                value={taskInstruction}
+                onChange={(event) => setTaskInstruction(event.target.value)}
+                placeholder="Agent browser task"
+              />
+              {browserTaskId ? (
+                <button type="button" onClick={() => void stopBrowserUseTask()}>
+                  <Square size={14} />
+                  Stop
+                </button>
+              ) : (
+                <button type="button" onClick={() => void startBrowserUseTask()}>
+                  <Send size={14} />
+                  Run
+                </button>
+              )}
+            </div>
+            {browserTaskEvents.length > 0 && (
+              <div className="preview-browser-task-events">
+                {browserTaskEvents.map((event, index) => (
+                  <span key={`${event.taskId}-${event.type}-${index}`}>
+                    {formatBrowserTaskEvent(event)}
+                  </span>
+                ))}
+              </div>
+            )}
+            {pendingTaskApprovals.length > 0 && (
+              <div className="preview-browser-task-approvals">
+                {pendingTaskApprovals.map((approval) => (
+                  <div key={approval.actionId}>
+                    <span>{approval.action}: {approval.target || approval.actionId}</span>
+                    <button type="button" onClick={() => void approveBrowserUseAction(approval.actionId, true)}>
+                      Approve
+                    </button>
+                    <button type="button" onClick={() => void approveBrowserUseAction(approval.actionId, false)}>
+                      Reject
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {taskScreenshotDataUrl ? (
+              <img
+                className="preview-browser-task-screenshot"
+                src={taskScreenshotDataUrl}
+                alt="browser-use task screenshot"
+              />
+            ) : null}
+            {taskResult ? <p className="preview-browser-task-result">{taskResult}</p> : null}
+          </div>
+        </details>
+      </div>
     </aside>
   );
 }
 
-function createTab(draftUrl: string, url = ""): BrowserTab {
-  return { id: crypto.randomUUID(), title: draftUrl, url, draftUrl, loading: false };
-}
-
-function loadState(): { tabs: BrowserTab[]; activeTabId: string; history: BrowserHistoryItem[]; bookmarks: BrowserBookmark[] } {
-  const fallbackTab = createTab(DEFAULT_URL, "");
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "{}") as Partial<{
-      tabs: BrowserTab[];
-      activeTabId: string;
-      history: BrowserHistoryItem[];
-      bookmarks: BrowserBookmark[];
-    }>;
-    const tabs = Array.isArray(parsed.tabs) && parsed.tabs.length
-      ? parsed.tabs.map((tab) => ({
-          ...tab,
-          draftUrl: tab.draftUrl || tab.url || DEFAULT_URL,
-          title: tab.title || tab.draftUrl || tab.url || DEFAULT_URL,
-          url: "",
-          loading: false,
-        }))
-      : [fallbackTab];
-    return {
-      tabs,
-      activeTabId: parsed.activeTabId && tabs.some((tab) => tab.id === parsed.activeTabId) ? parsed.activeTabId : tabs[0].id,
-      history: Array.isArray(parsed.history) ? parsed.history : [],
-      bookmarks: Array.isArray(parsed.bookmarks) ? parsed.bookmarks : [],
-    };
-  } catch {
-    return { tabs: [fallbackTab], activeTabId: fallbackTab.id, history: [], bookmarks: [] };
-  }
-}
-
-function normalizeUrlInput(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) return DEFAULT_URL;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return trimmed;
-  if (trimmed.startsWith("localhost") || trimmed.startsWith("127.0.0.1") || trimmed.startsWith("[::1]") || trimmed.startsWith("::1")) return `http://${trimmed}`;
-  return `https://${trimmed}`;
-}
-
-function createActionScript(mode: BrowserActionMode, selector: string, text: string, key: string): string {
-  return [
-    "(() => {",
-    `  const mode = ${JSON.stringify(mode)};`,
-    `  const selector = ${JSON.stringify(selector)};`,
-    `  const text = ${JSON.stringify(text)};`,
-    `  const key = ${JSON.stringify(key)};`,
-    "  const find = () => selector ? document.querySelector(selector) : null;",
-    "  if (mode === 'assert_text') { const source = selector ? (find()?.innerText || find()?.textContent || '') : (document.body?.innerText || ''); return source.includes(text) ? 'Assertion passed.' : 'Assertion failed: text not found.'; }",
-    "  if (mode === 'wait_for') { const start = Date.now(); return new Promise((resolve) => { const tick = () => { if (find()) { resolve('Wait complete: selector found.'); return; } if (Date.now() - start > 5000) { resolve('Wait timed out: selector not found.'); return; } setTimeout(tick, 100); }; tick(); }); }",
-    "  const node = find();",
-    "  if (!node) return 'No element matched the selector.';",
-    "  node.scrollIntoView({ block: 'center', inline: 'center' });",
-    "  node.focus();",
-    "  if (mode === 'click') { const rect = node.getBoundingClientRect(); const options = { bubbles: true, cancelable: true, view: window, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }; node.dispatchEvent(new PointerEvent('pointerdown', options)); node.dispatchEvent(new MouseEvent('mousedown', options)); node.dispatchEvent(new PointerEvent('pointerup', options)); node.dispatchEvent(new MouseEvent('mouseup', options)); node.click(); return 'Approved click executed.'; }",
-    "  if (mode === 'type') { if ('value' in node) node.value = text; else if (node.isContentEditable) node.textContent = text; else return 'Matched element is not editable.'; node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text })); node.dispatchEvent(new Event('change', { bubbles: true })); return 'Approved type action executed.'; }",
-    "  if (mode === 'select') { if (!('value' in node)) return 'Matched element is not selectable.'; node.value = text; node.dispatchEvent(new Event('input', { bubbles: true })); node.dispatchEvent(new Event('change', { bubbles: true })); return 'Approved select action executed.'; }",
-    "  if (mode === 'key_press') { node.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })); node.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true })); return 'Approved key action executed.'; }",
-    "  return 'Unsupported action.';",
-    "})()",
-  ].join("\n");
-}
-
-class BrowserPanelErrorBoundary extends Component<
-  BrowserPanelErrorBoundaryProps,
-  BrowserPanelErrorBoundaryState
-> {
-  state: BrowserPanelErrorBoundaryState = { error: null };
-
-  static getDerivedStateFromError(error: unknown): BrowserPanelErrorBoundaryState {
-    return {
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-
-  override componentDidCatch(error: unknown): void {
-    console.error("Preview Browser panel failed", error);
-  }
-
-  override render(): ReactNode {
-    if (!this.state.error) return this.props.children;
-    return (
-      <aside className="preview-browser-panel" aria-label="Preview Browser">
-        <div className="preview-browser-header">
-          <div>
-            <h2>Browser</h2>
-            <p>Preview panel recovered from an error.</p>
-          </div>
-        </div>
-        <div className="preview-browser-status warning">
-          <ShieldAlert size={14} />
-          <span>{this.state.error}</span>
-        </div>
-        <div className="preview-browser-empty">
-          <Globe2 size={28} />
-          <h3>Browser panel paused</h3>
-          <p>Close and reopen the Browser tab after fixing the page or URL that caused the failure.</p>
-        </div>
-      </aside>
-    );
-  }
+function formatBrowserTaskEvent(event: BrowserTaskEvent): string {
+  if (event.type === "task.started") return `${event.taskId}: started`;
+  if (event.type === "page.observed") return `${event.taskId}: observed ${event.url}`;
+  if (event.type === "action.proposed") return `${event.taskId}: proposed ${event.action} ${event.target || event.actionId}`;
+  if (event.type === "action.completed") return `${event.taskId}: action ${event.actionId} ${event.ok ? "ok" : "failed"} ${event.message}`;
+  if (event.type === "screenshot") return `${event.taskId}: screenshot captured`;
+  if (event.type === "task.completed") return `${event.taskId}: completed ${event.result}`;
+  if (event.type === "task.failed") return `${event.taskId}: failed ${event.error}`;
+  return `${event.taskId}: cancelled`;
 }

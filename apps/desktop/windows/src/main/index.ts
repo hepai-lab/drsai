@@ -12,6 +12,7 @@ import {
   ipcMain,
   shell,
   type IpcMainInvokeEvent,
+  type WebContents,
 } from "electron";
 import { dirname, isAbsolute, join, relative, resolve } from "path";
 import { is } from "@electron-toolkit/utils";
@@ -39,6 +40,10 @@ import {
   getWorkspaceGitDiff,
   listWorkspaceFiles,
   previewWorkspaceFile,
+  revertWorkspaceHunk,
+  revertWorkspaceFile,
+  stageWorkspaceFile,
+  stageWorkspaceHunk,
 } from "./workspaceContext";
 import { saveApiKey } from "./settings";
 import {
@@ -66,13 +71,44 @@ import {
   writeTerminalSession,
 } from "./terminal";
 import type { TerminalCreateOptions } from "./terminal";
+import { approveBrowserActionRequest } from "./browser/actionApproval";
+import { checkBrowserUrlSync } from "./browser/urlPolicy";
+import { registerBrowserController } from "./browser/browserControllerRegistry";
+import { ElectronWebviewController } from "./browser/adapters/electronWebviewController";
+import { BrowserUseController } from "./browser/adapters/browserUseController";
+import { BrowserUseWorkerClient } from "./browser/browserUse/workerClient";
+import { createBrowserUseTaskCommand } from "./browser/browserUse/protocol";
+import {
+  appendBrowserTaskTraceEvent,
+  initializeBrowserTaskTrace,
+} from "./browser/browserTaskTrace";
+import type {
+  BrowserTaskApprovalRequest,
+  BrowserTaskStartRequest,
+} from "../shared/browser/types";
 
 let mainWindow: BrowserWindow | null = null;
 let browserWebContentsPolicyRegistered = false;
+const browserTaskSubscribers = new Set<WebContents>();
 
 const rendererHtmlPath = join(__dirname, "../renderer/index.html");
 const TRUSTED_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
-const TRUSTED_BROWSER_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const browserUseWorkerClient = new BrowserUseWorkerClient();
+
+browserUseWorkerClient.on("event", (event) => {
+  appendBrowserTaskTraceEvent(event);
+  for (const subscriber of [...browserTaskSubscribers]) {
+    if (subscriber.isDestroyed()) {
+      browserTaskSubscribers.delete(subscriber);
+      continue;
+    }
+    subscriber.send("desktop:browser-task-event", event);
+  }
+});
+
+browserUseWorkerClient.on("error-line", (line) => {
+  console.warn("[browser-use worker]", line);
+});
 
 if (process.env.OPENDRSAI_E2E_DISABLE_GPU === "1") {
   app.disableHardwareAcceleration();
@@ -216,76 +252,6 @@ function isAllowedDevRendererUrl(rawUrl: string): boolean {
   }
 }
 
-function checkBrowserUrlSync(rawUrl: unknown): {
-  allowed: boolean;
-  reason: string;
-  normalizedUrl?: string;
-  scope: "local" | "workspace-file" | "public" | "blocked";
-} {
-  if (typeof rawUrl !== "string" || !rawUrl.trim()) {
-    return {
-      allowed: false,
-      reason: "Enter a URL to preview.",
-      scope: "blocked",
-    };
-  }
-
-  try {
-    const url = new URL(rawUrl.trim());
-    if (url.username || url.password) {
-      return {
-        allowed: false,
-        reason: "Browser preview does not allow credentials in URLs.",
-        scope: "blocked",
-      };
-    }
-    if (url.protocol === "http:" || url.protocol === "https:") {
-      if (TRUSTED_BROWSER_HOSTS.has(url.hostname)) {
-        return {
-          allowed: true,
-          reason: "Local development URL allowed.",
-          normalizedUrl: url.toString(),
-          scope: "local",
-        };
-      }
-      if (url.protocol === "https:") {
-        return {
-          allowed: true,
-          reason: "Public HTTPS URL allowed.",
-          normalizedUrl: url.toString(),
-          scope: "public",
-        };
-      }
-      return {
-        allowed: false,
-        reason: "Public browser preview requires HTTPS.",
-        normalizedUrl: url.toString(),
-        scope: "public",
-      };
-    }
-    if (url.protocol === "file:") {
-      return {
-        allowed: false,
-        reason:
-          "Use workspace file previews through the OpenDrSai file preview flow.",
-        normalizedUrl: url.toString(),
-        scope: "workspace-file",
-      };
-    }
-    return {
-      allowed: false,
-      reason: "Only http, https, and workspace file previews are supported.",
-      scope: "blocked",
-    };
-  } catch {
-    return {
-      allowed: false,
-      reason: "The browser URL is not valid.",
-      scope: "blocked",
-    };
-  }
-}
-
 function isTrustedSender(event: IpcMainInvokeEvent): boolean {
   if (!mainWindow || event.sender !== mainWindow.webContents) return false;
   const frameUrl = event.senderFrame?.url;
@@ -341,6 +307,8 @@ async function isAllowedOpenPath(rawPath: unknown): Promise<boolean> {
 }
 
 function registerIpc(): void {
+  registerBrowserController(new ElectronWebviewController());
+  registerBrowserController(new BrowserUseController(browserUseWorkerClient));
   secureHandle("desktop:get-auth-session", () => getAuthSession());
   secureHandle("desktop:login", (_event, request) => login(request));
   secureHandle("desktop:start-oidc-login", (_event, request) =>
@@ -381,6 +349,21 @@ function registerIpc(): void {
       return "Path is not registered as a DrSai or workspace path.";
     }
     return shell.openPath(rawPath);
+  });
+
+  secureHandle("desktop:get-file-icon", async (_event, rawPath: string) => {
+    if (!(await isAllowedOpenPath(rawPath))) {
+      return { path: rawPath, dataUrl: null };
+    }
+    try {
+      const icon = await app.getFileIcon(rawPath, { size: "normal" });
+      return {
+        path: rawPath,
+        dataUrl: icon.isEmpty() ? null : icon.toDataURL(),
+      };
+    } catch {
+      return { path: rawPath, dataUrl: null };
+    }
   });
 
   secureHandle("desktop:start-install", async (event, options) => {
@@ -437,6 +420,18 @@ function registerIpc(): void {
   secureHandle("desktop:workspace-git-diff", (_event, request) =>
     getWorkspaceGitDiff(request),
   );
+  secureHandle("desktop:workspace-revert-file", (_event, request) =>
+    revertWorkspaceFile(request),
+  );
+  secureHandle("desktop:workspace-stage-file", (_event, request) =>
+    stageWorkspaceFile(request),
+  );
+  secureHandle("desktop:workspace-stage-hunk", (_event, request) =>
+    stageWorkspaceHunk(request),
+  );
+  secureHandle("desktop:workspace-revert-hunk", (_event, request) =>
+    revertWorkspaceHunk(request),
+  );
   secureHandle("desktop:list-threads", () => listThreads());
   secureHandle("desktop:create-thread", (_event, request) =>
     createThread(request),
@@ -478,111 +473,84 @@ function registerIpc(): void {
   secureHandle("desktop:browser-check-url", (_event, rawUrl: string) =>
     checkBrowserUrlSync(rawUrl),
   );
-  secureHandle("desktop:browser-action-request", (_event, request) => {
-    if (!request || typeof request !== "object") {
-      return {
-        ok: false,
-        action: "snapshot",
-        message: "Invalid browser action request.",
-      };
+  secureHandle("desktop:browser-action-request", (_event, request) =>
+    approveBrowserActionRequest(request),
+  );
+  secureHandle("desktop:browser-task-start", async (event, request) => {
+    const startRequest = toBrowserTaskStartRequest(request);
+    if (!startRequest) {
+      throw new Error("Invalid browser task start request.");
     }
-    const action = String(
-      (request as { action?: unknown }).action || "snapshot",
+    browserTaskSubscribers.add(event.sender);
+    const install = await getInstallStatus();
+    const pythonCommand = resolveBrowserUsePythonCommand(
+      install.pythonPath || install.prerequisites.pythonCommand,
     );
-    const allowedActions = new Set([
-      "open",
-      "snapshot",
-      "screenshot",
-      "read_text",
-      "eval_readonly",
-      "click",
-      "type",
-      "select",
-      "key_press",
-      "wait_for",
-      "assert_text",
-    ]);
-    if (!allowedActions.has(action)) {
-      return { ok: false, action, message: "Unsupported browser action." };
-    }
-    if (action === "open") {
-      const check = checkBrowserUrlSync((request as { url?: unknown }).url);
-      return {
-        ok: check.allowed,
-        action,
-        message: check.reason,
-        url: check.normalizedUrl,
-      };
-    }
-    if (
-      action === "click" ||
-      action === "type" ||
-      action === "select" ||
-      action === "key_press"
-    ) {
-      const typedRequest = request as {
-        approved?: unknown;
-        selector?: unknown;
-        text?: unknown;
-        value?: unknown;
-        key?: unknown;
-      };
-      if (typedRequest.approved !== true) {
-        return {
-          ok: false,
-          action,
-          message: "Interactive browser actions require explicit approval.",
-        };
-      }
-      const selector = typedRequest.selector;
-      if (
-        action !== "key_press" &&
-        (typeof selector !== "string" ||
-          !selector.trim() ||
-          selector.length > 500 ||
-          /[\r\n]/.test(selector))
-      ) {
-        return {
-          ok: false,
-          action,
-          message: "Interactive browser action selector is invalid.",
-        };
-      }
-      if (
-        (action === "type" || action === "select") &&
-        (typeof typedRequest.text !== "string" ||
-          typedRequest.text.length > 4000)
-      ) {
-        return {
-          ok: false,
-          action,
-          message: "Interactive browser action text is invalid.",
-        };
-      }
-      if (
-        action === "key_press" &&
-        (typeof typedRequest.key !== "string" ||
-          !typedRequest.key.trim() ||
-          typedRequest.key.length > 80)
-      ) {
-        return {
-          ok: false,
-          action,
-          message: "Interactive browser action key is invalid.",
-        };
-      }
-      return {
-        ok: true,
-        action,
-        message: `Approved browser ${action} action accepted by the desktop bridge.`,
-      };
-    }
-    return {
-      ok: true,
-      action,
-      message: "Browser action accepted by the desktop bridge.",
-    };
+    browserUseWorkerClient.start(pythonCommand);
+    const command = createBrowserUseTaskCommand(startRequest);
+    initializeBrowserTaskTrace(command.taskId, startRequest);
+    browserUseWorkerClient.send(command);
+    return { taskId: command.taskId };
   });
+  secureHandle("desktop:browser-task-stop", (_event, request) => {
+    if (!request || typeof request !== "object") return false;
+    const taskId = (request as { taskId?: unknown }).taskId;
+    if (typeof taskId !== "string" || !taskId.trim()) return false;
+    browserUseWorkerClient.send({ type: "task.stop", taskId });
+    return true;
+  });
+  secureHandle("desktop:browser-task-approve", (_event, request) => {
+    const approvalRequest = toBrowserTaskApprovalRequest(request);
+    if (!approvalRequest) return false;
+    browserUseWorkerClient.send({
+      type: "action.approve",
+      taskId: approvalRequest.taskId,
+      actionId: approvalRequest.actionId,
+      approved: approvalRequest.approved,
+    });
+    return true;
+  });
+}
+
+function resolveBrowserUsePythonCommand(preferredPython?: string | null): string {
+  if (process.env.OPENDRSAI_BROWSER_USE_PYTHON) {
+    return process.env.OPENDRSAI_BROWSER_USE_PYTHON;
+  }
+  const python311 = "C:\\Python311\\python.exe";
+  if (existsSync(python311)) return python311;
+  return preferredPython || process.env.PYTHON || "python";
+}
+
+function toBrowserTaskStartRequest(
+  request: unknown,
+): BrowserTaskStartRequest | null {
+  if (!request || typeof request !== "object") return null;
+  const typed = request as Partial<BrowserTaskStartRequest>;
+  if (typeof typed.instruction !== "string" || !typed.instruction.trim()) {
+    return null;
+  }
+  return {
+    taskId: typeof typed.taskId === "string" ? typed.taskId : undefined,
+    instruction: typed.instruction,
+    url: typeof typed.url === "string" ? typed.url : undefined,
+    engine: typed.engine === "browser-use" || typed.engine === "electron-webview" ? typed.engine : "browser-use",
+    workspacePath: typeof typed.workspacePath === "string" ? typed.workspacePath : undefined,
+  };
+}
+
+function toBrowserTaskApprovalRequest(
+  request: unknown,
+): BrowserTaskApprovalRequest | null {
+  if (!request || typeof request !== "object") return null;
+  const typed = request as Partial<BrowserTaskApprovalRequest>;
+  if (typeof typed.taskId !== "string" || !typed.taskId.trim()) return null;
+  if (typeof typed.actionId !== "string" || !typed.actionId.trim()) return null;
+  if (typeof typed.approved !== "boolean") return null;
+  return {
+    taskId: typed.taskId,
+    actionId: typed.actionId,
+    approved: typed.approved,
+  };
 }
 
 async function autoStartGatewayWhenInstalled(): Promise<void> {

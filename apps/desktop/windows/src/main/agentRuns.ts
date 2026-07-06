@@ -1,9 +1,17 @@
 import type { WebContents } from "electron";
+import { execFile } from "child_process";
+import { createHash } from "crypto";
+import { readFile, stat } from "fs/promises";
 import { randomUUID } from "crypto";
-import type { AgentRunEvent, AgentRunRequest } from "../shared/desktopApi";
+import { join } from "path";
+import type { AgentRunEvent, AgentRunFileEvent, AgentRunRequest } from "../shared/desktopApi";
 import { requireAuthContext, type AuthContext } from "./auth";
 import { startGateway } from "./gateway";
-import { isCompletionDoneFrame, parseAgentRunSseFrame } from "./sseParser";
+import {
+  isCompletionDoneFrame,
+  parseAgentRunSseFileEvents,
+  parseAgentRunSseFrame,
+} from "./sseParser";
 import { upsertThreadFromRun } from "./threads";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
@@ -143,6 +151,7 @@ async function runAgent(
   });
 
   const timeout = setTimeout(() => controller.abort("timeout"), AGENT_RUN_TIMEOUT_MS);
+  const beforeFiles = await readWorkspaceFileSnapshot(request.workspacePath);
   try {
     const ready = await startGateway();
     if (!ready) {
@@ -199,6 +208,7 @@ async function runAgent(
       lastRequestId: requestId,
       status: "idle",
     });
+    await emitWorkspaceSnapshotEvents(webContents, requestId, sessionId, runId, request.workspacePath, beforeFiles);
     emit(webContents, { requestId, sessionId, runId, type: "done" });
   } catch (error) {
     await upsertThreadFromRun({
@@ -210,6 +220,7 @@ async function runAgent(
       lastRequestId: requestId,
       status: "error",
     });
+    await emitWorkspaceSnapshotEvents(webContents, requestId, sessionId, runId, request.workspacePath, beforeFiles);
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -246,6 +257,9 @@ async function readSse(
       parseAgentRunSseFrame(frame).forEach((content) => {
         emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
       });
+      parseAgentRunSseFileEvents(frame).forEach((fileEvent) => {
+        emit(webContents, { requestId, sessionId, runId, type: "file_event", fileEvent });
+      });
     }
   }
 
@@ -256,8 +270,119 @@ async function readSse(
     parseAgentRunSseFrame(buffer).forEach((content) => {
       emit(webContents, { requestId, sessionId, runId, type: "chunk", content });
     });
+    parseAgentRunSseFileEvents(buffer).forEach((fileEvent) => {
+      emit(webContents, { requestId, sessionId, runId, type: "file_event", fileEvent });
+    });
   }
   return sawDone;
+}
+
+interface WorkspaceFileSnapshotItem {
+  hash: string | null;
+  path: string;
+  status: string;
+}
+
+async function readWorkspaceFileSnapshot(
+  workspacePath: string | undefined,
+): Promise<Map<string, WorkspaceFileSnapshotItem>> {
+  if (!workspacePath) return new Map();
+  const statusOutput = await runGit(workspacePath, ["status", "--porcelain=v1"], 8000);
+  if (!statusOutput) return new Map();
+  const entries = await Promise.all(
+    statusOutput
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter(Boolean)
+      .map(async (line): Promise<WorkspaceFileSnapshotItem | null> => {
+        const status = line.slice(0, 2).trim() || "modified";
+        const rawPath = line.slice(3).trim();
+        const path = normalizeGitStatusPath(rawPath);
+        if (!path) return null;
+        return {
+          hash: await hashWorkspaceFile(workspacePath, path),
+          path,
+          status,
+        };
+      }),
+  );
+  return new Map(
+    entries
+      .filter(isSnapshotItem)
+      .map((entry) => [entry.path, entry] as const),
+  );
+}
+
+function isSnapshotItem(
+  value: WorkspaceFileSnapshotItem | null,
+): value is WorkspaceFileSnapshotItem {
+  return value !== null;
+}
+
+async function emitWorkspaceSnapshotEvents(
+  webContents: WebContents,
+  requestId: string,
+  sessionId: string,
+  runId: string,
+  workspacePath: string | undefined,
+  before: Map<string, WorkspaceFileSnapshotItem>,
+): Promise<void> {
+  if (!workspacePath) return;
+  const after = await readWorkspaceFileSnapshot(workspacePath);
+  const timestamp = new Date().toISOString();
+  for (const item of after.values()) {
+    const previous = before.get(item.path);
+    if (previous && previous.status === item.status && previous.hash === item.hash) continue;
+    emit(webContents, {
+      requestId,
+      sessionId,
+      runId,
+      type: "file_event",
+      fileEvent: snapshotItemToFileEvent(item, timestamp),
+    });
+  }
+}
+
+function snapshotItemToFileEvent(
+  item: WorkspaceFileSnapshotItem,
+  timestamp: string,
+): AgentRunFileEvent {
+  return {
+    action: classifySnapshotAction(item.status),
+    hash: item.hash ?? undefined,
+    name: item.path,
+    path: item.path,
+    source: "desktop-git-snapshot",
+    timestamp,
+  };
+}
+
+function classifySnapshotAction(status: string): AgentRunFileEvent["action"] {
+  if (status.includes("D")) return "delete";
+  if (status.includes("A") || status.includes("?")) return "artifact";
+  return "modify";
+}
+
+function normalizeGitStatusPath(value: string): string {
+  const normalized = value.replace(/^"|"$/g, "");
+  const renameTarget = normalized.includes(" -> ")
+    ? normalized.split(" -> ").pop() ?? normalized
+    : normalized;
+  return renameTarget.replace(/\\/g, "/").trim();
+}
+
+async function hashWorkspaceFile(
+  workspacePath: string,
+  relativePath: string,
+): Promise<string | null> {
+  try {
+    const filePath = join(workspacePath, relativePath);
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile() || fileStat.size > 25_000_000) return null;
+    return `sha256:${createHash("sha256").update(await readFile(filePath)).digest("hex")}`;
+  } catch {
+    return null;
+  }
 }
 
 async function formatHttpError(response: Response): Promise<string> {
@@ -307,6 +432,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function emit(webContents: WebContents, event: AgentRunEvent): void {
   webContents.send("desktop:agent-run-event", event);
+}
+
+function runGit(cwd: string, args: string[], timeout: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile("git", args, { cwd, timeout, windowsHide: true }, (error, stdout) => {
+      if (error) {
+        resolve(null);
+        return;
+      }
+      resolve(stdout.trim() || null);
+    });
+  });
 }
 
 function getPositiveIntEnv(name: string, fallback: number): number {

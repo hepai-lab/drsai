@@ -9,6 +9,10 @@ import type {
   ChatRequest,
   BrowserActionRequest,
   BrowserActionResult,
+  BrowserTaskApprovalRequest,
+  BrowserTaskEvent,
+  BrowserTaskStartRequest,
+  BrowserTaskStopRequest,
   BrowserUrlCheck,
   CreateWorkspaceRequest,
   CreateThreadRequest,
@@ -33,6 +37,12 @@ import type {
   WorkspaceFileTreeResult,
   WorkspaceGitDiffRequest,
   WorkspaceGitDiffResult,
+  WorkspaceHunkActionRequest,
+  WorkspaceHunkActionResult,
+  WorkspaceRevertFileRequest,
+  WorkspaceRevertFileResult,
+  WorkspaceStageFileRequest,
+  WorkspaceStageFileResult,
 } from "../shared/desktopApi";
 
 const api: DesktopApi = {
@@ -116,16 +126,44 @@ const api: DesktopApi = {
     request: WorkspaceGitDiffRequest,
   ): Promise<WorkspaceGitDiffResult> =>
     ipcRenderer.invoke("desktop:workspace-git-diff", request),
+  revertWorkspaceFile: (
+    request: WorkspaceRevertFileRequest,
+  ): Promise<WorkspaceRevertFileResult> =>
+    ipcRenderer.invoke("desktop:workspace-revert-file", request),
+  stageWorkspaceFile: (
+    request: WorkspaceStageFileRequest,
+  ): Promise<WorkspaceStageFileResult> =>
+    ipcRenderer.invoke("desktop:workspace-stage-file", request),
+  stageWorkspaceHunk: (
+    request: WorkspaceHunkActionRequest,
+  ): Promise<WorkspaceHunkActionResult> =>
+    ipcRenderer.invoke("desktop:workspace-stage-hunk", request),
+  revertWorkspaceHunk: (
+    request: WorkspaceHunkActionRequest,
+  ): Promise<WorkspaceHunkActionResult> =>
+    ipcRenderer.invoke("desktop:workspace-revert-hunk", request),
   checkBrowserUrl: (url: string): Promise<BrowserUrlCheck> =>
     ipcRenderer.invoke("desktop:browser-check-url", url),
   requestBrowserAction: (
     request: BrowserActionRequest,
   ): Promise<BrowserActionResult> =>
     ipcRenderer.invoke("desktop:browser-action-request", request),
+  startBrowserTask: (
+    request: BrowserTaskStartRequest,
+  ): Promise<{ taskId: string }> =>
+    ipcRenderer.invoke("desktop:browser-task-start", request),
+  stopBrowserTask: (request: BrowserTaskStopRequest): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:browser-task-stop", request),
+  approveBrowserTaskAction: (
+    request: BrowserTaskApprovalRequest,
+  ): Promise<boolean> =>
+    ipcRenderer.invoke("desktop:browser-task-approve", request),
   openExternal: (url: string): Promise<void> =>
     ipcRenderer.invoke("desktop:open-external", url),
   openPath: (path: string): Promise<string> =>
     ipcRenderer.invoke("desktop:open-path", path),
+  getFileIcon: (path: string) =>
+    ipcRenderer.invoke("desktop:get-file-icon", path),
   createTerminal: (options) =>
     ipcRenderer.invoke("desktop:terminal-create", options),
   listTerminalSessions: (workspaceKey) =>
@@ -183,6 +221,16 @@ const api: DesktopApi = {
     };
     ipcRenderer.on("desktop:terminal-exit", listener);
     return () => ipcRenderer.removeListener("desktop:terminal-exit", listener);
+  },
+  onBrowserTaskEvent: (
+    callback: (event: BrowserTaskEvent) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: BrowserTaskEvent) => {
+      callback(event);
+    };
+    ipcRenderer.on("desktop:browser-task-event", listener);
+    return () =>
+      ipcRenderer.removeListener("desktop:browser-task-event", listener);
   },
 };
 
