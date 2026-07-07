@@ -1211,6 +1211,21 @@ export class AuthAPI {
         }
         return data.data as { access_token: string; user_id: string };
     }
+
+    /** 统一认证免密登录：用 IHEP access_token + username 换取本系统 JWT */
+    async scienceUserVerify(accessToken: string, username: string): Promise<{ access_token: string; user_id: string }> {
+        const params = new URLSearchParams({ access_token: accessToken, username });
+        const response = await fetch(`${this.getBaseUrl()}/auth/science-user/verify?${params.toString()}`, {
+            method: "POST",
+            headers: this.getHeaders(),
+            credentials: "include",
+        });
+        const data = await response.json();
+        if (!response.ok || !data.status) {
+            throw new Error(data.detail || data.message || `science_user_auth_failed`);
+        }
+        return data.data as { access_token: string; user_id: string };
+    }
 }
 
 export const authAPI = new AuthAPI();

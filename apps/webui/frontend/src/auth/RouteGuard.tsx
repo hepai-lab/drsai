@@ -26,10 +26,34 @@ export const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
         const guard = async () => {
             const searchParams = new URLSearchParams(location.search);
 
-            // Science user iframe embed: ?user_source=science_user&tokenId=xxx
+            // Science user iframe embed:
+            //   统一认证: ?user_source=science_user&access_token=<ihep_token>
+            //   院平台:   ?user_source=science_user&tokenId=<cas_token>
             // 在所有其他守卫逻辑之前处理，避免跳转到登录页
             if (searchParams.get("user_source") === "science_user") {
+                const accessToken = searchParams.get("access_token");
+                const username = searchParams.get("username");
                 const tokenId = searchParams.get("tokenId");
+
+                // 统一认证：后端用 IHEP access_token + username 验证，换取本系统 JWT
+                if (accessToken && username) {
+                    try {
+                        const result = await authAPI.scienceUserVerify(accessToken, username);
+                        if (cancelled) return;
+                        saveAuthSession(result.access_token, result.user_id);
+                        localStorage.removeItem("drsai-mode-config");
+                        localStorage.removeItem("drsai.recentAgents");
+                        setUser({ name: result.user_id, email: result.user_id });
+                        window.location.replace("/?menu=current_session&view=chat");
+                    } catch (err: any) {
+                        if (cancelled) return;
+                        const isNetwork = err instanceof TypeError || String(err?.message).includes("fetch");
+                        setScienceAuthError(isNetwork ? "networkError" : "invalidToken");
+                    }
+                    return;
+                }
+
+                // 院平台：通过 tokenId 换取 access_token
                 if (!tokenId) {
                     if (!cancelled) setScienceAuthError("missingToken");
                     return;
