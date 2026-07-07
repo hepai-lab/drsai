@@ -688,7 +688,7 @@ export default function ChatView({
                 plan?: IPlan,
                 llm?: { label: string; value: string }
               ) => {
-                if (currentRun?.status === "awaiting_input") {
+                if (currentRun?.status === "awaiting_input" && activeSocketRef?.current?.readyState === WebSocket.OPEN) {
                   handleInputResponse(query, accepted, plan, files, llm);
                 } else {
                   runTask(query, files, plan, true, llm);

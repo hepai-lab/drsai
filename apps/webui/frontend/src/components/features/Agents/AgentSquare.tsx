@@ -11,7 +11,7 @@ import { useLang } from "../../../i18n/useLang";
 import { Agent } from "../../../types/common";
 import { Button } from "../../common/Button";
 import { CustomAgentData } from "../../common/agent-form/CustomAgentForm";
-import { getServerUrl } from "../../utils";
+import { getDescriptionForSearch, getLocalizedDescription, getServerUrl } from "../../utils";
 import { agentWorkerAPI, settingsAPI } from "../../views/api";
 import { AgentCard, AgentCardData } from "./AgentCard";
 import CustomAgentModal from "./CustomAgentModal";
@@ -27,7 +27,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
   handleAgentList,
 }) => {
   const { user } = useContext(appContext);
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const { agentId, setAgentId, setMode } = useModeConfigStore();
   const [agentList, setAgentList] = useState<AgentCardData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -445,6 +445,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
         const platformPolicy = {
           auto_load_default_agent: userDefault?.auto_load_default_agent,
           default_agent_name: userDefault?.default_agent_name ?? null,
+          science_default_agent_name: userDefault?.science_default_agent_name ?? null,
         };
         const target = pickAgentForSessionStart(
           agentList as Agent[],
@@ -499,13 +500,13 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
     if (!q) return true;
     return (
       (agent.name || "").toLowerCase().includes(q) ||
-      (agent.description || "").toLowerCase().includes(q) ||
+      getDescriptionForSearch(agent.description).toLowerCase().includes(q) ||
       (agent.owner || "").toLowerCase().includes(q)
     );
   };
 
   const baseList = agentList.filter(
-    (agent) => agent.mode !== "magentic-one" && agent.mode !== "besiii"
+    (agent) => agent.mode !== "magentic-one"
   );
 
   /** 主推位：仅展示用户设置的默认智能体 */
@@ -705,7 +706,7 @@ const AgentSquare: React.FC<AgentSquareProps> = ({
                         {defaultAgent.owner}
                       </div>
                       <p className="mt-1 line-clamp-2 text-[13px] leading-snug text-[#404e67] dark:text-[#c7d0e6]">
-                        {defaultAgent.description}
+                        {getLocalizedDescription(defaultAgent.description, lang)}
                       </p>
                     </div>
                   </div>

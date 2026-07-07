@@ -1,5 +1,5 @@
 from drsai import DrSai
-import os, sys
+import json, os, sys
 from pathlib import Path
 here = Path(__file__).parent
 from typing import Generator, Optional, Union, Dict, Any
@@ -99,12 +99,11 @@ class DrSaiAPP(DrSai):
         return models
     
     async def a_list_agents(self, request: Request):
+        logger.info(f"a_list_agents: _info = {json.dumps(self._info, ensure_ascii=False, indent=2)}")
         models_data = [{
-                "id": self._info["name"],
+                **self._info,
+                "id": self._info.get("name", "unknown"),
                 "object": "agent",
-                "owner": self._info["author"],
-                "description": self._info["description"],
-                "version": self._info["version"],
                 }]
         
         models = {
