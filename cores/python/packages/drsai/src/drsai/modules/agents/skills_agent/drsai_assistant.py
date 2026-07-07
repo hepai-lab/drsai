@@ -1175,13 +1175,14 @@ Current Session_ID is {self._thread_id}"""
         """
         if not self._elevated_tools:
             return
+        _shared = self._workbench._tools is self._tools
         for tool in self._elevated_tools:
-            # Remove from workbench tools if present
-            if tool in self._workbench._tools:
-                self._workbench._tools.remove(tool)
-            # Remove from self._tools if present
+            # Remove from self._tools (primary list)
             if tool in self._tools:
                 self._tools.remove(tool)
+            # Remove from workbench only if it's a separate list object
+            if not _shared and tool in self._workbench._tools:
+                self._workbench._tools.remove(tool)
         self._elevated_tools.clear()
         self._elevated_tool_names.clear()
         logger.debug("Skill elevated tools cleared — default permission restored")
@@ -1202,7 +1203,9 @@ Current Session_ID is {self._thread_id}"""
                 self._elevated_tools.append(tool)
                 self._elevated_tool_names.add(tool.name)
                 self._tools.append(tool)
-                self._workbench._tools.append(tool)
+                # Only append to workbench if it's a separate list object
+                if self._workbench._tools is not self._tools:
+                    self._workbench._tools.append(tool)
                     
         if self._elevated_tools:
             logger.info(

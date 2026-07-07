@@ -266,6 +266,14 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
         vision=True,            # GLM-5.1 supports image input
     ),
+    "glm-5.2": ModelEntry(
+        model="zhipu/glm-5.2",
+        token_limit=200000,      # context window: 200K
+        max_tokens=64000,      # max output per request
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
+        vision=True,            # GLM-5.1 supports image input
+    ),
     # ── MiniMax ──────────────────────────────────────────────────────
     "minimax-m2.7-highspeed": ModelEntry(
         model="minimax/minimax-m2.7-highspeed",
