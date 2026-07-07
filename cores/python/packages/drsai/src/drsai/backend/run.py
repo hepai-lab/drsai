@@ -807,6 +807,7 @@ async def run_worker(
     # ════════════════════════════════════════════════════════════════════
     if "name" in worker_info and worker_info["name"] is not None:
         model_args.name = worker_info["name"]
+        agent_name= worker_info["name"]
         os.environ['AGNET_NAME'] = worker_info["name"]
 
     if "version" in worker_info and worker_info["version"] is not None:
