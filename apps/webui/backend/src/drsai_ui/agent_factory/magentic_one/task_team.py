@@ -432,7 +432,7 @@ async def create_magentic_round_team(
             run_info=run_info,
             model_remote_configs={
                 # "url": "http://0.0.0.0:42806/apiv2/",
-                "model": "drsai/besiii",
+                "name": "drsai/besiii",
                 "api_key": api_key
             },
             files = files,

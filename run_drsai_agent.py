@@ -287,7 +287,11 @@ if __name__ == "__main__":
                 ],
                 "agent_config": llm_mode_config,
                 "defult_config_name": "hepai/deepseek-v4-flash",
-                "announcements": ["My Dr.Sai 007 is ready to serve you!"],
+                "announcements": [
+                    {"en": "My Dr.Sai is ready to serve you!", "zh": "我的Dr.Sai已经准备好为您服务！"},
+                    {"en": "reasoning is coming!", "zh": "推理功能即将上线！"},
+                    {"en": "try the latest Dr.Sai features today!", "zh": "尝试最新的Dr.Sai功能今天！"},
+                ],
             },
             # ── 智能体实体 ──
             agent_factory=create_agent,

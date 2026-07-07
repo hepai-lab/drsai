@@ -27,6 +27,9 @@ def _extract_api_key_from_json(obj: object) -> Optional[str]:
     return None
 
 
+SCIENCE_USER_SHARED_API_KEY = os.getenv("SCIENCE_USER_SHARED_API_KEY", os.getenv("HEPAI_API_KEY", ""))
+
+
 class PersonalKeyConfigFetcher:
     """获取个人密钥配置"""
     def __init__(self) -> None:
@@ -88,9 +91,16 @@ class PersonalKeyConfigFetcher:
             )
         return token
 
-    def get_personal_key(self, username: str) -> str:
-        """获取个人密钥"""
-        
+    def get_personal_key(self, username: str, user_source: str | None = None) -> str:
+        """获取个人密钥
+
+        Args:
+            username: 用户标识（邮箱）
+            user_source: 用户来源，"science_user" 使用共享 key，不走 HepAI
+        """
+        if user_source == "science_user":
+            return SCIENCE_USER_SHARED_API_KEY
+
         if self.service_mode == "PROD":
             try:
                 api_key = self.client.fetch_api_key(username=username)
@@ -115,11 +125,15 @@ class PersonalKeyConfigFetcher:
             return api_key
         
     
-    def get_default_config(self, username: str) -> Dict[str, Any]:
-        """获取默认配置"""
-        
+    def get_default_config(self, username: str, user_source: str | None = None) -> Dict[str, Any]:
+        """获取默认配置
+
+        Args:
+            username: 用户标识（邮箱）
+            user_source: 用户来源，"science_user" 使用共享 key
+        """
         # "openai/gpt-4.1"
-        personal_key = self.get_personal_key(username=username)
+        personal_key = self.get_personal_key(username=username, user_source=user_source)
         default_model_configs = f"""model_config: &client
   provider: drsai.HepAIChatCompletionClient
   config:

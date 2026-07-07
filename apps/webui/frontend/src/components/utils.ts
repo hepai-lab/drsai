@@ -118,6 +118,51 @@ export function truncateText(text: string, length = 50) {
   }
   return text;
 }
+/**
+ * Parse a potentially i18n JSON description string (e.g. '{"en":"...","zh":"..."}')
+ * and return the text for the given language.
+ * Falls back to the raw string if parsing fails or the format doesn't match.
+ */
+export function getLocalizedDescription(
+  description: string | undefined | null,
+  lang: "zh" | "en"
+): string {
+  if (!description) return "";
+  try {
+    const parsed = JSON.parse(description);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      if (parsed[lang]) return parsed[lang];
+      // Fallback: try the other language
+      if (lang === "zh" && parsed.en) return parsed.en;
+      if (lang === "en" && parsed.zh) return parsed.zh;
+    }
+  } catch {
+    // not JSON — return as-is
+  }
+  return description;
+}
+
+/**
+ * For search: concatenate text from both languages so that
+ * searching in either language matches the description.
+ */
+export function getDescriptionForSearch(
+  description: string | undefined | null
+): string {
+  if (!description) return "";
+  try {
+    const parsed = JSON.parse(description);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return Object.values(parsed)
+        .filter((v): v is string => typeof v === "string")
+        .join(" ");
+    }
+  } catch {
+    // not JSON — return as-is
+  }
+  return description;
+}
+
 export const fetchVersion = () => {
   const versionUrl = getServerUrl() + "/version";
   

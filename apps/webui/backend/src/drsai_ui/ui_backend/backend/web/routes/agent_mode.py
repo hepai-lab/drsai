@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ...datamodel.db import AgentModeSettings, AgentModeConfig, UserAgents
 from drsai_ui.ui_backend.backend.database import DatabaseManager
 from ..deps import get_db
+from ..auth_source import get_user_source
 from .....agent_factory.agent_mode_cofigs import (
     get_agent_mode_config, 
     get_default_agent_mode_config,
@@ -18,7 +19,8 @@ router = APIRouter()
 @router.get("/")
 async def get_agents_mode_route(user_id: str, db=Depends(get_db)) -> Dict:
     try:
-        return await get_agents_mode(user_id, db)
+        user_source = get_user_source(db, user_id)
+        return await get_agents_mode(user_id, db, user_source=user_source)
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
