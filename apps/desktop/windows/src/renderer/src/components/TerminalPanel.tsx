@@ -17,18 +17,25 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
+import { recordRecentTerminalTestResult } from "../terminalTestResults";
 import type {
   ChatAttachment,
   TerminalSessionInfo,
   TerminalShellProfile,
 } from "@shared/desktopApi";
 
+interface WorkflowTerminalCommandProposal {
+  command: string;
+  workflowRunId?: string;
+  workflowStepId?: string;
+}
+
 interface TerminalPanelProps {
   cwd?: string;
   language: AppLanguage;
   onCommandResult?: (attachment: ChatAttachment) => void;
   onSendOutputToAgent?: (text: string) => void;
-  proposedCommand?: string;
+  proposedCommand?: string | WorkflowTerminalCommandProposal | null;
 }
 
 type CommandRisk = "read_only" | "write" | "network" | "process" | "destructive";
@@ -39,6 +46,8 @@ interface CommandProposal {
   command: string;
   risk: CommandRisk;
   reason: string;
+  workflowRunId?: string;
+  workflowStepId?: string;
 }
 
 interface CommandRun {
@@ -50,6 +59,8 @@ interface CommandRun {
   completedAt?: string;
   exitCode?: number;
   output?: string;
+  workflowRunId?: string;
+  workflowStepId?: string;
 }
 
 export function TerminalPanel({
@@ -64,6 +75,7 @@ export function TerminalPanel({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const reportedCommandResultsRef = useRef<Set<string>>(new Set());
+  const reportedWorkflowStepResultsRef = useRef<Set<string>>(new Set());
   const [sessions, setSessions] = useState<TerminalSessionInfo[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [copyNotice, setCopyNotice] = useState("");
@@ -144,6 +156,12 @@ export function TerminalPanel({
   }, [commandRuns, workspaceKey]);
 
   useEffect(() => {
+    for (const run of commandRuns) {
+      if (recordRecentTerminalTestResult(workspaceKey, run)) break;
+    }
+  }, [commandRuns, workspaceKey]);
+
+  useEffect(() => {
     if (!onCommandResult) return;
     for (const run of commandRuns) {
       if (
@@ -158,7 +176,46 @@ export function TerminalPanel({
   }, [commandRuns, onCommandResult, workspaceKey]);
 
   useEffect(() => {
-    const command = proposedCommand?.trim();
+    for (const run of commandRuns) {
+      if (
+        !run.workflowRunId ||
+        !run.workflowStepId ||
+        !["succeeded", "failed", "stopped"].includes(run.status) ||
+        reportedWorkflowStepResultsRef.current.has(run.id)
+      ) {
+        continue;
+      }
+      reportedWorkflowStepResultsRef.current.add(run.id);
+      void desktopApi
+        .completeWorkflowRunStep({
+          runId: run.workflowRunId,
+          stepId: run.workflowStepId,
+          exitCode:
+            run.exitCode ??
+            (run.status === "succeeded" ? 0 : run.status === "stopped" ? -1 : 1),
+          output: run.output,
+        })
+        .then((result) => {
+          setStatusNote(result.message);
+          window.dispatchEvent(
+            new CustomEvent("drsai:workflow-run-updated", {
+              detail: { run: result.run },
+            }),
+          );
+        })
+        .catch((error) => {
+          setStatusNote(
+            error instanceof Error
+              ? error.message
+              : "Failed to update workflow run step.",
+          );
+        });
+    }
+  }, [commandRuns]);
+
+  useEffect(() => {
+    const normalized = normalizeProposedCommand(proposedCommand);
+    const command = normalized?.command.trim();
     if (!command) return;
     const risk = classifyCommandRisk(command);
     setCommandDraft(command);
@@ -168,6 +225,8 @@ export function TerminalPanel({
       command,
       risk: risk.risk,
       reason: risk.reason,
+      ...(normalized?.workflowRunId ? { workflowRunId: normalized.workflowRunId } : {}),
+      ...(normalized?.workflowStepId ? { workflowStepId: normalized.workflowStepId } : {}),
     });
   }, [proposedCommand]);
 
@@ -294,16 +353,47 @@ export function TerminalPanel({
         id: commandId,
         command: proposal.command,
         risk: proposal.risk,
-        status: "running",
+        status: "pending",
         startedAt: new Date().toISOString(),
         output: "",
+        ...(proposal.workflowRunId ? { workflowRunId: proposal.workflowRunId } : {}),
+        ...(proposal.workflowStepId ? { workflowStepId: proposal.workflowStepId } : {}),
       },
       ...current.slice(0, 5),
     ]);
     saveCommandHistory(proposal.command);
     setCommandDraft("");
     setCommandProposal(null);
-    await desktopApi.writeTerminal(sessionId, wrappedCommand);
+    const approval = await desktopApi.requestShellCommandApproval({
+      terminalSessionId: sessionId,
+      commandId,
+      command: proposal.command,
+      invocation: wrappedCommand,
+      risk: approvalRiskForCommand(proposal.risk),
+      ...(proposal.workflowRunId ? { workflowRunId: proposal.workflowRunId } : {}),
+      ...(proposal.workflowStepId ? { workflowStepId: proposal.workflowStepId } : {}),
+    });
+    if (approval.blocked || !approval.allowed) {
+      setStatusNote(approval.reason);
+      setCommandRuns((current) =>
+        current.map((item) =>
+          item.id === commandId
+            ? { ...item, status: "failed", completedAt: new Date().toISOString() }
+            : item,
+        ),
+      );
+      return;
+    }
+    if (approval.queued) {
+      setStatusNote("Command is waiting in Approval Center.");
+    } else {
+      setStatusNote("");
+      setCommandRuns((current) =>
+        current.map((item) =>
+          item.id === commandId ? { ...item, status: "running" } : item,
+        ),
+      );
+    }
     terminalRef.current?.focus();
   }, [activeSession?.shellProfile, commandProposal, saveCommandHistory, selectedShellProfile]);
 
@@ -443,9 +533,10 @@ export function TerminalPanel({
         terminal.write(data);
         setCommandRuns((runs) =>
           runs.map((run) =>
-            run.status === "running"
+            run.status === "running" || run.status === "pending"
               ? {
                   ...run,
+                  status: "running",
                   output: `${run.output || ""}${data}`.slice(-12000),
                 }
               : run,
@@ -805,6 +896,16 @@ function commandRunsKey(workspaceKey: string): string {
   return `opendrsai.terminal.commandRuns.${workspaceKey}`;
 }
 
+function normalizeProposedCommand(
+  proposedCommand?: string | WorkflowTerminalCommandProposal | null,
+): WorkflowTerminalCommandProposal | null {
+  if (!proposedCommand) return null;
+  if (typeof proposedCommand === "string") {
+    return { command: proposedCommand };
+  }
+  return proposedCommand;
+}
+
 function commandRunToAttachment(
   run: CommandRun,
   workspaceKey: string,
@@ -892,6 +993,14 @@ function riskLabel(risk: CommandRisk): string {
   if (risk === "network") return "Network or install";
   if (risk === "process") return "Process control";
   return "Blocked destructive";
+}
+
+function approvalRiskForCommand(
+  risk: CommandRisk,
+): "low" | "medium" | "high" {
+  if (risk === "read_only") return "low";
+  if (risk === "network" || risk === "process") return "high";
+  return "medium";
 }
 
 function buildCommandInvocation(

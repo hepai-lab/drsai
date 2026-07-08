@@ -3085,6 +3085,7 @@ body {
 }
 
 /* Search bar — integrated into header */
+.sessions-search-trigger,
 .sessions-searchbar {
   display: flex;
   align-items: center;
@@ -3096,6 +3097,21 @@ body {
   transition:
     border-color var(--transition),
     box-shadow var(--transition);
+}
+
+.sessions-search-trigger {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.sessions-search-trigger:hover {
+  border-color: var(--border-bright);
+  background: var(--bg-tertiary);
 }
 
 .sessions-searchbar:focus-within {
@@ -3126,6 +3142,76 @@ body {
 .sessions-searchbar-clear {
   padding: 2px;
   color: var(--text-muted);
+}
+
+.sessions-search-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: min(18vh, 140px);
+}
+
+.sessions-search-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.28);
+  cursor: default;
+}
+
+.sessions-search-panel {
+  position: relative;
+  width: min(680px, calc(100vw - 48px));
+  max-height: min(70vh, 620px);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+.sessions-search-panel .sessions-searchbar {
+  min-width: 0;
+}
+
+.sessions-search-modal-close {
+  width: 34px;
+  height: 34px;
+  align-self: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.sessions-search-results {
+  grid-column: 1 / -1;
+  min-height: 180px;
+  max-height: calc(min(70vh, 620px) - 68px);
+  overflow: hidden;
+}
+
+.sessions-search-result-list {
+  height: 100%;
+  padding: 0;
+}
+
+.sessions-search-empty,
+.sessions-search-loading,
+.sessions-search-empty-state {
+  min-height: 180px;
+}
+
+.sessions-search-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 /* Loading & empty states */

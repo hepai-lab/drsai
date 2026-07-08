@@ -1,138 +1,71 @@
-import { ArrowRight, Network, RefreshCw, Search, Star } from "lucide-react";
+import { ArrowRight, RefreshCw, Save, Search, Server, Settings, Sparkles, Star } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import type {
+  DesktopAgent,
+  MyDrSaiConfig,
+  UpdateMyDrSaiConfigRequest,
+} from "@shared/desktopApi";
+import { desktopApi } from "../desktopApi";
 import type { AppLanguage } from "../navigation";
-
-type AgentMode = "local" | "remote" | "custom";
-type OwnerFilter = "all" | "mine" | "official";
-type SortMode = "recent" | "name";
-
-interface AgentCardData {
-  id: string;
-  name: string;
-  description: string;
-  owner: string;
-  mode: AgentMode;
-  logoText: string;
-  featured?: boolean;
-  isUserDefault?: boolean;
-}
 
 interface AgentSquareViewProps {
   language: AppLanguage;
   userEmail?: string;
-  onStartChat: (agent: AgentCardData) => void;
+  onStartChat: (agent: DesktopAgent) => void;
 }
-
-const RECENT_AGENTS_KEY = "drsai.recentAgents";
-
-const AGENTS: AgentCardData[] = [
-  {
-    id: "drsai-research",
-    name: "DrSai Research",
-    description: "面向科研问题拆解、文献线索整理和实验路线规划的通用智能体。",
-    owner: "OpenDrSai",
-    mode: "local",
-    logoText: "R",
-    featured: true,
-    isUserDefault: true,
-  },
-  {
-    id: "code-lab",
-    name: "Code Lab",
-    description: "辅助阅读代码、生成补丁、运行验证并总结工程风险。",
-    owner: "OpenDrSai",
-    mode: "local",
-    logoText: "C",
-  },
-  {
-    id: "data-analyst",
-    name: "Data Analyst",
-    description: "用于表格清洗、统计分析、图表解释和数据报告草稿。",
-    owner: "OpenDrSai",
-    mode: "local",
-    logoText: "D",
-  },
-  {
-    id: "paper-reader",
-    name: "Paper Reader",
-    description: "读取论文结构，提取方法、实验设置、局限和可复现实验线索。",
-    owner: "OpenDrSai",
-    mode: "local",
-    logoText: "P",
-  },
-  {
-    id: "my-remote-agent",
-    name: "Remote Agent",
-    description: "连接你自己的远程智能体服务，适合接入团队已有工作流。",
-    owner: "Me",
-    mode: "remote",
-    logoText: "N",
-  },
-];
 
 export function AgentSquareView({
   language,
-  userEmail,
   onStartChat,
 }: AgentSquareViewProps): React.JSX.Element {
   const zh = language === "zh";
+  const [agents, setAgents] = useState<DesktopAgent[]>([]);
   const [search, setSearch] = useState("");
-  const [ownerFilter, setOwnerFilter] = useState<OwnerFilter>("all");
-  const [sortBy, setSortBy] = useState<SortMode>("recent");
-  const [recentAgentIds, setRecentAgentIds] = useState<string[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
-  const defaultAgent = AGENTS.find((agent) => agent.isUserDefault) ?? AGENTS[0];
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
 
   useEffect(() => {
-    setRecentAgentIds(readRecentAgentIds());
+    void refreshAgents();
   }, []);
 
   const filteredAgents = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
-    return AGENTS.filter((agent) => {
-      if (ownerFilter === "mine" && !isMine(agent, userEmail)) return false;
-      if (ownerFilter === "official" && agent.mode !== "local") return false;
-      if (!normalizedSearch) return true;
-      return [agent.name, agent.description, agent.owner]
+    if (!normalizedSearch) return agents;
+    return agents.filter((agent) =>
+      [agent.name, agent.description, agent.owner, agent.url]
+        .filter(Boolean)
         .join(" ")
         .toLowerCase()
-        .includes(normalizedSearch);
-    });
-  }, [ownerFilter, search, userEmail]);
+        .includes(normalizedSearch),
+    );
+  }, [agents, search]);
 
-  const sortedAgents = useMemo(() => {
-    const order = new Map(recentAgentIds.map((id, index) => [id, index]));
-    return [...filteredAgents].sort((left, right) => {
-      if (sortBy === "name") return left.name.localeCompare(right.name);
-      return (order.get(left.id) ?? 999) - (order.get(right.id) ?? 999);
-    });
-  }, [filteredAgents, recentAgentIds, sortBy]);
-
-  const recentAgents = recentAgentIds
-    .map((id) => AGENTS.find((agent) => agent.id === id))
-    .filter(Boolean)
-    .filter((agent) => agent?.id !== defaultAgent.id)
-    .slice(0, 6) as AgentCardData[];
-
-  function startWithAgent(agent: AgentCardData): void {
-    const nextRecent = [agent.id, ...recentAgentIds.filter((id) => id !== agent.id)].slice(0, 12);
-    setRecentAgentIds(nextRecent);
-    writeRecentAgentIds(nextRecent);
-    onStartChat(agent);
+  async function refreshAgents(): Promise<void> {
+    setLoading(true);
+    setError(null);
+    try {
+      setAgents(await loadAgents());
+    } catch (agentError) {
+      setError(agentError instanceof Error ? agentError.message : String(agentError));
+    } finally {
+      setLoading(false);
+    }
   }
 
-  function refreshAgents(): void {
-    setRefreshing(true);
-    window.setTimeout(() => setRefreshing(false), 350);
-  }
+  const myDrSai = filteredAgents.find((agent) => agent.id === "my-drsai");
+  const otherAgents = filteredAgents.filter((agent) => agent.id !== "my-drsai");
 
   return (
-    <section className="agent-square-view" aria-label={zh ? "智能体广场" : "Agent Square"}>
+    <section
+      className="agent-square-view"
+      aria-label={zh ? "智能体面板" : "Agent Panel"}
+    >
       <div className="agent-square-toolbar">
         <div className="agent-square-title-block">
           <strong>{zh ? "智能体" : "Agents"}</strong>
           <span>
-            {sortedAgents.length}/{AGENTS.length}
+            {filteredAgents.length}/{agents.length}
           </span>
         </div>
         <label className="agent-square-search">
@@ -140,98 +73,289 @@ export function AgentSquareView({
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder={zh ? "搜索名称 / 描述 / 创建人" : "Search name / description / owner"}
+            placeholder={zh ? "搜索智能体 / 来源 / 地址" : "Search agents / source / URL"}
           />
         </label>
         <div className="agent-square-actions">
-          <div className="agent-square-segmented" aria-label={zh ? "筛选智能体" : "Filter agents"}>
-            {([
-              ["all", zh ? "全部" : "All"],
-              ["mine", zh ? "我的" : "Mine"],
-              ["official", zh ? "本地" : "Local"],
-            ] as const).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                className={ownerFilter === key ? "active" : ""}
-                onClick={() => setOwnerFilter(key)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <select value={sortBy} onChange={(event) => setSortBy(event.target.value as SortMode)}>
-            <option value="recent">{zh ? "按最近使用" : "Recent"}</option>
-            <option value="name">{zh ? "按名称" : "Name"}</option>
-          </select>
           <button className="agent-square-refresh" type="button" onClick={refreshAgents}>
-            <RefreshCw size={14} className={refreshing ? "spinning" : ""} />
-            {zh ? "刷新" : "Refresh"}
+            <RefreshCw size={14} className={loading ? "spinning" : ""} />
+            {zh ? "检查状态" : "Check"}
           </button>
         </div>
       </div>
 
-      <div className="agent-square-content">
-        {defaultAgent && (
+      <div className="agent-square-content agent-square-empty-content">
+        {error && <div className="agent-square-error">{error}</div>}
+        {myDrSai && (
           <section className="agent-square-section">
             <h3>
               <Star size={14} fill="currentColor" />
-              {zh ? "我的默认智能体" : "My Default Agent"}
+              {zh ? "我的智能体" : "My Agent"}
             </h3>
-            <FeaturedAgentCard agent={defaultAgent} zh={zh} onStartChat={startWithAgent} />
+            <AgentFeaturedCard
+              agent={myDrSai}
+              zh={zh}
+              onConfigure={() => setConfigOpen((open) => !open)}
+              onStartChat={onStartChat}
+            />
+            {configOpen && <MyDrSaiConfigPanel zh={zh} />}
           </section>
         )}
 
-        {recentAgents.length > 0 && (
+        {otherAgents.length > 0 ? (
           <section className="agent-square-section">
-            <h3>{zh ? "最近使用" : "Recently Used"}</h3>
-            <div className="agent-square-grid compact">
-              {recentAgents.map((agent) => (
-                <AgentCard key={`recent-${agent.id}`} agent={agent} zh={zh} onStartChat={startWithAgent} />
+            <h3>{zh ? "已连接智能体" : "Connected Agents"}</h3>
+            <div className="agent-square-grid">
+              {otherAgents.map((agent) => (
+                <AgentCard key={`${agent.source}:${agent.id}`} agent={agent} zh={zh} onStartChat={onStartChat} />
               ))}
             </div>
           </section>
+        ) : (
+          <div className="agent-square-empty-state">
+            <Sparkles size={18} />
+            <span>
+              {loading
+                ? zh
+                  ? "正在检查本机和远程智能体..."
+                  : "Checking local and remote agents..."
+                : zh
+                  ? "暂无其他已连接智能体。"
+                  : "No other connected agents are available yet."}
+            </span>
+          </div>
         )}
-
-        <section className="agent-square-section">
-          <h3>{zh ? "全部" : "All"}</h3>
-          {sortedAgents.length === 0 ? (
-            <div className="agent-square-empty">{zh ? "没有匹配的智能体" : "No matching agents"}</div>
-          ) : (
-            <div className="agent-square-grid">
-              {sortedAgents.map((agent) => (
-                <AgentCard key={agent.id} agent={agent} zh={zh} onStartChat={startWithAgent} />
-              ))}
-            </div>
-          )}
-        </section>
       </div>
     </section>
   );
 }
 
-function FeaturedAgentCard({
+function AgentFeaturedCard({
   agent,
   zh,
+  onConfigure,
   onStartChat,
 }: {
-  agent: AgentCardData;
+  agent: DesktopAgent;
   zh: boolean;
-  onStartChat: (agent: AgentCardData) => void;
+  onConfigure: () => void;
+  onStartChat: (agent: DesktopAgent) => void;
 }): React.JSX.Element {
+  const running = agent.status === "running";
   return (
-    <article className="agent-featured-card">
+    <article className="agent-featured-card my-drsai-card">
       <AgentLogo agent={agent} large />
       <div>
-        <h2>{agent.name}</h2>
-        <span>{agent.owner}</span>
-        <p>{agent.description}</p>
+        <div className="agent-title-row">
+          <h2>{agent.name}</h2>
+          <AgentStatusPill agent={agent} zh={zh} />
+        </div>
+        {agent.id === "my-drsai" ? (
+          <div className="my-drsai-subtitle">
+            <span>运行在本机的智能体。</span>
+            <span>专属于您的AI智能体❤</span>
+          </div>
+        ) : (
+          <>
+            <span>{agent.owner}</span>
+            <p>{agent.description}</p>
+          </>
+        )}
+        {agent.error && <small className="agent-card-error">{agent.error}</small>}
       </div>
-      <button type="button" onClick={() => onStartChat(agent)}>
-        <span>{zh ? "开始会话" : "Start Chat"}</span>
-        <ArrowRight size={15} />
-      </button>
+      <div className="agent-featured-actions">
+        <button type="button" className="secondary" onClick={onConfigure}>
+          <Settings size={15} />
+          <span>{zh ? "配置" : "Config"}</span>
+        </button>
+        {!running && (
+          <button type="button" onClick={() => onStartChat(agent)}>
+            <span>{zh ? "一键启动" : "Start"}</span>
+            <ArrowRight size={15} />
+          </button>
+        )}
+      </div>
     </article>
+  );
+}
+
+function MyDrSaiConfigPanel({ zh }: { zh: boolean }): React.JSX.Element {
+  const [config, setConfig] = useState<MyDrSaiConfig | null>(null);
+  const [draft, setDraft] = useState<UpdateMyDrSaiConfigRequest>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadConfig();
+  }, []);
+
+  async function loadConfig(): Promise<void> {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const nextConfig = await loadMyDrSaiConfig();
+      setConfig(nextConfig);
+      setDraft({
+        user_id: nextConfig.config.user_id || "",
+        defult_config_name:
+          nextConfig.config.defult_config_name || nextConfig.defaultModelAlias || "",
+        plan_mode: Boolean(nextConfig.config.plan_mode),
+        workspace_enabled: nextConfig.config.workspace_enabled !== false,
+        dangerous_allowed: Boolean(nextConfig.config.dangerous_allowed),
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveConfig(): Promise<void> {
+    setSaving(true);
+    setMessage(null);
+    try {
+      const saved = await saveMyDrSaiConfig(draft);
+      setConfig(saved);
+      setMessage(zh ? "配置已保存。" : "Configuration saved.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const selectedModel = config?.models.find(
+    (model) => model.alias === draft.defult_config_name,
+  );
+
+  return (
+    <section className="my-drsai-config-panel" aria-label={zh ? "My DrSai 配置" : "My DrSai config"}>
+      <div className="my-drsai-config-header">
+        <div>
+          <strong>{zh ? "My DrSai 配置" : "My DrSai Config"}</strong>
+          <span>{config?.cliPath || config?.baseUrl || (zh ? "读取本机配置" : "Local config")}</span>
+        </div>
+        <button type="button" onClick={loadConfig} disabled={loading || saving}>
+          <RefreshCw size={14} className={loading ? "spinning" : ""} />
+          {zh ? "刷新" : "Refresh"}
+        </button>
+      </div>
+
+      {message && <div className="my-drsai-config-message">{message}</div>}
+
+      <div className="my-drsai-config-grid">
+        <label>
+          <span>{zh ? "默认模型" : "Default model"}</span>
+          <select
+            value={draft.defult_config_name || ""}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, defult_config_name: event.target.value }))
+            }
+            disabled={loading || saving || !config?.ready}
+          >
+            <option value="">{zh ? "未选择" : "Not selected"}</option>
+            {config?.models.map((model) => (
+              <option key={model.alias} value={model.alias}>
+                {model.display_name || model.alias}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label>
+          <span>{zh ? "用户 ID" : "User ID"}</span>
+          <input
+            value={draft.user_id || ""}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, user_id: event.target.value }))
+            }
+            disabled={loading || saving || !config?.ready}
+            placeholder="desktop"
+          />
+        </label>
+      </div>
+
+      {selectedModel && (
+        <div className="my-drsai-model-meta">
+          <span>{selectedModel.client_type || "model"}</span>
+          <span>{selectedModel.model || selectedModel.alias}</span>
+          {typeof selectedModel.token_limit === "number" && (
+            <span>{zh ? "上下文" : "Context"} {selectedModel.token_limit}</span>
+          )}
+          {selectedModel.vision && <span>{zh ? "视觉" : "Vision"}</span>}
+        </div>
+      )}
+
+      <div className="my-drsai-toggle-list">
+        <ConfigToggle
+          checked={Boolean(draft.plan_mode)}
+          title={zh ? "Plan mode" : "Plan mode"}
+          description={zh ? "让智能体先规划再执行。" : "Ask the agent to plan before acting."}
+          disabled={loading || saving || !config?.ready}
+          onChange={(value) => setDraft((current) => ({ ...current, plan_mode: value }))}
+        />
+        <ConfigToggle
+          checked={draft.workspace_enabled !== false}
+          title={zh ? "工作区限制" : "Workspace scope"}
+          description={zh ? "优先把文件操作限制在当前工作区。" : "Prefer file actions inside the current workspace."}
+          disabled={loading || saving || !config?.ready}
+          onChange={(value) =>
+            setDraft((current) => ({ ...current, workspace_enabled: value }))
+          }
+        />
+        <ConfigToggle
+          checked={Boolean(draft.dangerous_allowed)}
+          title={zh ? "允许危险命令" : "Allow dangerous commands"}
+          description={zh ? "关闭时，高风险命令需要拦截或审批。" : "When off, high-risk commands are blocked or require approval."}
+          disabled={loading || saving || !config?.ready}
+          onChange={(value) =>
+            setDraft((current) => ({ ...current, dangerous_allowed: value }))
+          }
+        />
+      </div>
+
+      <div className="my-drsai-config-footer">
+        <small>
+          {zh
+            ? "高级项如工具、RAG、环境变量和模型目录增删改，可继续放到独立设置页。"
+            : "Advanced tools, RAG, environment variables, and model CRUD can live in a full settings page."}
+        </small>
+        <button type="button" onClick={saveConfig} disabled={loading || saving || !config?.ready}>
+          <Save size={14} />
+          {saving ? (zh ? "保存中" : "Saving") : zh ? "保存配置" : "Save"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ConfigToggle({
+  checked,
+  title,
+  description,
+  disabled,
+  onChange,
+}: {
+  checked: boolean;
+  title: string;
+  description: string;
+  disabled: boolean;
+  onChange: (value: boolean) => void;
+}): React.JSX.Element {
+  return (
+    <label className="my-drsai-config-toggle">
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>
+        <strong>{title}</strong>
+        <small>{description}</small>
+      </span>
+    </label>
   );
 }
 
@@ -240,23 +364,15 @@ function AgentCard({
   zh,
   onStartChat,
 }: {
-  agent: AgentCardData;
+  agent: DesktopAgent;
   zh: boolean;
-  onStartChat: (agent: AgentCardData) => void;
+  onStartChat: (agent: DesktopAgent) => void;
 }): React.JSX.Element {
-  const mode = getModeLabel(agent.mode, zh);
+  const running = agent.status === "running";
   return (
     <article className="agent-card">
       <div className="agent-card-top">
-        <span className={`agent-mode-pill ${agent.mode}`}>
-          {agent.mode === "remote" ? <Network size={12} /> : <span aria-hidden />}
-          {mode}
-        </span>
-        {agent.isUserDefault && (
-          <span className="agent-default-star" title={zh ? "当前默认" : "Current default"}>
-            <Star size={15} fill="currentColor" />
-          </span>
-        )}
+        <AgentStatusPill agent={agent} zh={zh} />
       </div>
       <div className="agent-card-main">
         <AgentLogo agent={agent} />
@@ -266,12 +382,29 @@ function AgentCard({
         </div>
       </div>
       <p>{agent.description}</p>
+      {agent.url && <code className="agent-url">{agent.url}</code>}
+      {agent.error && <small className="agent-card-error">{agent.error}</small>}
       <div className="agent-card-actions">
-        <button type="button" onClick={() => onStartChat(agent)}>
-          {zh ? "开始会话" : "Start Chat"}
+        <button type="button" disabled={!running} onClick={() => onStartChat(agent)}>
+          {zh ? "一键启动" : "Start"}
         </button>
       </div>
     </article>
+  );
+}
+
+function AgentStatusPill({
+  agent,
+  zh,
+}: {
+  agent: DesktopAgent;
+  zh: boolean;
+}): React.JSX.Element {
+  return (
+    <span className={`agent-status-pill ${agent.source} ${agent.status}`}>
+      <Server size={12} />
+      {getStatusLabel(agent, zh)}
+    </span>
   );
 }
 
@@ -279,36 +412,66 @@ function AgentLogo({
   agent,
   large = false,
 }: {
-  agent: AgentCardData;
+  agent: DesktopAgent;
   large?: boolean;
 }): React.JSX.Element {
-  return <span className={`agent-logo ${large ? "large" : ""}`}>{agent.logoText}</span>;
+  return (
+    <span className={`agent-logo ${large ? "large" : ""}`}>
+      {agent.name.slice(0, 1).toUpperCase()}
+    </span>
+  );
 }
 
-function getModeLabel(mode: AgentMode, zh: boolean): string {
-  if (mode === "remote") return zh ? "连接远程" : "Remote";
-  if (mode === "custom") return zh ? "自定义智能体" : "Custom";
-  return zh ? "本地" : "Local";
+function getStatusLabel(agent: DesktopAgent, zh: boolean): string {
+  const source = agent.source === "local" ? (zh ? "本机" : "Local") : (zh ? "远程" : "Remote");
+  if (agent.status === "running") return `${source} · ${zh ? "运行中" : "Running"}`;
+  if (agent.status === "stopped") return `${source} · ${zh ? "未启动" : "Stopped"}`;
+  return `${source} · ${zh ? "不可达" : "Unreachable"}`;
 }
 
-function isMine(agent: AgentCardData, userEmail?: string): boolean {
-  return agent.owner === "Me" || Boolean(userEmail && agent.owner === userEmail);
-}
-
-function readRecentAgentIds(): string[] {
-  try {
-    const raw = window.localStorage.getItem(RECENT_AGENTS_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((value) => typeof value === "string") : [];
-  } catch {
-    return [];
+async function loadAgents(): Promise<DesktopAgent[]> {
+  const bridge = window.openDrSai as
+    | { listAgents?: () => Promise<DesktopAgent[]> }
+    | undefined;
+  if (typeof bridge?.listAgents === "function") {
+    return bridge.listAgents();
   }
+
+  const gateway = await desktopApi.getGatewayStatus();
+  return [
+    {
+      id: "my-drsai",
+      name: "My DrSai",
+      description: "专属于您的AI智能体❤",
+      owner: "运行在本机的智能体。",
+      source: "local",
+      status: gateway.ready ? "running" : "stopped",
+      url: gateway.baseUrl,
+      error: gateway.ready
+        ? undefined
+        : "当前桌面桥尚未提供 listAgents，已降级检查本机 gateway。",
+    },
+  ];
 }
 
-function writeRecentAgentIds(ids: string[]): void {
-  try {
-    window.localStorage.setItem(RECENT_AGENTS_KEY, JSON.stringify(ids));
-  } catch {
-    // Ignore storage failures in private or restricted environments.
+async function loadMyDrSaiConfig(): Promise<MyDrSaiConfig> {
+  const bridge = window.openDrSai as
+    | { getMyDrSaiConfig?: () => Promise<MyDrSaiConfig> }
+    | undefined;
+  if (typeof bridge?.getMyDrSaiConfig === "function") {
+    return bridge.getMyDrSaiConfig();
   }
+  throw new Error("当前桌面桥尚未提供 getMyDrSaiConfig，请重启窗口后再试。");
+}
+
+async function saveMyDrSaiConfig(
+  request: UpdateMyDrSaiConfigRequest,
+): Promise<MyDrSaiConfig> {
+  const bridge = window.openDrSai as
+    | { updateMyDrSaiConfig?: (request: UpdateMyDrSaiConfigRequest) => Promise<MyDrSaiConfig> }
+    | undefined;
+  if (typeof bridge?.updateMyDrSaiConfig === "function") {
+    return bridge.updateMyDrSaiConfig(request);
+  }
+  throw new Error("当前桌面桥尚未提供 updateMyDrSaiConfig，请重启窗口后再试。");
 }

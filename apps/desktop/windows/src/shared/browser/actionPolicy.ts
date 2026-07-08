@@ -1,4 +1,9 @@
 import type { BrowserActionName, BrowserActionRequest, BrowserActionResult } from "./types";
+import {
+  createExecutionPolicy,
+  evaluateExecutionPermission,
+  type ExecutionActionKind,
+} from "../executionPolicy";
 
 const READ_ONLY_ACTIONS = new Set<BrowserActionName>([
   "open",
@@ -16,6 +21,20 @@ const SIDE_EFFECT_ACTIONS = new Set<BrowserActionName>([
   "select",
   "key_press",
 ]);
+
+const BROWSER_EXECUTION_ACTIONS: Record<BrowserActionName, ExecutionActionKind> = {
+  open: "browser.read",
+  snapshot: "browser.read",
+  screenshot: "browser.read",
+  read_text: "browser.read",
+  eval_readonly: "browser.read",
+  click: "browser.interact",
+  type: "browser.interact",
+  select: "browser.interact",
+  key_press: "browser.interact",
+  wait_for: "browser.read",
+  assert_text: "browser.read",
+};
 
 const SENSITIVE_TARGET_PATTERNS = [
   /submit/i,
@@ -56,7 +75,11 @@ export function isReadOnlyBrowserAction(action: BrowserActionName): boolean {
 }
 
 export function browserActionRequiresApproval(action: BrowserActionName): boolean {
-  return SIDE_EFFECT_ACTIONS.has(action);
+  const decision = evaluateExecutionPermission(
+    BROWSER_EXECUTION_ACTIONS[action],
+    createExecutionPolicy(),
+  );
+  return decision.requiresApproval || SIDE_EFFECT_ACTIONS.has(action);
 }
 
 export function browserActionRequiresSensitiveApproval(
@@ -83,6 +106,20 @@ export function validateBrowserActionRequest(request: unknown): BrowserActionRes
   const action = typed.action;
   if (!isBrowserActionName(action)) {
     return { ok: false, action: "snapshot", message: "Unsupported browser action." };
+  }
+  const actionKind = browserActionRequiresSensitiveApproval(typed)
+    ? "browser.sensitive_interact"
+    : BROWSER_EXECUTION_ACTIONS[action];
+  const policyDecision = evaluateExecutionPermission(
+    actionKind,
+    createExecutionPolicy(),
+  );
+  if (!policyDecision.allowed) {
+    return {
+      ok: false,
+      action,
+      message: policyDecision.reason,
+    };
   }
   if (browserActionRequiresApproval(action) && typed.approved !== true) {
     return {

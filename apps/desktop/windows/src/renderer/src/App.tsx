@@ -9,6 +9,7 @@ import {
   MessageSquare,
   Plug,
   Settings,
+  ShieldCheck,
   Sparkles,
   Terminal as TerminalIcon,
 } from "lucide-react";
@@ -17,9 +18,16 @@ import type {
   AuthUser,
   ChatAttachment,
   CreateWorkspaceRequest,
+  DesktopAgent,
+  DesktopChannelContextImportResult,
+  DesktopForkLifecycleAction,
   DesktopHealth,
+  DesktopIdeContextSnapshot,
+  DesktopMcpContextResult,
   DesktopThread,
   InstallProgress,
+  MyDrSaiModelConfig,
+  WorkspaceFilePreview,
   WorkspaceProject,
 } from "@shared/desktopApi";
 import { desktopApi } from "./desktopApi";
@@ -27,8 +35,11 @@ import { AuthSplash, LoginScreen } from "./auth/LoginScreen";
 import { useAuth } from "./auth/AuthProvider";
 import { AgentSquareView } from "./components/AgentSquareView";
 import { AgentRunWorkspace } from "./components/AgentRunWorkspace";
+import { ApprovalCenterView } from "./components/ApprovalCenterView";
+import { ChannelsView } from "./components/ChannelsView";
 import { ChatWorkspace } from "./components/ChatWorkspace";
 import { PreviewBrowserPanel } from "./components/PreviewBrowserPanel";
+import { SkillSquareView } from "./components/SkillSquareView";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { FilesContextPanel } from "./components/files/FilesContextPanel";
 import {
@@ -38,12 +49,17 @@ import {
 } from "./components/files/AgentFileActivityPanel";
 import {
   WorkspaceShell,
+  type ForkConflictContentPreviewResult,
+  type ForkConflictDraftWriteResult,
+  type ForkConflictFile,
+  type ForkConflictStageResult,
   type WorkspaceThread,
 } from "./components/WorkspaceShell";
 import {
   type ChatThreadSnapshot,
   useDesktopChatAdapter,
 } from "./adapters/useDesktopChatAdapter";
+import type { ChatCommandAction } from "./chatCommands";
 import { useDesktopHealthAdapter } from "./adapters/useDesktopHealthAdapter";
 import {
   MENU_IDS,
@@ -63,6 +79,7 @@ const navIcons: Record<NavId, LucideIcon> = {
   skills_square: Lightbulb,
   plugins: Plug,
   library: Library,
+  approval_center: ShieldCheck,
   profile: Settings,
   usage_analytics: History,
   channels: MessageSquare,
@@ -70,6 +87,12 @@ const navIcons: Record<NavId, LucideIcon> = {
   agent_management: Bot,
   user_management: Settings,
 };
+
+interface TerminalCommandProposal {
+  command: string;
+  workflowRunId?: string;
+  workflowStepId?: string;
+}
 
 const rightTabIcons: Record<RightTab, LucideIcon> = {
   files: FileText,
@@ -82,6 +105,7 @@ const WORKSPACE_STORAGE_KEY = "opendrsai.workspaces";
 const WORKSPACE_MIGRATION_KEY = "opendrsai.workspaces.migrated";
 const THREAD_SNAPSHOT_STORAGE_KEY = "opendrsai.threadSnapshots";
 const WORKSPACE_SORT_STORAGE_KEY = "opendrsai.workspaceSortMode";
+const DEVELOPER_MODE_STORAGE_KEY = "opendrsai.developerMode";
 type WorkspaceSortMode = "recent" | "name" | "created";
 
 function App(): React.JSX.Element {
@@ -106,7 +130,10 @@ function AuthenticatedApp({
   onLogout: () => Promise<void>;
 }): React.JSX.Element {
   const [language, setLanguage] = useState<AppLanguage>("zh");
+  const [developerMode, setDeveloperMode] = useState(() => loadDeveloperMode());
   const [activeNav, setActiveNav] = useState<NavId>(MENU_IDS.currentSession);
+  const [skillSquareCommandTarget, setSkillSquareCommandTarget] =
+    useState<Extract<ChatCommandAction, { type: "open-view" }>["target"] | null>(null);
   const [navHistory, setNavHistory] = useState<NavId[]>([
     MENU_IDS.currentSession,
   ]);
@@ -129,11 +156,20 @@ function AuthenticatedApp({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [sessionScope, setSessionScope] = useState<"workspace" | "all">("workspace");
-  const [chatSearchRequestNonce, setChatSearchRequestNonce] = useState(0);
+  const [availableChatAgents, setAvailableChatAgents] = useState<DesktopAgent[]>([]);
+  const [availableChatModels, setAvailableChatModels] = useState<MyDrSaiModelConfig[]>([]);
+  const [selectedChatAgentId, setSelectedChatAgentId] = useState<string | null>(null);
+  const [selectedChatAgentName, setSelectedChatAgentName] = useState("OpenDrSai");
+  const [selectedChatModel, setSelectedChatModel] = useState<string | null>(null);
+  const [selectedChatExamples, setSelectedChatExamples] = useState<
+    DesktopAgent["examples"]
+  >();
   const [terminalAgentTask, setTerminalAgentTask] = useState("");
-  const [terminalCommandProposal, setTerminalCommandProposal] = useState("");
+  const [terminalCommandProposal, setTerminalCommandProposal] =
+    useState<TerminalCommandProposal | null>(null);
   const [browserPanelUrl, setBrowserPanelUrl] = useState<string | undefined>();
   const [browserAttachments, setBrowserAttachments] = useState<ChatAttachment[]>([]);
+  const [ideContext, setIdeContext] = useState<DesktopIdeContextSnapshot | null>(null);
   const [workspaceContextAttachmentsByThread, setWorkspaceContextAttachmentsByThread] = useState<
     Record<string, ChatAttachment[]>
   >({});
@@ -173,13 +209,33 @@ function AuthenticatedApp({
     workspaces.find((workspace) => workspace.id === activeWorkspaceId) ??
     currentWorkspace;
   const activeWorkspacePathKey = getComparablePath(activeWorkspace.path);
-  const visibleThreads =
+  const activeThread = threads.find((thread) => thread.id === activeThreadId);
+  const activeThreadWorkspacePath = activeThread?.workspacePath?.trim();
+  const effectiveWorkspacePath = activeThreadWorkspacePath || activeWorkspace.path;
+  const effectiveWorkspace =
+    workspaces.find(
+      (workspace) =>
+        getComparablePath(workspace.path) === getComparablePath(effectiveWorkspacePath),
+    ) ?? activeWorkspace;
+  const effectiveWorkspaceInstructions =
+    effectiveWorkspace.instructions ?? activeWorkspace.instructions;
+  const workspaceTrusted =
+    effectiveWorkspace.id === activeWorkspace.id
+      ? activeWorkspace.trusted
+      : activeThread?.kind === "agent_run" && Boolean(activeThreadWorkspacePath)
+        ? true
+        : effectiveWorkspace.trusted;
+  const scopedThreads =
     sessionScope === "all"
       ? threads
       : threads.filter((thread) => {
+          if (thread.id === activeThreadId) return true;
           if (!thread.workspacePath) return true;
           return getComparablePath(thread.workspacePath) === activeWorkspacePathKey;
         });
+  const visibleThreads = scopedThreads.filter((thread) =>
+    sessionScope === "all" ? true : !thread.archived,
+  );
   const recentThreads: WorkspaceThread[] = visibleThreads
     .slice(0, 12)
     .map((thread) => ({
@@ -187,21 +243,79 @@ function AuthenticatedApp({
       title: thread.title,
       timeLabel: formatThreadTime(thread.updatedAt, language),
       workspaceId: getWorkspaceId(thread.workspacePath || activeWorkspace.path),
+      workspacePath: thread.workspacePath,
+      fork: thread.fork,
       active: thread.id === activeThreadId,
+      pinned: thread.pinned,
+      archived: thread.archived,
+      unread: thread.unread,
     }));
-  const workspaceTrusted = activeWorkspace.trusted;
   const chat = useDesktopChatAdapter({
+    availableAgents: availableChatAgents,
+    availableModels: availableChatModels,
     canChat: Boolean(
       health?.installed && health?.gatewayReady && workspaceTrusted,
     ),
+    developerMode,
     onChatComplete: desktop.refreshHealth,
+    onForkThreadCreated: handleForkThreadCreated,
+    onOpenSkillsSquare: (target) => {
+      setSkillSquareCommandTarget(target ?? null);
+      setActiveNav(MENU_IDS.skillsSquare);
+    },
+    onSelectAgent: handleChatAgentSelect,
+    onSelectModel: handleChatModelSelect,
     onThreadUpdated: handleThreadUpdated,
     language,
     threadId: activeThreadId,
     threadSnapshot: threadSnapshots[activeThreadId] ?? null,
-    workspaceInstructions: activeWorkspace.instructions,
-    workspacePath: activeWorkspace.path,
+    workspaceInstructions: effectiveWorkspaceInstructions,
+    workspacePath: effectiveWorkspacePath,
   });
+
+  const proposeTerminalCommand = useCallback((
+    command: string,
+    workflow?: { workflowRunId?: string; workflowStepId?: string },
+  ): void => {
+    const trimmed = command.trim();
+    if (!trimmed) return;
+    setTerminalCommandProposal(null);
+    window.setTimeout(() => {
+      setTerminalCommandProposal({
+        command: trimmed,
+        ...(workflow?.workflowRunId ? { workflowRunId: workflow.workflowRunId } : {}),
+        ...(workflow?.workflowStepId ? { workflowStepId: workflow.workflowStepId } : {}),
+      });
+      setActiveRightTab("terminal");
+      setRightPanelCollapsed(false);
+    }, 0);
+  }, []);
+
+  useEffect(() => {
+    function handleWorkflowTerminalCommand(event: Event): void {
+      const detail = (event as CustomEvent<unknown>).detail;
+      if (!detail || typeof detail !== "object") return;
+      const command = (detail as { command?: unknown }).command;
+      if (typeof command !== "string" || !command.trim()) return;
+      const workflowRunId = (detail as { workflowRunId?: unknown }).workflowRunId;
+      const stepId = (detail as { stepId?: unknown }).stepId;
+      proposeTerminalCommand(command, {
+        ...(typeof workflowRunId === "string" ? { workflowRunId } : {}),
+        ...(typeof stepId === "string" ? { workflowStepId: stepId } : {}),
+      });
+    }
+
+    window.addEventListener(
+      "drsai:workflow-terminal-command",
+      handleWorkflowTerminalCommand,
+    );
+    return () => {
+      window.removeEventListener(
+        "drsai:workflow-terminal-command",
+        handleWorkflowTerminalCommand,
+      );
+    };
+  }, [proposeTerminalCommand]);
   const canChat = Boolean(
     health?.installed &&
     health?.gatewayReady &&
@@ -209,6 +323,7 @@ function AuthenticatedApp({
     !chat.activeRequestId,
   );
   const externalChatAttachments = [
+    ...chat.commandAttachments,
     ...browserAttachments,
     ...(workspaceContextAttachmentsByThread[activeThreadId] ?? []),
   ];
@@ -216,8 +331,7 @@ function AuthenticatedApp({
     workspaceContextAttachmentsByThread[activeThreadId] ?? [];
   const workspaceFileTraceEvents =
     workspaceFileTraceByThread[activeThreadId] ?? [];
-  const filesWorkspacePath =
-    activeWorkspace.id === "current" ? "Local workspace" : activeWorkspace.path;
+  const filesWorkspacePath = effectiveWorkspacePath || "Local workspace";
 
   useEffect(() => {
     void refreshWorkspaces();
@@ -235,13 +349,61 @@ function AuthenticatedApp({
   }, [workspaceSortMode]);
 
   useEffect(() => {
+    window.localStorage.setItem(DEVELOPER_MODE_STORAGE_KEY, developerMode ? "true" : "false");
+  }, [developerMode]);
+
+  useEffect(() => {
     void refreshThreads();
   }, []);
 
   useEffect(() => {
+    function handleThreadsUpdated(): void {
+      void refreshThreads();
+    }
+    window.addEventListener("drsai:threads-updated", handleThreadsUpdated);
+    return () => {
+      window.removeEventListener("drsai:threads-updated", handleThreadsUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadChatChoices(): Promise<void> {
+      try {
+        const [agents, myDrSaiConfig] = await Promise.all([
+          desktopApi.listAgents(),
+          desktopApi.getMyDrSaiConfig(effectiveWorkspacePath).catch(() => null),
+        ]);
+        if (cancelled) return;
+        setAvailableChatAgents(agents);
+        setAvailableChatModels(myDrSaiConfig?.models ?? []);
+        if (cancelled || agents.length === 0) return;
+        const defaultAgent =
+          agents.find((agent) => agent.id === "my-drsai") ??
+          agents.find((agent) => agent.status === "running") ??
+          agents[0];
+        setSelectedChatAgentId((current) => current ?? defaultAgent.id);
+        setSelectedChatAgentName((current) =>
+          current === "OpenDrSai" ? defaultAgent.name : current,
+        );
+        setSelectedChatModel(
+          (current) => current ?? defaultAgent.model ?? myDrSaiConfig?.defaultModelAlias ?? null,
+        );
+        setSelectedChatExamples((current) => current ?? defaultAgent.examples);
+      } catch {
+        // The chat composer should remain usable even if the agent catalog is unavailable.
+      }
+    }
+    void loadChatChoices();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveWorkspacePath, health?.gatewayReady]);
+
+  useEffect(() => {
     setWorkspaceContextAttachmentsByThread({});
     setWorkspaceFileTraceByThread({});
-  }, [activeWorkspace.path]);
+  }, [effectiveWorkspacePath]);
 
   async function handleSaveApiKey(event: FormEvent): Promise<void> {
     event.preventDefault();
@@ -398,22 +560,104 @@ function AuthenticatedApp({
   }
 
   async function handleNewChat(): Promise<void> {
+    setRightPanelCollapsed(true);
     const thread = await desktopApi.createThread({
       kind: "chat",
       title: language === "zh" ? "新会话" : "New chat",
-      workspacePath: activeWorkspace.path,
+      workspacePath: effectiveWorkspacePath,
     });
     setActiveThreadId(thread.id);
-    setThreads((current) => [
-      thread,
-      ...current.filter((item) => item.id !== thread.id),
-    ]);
+    setThreads((current) =>
+      sortThreadsForSidebar([
+        thread,
+        ...current.filter((item) => item.id !== thread.id),
+      ]),
+    );
+    navigateTo(MENU_IDS.currentSession);
+  }
+
+  function handleForkThreadCreated(thread: DesktopThread): void {
+    setThreads((current) =>
+      sortThreadsForSidebar([
+        thread,
+        ...current.filter((item) => item.id !== thread.id),
+      ]),
+    );
+    setActiveThreadId(thread.id);
+    setRightPanelCollapsed(true);
     navigateTo(MENU_IDS.currentSession);
   }
 
   function handleThreadSelect(threadId: string): void {
+    const thread = threads.find((item) => item.id === threadId);
+    if (thread?.workspacePath) {
+      const nextWorkspace = workspaces.find(
+        (workspace) =>
+          getComparablePath(workspace.path) === getComparablePath(thread.workspacePath),
+      );
+      if (nextWorkspace && nextWorkspace.id !== activeWorkspaceId) {
+        setActiveWorkspaceId(nextWorkspace.id);
+      }
+    }
     setActiveThreadId(threadId);
+    setRightPanelCollapsed(true);
+    if (thread?.unread) {
+      void handleThreadUpdate(threadId, { unread: false });
+    }
     navigateTo(MENU_IDS.currentSession);
+  }
+
+  function handleChatAgentSelect(agentId: string): void {
+    const agent = availableChatAgents.find((item) => item.id === agentId);
+    if (!agent) return;
+    setSelectedChatAgentId(agent.id);
+    setSelectedChatAgentName(agent.name);
+    setSelectedChatModel(agent.model || selectedChatModel);
+    setSelectedChatExamples(agent.examples);
+  }
+
+  function handleChatModelSelect(model: string): void {
+    setSelectedChatModel(model);
+  }
+
+  async function handleThreadUpdate(
+    threadId: string,
+    updates: { title?: string; pinned?: boolean; archived?: boolean; unread?: boolean; fork?: DesktopThread["fork"] },
+  ): Promise<void> {
+    const thread = await desktopApi.updateThread({
+      id: threadId,
+      ...updates,
+    });
+    setThreads((current) =>
+      sortThreadsForSidebar([
+        thread,
+        ...current.filter((item) => item.id !== thread.id),
+      ]),
+    );
+    if (updates.archived && activeThreadId === threadId) {
+      void handleNewChat();
+    }
+  }
+
+  async function handleForkLifecycleRequest(
+    threadId: string,
+    action: DesktopForkLifecycleAction,
+  ): Promise<void> {
+    const result = await desktopApi.requestForkLifecycleApproval({
+      threadId,
+      action,
+    });
+    if (result.thread) {
+      setThreads((current) =>
+        sortThreadsForSidebar([
+          result.thread!,
+          ...current.filter((item) => item.id !== result.thread!.id),
+        ]),
+      );
+    }
+    if (result.queued) {
+      setActiveNav(MENU_IDS.approvalCenter);
+    }
   }
 
   async function handleThreadUpdated(
@@ -425,34 +669,43 @@ function AuthenticatedApp({
     }));
     const thread = await desktopApi.updateThread({
       id: snapshot.threadId,
-      kind: "chat",
+      kind: threads.find((item) => item.id === snapshot.threadId)?.kind ?? "chat",
       title: snapshot.title,
-      workspacePath: activeWorkspace.path,
+      workspacePath: effectiveWorkspacePath,
       status: snapshot.messages.some((message) => message.streaming)
         ? "running"
         : "idle",
       messageCount: snapshot.messageCount,
     });
-    setThreads((current) => [
-      thread,
-      ...current.filter((item) => item.id !== thread.id),
-    ]);
+    setThreads((current) =>
+      sortThreadsForSidebar([
+        thread,
+        ...current.filter((item) => item.id !== thread.id),
+      ]),
+    );
   }
 
   async function refreshThreads(): Promise<void> {
     setThreads(await desktopApi.listThreads());
   }
 
-  const handleSearch = useCallback((): void => {
-    navigateTo(MENU_IDS.currentSession);
-    setChatSearchRequestNonce((current) => current + 1);
-  }, [navigateTo]);
-
   const openPreviewBrowser = useCallback((url?: string): void => {
     if (url) setBrowserPanelUrl(url);
     setActiveRightTab("browser");
     setRightPanelCollapsed(false);
   }, []);
+
+  const refreshIdeContext = useCallback(async (): Promise<void> => {
+    try {
+      setIdeContext(await desktopApi.getIdeContext(effectiveWorkspacePath));
+    } catch {
+      setIdeContext(null);
+    }
+  }, [effectiveWorkspacePath]);
+
+  useEffect(() => {
+    void refreshIdeContext();
+  }, [refreshIdeContext]);
 
   function setActiveThreadWorkspaceContextAttachments(
     attachments: ChatAttachment[],
@@ -461,6 +714,143 @@ function AuthenticatedApp({
       ...current,
       [activeThreadId]: attachments,
     }));
+  }
+
+  function addActiveThreadWorkspaceContextAttachment(
+    attachment: ChatAttachment,
+  ): void {
+    setWorkspaceContextAttachmentsByThread((current) => {
+      const existing = current[activeThreadId] ?? [];
+      const key = getAttachmentIdentity(attachment);
+      const next = [
+        ...existing.filter((item) => getAttachmentIdentity(item) !== key),
+        attachment,
+      ];
+      return {
+        ...current,
+        [activeThreadId]: next,
+      };
+    });
+  }
+
+  function attachIdeCurrentFile(): void {
+    const currentFile = ideContext?.currentFile;
+    if (!currentFile) return;
+    addActiveThreadWorkspaceContextAttachment({
+      kind: "file",
+      path: currentFile.path,
+      name: currentFile.name,
+      note: `IDE current file from ${ideContext?.source ?? "unknown"}.`,
+    });
+  }
+
+  function attachIdeCurrentSelection(): void {
+    const selection = ideContext?.currentSelection;
+    if (!selection) return;
+    const lineRange =
+      selection.startLine && selection.endLine
+        ? `:${selection.startLine}-${selection.endLine}`
+        : "";
+    addActiveThreadWorkspaceContextAttachment({
+      kind: "selection",
+      path: `ide-selection:${selection.path}${lineRange}`,
+      name: "IDE selection",
+      title: selection.relativePath
+        ? `${selection.relativePath}${lineRange}`
+        : selection.name,
+      visibleText: selection.text,
+      note: selection.truncated
+        ? "IDE current selection context. Truncated to 12000 characters."
+        : "IDE current selection context.",
+    });
+  }
+
+  function attachImportedChannelContext(
+    result: DesktopChannelContextImportResult,
+  ): void {
+    const attachments = result.items.map((item): ChatAttachment => ({
+      kind: "selection",
+      path: `channel-import:${item.path}`,
+      name: `Channel import: ${item.title}`,
+      title: `${item.relativePath} (${item.kind})`,
+      visibleText: [
+        `Imported from ${item.provider} / ${result.adapterId}.`,
+        `Workspace path: ${result.workspacePath}`,
+        `Source file: ${item.path}`,
+        item.mime ? `MIME: ${item.mime}` : "",
+        typeof item.size === "number" ? `Size: ${item.size} bytes` : "",
+        item.truncated ? "Summary was truncated by the read-only channel importer." : "",
+        "",
+        item.summary,
+      ].filter(Boolean).join("\n"),
+      note:
+        "Read-only channel context import. This summary was reviewed as a visible chat attachment before send.",
+    }));
+    if (!attachments.length) return;
+    setWorkspaceContextAttachmentsByThread((current) => {
+      const existing = current[activeThreadId] ?? [];
+      const next = [...existing];
+      for (const attachment of attachments) {
+        const key = getAttachmentIdentity(attachment);
+        const existingIndex = next.findIndex(
+          (item) => getAttachmentIdentity(item) === key,
+        );
+        if (existingIndex >= 0) {
+          next[existingIndex] = attachment;
+        } else {
+          next.push(attachment);
+        }
+      }
+      return {
+        ...current,
+        [activeThreadId]: next,
+      };
+    });
+    setRightPanelCollapsed(true);
+    navigateTo(MENU_IDS.currentSession);
+  }
+
+  function attachImportedMcpContext(
+    result: DesktopMcpContextResult,
+  ): void {
+    const attachments = result.items.map((item): ChatAttachment => ({
+      kind: "selection",
+      path: `mcp-context:${item.id}`,
+      name: `MCP ${item.kind}: ${item.title}`,
+      title: `${item.server} / ${item.name}`,
+      visibleText: [
+        `Reviewed MCP ${item.kind} context imported from .drsai/mcp-context.json.`,
+        `Workspace path: ${result.workspacePath}`,
+        `Source file: ${result.sourcePath}`,
+        item.truncated ? "Content was truncated by the read-only MCP context importer." : "",
+        "",
+        item.content,
+      ].filter(Boolean).join("\n"),
+      note:
+        "Read-only MCP context import. This result was reviewed as a visible chat attachment before send.",
+    }));
+    if (!attachments.length) return;
+    setWorkspaceContextAttachmentsByThread((current) => {
+      const existing = current[activeThreadId] ?? [];
+      const next = [...existing];
+      for (const attachment of attachments) {
+        const key = getAttachmentIdentity(attachment);
+        const existingIndex = next.findIndex(
+          (item) => getAttachmentIdentity(item) === key,
+        );
+        if (existingIndex >= 0) {
+          next[existingIndex] = attachment;
+        } else {
+          next.push(attachment);
+        }
+      }
+      return {
+        ...current,
+        [activeThreadId]: next,
+      };
+    });
+    setRightPanelCollapsed(true);
+    navigateTo(MENU_IDS.currentSession);
   }
 
   function setActiveThreadFileTraceEvents(
@@ -491,48 +881,85 @@ function AuthenticatedApp({
 
   const mainContent =
     activeNav === MENU_IDS.currentSession ? (
-      <ChatWorkspace
-        activeRequestId={chat.activeRequestId}
-        canChat={canChat}
-        health={health}
-        input={chat.input}
-        language={language}
-        messages={chat.messages}
-        searchRequestNonce={chatSearchRequestNonce}
-        externalAttachments={externalChatAttachments}
-        onAbort={chat.abort}
-        onClearExternalAttachments={() => {
-          setBrowserAttachments([]);
-          setActiveThreadWorkspaceContextAttachments([]);
-          setActiveThreadFileTraceEvents([]);
-        }}
-        onInputChange={chat.setInput}
-        onOpenExternal={(url) => desktopApi.openExternal(url)}
-        onOpenPreviewBrowser={openPreviewBrowser}
-        onRemoveExternalAttachment={(index) =>
-          removeExternalAttachment(
-            index,
-            browserAttachments.length,
-            setBrowserAttachments,
-            workspaceContextAttachments,
-            setActiveThreadWorkspaceContextAttachments,
-          )
-        }
-        onSubmit={chat.submit}
-      />
+      <section className="conversation-panel">
+        <ChatWorkspace
+          activeRequestId={chat.activeRequestId}
+          canChat={canChat}
+          health={health}
+          input={chat.input}
+          language={language}
+          messages={chat.messages}
+          currentRuntimeMode={chat.currentRuntimeMode}
+          selectedAgentId={selectedChatAgentId ?? undefined}
+          selectedAgentName={selectedChatAgentName}
+          selectedModelName={selectedChatModel ?? undefined}
+          agentOptions={availableChatAgents}
+          modelOptions={availableChatModels}
+          samplePrompts={selectedChatExamples}
+          externalAttachments={externalChatAttachments}
+          ideContext={ideContext}
+          workspaceInstructions={effectiveWorkspaceInstructions}
+          workspacePath={effectiveWorkspacePath}
+          onAbort={chat.abort}
+          onClearRuntimeMode={chat.clearRuntimeMode}
+          onClearExternalAttachments={() => {
+            chat.clearCommandAttachments();
+            setBrowserAttachments([]);
+            setActiveThreadWorkspaceContextAttachments([]);
+            setActiveThreadFileTraceEvents([]);
+          }}
+          onInputChange={chat.setInput}
+          onSelectAgent={handleChatAgentSelect}
+          onSelectModel={handleChatModelSelect}
+          onOpenExternal={(url) => desktopApi.openExternal(url)}
+          onOpenPreviewBrowser={openPreviewBrowser}
+          onAttachIdeCurrentFile={attachIdeCurrentFile}
+          onAttachIdeCurrentSelection={attachIdeCurrentSelection}
+          onRefreshIdeContext={() => {
+            void refreshIdeContext();
+          }}
+          onRemoveExternalAttachment={(index) =>
+            index < chat.commandAttachments.length
+              ? chat.removeCommandAttachment(index)
+              : removeExternalAttachment(
+                  index - chat.commandAttachments.length,
+                  browserAttachments.length,
+                  setBrowserAttachments,
+                  workspaceContextAttachments,
+                  setActiveThreadWorkspaceContextAttachments,
+                )
+          }
+          onSubmit={chat.submit}
+        />
+      </section>
     ) : activeNav === MENU_IDS.agentSquare ? (
-      <AgentSquareView
-        language={language}
-        userEmail={user?.email}
-        onStartChat={(agent) => {
-          chat.setInput(
-            language === "zh"
-              ? `我想使用 ${agent.name} 处理一个任务：`
-              : `I want to use ${agent.name} for a task:`,
-          );
-          navigateTo(MENU_IDS.currentSession);
-        }}
-      />
+      <section className="agent-square-panel">
+        <AgentSquareView
+          language={language}
+          userEmail={user?.email}
+          onStartChat={(agent) => {
+            setSelectedChatAgentId(agent.id);
+            setSelectedChatAgentName(agent.name);
+            setSelectedChatModel(agent.model || null);
+            setSelectedChatExamples(agent.examples);
+            setRightPanelCollapsed(true);
+            chat.setInput(
+              language === "zh"
+                ? `我想使用 ${agent.name} 处理一个任务：`
+                : `I want to use ${agent.name} for a task:`,
+            );
+            navigateTo(MENU_IDS.currentSession);
+          }}
+        />
+      </section>
+    ) : activeNav === MENU_IDS.skillsSquare ? (
+      <section className="skills-square-panel">
+        <SkillSquareView
+          initialFocus={skillSquareCommandTarget ?? undefined}
+          language={language}
+          workspacePath={effectiveWorkspacePath}
+        />
+      </section>
     ) : activeNav === MENU_IDS.myAgents ? (
       <AgentRunWorkspace
         fileContextAttachments={workspaceContextAttachments}
@@ -562,23 +989,36 @@ function AuthenticatedApp({
           ]);
         }}
         onProposeTerminalCommand={(command) => {
-          setTerminalCommandProposal(command);
-          setActiveRightTab("terminal");
-          setRightPanelCollapsed(false);
+          proposeTerminalCommand(command);
         }}
         threadId={activeThreadId}
-        workspaceInstructions={activeWorkspace.instructions}
-        workspacePath={activeWorkspace.path}
+        workspaceInstructions={effectiveWorkspaceInstructions}
+        workspacePath={effectiveWorkspacePath}
         workspaceTrusted={workspaceTrusted}
+      />
+    ) : activeNav === MENU_IDS.approvalCenter ? (
+      <ApprovalCenterView
+        language={language}
+        onAttachMcpContext={attachImportedMcpContext}
+        workspacePath={effectiveWorkspacePath}
+        workspaceTrusted={workspaceTrusted}
+      />
+    ) : activeNav === MENU_IDS.channels ? (
+      <ChannelsView
+        language={language}
+        onAttachImportedContext={attachImportedChannelContext}
+        workspacePath={effectiveWorkspacePath}
       />
     ) : activeNav === MENU_IDS.profile ? (
       <SettingsPanel
         apiKeyInput={desktop.apiKeyInput}
         busy={desktop.busy}
         health={health}
+        developerMode={developerMode}
         language={language}
         message={desktop.settingsMessage}
         onApiKeyChange={desktop.setApiKeyInput}
+        onDeveloperModeChange={setDeveloperMode}
         onLanguageChange={setLanguage}
         onSubmit={handleSaveApiKey}
       />
@@ -611,7 +1051,7 @@ function AuthenticatedApp({
   const rightPanelContent =
     activeRightTab === "terminal" ? (
       <TerminalPanel
-        cwd={activeWorkspace.path}
+        cwd={effectiveWorkspacePath}
         language={language}
         onCommandResult={(attachment) => {
           setBrowserAttachments((current) => [attachment, ...current].slice(0, 6));
@@ -650,6 +1090,131 @@ function AuthenticatedApp({
       <SidePlaceholder language={language} tab={activeRightTab} />
     );
 
+  const getPreviewContent = useCallback((preview: WorkspaceFilePreview): string => {
+    return preview.content ?? preview.message ?? `${preview.kind} preview is metadata-only.`;
+  }, []);
+
+  const loadForkConflictContent = useCallback(
+    async (
+      thread: WorkspaceThread,
+      file: ForkConflictFile,
+    ): Promise<ForkConflictContentPreviewResult> => {
+      const fork = thread.fork;
+      if (!fork) throw new Error("Fork metadata is missing for this thread.");
+      const [baseResult, sourceResult, forkResult, diffResult] = await Promise.allSettled([
+        desktopApi.getWorkspaceGitFileAtRef({
+          workspacePath: fork.sourceWorkspacePath,
+          ref: fork.baseRef,
+          path: file.path,
+          maxBytes: 80_000,
+        }),
+        desktopApi.previewWorkspaceFile({
+          workspacePath: fork.sourceWorkspacePath,
+          path: file.path,
+          maxBytes: 80_000,
+        }),
+        desktopApi.previewWorkspaceFile({
+          workspacePath: fork.worktreePath,
+          path: file.path,
+          maxBytes: 80_000,
+        }),
+        desktopApi.getWorkspaceGitDiff({
+          workspacePath: fork.sourceWorkspacePath,
+          path: file.path,
+          maxChars: 80_000,
+        }),
+      ] as const);
+      const sourceContent =
+        sourceResult.status === "fulfilled"
+          ? getPreviewContent(sourceResult.value)
+          : `Unable to preview source file: ${String(sourceResult.reason)}`;
+      const baseContent =
+        baseResult.status === "fulfilled"
+          ? baseResult.value.content || baseResult.value.message
+          : `Unable to preview merge-base file: ${String(baseResult.reason)}`;
+      const forkContent =
+        forkResult.status === "fulfilled"
+          ? getPreviewContent(forkResult.value)
+          : `Unable to preview fork file: ${String(forkResult.reason)}`;
+      const diff =
+        diffResult.status === "fulfilled"
+          ? diffResult.value.diff || "No unstaged source diff is currently available for this file."
+          : `Unable to load source diff: ${String(diffResult.reason)}`;
+      return {
+        baseContent,
+        baseRef: fork.baseRef,
+        baseMissing: baseResult.status === "fulfilled" ? baseResult.value.missing : true,
+        sourceContent,
+        forkContent,
+        diff,
+        diffHash: diffResult.status === "fulfilled" ? diffResult.value.diffHash : undefined,
+        truncated:
+          (sourceResult.status === "fulfilled" && sourceResult.value.truncated) ||
+          (baseResult.status === "fulfilled" && baseResult.value.truncated) ||
+          (forkResult.status === "fulfilled" && forkResult.value.truncated) ||
+          (diffResult.status === "fulfilled" && diffResult.value.truncated),
+      };
+    },
+    [getPreviewContent],
+  );
+
+  const stageForkConflictFile = useCallback(
+    async (thread: WorkspaceThread, file: ForkConflictFile): Promise<ForkConflictStageResult> => {
+      const fork = thread.fork;
+      if (!fork) throw new Error("Fork metadata is missing for this thread.");
+      const diff = await desktopApi.getWorkspaceGitDiff({
+        workspacePath: fork.sourceWorkspacePath,
+        path: file.path,
+        maxChars: 80_000,
+      });
+      if (!diff.diffHash) {
+        throw new Error("No source diff hash is available for this conflict file.");
+      }
+      const result = await desktopApi.stageWorkspaceFile({
+        workspacePath: fork.sourceWorkspacePath,
+        path: file.path,
+        expectedDiffHash: diff.diffHash,
+      });
+      return {
+        diff: diff.diff,
+        diffHash: diff.diffHash,
+        message: result.message,
+        approvalQueued: result.approvalQueued,
+        staged: result.staged,
+      };
+    },
+    [],
+  );
+
+  const writeForkConflictDraft = useCallback(
+    async (
+      thread: WorkspaceThread,
+      file: ForkConflictFile,
+      draft: string,
+      expectedDiffHash?: string,
+    ): Promise<ForkConflictDraftWriteResult> => {
+      const fork = thread.fork;
+      if (!fork) throw new Error("Fork metadata is missing for this thread.");
+      if (!expectedDiffHash) {
+        throw new Error("Load and review the source diff before writing a resolved draft.");
+      }
+      const result = await desktopApi.writeForkConflictDraft({
+        threadId: thread.id,
+        workspacePath: fork.sourceWorkspacePath,
+        path: file.path,
+        draft,
+        expectedDiffHash,
+      });
+      return {
+        path: result.path,
+        message: result.message,
+        approvalQueued: result.approvalQueued,
+        written: result.written,
+      };
+    },
+    [],
+  );
+
   return (
     <WorkspaceShell
       activeNav={activeNav}
@@ -660,7 +1225,7 @@ function AuthenticatedApp({
       canGoForward={navHistoryIndex < navHistory.length - 1}
       desktopStatusPanel={desktopStatusPanel}
       language={language}
-      main={mainContent}
+      mainContent={mainContent}
       navIcons={navIcons}
       navSections={navSections}
       recentThreads={recentThreads}
@@ -678,6 +1243,7 @@ function AuthenticatedApp({
       onGoForward={goForward}
       onAddWorkspace={handleAddWorkspace}
       onLanguageChange={setLanguage}
+      onLoadForkConflictContent={loadForkConflictContent}
       onLogout={async () => {
         await chat.abort();
         await onLogout();
@@ -690,9 +1256,12 @@ function AuthenticatedApp({
       onPickWorkspaceFolder={handlePickWorkspaceFolder}
       onRefreshWorkspaces={refreshWorkspaces}
       onRemoveWorkspace={handleRemoveWorkspace}
+      onRequestForkLifecycle={handleForkLifecycleRequest}
       onRightTabChange={setActiveRightTab}
-      onSearch={handleSearch}
+      onStageForkConflictFile={stageForkConflictFile}
+      onWriteForkConflictDraft={writeForkConflictDraft}
       onThreadSelect={handleThreadSelect}
+      onThreadUpdate={handleThreadUpdate}
       onToggleSessionScope={() =>
         setSessionScope((scope) => (scope === "workspace" ? "all" : "workspace"))
       }
@@ -746,6 +1315,10 @@ function loadWorkspaceSortMode(): WorkspaceSortMode {
     : "recent";
 }
 
+function loadDeveloperMode(): boolean {
+  return window.localStorage.getItem(DEVELOPER_MODE_STORAGE_KEY) === "true";
+}
+
 function sortWorkspacesForSidebar(
   workspaces: WorkspaceProject[],
   mode: WorkspaceSortMode,
@@ -764,6 +1337,15 @@ function sortWorkspacesForSidebar(
       return right.createdAt.localeCompare(left.createdAt);
     }
     return right.lastOpenedAt.localeCompare(left.lastOpenedAt);
+  });
+}
+
+function sortThreadsForSidebar(threads: DesktopThread[]): DesktopThread[] {
+  return [...threads].sort((left, right) => {
+    if (Boolean(left.pinned) !== Boolean(right.pinned)) {
+      return left.pinned ? -1 : 1;
+    }
+    return right.updatedAt.localeCompare(left.updatedAt);
   });
 }
 
@@ -795,6 +1377,15 @@ function getComparablePath(path: string | null | undefined): string {
 function getWorkspaceName(path: string): string {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
   return normalized.split("/").filter(Boolean).at(-1) ?? "";
+}
+
+function getAttachmentIdentity(attachment: ChatAttachment): string {
+  return [
+    attachment.kind,
+    attachment.path,
+    attachment.title || "",
+    attachment.visibleText ? attachment.visibleText.slice(0, 64) : "",
+  ].join("|");
 }
 
 function DesktopStatusPanel({
@@ -1079,19 +1670,23 @@ function formatUpdateStatus(
 function SettingsPanel({
   apiKeyInput,
   busy,
+  developerMode,
   health,
   language,
   message,
   onApiKeyChange,
+  onDeveloperModeChange,
   onLanguageChange,
   onSubmit,
 }: {
   apiKeyInput: string;
   busy: boolean;
+  developerMode: boolean;
   health: DesktopHealth | null;
   language: AppLanguage;
   message: string | null;
   onApiKeyChange: (value: string) => void;
+  onDeveloperModeChange: (enabled: boolean) => void;
   onLanguageChange: (language: AppLanguage) => void;
   onSubmit: (event: FormEvent) => void;
 }): React.JSX.Element {
@@ -1130,6 +1725,27 @@ function SettingsPanel({
             </button>
           </div>
         </div>
+      </section>
+      <section className="settings-section">
+        <div>
+          <h2>{zh ? "开发者模式" : "Developer Mode"}</h2>
+          <p>
+            {zh
+              ? "关闭时，聊天中的模型错误只显示简要摘要，并且只保留最新一条重试提示。开启后显示完整错误详情，便于排查。"
+              : "When off, chat model errors show a short summary and only the latest retry notice. Turn it on to keep full diagnostic details."}
+          </p>
+        </div>
+        <label className="settings-toggle">
+          <span>
+            <strong>{zh ? "显示完整错误信息" : "Show full error details"}</strong>
+            <small>{developerMode ? (zh ? "已启用" : "Enabled") : (zh ? "默认关闭" : "Off by default")}</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={developerMode}
+            onChange={(event) => onDeveloperModeChange(event.target.checked)}
+          />
+        </label>
       </section>
       <section className="settings-section">
         <div>

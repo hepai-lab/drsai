@@ -13,7 +13,7 @@ import {
   parseAgentRunSseFileEvents,
   parseAgentRunSseFrame,
 } from "./sseParser";
-import { upsertThreadFromRun } from "./threads";
+import { listThreads, updateThread, upsertThreadFromRun } from "./threads";
 
 const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 const MAX_ACTIVE_RUNS = 3;
@@ -214,6 +214,7 @@ async function runAgent(
       lastRequestId: requestId,
       status: "idle",
     });
+    await markForkQueueRunState(request, sessionId, "completed", "Fork queue subtask completed.");
     await emitWorkspaceSnapshotEvents(webContents, requestId, sessionId, runId, request.workspacePath, beforeFiles);
     emit(webContents, { requestId, sessionId, runId, type: "done" });
   } catch (error) {
@@ -226,6 +227,12 @@ async function runAgent(
       lastRequestId: requestId,
       status: "error",
     });
+    await markForkQueueRunState(
+      request,
+      sessionId,
+      "blocked",
+      `Fork queue subtask blocked: ${error instanceof Error ? error.message : String(error)}`,
+    );
     await emitWorkspaceSnapshotEvents(webContents, requestId, sessionId, runId, request.workspacePath, beforeFiles);
     throw error;
   } finally {
@@ -281,6 +288,28 @@ async function readSse(
     });
   }
   return sawDone;
+}
+
+async function markForkQueueRunState(
+  request: AgentRunRequest,
+  threadId: string,
+  queueStatus: "completed" | "blocked",
+  queueMessage: string,
+): Promise<void> {
+  if (request.metadata?.fork_queue_dispatch !== true) return;
+  const now = new Date().toISOString();
+  const thread = (await listThreads()).find((item) => item.id === threadId);
+  if (!thread?.fork) return;
+  await updateThread({
+    id: threadId,
+    status: queueStatus === "completed" ? "idle" : "error",
+    fork: {
+      ...thread.fork,
+      queueStatus,
+      queueMessage,
+      queueUpdatedAt: now,
+    },
+  }).catch(() => undefined);
 }
 
 interface WorkspaceFileSnapshotItem {
@@ -401,12 +430,24 @@ async function formatHttpError(response: Response): Promise<string> {
   if (!body) return `Gateway agent run failed with HTTP ${response.status}.`;
   try {
     const parsed = JSON.parse(body);
-    const detail = parsed?.detail || parsed?.message || parsed?.error;
+    const detail = extractErrorMessage(parsed);
     if (detail) return `Gateway agent run failed: ${String(detail)}`;
   } catch {
     // Keep the raw body below.
   }
   return `Gateway agent run failed with HTTP ${response.status}: ${body.slice(0, 600)}`;
+}
+
+function extractErrorMessage(value: unknown): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  if (typeof value !== "object") return String(value);
+
+  const record = value as Record<string, unknown>;
+  return extractErrorMessage(record.detail) ||
+    extractErrorMessage(record.message) ||
+    extractErrorMessage(record.error) ||
+    null;
 }
 
 async function readLimitedText(response: Response, maxBytes: number): Promise<string> {

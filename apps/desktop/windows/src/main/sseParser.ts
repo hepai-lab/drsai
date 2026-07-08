@@ -11,13 +11,15 @@ export interface ChatSsePayload {
   metadata?: { file_event?: unknown; file_events?: unknown };
 }
 
+export interface AgentLogSsePayload {
+  title?: string;
+  content?: string;
+  level?: string;
+  content_type?: string;
+}
+
 export function parseCompletionSseFrame(frame: string): string[] {
-  const payload = frame
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice(5).trimStart())
-    .join("\n")
-    .trim();
+  const payload = getSseData(frame);
 
   if (!payload || payload === "[DONE]") {
     return [];
@@ -38,6 +40,32 @@ export function parseCompletionSseFrame(frame: string): string[] {
 
   const content = value.choices?.[0]?.delta?.content ?? value.choices?.[0]?.message?.content ?? "";
   return content ? [content] : [];
+}
+
+export function parseAgentLogSseFrame(frame: string): AgentLogSsePayload | null {
+  if (getSseEventName(frame) !== "agent.log") return null;
+
+  const payload = getSseData(frame);
+  if (!payload || payload === "[DONE]") return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object") return null;
+  const value = parsed as AgentLogSsePayload;
+  const content = typeof value.content === "string" ? value.content.trim() : "";
+  if (!content) return null;
+
+  return {
+    title: typeof value.title === "string" ? value.title : undefined,
+    content,
+    level: typeof value.level === "string" ? value.level : undefined,
+    content_type: typeof value.content_type === "string" ? value.content_type : undefined,
+  };
 }
 
 export function isCompletionDoneFrame(frame: string): boolean {
@@ -112,4 +140,21 @@ function normalizeAction(value: unknown): AgentRunSseFileEvent["action"] | null 
     return value;
   }
   return null;
+}
+
+function getSseEventName(frame: string): string {
+  return frame
+    .split(/\r?\n/)
+    .find((line) => line.startsWith("event:"))
+    ?.slice(6)
+    .trim() ?? "";
+}
+
+function getSseData(frame: string): string {
+  return frame
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n")
+    .trim();
 }

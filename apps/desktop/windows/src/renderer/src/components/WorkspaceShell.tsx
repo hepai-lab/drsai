@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownAZ,
   ArrowLeft,
@@ -24,16 +24,71 @@ import {
   X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { AuthUser, CreateWorkspaceRequest, WorkspaceProject } from "@shared/desktopApi";
+import type {
+  AuthUser,
+  CreateWorkspaceRequest,
+  DesktopForkLifecycleAction,
+  DesktopThreadForkMetadata,
+  WorkspaceProject,
+} from "@shared/desktopApi";
 import drsaiLogo from "../assets/drsai-transparent.png";
 import { MENU_IDS, type AppLanguage, type NavId, type NavSection, type RightTab } from "../navigation";
+import {
+  getConflictMarkerCount,
+  getForkConflictFileKind,
+  getForkConflictHunkTestSuggestions,
+  getForkConflictRepoTestGraphSuggestions,
+  getForkConflictStructureDiff,
+  getForkConflictTestSuggestions,
+  getLineCount,
+  parseForkConflictDraftHunks,
+  splitConflictDraftLines,
+  type ForkConflictDraftHunk,
+  type ForkConflictSemanticPreview,
+} from "./forkConflictAnalysis";
 
 export interface WorkspaceThread {
   id: string;
   title: string;
   timeLabel: string;
   workspaceId: string;
+  workspacePath?: string;
+  fork?: DesktopThreadForkMetadata;
   active?: boolean;
+  pinned?: boolean;
+  archived?: boolean;
+  unread?: boolean;
+}
+
+export interface ForkConflictFile {
+  path: string;
+  status: string;
+}
+
+export interface ForkConflictContentPreviewResult {
+  baseContent: string;
+  baseRef: string;
+  baseMissing?: boolean;
+  sourceContent: string;
+  forkContent: string;
+  diff: string;
+  diffHash?: string;
+  truncated?: boolean;
+}
+
+export interface ForkConflictStageResult {
+  diff: string;
+  diffHash?: string;
+  message: string;
+  approvalQueued?: boolean;
+  staged?: boolean;
+}
+
+export interface ForkConflictDraftWriteResult {
+  path: string;
+  message: string;
+  approvalQueued?: boolean;
+  written?: boolean;
 }
 
 interface WorkspaceShellProps {
@@ -45,7 +100,7 @@ interface WorkspaceShellProps {
   canGoForward: boolean;
   desktopStatusPanel: React.ReactNode;
   language: AppLanguage;
-  main: React.ReactNode;
+  mainContent: React.ReactNode;
   navIcons: Record<NavId, LucideIcon>;
   navSections: NavSection[];
   recentThreads: WorkspaceThread[];
@@ -65,14 +120,29 @@ interface WorkspaceShellProps {
   onPickWorkspaceFolder: () => Promise<string | null>;
   onLanguageChange: (language: AppLanguage) => void;
   onLogout: () => void;
+  onLoadForkConflictContent: (
+    thread: WorkspaceThread,
+    file: ForkConflictFile,
+  ) => Promise<ForkConflictContentPreviewResult>;
   onNavChange: (id: NavId) => void;
   onNewChat: () => void;
   onOpenWorkspacePath: (path: string) => void | Promise<void>;
   onRefreshWorkspaces: () => void | Promise<void>;
   onRemoveWorkspace: (id: string) => void | Promise<void>;
+  onRequestForkLifecycle: (threadId: string, action: DesktopForkLifecycleAction) => void | Promise<void>;
   onRightTabChange: (id: RightTab) => void;
-  onSearch: () => void;
+  onStageForkConflictFile: (
+    thread: WorkspaceThread,
+    file: ForkConflictFile,
+  ) => Promise<ForkConflictStageResult>;
+  onWriteForkConflictDraft: (
+    thread: WorkspaceThread,
+    file: ForkConflictFile,
+    draft: string,
+    expectedDiffHash?: string,
+  ) => Promise<ForkConflictDraftWriteResult>;
   onThreadSelect: (threadId: string) => void;
+  onThreadUpdate: (threadId: string, updates: { title?: string; pinned?: boolean; archived?: boolean; unread?: boolean; fork?: DesktopThreadForkMetadata }) => void | Promise<void>;
   onToggleSessionScope: () => void;
   onToggleRightPanel: () => void;
   onToggleSidebar: () => void;
@@ -90,7 +160,7 @@ export function WorkspaceShell({
   canGoForward,
   desktopStatusPanel,
   language,
-  main,
+  mainContent,
   navIcons,
   navSections,
   recentThreads,
@@ -110,14 +180,18 @@ export function WorkspaceShell({
   onPickWorkspaceFolder,
   onLanguageChange,
   onLogout,
+  onLoadForkConflictContent,
   onNavChange,
   onNewChat,
   onOpenWorkspacePath,
   onRefreshWorkspaces,
   onRemoveWorkspace,
+  onRequestForkLifecycle,
   onRightTabChange,
-  onSearch,
+  onStageForkConflictFile,
+  onWriteForkConflictDraft,
   onThreadSelect,
+  onThreadUpdate,
   onToggleSessionScope,
   onToggleRightPanel,
   onToggleSidebar,
@@ -141,11 +215,39 @@ export function WorkspaceShell({
   const [workspaceCreateParent, setWorkspaceCreateParent] = useState("");
   const [workspaceCreateRepoUrl, setWorkspaceCreateRepoUrl] = useState("");
   const [workspaceCreateError, setWorkspaceCreateError] = useState<string | null>(null);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandPaletteQuery, setCommandPaletteQuery] = useState("");
+  const [commandPaletteSelectedIndex, setCommandPaletteSelectedIndex] = useState(0);
+  const [threadMenu, setThreadMenu] = useState<{
+    thread: WorkspaceThread;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [forkConflictPreview, setForkConflictPreview] = useState<{
+    key: string;
+    path: string;
+    status: "loading" | "ready" | "error";
+    message: string;
+    baseContent?: string;
+    baseRef?: string;
+    baseMissing?: boolean;
+    sourceContent?: string;
+    forkContent?: string;
+    diff?: string;
+    diffHash?: string;
+    truncated?: boolean;
+    stageStatus?: "idle" | "loading" | "queued" | "error";
+    stageMessage?: string;
+    writeStatus?: "idle" | "loading" | "queued" | "written" | "error";
+    writeMessage?: string;
+  } | null>(null);
+  const [forkConflictDrafts, setForkConflictDrafts] = useState<Record<string, string>>({});
   const [sidebarWidth, setSidebarWidth] = useState(248);
   const [rightPanelWidth, setRightPanelWidth] = useState(420);
   const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
   const helpMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const commandPaletteInputRef = useRef<HTMLInputElement | null>(null);
   const zh = language === "zh";
   const userInitials = getUserInitials(user, zh);
   const workbenchMenus = zh ? ["文件", "编辑", "视图"] : ["File", "Edit", "View"];
@@ -154,6 +256,7 @@ export function WorkspaceShell({
   const workspaceItems = getEnabledNavItems(navSections, "workspace");
   const settingsItems = getEnabledNavItems(navSections, "settings");
   const workspaceDetails = workspaces.find((workspace) => workspace.id === workspaceDetailsId) ?? null;
+  const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? workspaces[0] ?? null;
   const isRightPanelExpanded = rightPanelExpanded && !rightPanelCollapsed;
   const rightPanelExpandLabel = isRightPanelExpanded
     ? zh ? "还原聊天视图" : "Restore chat view"
@@ -178,9 +281,16 @@ export function WorkspaceShell({
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
+        return;
+      }
       if (event.key === "Escape") {
         setDesktopStatusOpen(false);
         setHelpMenuOpen(false);
+        setCommandPaletteOpen(false);
+        setThreadMenu(null);
         setRightPanelExpanded(false);
         closeWorkspaceDetails();
       }
@@ -195,6 +305,20 @@ export function WorkspaceShell({
       setRightPanelExpanded(false);
     }
   }, [rightPanelCollapsed]);
+
+  useEffect(() => {
+    setForkConflictPreview(null);
+  }, [threadMenu?.thread.id]);
+
+  useEffect(() => {
+    if (!commandPaletteOpen) return;
+    commandPaletteInputRef.current?.focus();
+    commandPaletteInputRef.current?.select();
+  }, [commandPaletteOpen]);
+
+  useEffect(() => {
+    setCommandPaletteSelectedIndex(0);
+  }, [commandPaletteQuery, commandPaletteOpen]);
 
   function startSidebarResize(event: React.PointerEvent<HTMLDivElement>): void {
     event.preventDefault();
@@ -303,6 +427,602 @@ export function WorkspaceShell({
     }
     await onRemoveWorkspace(workspaceDetails.id);
     closeWorkspaceDetails();
+  }
+
+  type CommandPaletteItem = {
+    id: string;
+    group: "chats" | "recommendations";
+    label: string;
+    meta?: string;
+    shortcut?: string;
+    icon: LucideIcon;
+    run: () => void | Promise<void>;
+  };
+
+  const commandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
+    const chatItems = recentThreads.map((thread, index) => ({
+      id: `thread:${thread.id}`,
+      group: "chats" as const,
+      label: thread.title,
+      meta: activeWorkspaceName,
+      shortcut: index < 9 ? `Ctrl+${index + 1}` : undefined,
+      icon: Search,
+      run: () => onThreadSelect(thread.id),
+    }));
+
+    const recommendationItems: CommandPaletteItem[] = [
+      {
+        id: "command:new-chat",
+        group: "recommendations",
+        label: zh ? "新对话" : "New chat",
+        shortcut: "Ctrl+N",
+        icon: MessageSquarePlus,
+        run: onNewChat,
+      },
+      {
+        id: "command:open-folder",
+        group: "recommendations",
+        label: zh ? "打开文件夹" : "Open folder",
+        shortcut: "Ctrl+O",
+        icon: FolderCode,
+        run: () => {
+          if (activeWorkspace?.path) void onOpenWorkspacePath(activeWorkspace.path);
+        },
+      },
+      {
+        id: "command:settings",
+        group: "recommendations",
+        label: zh ? "设置" : "Settings",
+        shortcut: "Ctrl+,",
+        icon: Settings,
+        run: () => onNavChange(MENU_IDS.profile),
+      },
+    ];
+
+    return [...chatItems, ...recommendationItems];
+  }, [activeWorkspace?.path, activeWorkspaceName, onNavChange, onNewChat, onOpenWorkspacePath, onThreadSelect, recentThreads, zh]);
+
+  const visibleCommandPaletteItems = useMemo(() => {
+    const query = commandPaletteQuery.trim().toLowerCase();
+    if (!query) return commandPaletteItems;
+    return commandPaletteItems.filter((item) =>
+      [item.label, item.meta, item.shortcut]
+        .filter(Boolean)
+        .some((text) => text!.toLowerCase().includes(query)),
+    );
+  }, [commandPaletteItems, commandPaletteQuery]);
+
+  function closeCommandPalette(): void {
+    setCommandPaletteOpen(false);
+    setCommandPaletteQuery("");
+    setCommandPaletteSelectedIndex(0);
+  }
+
+  function runCommandPaletteItem(item: CommandPaletteItem): void {
+    closeCommandPalette();
+    void item.run();
+  }
+
+  function openThreadMenu(event: React.MouseEvent, thread: WorkspaceThread): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const menuWidth = 260;
+    const menuHeight = thread.fork ? 560 : 306;
+    setThreadMenu({
+      thread,
+      x: Math.min(event.clientX, Math.max(12, window.innerWidth - menuWidth - 12)),
+      y: Math.min(event.clientY, Math.max(46, window.innerHeight - menuHeight - 12)),
+    });
+  }
+
+  function closeThreadMenu(): void {
+    setThreadMenu(null);
+  }
+
+  function renameThread(thread: WorkspaceThread): void {
+    const nextTitle = window.prompt(zh ? "重命名对话" : "Rename conversation", thread.title);
+    if (!nextTitle || nextTitle.trim() === thread.title) return;
+    void onThreadUpdate(thread.id, { title: nextTitle.trim() });
+  }
+
+  function copyText(text: string): void {
+    void navigator.clipboard.writeText(text);
+  }
+
+  function getThreadWorkspacePath(thread: WorkspaceThread): string {
+    return thread.workspacePath || activeWorkspace?.path || "";
+  }
+
+  function getThreadDeepLink(thread: WorkspaceThread): string {
+    return `opendrsai://thread/${encodeURIComponent(thread.id)}`;
+  }
+
+  function getThreadForkSummary(thread: WorkspaceThread): string {
+    if (!thread.fork) return "";
+    return [
+      `Branch: ${thread.fork.branch}`,
+      `Base: ${thread.fork.baseRef}`,
+      `Source: ${thread.fork.sourceWorkspacePath}`,
+      `Worktree: ${thread.fork.worktreePath}`,
+      `Lifecycle: ${thread.fork.lifecycleStatus}`,
+      thread.fork.queueStatus
+        ? `Queue: ${thread.fork.queueStatus}${thread.fork.queueIndex && thread.fork.queueSize ? ` (${thread.fork.queueIndex}/${thread.fork.queueSize})` : ""}`
+        : "",
+      thread.fork.queueApprovalId ? `Queue approval: ${thread.fork.queueApprovalId}` : "",
+      thread.fork.queueAgentName ? `Assigned agent: ${thread.fork.queueAgentName}` : "",
+      thread.fork.queueAgentHint ? `Agent hint: ${thread.fork.queueAgentHint}` : "",
+      thread.fork.queueMessage ? `Queue detail: ${thread.fork.queueMessage}` : "",
+      thread.fork.lifecycleMessage ? `Lifecycle detail: ${thread.fork.lifecycleMessage}` : "",
+      thread.fork.mergedCommit ? `Merged commit: ${thread.fork.mergedCommit}` : "",
+      thread.fork.branchCleanupStatus ? `Branch cleanup: ${thread.fork.branchCleanupStatus}` : "",
+      thread.fork.archivedBranch ? `Archived branch: ${thread.fork.archivedBranch}` : "",
+      thread.fork.branchCleanupMessage ? `Branch cleanup detail: ${thread.fork.branchCleanupMessage}` : "",
+      thread.fork.sourceHasChanges
+        ? `Source changes at fork: ${thread.fork.sourceStatusSummary || "dirty worktree"}`
+        : "Source was clean at fork creation.",
+    ].filter(Boolean).join("\n");
+  }
+
+  function getForkRecoveryKind(
+    fork?: DesktopThreadForkMetadata,
+  ): "conflict" | "dirty-source" | "dirty-fork" | "pending" | null {
+    if (!fork || fork.lifecycleStatus !== "merge_pending") return null;
+    const message = (fork.lifecycleMessage || "").toLowerCase();
+    if (message.includes("conflict")) return "conflict";
+    if (message.includes("source workspace has uncommitted changes")) return "dirty-source";
+    if (message.includes("fork worktree has uncommitted changes")) return "dirty-fork";
+    return "pending";
+  }
+
+  function getForkRecoverySummary(fork: DesktopThreadForkMetadata): string {
+    const kind = getForkRecoveryKind(fork);
+    if (kind === "conflict") {
+      return "Merge-back is blocked by conflicts. Inspect source and fork diffs, resolve the branch, then request merge-back again.";
+    }
+    if (kind === "dirty-source") {
+      return "Merge-back is waiting for the source workspace to be clean. Commit, stash, or discard source changes before retrying.";
+    }
+    if (kind === "dirty-fork") {
+      return "Merge-back is waiting for the fork worktree to be clean. Commit or discard fork changes before retrying.";
+    }
+    return "Merge-back is pending manual recovery. Review both worktrees and retry after the status is clean.";
+  }
+
+  function getForkRecoveryStatusItems(fork: DesktopThreadForkMetadata): Array<{ label: string; value: string }> {
+    const messageLines = (fork.lifecycleMessage || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const sourceStatusLine = messageLines.find((line) => line.toLowerCase().startsWith("source status:"));
+    return [
+      { label: "Recovery type", value: getForkRecoveryKind(fork) || "pending" },
+      sourceStatusLine ? { label: "Source status", value: sourceStatusLine.replace(/^source status:\s*/i, "") } : null,
+      fork.sourceHasChanges
+        ? { label: "At fork creation", value: fork.sourceStatusSummary || "source workspace had changes" }
+        : null,
+      fork.lifecycleUpdatedAt ? { label: "Last update", value: fork.lifecycleUpdatedAt } : null,
+    ].filter((item): item is { label: string; value: string } => Boolean(item));
+  }
+
+  function getForkConflictFiles(fork: DesktopThreadForkMetadata): ForkConflictFile[] {
+    if (getForkRecoveryKind(fork) !== "conflict") return [];
+    const sourceStatus = getForkRecoveryStatusItems(fork)
+      .find((item) => item.label === "Source status")
+      ?.value ?? "";
+    return sourceStatus
+      .split(";")
+      .map((item) => item.trim())
+      .map((item) => {
+        const match = item.match(/^([ A-Z?]{1,2})\s+(.+)$/);
+        if (!match) return null;
+        const status = match[1].trim();
+        const path = match[2].trim();
+        if (!path || !/[AU]/.test(status)) return null;
+        return { path, status };
+      })
+      .filter((item): item is ForkConflictFile => Boolean(item))
+      .slice(0, 8);
+  }
+
+  function quotePowerShellPath(path: string): string {
+    return `'${path.replace(/'/g, "''")}'`;
+  }
+
+  function getForkRecoveryCommandSet(thread: WorkspaceThread): string {
+    const fork = thread.fork;
+    if (!fork) return "";
+    const sourcePath = quotePowerShellPath(fork.sourceWorkspacePath);
+    const forkPath = quotePowerShellPath(fork.worktreePath);
+    const branch = fork.branch;
+    return [
+      "# Fork recovery inspection commands",
+      `git -C ${sourcePath} status --short`,
+      `git -C ${forkPath} status --short`,
+      `git -C ${sourcePath} diff --check`,
+      `git -C ${forkPath} diff --check`,
+      `git -C ${sourcePath} diff --stat HEAD...${branch}`,
+      `git -C ${sourcePath} diff HEAD...${branch}`,
+      "# After manual resolution and verification, request merge-back again in OpenDrSai.",
+      "# Approval Center still gates the merge-back operation.",
+    ].join("\n");
+  }
+
+  function getForkConflictResolutionPlan(thread: WorkspaceThread): string {
+    const fork = thread.fork;
+    if (!fork) return "";
+    const sourcePath = quotePowerShellPath(fork.sourceWorkspacePath);
+    const files = getForkConflictFiles(fork);
+    return [
+      "# Fork conflict resolution workbench",
+      `# Thread: ${thread.title}`,
+      `# Branch: ${fork.branch}`,
+      `git -C ${sourcePath} status --short`,
+      "",
+      ...(files.length
+        ? files.flatMap((file, index) => [
+            `# ${index + 1}. ${file.path} (${file.status})`,
+            `git -C ${sourcePath} diff -- ${quotePowerShellPath(file.path)}`,
+            `# Choose one side only when that is the intended resolution:`,
+            `# git -C ${sourcePath} checkout --ours -- ${quotePowerShellPath(file.path)}`,
+            `# git -C ${sourcePath} checkout --theirs -- ${quotePowerShellPath(file.path)}`,
+            `git -C ${sourcePath} add -- ${quotePowerShellPath(file.path)}`,
+            "",
+          ])
+        : [
+            "# No individual conflict files were parsed from the lifecycle status.",
+            "# Open the source workspace, inspect conflict markers, then stage resolved files.",
+            "",
+          ]),
+      "# After every conflict file is staged, run the relevant tests.",
+      "# Then request merge-back review again; Approval Center still gates the merge.",
+    ].join("\n");
+  }
+
+  function getForkConflictPreviewKey(thread: WorkspaceThread, file: ForkConflictFile): string {
+    return `${thread.id}:${file.path}`;
+  }
+
+  async function loadForkConflictContent(thread: WorkspaceThread, file: ForkConflictFile): Promise<void> {
+    const fork = thread.fork;
+    if (!fork) return;
+    const key = getForkConflictPreviewKey(thread, file);
+    setForkConflictPreview({
+      key,
+      path: file.path,
+      status: "loading",
+      message: "Loading source, fork, and diff preview.",
+    });
+    try {
+      const result = await onLoadForkConflictContent(thread, file);
+      setForkConflictDrafts((current) =>
+        current[key] !== undefined
+          ? current
+          : {
+              ...current,
+              [key]: result.sourceContent,
+            },
+      );
+      setForkConflictPreview({
+        key,
+        path: file.path,
+        status: "ready",
+        message: result.truncated
+          ? "Preview loaded with truncation. Open the file before final staging."
+          : "Preview loaded. Edit the resolved draft here or open the source file for final changes.",
+        baseContent: result.baseContent,
+        baseRef: result.baseRef,
+        baseMissing: result.baseMissing,
+        sourceContent: result.sourceContent,
+        forkContent: result.forkContent,
+        diff: result.diff,
+        diffHash: result.diffHash,
+        truncated: result.truncated,
+        stageStatus: "idle",
+      });
+    } catch (error) {
+      setForkConflictPreview({
+        key,
+        path: file.path,
+        status: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function stageForkConflictFile(thread: WorkspaceThread, file: ForkConflictFile): Promise<void> {
+    const fork = thread.fork;
+    if (!fork) return;
+    const key = getForkConflictPreviewKey(thread, file);
+    setForkConflictPreview((current) =>
+      current?.key === key
+        ? { ...current, stageStatus: "loading", stageMessage: "Refreshing diff before approval." }
+        : current,
+    );
+    try {
+      const result = await onStageForkConflictFile(thread, file);
+      setForkConflictPreview((current) =>
+        current?.key === key
+          ? {
+              ...current,
+              diff: result.diff,
+              diffHash: result.diffHash,
+              stageStatus: result.approvalQueued ? "queued" : result.staged ? "queued" : "idle",
+              stageMessage: result.message,
+            }
+          : current,
+      );
+    } catch (error) {
+      setForkConflictPreview((current) =>
+        current?.key === key
+          ? {
+              ...current,
+              stageStatus: "error",
+              stageMessage: error instanceof Error ? error.message : String(error),
+            }
+          : current,
+      );
+    }
+  }
+
+  async function writeForkConflictDraft(thread: WorkspaceThread, file: ForkConflictFile): Promise<void> {
+    const fork = thread.fork;
+    if (!fork) return;
+    const key = getForkConflictPreviewKey(thread, file);
+    const draft = forkConflictDrafts[key] ?? "";
+    setForkConflictPreview((current) =>
+      current?.key === key
+        ? { ...current, writeStatus: "loading", writeMessage: "Requesting Approval Center write-back." }
+        : current,
+    );
+    try {
+      const result = await onWriteForkConflictDraft(thread, file, draft, forkConflictPreview?.diffHash);
+      const nextDiff =
+        result.written || !result.approvalQueued
+          ? await onLoadForkConflictContent(thread, file)
+          : null;
+      setForkConflictPreview((current) =>
+        current?.key === key
+          ? {
+              ...current,
+              ...(nextDiff
+                ? {
+                    sourceContent: nextDiff.sourceContent,
+                    baseContent: nextDiff.baseContent,
+                    baseRef: nextDiff.baseRef,
+                    baseMissing: nextDiff.baseMissing,
+                    forkContent: nextDiff.forkContent,
+                    diff: nextDiff.diff,
+                    diffHash: nextDiff.diffHash,
+                    truncated: nextDiff.truncated,
+                    message: "Resolved draft written. Review the refreshed source diff before staging.",
+                  }
+                : {}),
+              writeStatus: result.approvalQueued ? "queued" : result.written ? "written" : "idle",
+              writeMessage: result.message,
+            }
+          : current,
+      );
+    } catch (error) {
+      setForkConflictPreview((current) =>
+        current?.key === key
+          ? {
+              ...current,
+              writeStatus: "error",
+              writeMessage: error instanceof Error ? error.message : String(error),
+            }
+          : current,
+      );
+    }
+  }
+
+  function setForkConflictDraft(key: string, draft: string): void {
+    setForkConflictDrafts((current) => ({
+      ...current,
+      [key]: draft,
+    }));
+  }
+
+  function getForkConflictSemanticPreview(
+    thread: WorkspaceThread,
+    preview: NonNullable<typeof forkConflictPreview>,
+    draft: string,
+  ): ForkConflictSemanticPreview | null {
+    const fork = thread.fork;
+    if (!fork || preview.status !== "ready") return null;
+    const sourceContent = preview.sourceContent ?? "";
+    const baseContent = preview.baseContent ?? "";
+    const forkContent = preview.forkContent ?? "";
+    const baseMarkers = getConflictMarkerCount(baseContent);
+    const sourceMarkers = getConflictMarkerCount(sourceContent);
+    const forkMarkers = getConflictMarkerCount(forkContent);
+    const draftMarkers = getConflictMarkerCount(draft);
+    const draftHunks = parseForkConflictDraftHunks(draft);
+    const sourceLines = getLineCount(sourceContent);
+    const baseLines = getLineCount(baseContent);
+    const forkLines = getLineCount(forkContent);
+    const draftLines = getLineCount(draft);
+    const sourceBaseDelta = Math.abs(sourceLines - baseLines);
+    const forkBaseDelta = Math.abs(forkLines - baseLines);
+    const lineDelta = Math.abs(sourceLines - forkLines);
+    const structureDiff = getForkConflictStructureDiff(preview.path, baseContent, sourceContent, forkContent, draft);
+    const risk: ForkConflictSemanticPreview["risk"] =
+      draftMarkers > 0 || draftHunks.length > 0
+        ? "high"
+        : structureDiff.hasOverlappingStructuralEdits ||
+            lineDelta > 40 ||
+            sourceBaseDelta > 80 ||
+            forkBaseDelta > 80 ||
+            preview.truncated ||
+            preview.baseMissing
+          ? "medium"
+          : "low";
+    return {
+      baseRef: preview.baseRef || fork.baseRef,
+      fileKind: getForkConflictFileKind(preview.path),
+      sourceSignal: `${sourceLines} lines, ${sourceMarkers} conflict markers, delta ${sourceBaseDelta} from base`,
+      forkSignal: `${forkLines} lines, ${forkMarkers} conflict markers, delta ${forkBaseDelta} from base`,
+      draftSignal: `${draftLines} lines, ${draftMarkers} conflict markers`,
+      risk,
+      reviewItems: [
+        preview.baseMissing
+          ? `Base reference ${fork.baseRef} has no preview for this file`
+          : `True merge-base content preview: ${baseLines} lines, ${baseMarkers} conflict markers`,
+        lineDelta > 0
+          ? `Source/fork size delta: ${lineDelta} lines`
+          : "Source and fork previews have matching line counts",
+        `Source/base delta: ${sourceBaseDelta} lines; fork/base delta: ${forkBaseDelta} lines`,
+        preview.truncated
+          ? "One or more previews are truncated; open the file before final approval"
+          : "Previews are within the inline review limit",
+        draftMarkers > 0
+          ? "Resolved draft still contains conflict markers"
+          : "Resolved draft has no visible conflict markers",
+      ],
+      structureItems: structureDiff.items,
+      testGraphMatches: getForkConflictRepoTestGraphSuggestions(preview.path, {
+        baseContent,
+        sourceContent,
+        forkContent,
+        draft,
+      }),
+      testSuggestions: getForkConflictTestSuggestions(preview.path, draftMarkers),
+    };
+  }
+
+  function applyForkConflictDraftHunk(
+    key: string,
+    hunk: ForkConflictDraftHunk,
+    resolution: "source" | "fork" | "both",
+  ): void {
+    const currentDraft = forkConflictDrafts[key] ?? "";
+    const lines = splitConflictDraftLines(currentDraft);
+    const liveHunk = parseForkConflictDraftHunks(currentDraft)
+      .find((item) => item.id === hunk.id) ?? hunk;
+    const replacement =
+      resolution === "source"
+        ? liveHunk.sourceText
+        : resolution === "fork"
+          ? liveHunk.forkText
+          : `${liveHunk.sourceText}${liveHunk.forkText}`;
+    const nextDraft = [
+      ...lines.slice(0, liveHunk.startLine - 1),
+      replacement,
+      ...lines.slice(liveHunk.endLine),
+    ].join("");
+    setForkConflictDraft(key, nextDraft);
+  }
+
+  function applyAllForkConflictDraftHunks(key: string, resolution: "source" | "fork"): void {
+    let nextDraft = forkConflictDrafts[key] ?? "";
+    let hunks = parseForkConflictDraftHunks(nextDraft);
+    while (hunks.length > 0) {
+      const hunk = hunks[0];
+      const lines = splitConflictDraftLines(nextDraft);
+      const replacement = resolution === "source" ? hunk.sourceText : hunk.forkText;
+      nextDraft = [
+        ...lines.slice(0, hunk.startLine - 1),
+        replacement,
+        ...lines.slice(hunk.endLine),
+      ].join("");
+      hunks = parseForkConflictDraftHunks(nextDraft);
+    }
+    setForkConflictDraft(key, nextDraft);
+  }
+
+  function getForkRecoveryChecklist(thread: WorkspaceThread): string {
+    const fork = thread.fork;
+    if (!fork) return "";
+    const kind = getForkRecoveryKind(fork);
+    const recoveryStep =
+      kind === "dirty-source"
+        ? "Clean the source workspace by committing, stashing, or intentionally discarding local changes."
+        : kind === "dirty-fork"
+          ? "Clean the fork worktree by committing intended changes or intentionally discarding local edits."
+          : kind === "conflict"
+            ? "Compare the source workspace and fork branch, resolve merge conflicts manually, and make sure the final source state is intentional."
+            : "Inspect source and fork git status, then resolve whichever workspace is blocking merge-back.";
+    return [
+      "Fork recovery checklist",
+      `Thread: ${thread.title}`,
+      `Lifecycle: ${fork.lifecycleStatus}`,
+      `Branch: ${fork.branch}`,
+      `Base: ${fork.baseRef}`,
+      `Source workspace: ${fork.sourceWorkspacePath}`,
+      `Fork worktree: ${fork.worktreePath}`,
+      fork.lifecycleMessage ? `Current status: ${fork.lifecycleMessage}` : "",
+      "",
+      "1. Open the source workspace and inspect git status.",
+      "2. Open the fork worktree and inspect git status or branch diff.",
+      `3. ${recoveryStep}`,
+      "4. Re-run tests or the relevant verification command in the affected workspace.",
+      kind === "conflict"
+        ? "5. Use the inline conflict workbench to track each parsed conflict file and stage resolved files through the existing review path."
+        : "",
+      "6. Return to this thread and request merge-back review again; Approval Center still gates the merge.",
+    ].filter(Boolean).join("\n");
+  }
+
+  function runThreadMenuAction(action: () => void | Promise<void>): void {
+    closeThreadMenu();
+    void action();
+  }
+
+  function handleCommandPaletteKeyDown(event: React.KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeCommandPalette();
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setCommandPaletteSelectedIndex((index) =>
+        visibleCommandPaletteItems.length > 0
+          ? (index + 1) % visibleCommandPaletteItems.length
+          : 0,
+      );
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setCommandPaletteSelectedIndex((index) =>
+        visibleCommandPaletteItems.length > 0
+          ? (index - 1 + visibleCommandPaletteItems.length) % visibleCommandPaletteItems.length
+          : 0,
+      );
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const item = visibleCommandPaletteItems[commandPaletteSelectedIndex];
+      if (item) runCommandPaletteItem(item);
+      return;
+    }
+    if (event.ctrlKey && !event.altKey && !event.shiftKey) {
+      const key = event.key.toLowerCase();
+      const shortcut =
+        key === "n"
+          ? "Ctrl+N"
+          : key === "o"
+            ? "Ctrl+O"
+            : event.key === ","
+              ? "Ctrl+,"
+              : null;
+      const item = shortcut
+        ? visibleCommandPaletteItems.find((candidate) => candidate.shortcut === shortcut)
+        : null;
+      if (item) {
+        event.preventDefault();
+        runCommandPaletteItem(item);
+        return;
+      }
+    }
+    if (event.ctrlKey && /^[1-9]$/.test(event.key)) {
+      const item = visibleCommandPaletteItems[Number(event.key) - 1];
+      if (item) {
+        event.preventDefault();
+        runCommandPaletteItem(item);
+      }
+    }
   }
 
   return (
@@ -477,7 +1197,7 @@ export function WorkspaceShell({
         <nav className="sidebar-scroll" aria-label={zh ? "OpenDrSai 侧边栏" : "OpenDrSai sidebar"}>
           <div className="sidebar-action-list">
             <SidebarButton active={activeNav === MENU_IDS.currentSession} icon={MessageSquarePlus} label={zh ? "开始聊天" : "New chat"} onClick={onNewChat} />
-            <SidebarButton icon={Search} label={zh ? "搜索" : "Search"} onClick={onSearch} />
+            <SidebarButton icon={Search} label={zh ? "搜索" : "Search"} onClick={() => setCommandPaletteOpen(true)} />
             <SidebarButton active={activeNav === MENU_IDS.savedPlan} icon={CalendarClock} label={zh ? "已安排" : "Scheduled"} onClick={() => onNavChange(MENU_IDS.savedPlan)} />
           </div>
 
@@ -694,8 +1414,24 @@ export function WorkspaceShell({
                     type="button"
                     className={`thread-item ${thread.active ? "active" : ""}`}
                     onClick={() => onThreadSelect(thread.id)}
+                    onContextMenu={(event) => openThreadMenu(event, thread)}
                   >
-                    <span>{thread.title}</span>
+                    <span>
+                      {thread.unread && <b className="thread-unread-dot" aria-hidden />}
+                      {thread.pinned && <b className="thread-pinned-mark" aria-hidden>◆</b>}
+                      {thread.fork && (
+                        <b
+                          className={`thread-fork-mark ${thread.fork.queueStatus ? `queue-${thread.fork.queueStatus}` : ""}`}
+                          title={[
+                            `Fork worktree: ${thread.fork.worktreePath}`,
+                            thread.fork.queueStatus ? `Queue: ${thread.fork.queueStatus}` : "",
+                          ].filter(Boolean).join("\n")}
+                        >
+                          {thread.fork.queueStatus === "waiting_approval" ? "Wait" : thread.fork.queueStatus === "ready" ? "Ready" : "Fork"}
+                        </b>
+                      )}
+                      {thread.title}
+                    </span>
                     <time>{thread.timeLabel}</time>
                   </button>
                 ))}
@@ -735,7 +1471,7 @@ export function WorkspaceShell({
             isRightPanelExpanded ? "right-expanded" : ""
           }`}
         >
-          <section className="conversation-panel">{main}</section>
+          <section className="main-content-area">{mainContent}</section>
           {!rightPanelCollapsed && !isRightPanelExpanded && (
             <div
               className="right-resize-handle"
@@ -780,6 +1516,598 @@ export function WorkspaceShell({
           )}
         </section>
       </main>
+      {threadMenu && (
+        <div className="thread-context-layer" role="presentation" onMouseDown={closeThreadMenu}>
+          <div
+            className="thread-context-menu"
+            role="menu"
+            style={{ left: threadMenu.x, top: threadMenu.y }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() =>
+                runThreadMenuAction(() =>
+                  onThreadUpdate(threadMenu.thread.id, { pinned: !threadMenu.thread.pinned }),
+                )
+              }
+            >
+              {threadMenu.thread.pinned ? (zh ? "取消置顶对话" : "Unpin conversation") : (zh ? "置顶对话" : "Pin conversation")}
+            </button>
+            <button type="button" role="menuitem" onClick={() => runThreadMenuAction(() => renameThread(threadMenu.thread))}>
+              {zh ? "重命名对话" : "Rename conversation"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() =>
+                runThreadMenuAction(() =>
+                  onThreadUpdate(threadMenu.thread.id, { archived: !threadMenu.thread.archived }),
+                )
+              }
+            >
+              {threadMenu.thread.archived ? (zh ? "取消归档对话" : "Unarchive conversation") : (zh ? "归档对话" : "Archive conversation")}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() =>
+                runThreadMenuAction(() =>
+                  onThreadUpdate(threadMenu.thread.id, { unread: !threadMenu.thread.unread }),
+                )
+              }
+            >
+              {threadMenu.thread.unread ? (zh ? "标记为已读" : "Mark as read") : (zh ? "标记为未读" : "Mark as unread")}
+            </button>
+            {threadMenu.thread.fork && (
+              <>
+                <div className="thread-context-separator" />
+                <div className="thread-fork-summary" role="group" aria-label="Fork worktree details">
+                  <strong>Fork worktree</strong>
+                  <span>{threadMenu.thread.fork.branch}</span>
+                  <small>{threadMenu.thread.fork.worktreePath}</small>
+                  <small>Lifecycle: {threadMenu.thread.fork.lifecycleStatus}</small>
+                  {threadMenu.thread.fork.queueStatus && (
+                    <small>
+                      Queue: {threadMenu.thread.fork.queueStatus}
+                      {threadMenu.thread.fork.queueIndex && threadMenu.thread.fork.queueSize
+                        ? ` (${threadMenu.thread.fork.queueIndex}/${threadMenu.thread.fork.queueSize})`
+                        : ""}
+                    </small>
+                  )}
+                  {threadMenu.thread.fork.queueMessage && (
+                    <small>{threadMenu.thread.fork.queueMessage}</small>
+                  )}
+                  {(threadMenu.thread.fork.queueAgentName || threadMenu.thread.fork.queueAgentHint) && (
+                    <small>
+                      Assigned agent: {threadMenu.thread.fork.queueAgentName || threadMenu.thread.fork.queueAgentHint}
+                    </small>
+                  )}
+                  {threadMenu.thread.fork.lifecycleMessage && (
+                    <small>{threadMenu.thread.fork.lifecycleMessage}</small>
+                  )}
+                  {threadMenu.thread.fork.branchCleanupStatus && (
+                    <small>Branch cleanup: {threadMenu.thread.fork.branchCleanupStatus}</small>
+                  )}
+                  {threadMenu.thread.fork.archivedBranch && (
+                    <small>Archived branch: {threadMenu.thread.fork.archivedBranch}</small>
+                  )}
+                  {threadMenu.thread.fork.branchCleanupMessage && (
+                    <small>{threadMenu.thread.fork.branchCleanupMessage}</small>
+                  )}
+                </div>
+                {getForkRecoveryKind(threadMenu.thread.fork) && (
+                  <>
+                    <div className="thread-fork-recovery" role="group" aria-label="Fork recovery actions">
+                      <strong>Recovery needed</strong>
+                      <span>{getForkRecoverySummary(threadMenu.thread.fork)}</span>
+                      <div className="thread-fork-recovery-status" aria-label="Fork recovery status detail">
+                        {getForkRecoveryStatusItems(threadMenu.thread.fork).map((item) => (
+                          <div key={item.label}>
+                            <small>{item.label}</small>
+                            <code title={item.value}>{item.value}</code>
+                          </div>
+                        ))}
+                      </div>
+                      <small>Copy the diff commands below to inspect conflicts before requesting merge-back again.</small>
+                    </div>
+                    {getForkConflictFiles(threadMenu.thread.fork).length > 0 && (
+                      <div className="thread-fork-conflict-workbench" role="group" aria-label="Inline conflict workbench">
+                        <strong>Inline conflict workbench</strong>
+                        <ol>
+                          {getForkConflictFiles(threadMenu.thread.fork).map((file) => (
+                            <li key={`${file.status}:${file.path}`}>
+                              <code title={file.path}>{file.path}</code>
+                              <span>{file.status} - resolve markers, preview diff, stage when reviewed</span>
+                              <div className="thread-fork-conflict-actions">
+                                <button
+                                  type="button"
+                                  onClick={() => void loadForkConflictContent(threadMenu.thread, file)}
+                                >
+                                  Load content merge editor
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void stageForkConflictFile(threadMenu.thread, file)}
+                                >
+                                  Stage resolved file
+                                </button>
+                              </div>
+                            </li>
+                          ))}
+                        </ol>
+                        {forkConflictPreview && (
+                          <div className={`thread-fork-conflict-preview ${forkConflictPreview.status}`}>
+                            <div className="thread-fork-conflict-preview-header">
+                              <strong title={forkConflictPreview.path}>{forkConflictPreview.path}</strong>
+                              <span>{forkConflictPreview.message}</span>
+                            </div>
+                            {forkConflictPreview.status === "ready" && (
+                              <>
+                                <div className="thread-fork-conflict-content-grid">
+                                  <section>
+                                    <small>Merge base ({forkConflictPreview.baseRef})</small>
+                                    <pre>
+                                      {forkConflictPreview.baseMissing
+                                        ? "Base file is missing at this ref."
+                                        : forkConflictPreview.baseContent}
+                                    </pre>
+                                  </section>
+                                  <section>
+                                    <small>Source workspace</small>
+                                    <pre>{forkConflictPreview.sourceContent}</pre>
+                                  </section>
+                                  <section>
+                                    <small>Fork branch</small>
+                                    <pre>{forkConflictPreview.forkContent}</pre>
+                                  </section>
+                                </div>
+                                <section className="thread-fork-conflict-diff">
+                                  <small>Source diff before staging</small>
+                                  <pre>{forkConflictPreview.diff}</pre>
+                                </section>
+                                {(() => {
+                                  const draft = forkConflictDrafts[forkConflictPreview.key] ?? "";
+                                  const semanticPreview = getForkConflictSemanticPreview(
+                                    threadMenu.thread,
+                                    forkConflictPreview,
+                                    draft,
+                                  );
+                                  if (!semanticPreview) return null;
+                                  return (
+                                    <section
+                                      className={`thread-fork-conflict-semantic risk-${semanticPreview.risk}`}
+                                      aria-label="Semantic three-way merge preview"
+                                    >
+                                      <div className="thread-fork-conflict-semantic-header">
+                                        <strong>Semantic three-way merge preview</strong>
+                                        <span>
+                                          {semanticPreview.fileKind} - risk {semanticPreview.risk}
+                                        </span>
+                                      </div>
+                                      <div className="thread-fork-conflict-semantic-grid">
+                                        <div>
+                                          <small>Base</small>
+                                          <code>{semanticPreview.baseRef}</code>
+                                        </div>
+                                        <div>
+                                          <small>Source</small>
+                                          <code>{semanticPreview.sourceSignal}</code>
+                                        </div>
+                                        <div>
+                                          <small>Fork</small>
+                                          <code>{semanticPreview.forkSignal}</code>
+                                        </div>
+                                        <div>
+                                          <small>Resolved draft</small>
+                                          <code>{semanticPreview.draftSignal}</code>
+                                        </div>
+                                      </div>
+                                      <div className="thread-fork-conflict-review-plan">
+                                        <small>Review focus</small>
+                                        <ul>
+                                          {semanticPreview.reviewItems.map((item) => (
+                                            <li key={item}>{item}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                      <div className="thread-fork-conflict-structure" aria-label="AST-aware structure diff">
+                                        <small>AST-aware structure diff</small>
+                                        <ul>
+                                          {semanticPreview.structureItems.map((item) => (
+                                            <li key={item}>{item}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                      <div className="thread-fork-conflict-test-suggestions">
+                                        <small>Test suggestions</small>
+                                        <ul>
+                                          {semanticPreview.testSuggestions.map((item) => (
+                                            <li key={item}>{item}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                      {semanticPreview.testGraphMatches.length > 0 && (
+                                        <div className="thread-fork-conflict-test-graph">
+                                          <small>Repo test graph matches</small>
+                                          <ul>
+                                            {semanticPreview.testGraphMatches.map((item) => (
+                                              <li key={item}>{item}</li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      )}
+                                    </section>
+                                  );
+                                })()}
+                                <label className="thread-fork-conflict-draft">
+                                  <small>Manual resolved draft</small>
+                                  <textarea
+                                    value={forkConflictDrafts[forkConflictPreview.key] ?? ""}
+                                    spellCheck={false}
+                                    onChange={(event) =>
+                                      setForkConflictDraft(forkConflictPreview.key, event.target.value)
+                                    }
+                                  />
+                                </label>
+                                <div className="thread-fork-conflict-draft-controls" aria-label="Inline hunk controls">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setForkConflictDraft(
+                                        forkConflictPreview.key,
+                                        forkConflictPreview.sourceContent ?? "",
+                                      )
+                                    }
+                                  >
+                                    Use source version
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setForkConflictDraft(
+                                        forkConflictPreview.key,
+                                        forkConflictPreview.forkContent ?? "",
+                                      )
+                                    }
+                                  >
+                                    Use fork version
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setForkConflictDraft(
+                                        forkConflictPreview.key,
+                                        forkConflictPreview.sourceContent ?? "",
+                                      )
+                                    }
+                                  >
+                                    Reset draft
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => applyAllForkConflictDraftHunks(forkConflictPreview.key, "source")}
+                                  >
+                                    Apply all source hunks
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => applyAllForkConflictDraftHunks(forkConflictPreview.key, "fork")}
+                                  >
+                                    Apply all fork hunks
+                                  </button>
+                                </div>
+                                <section className="thread-fork-conflict-hunks" aria-label="Inline conflict hunk application">
+                                  <small>Conflict hunk application</small>
+                                  {(() => {
+                                    const hunks = parseForkConflictDraftHunks(
+                                      forkConflictDrafts[forkConflictPreview.key] ?? "",
+                                    );
+                                    if (hunks.length === 0) {
+                                      return (
+                                        <p>
+                                          No conflict markers detected in the draft. Review the diff, then write the draft for approval.
+                                        </p>
+                                      );
+                                    }
+                                    return hunks.map((hunk) => (
+                                      <article key={hunk.id} className="thread-fork-conflict-hunk">
+                                        <header>
+                                          <strong>Conflict hunk {hunk.index}</strong>
+                                          <span>
+                                            Lines {hunk.startLine}-{hunk.endLine}
+                                          </span>
+                                        </header>
+                                        <div className="thread-fork-conflict-hunk-grid">
+                                          <section>
+                                            <small>Source side: {hunk.sourceLabel}</small>
+                                            <pre>{hunk.sourceText || "(empty side)"}</pre>
+                                          </section>
+                                          <section>
+                                            <small>Fork side: {hunk.forkLabel}</small>
+                                            <pre>{hunk.forkText || "(empty side)"}</pre>
+                                          </section>
+                                        </div>
+                                        <div className="thread-fork-conflict-hunk-actions">
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              applyForkConflictDraftHunk(forkConflictPreview.key, hunk, "source")
+                                            }
+                                          >
+                                            Apply source side
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              applyForkConflictDraftHunk(forkConflictPreview.key, hunk, "fork")
+                                            }
+                                          >
+                                            Apply fork side
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              applyForkConflictDraftHunk(forkConflictPreview.key, hunk, "both")
+                                            }
+                                          >
+                                            Keep both sides
+                                          </button>
+                                        </div>
+                                        <div className="thread-fork-conflict-hunk-tests">
+                                          <small>Hunk-level test suggestions</small>
+                                          <ul>
+                                            {getForkConflictHunkTestSuggestions(forkConflictPreview.path, hunk).map(
+                                              (suggestion) => (
+                                                <li key={suggestion}>{suggestion}</li>
+                                              ),
+                                            )}
+                                          </ul>
+                                        </div>
+                                      </article>
+                                    ));
+                                  })()}
+                                </section>
+                                <div className="thread-fork-conflict-preview-actions">
+                                  <button
+                                    type="button"
+                                    onClick={() => copyText(forkConflictDrafts[forkConflictPreview.key] ?? "")}
+                                  >
+                                    Copy resolved draft
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={forkConflictPreview.writeStatus === "loading" || !forkConflictPreview.diffHash}
+                                    onClick={() => {
+                                      const file = getForkConflictFiles(threadMenu.thread.fork!)
+                                        .find((item) => item.path === forkConflictPreview.path);
+                                      if (file) void writeForkConflictDraft(threadMenu.thread, file);
+                                    }}
+                                  >
+                                    Write draft for approval
+                                  </button>
+                                  {forkConflictPreview.writeMessage && <span>{forkConflictPreview.writeMessage}</span>}
+                                  {forkConflictPreview.stageMessage && <span>{forkConflictPreview.stageMessage}</span>}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        )}
+                        <small>
+                          Manual draft write-back and staging both use the existing Approval Center workspace mutation path.
+                        </small>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() =>
+                        runThreadMenuAction(() =>
+                          onOpenWorkspacePath(threadMenu.thread.fork?.sourceWorkspacePath || ""),
+                        )
+                      }
+                    >
+                      Open source workspace
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() =>
+                        runThreadMenuAction(() =>
+                          onOpenWorkspacePath(threadMenu.thread.fork?.worktreePath || ""),
+                        )
+                      }
+                    >
+                      Open fork worktree
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => runThreadMenuAction(() => copyText(getForkRecoveryChecklist(threadMenu.thread)))}
+                    >
+                      Copy recovery checklist
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => runThreadMenuAction(() => copyText(getForkConflictResolutionPlan(threadMenu.thread)))}
+                    >
+                      Copy conflict resolution plan
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => runThreadMenuAction(() => copyText(getForkRecoveryCommandSet(threadMenu.thread)))}
+                    >
+                      Copy conflict diff commands
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => runThreadMenuAction(() => copyText(getThreadForkSummary(threadMenu.thread)))}
+                    >
+                      Copy fork status summary
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => runThreadMenuAction(() => copyText(getThreadForkSummary(threadMenu.thread)))}
+                >
+                  Copy fork details
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => runThreadMenuAction(() => copyText(threadMenu.thread.fork?.sourceWorkspacePath || ""))}
+                >
+                  Copy fork source path
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => runThreadMenuAction(() => copyText(threadMenu.thread.fork?.branch || ""))}
+                >
+                  Copy fork branch
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={
+                    threadMenu.thread.fork.lifecycleStatus === "closed" ||
+                    threadMenu.thread.fork.lifecycleStatus === "merged" ||
+                    threadMenu.thread.fork.lifecycleStatus === "cleanup_pending"
+                  }
+                  onClick={() =>
+                    runThreadMenuAction(() =>
+                      onRequestForkLifecycle(threadMenu.thread.id, "merge_back"),
+                    )
+                  }
+                >
+                  Request merge-back review
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={threadMenu.thread.fork.lifecycleStatus === "closed"}
+                  onClick={() =>
+                    runThreadMenuAction(() =>
+                      onRequestForkLifecycle(threadMenu.thread.id, "discard"),
+                    )
+                  }
+                >
+                  Request discard review
+                </button>
+              </>
+            )}
+            <div className="thread-context-separator" />
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() =>
+                runThreadMenuAction(() => {
+                  const path = getThreadWorkspacePath(threadMenu.thread);
+                  if (path) void onOpenWorkspacePath(path);
+                })
+              }
+            >
+              {zh ? "在资源管理器中打开" : "Open in File Explorer"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => runThreadMenuAction(() => copyText(getThreadWorkspacePath(threadMenu.thread)))}
+            >
+              {zh ? "复制工作目录" : "Copy working directory"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => runThreadMenuAction(() => copyText(threadMenu.thread.id))}
+            >
+              {zh ? "复制会话 ID" : "Copy conversation ID"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => runThreadMenuAction(() => copyText(getThreadDeepLink(threadMenu.thread)))}
+            >
+              {zh ? "复制深度链接" : "Copy deep link"}
+            </button>
+          </div>
+        </div>
+      )}
+      {commandPaletteOpen && (
+        <div className="command-palette-overlay" role="presentation" onMouseDown={closeCommandPalette}>
+          <section
+            className="command-palette"
+            role="dialog"
+            aria-modal="true"
+            aria-label={zh ? "搜索聊天或运行命令" : "Search chats or run commands"}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="command-palette-input-row">
+              <input
+                ref={commandPaletteInputRef}
+                value={commandPaletteQuery}
+                onChange={(event) => setCommandPaletteQuery(event.target.value)}
+                onKeyDown={handleCommandPaletteKeyDown}
+                placeholder={zh ? "搜索聊天或运行命令" : "Search chats or run commands"}
+                aria-label={zh ? "搜索聊天或运行命令" : "Search chats or run commands"}
+              />
+            </div>
+            <div className="command-palette-results">
+              {visibleCommandPaletteItems.length === 0 ? (
+                <div className="command-palette-empty">
+                  {zh ? "没有匹配结果" : "No matching results"}
+                </div>
+              ) : (
+                <>
+                  {(["chats", "recommendations"] as const).map((group) => {
+                    const groupItems = visibleCommandPaletteItems.filter((item) => item.group === group);
+                    if (groupItems.length === 0) return null;
+                    return (
+                      <div className="command-palette-group" key={group}>
+                        <div className="command-palette-group-label">
+                          {group === "chats"
+                            ? zh ? "聊天" : "Chats"
+                            : zh ? "推荐" : "Recommended"}
+                        </div>
+                        {groupItems.map((item) => {
+                          const selected = visibleCommandPaletteItems[commandPaletteSelectedIndex]?.id === item.id;
+                          const Icon = item.icon;
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              className={`command-palette-item ${selected ? "selected" : ""}`}
+                              onClick={() => runCommandPaletteItem(item)}
+                              onMouseEnter={() =>
+                                setCommandPaletteSelectedIndex(
+                                  visibleCommandPaletteItems.findIndex((candidate) => candidate.id === item.id),
+                                )
+                              }
+                            >
+                              <span className="command-palette-icon">
+                                <Icon size={16} />
+                              </span>
+                              <span className="command-palette-title">{item.label}</span>
+                              {item.meta && <span className="command-palette-meta">{item.meta}</span>}
+                              {item.shortcut && <kbd>{item.shortcut}</kbd>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
       {desktopStatusOpen && (
         <div className="desktop-status-overlay" role="presentation" onMouseDown={() => setDesktopStatusOpen(false)}>
           <section

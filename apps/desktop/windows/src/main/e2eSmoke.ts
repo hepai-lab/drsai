@@ -1,5 +1,6 @@
+import { execFileSync } from "child_process";
 import { dirname, join } from "path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import type { BrowserWindow } from "electron";
 
 interface SmokeResult {
@@ -7,6 +8,27 @@ interface SmokeResult {
   checks: Record<string, boolean>;
   details: Record<string, unknown>;
   error?: string;
+}
+
+interface ForkMergeApprovedFixture {
+  fixtureRoot: string;
+  sourcePath: string;
+  worktreePath: string;
+  branch: string;
+  baseRef: string;
+  forkCommit: string;
+  expectedContent: string;
+}
+
+interface ForkMergeConflictFixture {
+  fixtureRoot: string;
+  sourcePath: string;
+  worktreePath: string;
+  branch: string;
+  baseRef: string;
+  sourceHead: string;
+  forkCommit: string;
+  sourceContent: string;
 }
 
 const timeoutMs = Number(process.env.OPENDRSAI_E2E_TIMEOUT_MS || "30000");
@@ -19,6 +41,7 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     process.env.OPENDRSAI_E2E_AGENT_RUN !== "1" &&
     process.env.OPENDRSAI_E2E_AGENT_RUN_FAILURES !== "1" &&
     process.env.OPENDRSAI_E2E_THREADS !== "1" &&
+    process.env.OPENDRSAI_E2E_FORK_MERGE !== "1" &&
     process.env.OPENDRSAI_E2E_OIDC !== "1"
   ) return;
   const resultPath = process.env.OPENDRSAI_E2E_RESULT;
@@ -56,6 +79,8 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
         ? runAgentRunSmoke
       : process.env.OPENDRSAI_E2E_THREADS === "1"
         ? runThreadsSmoke
+      : process.env.OPENDRSAI_E2E_FORK_MERGE === "1"
+        ? runForkMergeSmoke
       : process.env.OPENDRSAI_E2E_OIDC === "1"
         ? runOidcSmoke
       : process.env.OPENDRSAI_E2E_CHAT === "1"
@@ -790,6 +815,510 @@ async function runThreadsSmoke(window: BrowserWindow): Promise<SmokeResult> {
   return { ok, checks: result.checks, details: result.details };
 }
 
+async function runForkMergeSmoke(window: BrowserWindow): Promise<SmokeResult> {
+  const approvedFixture = prepareForkMergeApprovedFixture();
+  const conflictFixture = prepareForkMergeConflictFixture();
+  const result = (await window.webContents.executeJavaScript(`
+    (async () => {
+      const checks = {};
+      const details = {};
+      async function waitForDomReady() {
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          if (document.body.innerText.includes("OpenDrSai") && document.querySelector("button")) return true;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return false;
+      }
+
+      const api = window.openDrSai;
+      checks.bridge = Boolean(api);
+      checks.domReady = await waitForDomReady();
+      if (!api) return { checks, details };
+
+      const login = await api.login({ developerBypass: true, rememberMe: false });
+      details.login = { ok: login && login.ok, message: login && login.message };
+      checks.login = Boolean(login && login.ok);
+
+      const parentPath = ${JSON.stringify(process.env.DRSAI_HOME || "")};
+      const sourceWorkspace = await api.createWorkspace({
+        source: "empty",
+        parentPath,
+        name: "fork-merge-source",
+        trusted: true,
+        metadata: { source: "e2e-fork-merge", role: "source" },
+      });
+      const forkWorkspace = await api.createWorkspace({
+        source: "empty",
+        parentPath,
+        name: "fork-merge-worktree",
+        trusted: true,
+        metadata: { source: "e2e-fork-merge", role: "worktree" },
+      });
+      details.sourceWorkspace = sourceWorkspace;
+      details.forkWorkspace = forkWorkspace;
+      checks.workspacesCreated = Boolean(sourceWorkspace && forkWorkspace && sourceWorkspace.path !== forkWorkspace.path);
+
+      const createdAt = new Date().toISOString();
+      const thread = await api.createThread({
+        kind: "agent_run",
+        title: "E2E fork merge-back smoke",
+        workspacePath: forkWorkspace.path,
+        fork: {
+          sourceWorkspacePath: sourceWorkspace.path,
+          repoRoot: sourceWorkspace.path,
+          worktreePath: forkWorkspace.path,
+          branch: "drsai/e2e-fork-merge",
+          baseRef: "HEAD",
+          createdAt,
+          sourceHasChanges: false,
+          lifecycleStatus: "active",
+          lifecycleMessage: "E2E packaged merge-back review fixture.",
+        },
+      });
+      details.thread = thread;
+      checks.threadCreated = Boolean(
+        thread &&
+        thread.kind === "agent_run" &&
+        thread.fork &&
+        thread.fork.lifecycleStatus === "active" &&
+        thread.workspacePath === forkWorkspace.path
+      );
+
+      const approvalResult = await api.requestForkLifecycleApproval({
+        threadId: thread.id,
+        action: "merge_back",
+      });
+      details.approvalResult = approvalResult;
+      checks.approvalQueued = Boolean(
+        approvalResult &&
+        approvalResult.queued === true &&
+        approvalResult.approval &&
+        approvalResult.approval.actionKind === "fork.lifecycle" &&
+        approvalResult.approval.source === "fork"
+      );
+
+      const pendingBefore = await api.listPendingApprovals();
+      details.pendingBefore = pendingBefore;
+      const queuedApproval = pendingBefore.find((approval) =>
+        approval.id === approvalResult.approval.id &&
+        approval.actionKind === "fork.lifecycle" &&
+        /merge back/i.test(String(approval.title || ""))
+      );
+      checks.pendingApprovalListed = Boolean(queuedApproval);
+      checks.approvalDetailMentionsBoundaries = Boolean(
+        queuedApproval &&
+        String(queuedApproval.detail || "").includes(sourceWorkspace.path) &&
+        String(queuedApproval.detail || "").includes(forkWorkspace.path)
+      );
+
+      const rejected = await api.decideApproval({
+        id: approvalResult.approval.id,
+        approved: false,
+        reason: "reject",
+      });
+      details.rejected = rejected;
+      checks.rejectionAccepted = rejected === true;
+
+      const pendingAfter = await api.listPendingApprovals();
+      details.pendingAfter = pendingAfter;
+      checks.approvalClearedAfterReject = !pendingAfter.some((approval) => approval.id === approvalResult.approval.id);
+
+      const threadsAfter = await api.listThreads();
+      const threadAfter = threadsAfter.find((item) => item.id === thread.id);
+      details.threadAfter = threadAfter;
+      checks.threadStillActiveAfterReject = Boolean(
+        threadAfter &&
+        threadAfter.fork &&
+        threadAfter.fork.lifecycleStatus === "active" &&
+        threadAfter.fork.branch === "drsai/e2e-fork-merge"
+      );
+      checks.rejectDidNotMergeOrClose = Boolean(
+        threadAfter &&
+        threadAfter.fork &&
+        threadAfter.fork.lifecycleStatus !== "merged" &&
+        threadAfter.fork.lifecycleStatus !== "closed" &&
+        threadAfter.fork.lifecycleStatus !== "cleanup_pending"
+      );
+
+      const approvedFixture = ${JSON.stringify(approvedFixture)};
+      const approvedSourceWorkspace = await api.createWorkspace({
+        source: "existing",
+        path: approvedFixture.sourcePath,
+        name: "fork-merge-approved-source",
+        trusted: true,
+        metadata: { source: "e2e-fork-merge", role: "approved-source" },
+      });
+      const approvedForkWorkspace = await api.createWorkspace({
+        source: "existing",
+        path: approvedFixture.worktreePath,
+        name: "fork-merge-approved-worktree",
+        trusted: true,
+        metadata: { source: "e2e-fork-merge", role: "approved-worktree" },
+      });
+      details.approvedSourceWorkspace = approvedSourceWorkspace;
+      details.approvedForkWorkspace = approvedForkWorkspace;
+      checks.approvedWorkspacesRegistered = Boolean(
+        approvedSourceWorkspace &&
+        approvedForkWorkspace &&
+        approvedSourceWorkspace.path === approvedFixture.sourcePath &&
+        approvedForkWorkspace.path === approvedFixture.worktreePath
+      );
+
+      const approvedThread = await api.createThread({
+        kind: "agent_run",
+        title: "E2E approved fork merge-back smoke",
+        workspacePath: approvedFixture.worktreePath,
+        fork: {
+          sourceWorkspacePath: approvedFixture.sourcePath,
+          repoRoot: approvedFixture.sourcePath,
+          worktreePath: approvedFixture.worktreePath,
+          branch: approvedFixture.branch,
+          baseRef: approvedFixture.baseRef,
+          createdAt: new Date().toISOString(),
+          sourceHasChanges: false,
+          lifecycleStatus: "active",
+          lifecycleMessage: "E2E packaged approved merge-back fixture.",
+        },
+      });
+      details.approvedThread = approvedThread;
+      checks.approvedThreadCreated = Boolean(
+        approvedThread &&
+        approvedThread.kind === "agent_run" &&
+        approvedThread.fork &&
+        approvedThread.fork.lifecycleStatus === "active"
+      );
+
+      const approvedProposal = await api.requestForkLifecycleApproval({
+        threadId: approvedThread.id,
+        action: "merge_back",
+      });
+      details.approvedProposal = approvedProposal;
+      checks.approvedMergeQueued = Boolean(
+        approvedProposal &&
+        approvedProposal.queued === true &&
+        approvedProposal.approval &&
+        approvedProposal.approval.actionKind === "fork.lifecycle"
+      );
+
+      const approvedPendingBefore = await api.listPendingApprovals();
+      details.approvedPendingBefore = approvedPendingBefore;
+      checks.approvedPendingListed = approvedPendingBefore.some((approval) =>
+        approval.id === approvedProposal.approval.id &&
+        approval.actionKind === "fork.lifecycle" &&
+        String(approval.detail || "").includes(approvedFixture.sourcePath) &&
+        String(approval.detail || "").includes(approvedFixture.worktreePath)
+      );
+
+      const approved = await api.decideApproval({
+        id: approvedProposal.approval.id,
+        approved: true,
+        reason: "approve throwaway fixture merge",
+      });
+      details.approved = approved;
+      checks.approvalAccepted = approved === true;
+
+      const approvedPendingAfter = await api.listPendingApprovals();
+      details.approvedPendingAfter = approvedPendingAfter;
+      checks.approvalClearedAfterApprove = !approvedPendingAfter.some((approval) => approval.id === approvedProposal.approval.id);
+
+      const approvedThreadsAfter = await api.listThreads();
+      const approvedThreadAfter = approvedThreadsAfter.find((item) => item.id === approvedThread.id);
+      details.approvedThreadAfter = approvedThreadAfter;
+      checks.threadMergedAfterApprove = Boolean(
+        approvedThreadAfter &&
+        approvedThreadAfter.fork &&
+        approvedThreadAfter.fork.lifecycleStatus === "merged" &&
+        approvedThreadAfter.fork.mergedCommit &&
+        approvedThreadAfter.fork.branchCleanupStatus === "pending"
+      );
+      checks.approvedMergeMessageMentionsCleanup = Boolean(
+        approvedThreadAfter &&
+        approvedThreadAfter.fork &&
+        /retained until discard cleanup is approved/i.test(String(approvedThreadAfter.fork.lifecycleMessage || ""))
+      );
+
+      const cleanupProposal = await api.requestForkLifecycleApproval({
+        threadId: approvedThread.id,
+        action: "discard",
+      });
+      details.cleanupProposal = cleanupProposal;
+      checks.cleanupQueued = Boolean(
+        cleanupProposal &&
+        cleanupProposal.queued === true &&
+        cleanupProposal.approval &&
+        cleanupProposal.approval.actionKind === "fork.lifecycle"
+      );
+
+      const cleanupPendingBefore = await api.listPendingApprovals();
+      details.cleanupPendingBefore = cleanupPendingBefore;
+      checks.cleanupPendingListed = cleanupPendingBefore.some((approval) =>
+        approval.id === cleanupProposal.approval.id &&
+        approval.actionKind === "fork.lifecycle" &&
+        /discard/i.test(String(approval.title || "")) &&
+        /git branch -d/i.test(String(approval.detail || ""))
+      );
+
+      const cleanupApproved = await api.decideApproval({
+        id: cleanupProposal.approval.id,
+        approved: true,
+        reason: "approve throwaway fixture cleanup",
+      });
+      details.cleanupApproved = cleanupApproved;
+      checks.cleanupApprovalAccepted = cleanupApproved === true;
+
+      const cleanupPendingAfter = await api.listPendingApprovals();
+      details.cleanupPendingAfter = cleanupPendingAfter;
+      checks.cleanupClearedAfterApprove = !cleanupPendingAfter.some((approval) => approval.id === cleanupProposal.approval.id);
+
+      const cleanupThreadsAfter = await api.listThreads();
+      const cleanupThreadAfter = cleanupThreadsAfter.find((item) => item.id === approvedThread.id);
+      details.cleanupThreadAfter = cleanupThreadAfter;
+      checks.threadClosedAfterCleanup = Boolean(
+        cleanupThreadAfter &&
+        cleanupThreadAfter.fork &&
+        cleanupThreadAfter.fork.lifecycleStatus === "closed" &&
+        cleanupThreadAfter.fork.branchCleanupStatus === "deleted"
+      );
+      checks.cleanupMessageMentionsBranchDelete = Boolean(
+        cleanupThreadAfter &&
+        cleanupThreadAfter.fork &&
+        /git branch -d/i.test(String(cleanupThreadAfter.fork.branchCleanupMessage || ""))
+      );
+
+      const conflictFixture = ${JSON.stringify(conflictFixture)};
+      const conflictSourceWorkspace = await api.createWorkspace({
+        source: "existing",
+        path: conflictFixture.sourcePath,
+        name: "fork-merge-conflict-source",
+        trusted: true,
+        metadata: { source: "e2e-fork-merge", role: "conflict-source" },
+      });
+      const conflictForkWorkspace = await api.createWorkspace({
+        source: "existing",
+        path: conflictFixture.worktreePath,
+        name: "fork-merge-conflict-worktree",
+        trusted: true,
+        metadata: { source: "e2e-fork-merge", role: "conflict-worktree" },
+      });
+      details.conflictSourceWorkspace = conflictSourceWorkspace;
+      details.conflictForkWorkspace = conflictForkWorkspace;
+      checks.conflictWorkspacesRegistered = Boolean(
+        conflictSourceWorkspace &&
+        conflictForkWorkspace &&
+        conflictSourceWorkspace.path === conflictFixture.sourcePath &&
+        conflictForkWorkspace.path === conflictFixture.worktreePath
+      );
+
+      const conflictThread = await api.createThread({
+        kind: "agent_run",
+        title: "E2E conflict fork merge-back smoke",
+        workspacePath: conflictFixture.worktreePath,
+        fork: {
+          sourceWorkspacePath: conflictFixture.sourcePath,
+          repoRoot: conflictFixture.sourcePath,
+          worktreePath: conflictFixture.worktreePath,
+          branch: conflictFixture.branch,
+          baseRef: conflictFixture.baseRef,
+          createdAt: new Date().toISOString(),
+          sourceHasChanges: false,
+          lifecycleStatus: "active",
+          lifecycleMessage: "E2E packaged conflict merge-back fixture.",
+        },
+      });
+      details.conflictThread = conflictThread;
+      checks.conflictThreadCreated = Boolean(
+        conflictThread &&
+        conflictThread.kind === "agent_run" &&
+        conflictThread.fork &&
+        conflictThread.fork.lifecycleStatus === "active"
+      );
+
+      const conflictProposal = await api.requestForkLifecycleApproval({
+        threadId: conflictThread.id,
+        action: "merge_back",
+      });
+      details.conflictProposal = conflictProposal;
+      checks.conflictMergeQueued = Boolean(
+        conflictProposal &&
+        conflictProposal.queued === true &&
+        conflictProposal.approval &&
+        conflictProposal.approval.actionKind === "fork.lifecycle"
+      );
+
+      const conflictPendingBefore = await api.listPendingApprovals();
+      details.conflictPendingBefore = conflictPendingBefore;
+      checks.conflictPendingListed = conflictPendingBefore.some((approval) =>
+        approval.id === conflictProposal.approval.id &&
+        approval.actionKind === "fork.lifecycle" &&
+        String(approval.detail || "").includes(conflictFixture.sourcePath) &&
+        String(approval.detail || "").includes(conflictFixture.worktreePath)
+      );
+
+      const conflictApproved = await api.decideApproval({
+        id: conflictProposal.approval.id,
+        approved: true,
+        reason: "approve throwaway conflict fixture merge",
+      });
+      details.conflictApproved = conflictApproved;
+      checks.conflictApprovalAccepted = conflictApproved === true;
+
+      const conflictPendingAfter = await api.listPendingApprovals();
+      details.conflictPendingAfter = conflictPendingAfter;
+      checks.conflictClearedAfterApprove = !conflictPendingAfter.some((approval) => approval.id === conflictProposal.approval.id);
+
+      const conflictThreadsAfter = await api.listThreads();
+      const conflictThreadAfter = conflictThreadsAfter.find((item) => item.id === conflictThread.id);
+      details.conflictThreadAfter = conflictThreadAfter;
+      checks.threadMergePendingAfterConflict = Boolean(
+        conflictThreadAfter &&
+        conflictThreadAfter.fork &&
+        conflictThreadAfter.fork.lifecycleStatus === "merge_pending" &&
+        /manual conflict resolution/i.test(String(conflictThreadAfter.fork.lifecycleMessage || ""))
+      );
+      checks.conflictDidNotMarkMerged = Boolean(
+        conflictThreadAfter &&
+        conflictThreadAfter.fork &&
+        conflictThreadAfter.fork.lifecycleStatus !== "merged" &&
+        !conflictThreadAfter.fork.mergedCommit
+      );
+
+      return { checks, details };
+    })()
+  `)) as { checks: Record<string, boolean>; details: Record<string, unknown> };
+
+  const mergedContent = readFileSync(join(approvedFixture.sourcePath, "notes.txt"), "utf8");
+  const mergedHead = runSmokeGit(approvedFixture.sourcePath, ["rev-parse", "--short=12", "HEAD"]);
+  const mergeParents = runSmokeGit(approvedFixture.sourcePath, ["rev-list", "--parents", "-n", "1", "HEAD"]);
+  const cleanupBranchExists = smokeGitSucceeds(approvedFixture.sourcePath, ["rev-parse", "--verify", approvedFixture.branch]);
+  const conflictContent = readFileSync(join(conflictFixture.sourcePath, "notes.txt"), "utf8");
+  const conflictHead = runSmokeGit(conflictFixture.sourcePath, ["rev-parse", "--short=12", "HEAD"]);
+  const conflictStatus = runSmokeGit(conflictFixture.sourcePath, ["status", "--porcelain=v1"]);
+  result.details.approvedFixture = {
+    ...approvedFixture,
+    mergedHead,
+    mergeParents,
+    cleanupBranchExists,
+    cleanupWorktreeExists: existsSync(approvedFixture.worktreePath),
+  };
+  result.details.conflictFixture = {
+    ...conflictFixture,
+    conflictHead,
+    conflictStatus,
+  };
+  result.checks.approvedSourceContainsForkChange = mergedContent === approvedFixture.expectedContent;
+  result.checks.approvedSourceHeadAdvanced = mergedHead !== approvedFixture.baseRef;
+  result.checks.approvedMergeCommitHasTwoParents = mergeParents.trim().split(/\s+/).length === 3;
+  result.checks.cleanupRemovedWorktree = !existsSync(approvedFixture.worktreePath);
+  result.checks.cleanupDeletedMergedBranch = !cleanupBranchExists;
+  result.checks.conflictSourceContentPreserved = conflictContent === conflictFixture.sourceContent;
+  result.checks.conflictSourceHeadPreserved = conflictHead === conflictFixture.sourceHead;
+  result.checks.conflictMergeWasAborted = conflictStatus.trim() === "";
+
+  const ok = Object.values(result.checks).every(Boolean);
+  return { ok, checks: result.checks, details: result.details };
+}
+
+function prepareForkMergeApprovedFixture(): ForkMergeApprovedFixture {
+  const fixtureRoot = join(process.env.DRSAI_HOME || "", "e2e-fork-merge-approved");
+  if (!fixtureRoot || fixtureRoot === "e2e-fork-merge-approved") {
+    throw new Error("DRSAI_HOME is required for the approved fork merge-back fixture.");
+  }
+  rmSync(fixtureRoot, { recursive: true, force: true });
+  const sourcePath = join(fixtureRoot, "source");
+  const worktreePath = join(fixtureRoot, "worktree");
+  const branch = "drsai/e2e-approved-merge";
+  mkdirSync(sourcePath, { recursive: true });
+
+  runSmokeGit(sourcePath, ["init"]);
+  runSmokeGit(sourcePath, ["config", "user.email", "desktop-e2e@opendrsai.local"]);
+  runSmokeGit(sourcePath, ["config", "user.name", "OpenDrSai Desktop E2E"]);
+  runSmokeGit(sourcePath, ["checkout", "-B", "main"]);
+  writeFileSync(join(sourcePath, "notes.txt"), "base\n", "utf8");
+  runSmokeGit(sourcePath, ["add", "notes.txt"]);
+  runSmokeGit(sourcePath, ["commit", "-m", "base"]);
+  const baseRef = runSmokeGit(sourcePath, ["rev-parse", "--short=12", "HEAD"]);
+
+  runSmokeGit(sourcePath, ["worktree", "add", "-b", branch, worktreePath, "HEAD"]);
+  const expectedContent = "base\napproved merge\n";
+  writeFileSync(join(worktreePath, "notes.txt"), expectedContent, "utf8");
+  runSmokeGit(worktreePath, ["add", "notes.txt"]);
+  runSmokeGit(worktreePath, ["commit", "-m", "approved fork change"]);
+  const forkCommit = runSmokeGit(worktreePath, ["rev-parse", "--short=12", "HEAD"]);
+
+  return {
+    fixtureRoot,
+    sourcePath,
+    worktreePath,
+    branch,
+    baseRef,
+    forkCommit,
+    expectedContent,
+  };
+}
+
+function prepareForkMergeConflictFixture(): ForkMergeConflictFixture {
+  const fixtureRoot = join(process.env.DRSAI_HOME || "", "e2e-fork-merge-conflict");
+  if (!fixtureRoot || fixtureRoot === "e2e-fork-merge-conflict") {
+    throw new Error("DRSAI_HOME is required for the conflict fork merge-back fixture.");
+  }
+  rmSync(fixtureRoot, { recursive: true, force: true });
+  const sourcePath = join(fixtureRoot, "source");
+  const worktreePath = join(fixtureRoot, "worktree");
+  const branch = "drsai/e2e-conflict-merge";
+  mkdirSync(sourcePath, { recursive: true });
+
+  runSmokeGit(sourcePath, ["init"]);
+  runSmokeGit(sourcePath, ["config", "user.email", "desktop-e2e@opendrsai.local"]);
+  runSmokeGit(sourcePath, ["config", "user.name", "OpenDrSai Desktop E2E"]);
+  runSmokeGit(sourcePath, ["checkout", "-B", "main"]);
+  writeFileSync(join(sourcePath, "notes.txt"), "base\n", "utf8");
+  runSmokeGit(sourcePath, ["add", "notes.txt"]);
+  runSmokeGit(sourcePath, ["commit", "-m", "base"]);
+  const baseRef = runSmokeGit(sourcePath, ["rev-parse", "--short=12", "HEAD"]);
+
+  runSmokeGit(sourcePath, ["worktree", "add", "-b", branch, worktreePath, "HEAD"]);
+  writeFileSync(join(worktreePath, "notes.txt"), "base\nfork conflicting change\n", "utf8");
+  runSmokeGit(worktreePath, ["add", "notes.txt"]);
+  runSmokeGit(worktreePath, ["commit", "-m", "conflicting fork change"]);
+  const forkCommit = runSmokeGit(worktreePath, ["rev-parse", "--short=12", "HEAD"]);
+
+  const sourceContent = "base\nsource conflicting change\n";
+  writeFileSync(join(sourcePath, "notes.txt"), sourceContent, "utf8");
+  runSmokeGit(sourcePath, ["add", "notes.txt"]);
+  runSmokeGit(sourcePath, ["commit", "-m", "source conflicting change"]);
+  const sourceHead = runSmokeGit(sourcePath, ["rev-parse", "--short=12", "HEAD"]);
+
+  return {
+    fixtureRoot,
+    sourcePath,
+    worktreePath,
+    branch,
+    baseRef,
+    sourceHead,
+    forkCommit,
+    sourceContent,
+  };
+}
+
+function runSmokeGit(cwd: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  }).trim();
+}
+
+function smokeGitSucceeds(cwd: string, args: string[]): boolean {
+  try {
+    runSmokeGit(cwd, args);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function runOidcSmoke(window: BrowserWindow): Promise<SmokeResult> {
   const result = (await window.webContents.executeJavaScript(`
     (async () => {
@@ -812,6 +1341,10 @@ async function runOidcSmoke(window: BrowserWindow): Promise<SmokeResult> {
           session.user &&
           session.user.id === "e2e-hai-user" &&
           session.user.email === "e2e-hai-user@ihep.ac.cn" &&
+          Array.isArray(session.user.roles) &&
+          session.user.roles.includes("user") &&
+          Array.isArray(session.user.groups) &&
+          session.user.groups.includes("desktop-e2e") &&
           session.refreshable === true &&
           !("accessToken" in session) &&
           !("refreshToken" in session) &&

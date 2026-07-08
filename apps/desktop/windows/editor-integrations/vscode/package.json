@@ -1,0 +1,41 @@
+{
+  "name": "opendrsai-ide-context",
+  "displayName": "OpenDrSai IDE Context",
+  "description": "Writes the active VS Code file and selection into .drsai/ide-context.json for the OpenDrSai Windows desktop chat bar.",
+  "version": "0.1.0",
+  "publisher": "opendrsai",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:opendrsai.captureIdeContext",
+    "onCommand:opendrsai.openIdeContextFile"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "opendrsai.captureIdeContext",
+        "title": "OpenDrSai: Capture IDE Context"
+      },
+      {
+        "command": "opendrsai.openIdeContextFile",
+        "title": "OpenDrSai: Open IDE Context File"
+      }
+    ],
+    "configuration": {
+      "title": "OpenDrSai IDE Context",
+      "properties": {
+        "opendrsai.ideContext.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write the active file and selected text to .drsai/ide-context.json in the current workspace."
+        }
+      }
+    }
+  }
+}

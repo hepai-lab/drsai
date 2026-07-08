@@ -502,6 +502,8 @@ async function createOidcSession(
       name: idClaims?.name || idClaims?.email || userId,
       avatarUrl: idClaims?.picture || undefined,
       role: Array.isArray(accessClaims?.roles) && accessClaims.roles.includes("admin") ? "admin" : "user",
+      roles: Array.isArray(accessClaims?.roles) ? accessClaims.roles : undefined,
+      groups: Array.isArray(accessClaims?.groups) ? accessClaims.groups : undefined,
     },
   };
 }
@@ -721,6 +723,7 @@ interface OidcAccessTokenClaims {
   aud?: string | string[];
   exp?: number;
   roles?: string[];
+  groups?: string[];
 }
 
 interface OidcJwtHeader {

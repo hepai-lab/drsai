@@ -6,6 +6,7 @@ const steps = [
   ["Project invariants", npmScript("verify"), true, {}],
   ["Renderer UI invariants", npmScript("verify:ui"), true, {}],
   ["Renderer mojibake guard", npmScript("verify:mojibake"), true, {}],
+  ["Renderer thread context menu", npmScript("verify:thread-menu"), true, {}],
   ["Gateway fake protocol smoke", npmScript("verify:gateway-smoke"), true, {}],
   ["Renderer visual interactions", npmScript("verify:visual"), true, {}],
   ["Packaged app IPC smoke", npmScript("verify:packaged"), true, {}],

@@ -7,6 +7,14 @@ import type {
   BrowserTaskStopRequest,
   BrowserUrlCheck,
 } from "./browser/types";
+import type { ExecutionActionKind } from "./executionPolicy";
+
+export type {
+  ExecutionActionKind,
+  ExecutionPermissionDecision,
+  ExecutionPolicyConfig,
+  ExecutionPolicyMode,
+} from "./executionPolicy";
 
 export type {
   BrowserActionLogEntry,
@@ -89,6 +97,8 @@ export interface AuthUser {
   name: string;
   avatarUrl?: string;
   role: "user" | "admin";
+  roles?: string[];
+  groups?: string[];
 }
 
 export interface AuthSession {
@@ -155,7 +165,7 @@ export interface ChatMessage {
 }
 
 export interface ChatAttachment {
-  kind: "file" | "folder" | "browser" | "terminal";
+  kind: "file" | "folder" | "browser" | "terminal" | "selection";
   path: string;
   name: string;
   url?: string;
@@ -180,11 +190,1184 @@ export interface ChatRequest {
 
 export interface ChatEvent {
   requestId: string;
-  type: "start" | "chunk" | "done" | "error" | "aborted";
+  type: "start" | "chunk" | "status" | "done" | "error" | "aborted";
   content?: string;
   error?: string;
+  level?: "INFO" | "WARNING" | "ERROR" | "DEBUG" | "TRACE" | "FATAL" | string;
   sessionId?: string;
   runId?: string;
+}
+
+export type BrowserTaskPendingApproval = Extract<
+  BrowserTaskEvent,
+  { type: "action.proposed" }
+>;
+
+export type DesktopPendingApprovalSource =
+  | "browser_task"
+  | "shell"
+  | "workspace"
+  | "git"
+  | "fork"
+  | "workflow"
+  | "network"
+  | "connector";
+
+export interface DesktopPendingApproval {
+  id: string;
+  source: DesktopPendingApprovalSource;
+  actionKind: ExecutionActionKind;
+  title: string;
+  detail: string;
+  target?: string;
+  createdAt: string;
+  risk: "low" | "medium" | "high";
+  checklist?: DesktopCommitApprovalChecklist;
+  taskId?: string;
+  actionId?: string;
+}
+
+export interface DesktopCommitApprovalChecklist {
+  type: "git_commit";
+  stagedFiles: string[];
+  workspaceChangedFileCount: number;
+  unstagedFileCount: number;
+  diffLineCount: number;
+  diffTruncated: boolean;
+  riskSummary: string;
+  testCommitment: string;
+  recentTestResult?: string;
+}
+
+export interface DesktopApprovalProposalRequest {
+  source: Exclude<DesktopPendingApprovalSource, "browser_task">;
+  actionKind: ExecutionActionKind;
+  title: string;
+  detail: string;
+  target?: string;
+  risk?: DesktopPendingApproval["risk"];
+  checklist?: DesktopCommitApprovalChecklist;
+  idempotencyKey?: string;
+}
+
+export interface DesktopApprovalProposalResult {
+  queued: boolean;
+  approval?: DesktopPendingApproval;
+  allowed: boolean;
+  requiresApproval: boolean;
+  blocked: boolean;
+  reason: string;
+}
+
+export interface DesktopApprovalDecisionRequest {
+  id: string;
+  approved: boolean;
+  reason?: "reject" | "cancel";
+}
+
+export interface DesktopShellCommandApprovalRequest {
+  terminalSessionId: string;
+  commandId: string;
+  command: string;
+  invocation: string;
+  risk?: DesktopPendingApproval["risk"];
+  workflowRunId?: string;
+  workflowStepId?: string;
+}
+
+export interface DesktopGitCommitApprovalRequest {
+  workspacePath: string;
+  message: string;
+  body?: string;
+  checklist?: DesktopCommitApprovalChecklist;
+  requestId?: string;
+}
+
+export type DesktopForkLifecycleAction = "merge_back" | "discard";
+
+export type DesktopForkQueueStatus =
+  | "queued"
+  | "waiting_approval"
+  | "ready"
+  | "running"
+  | "blocked"
+  | "completed";
+
+export interface DesktopForkLifecycleApprovalRequest {
+  threadId: string;
+  action: DesktopForkLifecycleAction;
+}
+
+export interface DesktopForkLifecycleApprovalResult {
+  queued: boolean;
+  approval?: DesktopPendingApproval;
+  thread?: DesktopThread;
+  allowed: boolean;
+  blocked: boolean;
+  reason: string;
+}
+
+export interface DesktopForkQueueStartApprovalRequest {
+  threadIds: string[];
+}
+
+export interface DesktopForkQueueStartApprovalResult {
+  queued: boolean;
+  approval?: DesktopPendingApproval;
+  threads: DesktopThread[];
+  allowed: boolean;
+  blocked: boolean;
+  reason: string;
+}
+
+export interface DesktopForkQueueDispatchRequest {
+  threadIds: string[];
+  selectedAgentId?: string;
+  selectedAgentName?: string;
+  threadAgentAssignments?: Record<string, DesktopForkQueueAgentAssignment>;
+  model?: string;
+}
+
+export interface DesktopForkQueueAgentAssignment {
+  agentId?: string;
+  agentName?: string;
+}
+
+export interface DesktopForkQueueDispatchStartedRun {
+  threadId: string;
+  requestId: string;
+  runId: string;
+}
+
+export interface DesktopForkQueueDispatchResult {
+  startedRuns: DesktopForkQueueDispatchStartedRun[];
+  threads: DesktopThread[];
+  blockedThreadIds: string[];
+  reason: string;
+}
+
+export interface DesktopForkConflictDraftWriteRequest {
+  threadId: string;
+  workspacePath: string;
+  path: string;
+  draft: string;
+  expectedDiffHash: string;
+}
+
+export interface DesktopForkConflictDraftWriteResult {
+  threadId: string;
+  workspacePath: string;
+  path: string;
+  written: boolean;
+  approvalId?: string;
+  approvalQueued?: boolean;
+  message: string;
+}
+
+export type DesktopProjectMemorySource =
+  | "manual"
+  | "chat_command"
+  | "retrospective";
+
+export interface DesktopProjectMemoryEntry {
+  id: string;
+  workspacePath: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  source: DesktopProjectMemorySource;
+}
+
+export interface DesktopProjectMemoryListRequest {
+  workspacePath: string;
+  limit?: number;
+}
+
+export interface DesktopProjectMemoryAddRequest {
+  workspacePath: string;
+  content: string;
+  source?: DesktopProjectMemorySource;
+}
+
+export interface DesktopProjectMemoryUpdateRequest {
+  workspacePath: string;
+  entryId: string;
+  content: string;
+  source?: DesktopProjectMemorySource;
+}
+
+export interface DesktopProjectMemoryClearRequest {
+  workspacePath: string;
+  entryId?: string;
+}
+
+export interface DesktopProjectMemoryClearResult {
+  workspacePath: string;
+  removedCount: number;
+}
+
+export interface DesktopCustomCommand {
+  id: string;
+  workspacePath: string;
+  name: string;
+  title: string;
+  prompt: string;
+  createdAt: string;
+  updatedAt: string;
+  source: "manual" | "chat_command";
+}
+
+export interface DesktopCustomCommandListRequest {
+  workspacePath: string;
+  limit?: number;
+}
+
+export interface DesktopCustomCommandUpsertRequest {
+  workspacePath: string;
+  name: string;
+  prompt: string;
+  title?: string;
+  source?: DesktopCustomCommand["source"];
+}
+
+export interface DesktopCustomCommandDeleteRequest {
+  workspacePath: string;
+  commandIdOrName: string;
+}
+
+export interface DesktopCustomCommandDeleteResult {
+  workspacePath: string;
+  removedCount: number;
+}
+
+export interface DesktopProjectSkillDraft {
+  id: string;
+  workspacePath: string;
+  title: string;
+  slug: string;
+  summary: string;
+  skillMarkdown: string;
+  draftPath: string;
+  createdAt: string;
+  updatedAt: string;
+  source: "project_memory" | "manual";
+  memoryEntryId?: string;
+  installedAt?: string;
+  installPath?: string;
+  publishedAt?: string;
+  marketplaceSubmissionPath?: string;
+}
+
+export interface DesktopProjectSkillDraftListRequest {
+  workspacePath: string;
+  limit?: number;
+}
+
+export interface DesktopProjectSkillDraftCreateRequest {
+  workspacePath: string;
+  content: string;
+  title?: string;
+  memoryEntryId?: string;
+  source?: DesktopProjectSkillDraft["source"];
+}
+
+export interface DesktopProjectSkillInstallRequest {
+  workspacePath: string;
+  draftId: string;
+  target?: "desktop_local";
+}
+
+export interface DesktopProjectSkillInstallResult {
+  workspacePath: string;
+  draftId: string;
+  title: string;
+  slug: string;
+  target: "desktop_local";
+  installedAt: string;
+  installPath: string;
+  alreadyInstalled: boolean;
+}
+
+export interface DesktopProjectSkillPublishRequest {
+  workspacePath: string;
+  draftId: string;
+  target?: "marketplace_submission";
+  notes?: string;
+}
+
+export interface DesktopProjectSkillPublishResult {
+  workspacePath: string;
+  draftId: string;
+  title: string;
+  slug: string;
+  target: "marketplace_submission";
+  publishedAt: string;
+  submissionPath: string;
+  alreadyPublished: boolean;
+  verification: string;
+}
+
+export type DesktopWorkflowTemplateStatus =
+  | "available"
+  | "preview"
+  | "planned";
+
+export type DesktopWorkflowTemplateCategory =
+  | "planning"
+  | "review"
+  | "testing"
+  | "release"
+  | "research"
+  | "automation";
+
+export interface DesktopWorkflowTemplate {
+  id: string;
+  name: string;
+  category: DesktopWorkflowTemplateCategory;
+  status: DesktopWorkflowTemplateStatus;
+  summary: string;
+  trigger: string;
+  steps: string[];
+  requiredCapabilities: string[];
+  approvalRequired: boolean;
+  verification: string;
+  risk: "low" | "medium" | "high";
+}
+
+export interface DesktopWorkflowMarketplaceListResult {
+  templates: DesktopWorkflowTemplate[];
+  generatedAt: string;
+  availableCount: number;
+  approvalRequiredCount: number;
+  syncedCount?: number;
+  lastSyncedAt?: string;
+}
+
+export interface DesktopWorkflowMarketplaceSyncRequest {
+  workspacePath: string;
+  sourcePath?: string;
+}
+
+export interface DesktopWorkflowMarketplaceSyncResult {
+  workspacePath: string;
+  sourcePath: string;
+  syncedAt: string;
+  importedCount: number;
+  ignoredCount: number;
+  templates: DesktopWorkflowTemplate[];
+  message: string;
+}
+
+export type DesktopWorkflowRunStepKind =
+  | "chat_command"
+  | "terminal_command"
+  | "external_runtime"
+  | "manual_review"
+  | "approval";
+
+export interface DesktopWorkflowRunStep {
+  id: string;
+  kind: DesktopWorkflowRunStepKind;
+  title: string;
+  detail: string;
+  command?: string;
+  requiresApproval: boolean;
+}
+
+export interface DesktopWorkflowRunPrepareRequest {
+  templateId: string;
+  workspacePath?: string;
+}
+
+export type DesktopWorkflowRunStatus =
+  | "ready"
+  | "approval_queued"
+  | "blocked";
+
+export interface DesktopWorkflowRunRecipe {
+  id: string;
+  templateId: string;
+  name: string;
+  workspacePath?: string;
+  status: DesktopWorkflowRunStatus;
+  createdAt: string;
+  steps: DesktopWorkflowRunStep[];
+  verification: string;
+  approvalId?: string;
+  message: string;
+}
+
+export interface DesktopWorkflowRunPrepareResult {
+  recipe: DesktopWorkflowRunRecipe;
+  approval?: DesktopPendingApproval;
+  blocked: boolean;
+  queued: boolean;
+  reason: string;
+}
+
+export type DesktopWorkflowExecutionStatus =
+  | "running"
+  | "waiting_approval"
+  | "blocked"
+  | "complete";
+
+export type DesktopWorkflowRunStepStatus =
+  | "pending"
+  | "ready"
+  | "running"
+  | "waiting_approval"
+  | "blocked"
+  | "completed";
+
+export type DesktopWorkflowRunResumeAction =
+  | "dispatch_chat"
+  | "prepare_terminal"
+  | "reconnect_external"
+  | "confirm_manual"
+  | "wait_approval";
+
+export interface DesktopWorkflowRunStepExecution
+  extends DesktopWorkflowRunStep {
+  status: DesktopWorkflowRunStepStatus;
+  message: string;
+  completedAt?: string;
+  resumableAfterRestart?: boolean;
+  resumeAction?: DesktopWorkflowRunResumeAction;
+  resumeMessage?: string;
+  lastResumedAt?: string;
+}
+
+export interface DesktopWorkflowRunResumePlan {
+  restartDetectedAt: string;
+  pendingStepCount: number;
+  resumableStepIds: string[];
+  waitingApprovalStepIds: string[];
+  message: string;
+}
+
+export interface DesktopWorkflowRun {
+  id: string;
+  recipeId: string;
+  templateId: string;
+  name: string;
+  workspacePath?: string;
+  status: DesktopWorkflowExecutionStatus;
+  createdAt: string;
+  updatedAt: string;
+  currentStepId?: string;
+  approvalId?: string;
+  steps: DesktopWorkflowRunStepExecution[];
+  verification: string;
+  message: string;
+  resumePlan?: DesktopWorkflowRunResumePlan;
+}
+
+export interface DesktopWorkflowRunStartRequest {
+  recipe: DesktopWorkflowRunRecipe;
+}
+
+export interface DesktopWorkflowRunStartResult {
+  run: DesktopWorkflowRun;
+  chatCommands: string[];
+  terminalCommands: string[];
+  approvalIds: string[];
+  manualCheckpoints: string[];
+}
+
+export interface DesktopWorkflowRunStepDispatchRequest {
+  runId: string;
+  stepId: string;
+}
+
+export interface DesktopWorkflowRunStepDispatchResult {
+  run: DesktopWorkflowRun;
+  dispatched: boolean;
+  kind: DesktopWorkflowRunStepKind;
+  command?: string;
+  requiresApproval: boolean;
+  message: string;
+}
+
+export interface DesktopWorkflowRunStepCompleteRequest {
+  runId: string;
+  stepId: string;
+  exitCode: number;
+  output?: string;
+}
+
+export interface DesktopWorkflowRunStepCompleteResult {
+  run: DesktopWorkflowRun;
+  completed: boolean;
+  blocked: boolean;
+  message: string;
+}
+
+export type DesktopBackgroundTaskKind =
+  | "chat_run"
+  | "workflow_run"
+  | "agent_run"
+  | "connector_sync"
+  | "scheduled_monitor";
+
+export type DesktopBackgroundTaskSource =
+  | "chat"
+  | "workflow"
+  | "agent"
+  | "connector"
+  | "manual"
+  | "scheduled"
+  | "monitor";
+
+export type DesktopBackgroundTaskStatus =
+  | "queued"
+  | "running"
+  | "waiting_approval"
+  | "blocked"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface DesktopBackgroundTask {
+  id: string;
+  kind: DesktopBackgroundTaskKind;
+  source: DesktopBackgroundTaskSource;
+  title: string;
+  status: DesktopBackgroundTaskStatus;
+  createdAt: string;
+  updatedAt: string;
+  workspacePath?: string;
+  targetId?: string;
+  approvalId?: string;
+  currentStep?: string;
+  message: string;
+  verification: string;
+}
+
+export interface DesktopBackgroundTaskListRequest {
+  workspacePath?: string;
+  limit?: number;
+}
+
+export interface DesktopBackgroundTaskEnqueueRequest {
+  kind: DesktopBackgroundTaskKind;
+  source: DesktopBackgroundTaskSource;
+  title: string;
+  workspacePath?: string;
+  targetId?: string;
+  approvalId?: string;
+  currentStep?: string;
+  message?: string;
+  verification?: string;
+  status?: DesktopBackgroundTaskStatus;
+}
+
+export interface DesktopBackgroundTaskUpdateRequest {
+  taskId: string;
+  status: DesktopBackgroundTaskStatus;
+  message?: string;
+  currentStep?: string;
+  verification?: string;
+}
+
+export type DesktopScheduledTaskKind = "scheduled" | "monitor";
+
+export type DesktopScheduledTaskStatus = "enabled" | "paused" | "blocked";
+
+export type DesktopScheduledTaskCadence =
+  | "manual"
+  | "hourly"
+  | "daily"
+  | "weekly";
+
+export interface DesktopScheduledTask {
+  id: string;
+  kind: DesktopScheduledTaskKind;
+  title: string;
+  status: DesktopScheduledTaskStatus;
+  cadence: DesktopScheduledTaskCadence;
+  createdAt: string;
+  updatedAt: string;
+  workspacePath?: string;
+  target: string;
+  workflowTemplateId?: string;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  activeWorkflowRunId?: string;
+  activeWorkflowRunStatus?: DesktopWorkflowExecutionStatus;
+  activeWorkflowRunUpdatedAt?: string;
+  approvalRequired: boolean;
+  message: string;
+  verification: string;
+}
+
+export interface DesktopScheduledTaskListRequest {
+  workspacePath?: string;
+  limit?: number;
+}
+
+export interface DesktopScheduledTaskCreateRequest {
+  kind: DesktopScheduledTaskKind;
+  title: string;
+  cadence: DesktopScheduledTaskCadence;
+  target: string;
+  workspacePath?: string;
+  workflowTemplateId?: string;
+  nextRunAt?: string;
+  approvalRequired?: boolean;
+  verification?: string;
+  message?: string;
+  status?: DesktopScheduledTaskStatus;
+}
+
+export interface DesktopScheduledTaskUpdateRequest {
+  taskId: string;
+  status: DesktopScheduledTaskStatus;
+  nextRunAt?: string;
+  message?: string;
+  verification?: string;
+}
+
+export type DesktopScheduledTaskRunItemStatus =
+  | "started"
+  | "queued_approval"
+  | "reconnected"
+  | "skipped"
+  | "blocked";
+
+export interface DesktopScheduledTaskRunRequest {
+  workspacePath?: string;
+  now?: string;
+  limit?: number;
+}
+
+export interface DesktopScheduledTaskRunItem {
+  taskId: string;
+  title: string;
+  status: DesktopScheduledTaskRunItemStatus;
+  message: string;
+  nextRunAt?: string;
+  workflowRunId?: string;
+  approvalId?: string;
+  reason?: string;
+}
+
+export interface DesktopScheduledTaskRunResult {
+  generatedAt: string;
+  checked: number;
+  triggered: number;
+  reconnected: number;
+  skipped: number;
+  blocked: number;
+  items: DesktopScheduledTaskRunItem[];
+  runs: DesktopWorkflowRun[];
+}
+
+export interface DesktopScheduledTaskWorkerStatus {
+  enabled: boolean;
+  running: boolean;
+  stopped: boolean;
+  intervalMs: number;
+  initialDelayMs: number;
+  nextRunAt?: string;
+  lastStartedAt?: string;
+  lastFinishedAt?: string;
+  lastResult?: {
+    generatedAt: string;
+    checked: number;
+    triggered: number;
+    reconnected: number;
+    skipped: number;
+    blocked: number;
+  };
+  lastError?: string;
+  message: string;
+}
+
+export type DesktopChannelAdapterProvider =
+  | "mobile"
+  | "slack"
+  | "github"
+  | "docs"
+  | "calendar"
+  | "database"
+  | "telegram"
+  | "discord"
+  | "voice"
+  | "file_upload";
+
+export type DesktopChannelAdapterKind =
+  | "chat"
+  | "connector"
+  | "input";
+
+export type DesktopChannelAdapterStatus =
+  | "available"
+  | "config_required"
+  | "planned"
+  | "disabled";
+
+export interface DesktopChannelAdapter {
+  id: string;
+  name: string;
+  provider: DesktopChannelAdapterProvider;
+  kind: DesktopChannelAdapterKind;
+  status: DesktopChannelAdapterStatus;
+  direction: "inbound" | "outbound" | "bidirectional";
+  configured: boolean;
+  requiresApproval: boolean;
+  capabilities: string[];
+  description: string;
+  setupHint?: string;
+  authMode?: "not_configured" | "local_git_remote" | "oauth" | "session_stub";
+  accountLabel?: string;
+  scopeLabel?: string;
+  configuredAt?: string;
+  lastImportAt?: string;
+  credentialState?: "missing" | "placeholder" | "configured";
+  sessionExpiresAt?: string;
+  authPreparedAt?: string;
+}
+
+export interface DesktopChannelAdapterListResult {
+  adapters: DesktopChannelAdapter[];
+  generatedAt: string;
+  configuredCount: number;
+  availableCount: number;
+}
+
+export interface DesktopChannelAdapterConfigureRequest {
+  adapterId: string;
+  workspacePath: string;
+  mode?: "local_git_remote" | "session_stub";
+  accountLabel?: string;
+  scopeLabel?: string;
+  credentialState?: "missing" | "placeholder" | "configured";
+  sessionExpiresAt?: string;
+}
+
+export interface DesktopChannelAdapterAuthStartRequest {
+  adapterId: string;
+  workspacePath: string;
+  scopes?: string[];
+}
+
+export interface DesktopChannelAdapterAuthStartResult {
+  adapterId: string;
+  provider: DesktopChannelAdapterProvider;
+  workspacePath: string;
+  authMode: "oauth" | "device_pairing";
+  authorizationUrl: string;
+  userCode: string;
+  verificationUri: string;
+  expiresAt: string;
+  intervalSeconds: number;
+  scopes: string[];
+  message: string;
+  verification: string;
+}
+
+export interface DesktopChannelConnection {
+  adapterId: string;
+  workspacePath: string;
+  provider: DesktopChannelAdapterProvider;
+  mode: "local_git_remote" | "session_stub";
+  configuredAt: string;
+  updatedAt: string;
+  accountLabel: string;
+  scopeLabel: string;
+  repository?: string;
+  remoteUrl?: string;
+  lastImportAt?: string;
+  credentialState?: "missing" | "placeholder" | "configured";
+  sessionExpiresAt?: string;
+  authPreparedAt?: string;
+  readOnly: boolean;
+}
+
+export interface DesktopChannelAdapterConfigureResult {
+  adapter: DesktopChannelAdapter;
+  connection: DesktopChannelConnection;
+  message: string;
+  verification: string;
+}
+
+export interface DesktopChannelContextImportRequest {
+  adapterId: string;
+  workspacePath: string;
+  limit?: number;
+  paths?: string[];
+  githubSnapshotPath?: string;
+  snapshotPath?: string;
+  slackSnapshotPath?: string;
+  mobileSnapshotPath?: string;
+  voiceTranscriptPath?: string;
+  logMonitorPath?: string;
+}
+
+export type DesktopChannelContextItemKind =
+  | "file"
+  | "image"
+  | "audio"
+  | "video"
+  | "document"
+  | "folder"
+  | "issue"
+  | "pull_request"
+  | "meeting"
+  | "database_table"
+  | "slack_message"
+  | "mobile_message"
+  | "voice_transcript";
+
+export interface DesktopChannelContextItem {
+  id: string;
+  adapterId: string;
+  provider: DesktopChannelAdapterProvider;
+  kind: DesktopChannelContextItemKind;
+  title: string;
+  path: string;
+  relativePath: string;
+  summary: string;
+  size?: number;
+  mime?: string;
+  truncated: boolean;
+}
+
+export interface DesktopChannelContextImportResult {
+  adapterId: string;
+  workspacePath: string;
+  importedAt: string;
+  items: DesktopChannelContextItem[];
+  truncated: boolean;
+  message: string;
+  verification: string;
+}
+
+export interface DesktopChannelSnapshotSyncRequest {
+  workspacePath: string;
+  adapterIds?: string[];
+  limit?: number;
+}
+
+export interface DesktopChannelSnapshotSyncResult {
+  workspacePath: string;
+  syncedAt: string;
+  adapterIds: string[];
+  results: DesktopChannelContextImportResult[];
+  queuedEventCount: number;
+  skippedAdapterIds: string[];
+  message: string;
+  verification: string;
+}
+
+export type DesktopChannelInboundEventStatus = "queued" | "routed" | "dismissed";
+
+export interface DesktopChannelInboundEvent {
+  id: string;
+  adapterId: string;
+  provider: DesktopChannelAdapterProvider;
+  workspacePath: string;
+  status: DesktopChannelInboundEventStatus;
+  title: string;
+  summary: string;
+  receivedAt: string;
+  updatedAt: string;
+  itemCount: number;
+  items: DesktopChannelContextItem[];
+  verification: string;
+}
+
+export interface DesktopChannelInboundEventListRequest {
+  workspacePath?: string;
+  status?: DesktopChannelInboundEventStatus;
+  limit?: number;
+}
+
+export interface DesktopChannelInboundEventRouteRequest {
+  eventId: string;
+  workspacePath?: string;
+  action?: "route_to_chat" | "dismiss";
+}
+
+export interface DesktopChannelInboundEventRouteResult {
+  event: DesktopChannelInboundEvent;
+  importResult: DesktopChannelContextImportResult;
+  message: string;
+  verification: string;
+}
+
+export interface DesktopChannelOutboundDraftRequest {
+  adapterId: string;
+  workspacePath?: string;
+  target: string;
+  body: string;
+  subject?: string;
+  idempotencyKey?: string;
+}
+
+export interface DesktopChannelOutboundDraftResult {
+  queued: boolean;
+  approval?: DesktopPendingApproval;
+  delivery?: DesktopChannelOutboundDelivery;
+  allowed: boolean;
+  blocked: boolean;
+  reason: string;
+  verification: string;
+}
+
+export type DesktopChannelOutboundDeliveryStatus =
+  | "blocked"
+  | "rejected"
+  | "sent"
+  | "failed";
+
+export interface DesktopChannelOutboundDelivery {
+  id: string;
+  approvalId: string;
+  adapterId: string;
+  provider: DesktopChannelAdapterProvider;
+  workspacePath?: string;
+  target: string;
+  subject?: string;
+  status: DesktopChannelOutboundDeliveryStatus;
+  runtime?: "missing_live_provider" | "workspace_local_outbox";
+  outboxPath?: string;
+  createdAt: string;
+  updatedAt: string;
+  message: string;
+  verification: string;
+}
+
+export interface DesktopChannelOutboundDeliveryListRequest {
+  workspacePath?: string;
+  limit?: number;
+}
+
+export type DesktopMcpContextKind = "resource" | "tool";
+
+export interface DesktopMcpContextRequest {
+  workspacePath: string;
+  kind: DesktopMcpContextKind;
+  selector?: string;
+  limit?: number;
+}
+
+export interface DesktopMcpContextItem {
+  id: string;
+  kind: DesktopMcpContextKind;
+  server: string;
+  name: string;
+  title: string;
+  uri?: string;
+  description?: string;
+  inputSchema?: string;
+  content: string;
+  truncated: boolean;
+}
+
+export interface DesktopMcpContextResult {
+  workspacePath: string;
+  importedAt: string;
+  sourcePath: string;
+  kind: DesktopMcpContextKind;
+  items: DesktopMcpContextItem[];
+  truncated: boolean;
+  message: string;
+  verification: string;
+}
+
+export type DesktopMcpLiveEnumerationStatus =
+  | "approval_queued"
+  | "completed"
+  | "blocked"
+  | "cancelled";
+
+export interface DesktopMcpLiveEnumerationRequest {
+  workspacePath: string;
+  server?: string;
+  reuseSession?: boolean;
+}
+
+export interface DesktopMcpLiveServerSummary {
+  name: string;
+  command: string;
+  status: "configured" | "enumerated";
+  resourceCount: number;
+  toolCount: number;
+  description?: string;
+}
+
+export interface DesktopMcpLiveEnumerationResult {
+  workspacePath: string;
+  configPath: string;
+  sourcePath: string;
+  status: DesktopMcpLiveEnumerationStatus;
+  servers: DesktopMcpLiveServerSummary[];
+  resourceCount: number;
+  toolCount: number;
+  approvalId?: string;
+  approvalQueued: boolean;
+  reusedSession?: boolean;
+  sessionReuseKey?: string;
+  message: string;
+  verification: string;
+  enumeratedAt?: string;
+}
+
+export interface DesktopMcpToolExecutionApprovalRequest {
+  workspacePath: string;
+  server: string;
+  tool: string;
+  input?: string;
+  reuseSession?: boolean;
+}
+
+export interface DesktopMcpToolExecutionApprovalResult {
+  workspacePath: string;
+  server: string;
+  tool: string;
+  status?: "approval_queued" | "completed" | "blocked" | "cancelled";
+  approvalId?: string;
+  queued: boolean;
+  blocked: boolean;
+  allowed: boolean;
+  sourcePath?: string;
+  resultContextName?: string;
+  outputPreview?: string;
+  reusedSession?: boolean;
+  sessionReuseKey?: string;
+  executedAt?: string;
+  message: string;
+  verification: string;
+}
+
+export type DesktopMcpToolExecutionAuditStatus =
+  | "completed"
+  | "failed"
+  | "rejected"
+  | "cancelled";
+
+export interface DesktopMcpToolExecutionAuditEntry {
+  id: string;
+  workspacePath: string;
+  approvalId?: string;
+  server: string;
+  tool: string;
+  status: DesktopMcpToolExecutionAuditStatus;
+  resultContextName?: string;
+  sourcePath?: string;
+  inputPreview: string;
+  outputPreview?: string;
+  reusedSession?: boolean;
+  sessionReuseKey?: string;
+  message: string;
+  verification: string;
+  createdAt: string;
+}
+
+export interface DesktopMcpToolExecutionAuditListRequest {
+  workspacePath: string;
+  limit?: number;
+}
+
+export type DesktopMcpSessionAuditPhase =
+  | "enumeration"
+  | "tool_execution"
+  | "reusable_pool";
+
+export type DesktopMcpSessionAuditStatus =
+  | "started"
+  | "completed"
+  | "failed"
+  | "timed_out"
+  | "rejected"
+  | "cancelled"
+  | "closed";
+
+export interface DesktopMcpSessionAuditEntry {
+  id: string;
+  workspacePath: string;
+  approvalId?: string;
+  sessionId: string;
+  phase: DesktopMcpSessionAuditPhase;
+  server: string;
+  tool?: string;
+  status: DesktopMcpSessionAuditStatus;
+  resourceCount?: number;
+  toolCount?: number;
+  reusedSession?: boolean;
+  sessionReuseKey?: string;
+  message: string;
+  verification: string;
+  createdAt: string;
+}
+
+export interface DesktopMcpSessionAuditListRequest {
+  workspacePath: string;
+  limit?: number;
+}
+
+export interface DesktopMcpActiveSession {
+  sessionId: string;
+  workspacePath: string;
+  phase: DesktopMcpSessionAuditPhase;
+  server: string;
+  tool?: string;
+  startedAt: string;
+  approvalId?: string;
+  command: string;
+  reusable?: boolean;
+  sessionReuseKey?: string;
+}
+
+export interface DesktopMcpActiveSessionListRequest {
+  workspacePath: string;
+}
+
+export type DesktopMcpReusableSessionStatus = "ready" | "busy" | "idle";
+
+export interface DesktopMcpReusableSession {
+  sessionReuseKey: string;
+  workspacePath: string;
+  server: string;
+  command: string;
+  startedAt: string;
+  lastUsedAt: string;
+  status: DesktopMcpReusableSessionStatus;
+  pendingRequestCount: number;
+  idleExpiresAt?: string;
+  idleExpiresInMs?: number;
+  stderrPreview?: string;
+}
+
+export interface DesktopMcpReusableSessionListRequest {
+  workspacePath: string;
+}
+
+export interface DesktopMcpReusableSessionCloseRequest {
+  workspacePath: string;
+  sessionReuseKey: string;
+}
+
+export interface DesktopMcpReusableSessionCloseResult {
+  workspacePath: string;
+  sessionReuseKey: string;
+  closed: boolean;
+  message: string;
+  verification: string;
+}
+
+export interface DesktopMcpSessionCancelRequest {
+  workspacePath: string;
+  sessionId: string;
+}
+
+export interface DesktopMcpSessionCancelResult {
+  workspacePath: string;
+  sessionId: string;
+  cancelled: boolean;
+  message: string;
+  verification: string;
 }
 
 export interface AgentRunRequest {
@@ -201,17 +1384,139 @@ export interface AgentRunRequest {
   metadata?: Record<string, unknown>;
 }
 
+export type DesktopAgentSource = "local" | "remote";
+export type DesktopAgentStatus = "running" | "stopped" | "unreachable";
+export type DesktopAgentExample =
+  | string
+  | {
+      en?: string;
+      zh?: string;
+    };
+
+export interface DesktopAgent {
+  id: string;
+  name: string;
+  description: string;
+  owner: string;
+  source: DesktopAgentSource;
+  status: DesktopAgentStatus;
+  url?: string;
+  model?: string;
+  logo?: string;
+  examples?: DesktopAgentExample[] | string;
+  error?: string;
+}
+
+export interface MyDrSaiReasoningConfig {
+  supported?: boolean;
+  effort_levels?: string[];
+  param_type?: string;
+}
+
+export interface MyDrSaiTokenizerCalibrationSample {
+  sample: string;
+  tokens: number;
+}
+
+export interface MyDrSaiModelConfig {
+  alias: string;
+  display_name?: string;
+  client_type?: string;
+  model?: string;
+  token_limit?: number;
+  max_tokens?: number;
+  tokenizer_calibration?: MyDrSaiTokenizerCalibrationSample[];
+  vision?: boolean;
+  reasoning?: MyDrSaiReasoningConfig;
+}
+
+export interface MyDrSaiCliConfig {
+  user_id?: string;
+  defult_config_name?: string;
+  plan_mode?: boolean;
+  workspace_enabled?: boolean;
+  dangerous_allowed?: boolean;
+  max_agent_concurrent?: number;
+  context_type?: string;
+  [key: string]: unknown;
+}
+
+export interface MyDrSaiConfig {
+  ready: boolean;
+  baseUrl: string;
+  cliPath?: string;
+  config: MyDrSaiCliConfig;
+  models: MyDrSaiModelConfig[];
+  defaultModelAlias?: string;
+  error?: string;
+}
+
+export interface UpdateMyDrSaiConfigRequest {
+  user_id?: string;
+  defult_config_name?: string;
+  plan_mode?: boolean;
+  workspace_enabled?: boolean;
+  dangerous_allowed?: boolean;
+}
+
 export interface DesktopThread {
   id: string;
   kind: "chat" | "agent_run";
   title: string;
   workspacePath?: string;
+  fork?: DesktopThreadForkMetadata;
   createdAt: string;
   updatedAt: string;
   lastRunId?: string;
   lastRequestId?: string;
   status?: "idle" | "running" | "error";
   messageCount?: number;
+  pinned?: boolean;
+  archived?: boolean;
+  unread?: boolean;
+}
+
+export interface DesktopThreadForkMetadata {
+  sourceWorkspacePath: string;
+  repoRoot: string;
+  worktreePath: string;
+  branch: string;
+  baseRef: string;
+  createdAt: string;
+  sourceHasChanges: boolean;
+  sourceStatusSummary?: string;
+  lifecycleStatus: "active" | "merge_pending" | "merged" | "cleanup_pending" | "closed";
+  lifecycleMessage?: string;
+  lifecycleUpdatedAt?: string;
+  mergedCommit?: string;
+  branchCleanupStatus?: "pending" | "deleted" | "archived" | "retained";
+  branchCleanupMessage?: string;
+  archivedBranch?: string;
+  queueGroupId?: string;
+  queueIndex?: number;
+  queueSize?: number;
+  queueStatus?: DesktopForkQueueStatus;
+  queueApprovalId?: string;
+  queueAgentHint?: string;
+  queueAgentId?: string;
+  queueAgentName?: string;
+  queueMessage?: string;
+  queueUpdatedAt?: string;
+}
+
+export interface DesktopForkWorktreeRequest {
+  workspacePath: string;
+  intent?: string;
+}
+
+export interface DesktopForkWorktreeResult {
+  sourceWorkspacePath: string;
+  repoRoot: string;
+  worktreePath: string;
+  branch: string;
+  baseRef: string;
+  sourceHasChanges: boolean;
+  sourceStatusSummary?: string;
 }
 
 export interface WorkspaceGitStatus {
@@ -314,6 +1619,35 @@ export interface WorkspaceFileTreeResult {
   truncated: boolean;
 }
 
+export interface WorkspaceFolderSummaryRequest {
+  path: string;
+  maxDepth?: number;
+  maxEntries?: number;
+  maxSampleFiles?: number;
+  maxChars?: number;
+}
+
+export interface WorkspaceFolderSummaryFile {
+  path: string;
+  relativePath: string;
+  kind: WorkspacePreviewKind;
+  size: number;
+  outline?: string[];
+}
+
+export interface WorkspaceFolderSummaryResult {
+  path: string;
+  name: string;
+  totalEntries: number;
+  fileCount: number;
+  directoryCount: number;
+  skippedDirectoryCount: number;
+  truncated: boolean;
+  estimatedTokens: number;
+  sampledFiles: WorkspaceFolderSummaryFile[];
+  summary: string;
+}
+
 export interface WorkspaceFilePreviewRequest {
   workspacePath: string;
   path: string;
@@ -358,6 +1692,24 @@ export interface WorkspaceGitDiffResult {
   staged?: boolean;
 }
 
+export interface WorkspaceGitFileAtRefRequest {
+  workspacePath: string;
+  ref: string;
+  path: string;
+  maxBytes?: number;
+}
+
+export interface WorkspaceGitFileAtRefResult {
+  workspacePath: string;
+  ref: string;
+  path: string;
+  content: string;
+  contentHash?: string;
+  truncated: boolean;
+  missing: boolean;
+  message: string;
+}
+
 export interface WorkspaceRevertFileRequest {
   workspacePath: string;
   path: string;
@@ -368,6 +1720,8 @@ export interface WorkspaceRevertFileResult {
   workspacePath: string;
   path: string;
   reverted: boolean;
+  approvalId?: string;
+  approvalQueued?: boolean;
   message: string;
 }
 
@@ -381,6 +1735,8 @@ export interface WorkspaceStageFileResult {
   workspacePath: string;
   path: string;
   staged: boolean;
+  approvalId?: string;
+  approvalQueued?: boolean;
   message: string;
 }
 
@@ -395,6 +1751,99 @@ export interface WorkspaceHunkActionResult {
   workspacePath: string;
   path: string;
   applied: boolean;
+  approvalId?: string;
+  approvalQueued?: boolean;
+  message: string;
+}
+
+export interface WorkspaceCheckpointEntry {
+  path: string;
+  relativePath: string;
+  status: WorkspaceFileGitStatus;
+  size: number;
+  fileHash?: string;
+  stored: boolean;
+  existed: boolean;
+  skippedReason?: string;
+}
+
+export interface WorkspaceCheckpoint {
+  id: string;
+  workspacePath: string;
+  label: string;
+  createdAt: string;
+  baseRef?: string;
+  changedFileCount: number;
+  storedFileCount: number;
+  skippedFileCount: number;
+  entries: WorkspaceCheckpointEntry[];
+}
+
+export interface WorkspaceCheckpointCreateRequest {
+  workspacePath: string;
+  label?: string;
+  maxFiles?: number;
+  maxBytesPerFile?: number;
+}
+
+export interface WorkspaceCheckpointRestoreRequest {
+  workspacePath: string;
+  checkpointId: string;
+}
+
+export interface WorkspaceCheckpointPreviewRequest {
+  workspacePath: string;
+  checkpointId: string;
+  maxFiles?: number;
+  maxCharsPerFile?: number;
+}
+
+export type WorkspaceCheckpointPreviewChange =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "unchanged"
+  | "skipped";
+
+export interface WorkspaceCheckpointPreviewEntry {
+  path: string;
+  relativePath: string;
+  checkpointStatus: WorkspaceFileGitStatus;
+  change: WorkspaceCheckpointPreviewChange;
+  stored: boolean;
+  existedAtCheckpoint: boolean;
+  currentExists: boolean;
+  checkpointHash?: string;
+  currentHash?: string;
+  checkpointSize?: number;
+  currentSize?: number;
+  checkpointSnippet?: string;
+  currentSnippet?: string;
+  message: string;
+}
+
+export interface WorkspaceCheckpointPreviewResult {
+  workspacePath: string;
+  checkpointId: string;
+  label: string;
+  createdAt: string;
+  totalEntries: number;
+  changedEntryCount: number;
+  skippedEntryCount: number;
+  truncated: boolean;
+  entries: WorkspaceCheckpointPreviewEntry[];
+  message: string;
+}
+
+export interface WorkspaceCheckpointRestoreResult {
+  workspacePath: string;
+  checkpointId: string;
+  restored: boolean;
+  restoredFileCount: number;
+  removedFileCount: number;
+  skippedFileCount: number;
+  approvalId?: string;
+  approvalQueued?: boolean;
   message: string;
 }
 
@@ -424,6 +1873,7 @@ export interface CreateThreadRequest {
   kind: DesktopThread["kind"];
   title?: string;
   workspacePath?: string;
+  fork?: DesktopThreadForkMetadata;
 }
 
 export interface UpdateThreadRequest {
@@ -431,10 +1881,14 @@ export interface UpdateThreadRequest {
   kind?: DesktopThread["kind"];
   title?: string;
   workspacePath?: string;
+  fork?: DesktopThreadForkMetadata;
   lastRunId?: string;
   lastRequestId?: string;
   status?: DesktopThread["status"];
   messageCount?: number;
+  pinned?: boolean;
+  archived?: boolean;
+  unread?: boolean;
 }
 
 export interface AgentRunEvent {
@@ -466,6 +1920,43 @@ export interface SaveApiKeyResult {
 export interface PickDialogResult {
   canceled: boolean;
   paths: string[];
+}
+
+export type DesktopIdeContextSource =
+  | "vscode"
+  | "jetbrains"
+  | "visual_studio"
+  | "manual"
+  | "unknown";
+
+export interface DesktopIdeContextFile {
+  path: string;
+  name: string;
+  relativePath?: string;
+  language?: string;
+  line?: number;
+  column?: number;
+}
+
+export interface DesktopIdeContextSelection {
+  path: string;
+  name: string;
+  relativePath?: string;
+  text: string;
+  startLine?: number;
+  endLine?: number;
+  language?: string;
+  truncated: boolean;
+}
+
+export interface DesktopIdeContextSnapshot {
+  available: boolean;
+  workspacePath: string;
+  source: DesktopIdeContextSource;
+  capturedAt?: string;
+  currentFile?: DesktopIdeContextFile;
+  currentSelection?: DesktopIdeContextSelection;
+  message: string;
 }
 
 export interface DesktopFileIconResult {
@@ -536,15 +2027,37 @@ export interface DesktopApi {
   deleteWorkspace(id: string): Promise<boolean>;
   getWorkspaceContextOverview(workspacePath: string): Promise<WorkspaceContextOverview>;
   listWorkspaceFiles(request: WorkspaceFileTreeRequest): Promise<WorkspaceFileTreeResult>;
+  summarizeWorkspaceFolder(
+    request: WorkspaceFolderSummaryRequest,
+  ): Promise<WorkspaceFolderSummaryResult>;
   previewWorkspaceFile(request: WorkspaceFilePreviewRequest): Promise<WorkspaceFilePreview>;
   getWorkspaceGitDiff(request: WorkspaceGitDiffRequest): Promise<WorkspaceGitDiffResult>;
+  getWorkspaceGitFileAtRef(
+    request: WorkspaceGitFileAtRefRequest,
+  ): Promise<WorkspaceGitFileAtRefResult>;
   revertWorkspaceFile(request: WorkspaceRevertFileRequest): Promise<WorkspaceRevertFileResult>;
   stageWorkspaceFile(request: WorkspaceStageFileRequest): Promise<WorkspaceStageFileResult>;
   stageWorkspaceHunk(request: WorkspaceHunkActionRequest): Promise<WorkspaceHunkActionResult>;
   revertWorkspaceHunk(request: WorkspaceHunkActionRequest): Promise<WorkspaceHunkActionResult>;
+  listWorkspaceCheckpoints(workspacePath: string): Promise<WorkspaceCheckpoint[]>;
+  createWorkspaceCheckpoint(
+    request: WorkspaceCheckpointCreateRequest,
+  ): Promise<WorkspaceCheckpoint>;
+  previewWorkspaceCheckpoint(
+    request: WorkspaceCheckpointPreviewRequest,
+  ): Promise<WorkspaceCheckpointPreviewResult>;
+  restoreWorkspaceCheckpoint(
+    request: WorkspaceCheckpointRestoreRequest,
+  ): Promise<WorkspaceCheckpointRestoreResult>;
   listThreads(): Promise<DesktopThread[]>;
+  listAgents(): Promise<DesktopAgent[]>;
+  getMyDrSaiConfig(workspacePath?: string): Promise<MyDrSaiConfig>;
+  updateMyDrSaiConfig(request: UpdateMyDrSaiConfigRequest): Promise<MyDrSaiConfig>;
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;
   updateThread(request: UpdateThreadRequest): Promise<DesktopThread>;
+  prepareForkWorktree(
+    request: DesktopForkWorktreeRequest,
+  ): Promise<DesktopForkWorktreeResult>;
   startChat(request: ChatRequest): Promise<string>;
   abortChat(requestId: string): Promise<boolean>;
   startAgentRun(
@@ -560,9 +2073,160 @@ export interface DesktopApi {
   ): Promise<BrowserActionResult>;
   startBrowserTask(request: BrowserTaskStartRequest): Promise<{ taskId: string }>;
   stopBrowserTask(request: BrowserTaskStopRequest): Promise<boolean>;
+  proposeApproval(
+    request: DesktopApprovalProposalRequest,
+  ): Promise<DesktopApprovalProposalResult>;
+  requestShellCommandApproval(
+    request: DesktopShellCommandApprovalRequest,
+  ): Promise<DesktopApprovalProposalResult>;
+  requestGitCommitApproval(
+    request: DesktopGitCommitApprovalRequest,
+  ): Promise<DesktopApprovalProposalResult>;
+  requestForkLifecycleApproval(
+    request: DesktopForkLifecycleApprovalRequest,
+  ): Promise<DesktopForkLifecycleApprovalResult>;
+  requestForkQueueStartApproval(
+    request: DesktopForkQueueStartApprovalRequest,
+  ): Promise<DesktopForkQueueStartApprovalResult>;
+  dispatchForkQueue(
+    request: DesktopForkQueueDispatchRequest,
+  ): Promise<DesktopForkQueueDispatchResult>;
+  writeForkConflictDraft(
+    request: DesktopForkConflictDraftWriteRequest,
+  ): Promise<DesktopForkConflictDraftWriteResult>;
+  listProjectMemory(
+    request: DesktopProjectMemoryListRequest,
+  ): Promise<DesktopProjectMemoryEntry[]>;
+  addProjectMemory(
+    request: DesktopProjectMemoryAddRequest,
+  ): Promise<DesktopProjectMemoryEntry>;
+  updateProjectMemory(
+    request: DesktopProjectMemoryUpdateRequest,
+  ): Promise<DesktopProjectMemoryEntry>;
+  clearProjectMemory(
+    request: DesktopProjectMemoryClearRequest,
+  ): Promise<DesktopProjectMemoryClearResult>;
+  listCustomCommands(
+    request: DesktopCustomCommandListRequest,
+  ): Promise<DesktopCustomCommand[]>;
+  upsertCustomCommand(
+    request: DesktopCustomCommandUpsertRequest,
+  ): Promise<DesktopCustomCommand>;
+  deleteCustomCommand(
+    request: DesktopCustomCommandDeleteRequest,
+  ): Promise<DesktopCustomCommandDeleteResult>;
+  listProjectSkillDrafts(
+    request: DesktopProjectSkillDraftListRequest,
+  ): Promise<DesktopProjectSkillDraft[]>;
+  createProjectSkillDraft(
+    request: DesktopProjectSkillDraftCreateRequest,
+  ): Promise<DesktopProjectSkillDraft>;
+  installProjectSkillDraft(
+    request: DesktopProjectSkillInstallRequest,
+  ): Promise<DesktopProjectSkillInstallResult>;
+  publishProjectSkillDraft(
+    request: DesktopProjectSkillPublishRequest,
+  ): Promise<DesktopProjectSkillPublishResult>;
+  listWorkflowMarketplace(
+    workspacePath?: string,
+  ): Promise<DesktopWorkflowMarketplaceListResult>;
+  syncWorkflowMarketplace(
+    request: DesktopWorkflowMarketplaceSyncRequest,
+  ): Promise<DesktopWorkflowMarketplaceSyncResult>;
+  prepareWorkflowRun(
+    request: DesktopWorkflowRunPrepareRequest,
+  ): Promise<DesktopWorkflowRunPrepareResult>;
+  startWorkflowRun(
+    request: DesktopWorkflowRunStartRequest,
+  ): Promise<DesktopWorkflowRunStartResult>;
+  listWorkflowRuns(workspacePath?: string): Promise<DesktopWorkflowRun[]>;
+  dispatchWorkflowRunStep(
+    request: DesktopWorkflowRunStepDispatchRequest,
+  ): Promise<DesktopWorkflowRunStepDispatchResult>;
+  completeWorkflowRunStep(
+    request: DesktopWorkflowRunStepCompleteRequest,
+  ): Promise<DesktopWorkflowRunStepCompleteResult>;
+  listBackgroundTasks(
+    request?: DesktopBackgroundTaskListRequest,
+  ): Promise<DesktopBackgroundTask[]>;
+  enqueueBackgroundTask(
+    request: DesktopBackgroundTaskEnqueueRequest,
+  ): Promise<DesktopBackgroundTask>;
+  updateBackgroundTask(
+    request: DesktopBackgroundTaskUpdateRequest,
+  ): Promise<DesktopBackgroundTask>;
+  listScheduledTasks(
+    request?: DesktopScheduledTaskListRequest,
+  ): Promise<DesktopScheduledTask[]>;
+  createScheduledTask(
+    request: DesktopScheduledTaskCreateRequest,
+  ): Promise<DesktopScheduledTask>;
+  updateScheduledTask(
+    request: DesktopScheduledTaskUpdateRequest,
+  ): Promise<DesktopScheduledTask>;
+  runDueScheduledTasks(
+    request?: DesktopScheduledTaskRunRequest,
+  ): Promise<DesktopScheduledTaskRunResult>;
+  getScheduledTaskWorkerStatus(): Promise<DesktopScheduledTaskWorkerStatus>;
+  listChannelAdapters(workspacePath?: string): Promise<DesktopChannelAdapterListResult>;
+  configureChannelAdapter(
+    request: DesktopChannelAdapterConfigureRequest,
+  ): Promise<DesktopChannelAdapterConfigureResult>;
+  startChannelAdapterAuth(
+    request: DesktopChannelAdapterAuthStartRequest,
+  ): Promise<DesktopChannelAdapterAuthStartResult>;
+  importChannelContext(
+    request: DesktopChannelContextImportRequest,
+  ): Promise<DesktopChannelContextImportResult>;
+  syncChannelSnapshots(
+    request: DesktopChannelSnapshotSyncRequest,
+  ): Promise<DesktopChannelSnapshotSyncResult>;
+  listChannelInboundEvents(
+    request?: DesktopChannelInboundEventListRequest,
+  ): Promise<DesktopChannelInboundEvent[]>;
+  routeChannelInboundEvent(
+    request: DesktopChannelInboundEventRouteRequest,
+  ): Promise<DesktopChannelInboundEventRouteResult>;
+  proposeChannelOutboundDraft(
+    request: DesktopChannelOutboundDraftRequest,
+  ): Promise<DesktopChannelOutboundDraftResult>;
+  listChannelOutboundDeliveries(
+    request?: DesktopChannelOutboundDeliveryListRequest,
+  ): Promise<DesktopChannelOutboundDelivery[]>;
+  importMcpContext(
+    request: DesktopMcpContextRequest,
+  ): Promise<DesktopMcpContextResult>;
+  requestMcpLiveEnumeration(
+    request: DesktopMcpLiveEnumerationRequest,
+  ): Promise<DesktopMcpLiveEnumerationResult>;
+  requestMcpToolExecutionApproval(
+    request: DesktopMcpToolExecutionApprovalRequest,
+  ): Promise<DesktopMcpToolExecutionApprovalResult>;
+  listMcpToolExecutionAudits(
+    request: DesktopMcpToolExecutionAuditListRequest,
+  ): Promise<DesktopMcpToolExecutionAuditEntry[]>;
+  listMcpSessionAudits(
+    request: DesktopMcpSessionAuditListRequest,
+  ): Promise<DesktopMcpSessionAuditEntry[]>;
+  listMcpActiveSessions(
+    request: DesktopMcpActiveSessionListRequest,
+  ): Promise<DesktopMcpActiveSession[]>;
+  listMcpReusableSessions(
+    request: DesktopMcpReusableSessionListRequest,
+  ): Promise<DesktopMcpReusableSession[]>;
+  closeMcpReusableSession(
+    request: DesktopMcpReusableSessionCloseRequest,
+  ): Promise<DesktopMcpReusableSessionCloseResult>;
+  cancelMcpActiveSession(
+    request: DesktopMcpSessionCancelRequest,
+  ): Promise<DesktopMcpSessionCancelResult>;
+  listPendingApprovals(): Promise<DesktopPendingApproval[]>;
+  decidePendingApproval(request: DesktopApprovalDecisionRequest): Promise<boolean>;
+  listPendingBrowserTaskApprovals(): Promise<BrowserTaskPendingApproval[]>;
   approveBrowserTaskAction(request: BrowserTaskApprovalRequest): Promise<boolean>;
   openExternal(url: string): Promise<void>;
   openPath(path: string): Promise<string>;
+  getIdeContext(workspacePath: string): Promise<DesktopIdeContextSnapshot>;
   getFileIcon(path: string): Promise<DesktopFileIconResult>;
   createTerminal(options?: TerminalCreateOptions): Promise<TerminalSessionInfo>;
   listTerminalSessions(workspaceKey?: string): Promise<TerminalSessionInfo[]>;

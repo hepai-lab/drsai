@@ -20,7 +20,13 @@ new Script(compiled, { filename: "sseParser.ts" }).runInNewContext({
   require,
 });
 
-const { isCompletionDoneFrame, parseAgentRunSseFrame, parseChatSseFrame, parseCompletionSseFrame } = module.exports;
+const {
+  isCompletionDoneFrame,
+  parseAgentLogSseFrame,
+  parseAgentRunSseFrame,
+  parseChatSseFrame,
+  parseCompletionSseFrame,
+} = module.exports;
 
 function assertDeepEqual(name, actual, expected) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -42,6 +48,16 @@ assertDeepEqual(
   "completion parser alias",
   parseCompletionSseFrame('data: {"choices":[{"delta":{"content":"completion"}}]}'),
   ["completion"],
+);
+assertDeepEqual(
+  "agent log is not chat content",
+  parseChatSseFrame('event: agent.log\ndata: {"title":"LLM Retry","content":"retrying","level":"WARNING"}'),
+  [],
+);
+assertDeepEqual(
+  "agent log payload",
+  parseAgentLogSseFrame('event: agent.log\ndata: {"title":"LLM Retry","content":"retrying","level":"WARNING"}'),
+  { title: "LLM Retry", content: "retrying", level: "WARNING", content_type: undefined },
 );
 assertDeepEqual(
   "message content with CRLF",

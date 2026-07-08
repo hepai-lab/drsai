@@ -78,6 +78,7 @@ check("preload exposes install, gateway, update, and chat APIs", () => {
     "abortChat",
     "startAgentRun",
     "abortAgentRun",
+    "prepareForkWorktree",
     "saveApiKey",
     "openPath",
     "onUpdateStatus",
@@ -139,7 +140,7 @@ check("main chat IPC validates request shape and bounds", () => {
     chat.includes("function withAttachmentContext") &&
     chat.includes("function looksBinary") &&
     chat.includes("readFile(attachment.path)") &&
-    chat.includes("folder-not-inlined") &&
+    chat.includes("folder-summary-missing") &&
     chat.includes("binary-file") &&
     chat.includes("Chat attachment path is invalid") &&
     chat.includes("attachments: request.attachments || []") &&
@@ -803,19 +804,26 @@ check("release build includes packaged install.ps1 when build:unpack has run", (
     (existsSync(packagedScript) && existsSync(backendArchive) && existsSync(backendManifest));
 });
 
-check("renderer blocks chat submission until gateway is ready", () => {
+check("renderer blocks normal chat until gateway is ready while local slash commands still work", () => {
   const app = read("src/renderer/src/App.tsx");
   const chatAdapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
   const chatWorkspace = read("src/renderer/src/components/ChatWorkspace.tsx");
   return (
     app.includes("canChat: Boolean(") &&
-    app.includes("health?.installed && health?.gatewayReady && workspaceTrusted") &&
+    app.includes("health?.installed &&") &&
+    app.includes("health?.gatewayReady &&") &&
+    app.includes("workspaceTrusted &&") &&
     app.includes("!chat.activeRequestId") &&
-    chatAdapter.includes("submit(attachments: ChatAttachment[] = [])") &&
+    chatAdapter.includes("async function submit(") &&
+    chatAdapter.includes("attachments: ChatAttachment[] = []") &&
+    chatAdapter.includes("parseChatCommand(text)") &&
+    chatAdapter.includes("if (!canChat) return false") &&
+    chatAdapter.indexOf("parseChatCommand(text)") < chatAdapter.indexOf("if (!canChat) return false") &&
     chatAdapter.includes("attachments,") &&
     chatWorkspace.includes("submitWithAttachments") &&
     chatWorkspace.includes("setAttachments([])") &&
-    chatWorkspace.includes('type="submit" disabled={!input.trim() || !canChat}')
+    chatWorkspace.includes('type="submit"') &&
+    chatWorkspace.includes("disabled={!input.trim() || !canChat}")
   );
 });
 
@@ -933,13 +941,13 @@ check("renderer navigation follows WebUI menu identifiers", () => {
     navItemEnabled("currentSession") &&
     navItemEnabled("agentSquare") &&
     navItemEnabled("profile") &&
+    navItemEnabled("skillsSquare") &&
+    navItemEnabled("channels") &&
     !navItemEnabled("savedPlan") &&
     !navItemEnabled("myAgents") &&
-    !navItemEnabled("skillsSquare") &&
     !navItemEnabled("plugins") &&
     !navItemEnabled("library") &&
     !navItemEnabled("usageAnalytics") &&
-    !navItemEnabled("channels") &&
     !navItemEnabled("logs") &&
     !navItemEnabled("agentManagement") &&
     !navItemEnabled("userManagement") &&
@@ -976,7 +984,7 @@ check("renderer shell is separated from desktop IPC adapters", () => {
     app.includes("const rightPanelContent") &&
     app.includes("WorkspaceShell") &&
     shell.includes("WorkspaceShellProps") &&
-    shell.includes("main: React.ReactNode") &&
+    shell.includes("mainContent: React.ReactNode") &&
     shell.includes("rightPanel: React.ReactNode") &&
     shell.includes("onNavChange") &&
     shell.includes("onRightTabChange") &&
@@ -1007,11 +1015,13 @@ check("renderer has production visual and interaction verification", () => {
   const ui = read("scripts/verify-renderer-ui.mjs");
   const mojibake = read("scripts/verify-no-mojibake.mjs");
   const visual = read("scripts/verify-renderer-visual.mjs");
+  const threadMenu = read("scripts/verify-thread-context-menu.mjs");
   const readiness = read("scripts/verify-release-readiness.mjs");
   return (
     packageJson.includes('"verify:ui": "node scripts/verify-renderer-ui.mjs"') &&
     packageJson.includes('"verify:mojibake": "node scripts/verify-no-mojibake.mjs"') &&
     packageJson.includes('"verify:visual": "node scripts/verify-renderer-visual.mjs"') &&
+    packageJson.includes('"verify:thread-menu": "node scripts/verify-thread-context-menu.mjs"') &&
     ui.includes("Renderer UI verification passed") &&
     ui.includes("chat workspace uses readable Chinese labels") &&
     ui.includes("renderer enables only completed desktop views") &&
@@ -1041,12 +1051,126 @@ check("renderer has production visual and interaction verification", () => {
     visual.includes("clickByText(interactive") &&
     visual.includes("fillTextarea(interactive") &&
     visual.includes("[1280, 720], [1024, 720], [860, 720]") &&
+    threadMenu.includes("Thread context menu verification passed") &&
+    threadMenu.includes("sidebar supports a right click context menu on conversations") &&
+    threadMenu.includes("pin and unpin conversation action is wired") &&
+    threadMenu.includes("archive conversation action is wired") &&
     readiness.includes("Renderer UI invariants") &&
     readiness.includes("Renderer mojibake guard") &&
     readiness.includes("Renderer visual interactions") &&
+    readiness.includes("Renderer thread context menu") &&
     readiness.includes("verify:ui") &&
     readiness.includes("verify:mojibake") &&
-    readiness.includes("verify:visual")
+    readiness.includes("verify:visual") &&
+    readiness.includes("verify:thread-menu")
+  );
+});
+check("smart chat bar has a shared execution policy contract", () => {
+  const packageJson = read("package.json");
+  const policy = read("src/shared/executionPolicy.ts");
+  const browserPolicy = read("src/shared/browser/actionPolicy.ts");
+  const chatCommands = read("src/renderer/src/chatCommands.ts");
+  const roadmap = read("docs/smart-chat-bar-roadmap.md");
+  return (
+    packageJson.includes('"verify:execution-policy": "node scripts/verify-execution-policy.mjs"') &&
+    policy.includes("ExecutionPolicyMode") &&
+    policy.includes("evaluateExecutionPermission") &&
+    policy.includes('"read_only" | "confirm_each" | "auto_execute"') &&
+    policy.includes('"terminal.write"') &&
+    policy.includes('"workspace.stage"') &&
+    policy.includes('"workspace.revert"') &&
+    policy.includes('"external.service"') &&
+    policy.includes('"workflow.run"') &&
+    browserPolicy.includes("../executionPolicy") &&
+    browserPolicy.includes("BROWSER_EXECUTION_ACTIONS") &&
+    chatCommands.includes("Execution policy:") &&
+    roadmap.includes("typed shared execution policy")
+  );
+});
+check("smart chat bar supports workspace custom commands", () => {
+  const packageJson = read("package.json");
+  const api = read("src/shared/desktopApi.ts");
+  const store = read("src/main/customCommands.ts");
+  const main = read("src/main/index.ts");
+  const preload = read("src/preload/index.ts");
+  const chatCommands = read("src/renderer/src/chatCommands.ts");
+  const chatAdapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
+  const verifier = read("scripts/verify-custom-commands.mjs");
+  const roadmap = read("docs/smart-chat-bar-roadmap.md");
+  return (
+    packageJson.includes('"verify:custom-commands": "node scripts/verify-custom-commands.mjs"') &&
+    api.includes("DesktopCustomCommand") &&
+    store.includes("custom-commands.json") &&
+    store.includes("RESERVED_COMMAND_NAMES") &&
+    main.includes('secureHandle("desktop:custom-command-upsert"') &&
+    preload.includes("desktop:custom-command-delete") &&
+    chatCommands.includes("describeCustomCommandInvocation") &&
+    chatCommands.includes('type: "set-input"') &&
+    chatAdapter.includes("maybeApplyCustomCommand") &&
+    verifier.includes("Custom command verification passed") &&
+    roadmap.includes("npm run verify:custom-commands")
+  );
+});
+check("smart chat bar tracks scheduled monitor definitions", () => {
+  const packageJson = read("package.json");
+  const api = read("src/shared/desktopApi.ts");
+  const scheduler = read("src/main/scheduledTasks.ts");
+  const main = read("src/main/index.ts");
+  const preload = read("src/preload/index.ts");
+  const skillSquare = read("src/renderer/src/components/SkillSquareView.tsx");
+  const roadmap = read("docs/smart-chat-bar-roadmap.md");
+  return (
+    packageJson.includes('"verify:scheduled-tasks": "node scripts/verify-scheduled-tasks.mjs"') &&
+    api.includes("DesktopScheduledTask") &&
+    api.includes("listScheduledTasks(") &&
+    scheduler.includes("scheduled-tasks.json") &&
+    scheduler.includes("createScheduledTask") &&
+    scheduler.includes("updateScheduledTask") &&
+    main.includes('secureHandle("desktop:scheduled-tasks-list"') &&
+    preload.includes("desktop:scheduled-task-create") &&
+    skillSquare.includes("ScheduledTaskPanel") &&
+    roadmap.includes("npm run verify:scheduled-tasks")
+  );
+});
+check("smart chat bar has a VS Code IDE context producer", () => {
+  const packageJson = read("package.json");
+  const extensionPackage = read("editor-integrations/vscode/package.json");
+  const extension = read("editor-integrations/vscode/extension.js");
+  const roadmap = read("docs/smart-chat-bar-roadmap.md");
+  return (
+    packageJson.includes('"verify:vscode-ide-producer": "node scripts/verify-vscode-ide-producer.mjs"') &&
+    extensionPackage.includes('"opendrsai.captureIdeContext"') &&
+    extensionPackage.includes('"opendrsai.ideContext.enabled"') &&
+    extension.includes('source: "vscode"') &&
+    extension.includes('CONTEXT_RELATIVE_PATH = path.join(".drsai", "ide-context.json")') &&
+    extension.includes("vscode.window.onDidChangeTextEditorSelection") &&
+    extension.includes("path.relative(parentPath, childPath)") &&
+    extension.includes("fs.rename(tempPath, contextPath)") &&
+    roadmap.includes("VS Code producer")
+  );
+});
+check("smart chat bar has cross-IDE context producer skeletons", () => {
+  const packageJson = read("package.json");
+  const api = read("src/shared/desktopApi.ts");
+  const ideContext = read("src/main/ideContext.ts");
+  const verifier = read("scripts/verify-ide-producers.mjs");
+  const jetBrains = read("editor-integrations/jetbrains/src/main/kotlin/org/opendrsai/idecontext/OpenDrSaiIdeContextListener.kt");
+  const visualStudio = read("editor-integrations/visual-studio/source/OpenDrSaiIdeContextPackage.cs");
+  const roadmap = read("docs/smart-chat-bar-roadmap.md");
+  return (
+    packageJson.includes('"verify:ide-producers": "node scripts/verify-ide-producers.mjs"') &&
+    api.includes('| "jetbrains"') &&
+    api.includes('| "visual_studio"') &&
+    ideContext.includes('value === "jetbrains"') &&
+    ideContext.includes('value === "visual_studio"') &&
+    verifier.includes("IDE producer verification passed") &&
+    jetBrains.includes('CONTEXT_RELATIVE_PATH = ".drsai/ide-context.json"') &&
+    jetBrains.includes('"source": "jetbrains"') &&
+    jetBrains.includes("StandardCopyOption.ATOMIC_MOVE") &&
+    visualStudio.includes('ContextRelativePath = ".drsai\\\\ide-context.json"') &&
+    visualStudio.includes('Source = "visual_studio"') &&
+    visualStudio.includes("File.Move(tempPath, contextPath, true)") &&
+    roadmap.includes("JetBrains/Visual Studio producer skeletons")
   );
 });
 check("packaged app smoke verifies real main, preload, and IPC", () => {

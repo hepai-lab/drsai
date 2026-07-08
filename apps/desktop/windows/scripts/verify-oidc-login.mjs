@@ -23,7 +23,7 @@ const main = read("src/main/index.ts");
 const provider = read("src/renderer/src/auth/AuthProvider.tsx");
 const login = read("src/renderer/src/auth/LoginScreen.tsx");
 const mock = read("src/renderer/src/mockDesktopApi.ts");
-const plan = read("docs/oidc-login-plan.md");
+const plan = read("docs/login_plan/oidc-login-plan.md");
 const e2eSmoke = read("src/main/e2eSmoke.ts");
 const e2eOidc = read("scripts/verify-e2e-oidc-login.mjs");
 const publicSessionBody = /function toPublicSession\(session: StoredAuthSession\): AuthSession \{([\s\S]*?)\n\}/.exec(auth)?.[1] || "";
@@ -89,6 +89,18 @@ const checks = [
       auth.includes("accessClaims.exp <= nowSeconds"),
   ],
   [
+    "OIDC public user is built from ID and access token claims",
+    auth.includes("email: idClaims?.email || userId") &&
+      auth.includes("name: idClaims?.name || idClaims?.email || userId") &&
+      auth.includes("avatarUrl: idClaims?.picture || undefined") &&
+      auth.includes("roles: Array.isArray(accessClaims?.roles) ? accessClaims.roles : undefined") &&
+      auth.includes("groups: Array.isArray(accessClaims?.groups) ? accessClaims.groups : undefined") &&
+      api.includes("roles?: string[]") &&
+      api.includes("groups?: string[]") &&
+      e2eSmoke.includes('session.user.roles.includes("user")') &&
+      e2eSmoke.includes('session.user.groups.includes("desktop-e2e")'),
+  ],
+  [
     "main process requests refresh only for remember-me and refreshes before expiry",
     auth.includes("rememberMe ? `${OIDC_BASE_SCOPE} offline_access` : OIDC_BASE_SCOPE") &&
       auth.includes("refreshOidcSessionIfNeeded") &&
@@ -122,9 +134,11 @@ const checks = [
       auth.includes("accessToken: refreshed.accessToken") &&
       chat.includes("requireAuthContext") &&
       chat.includes("Authorization: `Bearer ${auth.accessToken}`") &&
+      chat.includes('"X-OpenDrSai-Auth-Mode": auth.authMode') &&
       chat.includes("auth_mode: auth.authMode") &&
       agentRuns.includes("requireAuthContext") &&
       agentRuns.includes("Authorization: `Bearer ${auth.accessToken}`") &&
+      agentRuns.includes('"X-OpenDrSai-Auth-Mode": auth.authMode') &&
       agentRuns.includes("auth_mode: auth.authMode"),
   ],
   [

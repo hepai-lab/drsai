@@ -162,6 +162,7 @@ function Sessions({
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -205,13 +206,14 @@ function Sessions({
 
   useEffect(() => {
     if (visible && focusSearchNonce > 0) {
-      searchRef.current?.focus();
+      const timer = window.setTimeout(() => setSearchModalOpen(true), 0);
+      return () => window.clearTimeout(timer);
     }
   }, [visible, focusSearchNonce]);
 
   useEffect(() => {
     if (searchTimer.current) clearTimeout(searchTimer.current);
-    if (!searchQuery.trim()) {
+    if (!searchModalOpen || !searchQuery.trim()) {
       setSearchResults([]);
       setIsSearching(false);
       return;
@@ -225,9 +227,29 @@ function Sessions({
     return () => {
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
-  }, [searchQuery]);
+  }, [searchModalOpen, searchQuery]);
 
-  const isShowingSearch = searchQuery.trim().length > 0;
+  useEffect(() => {
+    if (!searchModalOpen) return;
+    searchRef.current?.focus();
+
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key === "Escape") {
+        setSearchModalOpen(false);
+        setSearchQuery("");
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [searchModalOpen]);
+
+  const closeSearchModal = useCallback(() => {
+    setSearchModalOpen(false);
+    setSearchQuery("");
+  }, []);
+
+  const isShowingSearch = searchModalOpen && searchQuery.trim().length > 0;
   const grouped = groupSessions(sessions);
 
   return (
@@ -241,85 +263,129 @@ function Sessions({
             {t("sessions.newChat")}
           </button>
         </div>
-        <div className="sessions-searchbar">
+        <button
+          type="button"
+          className="sessions-search-trigger"
+          onClick={() => setSearchModalOpen(true)}
+        >
           <Search size={14} className="sessions-searchbar-icon" />
-          <input
-            ref={searchRef}
-            className="sessions-searchbar-input"
-            type="text"
-            placeholder={t("sessions.searchPlaceholder")}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          {searchQuery && (
-            <button
-              className="btn-ghost sessions-searchbar-clear"
-              onClick={() => {
-                setSearchQuery("");
-                searchRef.current?.focus();
-              }}
-            >
-              <X size={13} />
-            </button>
-          )}
-        </div>
+          <span>{t("sessions.searchPlaceholder")}</span>
+        </button>
       </div>
+
+      {searchModalOpen && (
+        <div className="sessions-search-modal" role="dialog" aria-modal="true">
+          <button
+            type="button"
+            className="sessions-search-backdrop"
+            aria-label={t("common.close")}
+            onClick={closeSearchModal}
+          />
+          <div className="sessions-search-panel">
+            <div className="sessions-searchbar">
+              <Search size={14} className="sessions-searchbar-icon" />
+              <input
+                ref={searchRef}
+                className="sessions-searchbar-input"
+                type="text"
+                placeholder={t("sessions.searchPlaceholder")}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && (
+                <button
+                  className="btn-ghost sessions-searchbar-clear"
+                  onClick={() => {
+                    setSearchQuery("");
+                    searchRef.current?.focus();
+                  }}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            <button
+              className="btn-ghost sessions-search-modal-close"
+              onClick={closeSearchModal}
+              title={t("common.close")}
+            >
+              <X size={14} />
+            </button>
+
+            <div className="sessions-search-results">
+              {!isShowingSearch ? (
+                <div className="sessions-search-empty">
+                  {t("sessions.noResultsHint")}
+                </div>
+              ) : isSearching ? (
+                <div className="sessions-loading sessions-search-loading">
+                  <div className="loading-spinner" />
+                </div>
+              ) : searchResults.length === 0 ? (
+                <div className="sessions-empty sessions-search-empty-state">
+                  <Search size={32} className="sessions-empty-icon" />
+                  <p className="sessions-empty-text">
+                    {t("sessions.noResults")}
+                  </p>
+                  <p className="sessions-empty-hint">
+                    {t("sessions.noResultsHint")}
+                  </p>
+                </div>
+              ) : (
+                <div className="sessions-list sessions-search-result-list">
+                  {searchResults.map((r) => (
+                    <button
+                      key={r.sessionId}
+                      className={`sessions-card ${currentSessionId === r.sessionId ? "sessions-card--active" : ""}`}
+                      onClick={() => {
+                        closeSearchModal();
+                        onResumeSession(r.sessionId);
+                      }}
+                    >
+                      <div className="sessions-card-main">
+                        <span className="sessions-card-title">
+                          {r.title ||
+                            `${t("sessions.title")} ${r.sessionId.slice(-6)}`}
+                        </span>
+                        <span className="sessions-card-time">
+                          {formatFullDate(r.startedAt)}
+                        </span>
+                      </div>
+                      {r.snippet && (
+                        <div className="sessions-result-snippet">
+                          {highlightSnippet(r.snippet)}
+                        </div>
+                      )}
+                      <div className="sessions-card-tags">
+                        <span className="sessions-tag sessions-tag--source">
+                          {r.source}
+                        </span>
+                        <span className="sessions-tag">
+                          {r.messageCount}{" "}
+                          {r.messageCount !== 1
+                            ? t("sessions.messages")
+                            : t("sessions.messageSingular")}
+                        </span>
+                        {r.model && (
+                          <span className="sessions-tag sessions-tag--model">
+                            {formatModel(r.model)}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       {loading ? (
         <div className="sessions-loading">
           <div className="loading-spinner" />
         </div>
-      ) : isShowingSearch ? (
-        isSearching ? (
-          <div className="sessions-loading">
-            <div className="loading-spinner" />
-          </div>
-        ) : searchResults.length === 0 ? (
-          <div className="sessions-empty">
-            <Search size={32} className="sessions-empty-icon" />
-            <p className="sessions-empty-text">{t("sessions.noResults")}</p>
-            <p className="sessions-empty-hint">{t("sessions.noResultsHint")}</p>
-          </div>
-        ) : (
-          <div className="sessions-list">
-            {searchResults.map((r) => (
-              <button
-                key={r.sessionId}
-                className={`sessions-card ${currentSessionId === r.sessionId ? "sessions-card--active" : ""}`}
-                onClick={() => onResumeSession(r.sessionId)}
-              >
-                <div className="sessions-card-main">
-                  <span className="sessions-card-title">
-                    {r.title ||
-                      `${t("sessions.title")} ${r.sessionId.slice(-6)}`}
-                  </span>
-                  <span className="sessions-card-time">
-                    {formatFullDate(r.startedAt)}
-                  </span>
-                </div>
-                {r.snippet && (
-                  <div className="sessions-result-snippet">
-                    {highlightSnippet(r.snippet)}
-                  </div>
-                )}
-                <div className="sessions-card-tags">
-                  <span className="sessions-tag sessions-tag--source">
-                    {r.source}
-                  </span>
-                  <span className="sessions-tag">
-                    {r.messageCount} {r.messageCount !== 1 ? t("sessions.messages") : t("sessions.messageSingular")}
-                  </span>
-                  {r.model && (
-                    <span className="sessions-tag sessions-tag--model">
-                      {formatModel(r.model)}
-                    </span>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-        )
       ) : sessions.length === 0 ? (
         <div className="sessions-empty">
           <ChatBubble size={32} className="sessions-empty-icon" />

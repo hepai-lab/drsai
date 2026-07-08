@@ -4,6 +4,7 @@ import {
   FileText,
   Folder,
   GitCompare,
+  History,
   ListPlus,
   Network,
   Rows3,
@@ -16,6 +17,8 @@ import {
 import type {
   ChatAttachment,
   WorkspaceContextOverview,
+  WorkspaceCheckpoint,
+  WorkspaceCheckpointPreviewResult,
   WorkspaceFileNode,
   WorkspaceFilePreview,
   WorkspaceGitDiffResult,
@@ -77,6 +80,10 @@ export function FilesContextPanel({
   const [preview, setPreview] = useState<WorkspaceFilePreview | null>(null);
   const [diffPreview, setDiffPreview] = useState<WorkspaceGitDiffResult | null>(null);
   const [contextSnapshots, setContextSnapshots] = useState<ContextSnapshot[]>([]);
+  const [workspaceCheckpoints, setWorkspaceCheckpoints] = useState<WorkspaceCheckpoint[]>([]);
+  const [checkpointPreview, setCheckpointPreview] =
+    useState<WorkspaceCheckpointPreviewResult | null>(null);
+  const [checkpointMessage, setCheckpointMessage] = useState("");
   const [systemOpenIconUrl, setSystemOpenIconUrl] = useState<string | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [previewState, setPreviewState] = useState<LoadState>("idle");
@@ -95,6 +102,15 @@ export function FilesContextPanel({
     ? "Open folder"
     : "Open with system app";
 
+  const loadWorkspaceCheckpoints = useCallback(async () => {
+    if (!workspacePath) return;
+    try {
+      setWorkspaceCheckpoints(await desktopApi.listWorkspaceCheckpoints(workspacePath));
+    } catch (caught) {
+      setCheckpointMessage(caught instanceof Error ? caught.message : String(caught));
+    }
+  }, [workspacePath]);
+
   const refresh = useCallback(async () => {
     if (!workspacePath) return;
     setLoadState("loading");
@@ -111,12 +127,13 @@ export function FilesContextPanel({
       ]);
       setOverview(nextOverview);
       setNodes(fileTree.nodes);
+      void loadWorkspaceCheckpoints();
       setLoadState("idle");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
       setLoadState("error");
     }
-  }, [query, workspacePath]);
+  }, [loadWorkspaceCheckpoints, query, workspacePath]);
 
   useEffect(() => {
     void refresh();
@@ -128,6 +145,9 @@ export function FilesContextPanel({
     setPreview(null);
     setDiffPreview(null);
     setContextSnapshots([]);
+    setWorkspaceCheckpoints([]);
+    setCheckpointPreview(null);
+    setCheckpointMessage("");
   }, [workspacePath]);
 
   useEffect(() => {
@@ -360,6 +380,60 @@ export function FilesContextPanel({
     ]);
   }
 
+  async function createRollbackCheckpoint(): Promise<void> {
+    setCheckpointMessage("");
+    setCheckpointPreview(null);
+    try {
+      const checkpoint = await desktopApi.createWorkspaceCheckpoint({
+        workspacePath,
+        label: `Before workspace change review ${new Date().toLocaleString()}`,
+      });
+      setWorkspaceCheckpoints((current) => [
+        checkpoint,
+        ...current.filter((item) => item.id !== checkpoint.id),
+      ]);
+      setCheckpointMessage(
+        `Checkpoint saved: ${checkpoint.storedFileCount}/${checkpoint.changedFileCount} files stored.`,
+      );
+    } catch (caught) {
+      setCheckpointMessage(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function restoreRollbackCheckpoint(checkpoint: WorkspaceCheckpoint): Promise<void> {
+    setCheckpointMessage("");
+    try {
+      const result = await desktopApi.restoreWorkspaceCheckpoint({
+        workspacePath,
+        checkpointId: checkpoint.id,
+      });
+      setCheckpointMessage(result.message);
+      if (result.restored) {
+        setDiffPreview(null);
+        await refresh();
+      }
+    } catch (caught) {
+      setCheckpointMessage(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function previewRollbackCheckpoint(checkpoint: WorkspaceCheckpoint): Promise<void> {
+    setCheckpointMessage("");
+    try {
+      const nextPreview = await desktopApi.previewWorkspaceCheckpoint({
+        workspacePath,
+        checkpointId: checkpoint.id,
+        maxFiles: 20,
+        maxCharsPerFile: 3000,
+      });
+      setCheckpointPreview(nextPreview);
+      setCheckpointMessage(nextPreview.message);
+    } catch (caught) {
+      setCheckpointPreview(null);
+      setCheckpointMessage(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   return (
     <section className="files-context-panel" aria-label="Files context">
       <header className="files-context-header">
@@ -567,6 +641,17 @@ export function FilesContextPanel({
             }}
           />
 
+          <WorkspaceCheckpointPanel
+            checkpoints={workspaceCheckpoints}
+            language={language}
+            message={checkpointMessage}
+            preview={checkpointPreview}
+            onCreate={() => void createRollbackCheckpoint()}
+            onPreview={(checkpoint) => void previewRollbackCheckpoint(checkpoint)}
+            onRefresh={() => void loadWorkspaceCheckpoints()}
+            onRestore={(checkpoint) => void restoreRollbackCheckpoint(checkpoint)}
+          />
+
           <ArtifactsPanel
             events={fileTraceEvents}
             language={language}
@@ -635,6 +720,111 @@ function FilesSectionGroup({
         {children}
       </div>
     </details>
+  );
+}
+
+function WorkspaceCheckpointPanel({
+  checkpoints,
+  language,
+  message,
+  preview,
+  onCreate,
+  onPreview,
+  onRefresh,
+  onRestore,
+}: {
+  checkpoints: WorkspaceCheckpoint[];
+  language: AppLanguage;
+  message: string;
+  preview: WorkspaceCheckpointPreviewResult | null;
+  onCreate: () => void;
+  onPreview: (checkpoint: WorkspaceCheckpoint) => void;
+  onRefresh: () => void;
+  onRestore: (checkpoint: WorkspaceCheckpoint) => void;
+}): React.JSX.Element {
+  void language;
+  return (
+    <section className="files-checkpoint-panel" aria-label="Rollback checkpoints">
+      <div className="files-checkpoint-header">
+        <div>
+          <span>
+            <History size={13} />
+            Rollback Checkpoints
+          </span>
+          <small>
+            Capture restorable snapshots of current changed files.
+          </small>
+        </div>
+        <div className="files-checkpoint-actions">
+          <button type="button" onClick={onRefresh}>
+            Refresh
+          </button>
+          <button type="button" onClick={onCreate}>
+            Create
+          </button>
+        </div>
+      </div>
+      {message ? <p className="files-checkpoint-message">{message}</p> : null}
+      {checkpoints.length === 0 ? (
+        <p className="files-checkpoint-empty">
+          No checkpoints yet. Create one before risky agent edits so restore can be reviewed.
+        </p>
+      ) : (
+        <ol className="files-checkpoint-list">
+          {checkpoints.slice(0, 6).map((checkpoint) => (
+            <li key={checkpoint.id}>
+              <div>
+                <strong>{checkpoint.label}</strong>
+                <small>
+                  {new Date(checkpoint.createdAt).toLocaleString()} - {checkpoint.storedFileCount}/{checkpoint.changedFileCount} stored
+                  {checkpoint.skippedFileCount ? ` - ${checkpoint.skippedFileCount} skipped` : ""}
+                </small>
+              </div>
+              <div className="files-checkpoint-row-actions">
+                <button type="button" onClick={() => onPreview(checkpoint)}>
+                  Preview diff
+                </button>
+                <button type="button" onClick={() => onRestore(checkpoint)}>
+                  Restore
+                </button>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+      {preview ? (
+        <div className="files-checkpoint-preview" aria-label="Checkpoint diff preview">
+          <div className="files-checkpoint-preview-header">
+            <strong>Checkpoint diff preview</strong>
+            <small>
+              {preview.changedEntryCount} changed / {preview.totalEntries} entries
+              {preview.truncated ? " - truncated" : ""}
+            </small>
+          </div>
+          <ol>
+            {preview.entries.map((entry) => (
+              <li key={`${preview.checkpointId}:${entry.relativePath}`}>
+                <div>
+                  <strong>{entry.relativePath}</strong>
+                  <small>
+                    {entry.change} - checkpoint {entry.checkpointStatus}
+                    {entry.currentSize != null ? ` - current ${entry.currentSize} bytes` : ""}
+                  </small>
+                  <p>{entry.message}</p>
+                </div>
+                <details>
+                  <summary>Snippets</summary>
+                  <div className="files-checkpoint-preview-snippets">
+                    <pre>{entry.checkpointSnippet || "[no checkpoint text]"}</pre>
+                    <pre>{entry.currentSnippet || "[no current text]"}</pre>
+                  </div>
+                </details>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+    </section>
   );
 }
 

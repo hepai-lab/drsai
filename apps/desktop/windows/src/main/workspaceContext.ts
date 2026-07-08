@@ -12,6 +12,11 @@ import type {
   WorkspaceFilePreviewRequest,
   WorkspaceFileTreeRequest,
   WorkspaceFileTreeResult,
+  WorkspaceFolderSummaryFile,
+  WorkspaceFolderSummaryRequest,
+  WorkspaceFolderSummaryResult,
+  WorkspaceGitFileAtRefRequest,
+  WorkspaceGitFileAtRefResult,
   WorkspaceGitDiffRequest,
   WorkspaceGitDiffResult,
   WorkspaceGitStatus,
@@ -29,6 +34,12 @@ const DEFAULT_MAX_DEPTH = 4;
 const DEFAULT_MAX_ENTRIES = 500;
 const DEFAULT_PREVIEW_BYTES = 120_000;
 const DEFAULT_DIFF_CHARS = 80_000;
+const DEFAULT_GIT_REF_FILE_BYTES = 120_000;
+const DEFAULT_FOLDER_SUMMARY_DEPTH = 3;
+const DEFAULT_FOLDER_SUMMARY_ENTRIES = 240;
+const DEFAULT_FOLDER_SUMMARY_FILES = 16;
+const DEFAULT_FOLDER_SUMMARY_CHARS = 12_000;
+const MAX_FOLDER_SUMMARY_FILE_BYTES = 24_000;
 const MAX_INSTRUCTION_CHARS = 12_000;
 const MAX_IMAGE_DATA_URL_BYTES = 1_500_000;
 const NOISY_DIRS = new Set([
@@ -231,6 +242,123 @@ export async function listWorkspaceFiles(
   };
 }
 
+export async function summarizeWorkspaceFolder(
+  rawRequest: unknown,
+): Promise<WorkspaceFolderSummaryResult> {
+  const request = validateFolderSummaryRequest(rawRequest);
+  const folderPath = await resolveWorkspaceRoot(request.path);
+  const maxDepth = clampInt(request.maxDepth, 1, 6, DEFAULT_FOLDER_SUMMARY_DEPTH);
+  const maxEntries = clampInt(request.maxEntries, 20, 1_000, DEFAULT_FOLDER_SUMMARY_ENTRIES);
+  const maxSampleFiles = clampInt(request.maxSampleFiles, 1, 80, DEFAULT_FOLDER_SUMMARY_FILES);
+  const maxChars = clampInt(request.maxChars, 1_000, 40_000, DEFAULT_FOLDER_SUMMARY_CHARS);
+  const extensionCounts = new Map<string, number>();
+  const sampledFiles: WorkspaceFolderSummaryFile[] = [];
+  let totalEntries = 0;
+  let fileCount = 0;
+  let directoryCount = 0;
+  let skippedDirectoryCount = 0;
+  let truncated = false;
+
+  async function walk(dirPath: string, depth: number): Promise<void> {
+    if (totalEntries >= maxEntries) {
+      truncated = true;
+      return;
+    }
+    let entries;
+    try {
+      entries = await readdir(dirPath, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    entries.sort((left, right) => {
+      if (left.isDirectory() !== right.isDirectory()) return left.isDirectory() ? -1 : 1;
+      return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+    });
+
+    for (const entry of entries) {
+      if (totalEntries >= maxEntries) {
+        truncated = true;
+        break;
+      }
+      if (entry.isSymbolicLink()) continue;
+      if (entry.name.startsWith(".") && entry.name !== ".claude" && entry.name !== ".env.example") {
+        if (entry.name !== ".env" && entry.name !== ".github") continue;
+      }
+      if (entry.isDirectory() && NOISY_DIRS.has(entry.name)) {
+        skippedDirectoryCount += 1;
+        continue;
+      }
+
+      const absolutePath = join(dirPath, entry.name);
+      totalEntries += 1;
+      if (entry.isDirectory()) {
+        directoryCount += 1;
+        if (depth < maxDepth) {
+          await walk(absolutePath, depth + 1);
+        } else {
+          truncated = true;
+        }
+        continue;
+      }
+      if (!entry.isFile()) continue;
+
+      fileCount += 1;
+      const fileStat = await safeStat(absolutePath);
+      const size = toSafeNumber(fileStat?.size) ?? 0;
+      const extension = extname(entry.name).toLowerCase() || "(none)";
+      extensionCounts.set(extension, (extensionCounts.get(extension) ?? 0) + 1);
+      if (sampledFiles.length >= maxSampleFiles) continue;
+      const kind = classifyPreviewKind(absolutePath, size);
+      sampledFiles.push({
+        path: absolutePath,
+        relativePath: normalizeRel(relative(folderPath, absolutePath)),
+        kind,
+        size,
+        outline: await summarizeFileForFolder(absolutePath, kind, size),
+      });
+    }
+  }
+
+  await walk(folderPath, 0);
+  const extensionSummary = [...extensionCounts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 12)
+    .map(([extension, count]) => `${extension}: ${count}`)
+    .join(", ");
+  const sampledSummary = sampledFiles.map((file, index) => {
+    const outline = file.outline?.length
+      ? `\n   ${file.outline.slice(0, 4).join("\n   ")}`
+      : "";
+    return `${index + 1}. ${file.relativePath} (${file.kind}, ${file.size} B)${outline}`;
+  });
+  const rawSummary = [
+    `Folder summary: ${basename(folderPath)}`,
+    `Path: ${folderPath}`,
+    `Entries scanned: ${totalEntries}${truncated ? " (truncated)" : ""}`,
+    `Files: ${fileCount}`,
+    `Folders: ${directoryCount}`,
+    skippedDirectoryCount ? `Skipped noisy folders: ${skippedDirectoryCount}` : "",
+    extensionSummary ? `Top file types: ${extensionSummary}` : "",
+    sampledSummary.length ? "Sampled files:" : "No readable files sampled.",
+    ...sampledSummary,
+  ].filter(Boolean).join("\n");
+  const summary = rawSummary.length > maxChars
+    ? `${rawSummary.slice(0, maxChars)}\n[folder summary truncated]`
+    : rawSummary;
+  return {
+    path: folderPath,
+    name: basename(folderPath),
+    totalEntries,
+    fileCount,
+    directoryCount,
+    skippedDirectoryCount,
+    truncated: truncated || rawSummary.length > maxChars,
+    estimatedTokens: Math.ceil(summary.length / 4),
+    sampledFiles,
+    summary,
+  };
+}
+
 export async function previewWorkspaceFile(
   rawRequest: unknown,
 ): Promise<WorkspaceFilePreview> {
@@ -417,6 +545,45 @@ export async function getWorkspaceGitDiff(
   };
 }
 
+export async function getWorkspaceGitFileAtRef(
+  rawRequest: unknown,
+): Promise<WorkspaceGitFileAtRefResult> {
+  const request = validateGitFileAtRefRequest(rawRequest);
+  const workspacePath = await resolveWorkspaceRoot(request.workspacePath);
+  const target = await resolvePossiblyMissingInsideWorkspace(workspacePath, request.path);
+  const safeRelativePath = normalizeRel(relative(workspacePath, target));
+  const maxBytes = clampInt(request.maxBytes, 4_000, 500_000, DEFAULT_GIT_REF_FILE_BYTES);
+  const content = await runGitRaw(
+    workspacePath,
+    ["show", `${request.ref}:${safeRelativePath}`],
+    8000,
+  );
+  if (content === null) {
+    return {
+      workspacePath,
+      ref: request.ref,
+      path: safeRelativePath,
+      content: "",
+      truncated: false,
+      missing: true,
+      message: `No file content was found at ${request.ref}:${safeRelativePath}.`,
+    };
+  }
+  const normalized = content.replace(/\u0000/g, "");
+  return {
+    workspacePath,
+    ref: request.ref,
+    path: safeRelativePath,
+    content: normalized.slice(0, maxBytes),
+    contentHash: hashString(normalized),
+    truncated: normalized.length > maxBytes,
+    missing: false,
+    message: normalized.length > maxBytes
+      ? "Git ref file preview loaded with truncation."
+      : "Git ref file preview loaded.",
+  };
+}
+
 export async function revertWorkspaceFile(
   rawRequest: unknown,
 ): Promise<WorkspaceRevertFileResult> {
@@ -575,6 +742,18 @@ function validateTreeRequest(rawRequest: unknown): WorkspaceFileTreeRequest {
   };
 }
 
+function validateFolderSummaryRequest(rawRequest: unknown): WorkspaceFolderSummaryRequest {
+  if (!rawRequest || typeof rawRequest !== "object") throw new Error("Workspace folder summary request is invalid.");
+  const request = rawRequest as Partial<WorkspaceFolderSummaryRequest>;
+  return {
+    path: String(request.path ?? ""),
+    maxDepth: typeof request.maxDepth === "number" ? request.maxDepth : undefined,
+    maxEntries: typeof request.maxEntries === "number" ? request.maxEntries : undefined,
+    maxSampleFiles: typeof request.maxSampleFiles === "number" ? request.maxSampleFiles : undefined,
+    maxChars: typeof request.maxChars === "number" ? request.maxChars : undefined,
+  };
+}
+
 function validatePreviewRequest(rawRequest: unknown): WorkspaceFilePreviewRequest {
   if (!rawRequest || typeof rawRequest !== "object") throw new Error("Workspace file preview request is invalid.");
   const request = rawRequest as Partial<WorkspaceFilePreviewRequest>;
@@ -596,6 +775,28 @@ function validateDiffRequest(rawRequest: unknown): WorkspaceGitDiffRequest {
     path: typeof request.path === "string" ? request.path : undefined,
     maxChars: typeof request.maxChars === "number" ? request.maxChars : undefined,
     staged: request.staged === true,
+  };
+}
+
+function validateGitFileAtRefRequest(rawRequest: unknown): WorkspaceGitFileAtRefRequest {
+  if (!rawRequest || typeof rawRequest !== "object") throw new Error("Workspace git ref file request is invalid.");
+  const request = rawRequest as Partial<WorkspaceGitFileAtRefRequest>;
+  const ref = typeof request.ref === "string" ? request.ref.trim() : "";
+  if (
+    !ref ||
+    ref.length > 160 ||
+    /[\r\n\u0000]/.test(ref) ||
+    ref.startsWith("-") ||
+    ref.includes("..") ||
+    !/^[A-Za-z0-9._/@{}^~:-]+$/.test(ref)
+  ) {
+    throw new Error("Git ref is invalid for file preview.");
+  }
+  return {
+    workspacePath: String(request.workspacePath ?? ""),
+    ref,
+    path: String(request.path ?? ""),
+    maxBytes: typeof request.maxBytes === "number" ? request.maxBytes : undefined,
   };
 }
 
@@ -789,6 +990,34 @@ function hashFile(filePath: string): Promise<string> {
 
 function hashString(input: string): string {
   return `sha256:${createHash("sha256").update(input).digest("hex")}`;
+}
+
+async function summarizeFileForFolder(
+  filePath: string,
+  kind: WorkspacePreviewKind,
+  size: number,
+): Promise<string[] | undefined> {
+  if (
+    kind === "binary" ||
+    kind === "image" ||
+    kind === "media" ||
+    kind === "large" ||
+    kind === "unknown" ||
+    size > MAX_FOLDER_SUMMARY_FILE_BYTES
+  ) {
+    return undefined;
+  }
+  try {
+    const buffer = await readFileSlice(filePath, Math.min(size, MAX_FOLDER_SUMMARY_FILE_BYTES));
+    if (looksBinary(buffer)) return undefined;
+    const content = buffer.toString("utf8").replace(/\u0000/g, "");
+    return createTextOutline(content)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+  } catch {
+    return undefined;
+  }
 }
 
 function createTextOutline(content: string): string[] {
@@ -1110,6 +1339,18 @@ function runGit(cwd: string, args: string[], timeout: number): Promise<string | 
         return;
       }
       resolve(stdout.trim() || null);
+    });
+  });
+}
+
+function runGitRaw(cwd: string, args: string[], timeout: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile("git", args, { cwd, timeout, windowsHide: true, maxBuffer: 2_000_000 }, (error, stdout) => {
+      if (error) {
+        resolve(null);
+        return;
+      }
+      resolve(stdout);
     });
   });
 }

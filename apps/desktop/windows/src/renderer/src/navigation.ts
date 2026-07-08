@@ -6,6 +6,7 @@ export const MENU_IDS = {
   skillsSquare: "skills_square",
   plugins: "plugins",
   library: "library",
+  approvalCenter: "approval_center",
   profile: "profile",
   usageAnalytics: "usage_analytics",
   channels: "channels",
@@ -25,6 +26,7 @@ export type AppLanguage = "en" | "zh";
 
 export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
   zh: {
+    [MENU_IDS.approvalCenter]: "Approval Center",
     [MENU_IDS.currentSession]: "当前会话",
     [MENU_IDS.myAgents]: "我的智能体",
     [MENU_IDS.agentSquare]: "智能体",
@@ -47,6 +49,7 @@ export const MENU_LABELS: Record<AppLanguage, Record<NavId, string>> = {
     [MENU_IDS.skillsSquare]: "Skills",
     [MENU_IDS.plugins]: "Plugins",
     [MENU_IDS.library]: "Library",
+    [MENU_IDS.approvalCenter]: "Approval Center",
     [MENU_IDS.profile]: "Settings",
     [MENU_IDS.usageAnalytics]: "Usage Analytics",
     [MENU_IDS.channels]: "Channels",
@@ -101,7 +104,7 @@ const navDefinitions: Array<{
     items: [
       { id: MENU_IDS.myAgents, enabled: false },
       { id: MENU_IDS.agentSquare, enabled: true },
-      { id: MENU_IDS.skillsSquare, enabled: false },
+      { id: MENU_IDS.skillsSquare, enabled: true },
       { id: MENU_IDS.plugins, enabled: false },
     ],
   },
@@ -109,6 +112,7 @@ const navDefinitions: Array<{
     id: "workspace",
     items: [
       { id: MENU_IDS.library, enabled: false },
+      { id: MENU_IDS.approvalCenter, enabled: true },
       { id: MENU_IDS.logs, enabled: false },
     ],
   },
@@ -116,7 +120,7 @@ const navDefinitions: Array<{
     id: "admin",
     items: [
       { id: MENU_IDS.usageAnalytics, enabled: false },
-      { id: MENU_IDS.channels, enabled: false },
+      { id: MENU_IDS.channels, enabled: true },
       { id: MENU_IDS.agentManagement, enabled: false },
       { id: MENU_IDS.userManagement, enabled: false },
     ],

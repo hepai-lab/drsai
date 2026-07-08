@@ -141,6 +141,7 @@ from drsai.modules.managers.database import DatabaseManager
 from drsai.modules.managers.datamodel.db import Thread, RunStatus
 
 from drsai.modules.managers.datamodel.types import Response as DBResponse
+from drsai.modules.managers.messages import AgentLogEvent
 
 from drsai.utils.utils import compress_state, decompress_state
 
@@ -326,6 +327,14 @@ class ChatRequest(BaseModel):
         description="Working directory for tool execution. "
 
                     "Defaults to the server's current working directory.",
+
+    )
+
+    metadata: dict[str, Any] = Field(
+
+        default_factory=dict,
+
+        description="Desktop request metadata, including chat runtime mode.",
 
     )
 
@@ -1305,6 +1314,79 @@ async def set_default_model_config(alias: str):
 
 
 
+_CHAT_RUNTIME_MODE_INSTRUCTIONS = {
+    "plan": "Produce a concrete implementation plan before any execution steps. Call out assumptions, risks, verification, and the smallest safe next step.",
+    "goal": "Track the user's objective, completion criteria, and remaining blockers explicitly. Keep the response oriented around goal progress.",
+    "review": "Use code-review behavior: findings first, ordered by severity, with file and line references where possible. Keep summaries secondary.",
+    "fix": "Implement or describe a focused fix path. Prefer minimal changes, include verification, and surface residual risk.",
+    "test": "Prioritize relevant automated tests or verification commands before broader execution. Explain what each test proves.",
+    "commit": "Prepare commit-ready output only after reviewing staged scope, risk, and test evidence. Do not claim a commit happened unless a commit tool actually ran.",
+    "fork": "Plan work as an isolated fork or subtask. Identify what should happen in the child thread or worktree before touching shared state.",
+}
+
+
+def _runtime_mode_from_metadata(metadata: dict[str, Any] | None) -> dict[str, str] | None:
+
+    if not isinstance(metadata, dict):
+
+        return None
+
+    raw_mode = metadata.get("runtime_mode")
+
+    if not isinstance(raw_mode, dict):
+
+        return None
+
+    name = _safe_str(raw_mode.get("name")).strip().lower()
+
+    if name not in _CHAT_RUNTIME_MODE_INSTRUCTIONS:
+
+        return None
+
+    mode: dict[str, str] = {"name": name}
+
+    for key in ("label", "description", "intent", "activated_by"):
+
+        value = _safe_str(raw_mode.get(key)).strip()
+
+        if value:
+
+            mode[key] = value[:600]
+
+    return mode
+
+
+def _task_with_runtime_mode(task: str, metadata: dict[str, Any] | None) -> str:
+
+    runtime_mode = _runtime_mode_from_metadata(metadata)
+
+    if not runtime_mode:
+
+        return task
+
+    lines = [
+        "Desktop runtime mode:",
+        f"Mode: {runtime_mode.get('label') or runtime_mode['name']} ({runtime_mode['name']})",
+        f"Backend instruction: {_CHAT_RUNTIME_MODE_INSTRUCTIONS[runtime_mode['name']]}",
+    ]
+
+    if runtime_mode.get("description"):
+
+        lines.append(f"Mode description: {runtime_mode['description']}")
+
+    if runtime_mode.get("intent"):
+
+        lines.append(f"User mode intent: {runtime_mode['intent']}")
+
+    if runtime_mode.get("activated_by"):
+
+        lines.append(f"Activated by: {runtime_mode['activated_by']}")
+
+    lines.extend(["", "User task:", task])
+
+    return "\n".join(lines)
+
+
 @app.post("/v1/chat/completions")
 
 async def chat_completions(request: ChatRequest, raw_request: Request):
@@ -1333,7 +1415,7 @@ async def chat_completions(request: ChatRequest, raw_request: Request):
 
         raise HTTPException(status_code=400, detail="No user message found")
 
-    task = user_msgs[-1].content
+    task = _task_with_runtime_mode(user_msgs[-1].content, request.metadata)
 
 
 
@@ -3273,6 +3355,18 @@ def _event_to_sse(event: Any) -> str | None:
 
 
     # ââ Tool call request âââââââââââââââââââââââââââââââââââââââââââââââââ
+
+    # Agent status/log updates, e.g. LLM retry warnings.
+    if isinstance(event, AgentLogEvent):
+        level = getattr(event, "send_level", "INFO")
+        payload = json.dumps({
+            "title": _safe_str(getattr(event, "title", "")),
+            "content": _safe_str(getattr(event, "content", "")),
+            "level": _safe_str(getattr(level, "value", level)),
+            "content_type": _safe_str(getattr(event, "content_type", "")),
+        }, ensure_ascii=False)
+
+        return f"event: agent.log\ndata: {payload}\n\n"
 
     if isinstance(event, ToolCallRequestEvent):
 

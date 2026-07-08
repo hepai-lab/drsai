@@ -39,9 +39,9 @@ export function PatchReviewPanel({
         path: diff.path,
         expectedDiffHash: diff.diffHash,
       });
-      setFileActionState(result.staged ? "done" : "idle");
+      setFileActionState(result.approvalQueued ? "busy" : result.staged ? "done" : "idle");
       setFileActionMessage(result.message);
-      onReverted();
+      if (result.staged) onReverted();
     } catch (caught) {
       setFileActionState("error");
       setFileActionMessage(caught instanceof Error ? caught.message : String(caught));
@@ -64,9 +64,9 @@ export function PatchReviewPanel({
         path: diff.path,
         expectedDiffHash: diff.diffHash,
       });
-      setFileActionState(result.reverted ? "done" : "idle");
+      setFileActionState(result.approvalQueued ? "busy" : result.reverted ? "done" : "idle");
       setFileActionMessage(result.message);
-      onReverted();
+      if (result.reverted) onReverted();
     } catch (caught) {
       setFileActionState("error");
       setFileActionMessage(caught instanceof Error ? caught.message : String(caught));
@@ -103,9 +103,13 @@ export function PatchReviewPanel({
         : await desktopApi.revertWorkspaceHunk(request);
       setDecisions((current) => ({
         ...current,
-        [hunk.id]: result.applied ? (action === "approve" ? "approved" : "rejected") : "error",
+        [hunk.id]: result.approvalQueued
+          ? "busy"
+          : result.applied
+            ? (action === "approve" ? "approved" : "rejected")
+            : "error",
       }));
-      setFileActionState(result.applied ? "done" : "error");
+      setFileActionState(result.approvalQueued ? "busy" : result.applied ? "done" : "error");
       setFileActionMessage(result.message);
       if (result.applied) onReverted();
     } catch (caught) {
