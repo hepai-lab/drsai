@@ -10,10 +10,9 @@
   "compilerOptions": {
     "composite": true,
     "jsx": "react-jsx",
-    "baseUrl": ".",
     "paths": {
-      "@renderer/*": ["src/renderer/src/*"],
-      "@shared/*": ["src/shared/*"]
+      "@renderer/*": ["./src/renderer/src/*"],
+      "@shared/*": ["./src/shared/*"]
     }
   }
 }
