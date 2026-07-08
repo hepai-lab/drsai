@@ -2931,7 +2931,8 @@ button {
 }
 
 .login-form input[type="email"],
-.login-form input[type="password"] {
+.login-form input[type="password"],
+.login-form select {
   height: clamp(44px, 7vh, 56px);
   min-width: 0;
   padding: 0 18px;
@@ -2942,7 +2943,13 @@ button {
   text-align: center;
 }
 
-.login-form input:focus {
+.login-form select {
+  appearance: none;
+  cursor: pointer;
+}
+
+.login-form input:focus,
+.login-form select:focus {
   border-color: var(--app-accent);
   box-shadow: 0 0 0 3px var(--app-focus-ring);
   outline: none;

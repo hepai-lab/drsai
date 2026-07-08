@@ -106,8 +106,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:start-agent-run", request),
   abortAgentRun: (requestId: string): Promise<boolean> =>
     ipcRenderer.invoke("desktop:abort-agent-run", requestId),
-  saveApiKey: (apiKey: string): Promise<SaveApiKeyResult> =>
-    ipcRenderer.invoke("desktop:save-api-key", apiKey),
+  saveApiKey: (apiKey: string, defaultModel?: string): Promise<SaveApiKeyResult> =>
+    ipcRenderer.invoke("desktop:save-api-key", apiKey, defaultModel),
   pickFiles: () => ipcRenderer.invoke("desktop:pick-files"),
   pickFolder: () => ipcRenderer.invoke("desktop:pick-folder"),
   getWorkspaceContextOverview: (

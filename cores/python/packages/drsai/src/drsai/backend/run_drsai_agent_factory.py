@@ -266,6 +266,14 @@ DEFAULT_LLM_MODE_CONFIG: dict[str, ModelEntry] = {
         reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
         vision=True,            # GLM-5.1 supports image input
     ),
+    "glm-5.2": ModelEntry(
+        model="zhipu/glm-5.2",
+        token_limit=200000,
+        max_tokens=64000,
+        client_type="openai",
+        reasoning=ReasoningConfig(supported=True, effort_levels=["low", "medium", "high"], param_type="zhipu_format"),
+        vision=True,
+    ),
     # ── MiniMax ──────────────────────────────────────────────────────
     "minimax-m2.7-highspeed": ModelEntry(
         model="minimax/minimax-m2.7-highspeed",
@@ -336,6 +344,7 @@ DISPLAY_NAME_OVERRIDES: dict[str, str] = {
     "deepseek-v4-pro": "DeepSeek V4 Pro",
     "deepseek-v4-flash": "DeepSeek V4 Flash",
     "glm-5.1": "GLM-5.1",
+    "glm-5.2": "GLM-5.2",
     "gpt-5.4": "GPT-5.4",
     "gpt-5.5": "GPT-5.5",
     "minimax-m2.7-highspeed": "MiniMax M2.7 Highspeed",
@@ -569,7 +578,7 @@ def create_agent(
     thread_id: Optional[str] = None,
     user_id: Optional[str] = None,
     db_manager: Optional[DatabaseManager] = None,
-    defult_config_name: Optional[str] = DEFAULT_CONFIG_NAME,
+    defult_config_name: Optional[str] = None,
     cli_cfg: Optional[dict[str, Any]] = None,
     assistant_cls: type[DrSaiAssistant] = DrSaiCLIAssistant,
     work_dir: Optional[str] = None,
@@ -599,7 +608,7 @@ def create_agent(
         - only_in_workspace = True  (tools restricted to cwd + storage_dir)
         - extra_work_dirs = [storage_dir]  (agent can access its own internal files)
     """
-    cli_cfg = cli_cfg or {}
+    cli_cfg = cli_cfg or load_config()
 
     # LLM catalog: env > cli_cfg > built-in default.
     llm_config_path = _resolve(cli_cfg, "llm_config_file", "LLM_CONFIG_FILE") or None

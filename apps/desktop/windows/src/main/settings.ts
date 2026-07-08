@@ -1,10 +1,13 @@
+import { request as httpRequest } from "http";
 import { mkdirSync, existsSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
 import type { SaveApiKeyResult } from "../shared/desktopApi";
+import { saveDefaultModelAlias } from "./modelDefaults";
 import { DRSAI_ENV_FILE } from "./paths";
 
 const API_KEY_NAME = "HEPAI_API_KEY";
 const MAX_API_KEY_CHARS = 4096;
+const GATEWAY_BASE_URL = `http://127.0.0.1:${getGatewayPort()}`;
 
 export function saveApiKey(rawApiKey: unknown): SaveApiKeyResult {
   if (typeof rawApiKey !== "string") {
@@ -31,6 +34,21 @@ export function saveApiKey(rawApiKey: unknown): SaveApiKeyResult {
   return { ok: true, message: "API key saved." };
 }
 
+export async function saveApiKeyAndDefaultModel(
+  rawApiKey: unknown,
+  rawDefaultModel?: unknown,
+): Promise<SaveApiKeyResult> {
+  const result = saveApiKey(rawApiKey);
+  if (!result.ok) return result;
+  const apiKey = typeof rawApiKey === "string" ? rawApiKey.trim() : "";
+  let defaultModel: string | undefined;
+  if (rawDefaultModel !== undefined) {
+    defaultModel = saveDefaultModelAlias(rawDefaultModel);
+  }
+  await syncRunningGatewayConfig(apiKey, defaultModel);
+  return result;
+}
+
 function upsertEnvValue(content: string, key: string, value: string): string {
   const lines = content.replace(/\r\n/g, "\n").split("\n");
   let replaced = false;
@@ -55,4 +73,52 @@ function upsertEnvValue(content: string, key: string, value: string): string {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function syncRunningGatewayConfig(
+  apiKey: string,
+  defaultModel?: string,
+): Promise<void> {
+  await Promise.all([
+    putGatewayConfig(`/v1/config/env/${encodeURIComponent(API_KEY_NAME)}`, {
+      value: apiKey,
+    }),
+    defaultModel
+      ? putGatewayConfig("/v1/config/cli/defult_config_name", {
+          value: defaultModel,
+        })
+      : Promise.resolve(),
+  ]).catch(() => undefined);
+}
+
+function putGatewayConfig(path: string, body: Record<string, unknown>): Promise<void> {
+  return new Promise((resolve) => {
+    const payload = JSON.stringify(body);
+    const req = httpRequest(
+      `${GATEWAY_BASE_URL}${path}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+        },
+        timeout: 1200,
+      },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve());
+      },
+    );
+    req.on("error", () => resolve());
+    req.on("timeout", () => {
+      req.destroy();
+      resolve();
+    });
+    req.end(payload);
+  });
+}
+
+function getGatewayPort(): string {
+  const rawPort = process.env.OPENDRSAI_GATEWAY_PORT || process.env.DRSAI_API_PORT || "8642";
+  return /^\d+$/.test(rawPort) ? rawPort : "8642";
 }

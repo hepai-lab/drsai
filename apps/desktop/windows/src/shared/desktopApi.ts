@@ -121,6 +121,7 @@ export interface LoginRequest {
   email?: string;
   password?: string;
   apiKey?: string;
+  defaultModel?: string;
   developerBypass?: boolean;
   oidc?: boolean;
   rememberMe?: boolean;
@@ -550,7 +551,7 @@ export interface DesktopApi {
     request: AgentRunRequest,
   ): Promise<{ requestId: string; sessionId: string; runId: string }>;
   abortAgentRun(requestId: string): Promise<boolean>;
-  saveApiKey(apiKey: string): Promise<SaveApiKeyResult>;
+  saveApiKey(apiKey: string, defaultModel?: string): Promise<SaveApiKeyResult>;
   pickFiles(): Promise<PickDialogResult>;
   pickFolder(): Promise<PickDialogResult>;
   checkBrowserUrl(url: string): Promise<BrowserUrlCheck>;

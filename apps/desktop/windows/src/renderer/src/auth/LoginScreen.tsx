@@ -5,11 +5,20 @@ import { useAuth } from "./AuthProvider";
 
 type LoginMode = "oidc" | "api_key" | "password";
 
+const DEFAULT_MODEL_OPTIONS = [
+  { value: "hepai/deepseek-v4-pro", label: "HEPAI DeepSeek V4 Pro" },
+  { value: "hepai/deepseek-v4-flash", label: "HEPAI DeepSeek V4 Flash" },
+  { value: "glm-5.2", label: "GLM-5.2" },
+  { value: "glm-5.1", label: "GLM-5.1" },
+  { value: "hepai/minimax-m2.7-highspeed", label: "HEPAI MiniMax M2.7" },
+];
+
 export function LoginScreen(): React.JSX.Element {
   const auth = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("zh");
   const [mode, setMode] = useState<LoginMode>("oidc");
   const [apiKey, setApiKey] = useState("");
+  const [defaultModel, setDefaultModel] = useState(DEFAULT_MODEL_OPTIONS[0].value);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(true);
@@ -20,7 +29,7 @@ export function LoginScreen(): React.JSX.Element {
     if (mode === "oidc") {
       await auth.startOidcLogin({ rememberMe });
     } else if (mode === "api_key") {
-      await auth.login({ apiKey, rememberMe });
+      await auth.login({ apiKey, defaultModel, rememberMe });
     } else {
       await auth.login({ email, password, rememberMe });
     }
@@ -94,15 +103,30 @@ export function LoginScreen(): React.JSX.Element {
 
         <form className="login-form" onSubmit={handleSubmit}>
           {mode === "oidc" ? null : mode === "api_key" ? (
-            <label className="login-field">
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                placeholder={zh ? "输入你的 API key" : "Enter your API key"}
-                autoComplete="off"
-              />
-            </label>
+            <>
+              <label className="login-field">
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(event) => setApiKey(event.target.value)}
+                  placeholder={zh ? "输入你的 API key" : "Enter your API key"}
+                  autoComplete="off"
+                />
+              </label>
+              <label className="login-field">
+                <select
+                  value={defaultModel}
+                  onChange={(event) => setDefaultModel(event.target.value)}
+                  aria-label={zh ? "默认模型" : "Default model"}
+                >
+                  {DEFAULT_MODEL_OPTIONS.map((model) => (
+                    <option key={model.value} value={model.value}>
+                      {model.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
           ) : (
             <>
               <label className="login-field">

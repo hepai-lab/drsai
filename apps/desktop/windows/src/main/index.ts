@@ -45,7 +45,7 @@ import {
   stageWorkspaceFile,
   stageWorkspaceHunk,
 } from "./workspaceContext";
-import { saveApiKey } from "./settings";
+import { saveApiKeyAndDefaultModel } from "./settings";
 import {
   cancelOidcLogin,
   cancelDesktopSsoLogin,
@@ -451,8 +451,8 @@ function registerIpc(): void {
   secureHandle("desktop:abort-agent-run", (_event, requestId: string) =>
     abortAgentRun(requestId),
   );
-  secureHandle("desktop:save-api-key", (_event, apiKey: string) =>
-    saveApiKey(apiKey),
+  secureHandle("desktop:save-api-key", (_event, apiKey: string, defaultModel?: string) =>
+    saveApiKeyAndDefaultModel(apiKey, defaultModel),
   );
   secureHandle("desktop:pick-files", async () => {
     if (!mainWindow) return { canceled: true, paths: [] };

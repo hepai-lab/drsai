@@ -20,7 +20,8 @@ import type {
   LogoutOptions,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
-import { saveApiKey } from "./settings";
+import { normalizeModelAlias } from "./modelDefaults";
+import { saveApiKeyAndDefaultModel } from "./settings";
 
 const AUTH_SESSION_FILE = join(DRSAI_HOME, "auth", "session.json");
 const SESSION_DAYS = 30;
@@ -118,7 +119,7 @@ export async function requireAuthContext(): Promise<AuthContext> {
   };
 }
 
-export function login(rawRequest: unknown): LoginResult {
+export async function login(rawRequest: unknown): Promise<LoginResult> {
   const request = normalizeLoginRequest(rawRequest);
   if ("message" in request) {
     return { ok: false, session: null, message: request.message };
@@ -138,7 +139,7 @@ export function login(rawRequest: unknown): LoginResult {
   }
 
   if (request.apiKey) {
-    const saveResult = saveApiKey(request.apiKey);
+    const saveResult = await saveApiKeyAndDefaultModel(request.apiKey, request.defaultModel);
     if (!saveResult.ok) {
       return { ok: false, session: null, message: saveResult.message };
     }
@@ -358,6 +359,12 @@ function normalizeLoginRequest(rawRequest: unknown): LoginRequest | { message: s
   const email = typeof value.email === "string" ? value.email.trim() : undefined;
   const password = typeof value.password === "string" ? value.password : undefined;
   const apiKey = typeof value.apiKey === "string" ? value.apiKey.trim() : undefined;
+  let defaultModel: string | undefined;
+  try {
+    defaultModel = normalizeModelAlias(value.defaultModel);
+  } catch {
+    return { message: "Default model is invalid." };
+  }
   const developerBypass = value.developerBypass === true;
   const rememberMe = value.rememberMe !== false;
 
@@ -377,7 +384,7 @@ function normalizeLoginRequest(rawRequest: unknown): LoginRequest | { message: s
     return { message: "API key must be a single line." };
   }
 
-  return { email, password, apiKey, developerBypass, rememberMe };
+  return { email, password, apiKey, defaultModel, developerBypass, rememberMe };
 }
 
 function normalizeLogoutOptions(rawOptions: unknown): LogoutOptions {

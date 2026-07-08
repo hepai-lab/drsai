@@ -239,6 +239,19 @@ def _get_user_id() -> str:
     return _desktop_user_name or _DEFAULT_USER_ID
 
 
+def _get_default_model_alias() -> str:
+    """Resolve the configured default model alias for desktop gateway callers."""
+    try:
+        from drsai.backend.cli.config import load_config
+
+        alias = load_config().get("defult_config_name")
+        if isinstance(alias, str) and alias.strip():
+            return alias.strip()
+    except Exception as e:
+        logger.debug(f"Failed to read default model alias from cli config: {e}")
+    return DEFAULT_CONFIG_NAME
+
+
 
 
 
@@ -690,7 +703,7 @@ class AgentManager:
                     thread_id=tid,
                     user_id=uid,
                     db_manager=_get_db(),
-                    defult_config_name=model_alias or "hepai/minimax-m2.7-highspeed",
+                    defult_config_name=model_alias or _get_default_model_alias(),
                     work_dir=work_dir or os.getcwd(),
                 )
                 if inspect.iscoroutinefunction(create_agent):
@@ -1116,7 +1129,7 @@ def _get_live_llm_config() -> tuple[dict[str, ModelEntry], str]:
     """Get current llm config + default_alias, resolving file path."""
     config_path = get_llm_config_file_path()
     llm_config = load_llm_mode_config(config_path)
-    default_alias = DEFAULT_CONFIG_NAME
+    default_alias = _get_default_model_alias()
     if config_path:
         import yaml
         try:

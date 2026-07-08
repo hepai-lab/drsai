@@ -4,6 +4,7 @@ import { readFile, stat } from "fs/promises";
 import type { ChatAttachment, ChatEvent, ChatMessage, ChatRequest } from "../shared/desktopApi";
 import { requireAuthContext } from "./auth";
 import { startGateway } from "./gateway";
+import { getDefaultModelAlias } from "./modelDefaults";
 import { isCompletionDoneFrame, parseChatSseFrame } from "./sseParser";
 import { upsertThreadFromRun } from "./threads";
 
@@ -253,6 +254,7 @@ async function runChat(
 
     const attachmentContext = await buildAttachmentContext(request.attachments);
     const messages = withAttachmentContext(request.messages, attachmentContext);
+    const model = request.model || getDefaultModelAlias() || "drsai";
     const response = await fetch(`${GATEWAY_BASE_URL}/v1/chat/completions`, {
       method: "POST",
       headers: {
@@ -263,7 +265,7 @@ async function runChat(
         ...(auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
       },
       body: JSON.stringify({
-        model: request.model || "drsai",
+        model,
         messages,
         stream: true,
         user_id: auth.userId,

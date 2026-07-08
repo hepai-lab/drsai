@@ -7,6 +7,7 @@ import { join } from "path";
 import type { AgentRunEvent, AgentRunFileEvent, AgentRunRequest } from "../shared/desktopApi";
 import { requireAuthContext, type AuthContext } from "./auth";
 import { startGateway } from "./gateway";
+import { getDefaultModelAlias } from "./modelDefaults";
 import {
   isCompletionDoneFrame,
   parseAgentRunSseFileEvents,
@@ -158,6 +159,11 @@ async function runAgent(
       throw new Error("Gateway is not ready. Install or start OpenDrSai first.");
     }
 
+    const model =
+      request.model ||
+      resolveModelFromSettings(request.settingsConfig) ||
+      getDefaultModelAlias() ||
+      "drsai";
     const response = await fetch(`${GATEWAY_BASE_URL}/v1/chat/completions`, {
       method: "POST",
       headers: {
@@ -168,7 +174,7 @@ async function runAgent(
         ...(auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
       },
       body: JSON.stringify({
-        model: request.model || resolveModelFromSettings(request.settingsConfig) || "drsai",
+        model,
         messages: [{ role: "user", content: request.task }],
         stream: true,
         user_id: auth.userId,
