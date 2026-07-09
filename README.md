@@ -67,14 +67,14 @@
 > ```
 
 ```shell
-conda create -n drsai python=>3.11
+conda create -n drsai python=3.12
 conda activate drsai
 git clone https://github.com/hepai-lab/drsai.git drsai # From Github
 git clone https://code.ihep.ac.cn/hepai/drsai drsai # or From IHEP
 
 cd drsai
 pip install -e cores/python/packages/drsai # for OpenDrSai backend and agent components
-pip install -e apps/webui/backend # for DrSai-UI  human-computer interaction frontend
+pip install -e cores/python/packages/drsai_ext && pip install -e apps/webui/backend # for DrSai-UI  human-computer interaction frontend
 ```
 
 > `pip install -e` 时会自动调用 `pnpm install && pnpm build` 编译
@@ -118,7 +118,7 @@ deactivate
 #### pip 安装 / 升级
 
 ```shell
-conda create -n drsai python=>3.11
+conda create -n drsai python=3.12
 conda activate drsai
 
 # 首次安装

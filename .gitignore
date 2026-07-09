@@ -266,3 +266,5 @@ notebooks/test.db
 core.*
 my_ragflow/
 *_page/
+.reasonix/
+eval/results/*
