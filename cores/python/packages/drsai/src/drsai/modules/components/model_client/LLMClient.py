@@ -407,58 +407,59 @@ class HepAIChatCompletionClient(OpenAIChatCompletionClient, Component[HepAIClien
             maybe_model = chunk.model
 
             reasoning_content: str | None = None
-            if choice.delta.model_extra is not None and "reasoning_content" in choice.delta.model_extra:
-                # If there is a reasoning_content field, then we populate the thought field. This is for models such as R1.
-                reasoning_content = choice.delta.model_extra.get("reasoning_content")
+            if choice.delta:
+                if choice.delta.model_extra is not None and "reasoning_content" in choice.delta.model_extra:
+                    # If there is a reasoning_content field, then we populate the thought field. This is for models such as R1.
+                    reasoning_content = choice.delta.model_extra.get("reasoning_content")
 
-            if isinstance(reasoning_content, str) and len(reasoning_content) > 0:
-                if not is_reasoning:
-                    # Enter reasoning mode.
-                    reasoning_content = "<think>" + reasoning_content
-                    is_reasoning = True
-                thought_deltas.append(reasoning_content)
-                yield reasoning_content
-            elif is_reasoning:
-                # Exit reasoning mode.
-                reasoning_content = "</think>"
-                thought_deltas.append(reasoning_content)
-                is_reasoning = False
-                yield reasoning_content
+                if isinstance(reasoning_content, str) and len(reasoning_content) > 0:
+                    if not is_reasoning:
+                        # Enter reasoning mode.
+                        reasoning_content = "<think>" + reasoning_content
+                        is_reasoning = True
+                    thought_deltas.append(reasoning_content)
+                    yield reasoning_content
+                elif is_reasoning:
+                    # Exit reasoning mode.
+                    reasoning_content = "</think>"
+                    thought_deltas.append(reasoning_content)
+                    is_reasoning = False
+                    yield reasoning_content
 
-            # First try get content
-            if choice.delta.content:
-                content_deltas.append(choice.delta.content)
-                if len(choice.delta.content) > 0:
-                    yield choice.delta.content
-                # NOTE: for OpenAI, tool_calls and content are mutually exclusive it seems, so we can skip the rest of the loop.
-                # However, this may not be the case for other APIs -- we should expect this may need to be updated.
-                continue
-            # Otherwise, get tool calls
-            if choice.delta.tool_calls is not None:
-                for tool_call_chunk in choice.delta.tool_calls:
-                    idx = tool_call_chunk.index
-                    if idx not in full_tool_calls:
-                        # We ignore the type hint here because we want to fill in type when the delta provides it
-                        full_tool_calls[idx] = FunctionCall(id="", arguments="", name="")
+                # First try get content
+                if choice.delta.content:
+                    content_deltas.append(choice.delta.content)
+                    if len(choice.delta.content) > 0:
+                        yield choice.delta.content
+                    # NOTE: for OpenAI, tool_calls and content are mutually exclusive it seems, so we can skip the rest of the loop.
+                    # However, this may not be the case for other APIs -- we should expect this may need to be updated.
+                    continue
+                # Otherwise, get tool calls
+                if choice.delta.tool_calls is not None:
+                    for tool_call_chunk in choice.delta.tool_calls:
+                        idx = tool_call_chunk.index
+                        if idx not in full_tool_calls:
+                            # We ignore the type hint here because we want to fill in type when the delta provides it
+                            full_tool_calls[idx] = FunctionCall(id="", arguments="", name="")
 
-                    if tool_call_chunk.id is not None:
-                        full_tool_calls[idx].id += tool_call_chunk.id
+                        if tool_call_chunk.id is not None:
+                            full_tool_calls[idx].id += tool_call_chunk.id
 
-                    if tool_call_chunk.function is not None:
-                        if tool_call_chunk.function.name is not None:
-                            full_tool_calls[idx].name += tool_call_chunk.function.name
-                        if tool_call_chunk.function.arguments is not None:
-                            full_tool_calls[idx].arguments += tool_call_chunk.function.arguments
-            if choice.logprobs and choice.logprobs.content:
-                logprobs = [
-                    ChatCompletionTokenLogprob(
-                        token=x.token,
-                        logprob=x.logprob,
-                        top_logprobs=[TopLogprob(logprob=y.logprob, bytes=y.bytes) for y in x.top_logprobs],
-                        bytes=x.bytes,
-                    )
-                    for x in choice.logprobs.content
-                ]
+                        if tool_call_chunk.function is not None:
+                            if tool_call_chunk.function.name is not None:
+                                full_tool_calls[idx].name += tool_call_chunk.function.name
+                            if tool_call_chunk.function.arguments is not None:
+                                full_tool_calls[idx].arguments += tool_call_chunk.function.arguments
+                if choice.logprobs and choice.logprobs.content:
+                    logprobs = [
+                        ChatCompletionTokenLogprob(
+                            token=x.token,
+                            logprob=x.logprob,
+                            top_logprobs=[TopLogprob(logprob=y.logprob, bytes=y.bytes) for y in x.top_logprobs],
+                            bytes=x.bytes,
+                        )
+                        for x in choice.logprobs.content
+                    ]
 
         # Finalize the CreateResult.
 
