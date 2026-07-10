@@ -92,7 +92,16 @@ try {
 
   console.log("Install script source archive verification passed.");
 } finally {
-  rmSync(tempDir, { recursive: true, force: true });
+  cleanupTempDir(tempDir);
+}
+process.exit(process.exitCode ?? 0);
+
+function cleanupTempDir(path) {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    console.warn(`Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function resolvePythonPath() {
@@ -100,8 +109,14 @@ function resolvePythonPath() {
     return process.env.OPENDRSAI_CHECKONLY_PYTHON;
   }
   for (const candidate of [
-    ["python", ["-c", "import sys; print(sys.executable)"]],
+    "C:\\Python311\\python.exe",
+    "C:\\Program Files\\Python311\\python.exe",
+  ]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  for (const candidate of [
     ["py", ["-3.11", "-c", "import sys; print(sys.executable)"]],
+    ["python", ["-c", "import sys; print(sys.executable)"]],
     ["python3", ["-c", "import sys; print(sys.executable)"]],
   ]) {
     const result = spawnSync(candidate[0], candidate[1], {

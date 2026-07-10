@@ -25,7 +25,15 @@ writeFileSync(mainPath, mainSource({ root, rendererHtml, preloadPath, artifactDi
 try {
   await runElectron(mainPath);
 } finally {
-  rmSync(tempDir, { recursive: true, force: true });
+  cleanupTempDir(tempDir);
+}
+
+function cleanupTempDir(path) {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    console.warn(`Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function runElectron(scriptPath) {
@@ -99,6 +107,15 @@ const fs = require("fs");
 const rendererHtml = ${JSON.stringify(htmlPath)};
 const preloadPath = ${JSON.stringify(preload)};
 const artifactDir = ${JSON.stringify(screenshots)};
+const userDataDir = path.join(path.dirname(preloadPath), "user-data");
+
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch("no-sandbox");
+app.commandLine.appendSwitch("disable-gpu");
+app.commandLine.appendSwitch("disable-gpu-compositing");
+app.commandLine.appendSwitch("disable-gpu-sandbox");
+app.commandLine.appendSwitch("in-process-gpu");
+app.setPath("userData", userDataDir);
 
 const failures = [];
 const watchdog = setTimeout(() => {
@@ -394,7 +411,108 @@ async function run() {
   app.exit(0);
 }
 
-app.whenReady().then(run).catch((error) => {
+async function runCurrentVisual() {
+  const text = {
+    newChatZh: "\u5f00\u59cb\u804a\u5929",
+    searchZh: "\u641c\u7d22",
+    scheduledZh: "\u5df2\u5b89\u6392",
+    agentsZh: "\u667a\u80fd\u4f53",
+    skillsZh: "\u6280\u80fd",
+    settingsZh: "\u8bbe\u7f6e",
+    workspaceZh: "\u5de5\u4f5c\u533a",
+    sendZh: "\u53d1\u9001",
+    stopZh: "\u505c\u6b62",
+    englishZh: "\u82f1\u6587",
+  };
+
+  const includesAny = (haystack, values) => values.some((value) => haystack.includes(value));
+
+  console.log("Checking bridge fallback...");
+  const bridgeMissing = await createWindow(900, 650, false);
+  const bridgeAudit = await auditWindow(bridgeMissing, "bridge-missing");
+  await captureVisual(bridgeMissing, "bridge-missing");
+  if (!bridgeAudit.text.includes("desktop bridge is unavailable")) {
+    fail("production renderer without preload bridge did not show the bridge error page");
+  }
+  bridgeMissing.close();
+
+  console.log("Checking responsive viewports...");
+  for (const [width, height] of [[1280, 720], [1024, 720], [860, 720]]) {
+    const win = await createWindow(width, height, true);
+    const audit = await auditWindow(win, width + "x" + height);
+    await captureVisual(win, audit.label);
+    if (audit.overflow) fail(audit.label + " has horizontal overflow");
+    if (audit.offscreen.length) {
+      fail(
+        audit.label +
+          " has offscreen controls: " +
+          audit.offscreen
+            .slice(0, 5)
+            .map((item) => item.tag + "." + item.className + "@" + Math.round(item.x) + "+" + Math.round(item.width))
+            .join(", "),
+      );
+    }
+    if (!audit.text.includes("OpenDrSai")) fail(audit.label + " is missing brand text");
+    if (!includesAny(audit.text, [text.newChatZh, "New chat"])) fail(audit.label + " is missing new chat action");
+    if (!includesAny(audit.text, [text.searchZh, "Search"])) fail(audit.label + " is missing search action");
+    if (!includesAny(audit.text, [text.agentsZh, "Agents"])) fail(audit.label + " is missing agents navigation");
+    if (!includesAny(audit.text, [text.skillsZh, "Skills"])) fail(audit.label + " is missing skills navigation");
+    if (!includesAny(audit.text, [text.workspaceZh, "Workspace"])) fail(audit.label + " is missing workspace section");
+    if (!audit.hasTextarea) fail(audit.label + " is missing chat textarea");
+    const accessibleNav = audit.buttons.filter((button) =>
+      [text.newChatZh, text.searchZh, text.scheduledZh, text.agentsZh, text.skillsZh, text.settingsZh, "New chat", "Search", "Scheduled", "Agents", "Skills", "Settings"].includes(
+        button.text,
+      ),
+    );
+    if (accessibleNav.some((button) => !button.title || !button.aria)) fail(audit.label + " has inaccessible nav buttons");
+    win.close();
+  }
+
+  console.log("Checking chat interaction...");
+  const interactive = await createWindow(1280, 720, true);
+  if (!(await fillTextarea(interactive, "visual release check"))) fail("could not fill chat textarea");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (!(await clickByAnyText(interactive, [text.sendZh, "Send"]))) fail("could not click Send");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  let interaction = await auditWindow(interactive, "interaction-chat-running");
+  await captureVisual(interactive, "interaction-chat-running");
+  if (!interaction.text.includes("visual release check")) fail("running chat user message did not render");
+  if (!interaction.buttons.some((button) => [text.stopZh, "Stop"].includes(button.text))) fail("running chat did not expose Stop state");
+  await new Promise((resolve) => setTimeout(resolve, 2200));
+  interaction = await auditWindow(interactive, "interaction-chat");
+  await captureVisual(interactive, "interaction-chat");
+  if (!interaction.text.includes("visual release check")) fail("chat user message did not render");
+  if (!interaction.text.includes("renderer") || !interaction.text.includes("ok")) fail("chat stream markdown did not render");
+  if (interaction.buttons.some((button) => [text.stopZh, "Stop"].includes(button.text))) {
+    fail("chat request stayed in Stop state after stream completion");
+  }
+  interactive.close();
+
+  console.log("Checking language switch...");
+  const languageWin = await createWindow(1280, 720, true);
+  if (!(await clickByAnyText(languageWin, ["Visual User", "User menu"]))) fail("could not open user menu for language switch");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  if (!(await clickByAnyText(languageWin, [text.englishZh, "EN", "English"]))) fail("could not switch to English");
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const languageAudit = await auditWindow(languageWin, "language-switch");
+  await captureVisual(languageWin, "language-switch");
+  if (!languageAudit.text.includes("New chat")) fail("English new chat action did not render");
+  if (!languageAudit.text.includes("Settings")) fail("English settings navigation did not render");
+  if (!languageAudit.text.includes("Workspace")) fail("English workspace section did not render");
+  languageWin.close();
+
+  if (failures.length) {
+    console.error("Renderer visual verification failed:");
+    for (const failure of failures) console.error("- " + failure);
+    app.exit(1);
+    return;
+  }
+  clearTimeout(watchdog);
+  console.log("Renderer visual verification passed (3 viewports + bridge + chat + language).");
+  app.exit(0);
+}
+
+app.whenReady().then(runCurrentVisual).catch((error) => {
   console.error(error);
   app.exit(1);
 });

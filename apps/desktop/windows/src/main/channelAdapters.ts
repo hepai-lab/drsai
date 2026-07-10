@@ -57,15 +57,31 @@ const MAX_JSONL_PREVIEW_RECORDS = 12;
 const MAX_JSONL_FIELD_PREVIEW = 16;
 const MAX_COLUMNAR_DATA_PREVIEW_BYTES = 192 * 1024;
 const MAX_COLUMNAR_STRING_PREVIEW = 12;
+const MAX_SCIENTIFIC_CONTAINER_PREVIEW_BYTES = 256 * 1024;
+const MAX_SCIENTIFIC_CONTAINER_ITEM_PREVIEW = 12;
 const MAX_HAR_PREVIEW_BYTES = 192 * 1024;
 const MAX_HAR_ENTRY_PREVIEW = 8;
 const MAX_HAR_HEADER_PREVIEW = 8;
+const MAX_DEVTOOLS_TRACE_PREVIEW_BYTES = 192 * 1024;
+const MAX_DEVTOOLS_TRACE_EVENT_PREVIEW = 16;
+const MAX_DEVTOOLS_TRACE_ARG_PREVIEW = 8;
+const MAX_LIGHTHOUSE_REPORT_PREVIEW_BYTES = 192 * 1024;
+const MAX_LIGHTHOUSE_AUDIT_PREVIEW = 12;
+const MAX_LIGHTHOUSE_CATEGORY_PREVIEW = 8;
 const MAX_PCAP_PREVIEW_BYTES = 256 * 1024;
 const MAX_PCAP_PACKET_PREVIEW = 8;
 const MAX_PCAP_BLOCK_PREVIEW = 12;
 const MAX_API_SPEC_PREVIEW_BYTES = 192 * 1024;
 const MAX_API_ENDPOINT_PREVIEW = 16;
 const MAX_API_SECURITY_PREVIEW = 8;
+const MAX_POSTMAN_ENVIRONMENT_PREVIEW_BYTES = 96 * 1024;
+const MAX_POSTMAN_ENVIRONMENT_ITEM_PREVIEW = 16;
+const MAX_REST_CLIENT_PREVIEW_BYTES = 96 * 1024;
+const MAX_REST_CLIENT_REQUEST_PREVIEW = 16;
+const MAX_REST_CLIENT_HEADER_PREVIEW = 12;
+const MAX_REST_CLIENT_VARIABLE_PREVIEW = 12;
+const MAX_BRUNO_COLLECTION_PREVIEW_BYTES = 96 * 1024;
+const MAX_BRUNO_COLLECTION_ITEM_PREVIEW = 16;
 const MAX_GRAPHQL_PREVIEW_BYTES = 128 * 1024;
 const MAX_GRAPHQL_OPERATION_PREVIEW = 12;
 const MAX_GRAPHQL_TYPE_PREVIEW = 16;
@@ -76,11 +92,21 @@ const MAX_KUBERNETES_PREVIEW_BYTES = 128 * 1024;
 const MAX_KUBERNETES_RESOURCE_PREVIEW = 16;
 const MAX_KUBERNETES_CONTAINER_PREVIEW = 12;
 const MAX_KUBERNETES_REFERENCE_PREVIEW = 12;
+const MAX_KUBERNETES_PACKAGE_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_KUBERNETES_PACKAGE_CONFIG_ITEM_PREVIEW = 16;
 const MAX_GEOSPATIAL_PREVIEW_BYTES = 192 * 1024;
 const MAX_GEOSPATIAL_FEATURE_PREVIEW = 16;
 const MAX_GEOSPATIAL_COORDINATE_PREVIEW = 12;
 const MAX_FEED_PREVIEW_BYTES = 128 * 1024;
 const MAX_FEED_ITEM_PREVIEW = 12;
+const MAX_WEB_CRAWL_METADATA_PREVIEW_BYTES = 128 * 1024;
+const MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW = 16;
+const MAX_ANDROID_MANIFEST_PREVIEW_BYTES = 128 * 1024;
+const MAX_ANDROID_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_APPLE_INFO_PLIST_PREVIEW_BYTES = 128 * 1024;
+const MAX_APPLE_INFO_PLIST_ITEM_PREVIEW = 16;
+const MAX_MOBILE_APP_PACKAGE_PREVIEW_BYTES = 512 * 1024;
+const MAX_MOBILE_APP_PACKAGE_ITEM_PREVIEW = 16;
 const MAX_BOOKMARK_PREVIEW_BYTES = 128 * 1024;
 const MAX_BOOKMARK_ITEM_PREVIEW = 16;
 const MAX_LINK_SHORTCUT_PREVIEW_BYTES = 32 * 1024;
@@ -111,6 +137,7 @@ const MAX_WINDOWS_TASK_ITEM_PREVIEW = 12;
 const MAX_XLSX_PREVIEW_SHEETS = 3;
 const MAX_XLSX_PREVIEW_ROWS = 6;
 const MAX_XLSX_PREVIEW_CELLS = 8;
+const MAX_XLSX_FORMULA_PREVIEW = 12;
 const MAX_NOTEBOOK_PREVIEW_BYTES = 256 * 1024;
 const MAX_NOTEBOOK_PREVIEW_CELLS = 8;
 const MAX_NOTEBOOK_OUTPUT_PREVIEW = 6;
@@ -118,13 +145,23 @@ const MAX_CONFIG_LOG_PREVIEW_BYTES = 64 * 1024;
 const MAX_CONFIG_KEYS_PREVIEW = 24;
 const MAX_CONFIG_SCHEMA_HINTS = 8;
 const MAX_CI_WORKFLOW_PREVIEW_ITEMS = 12;
+const MAX_METRICS_SNAPSHOT_PREVIEW_BYTES = 128 * 1024;
+const MAX_METRICS_SNAPSHOT_ITEM_PREVIEW = 16;
 const MAX_CONTAINER_CONFIG_PREVIEW_BYTES = 96 * 1024;
 const MAX_CONTAINER_INSTRUCTION_PREVIEW = 16;
 const MAX_CONTAINER_COMPOSE_SERVICE_PREVIEW = 12;
 const MAX_BUILD_MANIFEST_PREVIEW_BYTES = 128 * 1024;
 const MAX_BUILD_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_DOTNET_NUGET_CONFIG_PREVIEW_BYTES = 96 * 1024;
+const MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW = 16;
+const MAX_CPP_BUILD_MANIFEST_PREVIEW_BYTES = 128 * 1024;
+const MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW = 16;
 const MAX_IAC_PREVIEW_BYTES = 128 * 1024;
 const MAX_IAC_BLOCK_PREVIEW = 16;
+const MAX_TERRAFORM_PLAN_PREVIEW_BYTES = 192 * 1024;
+const MAX_TERRAFORM_PLAN_ITEM_PREVIEW = 16;
+const MAX_CLOUD_IAC_TEMPLATE_PREVIEW_BYTES = 192 * 1024;
+const MAX_CLOUD_IAC_TEMPLATE_ITEM_PREVIEW = 16;
 const MAX_ANSIBLE_PREVIEW_BYTES = 128 * 1024;
 const MAX_ANSIBLE_ITEM_PREVIEW = 16;
 const MAX_3D_MODEL_PREVIEW_BYTES = 256 * 1024;
@@ -143,6 +180,10 @@ const MAX_SARIF_PREVIEW_BYTES = 192 * 1024;
 const MAX_SARIF_RUN_PREVIEW = 6;
 const MAX_SARIF_RESULT_PREVIEW = 12;
 const MAX_SARIF_LOCATION_PREVIEW = 12;
+const MAX_SECURITY_SCAN_REPORT_PREVIEW_BYTES = 192 * 1024;
+const MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW = 16;
+const MAX_STATIC_ANALYSIS_XML_PREVIEW_BYTES = 128 * 1024;
+const MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW = 12;
 const MAX_COVERAGE_REPORT_PREVIEW_BYTES = 128 * 1024;
 const MAX_COVERAGE_FILE_PREVIEW = 16;
 const MAX_COVERAGE_PACKAGE_PREVIEW = 12;
@@ -151,8 +192,26 @@ const MAX_TEST_REPORT_CASE_PREVIEW = 16;
 const MAX_TEST_REPORT_FAILURE_PREVIEW = 8;
 const MAX_PYTHON_DEPENDENCY_PREVIEW_BYTES = 128 * 1024;
 const MAX_PYTHON_DEPENDENCY_ITEM_PREVIEW = 16;
+const MAX_CARGO_MANIFEST_PREVIEW_BYTES = 96 * 1024;
+const MAX_CARGO_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_DART_PUBSPEC_PREVIEW_BYTES = 96 * 1024;
+const MAX_DART_PUBSPEC_ITEM_PREVIEW = 16;
+const MAX_APPLE_PACKAGE_MANIFEST_PREVIEW_BYTES = 96 * 1024;
+const MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_PHP_RUBY_PACKAGE_MANIFEST_PREVIEW_BYTES = 96 * 1024;
+const MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_PREVIEW_BYTES = 96 * 1024;
+const MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_GO_MODULE_MANIFEST_PREVIEW_BYTES = 96 * 1024;
+const MAX_GO_MODULE_MANIFEST_ITEM_PREVIEW = 16;
 const MAX_NODE_PACKAGE_MANIFEST_PREVIEW_BYTES = 128 * 1024;
 const MAX_NODE_PACKAGE_MANIFEST_ITEM_PREVIEW = 16;
+const MAX_NODE_PACKAGE_MANAGER_CONFIG_PREVIEW_BYTES = 64 * 1024;
+const MAX_NODE_PACKAGE_MANAGER_CONFIG_ITEM_PREVIEW = 16;
+const MAX_JVM_BUILD_CONFIG_PREVIEW_BYTES = 64 * 1024;
+const MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW = 16;
+const MAX_JAVA_BUILD_ARTIFACT_PREVIEW_BYTES = 256 * 1024;
+const MAX_JAVA_BUILD_ARTIFACT_ITEM_PREVIEW = 16;
 const MAX_REPOSITORY_GOVERNANCE_PREVIEW_BYTES = 96 * 1024;
 const MAX_REPOSITORY_GOVERNANCE_ITEM_PREVIEW = 16;
 const MAX_SECURITY_ARTIFACT_PREVIEW_BYTES = 128 * 1024;
@@ -161,11 +220,17 @@ const MAX_WINDOWS_DRIVER_PACKAGE_PREVIEW_BYTES = 128 * 1024;
 const MAX_WINDOWS_DRIVER_PACKAGE_ITEMS = 16;
 const MAX_BINARY_ARTIFACT_PREVIEW_BYTES = 256 * 1024;
 const MAX_VIDEO_HEADER_PREVIEW_BYTES = 512 * 1024;
+const MAX_STYLESHEET_PREVIEW_BYTES = 96 * 1024;
+const MAX_STYLESHEET_ITEM_PREVIEW = 16;
 const MAX_SOURCE_CODE_PREVIEW_BYTES = 96 * 1024;
 const MAX_PATCH_PREVIEW_BYTES = 128 * 1024;
 const MAX_PATCH_FILE_PREVIEW = 16;
 const MAX_PATCH_CONFLICT_TARGET_BYTES = 256 * 1024;
 const MAX_PATCH_CONTEXT_LINES = 24;
+const MAX_POWERSHELL_SCRIPT_PREVIEW_BYTES = 96 * 1024;
+const MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW = 16;
+const MAX_BATCH_SCRIPT_PREVIEW_BYTES = 96 * 1024;
+const MAX_BATCH_SCRIPT_ITEM_PREVIEW = 16;
 const MAX_SQL_SCRIPT_PREVIEW_BYTES = 96 * 1024;
 const MAX_SOURCE_CODE_SYMBOLS = 18;
 const MAX_SOURCE_CODE_INSIGHT_CUES = 8;
@@ -258,15 +323,28 @@ const SKIPPED_DIRECTORIES = new Set([
 const IMPORTABLE_EXTENSIONS = new Set([
   ".7z",
   ".ansible-inventory",
+  ".aab",
+  ".apk",
   ".bat",
   ".bash",
+  ".bicep",
+  ".bicepparam",
   ".blg",
+  ".bru",
   ".c",
+  ".cabal",
   ".cat",
   ".cc",
+  ".checkstyle.xml",
   ".cjs",
   ".cmd",
+  ".cmake",
+  ".cmakelists.txt",
   ".codeowners",
+  ".cloudformation.json",
+  ".cloudformation.yaml",
+  ".compile_commands.json",
+  ".composer.json",
   ".cpp",
   ".cfg",
   ".cs",
@@ -277,11 +355,13 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".dart",
   ".db",
   ".dmp",
+  ".dotnet-global.json",
   ".dockerfile",
   ".dockerignore",
   ".doc",
   ".docm",
   ".docx",
+  ".dot",
   ".drawio",
   ".dll",
   ".dwg",
@@ -292,9 +372,11 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".evtx",
   ".editorconfig",
   ".asc",
+  ".androidmanifest.xml",
   ".appx",
   ".appxmanifest",
   ".appxbundle",
+  ".arm-template.json",
   ".atom",
   ".attestation",
   ".attestation.json",
@@ -305,15 +387,24 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".der",
   ".fsproj",
   ".feather",
+  ".flac",
   ".go",
   ".geojson",
+  ".gemfile",
+  ".gemspec",
   ".gif",
   ".glb",
   ".gltf",
+  ".go.mod",
+  ".go.work",
+  ".gv",
   ".gql",
   ".gpx",
+  ".h5",
+  ".helm-chart.yaml",
   ".gradle",
   ".gradle.kts",
+  ".gradle.properties",
   ".gitattributes",
   ".gitignore",
   ".graphql",
@@ -323,19 +414,31 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".html",
   ".h",
   ".hpp",
-  ".ini",
+  ".http",
+      ".ini",
   ".inf",
-  ".intoto.jsonl",
+  ".info.plist",
+      ".intoto.jsonl",
   ".ipynb",
+  ".ipa",
+  ".ical",
   ".ics",
-  ".ico",
-  ".java",
+      ".ico",
+      ".jar",
+      ".war",
+      ".ear",
+      ".class",
+      ".java",
   ".junit.xml",
+  ".lighthouse.json",
+  ".test-results.json",
+  ".trace.json",
   ".js",
   ".jsx",
   ".key",
   ".kml",
   ".jpeg",
+  ".jvm.config",
   ".jpg",
   ".bmp",
   ".less",
@@ -346,11 +449,16 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".lnk",
   ".lua",
   ".gz",
+  ".makefile",
   ".har",
+  ".hdf5",
   ".hcl",
   ".hdmp",
+  ".mix.exs",
+  ".mix.lock",
   ".mjs",
   ".man",
+  ".maven.config",
   ".msi",
   ".msix",
   ".msixbundle",
@@ -358,75 +466,108 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".mov",
   ".mp4",
   ".mp3",
+  ".m4a",
   ".m4v",
   ".mermaid",
   ".json",
   ".jsonl",
   ".kt",
+  ".kustomization.yaml",
   ".kts",
   ".markdown",
   ".md",
   ".mmd",
   ".m",
+  ".mat",
   ".mm",
   ".mdmp",
   ".mhtml",
   ".mbox",
+  ".metrics",
   ".msg",
+  ".nc",
   ".ndjson",
   ".notice",
+  ".nuget.config",
+  ".npmignore",
+  ".npmrc",
+  ".nuspec",
   ".odp",
   ".ods",
   ".odt",
+  ".ogg",
   ".otf",
   ".obj",
+  ".openmetrics",
   ".patch",
   ".parquet",
   ".pcap",
   ".pcapng",
   ".pem",
+  ".package.yaml",
+  ".packages.config",
   ".pipfile",
   ".pdf",
   ".php",
+  ".podfile",
+  ".podfile.lock",
+  ".podspec",
   ".ppt",
   ".pptm",
   ".png",
   ".pptx",
+  ".prom",
   ".proto",
   ".ps1",
   ".psd1",
   ".psm1",
+  ".pubspec.lock",
+  ".pubspec.yaml",
   ".puml",
   ".plantuml",
+  ".pnpmfile.cjs",
+  ".pmd.xml",
   ".py",
   ".rb",
   ".rar",
+  ".rest",
   ".reg",
   ".diff",
   ".rss",
+  ".robots.txt",
   ".r",
   ".rs",
   ".rtf",
+  ".sass",
   ".sarif",
   ".sarif.json",
   ".scss",
+  ".security-audit.json",
   ".sh",
   ".sha1",
   ".sha256",
   ".sha512",
   ".sig",
   ".sln",
+  ".sitemap.xml",
+  ".sitemap.xml.gz",
   ".sql",
+  ".stack.yaml",
   ".scala",
-  ".spdx",
-  ".spdx.json",
+      ".spdx",
+      ".spdx.json",
+      ".syft.json",
+      ".spotbugs.xml",
   ".srt",
   ".stl",
   ".sum",
   ".svg",
   ".swift",
+  ".swift-package",
   ".sqlite",
   ".sqlite3",
+  ".tap",
+  ".tap13",
   ".task",
   ".tar",
   ".tar.gz",
@@ -434,6 +575,7 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".props",
   ".tf",
   ".tf.json",
+  ".tfplan.json",
   ".tfvars",
   ".toml",
   ".topojson",
@@ -468,6 +610,8 @@ const IMPORTABLE_EXTENSIONS = new Set([
   ".xml",
   ".yaml",
   ".yml",
+  ".yarnrc",
+  ".yarnrc.yml",
   ".zsh",
   ".zip",
 ]);
@@ -504,6 +648,7 @@ const SOURCE_CODE_EXTENSIONS = new Set([
   ".rb",
   ".r",
   ".rs",
+  ".sass",
   ".scala",
   ".scss",
   ".sh",
@@ -3741,6 +3886,54 @@ function getImportExtension(filePath: string): string {
   if (name === "notice" || name === "notice.txt" || name === "notice.md") {
     return ".notice";
   }
+  if (name === ".npmrc" || name.endsWith(".npmrc")) {
+    return ".npmrc";
+  }
+  if (name === ".yarnrc") {
+    return ".yarnrc";
+  }
+  if (name === ".yarnrc.yml" || name === ".yarnrc.yaml") {
+    return ".yarnrc.yml";
+  }
+  if (name === ".pnpmfile.cjs") {
+    return ".pnpmfile.cjs";
+  }
+  if (name === ".npmignore") {
+    return ".npmignore";
+  }
+  if (name === "composer.json") {
+    return ".composer.json";
+  }
+  if (name === "gemfile") {
+    return ".gemfile";
+  }
+  if (name === "mix.exs") {
+    return ".mix.exs";
+  }
+  if (name === "mix.lock") {
+    return ".mix.lock";
+  }
+  if (name === "stack.yaml" || name === "stack.yml") {
+    return ".stack.yaml";
+  }
+  if (name === "package.yaml" || name === "package.yml") {
+    return ".package.yaml";
+  }
+  if (name === "go.mod") {
+    return ".go.mod";
+  }
+  if (name === "go.work") {
+    return ".go.work";
+  }
+  if (name === "cmakelists.txt") {
+    return ".cmakelists.txt";
+  }
+  if (name === "compile_commands.json") {
+    return ".compile_commands.json";
+  }
+  if (["makefile", "gnumakefile", "bsdmakefile"].includes(name) || name.endsWith(".mk")) {
+    return ".makefile";
+  }
   if (name === "inventory" || name.endsWith(".inventory")) {
     return ".ansible-inventory";
   }
@@ -3761,6 +3954,15 @@ function getImportExtension(filePath: string): string {
   if (name === "pipfile") {
     return ".pipfile";
   }
+  if (name === "robots.txt" || name.endsWith(".robots.txt")) {
+    return ".robots.txt";
+  }
+  if (name === "sitemap.xml") {
+    return ".sitemap.xml";
+  }
+  if (name === "sitemap.xml.gz") {
+    return ".sitemap.xml.gz";
+  }
   if (name.endsWith(".tar.gz")) {
     return ".tar.gz";
   }
@@ -3770,11 +3972,71 @@ function getImportExtension(filePath: string): string {
   if (name.endsWith(".sarif.json")) {
     return ".sarif.json";
   }
+  if (
+    name === "snyk.json" ||
+    name === "npm-audit.json" ||
+    name === "audit-ci.json" ||
+    name === "security-audit.json" ||
+    name === "vulnerability-report.json" ||
+    name.endsWith(".snyk.json") ||
+    name.endsWith(".npm-audit.json") ||
+    name.endsWith(".audit-ci.json") ||
+    name.endsWith(".security-audit.json") ||
+    name.endsWith(".vulnerability-report.json")
+  ) {
+    return ".security-audit.json";
+  }
   if (name === "lcov.info" || name.endsWith(".lcov.info")) {
     return ".lcov";
   }
+  if (
+    name === "checkstyle.xml" ||
+    name.endsWith(".checkstyle.xml") ||
+    name.includes("checkstyle-result")
+  ) {
+    return ".checkstyle.xml";
+  }
+  if (name === "pmd.xml" || name.endsWith(".pmd.xml") || name.includes("pmd-result")) {
+    return ".pmd.xml";
+  }
+  if (
+    name === "spotbugs.xml" ||
+    name.endsWith(".spotbugs.xml") ||
+    name.includes("spotbugs-result") ||
+    name.includes("findbugs-result")
+  ) {
+    return ".spotbugs.xml";
+  }
   if (name.endsWith(".junit.xml")) {
     return ".junit.xml";
+  }
+  if (
+    name.endsWith(".playwright.json") ||
+    name.endsWith(".jest.json") ||
+    name.endsWith(".vitest.json") ||
+    name === "playwright-report.json" ||
+    name === "test-results.json" ||
+    name === "test-results-jest.json" ||
+    name === "test-results-vitest.json"
+  ) {
+    return ".test-results.json";
+  }
+  if (
+    name === "lhr.json" ||
+    name === "lighthouse.json" ||
+    name.endsWith(".lhr.json") ||
+    name.endsWith(".lighthouse.json") ||
+    name.endsWith("-lighthouse.json")
+  ) {
+    return ".lighthouse.json";
+  }
+  if (
+    name === "trace.json" ||
+    name.endsWith(".trace.json") ||
+    name.endsWith("-trace.json") ||
+    name.endsWith(".devtools.json")
+  ) {
+    return ".trace.json";
   }
   if (name.endsWith(".cdx.json")) {
     return ".cdx.json";
@@ -3785,14 +4047,99 @@ function getImportExtension(filePath: string): string {
   if (name.endsWith(".tf.json")) {
     return ".tf.json";
   }
+  if (
+    name === "azuredeploy.json" ||
+    name === "arm-template.json" ||
+    name.endsWith(".arm-template.json") ||
+    name.endsWith(".azuredeploy.json")
+  ) {
+    return ".arm-template.json";
+  }
+  if (
+    name === "cloudformation.json" ||
+    name === "cfn-template.json" ||
+    name.endsWith(".cloudformation.json") ||
+    name.endsWith(".cfn.json")
+  ) {
+    return ".cloudformation.json";
+  }
+  if (
+    name === "cloudformation.yaml" ||
+    name === "cloudformation.yml" ||
+    name === "sam-template.yaml" ||
+    name === "sam-template.yml" ||
+    name === "template.cfn.yaml" ||
+    name === "template.cfn.yml" ||
+    name.endsWith(".cloudformation.yaml") ||
+    name.endsWith(".cloudformation.yml") ||
+    name.endsWith(".cfn.yaml") ||
+    name.endsWith(".cfn.yml")
+  ) {
+    return ".cloudformation.yaml";
+  }
+  if (
+    name === "tfplan.json" ||
+    name === "terraform-plan.json" ||
+    name.endsWith(".tfplan.json") ||
+    name.endsWith("-tfplan.json") ||
+    name.endsWith(".terraform-plan.json") ||
+    name.endsWith("-terraform-plan.json")
+  ) {
+    return ".tfplan.json";
+  }
   if (name.endsWith(".gradle.kts")) {
     return ".gradle.kts";
+  }
+  if (name === "gradle.properties") {
+    return ".gradle.properties";
+  }
+  if (name === "maven.config") {
+    return ".maven.config";
+  }
+  if (name === "jvm.config") {
+    return ".jvm.config";
+  }
+  if (name === "global.json") {
+    return ".dotnet-global.json";
+  }
+  if (name === "nuget.config") {
+    return ".nuget.config";
+  }
+  if (name === "packages.config") {
+    return ".packages.config";
   }
   if (name.endsWith(".intoto.jsonl")) {
     return ".intoto.jsonl";
   }
   if (name === "uv.lock") {
     return ".uv.lock";
+  }
+  if (name === "pubspec.yaml" || name === "pubspec.yml") {
+    return ".pubspec.yaml";
+  }
+  if (name === "pubspec.lock") {
+    return ".pubspec.lock";
+  }
+  if (name === "chart.yaml" || name === "chart.yml") {
+    return ".helm-chart.yaml";
+  }
+  if (name === "kustomization.yaml" || name === "kustomization.yml" || name === "kustomization") {
+    return ".kustomization.yaml";
+  }
+  if (name === "package.swift") {
+    return ".swift-package";
+  }
+  if (name === "podfile") {
+    return ".podfile";
+  }
+  if (name === "podfile.lock") {
+    return ".podfile.lock";
+  }
+  if (name === "androidmanifest.xml") {
+    return ".androidmanifest.xml";
+  }
+  if (name === "info.plist") {
+    return ".info.plist";
   }
   if (name === "sha256sums" || name === "sha512sums" || name === "checksums" || name === "checksums.txt") {
     return ".checksum";
@@ -3802,27 +4149,38 @@ function getImportExtension(filePath: string): string {
 
 function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
   if ([".bmp", ".gif", ".ico", ".jpg", ".jpeg", ".png", ".svg", ".tif", ".tiff", ".webp"].includes(extension)) return "image";
-  if ([".mp3", ".wav"].includes(extension)) return "audio";
+  if ([".flac", ".m4a", ".mp3", ".ogg", ".wav"].includes(extension)) return "audio";
   if ([".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"].includes(extension)) return "video";
   if ([".srt", ".vtt"].includes(extension)) return "voice_transcript";
-  if (extension === ".ics") return "meeting";
+  if (extension === ".ics" || extension === ".ical") return "meeting";
   if ([".db", ".sqlite", ".sqlite3", ".sql"].includes(extension)) return "database_table";
   if (
     [
       ".7z",
+      ".aab",
+      ".apk",
+      ".androidmanifest.xml",
+      ".info.plist",
       ".atom",
       ".arrow",
       ".appx",
       ".appxmanifest",
       ".appxbundle",
       ".blg",
+      ".cabal",
       ".cat",
       ".cfg",
+      ".checkstyle.xml",
+      ".cmake",
+      ".cmakelists.txt",
       ".codeowners",
+      ".compile_commands.json",
       ".csproj",
       ".doc",
       ".docm",
       ".docx",
+      ".dotnet-global.json",
+      ".dot",
       ".drawio",
       ".dmp",
       ".dwg",
@@ -3843,52 +4201,89 @@ function getItemKind(extension: string): DesktopChannelContextItem["kind"] {
       ".gitignore",
       ".gradle",
       ".gradle.kts",
+      ".gradle.properties",
+      ".gv",
       ".gpx",
+      ".h5",
+      ".hdf5",
+      ".helm-chart.yaml",
       ".hdmp",
       ".inf",
+      ".jvm.config",
       ".markdown",
       ".man",
+      ".maven.config",
+      ".mat",
       ".mbox",
       ".md",
       ".mermaid",
       ".mdmp",
       ".mhtml",
+      ".metrics",
       ".mmd",
+      ".mix.exs",
+      ".mix.lock",
       ".msi",
       ".msix",
       ".msixbundle",
       ".msg",
+      ".nc",
       ".notice",
+      ".nuget.config",
       ".odp",
       ".ods",
       ".odt",
+      ".nuspec",
       ".otf",
       ".obj",
+      ".openmetrics",
+      ".package.yaml",
+      ".packages.config",
       ".pipfile",
       ".pdf",
       ".parquet",
+      ".podfile",
+      ".podfile.lock",
+      ".podspec",
+      ".pmd.xml",
       ".ppt",
       ".pptm",
       ".pptx",
+      ".prom",
       ".proto",
       ".props",
       ".puml",
       ".plantuml",
       ".rar",
       ".reg",
+      ".robots.txt",
       ".rss",
       ".rtf",
       ".sarif",
       ".sarif.json",
+      ".security-audit.json",
+      ".spotbugs.xml",
       ".junit.xml",
+      ".kustomization.yaml",
+      ".lighthouse.json",
+      ".test-results.json",
+      ".trace.json",
       ".sln",
+      ".sitemap.xml",
+      ".sitemap.xml.gz",
+      ".ipa",
       ".ipynb",
+      ".stack.yaml",
       ".kml",
       ".lcov",
       ".license",
       ".lnk",
+      ".makefile",
       ".stl",
       ".gz",
+      ".swift-package",
+      ".tap",
+      ".tap13",
       ".task",
       ".tar",
       ".tar.gz",
@@ -3940,7 +4335,7 @@ function summarizeFile(
   if (kind === "voice_transcript") {
     return summarizeTimedTranscript(filePath, extension, size);
   }
-  if (extension === ".ics") {
+  if (extension === ".ics" || extension === ".ical") {
     return summarizeCalendarIcsFile(filePath, size);
   }
   if (extension === ".lnk") {
@@ -3967,6 +4362,9 @@ function summarizeFile(
   if (isTestReportFile(filePath, extension)) {
     return summarizeTestReportFile(filePath, extension, size);
   }
+  if (isStaticAnalysisXmlReportFile(filePath, extension)) {
+    return summarizeStaticAnalysisXmlReportFile(filePath, extension, size);
+  }
   if (isWindowsCrashDumpExtension(extension)) {
     return summarizeWindowsCrashDumpFile(filePath, extension, size);
   }
@@ -3984,6 +4382,18 @@ function summarizeFile(
   }
   if (isThreeDModelExtension(extension)) {
     return summarizeThreeDModelFile(filePath, extension, size);
+  }
+  if (isWebCrawlMetadataFile(extension)) {
+    return summarizeWebCrawlMetadataFile(filePath, extension, size);
+  }
+  if (isAndroidManifestFile(filePath, extension)) {
+    return summarizeAndroidManifestFile(filePath, size);
+  }
+  if (isAppleInfoPlistFile(filePath, extension)) {
+    return summarizeAppleInfoPlistFile(filePath, size);
+  }
+  if (isMobileAppPackageExtension(extension)) {
+    return summarizeMobileAppPackageFile(filePath, extension, size);
   }
   if ([".xlsx", ".xlsm"].includes(extension)) {
     return summarizeXlsxDataFile(filePath, extension, size);
@@ -4015,8 +4425,14 @@ function summarizeFile(
   if (isDiagramSourceExtension(extension)) {
     return summarizeDiagramSourceFile(filePath, extension, size);
   }
+  if (isDotnetNugetConfigFile(filePath, extension)) {
+    return summarizeDotnetNugetConfigFile(filePath, extension, size);
+  }
   if (isBuildManifestFile(filePath, extension)) {
     return summarizeBuildManifestFile(filePath, extension, size);
+  }
+  if (isCppBuildManifestFile(filePath, extension)) {
+    return summarizeCppBuildManifestFile(filePath, extension, size);
   }
   if (isCoverageReportFile(filePath, extension)) {
     return summarizeCoverageReportFile(filePath, extension, size);
@@ -4026,6 +4442,190 @@ function summarizeFile(
   }
   if (extension === ".xml" && looksLikeTestReportXml(filePath)) {
     return summarizeTestReportFile(filePath, extension, size);
+  }
+  if (isJvmBuildConfigFile(filePath, extension)) {
+    return summarizeJvmBuildConfigFile(filePath, extension, size);
+  }
+  if (isJavaBuildArtifactExtension(extension)) {
+    return summarizeJavaBuildArtifactFile(filePath, extension, size);
+  }
+  if (isScientificContainerExtension(extension)) {
+    return summarizeScientificContainerFile(filePath, extension, size);
+  }
+  if (isNodePackageManagerConfigFile(filePath, extension)) {
+    return summarizeNodePackageManagerConfigFile(filePath, extension, size);
+  }
+  if (isCargoManifestFile(filePath, extension)) {
+    return summarizeCargoManifestFile(filePath, size);
+  }
+  if (isDartPubspecManifestFile(filePath, extension)) {
+    return summarizeDartPubspecManifestFile(filePath, extension, size);
+  }
+  if (isApplePackageManifestFile(filePath, extension)) {
+    return summarizeApplePackageManifestFile(filePath, extension, size);
+  }
+  if (isPhpRubyPackageManifestFile(filePath, extension)) {
+    return summarizePhpRubyPackageManifestFile(filePath, extension, size);
+  }
+  if (isElixirHaskellPackageManifestFile(filePath, extension)) {
+    return summarizeElixirHaskellPackageManifestFile(filePath, extension, size);
+  }
+  if (isPythonDependencyManifestFile(filePath, extension)) {
+    return summarizePythonDependencyManifestFile(filePath, extension, size);
+  }
+  if (isGoModuleManifestFile(filePath, extension)) {
+    return summarizeGoModuleManifestFile(filePath, extension, size);
+  }
+  if (isKubernetesPackageConfigFile(filePath, extension)) {
+    return summarizeKubernetesPackageConfigFile(filePath, extension, size);
+  }
+  if (isDependencyLockfile(filePath, extension)) {
+    return summarizeDependencyLockfile(filePath, extension, size);
+  }
+  if (extension === ".graphql" || extension === ".gql") {
+    return summarizeGraphqlFile(filePath, size);
+  }
+  if (extension === ".http" || extension === ".rest") {
+    return summarizeRestClientRequestFile(filePath, size);
+  }
+  if (isDevtoolsTraceFile(filePath, extension)) {
+    return summarizeDevtoolsTraceFile(filePath, size);
+  }
+  if (isLighthouseReportFile(filePath, extension)) {
+    return summarizeLighthouseReportFile(filePath, size);
+  }
+  if (extension === ".bru") {
+    return summarizeBrunoCollectionFile(filePath, size);
+  }
+  if (extension === ".proto") {
+    return summarizeProtobufSchemaFile(filePath, size);
+  }
+  if (isSarifResultFile(filePath, extension)) {
+    return summarizeSarifResultFile(filePath, extension, size);
+  }
+  if (isSecurityScanReportFile(filePath, extension)) {
+    return summarizeSecurityScanReportFile(filePath, extension, size);
+  }
+  if (isSbomProvenanceArtifact(filePath, extension)) {
+    return summarizeSbomProvenanceArtifact(filePath, extension, size);
+  }
+  if (isSecurityArtifactExtension(extension)) {
+    return summarizeSecurityArtifactFile(filePath, extension, size);
+  }
+  if (isBinaryArtifactExtension(extension)) {
+    return summarizeBinaryArtifactFile(filePath, extension, size);
+  }
+  if (isGeospatialExtension(extension)) {
+    return summarizeGeospatialFile(filePath, extension, size);
+  }
+  if (isCadDrawingExtension(extension)) {
+    return summarizeCadDrawingFile(filePath, extension, size);
+  }
+  if (isIacConfigExtension(extension)) {
+    return summarizeIacConfigFile(filePath, extension, size);
+  }
+  if (isTerraformPlanJsonFile(extension)) {
+    return summarizeTerraformPlanJsonFile(filePath, size);
+  }
+  if (isCloudIacTemplateFile(filePath, extension)) {
+    return summarizeCloudIacTemplateFile(filePath, extension, size);
+  }
+  if ((extension === ".yaml" || extension === ".yml") && detectCiWorkflowKind(filePath)) {
+    return summarizeConfigOrLogFile(filePath, extension, size);
+  }
+  if (isAnsibleAutomationFile(filePath, extension)) {
+    return summarizeAnsibleAutomationFile(filePath, extension, size);
+  }
+  if (isStylesheetFile(extension)) {
+    return summarizeStylesheetFile(filePath, extension, size);
+  }
+  if (isMetricsSnapshotFile(extension)) {
+    return summarizeMetricsSnapshotFile(filePath, extension, size);
+  }
+  if (isColumnarDataExtension(extension)) {
+    return summarizeColumnarDataFile(filePath, extension, size);
+  }
+  if (isFeedDocumentExtension(extension) || (extension === ".xml" && looksLikeFeedXml(filePath))) {
+    return summarizeFeedDocumentFile(filePath, extension, size);
+  }
+  if (extension === ".ipynb") {
+    return summarizeNotebook(filePath, size);
+  }
+  if (extension === ".csv" || extension === ".tsv") {
+    return summarizeCsvDataFile(filePath, size, extension);
+  }
+  if (extension === ".har") {
+    return summarizeHarNetworkTraceFile(filePath, size);
+  }
+  if (extension === ".pcap" || extension === ".pcapng") {
+    return summarizePacketCaptureFile(filePath, extension, size);
+  }
+  if (extension === ".json") {
+    if (isSarifResultFile(filePath, extension)) {
+      return summarizeSarifResultFile(filePath, extension, size);
+    }
+    if (isSecurityScanReportFile(filePath, extension)) {
+      return summarizeSecurityScanReportFile(filePath, extension, size);
+    }
+    if (isSbomProvenanceArtifact(filePath, extension)) {
+      return summarizeSbomProvenanceArtifact(filePath, extension, size);
+    }
+    if (isDependencyLockfile(filePath, extension)) {
+      return summarizeDependencyLockfile(filePath, extension, size);
+    }
+    if (isNodePackageManifestFile(filePath, extension)) {
+      return summarizeNodePackageManifestFile(filePath, size);
+    }
+    if (isLighthouseReportFile(filePath, extension)) {
+      return summarizeLighthouseReportFile(filePath, size);
+    }
+    if (isCloudIacTemplateFile(filePath, extension)) {
+      return summarizeCloudIacTemplateFile(filePath, extension, size);
+    }
+    const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size);
+    if (apiSpecPreview) return apiSpecPreview;
+    const postmanEnvironmentPreview = summarizePostmanEnvironmentFile(filePath, size);
+    if (postmanEnvironmentPreview) return postmanEnvironmentPreview;
+    const kubernetesPreview = summarizeKubernetesManifestFile(filePath, extension, size);
+    if (kubernetesPreview) return kubernetesPreview;
+    return summarizeJsonDataFile(filePath, size);
+  }
+  if (extension === ".jsonl" || extension === ".ndjson") {
+    return summarizeJsonLinesDataFile(filePath, extension, size);
+  }
+  if (extension === ".yaml" || extension === ".yml") {
+    if (isContainerComposeFile(filePath, extension)) {
+      return summarizeContainerComposeFile(filePath, size);
+    }
+    if (isCloudIacTemplateFile(filePath, extension)) {
+      return summarizeCloudIacTemplateFile(filePath, extension, size);
+    }
+    const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size);
+    if (apiSpecPreview) return apiSpecPreview;
+    const kubernetesPreview = summarizeKubernetesManifestFile(filePath, extension, size);
+    if (kubernetesPreview) return kubernetesPreview;
+    return summarizeConfigOrLogFile(filePath, extension, size);
+  }
+  if (isPatchDiffExtension(extension)) {
+    return summarizePatchDiffFile(workspacePath, filePath, extension, size);
+  }
+  if (isPowerShellScriptExtension(extension)) {
+    return summarizePowerShellScriptFile(filePath, extension, size);
+  }
+  if (isBatchScriptExtension(extension)) {
+    return summarizeBatchScriptFile(filePath, extension, size);
+  }
+  if (isSourceCodeExtension(extension)) {
+    return summarizeSourceCodeFile(filePath, extension, size);
+  }
+  if (extension === ".dockerfile") {
+    return summarizeContainerBuildFile(filePath, size);
+  }
+  if (extension === ".dockerignore") {
+    return summarizeDockerignoreFile(filePath, size);
+  }
+  if (isConfigOrLogExtension(extension)) {
+    return summarizeConfigOrLogFile(filePath, extension, size);
   }
   if (kind === "document" && extension !== ".ipynb") {
     if (extension === ".eml") {
@@ -4052,106 +4652,6 @@ function summarizeFile(
     }
     return `Document file ready for explicit attachment after visible review (${formatBytes(size)}). Basic document text extraction did not find readable text in this read-only importer.`;
   }
-  if (extension === ".ipynb") {
-    return summarizeNotebook(filePath, size);
-  }
-  if (extension === ".csv" || extension === ".tsv") {
-    return summarizeCsvDataFile(filePath, size, extension);
-  }
-  if (extension === ".har") {
-    return summarizeHarNetworkTraceFile(filePath, size);
-  }
-  if (extension === ".pcap" || extension === ".pcapng") {
-    return summarizePacketCaptureFile(filePath, extension, size);
-  }
-  if (extension === ".json") {
-    if (isSarifResultFile(filePath, extension)) {
-      return summarizeSarifResultFile(filePath, extension, size);
-    }
-    if (isSbomProvenanceArtifact(filePath, extension)) {
-      return summarizeSbomProvenanceArtifact(filePath, extension, size);
-    }
-    if (isDependencyLockfile(filePath, extension)) {
-      return summarizeDependencyLockfile(filePath, extension, size);
-    }
-    if (isNodePackageManifestFile(filePath, extension)) {
-      return summarizeNodePackageManifestFile(filePath, size);
-    }
-    const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size);
-    if (apiSpecPreview) return apiSpecPreview;
-    const kubernetesPreview = summarizeKubernetesManifestFile(filePath, extension, size);
-    if (kubernetesPreview) return kubernetesPreview;
-    return summarizeJsonDataFile(filePath, size);
-  }
-  if (extension === ".jsonl" || extension === ".ndjson") {
-    return summarizeJsonLinesDataFile(filePath, extension, size);
-  }
-  if (isColumnarDataExtension(extension)) {
-    return summarizeColumnarDataFile(filePath, extension, size);
-  }
-  if (extension === ".yaml" || extension === ".yml") {
-    if (isContainerComposeFile(filePath, extension)) {
-      return summarizeContainerComposeFile(filePath, size);
-    }
-    const apiSpecPreview = summarizeApiSpecFile(filePath, extension, size);
-    if (apiSpecPreview) return apiSpecPreview;
-    const kubernetesPreview = summarizeKubernetesManifestFile(filePath, extension, size);
-    if (kubernetesPreview) return kubernetesPreview;
-  }
-  if (extension === ".graphql" || extension === ".gql") {
-    return summarizeGraphqlFile(filePath, size);
-  }
-  if (extension === ".proto") {
-    return summarizeProtobufSchemaFile(filePath, size);
-  }
-  if (isPythonDependencyManifestFile(filePath, extension)) {
-    return summarizePythonDependencyManifestFile(filePath, extension, size);
-  }
-  if (isGeospatialExtension(extension)) {
-    return summarizeGeospatialFile(filePath, extension, size);
-  }
-  if (isCadDrawingExtension(extension)) {
-    return summarizeCadDrawingFile(filePath, extension, size);
-  }
-  if (isFeedDocumentExtension(extension) || (extension === ".xml" && looksLikeFeedXml(filePath))) {
-    return summarizeFeedDocumentFile(filePath, extension, size);
-  }
-  if (isSarifResultFile(filePath, extension)) {
-    return summarizeSarifResultFile(filePath, extension, size);
-  }
-  if (isSbomProvenanceArtifact(filePath, extension)) {
-    return summarizeSbomProvenanceArtifact(filePath, extension, size);
-  }
-  if (isDependencyLockfile(filePath, extension)) {
-    return summarizeDependencyLockfile(filePath, extension, size);
-  }
-  if (isSecurityArtifactExtension(extension)) {
-    return summarizeSecurityArtifactFile(filePath, extension, size);
-  }
-  if (isBinaryArtifactExtension(extension)) {
-    return summarizeBinaryArtifactFile(filePath, extension, size);
-  }
-  if (isPatchDiffExtension(extension)) {
-    return summarizePatchDiffFile(workspacePath, filePath, extension, size);
-  }
-  if (isSourceCodeExtension(extension)) {
-    return summarizeSourceCodeFile(filePath, extension, size);
-  }
-  if (extension === ".dockerfile") {
-    return summarizeContainerBuildFile(filePath, size);
-  }
-  if (extension === ".dockerignore") {
-    return summarizeDockerignoreFile(filePath, size);
-  }
-  if (isIacConfigExtension(extension)) {
-    return summarizeIacConfigFile(filePath, extension, size);
-  }
-  if (isAnsibleAutomationFile(filePath, extension)) {
-    return summarizeAnsibleAutomationFile(filePath, extension, size);
-  }
-  if (isConfigOrLogExtension(extension)) {
-    return summarizeConfigOrLogFile(filePath, extension, size);
-  }
   try {
     const buffer = readFileSync(filePath, { encoding: "utf8", flag: "r" }).slice(
       0,
@@ -4165,6 +4665,397 @@ function summarizeFile(
 
 function isConfigOrLogExtension(extension: string): boolean {
   return [".env", ".ini", ".log", ".toml", ".xml", ".yaml", ".yml"].includes(extension);
+}
+
+interface AndroidManifestPreview {
+  packageName: string;
+  versions: string[];
+  sdk: string[];
+  application: string[];
+  permissions: string[];
+  features: string[];
+  components: string[];
+  intentActions: string[];
+  metadata: string[];
+}
+
+function isAndroidManifestFile(filePath: string, extension: string): boolean {
+  return extension === ".androidmanifest.xml" || basename(filePath).toLowerCase() === "androidmanifest.xml";
+}
+
+function summarizeAndroidManifestFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_ANDROID_MANIFEST_PREVIEW_BYTES).toString("utf8");
+    const preview = parseAndroidManifestPreview(raw);
+    return [
+      `Android app manifest preview (${formatBytes(size)}).`,
+      `Package: ${preview.packageName || "none detected in the bounded local preview"}.`,
+      preview.versions.length > 0 ? `Versions: ${preview.versions.join("; ")}.` : "Versions: none detected in the bounded local preview.",
+      preview.sdk.length > 0 ? `SDK: ${preview.sdk.join("; ")}.` : "SDK: none detected in the bounded local preview.",
+      preview.application.length > 0 ? `Application: ${preview.application.join("; ")}.` : "Application: none detected in the bounded local preview.",
+      preview.permissions.length > 0
+        ? `Permissions (${preview.permissions.length}${preview.permissions.length >= MAX_ANDROID_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${preview.permissions.join(", ")}.`
+        : "Permissions: none detected in the bounded local preview.",
+      preview.features.length > 0 ? `Features: ${preview.features.join(", ")}.` : "Features: none detected in the bounded local preview.",
+      preview.components.length > 0
+        ? `Components (${preview.components.length}${preview.components.length >= MAX_ANDROID_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${preview.components.join(" | ")}.`
+        : "Components: none detected in the bounded local preview.",
+      preview.intentActions.length > 0 ? `Intent actions: ${preview.intentActions.join(", ")}.` : "Intent actions: none detected in the bounded local preview.",
+      preview.metadata.length > 0 ? `Metadata keys: ${preview.metadata.join(", ")}.` : "Metadata keys: none detected in the bounded local preview.",
+      "Ready for explicit attachment after visible review; Android manifest metadata was parsed from bounded workspace-local XML only, manifest meta-data values were not expanded, and no Gradle/Android Studio/ADB/emulator/aapt/apksigner command, package install, device query, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Android app manifest ready for explicit attachment (${formatBytes(size)}).`,
+      "Android manifest preview could not parse bounded local XML; no Gradle/Android Studio/ADB/emulator/aapt/apksigner command, package install, device query, credential lookup, network call, or provider send was performed.",
+    ].join("\n");
+  }
+}
+
+function parseAndroidManifestPreview(raw: string): AndroidManifestPreview {
+  const xml = raw.replace(/^\uFEFF/, "");
+  const manifestAttrs = readXmlAttributes(xml.match(/<manifest\b([^>]*)>/i)?.[1] ?? "");
+  const usesSdkAttrs = readXmlAttributes(xml.match(/<uses-sdk\b([^>]*)\/?>/i)?.[1] ?? "");
+  const applicationAttrs = readXmlAttributes(xml.match(/<application\b([^>]*)>/i)?.[1] ?? "");
+  return {
+    packageName: sanitizeAndroidManifestValue(manifestAttrs.get("package") || ""),
+    versions: [
+      formatAndroidAttribute("versionName", manifestAttrs),
+      formatAndroidAttribute("versionCode", manifestAttrs),
+    ].filter((value) => value.length > 0),
+    sdk: [
+      formatAndroidAttribute("minSdkVersion", usesSdkAttrs),
+      formatAndroidAttribute("targetSdkVersion", usesSdkAttrs),
+      formatAndroidAttribute("maxSdkVersion", usesSdkAttrs),
+    ].filter((value) => value.length > 0),
+    application: [
+      formatAndroidAttribute("label", applicationAttrs),
+      formatAndroidAttribute("theme", applicationAttrs),
+      formatAndroidAttribute("debuggable", applicationAttrs),
+      formatAndroidAttribute("allowBackup", applicationAttrs),
+      formatAndroidAttribute("networkSecurityConfig", applicationAttrs),
+    ].filter((value) => value.length > 0),
+    permissions: collectAndroidElementAttributes(xml, "uses-permission", (attrs) =>
+      sanitizeAndroidManifestValue(readAndroidAttribute(attrs, "name")),
+    ),
+    features: collectAndroidElementAttributes(xml, "uses-feature", (attrs) => {
+      const name = sanitizeAndroidManifestValue(readAndroidAttribute(attrs, "name"));
+      const required = sanitizeAndroidManifestValue(readAndroidAttribute(attrs, "required"));
+      return name ? `${name}${required ? ` required=${required}` : ""}` : "";
+    }),
+    components: collectAndroidComponents(xml),
+    intentActions: collectAndroidElementAttributes(xml, "action", (attrs) =>
+      sanitizeAndroidManifestValue(readAndroidAttribute(attrs, "name")),
+    ),
+    metadata: collectAndroidElementAttributes(xml, "meta-data", (attrs) =>
+      sanitizeAndroidManifestValue(readAndroidAttribute(attrs, "name")),
+    ),
+  };
+}
+
+function collectAndroidComponents(xml: string): string[] {
+  const components: string[] = [];
+  for (const tagName of ["activity", "activity-alias", "service", "receiver", "provider"]) {
+    for (const value of collectAndroidElementAttributes(xml, tagName, (attrs) => {
+      const name = sanitizeAndroidManifestValue(readAndroidAttribute(attrs, "name"));
+      const exported = sanitizeAndroidManifestValue(readAndroidAttribute(attrs, "exported"));
+      const permission = sanitizeAndroidManifestValue(readAndroidAttribute(attrs, "permission"));
+      if (!name) return "";
+      return [
+        `${tagName}=${name}`,
+        exported ? `exported=${exported}` : "",
+        permission ? `permission=${permission}` : "",
+      ].filter((part) => part.length > 0).join(" ");
+    })) {
+      if (!components.includes(value)) components.push(value);
+      if (components.length >= MAX_ANDROID_MANIFEST_ITEM_PREVIEW) return components;
+    }
+  }
+  return components;
+}
+
+function collectAndroidElementAttributes(xml: string, tagName: string, formatter: (attrs: Map<string, string>) => string): string[] {
+  const values: string[] = [];
+  const pattern = new RegExp(`<${escapeRegex(tagName)}\\b([^>]*)\\/?>`, "gi");
+  for (const match of xml.matchAll(pattern)) {
+    const attrs = readXmlAttributes(match[1] ?? "");
+    const value = clampSingleLine(formatter(attrs), 180);
+    if (value && !values.includes(value)) values.push(value);
+    if (values.length >= MAX_ANDROID_MANIFEST_ITEM_PREVIEW) break;
+  }
+  return values;
+}
+
+function formatAndroidAttribute(name: string, attrs: Map<string, string>): string {
+  const value = sanitizeAndroidManifestValue(readAndroidAttribute(attrs, name));
+  return value ? `${name}=${value}` : "";
+}
+
+function readAndroidAttribute(attrs: Map<string, string>, name: string): string {
+  return attrs.get(`android:${name}`) || attrs.get(name) || "";
+}
+
+function sanitizeAndroidManifestValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(value), 140);
+}
+
+interface AppleInfoPlistPreview {
+  bundle: string[];
+  versions: string[];
+  platforms: string[];
+  urlSchemes: string[];
+  capabilities: string[];
+  backgroundModes: string[];
+  usageKeys: string[];
+  metadataKeys: string[];
+  truncated: boolean;
+}
+
+function isAppleInfoPlistFile(filePath: string, extension: string): boolean {
+  return extension === ".info.plist" || basename(filePath).toLowerCase() === "info.plist";
+}
+
+function summarizeAppleInfoPlistFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_APPLE_INFO_PLIST_PREVIEW_BYTES).toString("utf8");
+    const preview = parseAppleInfoPlistPreview(raw);
+    return [
+      `Apple Info.plist app manifest preview (${formatBytes(size)}).`,
+      preview.bundle.length > 0 ? `Bundle metadata: ${preview.bundle.join("; ")}.` : "Bundle metadata: none detected in the bounded local preview.",
+      preview.versions.length > 0 ? `Versions/builds: ${preview.versions.join("; ")}.` : "Versions/builds: none detected in the bounded local preview.",
+      preview.platforms.length > 0 ? `Platform hints: ${preview.platforms.join("; ")}.` : "Platform hints: none detected in the bounded local preview.",
+      preview.urlSchemes.length > 0
+        ? `URL schemes (${preview.urlSchemes.length}${preview.urlSchemes.length >= MAX_APPLE_INFO_PLIST_ITEM_PREVIEW ? "+" : ""}): ${preview.urlSchemes.join(", ")}.`
+        : "URL schemes: none detected in the bounded local preview.",
+      preview.capabilities.length > 0 ? `Device capabilities: ${preview.capabilities.join(", ")}.` : "Device capabilities: none detected in the bounded local preview.",
+      preview.backgroundModes.length > 0 ? `Background modes: ${preview.backgroundModes.join(", ")}.` : "Background modes: none detected in the bounded local preview.",
+      preview.usageKeys.length > 0 ? `Privacy usage keys: ${preview.usageKeys.join(", ")}.` : "Privacy usage keys: none detected in the bounded local preview.",
+      preview.metadataKeys.length > 0 ? `Metadata keys: ${preview.metadataKeys.join(", ")}.` : "Metadata keys: none detected in the bounded local preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_APPLE_INFO_PLIST_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Info.plist metadata was parsed from bounded workspace-local XML text only, privacy usage-description values were not expanded, binary plist data was not decoded, and no plutil/xcodebuild/simulator command, package install, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Apple Info.plist app manifest ready for explicit attachment (${formatBytes(size)}).`,
+      "Info.plist preview could not parse bounded local XML text; no plutil/xcodebuild/simulator command, package install, credential lookup, network call, or provider send was performed.",
+    ].join("\n");
+  }
+}
+
+function parseAppleInfoPlistPreview(raw: string): AppleInfoPlistPreview {
+  const text = normalizeTextPreview(raw.replace(/^\uFEFF/, "")).slice(0, MAX_APPLE_INFO_PLIST_PREVIEW_BYTES);
+  if (/^bplist/i.test(text.trim())) {
+    return emptyAppleInfoPlistPreview(text.length >= MAX_APPLE_INFO_PLIST_PREVIEW_BYTES);
+  }
+  const bundle = [
+    formatPlistKeyValue(text, "CFBundleIdentifier", "bundleId"),
+    formatPlistKeyValue(text, "CFBundleName", "name"),
+    formatPlistKeyValue(text, "CFBundleDisplayName", "displayName"),
+    formatPlistKeyValue(text, "CFBundleExecutable", "executable"),
+    formatPlistKeyValue(text, "CFBundlePackageType", "packageType"),
+  ].filter(Boolean);
+  const versions = [
+    formatPlistKeyValue(text, "CFBundleShortVersionString", "shortVersion"),
+    formatPlistKeyValue(text, "CFBundleVersion", "build"),
+    formatPlistKeyValue(text, "MinimumOSVersion", "minimumOS"),
+    formatPlistKeyValue(text, "DTPlatformVersion", "platformVersion"),
+  ].filter(Boolean);
+  const platforms = [
+    formatPlistKeyValue(text, "DTPlatformName", "platform"),
+    formatPlistKeyValue(text, "LSRequiresIPhoneOS", "requiresIPhoneOS"),
+    formatPlistKeyValue(text, "UIApplicationSceneManifest", "sceneManifest"),
+  ].filter(Boolean);
+  return {
+    bundle,
+    versions,
+    platforms,
+    urlSchemes: collectApplePlistArrayValues(text, "CFBundleURLSchemes", MAX_APPLE_INFO_PLIST_ITEM_PREVIEW),
+    capabilities: collectApplePlistArrayValues(text, "UIRequiredDeviceCapabilities", MAX_APPLE_INFO_PLIST_ITEM_PREVIEW),
+    backgroundModes: collectApplePlistArrayValues(text, "UIBackgroundModes", MAX_APPLE_INFO_PLIST_ITEM_PREVIEW),
+    usageKeys: collectAppleInfoPlistKeys(text, /^NS[A-Za-z0-9]+UsageDescription$/, MAX_APPLE_INFO_PLIST_ITEM_PREVIEW),
+    metadataKeys: collectAppleInfoPlistKeys(text, /^(CFBundle|UIApplication|UIRequired|UIBackground|LSRequires|DTPlatform|MinimumOSVersion)/, MAX_APPLE_INFO_PLIST_ITEM_PREVIEW),
+    truncated: text.length >= MAX_APPLE_INFO_PLIST_PREVIEW_BYTES,
+  };
+}
+
+function emptyAppleInfoPlistPreview(truncated: boolean): AppleInfoPlistPreview {
+  return {
+    bundle: [],
+    versions: [],
+    platforms: [],
+    urlSchemes: [],
+    capabilities: [],
+    backgroundModes: [],
+    usageKeys: [],
+    metadataKeys: [],
+    truncated,
+  };
+}
+
+function formatPlistKeyValue(xml: string, key: string, label: string): string {
+  const value = firstApplePlistScalarValue(xml, key);
+  return value ? `${label}=${value}` : "";
+}
+
+function firstApplePlistScalarValue(xml: string, key: string): string {
+  const escapedKey = escapeRegex(key);
+  const scalar = xml.match(new RegExp(`<key>\\s*${escapedKey}\\s*<\\/key>\\s*<(string|integer|real|date)>\\s*([\\s\\S]*?)\\s*<\\/\\1>`, "i"));
+  if (scalar?.[2]) return sanitizeAppleInfoPlistValue(scalar[2]);
+  const bool = xml.match(new RegExp(`<key>\\s*${escapedKey}\\s*<\\/key>\\s*<(true|false)\\s*\\/>`, "i"));
+  return bool?.[1] ? bool[1].toLowerCase() : "";
+}
+
+function collectApplePlistArrayValues(xml: string, key: string, limit: number): string[] {
+  const escapedKey = escapeRegex(key);
+  const arrayMatch = xml.match(new RegExp(`<key>\\s*${escapedKey}\\s*<\\/key>\\s*<array>([\\s\\S]*?)<\\/array>`, "i"));
+  if (!arrayMatch?.[1]) return [];
+  const values: string[] = [];
+  for (const valueMatch of arrayMatch[1].matchAll(/<(string|integer|real|date)>\s*([\s\S]*?)\s*<\/\1>/gi)) {
+    const value = sanitizeAppleInfoPlistValue(valueMatch[2] ?? "");
+    if (value && !values.includes(value)) values.push(value);
+    if (values.length >= limit) break;
+  }
+  return values;
+}
+
+function collectAppleInfoPlistKeys(xml: string, pattern: RegExp, limit: number): string[] {
+  const keys: string[] = [];
+  for (const match of xml.matchAll(/<key>\s*([\s\S]*?)\s*<\/key>/gi)) {
+    const key = clampSingleLine(decodeXmlEntities(match[1] ?? "").trim(), 120);
+    if (key && pattern.test(key) && !keys.includes(key)) keys.push(key);
+    if (keys.length >= limit) break;
+  }
+  return keys;
+}
+
+function sanitizeAppleInfoPlistValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(decodeXmlEntities(value).trim()), 140);
+}
+
+function isMobileAppPackageExtension(extension: string): boolean {
+  return [".apk", ".aab", ".ipa"].includes(extension);
+}
+
+function summarizeMobileAppPackageFile(filePath: string, extension: string, size: number): string {
+  const packageLabel =
+    extension === ".apk" ? "Android APK" : extension === ".aab" ? "Android App Bundle" : "iOS IPA";
+  try {
+    const buffer = readFileHeader(filePath, Math.min(size, MAX_MOBILE_APP_PACKAGE_PREVIEW_BYTES));
+    const { entries, truncated } = readZipArchiveMetadata(buffer);
+    const preview = buildMobileAppPackagePreview(entries, extension);
+    return [
+      `Mobile app package preview (${packageLabel}, ${formatBytes(size)}).`,
+      `Archive entries in bounded local header scan: ${entries.length}${truncated ? "+" : ""}.`,
+      preview.manifests.length > 0
+        ? `Manifest candidates: ${preview.manifests.join(", ")}.`
+        : "Manifest candidates: none found in the bounded local header scan.",
+      preview.code.length > 0
+        ? `Code/package artifacts: ${preview.code.join(", ")}.`
+        : "Code/package artifacts: none detected in the bounded local header scan.",
+      preview.resources.length > 0
+        ? `Resource/asset cues: ${preview.resources.join(", ")}.`
+        : "Resource/asset cues: none detected in the bounded local header scan.",
+      preview.native.length > 0
+        ? `Native/library cues: ${preview.native.join(", ")}.`
+        : "Native/library cues: none detected in the bounded local header scan.",
+      preview.signing.length > 0
+        ? `Signing/provisioning cues: ${preview.signing.join(", ")}.`
+        : "Signing/provisioning cues: none detected in the bounded local header scan.",
+      preview.modules.length > 0
+        ? `Module/bundle cues: ${preview.modules.join(", ")}.`
+        : "Module/bundle cues: none detected in the bounded local header scan.",
+      truncated ? `Preview was capped at ${formatBytes(MAX_MOBILE_APP_PACKAGE_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; mobile app package preview read bounded workspace-local ZIP headers only, did not extract package contents, decode binary manifests, verify signatures, install packages, launch Android/iOS tooling, contact devices/simulators, call networks, or send providers.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Mobile app package ready for explicit attachment (${packageLabel}, ${formatBytes(size)}).`,
+      "Mobile app package preview could not parse bounded local ZIP headers; no package extraction, manifest decoding, signature verification, install, Android/iOS tooling, device/simulator access, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function buildMobileAppPackagePreview(
+  entries: ChannelZipEntryMetadata[],
+  extension: string,
+): {
+  manifests: string[];
+  code: string[];
+  resources: string[];
+  native: string[];
+  signing: string[];
+  modules: string[];
+} {
+  const files = entries.filter((entry) => !entry.directory).map((entry) => entry.name.replace(/\\/g, "/"));
+  const lowerFiles = files.map((name) => name.toLowerCase());
+  const manifests = uniquePreviewValues(files.filter((name, index) => isMobileAppManifestEntry(name, lowerFiles[index], extension)), MAX_MOBILE_APP_PACKAGE_ITEM_PREVIEW);
+  const code = uniquePreviewValues(files.filter((name, index) => isMobileAppCodeEntry(name, lowerFiles[index], extension)), MAX_MOBILE_APP_PACKAGE_ITEM_PREVIEW);
+  const resources = uniquePreviewValues(files.filter((_, index) => isMobileAppResourceEntry(lowerFiles[index], extension)), MAX_MOBILE_APP_PACKAGE_ITEM_PREVIEW);
+  const native = uniquePreviewValues(files.filter((name, index) => isMobileAppNativeEntry(name, lowerFiles[index], extension)), MAX_MOBILE_APP_PACKAGE_ITEM_PREVIEW);
+  const signing = uniquePreviewValues(files.filter((name, index) => isMobileAppSigningEntry(name, lowerFiles[index], extension)), MAX_MOBILE_APP_PACKAGE_ITEM_PREVIEW);
+  const modules = uniquePreviewValues(collectMobileAppModuleCues(files, extension), MAX_MOBILE_APP_PACKAGE_ITEM_PREVIEW);
+  return { manifests, code, resources, native, signing, modules };
+}
+
+function isMobileAppManifestEntry(name: string, lowerName: string, extension: string): boolean {
+  if (extension === ".ipa") return /^payload\/[^/]+\.app\/info\.plist$/i.test(name);
+  return lowerName === "androidmanifest.xml" || /\/androidmanifest\.xml$/i.test(lowerName);
+}
+
+function isMobileAppCodeEntry(name: string, lowerName: string, extension: string): boolean {
+  if (extension === ".ipa") {
+    return /^payload\/[^/]+\.app\/[^/.]+$/i.test(name) || /^payload\/[^/]+\.app\/frameworks\/.+\.(?:framework|dylib)/i.test(name);
+  }
+  return /^classes\d*\.dex$/i.test(name) || lowerName.endsWith(".dex") || lowerName.endsWith(".so");
+}
+
+function isMobileAppResourceEntry(lowerName: string, extension: string): boolean {
+  if (extension === ".ipa") {
+    return lowerName.includes(".app/assets.car") || lowerName.includes(".app/base.lproj/") || lowerName.includes(".app/storyboardc/");
+  }
+  return (
+    lowerName === "resources.arsc" ||
+    lowerName.startsWith("res/") ||
+    lowerName.startsWith("assets/") ||
+    /\/res\//i.test(lowerName) ||
+    /\/assets\//i.test(lowerName)
+  );
+}
+
+function isMobileAppNativeEntry(name: string, lowerName: string, extension: string): boolean {
+  if (extension === ".ipa") {
+    return /^payload\/[^/]+\.app\/frameworks\//i.test(name) || lowerName.endsWith(".dylib");
+  }
+  return /^lib\/[^/]+\/.+\.so$/i.test(name) || /\/lib\/[^/]+\/.+\.so$/i.test(name);
+}
+
+function isMobileAppSigningEntry(name: string, lowerName: string, extension: string): boolean {
+  if (extension === ".ipa") {
+    return lowerName.endsWith("embedded.mobileprovision") || lowerName.includes("_codesignature/");
+  }
+  return /^meta-inf\/[^/]+\.(?:rsa|dsa|ec|sf|mf)$/i.test(name) || lowerName.includes("stamp-cert-sha256");
+}
+
+function collectMobileAppModuleCues(files: string[], extension: string): string[] {
+  const modules = new Set<string>();
+  for (const name of files) {
+    const normalized = name.replace(/\\/g, "/");
+    if (extension === ".ipa") {
+      const appMatch = normalized.match(/^Payload\/([^/]+\.app)\//i);
+      const pluginMatch = normalized.match(/^Payload\/[^/]+\.app\/PlugIns\/([^/]+)/i);
+      const watchMatch = normalized.match(/^Payload\/[^/]+\.app\/Watch\/([^/]+)/i);
+      if (appMatch?.[1]) modules.add(`app=${appMatch[1]}`);
+      if (pluginMatch?.[1]) modules.add(`plugin=${pluginMatch[1]}`);
+      if (watchMatch?.[1]) modules.add(`watch=${watchMatch[1]}`);
+    } else {
+      const moduleMatch = normalized.match(/^([^/]+)\/(?:manifest|dex|res|assets|lib)\//i);
+      const splitConfigMatch = normalized.match(/^([^/]+)\/.+config\.[^/]+/i);
+      if (moduleMatch?.[1] && moduleMatch[1] !== "META-INF") modules.add(moduleMatch[1]);
+      if (splitConfigMatch?.[1]) modules.add(`${splitConfigMatch[1]} split-config`);
+    }
+    if (modules.size >= MAX_MOBILE_APP_PACKAGE_ITEM_PREVIEW) break;
+  }
+  return [...modules];
 }
 
 function isRepositoryGovernanceFile(filePath: string, extension: string): boolean {
@@ -4307,12 +5198,20 @@ function isSourceCodeExtension(extension: string): boolean {
   return SOURCE_CODE_EXTENSIONS.has(extension);
 }
 
+function isStylesheetFile(extension: string): boolean {
+  return [".css", ".scss", ".sass", ".less"].includes(extension);
+}
+
 function isPatchDiffExtension(extension: string): boolean {
   return extension === ".diff" || extension === ".patch";
 }
 
 function isFeedDocumentExtension(extension: string): boolean {
   return extension === ".rss" || extension === ".atom";
+}
+
+function isWebCrawlMetadataFile(extension: string): boolean {
+  return extension === ".robots.txt" || extension === ".sitemap.xml" || extension === ".sitemap.xml.gz";
 }
 
 function isGeospatialExtension(extension: string): boolean {
@@ -4323,8 +5222,42 @@ function isColumnarDataExtension(extension: string): boolean {
   return extension === ".parquet" || extension === ".arrow" || extension === ".feather";
 }
 
+function isScientificContainerExtension(extension: string): boolean {
+  return extension === ".h5" || extension === ".hdf5" || extension === ".nc" || extension === ".mat";
+}
+
 function isIacConfigExtension(extension: string): boolean {
   return extension === ".tf" || extension === ".tf.json" || extension === ".tfvars" || extension === ".hcl";
+}
+
+function isTerraformPlanJsonFile(extension: string): boolean {
+  return extension === ".tfplan.json";
+}
+
+function isCloudIacTemplateFile(filePath: string, extension: string): boolean {
+  if ([".bicep", ".bicepparam", ".cloudformation.json", ".cloudformation.yaml", ".arm-template.json"].includes(extension)) {
+    return true;
+  }
+  if (![".json", ".yaml", ".yml"].includes(extension)) return false;
+  try {
+    const raw = readFileHeader(filePath, Math.min(MAX_CLOUD_IAC_TEMPLATE_PREVIEW_BYTES, 32 * 1024)).toString("utf8");
+    return looksLikeCloudFormationTemplate(raw) || looksLikeArmTemplate(raw);
+  } catch {
+    return false;
+  }
+}
+
+function isKubernetesPackageConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    extension === ".helm-chart.yaml" ||
+    extension === ".kustomization.yaml" ||
+    name === "chart.yaml" ||
+    name === "chart.yml" ||
+    name === "kustomization.yaml" ||
+    name === "kustomization.yml" ||
+    name === "kustomization"
+  );
 }
 
 function isAnsibleAutomationFile(filePath: string, extension: string): boolean {
@@ -4357,7 +5290,7 @@ function isCadDrawingExtension(extension: string): boolean {
 }
 
 function isDiagramSourceExtension(extension: string): boolean {
-  return [".drawio", ".mmd", ".mermaid", ".puml", ".plantuml"].includes(extension);
+  return [".drawio", ".dot", ".gv", ".mmd", ".mermaid", ".puml", ".plantuml"].includes(extension);
 }
 
 function isWindowsScheduledTaskFile(extension: string): boolean {
@@ -4396,8 +5329,195 @@ function isPythonDependencyManifestFile(filePath: string, extension: string): bo
   );
 }
 
+function isGoModuleManifestFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return extension === ".go.mod" || extension === ".go.work" || name === "go.mod" || name === "go.work";
+}
+
+function isCargoManifestFile(filePath: string, extension: string): boolean {
+  return extension === ".toml" && basename(filePath).toLowerCase() === "cargo.toml";
+}
+
+function isDartPubspecManifestFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    extension === ".pubspec.yaml" ||
+    extension === ".pubspec.lock" ||
+    name === "pubspec.yaml" ||
+    name === "pubspec.yml" ||
+    name === "pubspec.lock"
+  );
+}
+
+function isApplePackageManifestFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    [".swift-package", ".podfile", ".podfile.lock", ".podspec"].includes(extension) ||
+    name === "package.swift" ||
+    name === "podfile" ||
+    name === "podfile.lock" ||
+    name.endsWith(".podspec")
+  );
+}
+
+function isPhpRubyPackageManifestFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    [".composer.json", ".gemfile", ".gemspec"].includes(extension) ||
+    name === "composer.json" ||
+    name === "gemfile" ||
+    name.endsWith(".gemspec")
+  );
+}
+
+function isElixirHaskellPackageManifestFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    [".mix.exs", ".mix.lock", ".stack.yaml", ".package.yaml", ".cabal"].includes(extension) ||
+    name === "mix.exs" ||
+    name === "mix.lock" ||
+    name === "stack.yaml" ||
+    name === "stack.yml" ||
+    name === "package.yaml" ||
+    name === "package.yml" ||
+    name.endsWith(".cabal")
+  );
+}
+
 function isNodePackageManifestFile(filePath: string, extension: string): boolean {
   return extension === ".json" && basename(filePath).toLowerCase() === "package.json";
+}
+
+function isNodePackageManagerConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    [".npmrc", ".yarnrc", ".yarnrc.yml", ".pnpmfile.cjs", ".npmignore"].includes(extension) ||
+    name === ".npmrc" ||
+    name.endsWith(".npmrc") ||
+    name === ".yarnrc" ||
+    name === ".yarnrc.yml" ||
+    name === ".yarnrc.yaml" ||
+    name === ".pnpmfile.cjs" ||
+    name === ".npmignore"
+  );
+}
+
+function isJvmBuildConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    [".gradle.properties", ".maven.config", ".jvm.config"].includes(extension) ||
+    name === "gradle.properties" ||
+    name === "maven.config" ||
+    name === "jvm.config"
+  );
+}
+
+function isMetricsSnapshotFile(extension: string): boolean {
+  return extension === ".prom" || extension === ".metrics" || extension === ".openmetrics";
+}
+
+interface MetricsSnapshotPreview {
+  format: string;
+  metricNames: string[];
+  metricTypes: string[];
+  helpLines: string[];
+  sampleLines: string[];
+  labelKeys: string[];
+  truncated: boolean;
+}
+
+function summarizeMetricsSnapshotFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_METRICS_SNAPSHOT_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseMetricsSnapshotPreview(raw, extension);
+    return [
+      `Metrics snapshot preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.metricNames.length > 0
+        ? `Metric names (${preview.metricNames.length}${preview.metricNames.length >= MAX_METRICS_SNAPSHOT_ITEM_PREVIEW ? "+" : ""}): ${preview.metricNames.join(", ")}.`
+        : "Metric names: none detected in the bounded preview.",
+      preview.metricTypes.length > 0
+        ? `Metric types: ${preview.metricTypes.join(", ")}.`
+        : "Metric types: none declared.",
+      preview.labelKeys.length > 0
+        ? `Label keys: ${preview.labelKeys.join(", ")}.`
+        : "Label keys: none detected.",
+      preview.helpLines.length > 0
+        ? `HELP metadata: ${preview.helpLines.join(" | ")}.`
+        : "HELP metadata: none detected.",
+      preview.sampleLines.length > 0
+        ? `Sample points: ${preview.sampleLines.join(" | ")}.`
+        : "Sample points: none detected in the bounded preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_METRICS_SNAPSHOT_PREVIEW_BYTES)} or item limits.` : "",
+      "Metrics snapshot preview read bounded workspace-local text only; no Prometheus/OpenMetrics server query, scrape, remote write, alert evaluation, TSDB access, network call, credential lookup, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Metrics snapshot file ready for explicit attachment (${formatBytes(size)}).`,
+      "No Prometheus/OpenMetrics server query, scrape, remote write, alert evaluation, TSDB access, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseMetricsSnapshotPreview(raw: string, extension: string): MetricsSnapshotPreview {
+  const lines = normalizeTextPreview(raw).split("\n");
+  const metricNames = new Set<string>();
+  const metricTypes = new Set<string>();
+  const helpLines: string[] = [];
+  const sampleLines: string[] = [];
+  const labelKeys = new Set<string>();
+  let sawEof = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed === "# EOF") {
+      sawEof = true;
+      continue;
+    }
+    const helpMatch = trimmed.match(/^#\s+HELP\s+([A-Za-z_:][A-Za-z0-9_:]*)\s+(.+)$/);
+    if (helpMatch) {
+      metricNames.add(helpMatch[1]);
+      if (helpLines.length < MAX_METRICS_SNAPSHOT_ITEM_PREVIEW) {
+        helpLines.push(`${helpMatch[1]}=${clampSingleLine(maskPotentialSecretValues(helpMatch[2]), 140)}`);
+      }
+      continue;
+    }
+    const typeMatch = trimmed.match(/^#\s+TYPE\s+([A-Za-z_:][A-Za-z0-9_:]*)\s+([A-Za-z_][A-Za-z0-9_]*)$/);
+    if (typeMatch) {
+      metricNames.add(typeMatch[1]);
+      metricTypes.add(`${typeMatch[1]}:${typeMatch[2]}`);
+      continue;
+    }
+    if (trimmed.startsWith("#")) continue;
+
+    const sampleMatch = trimmed.match(/^([A-Za-z_:][A-Za-z0-9_:]*)(?:\{([^}]*)\})?\s+([-+]?Inf|NaN|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)(?:\s+[-+]?\d+)?$/);
+    if (!sampleMatch) continue;
+    metricNames.add(sampleMatch[1]);
+    collectMetricsLabelKeys(sampleMatch[2] || "", labelKeys);
+    if (sampleLines.length < MAX_METRICS_SNAPSHOT_ITEM_PREVIEW) {
+      sampleLines.push(clampSingleLine(maskPotentialSecretValues(trimmed), 220));
+    }
+  }
+
+  return {
+    format: extension === ".openmetrics" || sawEof ? "OpenMetrics/Prometheus text" : "Prometheus text exposition",
+    metricNames: [...metricNames].slice(0, MAX_METRICS_SNAPSHOT_ITEM_PREVIEW),
+    metricTypes: [...metricTypes].slice(0, MAX_METRICS_SNAPSHOT_ITEM_PREVIEW),
+    helpLines,
+    sampleLines,
+    labelKeys: [...labelKeys].slice(0, MAX_METRICS_SNAPSHOT_ITEM_PREVIEW),
+    truncated:
+      raw.length >= MAX_METRICS_SNAPSHOT_PREVIEW_BYTES ||
+      metricNames.size >= MAX_METRICS_SNAPSHOT_ITEM_PREVIEW ||
+      sampleLines.length >= MAX_METRICS_SNAPSHOT_ITEM_PREVIEW,
+  };
+}
+
+function collectMetricsLabelKeys(labelText: string, labelKeys: Set<string>): void {
+  for (const match of labelText.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"(?:\\.|[^"\\])*"/g)) {
+    if (labelKeys.size >= MAX_METRICS_SNAPSHOT_ITEM_PREVIEW) break;
+    labelKeys.add(match[1]);
+  }
 }
 
 interface PythonDependencyManifestPreview {
@@ -4718,6 +5838,7 @@ function looksLikeCoverageReportXml(filePath: string): boolean {
     const raw = readFileHeader(filePath, Math.min(MAX_COVERAGE_REPORT_PREVIEW_BYTES, 16 * 1024)).toString("utf8");
     return (
       /<coverage\b/i.test(raw) ||
+      /<project\b[\s\S]*?<metrics\b/i.test(raw) ||
       /<report\b[^>]*\bname\s*=\s*["'][^"']*jacoco/i.test(raw) ||
       /<counter\b[^>]*\btype\s*=\s*["'](?:LINE|BRANCH)["']/i.test(raw)
     );
@@ -4761,7 +5882,7 @@ function parseLcovCoverageReport(raw: string): CoverageReportPreview {
   for (const line of raw.split(/\r?\n/)) {
     if (line.startsWith("SF:")) {
       if (files.length < MAX_COVERAGE_FILE_PREVIEW) {
-        files.push(clampSingleLine(maskPotentialSecretValues(line.slice(3)), 160));
+        files.push(clampSingleLine(maskPotentialSecretPathSegments(line.slice(3)), 160));
       }
       continue;
     }
@@ -4785,6 +5906,7 @@ function parseLcovCoverageReport(raw: string): CoverageReportPreview {
 }
 
 function parseXmlCoverageReport(raw: string): CoverageReportPreview {
+  if (looksLikeCloverCoverageXml(raw)) return parseCloverCoverageReport(raw);
   const rootAttrs = readXmlAttributes(raw.match(/<(coverage|report)\b([^>]*)>/i)?.[2] ?? "");
   const packages = [...raw.matchAll(/<package\b([^>]*)>/gi)]
     .map((match) => readXmlAttributes(match[1] ?? "").get("name") || "")
@@ -4809,16 +5931,51 @@ function parseXmlCoverageReport(raw: string): CoverageReportPreview {
     truncated:
       raw.length >= MAX_COVERAGE_REPORT_PREVIEW_BYTES ||
       files.length >= MAX_COVERAGE_FILE_PREVIEW ||
+    packages.length >= MAX_COVERAGE_PACKAGE_PREVIEW,
+  };
+}
+
+function looksLikeCloverCoverageXml(raw: string): boolean {
+  return /<coverage\b/i.test(raw) && /<project\b/i.test(raw) && /<metrics\b/i.test(raw) && /\bcoveredstatements\s*=/i.test(raw);
+}
+
+function parseCloverCoverageReport(raw: string): CoverageReportPreview {
+  const projectMatch = raw.match(/<project\b[\s\S]*?<\/project>/i);
+  const projectBody = projectMatch?.[0] ?? raw;
+  const metricsAttrs = readXmlAttributes(projectBody.match(/<metrics\b([^>]*)\/?>/i)?.[1] ?? "");
+  const packages = [...raw.matchAll(/<package\b([^>]*)>/gi)]
+    .map((match) => readXmlAttributes(match[1] ?? "").get("name") || "")
+    .filter(Boolean)
+    .map((name) => clampSingleLine(maskPotentialSecretValues(name), 120))
+    .slice(0, MAX_COVERAGE_PACKAGE_PREVIEW);
+  const files = extractCoverageXmlFiles(raw);
+  const coveredLines = readOptionalCoverageNumber(metricsAttrs.get("coveredstatements"));
+  const totalLines = readOptionalCoverageNumber(metricsAttrs.get("statements"));
+  const coveredBranches = readOptionalCoverageNumber(metricsAttrs.get("coveredconditionals"));
+  const totalBranches = readOptionalCoverageNumber(metricsAttrs.get("conditionals"));
+  return {
+    format: "Clover XML",
+    files,
+    packages,
+    lineRate: null,
+    branchRate: null,
+    coveredLines,
+    totalLines,
+    coveredBranches,
+    totalBranches,
+    truncated:
+      raw.length >= MAX_COVERAGE_REPORT_PREVIEW_BYTES ||
+      files.length >= MAX_COVERAGE_FILE_PREVIEW ||
       packages.length >= MAX_COVERAGE_PACKAGE_PREVIEW,
   };
 }
 
 function extractCoverageXmlFiles(raw: string): string[] {
   const files = new Set<string>();
-  for (const match of raw.matchAll(/<(?:class|sourcefile)\b([^>]*)>/gi)) {
+  for (const match of raw.matchAll(/<(?:class|sourcefile|file)\b([^>]*)>/gi)) {
     const attrs = readXmlAttributes(match[1] ?? "");
-    const filename = attrs.get("filename") || attrs.get("name") || "";
-    if (filename) files.add(clampSingleLine(maskPotentialSecretValues(filename), 160));
+    const filename = attrs.get("filename") || attrs.get("path") || attrs.get("name") || "";
+    if (filename) files.add(clampSingleLine(maskPotentialSecretPathSegments(filename), 160));
     if (files.size >= MAX_COVERAGE_FILE_PREVIEW) break;
   }
   return [...files].slice(0, MAX_COVERAGE_FILE_PREVIEW);
@@ -4848,12 +6005,25 @@ function readCoverageNumber(value: string | undefined): number {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
+function readOptionalCoverageNumber(value: string | undefined): number | null {
+  if (!value) return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function formatCoverageRate(rate: number | null, covered: number | null, total: number | null): string {
   if (rate !== null) return `${Math.round(rate * 1000) / 10}%`;
   if (covered !== null && total !== null && total > 0) {
     return `${Math.round((covered / total) * 1000) / 10}% (${covered}/${total})`;
   }
   return "not detected in the bounded preview";
+}
+
+function maskPotentialSecretPathSegments(value: string): string {
+  return maskPotentialSecretValues(value).replace(
+    /(^|[\\/])([^\\/]*(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)[^\\/]*?)(\.[A-Za-z0-9]+)?(?=$|[\\/])/gi,
+    (_match, prefix: string, _segment: string, extension = "") => `${prefix}[redacted]${extension}`,
+  );
 }
 
 interface TestReportPreview {
@@ -4870,7 +6040,15 @@ interface TestReportPreview {
 }
 
 function isTestReportFile(filePath: string, extension: string): boolean {
-  return extension === ".trx" || extension === ".junit.xml" || (extension === ".xml" && looksLikeTestReportXml(filePath));
+  return (
+    extension === ".trx" ||
+    extension === ".junit.xml" ||
+    extension === ".tap" ||
+    extension === ".tap13" ||
+    extension === ".test-results.json" ||
+    (extension === ".xml" && looksLikeTestReportXml(filePath)) ||
+    (extension === ".json" && looksLikeJsonTestReport(filePath))
+  );
 }
 
 function looksLikeTestReportXml(filePath: string): boolean {
@@ -4882,11 +6060,29 @@ function looksLikeTestReportXml(filePath: string): boolean {
   }
 }
 
+function looksLikeJsonTestReport(filePath: string): boolean {
+  try {
+    const raw = readFileHeader(filePath, Math.min(MAX_TEST_REPORT_PREVIEW_BYTES, 32 * 1024)).toString("utf8");
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    if (!isRecord(parsed)) return false;
+    if (Array.isArray(parsed.suites) && (isRecord(parsed.stats) || parsed.config !== undefined)) return true;
+    if (Array.isArray(parsed.testResults) && hasAnyProperty(parsed, ["numTotalTests", "numPassedTests", "numFailedTests", "numPendingTests"])) return true;
+    if (Array.isArray(parsed.testResults) && parsed.testResults.some((entry) => isRecord(entry) && Array.isArray(entry.assertionResults))) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 function summarizeTestReportFile(filePath: string, extension: string, size: number): string {
   try {
     const raw = readFileHeader(filePath, Math.min(size, MAX_TEST_REPORT_PREVIEW_BYTES)).toString("utf8");
-    const preview = extension === ".trx" || /<TestRun\b/i.test(raw)
+    const preview = extension === ".tap" || extension === ".tap13" || looksLikeTapTestReport(raw)
+      ? parseTapTestReport(raw)
+      : extension === ".trx" || /<TestRun\b/i.test(raw)
       ? parseTrxTestReport(raw)
+      : extension === ".test-results.json" || looksLikeJsonTestReportText(raw)
+      ? parseJsonTestReport(raw)
       : parseJunitTestReport(raw);
     return [
       `Test report preview (${preview.format}, ${formatBytes(size)}).`,
@@ -4899,7 +6095,7 @@ function summarizeTestReportFile(filePath: string, extension: string, size: numb
         ? `Failure/error previews (${preview.failedCases.length}${preview.failedCases.length >= MAX_TEST_REPORT_FAILURE_PREVIEW ? "+" : ""}): ${preview.failedCases.join(" | ")}.`
         : "Failure/error previews: none detected in the bounded preview.",
       preview.truncated ? `Preview was capped at ${formatBytes(MAX_TEST_REPORT_PREVIEW_BYTES)} or item limits.` : "",
-      "Test report preview read bounded local XML only; no test runner, build command, CI provider API call, artifact download, retry, network call, or provider send was performed.",
+      "Test report preview read bounded local XML/TAP/JSON only; no test runner, build command, CI provider API call, artifact download, retry, network call, or provider send was performed.",
     ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
   } catch {
     return [
@@ -4917,7 +6113,7 @@ function parseJunitTestReport(raw: string): TestReportPreview {
     .map((name) => clampSingleLine(name, 120))
     .slice(0, MAX_TEST_REPORT_CASE_PREVIEW);
   const suiteAttrs = [...raw.matchAll(/<testsuite\b([^>]*)>/gi)].map((match) => readXmlAttributes(match[1] ?? ""));
-  const caseMatches = [...raw.matchAll(/<testcase\b([^>]*)(?:\/>|>([\s\S]*?)<\/testcase>)/gi)];
+  const caseMatches = [...raw.matchAll(/<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/gi)];
   const failedCases: string[] = [];
   let failures = sumXmlNumericAttributes(suiteAttrs, "failures");
   let errors = sumXmlNumericAttributes(suiteAttrs, "errors");
@@ -4953,7 +6149,7 @@ function parseJunitTestReport(raw: string): TestReportPreview {
 
 function parseTrxTestReport(raw: string): TestReportPreview {
   const counterAttrs = readXmlAttributes(raw.match(/<Counters\b([^>]*)\/?>/i)?.[1] ?? "");
-  const resultMatches = [...raw.matchAll(/<UnitTestResult\b([^>]*)(?:\/>|>([\s\S]*?)<\/UnitTestResult>)/gi)];
+  const resultMatches = [...raw.matchAll(/<UnitTestResult\b([^>]*?)(?:\/>|>([\s\S]*?)<\/UnitTestResult>)/gi)];
   const failedCases: string[] = [];
   const outcomeCounts = new Map<string, number>();
   for (const match of resultMatches) {
@@ -4979,6 +6175,253 @@ function parseTrxTestReport(raw: string): TestReportPreview {
     failedCases,
     resultSummary: `Cases: ${total}; passed: ${readXmlNumber(counterAttrs, "passed") || (outcomeCounts.get("Passed") ?? 0)}; non-passing: ${failed || countNonPassingOutcomes(outcomeCounts)}; skipped/not executed: ${skipped}.`,
     truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || resultMatches.length > MAX_TEST_REPORT_CASE_PREVIEW,
+  };
+}
+
+function looksLikeJsonTestReportText(raw: string): boolean {
+  try {
+    const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    if (!isRecord(parsed)) return false;
+    if (Array.isArray(parsed.suites) && (isRecord(parsed.stats) || parsed.config !== undefined)) return true;
+    if (Array.isArray(parsed.testResults) && hasAnyProperty(parsed, ["numTotalTests", "numPassedTests", "numFailedTests", "numPendingTests"])) return true;
+    if (Array.isArray(parsed.testResults) && parsed.testResults.some((entry) => isRecord(entry) && Array.isArray(entry.assertionResults))) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function parseJsonTestReport(raw: string): TestReportPreview {
+  const parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  if (!isRecord(parsed)) {
+    return emptyJsonTestReportPreview("JSON test report");
+  }
+  if (Array.isArray(parsed.suites)) {
+    return parsePlaywrightJsonTestReport(parsed);
+  }
+  return parseJestVitestJsonTestReport(parsed);
+}
+
+function emptyJsonTestReportPreview(format: string): TestReportPreview {
+  return {
+    format,
+    suites: [],
+    cases: 0,
+    failures: 0,
+    errors: 0,
+    skipped: 0,
+    durationSeconds: null,
+    failedCases: [],
+    resultSummary: "Cases: 0; passed: 0; non-passing: 0; skipped: 0.",
+    truncated: false,
+  };
+}
+
+function parsePlaywrightJsonTestReport(record: Record<string, unknown>): TestReportPreview {
+  const suites: string[] = [];
+  const failedCases: string[] = [];
+  let cases = 0;
+  let passed = 0;
+  let failures = 0;
+  let skipped = 0;
+  let durationMs = readJsonNumber(record.stats, "duration") ?? 0;
+
+  const visitSuite = (suite: unknown): void => {
+    if (!isRecord(suite)) return;
+    const title = readJsonString(suite, "title");
+    if (title && suites.length < MAX_TEST_REPORT_CASE_PREVIEW) suites.push(clampSingleLine(title, 120));
+    for (const child of readJsonArray(suite, "suites")) visitSuite(child);
+    for (const spec of readJsonArray(suite, "specs")) {
+      if (!isRecord(spec)) continue;
+      const specTitle = readJsonString(spec, "title") || readJsonString(spec, "file") || "(unnamed spec)";
+      for (const test of readJsonArray(spec, "tests")) {
+        const testRecord = isRecord(test) ? test : spec;
+        const testTitle = readJsonString(testRecord, "title") || specTitle;
+        const results = readJsonArray(testRecord, "results");
+        if (results.length === 0) {
+          cases += 1;
+          continue;
+        }
+        for (const result of results) {
+          if (!isRecord(result)) continue;
+          cases += 1;
+          const status = (readJsonString(result, "status") || readJsonString(testRecord, "status") || "unknown").toLowerCase();
+          durationMs += readJsonNumber(result, "duration") ?? 0;
+          if (status === "passed") passed += 1;
+          else if (status === "skipped" || status === "interrupted") skipped += 1;
+          else {
+            failures += 1;
+            if (failedCases.length < MAX_TEST_REPORT_FAILURE_PREVIEW) {
+              const error = readJsonString(result.error, "message") || readJsonString(result, "error") || readJsonString(result, "errors");
+              failedCases.push(clampSingleLine(`${testTitle} [${status}]${error ? `: ${maskPotentialSecretValues(error)}` : ""}`, 240));
+            }
+          }
+        }
+      }
+    }
+  };
+
+  for (const suite of readJsonArray(record, "suites")) visitSuite(suite);
+  const stats = isRecord(record.stats) ? record.stats : {};
+  const expected = readJsonNumber(stats, "expected");
+  const unexpected = readJsonNumber(stats, "unexpected");
+  const flaky = readJsonNumber(stats, "flaky") ?? 0;
+  const skippedStats = readJsonNumber(stats, "skipped");
+  if (typeof expected === "number") passed = Math.max(passed, expected);
+  if (typeof unexpected === "number") failures = Math.max(failures, unexpected + flaky);
+  if (typeof skippedStats === "number") skipped = Math.max(skipped, skippedStats);
+  if (cases === 0) cases = passed + failures + skipped;
+
+  return {
+    format: "Playwright JSON",
+    suites,
+    cases,
+    failures,
+    errors: 0,
+    skipped,
+    durationSeconds: durationMs > 0 ? durationMs / 1000 : null,
+    failedCases,
+    resultSummary: `Cases: ${cases}; passed: ${passed}; non-passing: ${failures}; skipped: ${skipped}.`,
+    truncated: JSON.stringify(record).length >= MAX_TEST_REPORT_PREVIEW_BYTES || cases > MAX_TEST_REPORT_CASE_PREVIEW,
+  };
+}
+
+function parseJestVitestJsonTestReport(record: Record<string, unknown>): TestReportPreview {
+  const suites: string[] = [];
+  const failedCases: string[] = [];
+  const hasTopLevelCounts = hasAnyProperty(record, ["numTotalTests", "numPassedTests", "numFailedTests", "numPendingTests"]);
+  let cases = readJsonNumber(record, "numTotalTests") ?? 0;
+  let passed = readJsonNumber(record, "numPassedTests") ?? 0;
+  let failures = readJsonNumber(record, "numFailedTests") ?? 0;
+  let skipped = (readJsonNumber(record, "numPendingTests") ?? 0) + (readJsonNumber(record, "numTodoTests") ?? 0);
+  let durationMs = 0;
+
+  for (const suite of readJsonArray(record, "testResults")) {
+    if (!isRecord(suite)) continue;
+    const suiteName = readJsonString(suite, "name") || readJsonString(suite, "file") || readJsonString(suite, "filepath");
+    if (suiteName && suites.length < MAX_TEST_REPORT_CASE_PREVIEW) suites.push(clampSingleLine(suiteName, 120));
+    durationMs += readJsonNumber(suite, "perfStats.runtime") ?? 0;
+    for (const assertion of readJsonArray(suite, "assertionResults")) {
+      if (!isRecord(assertion)) continue;
+      if (!hasTopLevelCounts) cases += 1;
+      const status = (readJsonString(assertion, "status") || "unknown").toLowerCase();
+      if (!hasTopLevelCounts && status === "passed") passed += 1;
+      if (!hasTopLevelCounts && (status === "pending" || status === "skipped" || status === "todo")) skipped += 1;
+      if (!/^(passed|pending|skipped|todo)$/i.test(status) && failedCases.length < MAX_TEST_REPORT_FAILURE_PREVIEW) {
+        const messages = readJsonArray(assertion, "failureMessages")
+          .map((message) => typeof message === "string" ? maskPotentialSecretValues(message) : "")
+          .filter(Boolean)
+          .join(" ");
+        const title = readJsonString(assertion, "fullName") || readJsonString(assertion, "title") || "(unnamed test)";
+        failedCases.push(clampSingleLine(`${title} [${status}]${messages ? `: ${messages}` : ""}`, 240));
+      }
+    }
+  }
+
+  if (cases === 0) cases = passed + failures + skipped;
+  if (failures === 0 && failedCases.length > 0) failures = failedCases.length;
+  const format = typeof record.numRuntimeErrorTestSuites === "number" ? "Jest/Vitest JSON" : "JSON test report";
+  return {
+    format,
+    suites,
+    cases,
+    failures,
+    errors: readJsonNumber(record, "numRuntimeErrorTestSuites") ?? 0,
+    skipped,
+    durationSeconds: durationMs > 0 ? durationMs / 1000 : null,
+    failedCases,
+    resultSummary: `Cases: ${cases}; passed: ${passed}; non-passing: ${failures}; skipped: ${skipped}.`,
+    truncated: JSON.stringify(record).length >= MAX_TEST_REPORT_PREVIEW_BYTES || cases > MAX_TEST_REPORT_CASE_PREVIEW,
+  };
+}
+
+function readJsonArray(record: Record<string, unknown>, key: string): unknown[] {
+  const value = record[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function readJsonString(value: unknown, key: string): string {
+  if (!isRecord(value)) return "";
+  const entry = value[key];
+  if (typeof entry === "string") return clampSingleLine(entry, 240);
+  if (Array.isArray(entry)) return clampSingleLine(entry.filter((item) => typeof item === "string").join(" "), 240);
+  return "";
+}
+
+function readJsonNumber(value: unknown, key: string): number | null {
+  if (!isRecord(value)) return null;
+  const entry = key.includes(".")
+    ? key.split(".").reduce<unknown>((current, part) => isRecord(current) ? current[part] : undefined, value)
+    : value[key];
+  return typeof entry === "number" && Number.isFinite(entry) ? entry : null;
+}
+
+function looksLikeTapTestReport(raw: string): boolean {
+  return /^\s*TAP version\b/im.test(raw) || /^\s*1\.\.\d+\b/m.test(raw) || /^\s*(?:not\s+)?ok\b/m.test(raw);
+}
+
+function parseTapTestReport(raw: string): TestReportPreview {
+  const lines = raw.split(/\r?\n/);
+  const failedCases: string[] = [];
+  const directives = new Map<string, number>();
+  let assertions = 0;
+  let passed = 0;
+  let failed = 0;
+  let plan = "";
+  let version = "";
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^TAP version\b/i.test(trimmed)) {
+      version = clampSingleLine(trimmed, 80);
+      continue;
+    }
+    const planMatch = trimmed.match(/^1\.\.(\d+)\b/);
+    if (planMatch) {
+      plan = `Plan: 1..${planMatch[1]}`;
+      continue;
+    }
+    const resultMatch = trimmed.match(/^(not\s+)?ok\b(?:\s+(\d+))?(?:\s+([^#]+?))?(?:\s+#\s*(\S+)(?:\s+(.*))?)?$/i);
+    if (!resultMatch) continue;
+
+    assertions += 1;
+    const isFailure = Boolean(resultMatch[1]);
+    const index = resultMatch[2] || String(assertions);
+    const name = clampSingleLine(maskPotentialSecretValues((resultMatch[3] || `assertion ${index}`).trim()), 120);
+    const directive = (resultMatch[4] || "").toUpperCase();
+    const reason = clampSingleLine(maskPotentialSecretValues((resultMatch[5] || "").trim()), 120);
+
+    if (directive) directives.set(directive, (directives.get(directive) ?? 0) + 1);
+    if (isFailure) {
+      failed += 1;
+      if (failedCases.length < MAX_TEST_REPORT_FAILURE_PREVIEW) {
+        failedCases.push(`${name} [not ok${directive ? ` ${directive}` : ""}]${reason ? `: ${reason}` : ""}`);
+      }
+    } else {
+      passed += 1;
+    }
+  }
+
+  const directiveSummary = [...directives.entries()]
+    .map(([directive, count]) => `${directive}: ${count}`)
+    .join(", ");
+  const suites = [version, plan, directiveSummary ? `Directives: ${directiveSummary}` : ""]
+    .filter(Boolean)
+    .slice(0, MAX_TEST_REPORT_CASE_PREVIEW);
+  const skipped = (directives.get("SKIP") ?? 0) + (directives.get("TODO") ?? 0);
+
+  return {
+    format: "TAP",
+    suites,
+    cases: assertions,
+    failures: failed,
+    errors: 0,
+    skipped,
+    durationSeconds: null,
+    failedCases,
+    resultSummary: `Cases: ${assertions}; passed: ${passed}; non-passing: ${failed}; directives: ${directiveSummary || "none"}.`,
+    truncated: raw.length >= MAX_TEST_REPORT_PREVIEW_BYTES || assertions > MAX_TEST_REPORT_CASE_PREVIEW,
   };
 }
 
@@ -6242,6 +7685,8 @@ function summarizeDiagramSourceFile(filePath: string, extension: string, size: n
     const preview =
       extension === ".drawio"
         ? summarizeDrawioDiagramPreview(normalized)
+        : extension === ".dot" || extension === ".gv"
+          ? summarizeGraphvizDiagramPreview(normalized)
         : extension === ".mmd" || extension === ".mermaid"
           ? summarizeMermaidDiagramPreview(normalized)
           : summarizePlantUmlDiagramPreview(normalized);
@@ -6354,6 +7799,32 @@ function summarizePlantUmlDiagramPreview(raw: string): string {
   ].join("\n");
 }
 
+function summarizeGraphvizDiagramPreview(raw: string): string {
+  const lines = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("//") && !line.startsWith("#"));
+  const declaration = lines.find((line) => /^(?:strict\s+)?(?:di)?graph\b/i.test(line)) || "";
+  const typeMatch = declaration.match(/^(strict\s+)?(di)?graph(?:\s+([A-Za-z0-9_.:-]+))?/i);
+  const graphKind = typeMatch?.[2] ? "directed graph" : "undirected graph";
+  const graphName = typeMatch?.[3]
+    ? ` ${clampSingleLine(maskPotentialSecretValues(typeMatch[3]), 80)}`
+    : "";
+  const edgeCount = lines.filter((line) => /(?:--|->)/.test(line)).length;
+  const subgraphs = lines
+    .map((line) => line.match(/^subgraph\s+([A-Za-z0-9_.:-]+)/i)?.[1])
+    .filter((value): value is string => Boolean(value))
+    .map((value) => clampSingleLine(maskPotentialSecretValues(value), 80))
+    .slice(0, MAX_DIAGRAM_SOURCE_ITEM_PREVIEW);
+  const nodeHints = collectGraphvizNodeHints(lines);
+  return [
+    `Format: Graphviz DOT diagram source (${graphKind}${graphName}).`,
+    `Edges sampled: ${edgeCount}.`,
+    subgraphs.length > 0 ? `Subgraphs/clusters: ${subgraphs.join(" | ")}.` : "Subgraphs/clusters: none detected in the bounded preview.",
+    nodeHints.length > 0 ? `Node hints: ${nodeHints.join(" | ")}.` : "Node hints: none detected in the bounded preview.",
+  ].join("\n");
+}
+
 function readFirstDiagramType(lines: string[], types: string[]): string {
   for (const line of lines) {
     const match = line.match(/^([A-Za-z][A-Za-z0-9_-]*)\b/);
@@ -6373,6 +7844,28 @@ function collectMermaidNodeHints(lines: string[]): string[] {
     }
     const classMatch = line.match(/^(?:class|interface|state)\s+([A-Za-z0-9_.:-]+)/i);
     if (classMatch?.[1]) nodes.add(clampSingleLine(maskPotentialSecretValues(classMatch[1]), 80));
+    if (nodes.size >= MAX_DIAGRAM_SOURCE_ITEM_PREVIEW) break;
+  }
+  return [...nodes].slice(0, MAX_DIAGRAM_SOURCE_ITEM_PREVIEW);
+}
+
+function collectGraphvizNodeHints(lines: string[]): string[] {
+  const nodes = new Set<string>();
+  const reserved = new Set(["graph", "digraph", "strict", "node", "edge", "subgraph"]);
+  for (const line of lines) {
+    const nodeDeclaration = line.match(/^"?([A-Za-z0-9_.:-]+)"?\s*(?:\[|;|$)/);
+    if (nodeDeclaration?.[1] && !reserved.has(nodeDeclaration[1].toLowerCase())) {
+      nodes.add(clampSingleLine(maskPotentialSecretValues(nodeDeclaration[1]), 80));
+    }
+    for (const match of line.matchAll(/"?([A-Za-z0-9_.:-]+)"?\s*(?:--|->)\s*"?([A-Za-z0-9_.:-]+)"?/g)) {
+      if (match[1] && !reserved.has(match[1].toLowerCase())) {
+        nodes.add(clampSingleLine(maskPotentialSecretValues(match[1]), 80));
+      }
+      if (match[2] && !reserved.has(match[2].toLowerCase())) {
+        nodes.add(clampSingleLine(maskPotentialSecretValues(match[2]), 80));
+      }
+      if (nodes.size >= MAX_DIAGRAM_SOURCE_ITEM_PREVIEW) break;
+    }
     if (nodes.size >= MAX_DIAGRAM_SOURCE_ITEM_PREVIEW) break;
   }
   return [...nodes].slice(0, MAX_DIAGRAM_SOURCE_ITEM_PREVIEW);
@@ -6659,6 +8152,243 @@ function collectAnsibleModuleHints(lines: string[]): string[] {
   return [...modules].slice(0, MAX_ANSIBLE_ITEM_PREVIEW);
 }
 
+function summarizeCloudIacTemplateFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_CLOUD_IAC_TEMPLATE_PREVIEW_BYTES, MAX_TEXT_BYTES * 48),
+    ).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    const preview =
+      extension === ".bicep" || extension === ".bicepparam"
+        ? summarizeBicepTemplatePreview(normalized)
+        : summarizeCloudTemplatePreview(normalized, extension);
+    const sample = normalized
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#") && !line.startsWith("//"))
+      .slice(0, 12)
+      .map(maskCloudIacSampleLine)
+      .join("\n");
+    return [
+      `Cloud IaC template preview (${formatBytes(size)}).`,
+      preview,
+      sample || "No readable CloudFormation/ARM/Bicep template lines were found.",
+      raw.length >= MAX_CLOUD_IAC_TEMPLATE_PREVIEW_BYTES
+        ? `Cloud IaC template preview was capped at ${formatBytes(MAX_CLOUD_IAC_TEMPLATE_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; CloudFormation/SAM, Azure ARM, or Bicep metadata was parsed from bounded workspace-local text only, parameter/default values were not expanded, and no aws/cloudformation/sam/az/bicep command, cloud credential lookup, deployment, state mutation, registry lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Cloud IaC template ready for explicit attachment (${formatBytes(size)}).`,
+      "No aws/cloudformation/sam/az/bicep command, cloud credential lookup, deployment, state mutation, registry lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeCloudTemplatePreview(raw: string, extension: string): string {
+  const parsed = tryParseJson(raw);
+  if (parsed && isPlainRecord(parsed)) {
+    if (looksLikeArmTemplate(raw)) return summarizeArmTemplateJsonPreview(parsed);
+    return summarizeCloudFormationJsonPreview(parsed, extension);
+  }
+  return summarizeCloudFormationYamlPreview(raw);
+}
+
+function maskCloudIacSampleLine(line: string): string {
+  const masked = maskPotentialSecretValues(line);
+  return masked.replace(
+    /^(\s*["']?(?:default|defaultValue|value)["']?\s*[:=]\s*).+$/i,
+    "$1[redacted]",
+  );
+}
+
+function summarizeCloudFormationJsonPreview(record: Record<string, unknown>, extension: string): string {
+  const resources = collectCloudFormationJsonResourceTypes(record.Resources);
+  const parameters = collectRecordKeys(record.Parameters);
+  const mappings = collectRecordKeys(record.Mappings);
+  const outputs = collectRecordKeys(record.Outputs);
+  const transform = collectCloudFormationTransforms(record.Transform);
+  const description = readRecordString(record, "Description");
+  return [
+    `Format hint: ${extension === ".arm-template.json" ? "Azure ARM JSON or CloudFormation JSON" : "CloudFormation/SAM JSON"}.`,
+    readRecordString(record, "AWSTemplateFormatVersion") ? `AWSTemplateFormatVersion: ${readRecordString(record, "AWSTemplateFormatVersion")}.` : "AWSTemplateFormatVersion: none detected.",
+    transform.length > 0 ? `Transforms: ${transform.join(", ")}.` : "Transforms: none detected.",
+    description ? `Description: ${clampSingleLine(description, 160)}.` : "Description: none detected.",
+    resources.length > 0 ? `Resource types: ${resources.join(", ")}.` : "Resource types: none detected in the bounded preview.",
+    parameters.length > 0 ? `Parameters: ${parameters.join(", ")}.` : "Parameters: none detected.",
+    mappings.length > 0 ? `Mappings: ${mappings.join(", ")}.` : "Mappings: none detected.",
+    outputs.length > 0 ? `Outputs: ${outputs.join(", ")}.` : "Outputs: none detected.",
+  ].join("\n");
+}
+
+function summarizeCloudFormationYamlPreview(raw: string): string {
+  const lines = raw.split("\n");
+  const resourceTypes = collectRegexSamples(lines, /^\s*Type\s*:\s*["']?(AWS::[A-Za-z0-9:._-]+)/i);
+  const transforms = collectRegexSamples(lines, /^\s*Transform\s*:\s*["']?([A-Za-z0-9:._-]+)/i);
+  const sections = collectYamlTopLevelSections(lines);
+  const parameters = collectYamlSectionKeys(lines, "Parameters");
+  const outputs = collectYamlSectionKeys(lines, "Outputs");
+  const mappings = collectYamlSectionKeys(lines, "Mappings");
+  return [
+    "Format hint: CloudFormation/SAM YAML.",
+    transforms.length > 0 ? `Transforms: ${transforms.join(", ")}.` : "Transforms: none detected.",
+    sections.length > 0 ? `Top-level sections: ${sections.join(", ")}.` : "Top-level sections: none detected.",
+    resourceTypes.length > 0 ? `Resource types: ${resourceTypes.join(", ")}.` : "Resource types: none detected in the bounded preview.",
+    parameters.length > 0 ? `Parameters: ${parameters.join(", ")}.` : "Parameters: none detected.",
+    mappings.length > 0 ? `Mappings: ${mappings.join(", ")}.` : "Mappings: none detected.",
+    outputs.length > 0 ? `Outputs: ${outputs.join(", ")}.` : "Outputs: none detected.",
+  ].join("\n");
+}
+
+function summarizeArmTemplateJsonPreview(record: Record<string, unknown>): string {
+  const resources = collectArmTemplateResources(record.resources);
+  const parameters = collectRecordKeys(record.parameters);
+  const variables = collectRecordKeys(record.variables);
+  const outputs = collectRecordKeys(record.outputs);
+  return [
+    "Format hint: Azure ARM deployment template JSON.",
+    readRecordString(record, "$schema") ? `Schema: ${clampSingleLine(readRecordString(record, "$schema"), 160)}.` : "Schema: none detected.",
+    readRecordString(record, "contentVersion") ? `Content version: ${readRecordString(record, "contentVersion")}.` : "Content version: none detected.",
+    resources.length > 0 ? `Resource types: ${resources.join(", ")}.` : "Resource types: none detected in the bounded preview.",
+    parameters.length > 0 ? `Parameters: ${parameters.join(", ")}.` : "Parameters: none detected.",
+    variables.length > 0 ? `Variables: ${variables.join(", ")}.` : "Variables: none detected.",
+    outputs.length > 0 ? `Outputs: ${outputs.join(", ")}.` : "Outputs: none detected.",
+  ].join("\n");
+}
+
+function summarizeBicepTemplatePreview(raw: string): string {
+  const lines = raw.split("\n");
+  const targetScopes = collectRegexSamples(lines, /^\s*targetScope\s*=\s*['"]?([A-Za-z0-9_-]+)/);
+  const resources = collectRegexSamples(lines, /^\s*resource\s+([A-Za-z_][\w-]*)\s+['"]([^'"]+)['"]/)
+    .map((sample) => sample.replace(/^([A-Za-z_][\w-]*)\s+/, "$1: "));
+  const modules = collectRegexSamples(lines, /^\s*module\s+([A-Za-z_][\w-]*)\s+['"]([^'"]+)['"]/)
+    .map((sample) => sample.replace(/^([A-Za-z_][\w-]*)\s+/, "$1: "));
+  const parameters = collectRegexSamples(lines, /^\s*param\s+([A-Za-z_][\w-]*)\b/);
+  const variables = collectRegexSamples(lines, /^\s*var\s+([A-Za-z_][\w-]*)\b/);
+  const outputs = collectRegexSamples(lines, /^\s*output\s+([A-Za-z_][\w-]*)\b/);
+  return [
+    "Format hint: Azure Bicep template.",
+    targetScopes.length > 0 ? `Target scopes: ${targetScopes.join(", ")}.` : "Target scopes: none detected.",
+    resources.length > 0 ? `Resources: ${resources.join(", ")}.` : "Resources: none detected in the bounded preview.",
+    modules.length > 0 ? `Modules: ${modules.join(", ")}.` : "Modules: none detected.",
+    parameters.length > 0 ? `Parameters: ${parameters.join(", ")}.` : "Parameters: none detected.",
+    variables.length > 0 ? `Variables: ${variables.join(", ")}.` : "Variables: none detected.",
+    outputs.length > 0 ? `Outputs: ${outputs.join(", ")}.` : "Outputs: none detected.",
+  ].join("\n");
+}
+
+function looksLikeCloudFormationTemplate(raw: string): boolean {
+  return (
+    /\bAWSTemplateFormatVersion\b/.test(raw) ||
+    /\bTransform\s*:\s*AWS::Serverless/i.test(raw) ||
+    /"Transform"\s*:\s*"AWS::Serverless/i.test(raw) ||
+    /\bType\s*:\s*AWS::[A-Za-z0-9:._-]+/i.test(raw) ||
+    /"Type"\s*:\s*"AWS::[A-Za-z0-9:._-]+"/i.test(raw)
+  );
+}
+
+function looksLikeArmTemplate(raw: string): boolean {
+  return (
+    /schema\.management\.azure\.com\/schemas\/[0-9-]+\/deploymentTemplate\.json/i.test(raw) ||
+    /"contentVersion"\s*:\s*"[^"]+"/i.test(raw) && /"type"\s*:\s*"Microsoft\.[^"]+"/i.test(raw)
+  );
+}
+
+function collectCloudFormationJsonResourceTypes(value: unknown): string[] {
+  if (!isPlainRecord(value)) return [];
+  const resources: string[] = [];
+  for (const [logicalId, definition] of Object.entries(value)) {
+    if (!isPlainRecord(definition)) continue;
+    const type = readRecordString(definition, "Type");
+    resources.push(type ? `${logicalId}: ${type}` : logicalId);
+    if (resources.length >= MAX_CLOUD_IAC_TEMPLATE_ITEM_PREVIEW) break;
+  }
+  return resources.map((resource) => clampSingleLine(resource, 140));
+}
+
+function collectArmTemplateResources(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const resources: string[] = [];
+  for (const item of value) {
+    if (!isPlainRecord(item)) continue;
+    const type = readRecordString(item, "type");
+    const name = readRecordString(item, "name");
+    if (type || name) resources.push(clampSingleLine(name ? `${name}: ${type || "unknown type"}` : type, 140));
+    if (resources.length >= MAX_CLOUD_IAC_TEMPLATE_ITEM_PREVIEW) break;
+  }
+  return resources;
+}
+
+function collectRecordKeys(value: unknown): string[] {
+  if (!isPlainRecord(value)) return [];
+  return Object.keys(value)
+    .slice(0, MAX_CLOUD_IAC_TEMPLATE_ITEM_PREVIEW)
+    .map((key) => clampSingleLine(key, 80));
+}
+
+function collectCloudFormationTransforms(value: unknown): string[] {
+  if (typeof value === "string") return [clampSingleLine(value, 120)];
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === "string")
+      .slice(0, MAX_CLOUD_IAC_TEMPLATE_ITEM_PREVIEW)
+      .map((item) => clampSingleLine(item, 120));
+  }
+  return [];
+}
+
+function collectRegexSamples(lines: string[], pattern: RegExp): string[] {
+  const samples: string[] = [];
+  for (const line of lines) {
+    const match = line.match(pattern);
+    if (!match) continue;
+    const value = match.length > 2 ? `${match[1]} ${match[2]}` : match[1];
+    if (value) samples.push(clampSingleLine(value, 140));
+    if (samples.length >= MAX_CLOUD_IAC_TEMPLATE_ITEM_PREVIEW) break;
+  }
+  return [...new Set(samples)].slice(0, MAX_CLOUD_IAC_TEMPLATE_ITEM_PREVIEW);
+}
+
+function collectYamlTopLevelSections(lines: string): string[];
+function collectYamlTopLevelSections(lines: string[]): string[];
+function collectYamlTopLevelSections(lines: string[] | string): string[] {
+  const input = Array.isArray(lines) ? lines : lines.split("\n");
+  const sections = new Set<string>();
+  for (const line of input) {
+    const match = line.match(/^([A-Za-z][A-Za-z0-9_-]*)\s*:/);
+    if (match?.[1]) sections.add(match[1]);
+    if (sections.size >= MAX_CLOUD_IAC_TEMPLATE_ITEM_PREVIEW) break;
+  }
+  return [...sections];
+}
+
+function collectYamlSectionKeys(lines: string[], section: string): string[] {
+  const keys: string[] = [];
+  let inSection = false;
+  for (const line of lines) {
+    if (new RegExp(`^${section}\\s*:`).test(line)) {
+      inSection = true;
+      continue;
+    }
+    if (inSection && /^[A-Za-z][A-Za-z0-9_-]*\s*:/.test(line)) break;
+    if (!inSection) continue;
+    const match = line.match(/^\s{2,}([A-Za-z0-9_.-]+)\s*:/);
+    if (match?.[1]) keys.push(clampSingleLine(match[1], 80));
+    if (keys.length >= MAX_CLOUD_IAC_TEMPLATE_ITEM_PREVIEW) break;
+  }
+  return [...new Set(keys)].slice(0, MAX_CLOUD_IAC_TEMPLATE_ITEM_PREVIEW);
+}
+
+function tryParseJson(raw: string): unknown | null {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 function summarizeIacConfigFile(filePath: string, extension: string, size: number): string {
   try {
     const raw = readFileHeader(
@@ -6817,6 +8547,141 @@ function collectTerraformJsonResources(value: unknown): string[] {
     if (resources.length >= MAX_IAC_BLOCK_PREVIEW) break;
   }
   return resources;
+}
+
+interface TerraformPlanPreview {
+  formatVersion: string;
+  terraformVersion: string;
+  actions: string[];
+  resources: string[];
+  providers: string[];
+  modules: string[];
+  outputs: string[];
+  plannedResources: string[];
+  truncated: boolean;
+}
+
+function summarizeTerraformPlanJsonFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_TERRAFORM_PLAN_PREVIEW_BYTES).toString("utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    const preview = parseTerraformPlanJsonPreview(parsed, raw.length >= MAX_TERRAFORM_PLAN_PREVIEW_BYTES);
+    return [
+      `Terraform plan JSON preview (${formatBytes(size)}).`,
+      `Format: ${preview.formatVersion || "unknown"}; Terraform: ${preview.terraformVersion || "unknown"}.`,
+      preview.actions.length > 0
+        ? `Actions (${preview.actions.length}${preview.actions.length >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW ? "+" : ""}): ${preview.actions.join(", ")}.`
+        : "Actions: none detected in bounded resource_changes.",
+      preview.resources.length > 0
+        ? `Resource changes (${preview.resources.length}${preview.resources.length >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW ? "+" : ""}): ${preview.resources.join(" | ")}.`
+        : "Resource changes: none detected in bounded resource_changes.",
+      preview.providers.length > 0
+        ? `Providers (${preview.providers.length}${preview.providers.length >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW ? "+" : ""}): ${preview.providers.join(", ")}.`
+        : "Providers: none detected.",
+      preview.modules.length > 0
+        ? `Modules (${preview.modules.length}${preview.modules.length >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW ? "+" : ""}): ${preview.modules.join(", ")}.`
+        : "Modules: none detected.",
+      preview.outputs.length > 0
+        ? `Output changes (${preview.outputs.length}${preview.outputs.length >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW ? "+" : ""}): ${preview.outputs.join(", ")}.`
+        : "Output changes: none detected.",
+      preview.plannedResources.length > 0
+        ? `Planned resource addresses (${preview.plannedResources.length}${preview.plannedResources.length >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW ? "+" : ""}): ${preview.plannedResources.join(" | ")}.`
+        : "Planned resource addresses: none detected in bounded planned_values.",
+      preview.truncated ? `Terraform plan preview was capped at ${formatBytes(MAX_TERRAFORM_PLAN_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Terraform plan metadata was parsed from bounded workspace-local JSON only, before/after values were not expanded, and no terraform init/plan/show/apply, cloud credential lookup, state mutation, provider plugin download, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Terraform plan JSON ready for explicit attachment (${formatBytes(size)}).`,
+      "Terraform plan preview could not parse bounded local JSON; no terraform init/plan/show/apply, cloud credential lookup, state mutation, provider plugin download, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseTerraformPlanJsonPreview(value: unknown, byteTruncated: boolean): TerraformPlanPreview {
+  const root = isPlainRecord(value) ? value : {};
+  const actions = new Map<string, number>();
+  const resources: string[] = [];
+  const providers = new Set<string>();
+  const modules = new Set<string>();
+  const resourceChanges = Array.isArray(root.resource_changes) ? root.resource_changes : [];
+  for (const item of resourceChanges) {
+    if (!isPlainRecord(item)) continue;
+    const address = clampSingleLine(readRecordString(item, "address") || readRecordString(item, "name") || "unknown", 120);
+    const providerName = readRecordString(item, "provider_name");
+    if (providerName) providers.add(clampSingleLine(providerName, 100));
+    const moduleAddress = readRecordString(item, "module_address") || parseTerraformModuleAddress(address);
+    if (moduleAddress) modules.add(clampSingleLine(moduleAddress, 100));
+    const change = isPlainRecord(item.change) ? item.change : {};
+    const actionList = Array.isArray(change.actions)
+      ? change.actions.map((action) => String(action)).filter(Boolean)
+      : [];
+    const actionLabel = actionList.length > 0 ? actionList.join("+") : "unknown";
+    actions.set(actionLabel, (actions.get(actionLabel) ?? 0) + 1);
+    if (resources.length < MAX_TERRAFORM_PLAN_ITEM_PREVIEW) {
+      resources.push(`${actionLabel} ${maskPotentialSecretValues(address)}`);
+    }
+    if (
+      resources.length >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW &&
+      providers.size >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW &&
+      modules.size >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW
+    ) {
+      break;
+    }
+  }
+  const outputChanges = isPlainRecord(root.output_changes)
+    ? Object.keys(root.output_changes).slice(0, MAX_TERRAFORM_PLAN_ITEM_PREVIEW).map((key) => clampSingleLine(key, 80))
+    : [];
+  const plannedResources = collectTerraformPlanPlannedResources(root.planned_values);
+  return {
+    formatVersion: clampSingleLine(readRecordString(root, "format_version"), 40),
+    terraformVersion: clampSingleLine(readRecordString(root, "terraform_version"), 40),
+    actions: [...actions.entries()]
+      .map(([action, count]) => `${action}: ${count}`)
+      .slice(0, MAX_TERRAFORM_PLAN_ITEM_PREVIEW),
+    resources,
+    providers: [...providers].slice(0, MAX_TERRAFORM_PLAN_ITEM_PREVIEW),
+    modules: [...modules].slice(0, MAX_TERRAFORM_PLAN_ITEM_PREVIEW),
+    outputs: outputChanges,
+    plannedResources,
+    truncated:
+      byteTruncated ||
+      resourceChanges.length > resources.length ||
+      providers.size >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW ||
+      modules.size >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW ||
+      outputChanges.length >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW ||
+      plannedResources.length >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW,
+  };
+}
+
+function parseTerraformModuleAddress(address: string): string {
+  const match = address.match(/^(module\.[^\[]+?)(?:\.|$)/);
+  return match?.[1] || "";
+}
+
+function collectTerraformPlanPlannedResources(value: unknown): string[] {
+  const output: string[] = [];
+  const visit = (moduleValue: unknown): void => {
+    if (!isPlainRecord(moduleValue) || output.length >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW) return;
+    const resources = Array.isArray(moduleValue.resources) ? moduleValue.resources : [];
+    for (const resource of resources) {
+      if (!isPlainRecord(resource)) continue;
+      const address = readRecordString(resource, "address");
+      const type = readRecordString(resource, "type");
+      const name = readRecordString(resource, "name");
+      const label = address || [type, name].filter(Boolean).join(".");
+      if (label) output.push(clampSingleLine(maskPotentialSecretValues(label), 120));
+      if (output.length >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW) return;
+    }
+    const childModules = Array.isArray(moduleValue.child_modules) ? moduleValue.child_modules : [];
+    for (const child of childModules) {
+      visit(child);
+      if (output.length >= MAX_TERRAFORM_PLAN_ITEM_PREVIEW) return;
+    }
+  };
+  const planned = isPlainRecord(value) ? value : {};
+  visit(planned.root_module);
+  return output;
 }
 
 function summarizeContainerBuildFile(filePath: string, size: number): string {
@@ -7156,6 +9021,325 @@ function summarizeBuildManifestFile(filePath: string, extension: string, size: n
   }
 }
 
+function isDotnetNugetConfigFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    [".dotnet-global.json", ".nuget.config", ".packages.config", ".nuspec"].includes(extension) ||
+    name === "global.json" ||
+    name === "nuget.config" ||
+    name === "packages.config" ||
+    name.endsWith(".nuspec")
+  );
+}
+
+function summarizeDotnetNugetConfigFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_DOTNET_NUGET_CONFIG_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    if (extension === ".dotnet-global.json") {
+      return summarizeDotnetGlobalJson(normalized, size);
+    }
+    if (extension === ".nuget.config") {
+      return summarizeNugetConfigFile(normalized, size);
+    }
+    if (extension === ".packages.config") {
+      return summarizeNugetPackagesConfigFile(normalized, size);
+    }
+    return summarizeNuspecFile(normalized, size);
+  } catch {
+    return [
+      `.NET/NuGet configuration ready for explicit attachment (${formatBytes(size)}).`,
+      `${basename(filePath)} could not be read as bounded workspace-local text.`,
+      "No dotnet/NuGet/MSBuild command, package restore, workload install, credential lookup, package source probe, registry lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeDotnetGlobalJson(raw: string, size: number): string {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    const sdk = readRecordValue(parsed, "sdk");
+    const sdkVersion = isPlainRecord(sdk) && typeof sdk.version === "string" ? sdk.version : "";
+    const rollForward = isPlainRecord(sdk) && typeof sdk.rollForward === "string" ? sdk.rollForward : "";
+    const allowPrerelease = isPlainRecord(sdk) && typeof sdk.allowPrerelease === "boolean" ? String(sdk.allowPrerelease) : "";
+    const msbuildSdks = readRecordValue(parsed, "msbuild-sdks");
+    const msbuildSdkEntries = isPlainRecord(msbuildSdks)
+      ? Object.entries(msbuildSdks)
+          .map(([name, version]) => `${name}@${typeof version === "string" ? version : "configured"}`)
+          .slice(0, MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW)
+      : [];
+    return [
+      `.NET SDK global.json preview (${formatBytes(size)}).`,
+      `SDK version: ${sdkVersion || "none detected in the bounded preview"}.`,
+      rollForward ? `Roll-forward: ${rollForward}.` : "Roll-forward: none detected.",
+      allowPrerelease ? `Allow prerelease SDK: ${allowPrerelease}.` : "Allow prerelease SDK: none detected.",
+      msbuildSdkEntries.length > 0 ? `MSBuild SDK pins (${msbuildSdkEntries.length}${msbuildSdkEntries.length >= MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${msbuildSdkEntries.join(", ")}.` : "MSBuild SDK pins: none detected.",
+      "Ready for explicit attachment after visible review; .NET SDK metadata was parsed from bounded workspace-local JSON only, and no dotnet command, SDK resolution, workload install, package restore, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `.NET SDK global.json ready for explicit attachment (${formatBytes(size)}).`,
+      "global.json could not be parsed from the bounded local JSON preview.",
+      "No dotnet command, SDK resolution, workload install, package restore, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeNugetConfigFile(raw: string, size: number): string {
+  const sourceEntries = extractNugetConfigAddEntries(raw, "packageSources");
+  const disabledSources = extractNugetConfigAddEntries(raw, "disabledPackageSources");
+  const configEntries = extractNugetConfigAddEntries(raw, "config");
+  const credentialSources = extractNugetCredentialSourceNames(raw);
+  return [
+    `NuGet config preview (${formatBytes(size)}).`,
+    sourceEntries.length > 0 ? `Package sources (${sourceEntries.length}${sourceEntries.length >= MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${sourceEntries.join(" | ")}.` : "Package sources: none detected in the bounded preview.",
+    disabledSources.length > 0 ? `Disabled sources: ${disabledSources.join(" | ")}.` : "Disabled sources: none detected.",
+    configEntries.length > 0 ? `Config keys: ${configEntries.join(" | ")}.` : "Config keys: none detected.",
+    credentialSources.length > 0 ? `Credential sections present for sources: ${credentialSources.join(", ")}; credential values were not expanded.` : "Credential sections: none detected.",
+    "Ready for explicit attachment after visible review; NuGet metadata was parsed from bounded workspace-local XML only, packageSourceCredentials values were not expanded, and no dotnet/NuGet command, restore, package source probe, credential lookup, network call, or provider send was performed.",
+  ].join("\n").slice(0, MAX_TEXT_BYTES);
+}
+
+function summarizeNugetPackagesConfigFile(raw: string, size: number): string {
+  const packages = [...raw.matchAll(/<package\b([^>]*)\/?>/gi)]
+    .map((match) => {
+      const attrs = readXmlAttributes(match[1] || "");
+      const id = attrs.get("id") || attrs.get("Id") || "";
+      const version = attrs.get("version") || attrs.get("Version") || "";
+      const targetFramework = attrs.get("targetFramework") || attrs.get("TargetFramework") || "";
+      return id ? clampSingleLine(`${id}${version ? ` ${version}` : ""}${targetFramework ? ` (${targetFramework})` : ""}`, 180) : "";
+    })
+    .filter(Boolean)
+    .slice(0, MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW);
+  return [
+    `NuGet packages.config preview (${formatBytes(size)}).`,
+    packages.length > 0 ? `Packages (${packages.length}${packages.length >= MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${packages.join(", ")}.` : "Packages: none detected in the bounded preview.",
+    "Ready for explicit attachment after visible review; packages.config package metadata was parsed from bounded workspace-local XML only, and no NuGet restore, package install, dependency resolution, registry lookup, credential lookup, network call, or provider send was performed.",
+  ].join("\n").slice(0, MAX_TEXT_BYTES);
+}
+
+function summarizeNuspecFile(raw: string, size: number): string {
+  const metadataBlock = raw.match(/<metadata\b[^>]*>([\s\S]*?)<\/metadata>/i)?.[1] ?? raw;
+  const packageId = firstXmlTagValue(metadataBlock, "id") || "";
+  const version = firstXmlTagValue(metadataBlock, "version") || "";
+  const authors = firstXmlTagValue(metadataBlock, "authors") || "";
+  const license = firstXmlTagValue(metadataBlock, "license") || firstXmlTagValue(metadataBlock, "licenseUrl") || "";
+  const dependencies = extractNuspecDependencies(metadataBlock);
+  const files = [...raw.matchAll(/<file\b([^>]*)\/?>/gi)]
+    .map((match) => {
+      const attrs = readXmlAttributes(match[1] || "");
+      const src = attrs.get("src") || "";
+      const target = attrs.get("target") || "";
+      return src ? clampSingleLine(`${src}${target ? ` -> ${target}` : ""}`, 180) : "";
+    })
+    .filter(Boolean)
+    .slice(0, MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW);
+  return [
+    `NuGet package specification preview (${formatBytes(size)}).`,
+    `Package: ${[packageId, version].filter(Boolean).join(" ") || "none detected in the bounded preview"}.`,
+    authors ? `Authors: ${clampSingleLine(authors, 160)}.` : "Authors: none detected.",
+    license ? `License metadata: ${clampSingleLine(maskPotentialSecretValues(license), 160)}.` : "License metadata: none detected.",
+    dependencies.length > 0 ? `Dependencies (${dependencies.length}${dependencies.length >= MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${dependencies.join(", ")}.` : "Dependencies: none detected in the bounded preview.",
+    files.length > 0 ? `Files (${files.length}${files.length >= MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${files.join(" | ")}.` : "Files: none detected in the bounded preview.",
+    "Ready for explicit attachment after visible review; .nuspec metadata was parsed from bounded workspace-local XML only, and no dotnet/NuGet pack, restore, package validation, license compliance scan, registry lookup, credential lookup, network call, or provider send was performed.",
+  ].join("\n").slice(0, MAX_TEXT_BYTES);
+}
+
+function extractNugetConfigAddEntries(raw: string, sectionName: string): string[] {
+  const section = raw.match(new RegExp(`<${sectionName}\\b[^>]*>([\\s\\S]*?)<\\/${sectionName}>`, "i"))?.[1] ?? "";
+  return [...section.matchAll(/<add\b([^>]*)\/?>/gi)]
+    .map((match) => {
+      const attrs = readXmlAttributes(match[1] || "");
+      const key = attrs.get("key") || attrs.get("Key") || "";
+      const value = attrs.get("value") || attrs.get("Value") || "";
+      return key ? clampSingleLine(`${key}${value ? `=${maskPotentialSecretValues(value)}` : ""}`, 180) : "";
+    })
+    .filter(Boolean)
+    .slice(0, MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW);
+}
+
+function extractNugetCredentialSourceNames(raw: string): string[] {
+  const block = raw.match(/<packageSourceCredentials\b[^>]*>([\s\S]*?)<\/packageSourceCredentials>/i)?.[1] ?? "";
+  return [...block.matchAll(/<([A-Za-z_][\w:.-]*)\b[^>]*>/g)]
+    .map((match) => match[1] || "")
+    .filter((name) => !["add", "clear", "remove"].includes(name.toLowerCase()))
+    .map((name) => clampSingleLine(name, 120))
+    .slice(0, MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW);
+}
+
+function extractNuspecDependencies(xml: string): string[] {
+  return [...xml.matchAll(/<dependency\b([^>]*)\/?>/gi)]
+    .map((match) => {
+      const attrs = readXmlAttributes(match[1] || "");
+      const id = attrs.get("id") || attrs.get("Id") || "";
+      const version = attrs.get("version") || attrs.get("Version") || "";
+      return id ? clampSingleLine(`${id}${version ? ` ${version}` : ""}`, 160) : "";
+    })
+    .filter(Boolean)
+    .slice(0, MAX_DOTNET_NUGET_CONFIG_ITEM_PREVIEW);
+}
+
+function isCppBuildManifestFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    [".cmake", ".cmakelists.txt", ".compile_commands.json", ".makefile"].includes(extension) ||
+    name === "cmakelists.txt" ||
+    name === "compile_commands.json" ||
+    ["makefile", "gnumakefile", "bsdmakefile"].includes(name) ||
+    name.endsWith(".mk")
+  );
+}
+
+function summarizeCppBuildManifestFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_CPP_BUILD_MANIFEST_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    if (extension === ".compile_commands.json") {
+      return summarizeCompileCommandsManifest(normalized, size);
+    }
+    if (extension === ".cmake" || extension === ".cmakelists.txt") {
+      return summarizeCmakeBuildManifest(normalized, extension, size);
+    }
+    return summarizeMakeBuildManifest(normalized, size);
+  } catch {
+    return [
+      `C/C++ build manifest ready for explicit attachment (${formatBytes(size)}).`,
+      `${basename(filePath)} could not be read as bounded workspace-local text.`,
+      "No cmake/make/ninja/compiler command, package restore, configure step, build target execution, external schema lookup, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeCmakeBuildManifest(raw: string, extension: string, size: number): string {
+  const calls = extractCmakeCalls(raw);
+  const project = calls.find((call) => call.name === "project")?.args;
+  const targets = calls
+    .filter((call) => ["add_executable", "add_library"].includes(call.name))
+    .map((call) => clampSingleLine(`${call.name} ${call.args}`, 180))
+    .slice(0, MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW);
+  const packages = calls
+    .filter((call) => call.name === "find_package")
+    .map((call) => clampSingleLine(call.args, 160))
+    .slice(0, MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW);
+  const subdirectories = calls
+    .filter((call) => call.name === "add_subdirectory")
+    .map((call) => clampSingleLine(call.args, 160))
+    .slice(0, MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW);
+  const options = calls
+    .filter((call) => call.name === "option")
+    .map((call) => clampSingleLine(call.args, 180))
+    .slice(0, MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW);
+  const links = calls
+    .filter((call) => call.name === "target_link_libraries")
+    .map((call) => clampSingleLine(call.args, 180))
+    .slice(0, MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW);
+  return [
+    `C/C++ build manifest preview (${extension === ".cmakelists.txt" ? "CMakeLists.txt" : "CMake module"}, ${formatBytes(size)}).`,
+    project ? `Project: ${project}.` : "Project: none detected in the bounded local preview.",
+    targets.length > 0 ? `Targets (${targets.length}${targets.length >= MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${targets.join(" | ")}.` : "Targets: none detected in the bounded preview.",
+    packages.length > 0 ? `Packages (${packages.length}${packages.length >= MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${packages.join(" | ")}.` : "Packages: none detected in the bounded preview.",
+    links.length > 0 ? `Target links (${links.length}${links.length >= MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${links.join(" | ")}.` : "Target links: none detected in the bounded preview.",
+    subdirectories.length > 0 ? `Subdirectories (${subdirectories.length}${subdirectories.length >= MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${subdirectories.join(" | ")}.` : "Subdirectories: none detected in the bounded preview.",
+    options.length > 0 ? `Options (${options.length}${options.length >= MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${options.join(" | ")}.` : "Options: none detected in the bounded preview.",
+    "CMake project/target/package metadata was parsed from bounded workspace-local text only; no cmake/make/ninja/compiler command, configure step, package discovery, generator invocation, external schema lookup, network call, credential lookup, or provider send was performed.",
+  ].join("\n").slice(0, MAX_TEXT_BYTES);
+}
+
+function extractCmakeCalls(raw: string): { name: string; args: string }[] {
+  const withoutComments = raw
+    .split("\n")
+    .map((line) => line.replace(/(^|[^\\])#.*/, "$1"))
+    .join("\n");
+  const calls: { name: string; args: string }[] = [];
+  const pattern = /\b(project|add_executable|add_library|find_package|target_link_libraries|add_subdirectory|option)\s*\(([\s\S]*?)\)/gi;
+  for (const match of withoutComments.matchAll(pattern)) {
+    const name = (match[1] || "").toLowerCase();
+    const args = maskPotentialSecretValues((match[2] || "").replace(/\s+/g, " ").trim());
+    if (name && args) calls.push({ name, args: clampSingleLine(args, 220) });
+    if (calls.length >= MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW * 4) break;
+  }
+  return calls;
+}
+
+function summarizeMakeBuildManifest(raw: string, size: number): string {
+  const lines = raw.split("\n");
+  const targets = extractMakeTargets(lines);
+  const includes = lines
+    .map((line) => line.match(/^\s*(?:-?include|sinclude)\s+(.+)$/)?.[1])
+    .filter((value): value is string => Boolean(value))
+    .map((value) => clampSingleLine(maskPotentialSecretValues(value), 160))
+    .slice(0, MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW);
+  const variables = lines
+    .map((line) => line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)(?:\s*[:?+]?=)\s*(.+)$/))
+    .filter((match): match is RegExpMatchArray => Boolean(match?.[1]))
+    .map((match) => clampSingleLine(`${match[1]}=${maskPotentialSecretValues(match[2] || "")}`, 180))
+    .slice(0, MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW);
+  return [
+    `C/C++ build manifest preview (Makefile, ${formatBytes(size)}).`,
+    targets.length > 0 ? `Targets (${targets.length}${targets.length >= MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${targets.join(", ")}.` : "Targets: none detected in the bounded preview.",
+    includes.length > 0 ? `Includes (${includes.length}${includes.length >= MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${includes.join(", ")}.` : "Includes: none detected in the bounded preview.",
+    variables.length > 0 ? `Variables (${variables.length}${variables.length >= MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${variables.join(" | ")}.` : "Variables: none detected in the bounded preview.",
+    "Make target/include/variable metadata was parsed from bounded workspace-local text only; no make/nmake/ninja/compiler command, target execution, include expansion beyond the reviewed file, shell recipe execution, network call, credential lookup, or provider send was performed.",
+  ].join("\n").slice(0, MAX_TEXT_BYTES);
+}
+
+function extractMakeTargets(lines: string[]): string[] {
+  const targets: string[] = [];
+  for (const line of lines) {
+    if (/^\s*(#|$|\t)/.test(line)) continue;
+    if (/^\s*(?:if|ifdef|ifndef|ifeq|ifneq|else|endif|include|sinclude|-include)\b/.test(line)) continue;
+    const match = line.match(/^([A-Za-z0-9_.%/$(){}+-][^:=#]*?)\s*:(?![=])[^=]?.*$/);
+    if (!match?.[1]) continue;
+    const names = match[1].split(/\s+/).map((value) => value.trim()).filter(Boolean);
+    for (const name of names) {
+      targets.push(clampSingleLine(name, 120));
+      if (targets.length >= MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW) return targets;
+    }
+  }
+  return targets;
+}
+
+function summarizeCompileCommandsManifest(raw: string, size: number): string {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    const entries = Array.isArray(parsed) ? parsed.filter(isPlainRecord) : [];
+    const directories = new Set<string>();
+    const files: string[] = [];
+    const commandHints = new Set<string>();
+    for (const entry of entries.slice(0, MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW)) {
+      if (typeof entry.directory === "string" && entry.directory.trim()) {
+        directories.add(clampSingleLine(entry.directory, 160));
+      }
+      if (typeof entry.file === "string" && entry.file.trim()) {
+        files.push(clampSingleLine(entry.file, 160));
+      }
+      const command = typeof entry.command === "string" ? entry.command : Array.isArray(entry.arguments) ? entry.arguments.join(" ") : "";
+      const compiler = command.trim().split(/\s+/)[0] || "";
+      if (compiler) commandHints.add(clampSingleLine(maskPotentialSecretValues(compiler), 100));
+    }
+    return [
+      `C/C++ build manifest preview (compile_commands.json, ${formatBytes(size)}).`,
+      `Compile database entries: ${entries.length}.`,
+      directories.size > 0 ? `Directories (${Math.min(directories.size, MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW)}${directories.size >= MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${[...directories].slice(0, MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW).join(" | ")}.` : "Directories: none detected in the bounded preview.",
+      files.length > 0 ? `Files (${files.length}${files.length >= MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${files.slice(0, MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW).join(" | ")}.` : "Files: none detected in the bounded preview.",
+      commandHints.size > 0 ? `Compiler command hints: ${[...commandHints].slice(0, MAX_CPP_BUILD_MANIFEST_ITEM_PREVIEW).join(", ")}.` : "Compiler command hints: none detected in sampled entries.",
+      "compile database entries were parsed from bounded workspace-local JSON only; no cmake/make/ninja/compiler command, compile invocation, include probing, file-system graph expansion, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `C/C++ build manifest ready for explicit attachment (${formatBytes(size)}).`,
+      "compile_commands.json could not be parsed from the bounded local JSON preview.",
+      "No cmake/make/ninja/compiler command, compile invocation, include probing, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
 function summarizeMavenPomManifest(raw: string, size: number): string {
   const projectBlock = raw.match(/<project\b[^>]*>([\s\S]*?)<\/project>/i)?.[1] ?? raw;
   const parentBlock = projectBlock.match(/<parent\b[^>]*>([\s\S]*?)<\/parent>/i)?.[1] ?? "";
@@ -7418,13 +9602,16 @@ function isSbomProvenanceArtifact(filePath: string, extension: string): boolean 
       ".intoto.jsonl",
       ".spdx",
       ".spdx.json",
+      ".syft.json",
     ].includes(extension) ||
     name === "bom.json" ||
     name === "sbom.json" ||
     name === "cyclonedx.json" ||
+    name === "syft.json" ||
     name === "provenance.json" ||
     name === "attestation.json" ||
     name.endsWith(".sbom.json") ||
+    name.endsWith(".syft.json") ||
     name.endsWith(".provenance.json")
   );
 }
@@ -7545,6 +9732,413 @@ function readSarifString(record: Record<string, unknown>, key: string): string {
   return typeof value === "string" ? maskPotentialSecretValues(value).trim() : "";
 }
 
+interface SecurityScanReportPreview {
+  format: string;
+  vulnerabilityCount: number;
+  packages: string[];
+  severities: string[];
+  ids: string[];
+  samples: string[];
+  truncated: boolean;
+}
+
+function isSecurityScanReportFile(filePath: string, extension: string): boolean {
+  const name = basename(filePath).toLowerCase();
+  return (
+    extension === ".security-audit.json" ||
+    name === "snyk.json" ||
+    name === "npm-audit.json" ||
+    name === "audit-ci.json" ||
+    name === "security-audit.json" ||
+    name === "vulnerability-report.json" ||
+    name.endsWith(".snyk.json") ||
+    name.endsWith(".npm-audit.json") ||
+    name.endsWith(".audit-ci.json") ||
+    name.endsWith(".security-audit.json") ||
+    name.endsWith(".vulnerability-report.json")
+  );
+}
+
+function summarizeSecurityScanReportFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_SECURITY_SCAN_REPORT_PREVIEW_BYTES, MAX_TEXT_BYTES * 48),
+    ).toString("utf8");
+    const preview = readSecurityScanReportPreview(JSON.parse(raw));
+    if (!preview) {
+      return [
+        `Security scan report file ready for explicit attachment (${formatBytes(size)}).`,
+        "The bounded JSON preview did not contain recognized Snyk, npm audit, or audit-ci vulnerability records.",
+        "No npm audit/Snyk/audit-ci command, package install, registry lookup, vulnerability database query, credential lookup, network call, or provider send was performed.",
+      ].join("\n").slice(0, MAX_TEXT_BYTES);
+    }
+    return [
+      `Security scan report preview (${preview.format}, ${formatBytes(size)}).`,
+      `Vulnerabilities reported in bounded preview: ${preview.vulnerabilityCount}.`,
+      preview.severities.length > 0
+        ? `Severities: ${summarizeCounts(preview.severities)}.`
+        : "Severities: none detected in the bounded local preview.",
+      preview.packages.length > 0
+        ? `Packages (${preview.packages.length}${preview.packages.length >= MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW ? "+" : ""}): ${preview.packages.join(", ")}.`
+        : "Packages: none detected in the bounded local preview.",
+      preview.ids.length > 0
+        ? `Advisory/CVE/CWE ids (${preview.ids.length}${preview.ids.length >= MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW ? "+" : ""}): ${preview.ids.join(", ")}.`
+        : "Advisory/CVE/CWE ids: none detected in the bounded local preview.",
+      preview.samples.length > 0
+        ? `Vulnerability samples (${preview.samples.length}${preview.samples.length >= MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW ? "+" : ""}): ${preview.samples.join(" | ")}.`
+        : "Vulnerability samples: none detected in sampled records.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_SECURITY_SCAN_REPORT_PREVIEW_BYTES)} or item limits.` : "",
+      extension === ".security-audit.json"
+        ? "Filename-based security scan report detection was used for this JSON file."
+        : "Security scan report MIME provenance was preserved for this import.",
+      "Security scan report preview read bounded local JSON only; no npm audit/Snyk/audit-ci command, package install, registry lookup, vulnerability database query, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Security scan report file ready for explicit attachment (${formatBytes(size)}).`,
+      "Security scan report preview could not parse bounded local JSON.",
+      "No npm audit/Snyk/audit-ci command, package install, registry lookup, vulnerability database query, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function readSecurityScanReportPreview(value: unknown): SecurityScanReportPreview | null {
+  if (!isPlainRecord(value)) return null;
+  if (Array.isArray(value.vulnerabilities)) {
+    return readSnykSecurityScanPreview(value);
+  }
+  if (isPlainRecord(value.vulnerabilities)) {
+    return readNpmAuditSecurityScanPreview(value);
+  }
+  if (isPlainRecord(value.advisories)) {
+    return readLegacyAdvisorySecurityScanPreview(value);
+  }
+  return null;
+}
+
+function readSnykSecurityScanPreview(record: Record<string, unknown>): SecurityScanReportPreview {
+  const vulnerabilities = record.vulnerabilities;
+  const items = Array.isArray(vulnerabilities) ? vulnerabilities.filter(isPlainRecord) : [];
+  const packages = new Set<string>();
+  const ids = new Set<string>();
+  const severities: string[] = [];
+  const samples: string[] = [];
+  for (const item of items.slice(0, MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW)) {
+    const pkg = sanitizeSecurityScanValue(
+      readJsonString(item, "packageName") || readJsonString(item, "name") || readJsonString(item, "moduleName"),
+    );
+    const severity = sanitizeSecurityScanValue(readJsonString(item, "severity"));
+    const title = sanitizeSecurityScanValue(readJsonString(item, "title") || readJsonString(item, "description"));
+    collectSecurityScanIds(item, ids);
+    addLimited(packages, pkg, MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW);
+    if (severity) severities.push(severity);
+    if (samples.length < MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW) {
+      samples.push(clampSingleLine([severity ? `[${severity}]` : "", pkg, title].filter(Boolean).join(" "), 220));
+    }
+  }
+  return {
+    format: "Snyk JSON",
+    vulnerabilityCount: readJsonNumber(record, "uniqueCount") ?? items.length,
+    packages: [...packages],
+    severities,
+    ids: [...ids].slice(0, MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW),
+    samples: samples.filter(Boolean),
+    truncated: items.length > MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW,
+  };
+}
+
+function readNpmAuditSecurityScanPreview(record: Record<string, unknown>): SecurityScanReportPreview {
+  const vulnerabilities = isPlainRecord(record.vulnerabilities) ? record.vulnerabilities : {};
+  const entries = Object.entries(vulnerabilities).filter(([, item]) => isPlainRecord(item));
+  const packages = new Set<string>();
+  const ids = new Set<string>();
+  const severities: string[] = [];
+  const samples: string[] = [];
+  for (const [name, rawItem] of entries.slice(0, MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW)) {
+    const item = rawItem as Record<string, unknown>;
+    const pkg = sanitizeSecurityScanValue(readJsonString(item, "name") || name);
+    const severity = sanitizeSecurityScanValue(readJsonString(item, "severity"));
+    const via = Array.isArray(item.via) ? item.via : [];
+    const title = sanitizeSecurityScanValue(readFirstSecurityScanTitle(via) || readJsonString(item, "title"));
+    collectSecurityScanIds(item, ids);
+    for (const viaItem of via) collectSecurityScanIds(viaItem, ids);
+    addLimited(packages, pkg, MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW);
+    if (severity) severities.push(severity);
+    if (samples.length < MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW) {
+      samples.push(clampSingleLine([severity ? `[${severity}]` : "", pkg, title].filter(Boolean).join(" "), 220));
+    }
+  }
+  return {
+    format: "npm audit JSON",
+    vulnerabilityCount: readNpmAuditVulnerabilityCount(record) ?? entries.length,
+    packages: [...packages],
+    severities,
+    ids: [...ids].slice(0, MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW),
+    samples: samples.filter(Boolean),
+    truncated: entries.length > MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW,
+  };
+}
+
+function readLegacyAdvisorySecurityScanPreview(record: Record<string, unknown>): SecurityScanReportPreview {
+  const advisories = isPlainRecord(record.advisories) ? record.advisories : {};
+  const entries = Object.entries(advisories).filter(([, item]) => isPlainRecord(item));
+  const packages = new Set<string>();
+  const ids = new Set<string>();
+  const severities: string[] = [];
+  const samples: string[] = [];
+  for (const [id, rawItem] of entries.slice(0, MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW)) {
+    const item = rawItem as Record<string, unknown>;
+    const pkg = sanitizeSecurityScanValue(readJsonString(item, "module_name") || readJsonString(item, "moduleName"));
+    const severity = sanitizeSecurityScanValue(readJsonString(item, "severity"));
+    const title = sanitizeSecurityScanValue(readJsonString(item, "title") || readJsonString(item, "overview"));
+    addLimited(ids, sanitizeSecurityScanValue(readJsonString(item, "cves") || id), MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW);
+    collectSecurityScanIds(item, ids);
+    addLimited(packages, pkg, MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW);
+    if (severity) severities.push(severity);
+    if (samples.length < MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW) {
+      samples.push(clampSingleLine([severity ? `[${severity}]` : "", pkg, title].filter(Boolean).join(" "), 220));
+    }
+  }
+  return {
+    format: "npm audit advisory JSON",
+    vulnerabilityCount: entries.length,
+    packages: [...packages],
+    severities,
+    ids: [...ids].slice(0, MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW),
+    samples: samples.filter(Boolean),
+    truncated: entries.length > MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW,
+  };
+}
+
+function readFirstSecurityScanTitle(values: unknown[]): string {
+  for (const value of values) {
+    if (!isPlainRecord(value)) continue;
+    const title = readJsonString(value, "title") || readJsonString(value, "name") || readJsonString(value, "source");
+    if (title) return title;
+  }
+  return "";
+}
+
+function readNpmAuditVulnerabilityCount(record: Record<string, unknown>): number | null {
+  const metadata = isPlainRecord(record.metadata) ? record.metadata : null;
+  const counts = metadata && isPlainRecord(metadata.vulnerabilities) ? metadata.vulnerabilities : null;
+  if (!counts) return null;
+  return ["info", "low", "moderate", "high", "critical"].reduce((total, key) => {
+    const value = counts[key];
+    return total + (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  }, 0);
+}
+
+function collectSecurityScanIds(value: unknown, ids: Set<string>): void {
+  if (ids.size >= MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW) return;
+  if (typeof value === "string") {
+    for (const match of value.matchAll(/\b(?:CVE-\d{4}-\d{4,}|CWE-\d+|GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4})\b/gi)) {
+      addLimited(ids, sanitizeSecurityScanValue(match[0] || ""), MAX_SECURITY_SCAN_VULNERABILITY_PREVIEW);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectSecurityScanIds(item, ids);
+    return;
+  }
+  if (!isPlainRecord(value)) return;
+  for (const key of ["id", "source", "url", "cve", "cwe", "cves", "cwes"]) {
+    const item = value[key];
+    if (typeof item === "string" || Array.isArray(item)) collectSecurityScanIds(item, ids);
+  }
+  const identifiers = isPlainRecord(value.identifiers) ? value.identifiers : null;
+  if (identifiers) {
+    for (const item of Object.values(identifiers)) collectSecurityScanIds(item, ids);
+  }
+}
+
+function sanitizeSecurityScanValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeSecurityScanValue(item)).filter(Boolean).join(", ");
+  }
+  if (value === null || value === undefined) return "";
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(String(value))), 180);
+}
+
+interface StaticAnalysisXmlPreview {
+  format: string;
+  files: string[];
+  rules: string[];
+  severities: string[];
+  issues: string[];
+  issueCount: number;
+  truncated: boolean;
+}
+
+function isStaticAnalysisXmlReportFile(filePath: string, extension: string): boolean {
+  return (
+    [".checkstyle.xml", ".pmd.xml", ".spotbugs.xml"].includes(extension) ||
+    (extension === ".xml" && looksLikeStaticAnalysisXmlReport(filePath))
+  );
+}
+
+function looksLikeStaticAnalysisXmlReport(filePath: string): boolean {
+  try {
+    const raw = readFileHeader(filePath, Math.min(MAX_STATIC_ANALYSIS_XML_PREVIEW_BYTES, 16 * 1024)).toString("utf8");
+    return /<checkstyle\b/i.test(raw) || /<pmd\b/i.test(raw) || /<BugCollection\b/i.test(raw);
+  } catch {
+    return false;
+  }
+}
+
+function summarizeStaticAnalysisXmlReportFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(size, MAX_STATIC_ANALYSIS_XML_PREVIEW_BYTES)).toString("utf8");
+    const preview = parseStaticAnalysisXmlReport(raw, extension);
+    return [
+      `Static analysis XML report preview (${preview.format}, ${formatBytes(size)}).`,
+      `Issues reported in bounded preview: ${preview.issueCount}.`,
+      preview.files.length > 0
+        ? `Files (${preview.files.length}${preview.files.length >= MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW ? "+" : ""}): ${preview.files.join(" | ")}.`
+        : "Files: none detected in the bounded local preview.",
+      preview.rules.length > 0
+        ? `Rules (${preview.rules.length}${preview.rules.length >= MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW ? "+" : ""}): ${preview.rules.join(", ")}.`
+        : "Rules: none detected in the bounded local preview.",
+      preview.severities.length > 0
+        ? `Severities/priorities: ${summarizeCounts(preview.severities)}.`
+        : "Severities/priorities: none detected in the bounded local preview.",
+      preview.issues.length > 0
+        ? `Issue samples (${preview.issues.length}${preview.issues.length >= MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW ? "+" : ""}): ${preview.issues.join(" | ")}.`
+        : "Issue samples: none detected in the bounded local preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_STATIC_ANALYSIS_XML_PREVIEW_BYTES)} or item limits.` : "",
+      "Static analysis XML preview read bounded local XML only; no Checkstyle/PMD/SpotBugs scanner, build command, test runner, CI provider API call, SARIF conversion/upload, baseline diff, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Static analysis XML report ready for explicit attachment (${formatBytes(size)}).`,
+      "No Checkstyle/PMD/SpotBugs scanner, build command, test runner, CI provider API call, SARIF conversion/upload, baseline diff, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseStaticAnalysisXmlReport(raw: string, extension: string): StaticAnalysisXmlPreview {
+  if (extension === ".pmd.xml" || /<pmd\b/i.test(raw)) return parsePmdXmlReport(raw);
+  if (extension === ".spotbugs.xml" || /<BugCollection\b/i.test(raw)) return parseSpotbugsXmlReport(raw);
+  return parseCheckstyleXmlReport(raw);
+}
+
+function parseCheckstyleXmlReport(raw: string): StaticAnalysisXmlPreview {
+  const files = new Set<string>();
+  const rules = new Set<string>();
+  const severities: string[] = [];
+  const issues: string[] = [];
+  let issueCount = 0;
+  const fileBlocks = [...raw.matchAll(/<file\b([^>]*)>([\s\S]*?)<\/file>/gi)];
+  for (const fileMatch of fileBlocks) {
+    const fileAttrs = readXmlAttributes(fileMatch[1] ?? "");
+    const fileName = sanitizeStaticAnalysisValue(fileAttrs.get("name") || "");
+    addLimited(files, fileName, MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW);
+    for (const errorMatch of (fileMatch[2] ?? "").matchAll(/<error\b([^>]*)\/?>/gi)) {
+      issueCount += 1;
+      const attrs = readXmlAttributes(errorMatch[1] ?? "");
+      const severity = sanitizeStaticAnalysisValue(attrs.get("severity") || "");
+      const source = sanitizeStaticAnalysisValue(attrs.get("source") || attrs.get("module") || "");
+      const rule = source.split(".").filter(Boolean).pop() || source;
+      const line = sanitizeStaticAnalysisValue(attrs.get("line") || "");
+      const message = sanitizeStaticAnalysisValue(attrs.get("message") || "");
+      if (severity) severities.push(severity);
+      addLimited(rules, rule, MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW);
+      if (issues.length < MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW) {
+        issues.push(clampSingleLine([fileName ? `${fileName}${line ? `:${line}` : ""}` : "", severity ? `[${severity}]` : "", rule, message].filter(Boolean).join(" "), 240));
+      }
+    }
+  }
+  return {
+    format: "Checkstyle XML",
+    files: [...files],
+    rules: [...rules],
+    severities,
+    issues,
+    issueCount,
+    truncated: raw.length >= MAX_STATIC_ANALYSIS_XML_PREVIEW_BYTES || issueCount > issues.length,
+  };
+}
+
+function parsePmdXmlReport(raw: string): StaticAnalysisXmlPreview {
+  const files = new Set<string>();
+  const rules = new Set<string>();
+  const severities: string[] = [];
+  const issues: string[] = [];
+  let issueCount = 0;
+  const fileBlocks = [...raw.matchAll(/<file\b([^>]*)>([\s\S]*?)<\/file>/gi)];
+  for (const fileMatch of fileBlocks) {
+    const fileAttrs = readXmlAttributes(fileMatch[1] ?? "");
+    const fileName = sanitizeStaticAnalysisValue(fileAttrs.get("name") || "");
+    addLimited(files, fileName, MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW);
+    for (const violationMatch of (fileMatch[2] ?? "").matchAll(/<violation\b([^>]*)>([\s\S]*?)<\/violation>/gi)) {
+      issueCount += 1;
+      const attrs = readXmlAttributes(violationMatch[1] ?? "");
+      const rule = sanitizeStaticAnalysisValue(attrs.get("rule") || attrs.get("ruleset") || "");
+      const priority = sanitizeStaticAnalysisValue(attrs.get("priority") || "");
+      const line = sanitizeStaticAnalysisValue(attrs.get("beginline") || attrs.get("line") || "");
+      const message = sanitizeStaticAnalysisValue(extractXmlText(violationMatch[2] ?? ""));
+      if (priority) severities.push(`priority ${priority}`);
+      addLimited(rules, rule, MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW);
+      if (issues.length < MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW) {
+        issues.push(clampSingleLine([fileName ? `${fileName}${line ? `:${line}` : ""}` : "", priority ? `[priority ${priority}]` : "", rule, message].filter(Boolean).join(" "), 240));
+      }
+    }
+  }
+  return {
+    format: "PMD XML",
+    files: [...files],
+    rules: [...rules],
+    severities,
+    issues,
+    issueCount,
+    truncated: raw.length >= MAX_STATIC_ANALYSIS_XML_PREVIEW_BYTES || issueCount > issues.length,
+  };
+}
+
+function parseSpotbugsXmlReport(raw: string): StaticAnalysisXmlPreview {
+  const files = new Set<string>();
+  const rules = new Set<string>();
+  const severities: string[] = [];
+  const issues: string[] = [];
+  const bugMatches = [...raw.matchAll(/<BugInstance\b([^>]*?)(?:\/>|>([\s\S]*?)<\/BugInstance>)/gi)];
+  for (const bugMatch of bugMatches) {
+    const attrs = readXmlAttributes(bugMatch[1] ?? "");
+    const body = bugMatch[2] ?? "";
+    const type = sanitizeStaticAnalysisValue(attrs.get("type") || attrs.get("abbrev") || "");
+    const category = sanitizeStaticAnalysisValue(attrs.get("category") || "");
+    const priority = sanitizeStaticAnalysisValue(attrs.get("priority") || attrs.get("rank") || "");
+    const sourceLineAttrs = readXmlAttributes(body.match(/<SourceLine\b([^>]*)\/?>/i)?.[1] ?? "");
+    const fileName = sanitizeStaticAnalysisValue(sourceLineAttrs.get("sourcepath") || sourceLineAttrs.get("classname") || "");
+    const line = sanitizeStaticAnalysisValue(sourceLineAttrs.get("start") || sourceLineAttrs.get("startLine") || "");
+    const message = sanitizeStaticAnalysisValue(extractXmlText(body.match(/<(LongMessage|ShortMessage)\b[^>]*>([\s\S]*?)<\/\1>/i)?.[2] ?? ""));
+    addLimited(files, fileName, MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW);
+    addLimited(rules, type || category, MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW);
+    if (priority) severities.push(`priority ${priority}`);
+    if (issues.length < MAX_STATIC_ANALYSIS_XML_ITEM_PREVIEW) {
+      issues.push(clampSingleLine([fileName ? `${fileName}${line ? `:${line}` : ""}` : "", priority ? `[priority ${priority}]` : "", type || category, message].filter(Boolean).join(" "), 240));
+    }
+  }
+  return {
+    format: "SpotBugs XML",
+    files: [...files],
+    rules: [...rules],
+    severities,
+    issues,
+    issueCount: bugMatches.length,
+    truncated: raw.length >= MAX_STATIC_ANALYSIS_XML_PREVIEW_BYTES || bugMatches.length > issues.length,
+  };
+}
+
+function addLimited(target: Set<string>, value: string, limit: number): void {
+  if (!value || target.size >= limit) return;
+  target.add(value);
+}
+
+function sanitizeStaticAnalysisValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(decodeXmlEntities(value).replace(/\s+/g, " ").trim()), 180);
+}
+
 function summarizeSbomProvenanceArtifact(
   filePath: string,
   extension: string,
@@ -7590,6 +10184,7 @@ function detectSbomProvenanceFormat(name: string, extension: string, raw: string
         return `CycloneDX ${typeof parsed.specVersion === "string" ? parsed.specVersion : "JSON"}`;
       }
       if (typeof parsed.spdxVersion === "string") return `SPDX JSON ${parsed.spdxVersion}`;
+      if (Array.isArray(parsed.artifacts) && isPlainRecord(parsed.source)) return "Syft JSON SBOM";
       if (isPlainRecord(parsed.predicate) && typeof parsed.predicateType === "string") {
         return `in-toto/SLSA provenance ${parsed.predicateType}`;
       }
@@ -7601,6 +10196,7 @@ function detectSbomProvenanceFormat(name: string, extension: string, raw: string
   if (extension === ".intoto.jsonl" || name.includes("intoto")) return "in-toto JSONL attestation";
   if (name.includes("cyclonedx") || extension === ".cdx.json") return "CycloneDX JSON";
   if (name.includes("spdx") || extension === ".spdx.json") return "SPDX JSON";
+  if (name.includes("syft") || extension === ".syft.json") return "Syft JSON SBOM";
   if (name.includes("provenance") || name.includes("attestation")) return "provenance attestation";
   return "SBOM/provenance artifact";
 }
@@ -7613,6 +10209,7 @@ function extractSbomProvenanceSubjects(raw: string, format: string): string[] {
       collectNameVersionRecord(parsed.metadata, subjects);
       collectNameVersionArray(parsed.components, subjects);
       collectNameVersionArray(parsed.packages, subjects);
+      collectNameVersionArray(parsed.artifacts, subjects);
       collectSubjectArray(parsed.subject, subjects);
       if (isPlainRecord(parsed.predicate)) {
         collectNameVersionArray(parsed.predicate.materials, subjects);
@@ -7633,6 +10230,7 @@ function extractSbomPackageSamples(raw: string, format: string): string[] {
     if (isPlainRecord(parsed)) {
       collectNameVersionArray(parsed.components, packages);
       collectNameVersionArray(parsed.packages, packages);
+      collectNameVersionArray(parsed.artifacts, packages);
       if (isPlainRecord(parsed.predicate)) {
         collectNameVersionArray(parsed.predicate.materials, packages);
         collectNameVersionArray(parsed.predicate.resolvedDependencies, packages);
@@ -7668,6 +10266,7 @@ function estimateSbomPackageCount(raw: string, format: string): string {
     if (isPlainRecord(parsed)) {
       if (Array.isArray(parsed.components)) return `${parsed.components.length} CycloneDX component entr${parsed.components.length === 1 ? "y" : "ies"}`;
       if (Array.isArray(parsed.packages)) return `${parsed.packages.length} SPDX package entr${parsed.packages.length === 1 ? "y" : "ies"}`;
+      if (Array.isArray(parsed.artifacts)) return `${parsed.artifacts.length} Syft artifact entr${parsed.artifacts.length === 1 ? "y" : "ies"}`;
       if (Array.isArray(parsed.subject)) return `${parsed.subject.length} attestation subject entr${parsed.subject.length === 1 ? "y" : "ies"}`;
       if (isPlainRecord(parsed.predicate) && Array.isArray(parsed.predicate.materials)) {
         return `${parsed.predicate.materials.length} provenance material entr${parsed.predicate.materials.length === 1 ? "y" : "ies"}`;
@@ -7741,6 +10340,192 @@ function isSecurityArtifactExtension(extension: string): boolean {
 
 function isBinaryArtifactExtension(extension: string): boolean {
   return [".dll", ".exe", ".wasm"].includes(extension);
+}
+
+function isJavaBuildArtifactExtension(extension: string): boolean {
+  return [".jar", ".war", ".ear", ".class"].includes(extension);
+}
+
+function summarizeJavaBuildArtifactFile(filePath: string, extension: string, size: number): string {
+  if (extension === ".class") {
+    return summarizeJavaClassFile(filePath, size);
+  }
+  return summarizeJavaArchiveArtifactFile(filePath, extension, size);
+}
+
+function summarizeJavaArchiveArtifactFile(filePath: string, extension: string, size: number): string {
+  try {
+    const buffer = readFileHeader(
+      filePath,
+      Math.min(MAX_JAVA_BUILD_ARTIFACT_PREVIEW_BYTES, MAX_TEXT_BYTES * 64),
+    );
+    const entries = extractZipEntries(buffer);
+    const entryNames = entries
+      .map((entry) => entry.name)
+      .filter((name) => name && !name.endsWith("/"))
+      .slice(0, MAX_JAVA_BUILD_ARTIFACT_ITEM_PREVIEW);
+    const manifest = entries.find((entry) => entry.name.toUpperCase() === "META-INF/MANIFEST.MF");
+    const manifestLines = manifest
+      ? summarizeJavaManifest(manifest.data.toString("utf8"))
+      : [];
+    const packageHints = summarizeJavaArchivePackageHints(entryNames);
+    const classCount = entries.filter((entry) => entry.name.toLowerCase().endsWith(".class")).length;
+    const nestedArchives = entryNames.filter((name) => /\.(?:jar|war|ear)$/i.test(name));
+    return [
+      `Java build artifact preview (${extension.toUpperCase().slice(1)}, ${formatBytes(size)}).`,
+      manifestLines.length > 0
+        ? `Manifest metadata: ${manifestLines.join(" | ")}.`
+        : "Manifest metadata: no META-INF/MANIFEST.MF entry detected in the bounded local preview.",
+      entryNames.length > 0
+        ? `Entry samples (${entryNames.length}${entryNames.length >= MAX_JAVA_BUILD_ARTIFACT_ITEM_PREVIEW ? "+" : ""}): ${entryNames.join(" | ")}.`
+        : "Entry samples: none detected in bounded local ZIP headers.",
+      packageHints.length > 0
+        ? `Package/class hints: ${packageHints.join(" | ")}.`
+        : "Package/class hints: none detected in bounded local entries.",
+      classCount > 0
+        ? `Class entry count in bounded preview: ${classCount}.`
+        : "Class entry count in bounded preview: none detected.",
+      nestedArchives.length > 0
+        ? `Nested archive cues: ${nestedArchives.slice(0, 6).join(" | ")}.`
+        : "Nested archive cues: none detected.",
+      buffer.length >= MAX_JAVA_BUILD_ARTIFACT_PREVIEW_BYTES
+        ? `Java artifact preview was capped at ${formatBytes(MAX_JAVA_BUILD_ARTIFACT_PREVIEW_BYTES)}.`
+        : "",
+      "Java artifact preview read bounded workspace-local ZIP metadata only; no JVM, javap, build tool, class loading, dependency resolver, signature verification, nested archive extraction, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Java build artifact ready for explicit attachment (${formatBytes(size)}).`,
+      "Java artifact preview could not read bounded local ZIP metadata; no JVM, javap, build tool, class loading, dependency resolver, signature verification, nested archive extraction, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeJavaClassFile(filePath: string, size: number): string {
+  try {
+    const buffer = readFileHeader(
+      filePath,
+      Math.min(MAX_JAVA_BUILD_ARTIFACT_PREVIEW_BYTES, MAX_TEXT_BYTES * 64),
+    );
+    const metadata = readJavaClassMetadata(buffer);
+    return [
+      `Java class file preview (${formatBytes(size)}).`,
+      metadata.valid
+        ? `Class header: CAFEBABE magic valid, major ${metadata.majorVersion ?? "unknown"}, minor ${metadata.minorVersion ?? "unknown"}.`
+        : "Class header: CAFEBABE magic was not recognized in the bounded local preview.",
+      typeof metadata.constantPoolCount === "number"
+        ? `Constant-pool count: ${metadata.constantPoolCount}.`
+        : "Constant-pool count: unavailable.",
+      metadata.utf8Hints.length > 0
+        ? `UTF-8 constant hints: ${metadata.utf8Hints.join(" | ")}.`
+        : "UTF-8 constant hints: none detected.",
+      buffer.length >= MAX_JAVA_BUILD_ARTIFACT_PREVIEW_BYTES
+        ? `Class preview was capped at ${formatBytes(MAX_JAVA_BUILD_ARTIFACT_PREVIEW_BYTES)}.`
+        : "",
+      "Java class preview read bounded workspace-local bytes only; no JVM, javap, bytecode verification, class loading, decompilation, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Java class file ready for explicit attachment (${formatBytes(size)}).`,
+      "Java class preview could not read bounded local bytes; no JVM, javap, bytecode verification, class loading, decompilation, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeJavaManifest(raw: string): string[] {
+  const interestingKeys = new Set([
+    "manifest-version",
+    "main-class",
+    "automatic-module-name",
+    "implementation-title",
+    "implementation-version",
+    "bundle-symbolicname",
+    "bundle-version",
+  ]);
+  return raw
+    .replace(/\r\n[ \t]/g, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => {
+      const key = line.split(":")[0]?.trim().toLowerCase() || "";
+      return interestingKeys.has(key);
+    })
+    .map((line) => clampSingleLine(maskPotentialSecretValues(line), 160))
+    .slice(0, MAX_JAVA_BUILD_ARTIFACT_ITEM_PREVIEW);
+}
+
+function summarizeJavaArchivePackageHints(entryNames: string[]): string[] {
+  const hints = new Set<string>();
+  for (const name of entryNames) {
+    if (!name.toLowerCase().endsWith(".class")) continue;
+    const withoutClass = name.replace(/\.class$/i, "");
+    const normalized = withoutClass.replace(/\$/g, ".").replace(/\//g, ".");
+    const parts = normalized.split(".").filter(Boolean);
+    if (parts.length >= 2) {
+      hints.add(parts.slice(0, Math.min(parts.length, 5)).join("."));
+    } else {
+      hints.add(normalized);
+    }
+    if (hints.size >= MAX_JAVA_BUILD_ARTIFACT_ITEM_PREVIEW) break;
+  }
+  return [...hints];
+}
+
+interface JavaClassMetadata {
+  valid: boolean;
+  minorVersion?: number;
+  majorVersion?: number;
+  constantPoolCount?: number;
+  utf8Hints: string[];
+}
+
+function readJavaClassMetadata(buffer: Buffer): JavaClassMetadata {
+  const metadata: JavaClassMetadata = { valid: false, utf8Hints: [] };
+  if (buffer.length < 10 || buffer.readUInt32BE(0) !== 0xcafebabe) {
+    return metadata;
+  }
+  metadata.valid = true;
+  metadata.minorVersion = buffer.readUInt16BE(4);
+  metadata.majorVersion = buffer.readUInt16BE(6);
+  metadata.constantPoolCount = buffer.readUInt16BE(8);
+  let offset = 10;
+  for (let index = 1; index < metadata.constantPoolCount && offset < buffer.length; index += 1) {
+    const tag = buffer[offset];
+    offset += 1;
+    if (tag === 1) {
+      if (offset + 2 > buffer.length) break;
+      const length = buffer.readUInt16BE(offset);
+      offset += 2;
+      if (offset + length > buffer.length) break;
+      const value = buffer.subarray(offset, offset + length).toString("utf8");
+      offset += length;
+      if (/^[\w.$/-]{3,}$/.test(value) && !/^\d+$/.test(value)) {
+        metadata.utf8Hints.push(clampSingleLine(value.replace(/\//g, "."), 120));
+      }
+      if (metadata.utf8Hints.length >= MAX_JAVA_BUILD_ARTIFACT_ITEM_PREVIEW) break;
+      continue;
+    }
+    if (tag === 3 || tag === 4 || tag === 9 || tag === 10 || tag === 11 || tag === 12 || tag === 18) {
+      offset += 4;
+      continue;
+    }
+    if (tag === 5 || tag === 6) {
+      offset += 8;
+      index += 1;
+      continue;
+    }
+    if (tag === 7 || tag === 8 || tag === 16 || tag === 19 || tag === 20) {
+      offset += 2;
+      continue;
+    }
+    if (tag === 15) {
+      offset += 3;
+      continue;
+    }
+    break;
+  }
+  metadata.utf8Hints = [...new Set(metadata.utf8Hints)].slice(0, MAX_JAVA_BUILD_ARTIFACT_ITEM_PREVIEW);
+  return metadata;
 }
 
 function isWindowsDriverPackageExtension(extension: string): boolean {
@@ -8646,6 +11431,1160 @@ function summarizeNodePackageManifestFile(filePath: string, size: number): strin
   }
 }
 
+function summarizeNodePackageManagerConfigFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_NODE_PACKAGE_MANAGER_CONFIG_PREVIEW_BYTES, MAX_TEXT_BYTES * 16),
+    ).toString("utf8");
+    const format = describeNodePackageManagerConfigFormat(filePath, extension);
+    const lines = raw.replace(/\r\n/g, "\n").split("\n");
+    const settings = collectNodePackageManagerConfigSettings(lines, extension);
+    const packageManagerHints = collectNodePackageManagerHints(lines, extension);
+    const sampleLines = lines
+      .map((line) => maskPotentialSecretValues(line.trim()))
+      .filter((line) => line.length > 0 && !line.startsWith("#") && !line.startsWith(";"))
+      .slice(0, MAX_NODE_PACKAGE_MANAGER_CONFIG_ITEM_PREVIEW);
+    return [
+      `Node package-manager config preview (${format}, ${formatBytes(size)}).`,
+      settings.length > 0
+        ? `registry/cache/package-manager settings (${settings.length}${settings.length >= MAX_NODE_PACKAGE_MANAGER_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${settings.join(", ")}.`
+        : "registry/cache/package-manager settings: none detected in the bounded local preview.",
+      packageManagerHints.length > 0
+        ? `Package-manager hints: ${packageManagerHints.join(", ")}.`
+        : "Package-manager hints: none detected in the bounded local preview.",
+      sampleLines.length > 0
+        ? `Sanitized line samples:\n${sampleLines.map((line, index) => `${index + 1}. ${clampSingleLine(line, 220)}`).join("\n")}`
+        : "Sanitized line samples: none detected in the bounded local preview.",
+      raw.length >= MAX_NODE_PACKAGE_MANAGER_CONFIG_PREVIEW_BYTES
+        ? `Node package-manager config preview was capped at ${formatBytes(MAX_NODE_PACKAGE_MANAGER_CONFIG_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; Node package-manager config metadata was parsed from bounded workspace-local text only, with likely secrets redacted and no npm, pnpm, Yarn, Bun, node command, lifecycle script, package install, registry lookup, registry reachability check, network call, credential validation, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Node package-manager config ready for explicit attachment (${formatBytes(size)}).`,
+      "Config preview could not read bounded local text.",
+      "No npm, pnpm, Yarn, Bun, node command, lifecycle script, package install, registry lookup, network call, credential validation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeJvmBuildConfigFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_JVM_BUILD_CONFIG_PREVIEW_BYTES, MAX_TEXT_BYTES * 16),
+    ).toString("utf8");
+    const lines = raw.replace(/\r\n/g, "\n").split("\n");
+    const format = describeJvmBuildConfigFormat(filePath, extension);
+    const metadata = extension === ".gradle.properties"
+      ? collectJvmPropertySettings(lines)
+      : collectJvmConfigOptions(lines);
+    const hints = collectJvmBuildConfigHints(lines, extension);
+    const samples = collectJvmBuildConfigSamples(lines);
+    return [
+      `JVM build config preview (${format}, ${formatBytes(size)}).`,
+      metadata.length > 0
+        ? `Gradle/Maven/JVM property and option metadata (${metadata.length}${metadata.length >= MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${metadata.join(", ")}.`
+        : "Gradle/Maven/JVM property and option metadata: none detected in the bounded local preview.",
+      hints.length > 0
+        ? `Build config hints: ${hints.join(", ")}.`
+        : "Build config hints: none detected in the bounded local preview.",
+      samples.length > 0
+        ? `Sanitized line samples:\n${samples.map((line, index) => `${index + 1}. ${line}`).join("\n")}`
+        : "Sanitized line samples: none detected in the bounded local preview.",
+      raw.length >= MAX_JVM_BUILD_CONFIG_PREVIEW_BYTES
+        ? `JVM build config preview was capped at ${formatBytes(MAX_JVM_BUILD_CONFIG_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; Gradle/Maven/JVM property and option metadata was parsed from bounded workspace-local text only, with likely secrets redacted and no Gradle/Maven/JVM command, wrapper launch, package restore, dependency resolution, plugin execution, settings.xml merge, network call, credential validation, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `JVM build config ready for explicit attachment (${formatBytes(size)}).`,
+      "Config preview could not read bounded local text.",
+      "No Gradle/Maven/JVM command, wrapper launch, package restore, dependency resolution, plugin execution, settings.xml merge, network call, credential validation, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function describeJvmBuildConfigFormat(filePath: string, extension: string): string {
+  const name = basename(filePath).toLowerCase();
+  if (extension === ".gradle.properties" || name === "gradle.properties") return "Gradle properties";
+  if (extension === ".maven.config" || name === "maven.config") return "Maven CLI config";
+  if (extension === ".jvm.config" || name === "jvm.config") return "Maven JVM config";
+  return "JVM build config";
+}
+
+function collectJvmPropertySettings(lines: string[]): string[] {
+  const settings = new Set<string>();
+  for (const line of lines) {
+    const trimmed = stripJvmBuildConfigComment(line);
+    if (!trimmed) continue;
+    const match = trimmed.match(/^([^:=\s][^:=]*?)\s*[:=]\s*(.*)$/);
+    if (match?.[1]) settings.add(clampSingleLine(maskPotentialSecretValues(match[1].trim()), 120));
+    if (settings.size >= MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW) break;
+  }
+  return [...settings].slice(0, MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW);
+}
+
+function collectJvmConfigOptions(lines: string[]): string[] {
+  const options = new Set<string>();
+  for (const line of lines) {
+    const trimmed = stripJvmBuildConfigComment(line);
+    if (!trimmed) continue;
+    for (const token of trimmed.split(/\s+/)) {
+      if (!token) continue;
+      const clean = maskPotentialSecretValues(token);
+      if (clean.startsWith("-D")) {
+        const key = clean.slice(2).split("=")[0];
+        if (key) options.add(`system property ${clampSingleLine(key, 100)}`);
+      } else if (clean.startsWith("-P") && clean.length > 2) {
+        options.add(`profile ${clampSingleLine(clean.slice(2), 100)}`);
+      } else if (clean.startsWith("--")) {
+        options.add(clampSingleLine(clean.split("=")[0], 120));
+      } else if (/^-X[^=]*/.test(clean) || clean.startsWith("-XX:")) {
+        options.add(clampSingleLine(clean.split("=")[0], 120));
+      } else if (/^-[A-Za-z]$/.test(clean)) {
+        options.add(clean);
+      }
+      if (options.size >= MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW) return [...options];
+    }
+  }
+  return [...options].slice(0, MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW);
+}
+
+function collectJvmBuildConfigHints(lines: string[], extension: string): string[] {
+  const hints = new Set<string>();
+  const raw = lines.join("\n").toLowerCase();
+  if (extension === ".gradle.properties" || raw.includes("org.gradle")) hints.add("Gradle");
+  if (extension === ".maven.config" || raw.includes("maven")) hints.add("Maven");
+  if (extension === ".jvm.config" || raw.includes("-xmx") || raw.includes("-xx:")) hints.add("JVM options");
+  if (raw.includes("repository") || raw.includes("repo") || raw.includes("mirror")) hints.add("repository/mirror");
+  if (raw.includes("proxy")) hints.add("proxy");
+  if (raw.includes("daemon")) hints.add("daemon");
+  if (raw.includes("parallel")) hints.add("parallelism");
+  if (raw.includes("offline")) hints.add("offline mode");
+  if (raw.includes("password") || raw.includes("token") || raw.includes("secret") || raw.includes("key")) hints.add("credential-shaped value redacted");
+  return [...hints].slice(0, MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW);
+}
+
+function collectJvmBuildConfigSamples(lines: string[]): string[] {
+  return lines
+    .map((line) => stripJvmBuildConfigComment(line))
+    .filter(Boolean)
+    .map((line) => clampSingleLine(maskPotentialSecretValues(line), 220))
+    .slice(0, MAX_JVM_BUILD_CONFIG_ITEM_PREVIEW);
+}
+
+function stripJvmBuildConfigComment(line: string): string {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("!")) return "";
+  return trimmed;
+}
+
+function summarizeCargoManifestFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(MAX_CARGO_MANIFEST_PREVIEW_BYTES, MAX_TEXT_BYTES * 16)).toString("utf8");
+    const lines = raw.replace(/\r\n/g, "\n").split("\n");
+    const metadata = collectCargoPackageWorkspaceMetadata(lines);
+    const dependencies = collectCargoManifestSectionEntries(lines, [
+      "dependencies",
+      "dev-dependencies",
+      "build-dependencies",
+    ]);
+    const targetDependencies = collectCargoTargetDependencyEntries(lines);
+    const features = collectCargoManifestSectionEntries(lines, ["features"]);
+    const targets = collectCargoTargetHints(lines);
+    return [
+      `Cargo manifest preview (${formatBytes(size)}).`,
+      metadata.length > 0
+        ? `package/workspace metadata (${metadata.length}${metadata.length >= MAX_CARGO_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${metadata.join(", ")}.`
+        : "package/workspace metadata: none detected in the bounded local preview.",
+      dependencies.length > 0
+        ? `Dependency entries (${dependencies.length}${dependencies.length >= MAX_CARGO_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${dependencies.join(", ")}.`
+        : "Dependency entries: none detected in the bounded local preview.",
+      targetDependencies.length > 0
+        ? `Target dependency entries (${targetDependencies.length}${targetDependencies.length >= MAX_CARGO_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${targetDependencies.join(", ")}.`
+        : "Target dependency entries: none detected in the bounded local preview.",
+      features.length > 0
+        ? `Feature declarations (${features.length}${features.length >= MAX_CARGO_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${features.join(", ")}.`
+        : "Feature declarations: none detected in the bounded local preview.",
+      targets.length > 0
+        ? `Target/build hints: ${targets.join(", ")}.`
+        : "Target/build hints: none detected in the bounded local preview.",
+      raw.length >= MAX_CARGO_MANIFEST_PREVIEW_BYTES
+        ? `Cargo manifest preview was capped at ${formatBytes(MAX_CARGO_MANIFEST_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; Cargo.toml metadata was parsed from bounded workspace-local TOML text only, with no cargo, rustc, rustup, build.rs, package install, registry lookup, dependency resolution, build/test execution, credential lookup, network call, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Cargo manifest ready for explicit attachment (${formatBytes(size)}).`,
+      "Cargo.toml preview could not read bounded local text.",
+      "No cargo, rustc, rustup, build.rs, package install, registry lookup, dependency resolution, build/test execution, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function summarizeDartPubspecManifestFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(MAX_DART_PUBSPEC_PREVIEW_BYTES, MAX_TEXT_BYTES * 16)).toString("utf8");
+    const lines = raw.replace(/\r\n/g, "\n").split("\n");
+    const format = extension === ".pubspec.lock" ? "pubspec.lock lockfile" : "pubspec.yaml manifest";
+    const metadata = collectDartPubspecMetadata(lines, extension);
+    const dependencies = collectDartPubspecDependencies(lines, extension);
+    const flutterHints = collectDartPubspecFlutterHints(lines);
+    const lockPackages = extension === ".pubspec.lock" ? collectDartPubspecLockPackages(lines) : [];
+    return [
+      `Dart pubspec manifest preview (${format}, ${formatBytes(size)}).`,
+      metadata.length > 0
+        ? `package/environment/dependency/flutter metadata (${metadata.length}${metadata.length >= MAX_DART_PUBSPEC_ITEM_PREVIEW ? "+" : ""}): ${metadata.join(", ")}.`
+        : "package/environment/dependency/flutter metadata: none detected in the bounded local preview.",
+      dependencies.length > 0
+        ? `Dependency entries (${dependencies.length}${dependencies.length >= MAX_DART_PUBSPEC_ITEM_PREVIEW ? "+" : ""}): ${dependencies.join(", ")}.`
+        : "Dependency entries: none detected in the bounded local preview.",
+      lockPackages.length > 0
+        ? `Locked package entries (${lockPackages.length}${lockPackages.length >= MAX_DART_PUBSPEC_ITEM_PREVIEW ? "+" : ""}): ${lockPackages.join(", ")}.`
+        : extension === ".pubspec.lock"
+          ? "Locked package entries: none detected in the bounded local preview."
+          : "",
+      flutterHints.length > 0
+        ? `Flutter hints: ${flutterHints.join(", ")}.`
+        : "Flutter hints: none detected in the bounded local preview.",
+      raw.length >= MAX_DART_PUBSPEC_PREVIEW_BYTES
+        ? `Dart pubspec manifest preview was capped at ${formatBytes(MAX_DART_PUBSPEC_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; Dart pubspec metadata was parsed from bounded workspace-local YAML text only, with no dart, flutter, pub command, package get, build_runner, code generation, dependency resolution, registry lookup, credential lookup, network call, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Dart pubspec manifest ready for explicit attachment (${formatBytes(size)}).`,
+      "Pubspec preview could not read bounded local text.",
+      "No dart, flutter, pub command, package get, build_runner, code generation, dependency resolution, registry lookup, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function collectDartPubspecMetadata(lines: string[], extension: string): string[] {
+  const metadata = new Set<string>();
+  let section = "";
+  for (const line of lines) {
+    const trimmed = stripYamlComment(line);
+    if (!trimmed) continue;
+    const topLevel = readYamlTopLevelKey(line);
+    if (topLevel) section = topLevel;
+    const entry = readYamlKeyValuePreview(trimmed);
+    if (!entry) continue;
+    if (
+      ["name", "version", "description", "publish_to", "sdk"].includes(entry.key) ||
+      section === "environment" ||
+      section === "flutter" ||
+      (extension === ".pubspec.lock" && ["sdks", "packages"].includes(section))
+    ) {
+      metadata.add(section && section !== entry.key ? `${section}.${entry.key}=${entry.value}` : `${entry.key}=${entry.value}`);
+    }
+    if (metadata.size >= MAX_DART_PUBSPEC_ITEM_PREVIEW) break;
+  }
+  return [...metadata].slice(0, MAX_DART_PUBSPEC_ITEM_PREVIEW);
+}
+
+function collectDartPubspecDependencies(lines: string[], extension: string): string[] {
+  const dependencies = new Set<string>();
+  let section = "";
+  let packageName = "";
+  for (const line of lines) {
+    const trimmed = stripYamlComment(line);
+    if (!trimmed) continue;
+    const topLevel = readYamlTopLevelKey(line);
+    if (topLevel) {
+      section = topLevel;
+      packageName = "";
+    }
+    const entry = readYamlKeyValuePreview(trimmed);
+    if (!entry) continue;
+    if (["dependencies", "dev_dependencies", "dependency_overrides"].includes(section)) {
+      if (entry.key !== section) {
+        dependencies.add(`${section}.${entry.key}`);
+      }
+    } else if (extension === ".pubspec.lock" && section === "packages") {
+      if (line.match(/^\s{2}[A-Za-z0-9_.-]+:\s*$/)) {
+        packageName = entry.key;
+        dependencies.add(`packages.${packageName}`);
+      } else if (packageName && ["dependency", "source", "version"].includes(entry.key)) {
+        dependencies.add(`${packageName}.${entry.key}=${entry.value}`);
+      }
+    }
+    if (dependencies.size >= MAX_DART_PUBSPEC_ITEM_PREVIEW) break;
+  }
+  return [...dependencies].slice(0, MAX_DART_PUBSPEC_ITEM_PREVIEW);
+}
+
+function collectDartPubspecLockPackages(lines: string[]): string[] {
+  const packages = new Set<string>();
+  let inPackages = false;
+  for (const line of lines) {
+    const trimmed = stripYamlComment(line);
+    if (!trimmed) continue;
+    const topLevel = readYamlTopLevelKey(line);
+    if (topLevel) inPackages = topLevel === "packages";
+    if (!inPackages) continue;
+    const match = line.match(/^\s{2}([A-Za-z0-9_.-]+):\s*$/);
+    if (match?.[1]) packages.add(match[1]);
+    if (packages.size >= MAX_DART_PUBSPEC_ITEM_PREVIEW) break;
+  }
+  return [...packages].slice(0, MAX_DART_PUBSPEC_ITEM_PREVIEW);
+}
+
+function collectDartPubspecFlutterHints(lines: string[]): string[] {
+  const hints = new Set<string>();
+  let section = "";
+  for (const line of lines) {
+    const trimmed = stripYamlComment(line);
+    if (!trimmed) continue;
+    const topLevel = readYamlTopLevelKey(line);
+    if (topLevel) section = topLevel;
+    if (section === "flutter") {
+      const entry = readYamlKeyValuePreview(trimmed);
+      if (entry && ["uses-material-design", "assets", "fonts", "plugin", "module"].includes(entry.key)) {
+        hints.add(entry.key);
+      }
+    }
+    if (trimmed.includes("flutter:")) hints.add("flutter section");
+    if (trimmed.includes("sdk: flutter")) hints.add("Flutter SDK dependency");
+    if (trimmed.includes("build_runner")) hints.add("build_runner dependency cue");
+    if (hints.size >= MAX_DART_PUBSPEC_ITEM_PREVIEW) break;
+  }
+  return [...hints].slice(0, MAX_DART_PUBSPEC_ITEM_PREVIEW);
+}
+
+function stripYamlComment(line: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const previous = index > 0 ? line[index - 1] : "";
+    if (char === "'" && !inDouble) inSingle = !inSingle;
+    if (char === '"' && !inSingle && previous !== "\\") inDouble = !inDouble;
+    if (char === "#" && !inSingle && !inDouble) return line.slice(0, index).trim();
+  }
+  return line.trim();
+}
+
+function readYamlTopLevelKey(line: string): string | null {
+  const match = line.match(/^([A-Za-z0-9_.-]+):(?:\s|$)/);
+  return match?.[1]?.toLowerCase() || null;
+}
+
+function readYamlKeyValuePreview(line: string): { key: string; value: string } | null {
+  const match = line.match(/^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/);
+  if (!match?.[1]) return null;
+  const rawValue = match[2]?.trim() || "(map/list)";
+  return {
+    key: match[1].toLowerCase(),
+    value: clampSingleLine(maskPotentialSecretValues(rawValue), 100),
+  };
+}
+
+function summarizeApplePackageManifestFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(MAX_APPLE_PACKAGE_MANIFEST_PREVIEW_BYTES, MAX_TEXT_BYTES * 16)).toString("utf8");
+    const lines = raw.replace(/\r\n/g, "\n").split("\n");
+    const format = describeApplePackageManifestFormat(filePath, extension);
+    const metadata = collectApplePackageManifestMetadata(lines, extension);
+    const dependencies = collectApplePackageManifestDependencies(lines, extension);
+    const products = collectApplePackageManifestProducts(lines, extension);
+    const targets = collectApplePackageManifestTargets(lines, extension);
+    return [
+      `Apple package manifest preview (${format}, ${formatBytes(size)}).`,
+      metadata.length > 0
+        ? `package/platform/dependency/product/target metadata (${metadata.length}${metadata.length >= MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${metadata.join(", ")}.`
+        : "package/platform/dependency/product/target metadata: none detected in the bounded local preview.",
+      dependencies.length > 0
+        ? `Dependency declarations (${dependencies.length}${dependencies.length >= MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${dependencies.join(", ")}.`
+        : "Dependency declarations: none detected in the bounded local preview.",
+      products.length > 0
+        ? `Product declarations (${products.length}${products.length >= MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${products.join(", ")}.`
+        : "Product declarations: none detected in the bounded local preview.",
+      targets.length > 0
+        ? `Target declarations (${targets.length}${targets.length >= MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${targets.join(", ")}.`
+        : "Target declarations: none detected in the bounded local preview.",
+      raw.length >= MAX_APPLE_PACKAGE_MANIFEST_PREVIEW_BYTES
+        ? `Apple package manifest preview was capped at ${formatBytes(MAX_APPLE_PACKAGE_MANIFEST_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; Apple package metadata was parsed from bounded workspace-local manifest text only, with no swift, xcodebuild, pod, bundle, ruby command, package resolution, install, build, test, registry lookup, credential lookup, network call, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Apple package manifest ready for explicit attachment (${formatBytes(size)}).`,
+      "Apple package manifest preview could not read bounded local text.",
+      "No swift, xcodebuild, pod, bundle, ruby command, package resolution, install, build, test, registry lookup, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function describeApplePackageManifestFormat(filePath: string, extension: string): string {
+  const name = basename(filePath).toLowerCase();
+  if (extension === ".swift-package" || name === "package.swift") return "Swift Package manifest";
+  if (extension === ".podfile.lock" || name === "podfile.lock") return "CocoaPods Podfile.lock";
+  if (extension === ".podfile" || name === "podfile") return "CocoaPods Podfile";
+  if (extension === ".podspec" || name.endsWith(".podspec")) return "CocoaPods podspec";
+  return "Apple package manifest";
+}
+
+function collectApplePackageManifestMetadata(lines: string[], extension: string): string[] {
+  const metadata = new Set<string>();
+  for (const rawLine of lines) {
+    const raw = rawLine.trim();
+    const line = stripAppleManifestComment(rawLine);
+    if (!raw && !line) continue;
+    if (extension === ".swift-package") {
+      const toolsVersion = raw.match(/swift-tools-version:\s*([A-Za-z0-9_.-]+)/i)?.[1];
+      if (toolsVersion) metadata.add(`swift-tools-version=${toolsVersion}`);
+      const name = line.match(/\bname\s*:\s*"([^"]+)"/)?.[1];
+      if (name) metadata.add(`name=${clampSingleLine(name, 80)}`);
+      for (const platform of [".iOS", ".macOS", ".tvOS", ".watchOS", ".visionOS"]) {
+        if (line.includes(platform)) metadata.add(`platform=${platform.slice(1)}`);
+      }
+      if (line.includes("swiftLanguageVersions")) metadata.add("swiftLanguageVersions");
+    } else if (extension === ".podfile" || extension === ".podfile.lock") {
+      if (line.match(/^platform\s+:/)) metadata.add(clampSingleLine(line, 120));
+      if (line.match(/^source\s+['"]/)) metadata.add("source repository declaration");
+      if (line.includes("use_frameworks!")) metadata.add("use_frameworks!");
+      if (line.includes("inhibit_all_warnings!")) metadata.add("inhibit_all_warnings!");
+      if (extension === ".podfile.lock" && /^[A-Z][A-Z _-]+:\s*$/.test(line)) metadata.add(line.replace(/:\s*$/, "").toLowerCase());
+    } else if (extension === ".podspec") {
+      const assignment = line.match(/\b(?:s|spec)\.([A-Za-z0-9_.-]+)\s*=\s*(.+)$/);
+      if (assignment?.[1] && ["name", "version", "summary", "platform", "ios.deployment_target", "osx.deployment_target", "swift_version", "swift_versions"].includes(assignment[1])) {
+        metadata.add(`${assignment[1]}=${clampSingleLine(maskPotentialSecretValues(assignment[2] || ""), 100)}`);
+      }
+    }
+    if (metadata.size >= MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW) break;
+  }
+  return [...metadata].slice(0, MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW);
+}
+
+function collectApplePackageManifestDependencies(lines: string[], extension: string): string[] {
+  const dependencies = new Set<string>();
+  let lockSection = "";
+  for (const rawLine of lines) {
+    const line = stripAppleManifestComment(rawLine);
+    if (!line) continue;
+    if (extension === ".podfile.lock" && /^[A-Z][A-Z _-]+:\s*$/.test(line)) {
+      lockSection = line.replace(/:\s*$/, "");
+      continue;
+    }
+    if (extension === ".swift-package") {
+      if (line.includes(".package(")) dependencies.add(clampSingleLine(line, 160));
+    } else if (extension === ".podfile") {
+      const pod = line.match(/^\s*pod\s+['"]([^'"]+)['"]/)?.[1];
+      if (pod) dependencies.add(`pod ${pod}`);
+    } else if (extension === ".podspec") {
+      const dependency = line.match(/\bdependency\s+['"]([^'"]+)['"]/)?.[1];
+      if (dependency) dependencies.add(`dependency ${dependency}`);
+    } else if (extension === ".podfile.lock" && ["PODS", "DEPENDENCIES"].includes(lockSection)) {
+      const entry = line.match(/^-\s+(.+)$/)?.[1];
+      if (entry) dependencies.add(clampSingleLine(entry, 120));
+    }
+    if (dependencies.size >= MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW) break;
+  }
+  return [...dependencies].slice(0, MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW);
+}
+
+function collectApplePackageManifestProducts(lines: string[], extension: string): string[] {
+  const products = new Set<string>();
+  for (const rawLine of lines) {
+    const line = stripAppleManifestComment(rawLine);
+    if (!line) continue;
+    if (extension === ".swift-package") {
+      for (const productKind of [".library", ".executable", ".plugin"]) {
+        if (line.includes(`${productKind}(`)) products.add(productKind.slice(1));
+      }
+    } else if (extension === ".podfile") {
+      const target = line.match(/^\s*target\s+['"]([^'"]+)['"]/)?.[1];
+      if (target) products.add(`target ${target}`);
+    } else if (extension === ".podspec") {
+      for (const cue of ["source_files", "resources", "vendored_frameworks", "subspec"]) {
+        if (line.includes(`.${cue}`)) products.add(cue);
+      }
+    }
+    if (products.size >= MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW) break;
+  }
+  return [...products].slice(0, MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW);
+}
+
+function collectApplePackageManifestTargets(lines: string[], extension: string): string[] {
+  const targets = new Set<string>();
+  for (const rawLine of lines) {
+    const line = stripAppleManifestComment(rawLine);
+    if (!line) continue;
+    if (extension === ".swift-package") {
+      for (const targetKind of [".target", ".testTarget", ".executableTarget", ".plugin"]) {
+        if (line.includes(`${targetKind}(`)) targets.add(targetKind.slice(1));
+      }
+    } else if (extension === ".podfile") {
+      const target = line.match(/^\s*(?:abstract_)?target\s+['"]([^'"]+)['"]/)?.[1];
+      if (target) targets.add(target);
+    } else if (extension === ".podspec") {
+      const moduleName = line.match(/\bmodule_name\s*=\s*['"]([^'"]+)['"]/)?.[1];
+      if (moduleName) targets.add(`module ${moduleName}`);
+      const dependencyTarget = line.match(/\b(?:ios|osx|tvos|watchos)\.deployment_target\s*=\s*(.+)$/)?.[0];
+      if (dependencyTarget) targets.add(clampSingleLine(dependencyTarget, 120));
+    } else if (extension === ".podfile.lock") {
+      const checksum = line.match(/^\s{2}([A-Za-z0-9_.+/-]+):\s+[a-f0-9]{8,}/i)?.[1];
+      if (checksum) targets.add(`checksum ${checksum}`);
+    }
+    if (targets.size >= MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW) break;
+  }
+  return [...targets].slice(0, MAX_APPLE_PACKAGE_MANIFEST_ITEM_PREVIEW);
+}
+
+function stripAppleManifestComment(line: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = index + 1 < line.length ? line[index + 1] : "";
+    const previous = index > 0 ? line[index - 1] : "";
+    if (char === "'" && !inDouble) inSingle = !inSingle;
+    if (char === '"' && !inSingle && previous !== "\\") inDouble = !inDouble;
+    if (!inSingle && !inDouble && char === "#") return line.slice(0, index).trim();
+    if (!inSingle && !inDouble && char === "/" && next === "/") return line.slice(0, index).trim();
+  }
+  return line.trim();
+}
+
+function summarizePhpRubyPackageManifestFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_PHP_RUBY_PACKAGE_MANIFEST_PREVIEW_BYTES, MAX_TEXT_BYTES * 16),
+    ).toString("utf8");
+    const format = describePhpRubyPackageManifestFormat(filePath, extension);
+    const summary =
+      extension === ".composer.json"
+        ? summarizeComposerJsonPackageManifest(raw)
+        : summarizeRubyPackageManifest(raw, extension);
+    return [
+      `PHP/Ruby package manifest preview (${format}, ${formatBytes(size)}).`,
+      summary.metadata.length > 0
+        ? `package/source/dependency/script/platform metadata (${summary.metadata.length}${summary.metadata.length >= MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${summary.metadata.join(", ")}.`
+        : "package/source/dependency/script/platform metadata: none detected in the bounded local preview.",
+      summary.dependencies.length > 0
+        ? `Dependency declarations (${summary.dependencies.length}${summary.dependencies.length >= MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${summary.dependencies.join(", ")}.`
+        : "Dependency declarations: none detected in the bounded local preview.",
+      summary.sources.length > 0
+        ? `Source/platform hints: ${summary.sources.join(", ")}.`
+        : "Source/platform hints: none detected in the bounded local preview.",
+      summary.scripts.length > 0
+        ? `Script/executable hints: ${summary.scripts.join(", ")}.`
+        : "Script/executable hints: none detected in the bounded local preview.",
+      raw.length >= MAX_PHP_RUBY_PACKAGE_MANIFEST_PREVIEW_BYTES
+        ? `PHP/Ruby package manifest preview was capped at ${formatBytes(MAX_PHP_RUBY_PACKAGE_MANIFEST_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; PHP/Ruby package metadata was parsed from bounded workspace-local manifest text only, with no php, composer, ruby, bundle, gem command, dependency resolution, package install, script/plugin execution, registry lookup, credential lookup, network call, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `PHP/Ruby package manifest ready for explicit attachment (${formatBytes(size)}).`,
+      "Package manifest preview could not read bounded local text.",
+      "No PHP/Composer/Ruby/Bundler/Gem command, dependency resolution, package install, registry lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function describePhpRubyPackageManifestFormat(filePath: string, extension: string): string {
+  const name = basename(filePath).toLowerCase();
+  if (extension === ".composer.json" || name === "composer.json") return "Composer composer.json";
+  if (extension === ".gemfile" || name === "gemfile") return "Bundler Gemfile";
+  if (extension === ".gemspec" || name.endsWith(".gemspec")) return "Ruby gemspec";
+  return "PHP/Ruby package manifest";
+}
+
+function summarizeComposerJsonPackageManifest(raw: string): {
+  metadata: string[];
+  dependencies: string[];
+  sources: string[];
+  scripts: string[];
+} {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) {
+      return { metadata: ["composer.json root is not a JSON object"], dependencies: [], sources: [], scripts: [] };
+    }
+    const metadata = new Set<string>();
+    for (const key of ["name", "type", "description", "license", "minimum-stability"]) {
+      const value = readRecordString(parsed, key);
+      if (value) metadata.add(`${key}=${clampSingleLine(value, 100)}`);
+    }
+    const preferStable = parsed["prefer-stable"];
+    if (typeof preferStable === "boolean") metadata.add(`prefer-stable=${preferStable}`);
+    const dependencyMaps = [
+      "require",
+      "require-dev",
+      "conflict",
+      "replace",
+      "provide",
+      "suggest",
+    ];
+    const dependencies = new Set<string>();
+    for (const mapName of dependencyMaps) {
+      if (!isRecord(parsed[mapName])) continue;
+      for (const key of readObjectKeys(parsed[mapName], MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW)) {
+        dependencies.add(`${mapName}.${key}`);
+        if (key === "php" || key.startsWith("ext-")) metadata.add(`${mapName}.${key}`);
+        if (dependencies.size >= MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW) break;
+      }
+      if (dependencies.size >= MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW) break;
+    }
+    const sources = new Set<string>();
+    if (Array.isArray(parsed.repositories)) {
+      for (const repository of parsed.repositories) {
+        if (isRecord(repository)) {
+          const type = readRecordString(repository, "type") || "repository";
+          const url = readRecordString(repository, "url");
+          sources.add(url ? `${type}:${clampSingleLine(maskPotentialSecretValues(url), 100)}` : type);
+        } else if (typeof repository === "string") {
+          sources.add(clampSingleLine(maskPotentialSecretValues(repository), 100));
+        }
+        if (sources.size >= MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW) break;
+      }
+    }
+    if (isRecord(parsed.config) && isRecord(parsed.config.platform)) {
+      for (const key of readObjectKeys(parsed.config.platform, MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW)) {
+        sources.add(`platform.${key}`);
+        if (sources.size >= MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW) break;
+      }
+    }
+    if (isRecord(parsed.autoload)) {
+      for (const key of readObjectKeys(parsed.autoload, MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW)) {
+        sources.add(`autoload.${key}`);
+        if (sources.size >= MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW) break;
+      }
+    }
+    const scripts = isRecord(parsed.scripts)
+      ? readObjectKeys(parsed.scripts, MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW)
+      : [];
+    return {
+      metadata: [...metadata].slice(0, MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW),
+      dependencies: [...dependencies].slice(0, MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW),
+      sources: [...sources].slice(0, MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW),
+      scripts: scripts.slice(0, MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW),
+    };
+  } catch {
+    return {
+      metadata: ["composer.json could not be parsed as JSON in the bounded preview"],
+      dependencies: [],
+      sources: [],
+      scripts: [],
+    };
+  }
+}
+
+function summarizeRubyPackageManifest(raw: string, extension: string): {
+  metadata: string[];
+  dependencies: string[];
+  sources: string[];
+  scripts: string[];
+} {
+  const lines = raw.replace(/\r\n/g, "\n").split("\n");
+  const metadata = new Set<string>();
+  const dependencies = new Set<string>();
+  const sources = new Set<string>();
+  const scripts = new Set<string>();
+  for (const rawLine of lines) {
+    const line = stripRubyManifestComment(rawLine);
+    if (!line) continue;
+    const stringCall = readRubyCallStringArgument(line, "source");
+    if (stringCall) sources.add(`source=${clampSingleLine(maskPotentialSecretValues(stringCall), 100)}`);
+    const rubyVersion = readRubyCallStringArgument(line, "ruby");
+    if (rubyVersion) metadata.add(`ruby=${clampSingleLine(rubyVersion, 80)}`);
+    const gemName = readRubyCallStringArgument(line, "gem");
+    if (gemName) dependencies.add(`gem ${gemName}`);
+    const group = line.match(/\bgroup\s+(:[A-Za-z0-9_:-]+(?:\s*,\s*:[A-Za-z0-9_:-]+)*)\s+do\b/);
+    if (group?.[1]) sources.add(`group ${clampSingleLine(group[1], 100)}`);
+    const platforms = line.match(/\bplatforms?\s+(:[A-Za-z0-9_:-]+(?:\s*,\s*:[A-Za-z0-9_:-]+)*)\s+do\b/);
+    if (platforms?.[1]) sources.add(`platform ${clampSingleLine(platforms[1], 100)}`);
+    if (line.match(/\bgemspec\b/)) metadata.add("gemspec directive");
+    if (extension === ".gemspec") {
+      const assignment = line.match(/\b(?:s|spec)\.([A-Za-z0-9_.-]+)\s*=\s*(.+)$/);
+      if (assignment?.[1] && ["name", "version", "summary", "description", "license", "required_ruby_version"].includes(assignment[1])) {
+        metadata.add(`${assignment[1]}=${clampSingleLine(maskPotentialSecretValues(assignment[2] || ""), 100)}`);
+      }
+      const dependency = line.match(/\badd_(?:runtime_|development_)?dependency\s+['"]([^'"]+)['"]/)?.[1];
+      if (dependency) dependencies.add(`dependency ${dependency}`);
+      for (const cue of ["executables", "bindir", "files", "require_paths"]) {
+        if (line.includes(`.${cue}`)) scripts.add(cue);
+      }
+    }
+    if (
+      metadata.size >= MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW &&
+      dependencies.size >= MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW &&
+      sources.size >= MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW &&
+      scripts.size >= MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW
+    ) {
+      break;
+    }
+  }
+  return {
+    metadata: [...metadata].slice(0, MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW),
+    dependencies: [...dependencies].slice(0, MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW),
+    sources: [...sources].slice(0, MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW),
+    scripts: [...scripts].slice(0, MAX_PHP_RUBY_PACKAGE_MANIFEST_ITEM_PREVIEW),
+  };
+}
+
+function readRubyCallStringArgument(line: string, callName: string): string | null {
+  const match = line.match(new RegExp(`\\b${callName}\\s+['"]([^'"]+)['"]`));
+  return match?.[1] || null;
+}
+
+function stripRubyManifestComment(line: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const previous = index > 0 ? line[index - 1] : "";
+    if (char === "'" && !inDouble) inSingle = !inSingle;
+    if (char === '"' && !inSingle && previous !== "\\") inDouble = !inDouble;
+    if (char === "#" && !inSingle && !inDouble) return line.slice(0, index).trim();
+  }
+  return line.trim();
+}
+
+function summarizeElixirHaskellPackageManifestFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_PREVIEW_BYTES, MAX_TEXT_BYTES * 16),
+    ).toString("utf8");
+    const format = describeElixirHaskellPackageManifestFormat(filePath, extension);
+    const summary = [".mix.exs", ".mix.lock"].includes(extension)
+      ? summarizeElixirPackageManifest(raw, extension)
+      : summarizeHaskellPackageManifest(raw, extension);
+    return [
+      `Elixir/Haskell package manifest preview (${format}, ${formatBytes(size)}).`,
+      summary.metadata.length > 0
+        ? `${summary.metadataLabel} (${summary.metadata.length}${summary.metadata.length >= MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${summary.metadata.join(", ")}.`
+        : `${summary.metadataLabel}: none detected in the bounded local preview.`,
+      summary.dependencies.length > 0
+        ? `Dependency declarations (${summary.dependencies.length}${summary.dependencies.length >= MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${summary.dependencies.join(", ")}.`
+        : "Dependency declarations: none detected in the bounded local preview.",
+      summary.components.length > 0
+        ? `Task/component cues (${summary.components.length}${summary.components.length >= MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${summary.components.join(", ")}.`
+        : "Task/component cues: none detected in the bounded local preview.",
+      raw.length >= MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_PREVIEW_BYTES
+        ? `Elixir/Haskell package manifest preview was capped at ${formatBytes(MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; Elixir/Haskell project metadata was parsed from bounded workspace-local manifest text only, with no Elixir/Mix/Rebar/Hex/Erlang/Stack/Cabal/GHC command, dependency resolution, package install, build, test, registry lookup, credential lookup, network call, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Elixir/Haskell package manifest ready for explicit attachment (${formatBytes(size)}).`,
+      "Package manifest preview could not read bounded local text.",
+      "No Elixir/Mix/Rebar/Hex/Erlang/Stack/Cabal/GHC command, dependency resolution, package install, build/test execution, registry lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function describeElixirHaskellPackageManifestFormat(filePath: string, extension: string): string {
+  const name = basename(filePath).toLowerCase();
+  if (extension === ".mix.exs" || name === "mix.exs") return "Elixir Mix project";
+  if (extension === ".mix.lock" || name === "mix.lock") return "Elixir Mix lockfile";
+  if (extension === ".stack.yaml" || name === "stack.yaml" || name === "stack.yml") return "Haskell Stack project";
+  if (extension === ".package.yaml" || name === "package.yaml" || name === "package.yml") return "Haskell package.yaml";
+  if (extension === ".cabal" || name.endsWith(".cabal")) return "Haskell Cabal package";
+  return "Elixir/Haskell package manifest";
+}
+
+function summarizeElixirPackageManifest(raw: string, extension: string): {
+  metadataLabel: string;
+  metadata: string[];
+  dependencies: string[];
+  components: string[];
+} {
+  const lines = raw.replace(/\r\n/g, "\n").split("\n");
+  const metadata = new Set<string>();
+  const dependencies = new Set<string>();
+  const components = new Set<string>();
+  for (const rawLine of lines) {
+    const line = stripElixirManifestComment(rawLine);
+    if (!line) continue;
+    if (extension === ".mix.lock") {
+      const locked = line.match(/["']([^"']+)["']\s*=>\s*\{?:(hex|git|path)\b/) || line.match(/["']([^"']+)["']\s*=>/);
+      if (locked?.[1]) dependencies.add(`locked ${clampSingleLine(locked[1], 80)}`);
+      if (line.includes(":hex")) metadata.add("Hex lock entries");
+      if (line.includes(":git")) metadata.add("Git lock entries");
+      if (line.includes(":path")) metadata.add("path lock entries");
+    } else {
+      const app = line.match(/\bapp:\s*:([A-Za-z0-9_]+)/)?.[1];
+      if (app) metadata.add(`app=${app}`);
+      const version = line.match(/\bversion:\s*["']([^"']+)["']/)?.[1];
+      if (version) metadata.add(`version=${clampSingleLine(version, 80)}`);
+      const elixir = line.match(/\belixir:\s*["']([^"']+)["']/)?.[1];
+      if (elixir) metadata.add(`elixir=${clampSingleLine(elixir, 80)}`);
+      const dep = line.match(/\{\s*:([A-Za-z0-9_]+)\s*,/)?.[1];
+      if (dep) dependencies.add(`mix ${dep}`);
+      const task = line.match(/\b(?:aliases|preferred_cli_env|deps|project|application)\b/);
+      if (task?.[0]) components.add(task[0]);
+      const extraApp = line.match(/\bextra_applications:\s*\[([^\]]+)/)?.[1];
+      if (extraApp) {
+        for (const item of extraApp.split(",")) {
+          const clean = item.replace(/[:'"\s]/g, "");
+          if (clean) components.add(`extra_app ${clampSingleLine(clean, 60)}`);
+          if (components.size >= MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW) break;
+        }
+      }
+    }
+    if (
+      metadata.size >= MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW &&
+      dependencies.size >= MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW &&
+      components.size >= MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW
+    ) break;
+  }
+  return {
+    metadataLabel: "Mix app/version/task/dependency metadata",
+    metadata: [...metadata].slice(0, MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW),
+    dependencies: [...dependencies].slice(0, MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW),
+    components: [...components].slice(0, MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW),
+  };
+}
+
+function summarizeHaskellPackageManifest(raw: string, extension: string): {
+  metadataLabel: string;
+  metadata: string[];
+  dependencies: string[];
+  components: string[];
+} {
+  const lines = raw.replace(/\r\n/g, "\n").split("\n");
+  const metadata = new Set<string>();
+  const dependencies = new Set<string>();
+  const components = new Set<string>();
+  let cabalField = "";
+  for (const rawLine of lines) {
+    const line = stripHaskellManifestComment(rawLine);
+    if (!line) continue;
+    if (extension === ".cabal") {
+      const section = line.match(/^(library|executable|test-suite|benchmark|flag|source-repository)\s*([A-Za-z0-9_.-]+)?/i);
+      if (section?.[1]) components.add(section[2] ? `${section[1].toLowerCase()} ${section[2]}` : section[1].toLowerCase());
+      const field = line.match(/^([A-Za-z0-9_.-]+):\s*(.*)$/);
+      if (field?.[1]) {
+        cabalField = field[1].toLowerCase();
+        const value = field[2] || "";
+        if (["name", "version", "cabal-version", "build-type", "license"].includes(cabalField)) {
+          metadata.add(`${cabalField}=${clampSingleLine(value, 100)}`);
+        }
+        if (cabalField === "build-depends") collectCommaSeparatedPreview(value, dependencies, "build-depends");
+        if (["hs-source-dirs", "main-is", "exposed-modules", "default-language"].includes(cabalField)) {
+          components.add(`${cabalField}=${clampSingleLine(value, 100)}`);
+        }
+      } else if (cabalField === "build-depends") {
+        collectCommaSeparatedPreview(line, dependencies, "build-depends");
+      }
+    } else {
+      const yaml = line.match(/^([A-Za-z0-9_.-]+):\s*(.*)$/);
+      if (yaml?.[1]) {
+        const key = yaml[1].toLowerCase();
+        const value = yaml[2] || "";
+        if (["name", "version", "resolver", "snapshot", "compiler", "license"].includes(key)) {
+          metadata.add(`${key}=${clampSingleLine(value, 100)}`);
+        }
+        if (["dependencies", "extra-deps"].includes(key)) {
+          if (value.trim()) collectCommaSeparatedPreview(value.replace(/^\[|\]$/g, ""), dependencies, key);
+          else components.add(key);
+        }
+        if (["packages", "library", "executables", "tests", "benchmarks", "flags", "source-dirs"].includes(key)) {
+          components.add(key);
+        }
+      }
+      const listItem = line.match(/^-\s*([A-Za-z0-9_.:@/+~-][A-Za-z0-9_.:@/+~<>= -]*)$/)?.[1];
+      if (listItem && dependencies.size < MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW) {
+        dependencies.add(clampSingleLine(listItem, 100));
+      }
+    }
+    if (
+      metadata.size >= MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW &&
+      dependencies.size >= MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW &&
+      components.size >= MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW
+    ) break;
+  }
+  return {
+    metadataLabel: "Haskell package/resolver/dependency/component metadata",
+    metadata: [...metadata].slice(0, MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW),
+    dependencies: [...dependencies].slice(0, MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW),
+    components: [...components].slice(0, MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW),
+  };
+}
+
+function collectCommaSeparatedPreview(value: string, target: Set<string>, prefix: string): void {
+  for (const item of value.split(",")) {
+    const clean = item.trim().replace(/^-\s*/, "");
+    if (!clean) continue;
+    target.add(`${prefix} ${clampSingleLine(clean, 100)}`);
+    if (target.size >= MAX_ELIXIR_HASKELL_PACKAGE_MANIFEST_ITEM_PREVIEW) break;
+  }
+}
+
+function stripElixirManifestComment(line: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const previous = index > 0 ? line[index - 1] : "";
+    if (char === "'" && !inDouble) inSingle = !inSingle;
+    if (char === '"' && !inSingle && previous !== "\\") inDouble = !inDouble;
+    if (char === "#" && !inSingle && !inDouble) return line.slice(0, index).trim();
+  }
+  return line.trim();
+}
+
+function stripHaskellManifestComment(line: string): string {
+  return line.replace(/--.*$/g, "").replace(/#.*$/g, "").trim();
+}
+
+function collectCargoPackageWorkspaceMetadata(lines: string[]): string[] {
+  const metadata = new Set<string>();
+  let section = "";
+  for (const line of lines) {
+    const trimmed = stripTomlComment(line);
+    if (!trimmed) continue;
+    const sectionName = readTomlSectionName(trimmed);
+    if (sectionName) {
+      section = sectionName;
+      continue;
+    }
+    if (section !== "package" && section !== "workspace" && section !== "workspace.package") continue;
+    const entry = readTomlKeyValuePreview(trimmed);
+    if (entry && ["name", "version", "edition", "rust-version", "resolver", "members", "default-members", "authors", "license"].includes(entry.key)) {
+      metadata.add(`${section}.${entry.key}=${entry.value}`);
+    }
+    if (metadata.size >= MAX_CARGO_MANIFEST_ITEM_PREVIEW) break;
+  }
+  return [...metadata].slice(0, MAX_CARGO_MANIFEST_ITEM_PREVIEW);
+}
+
+function collectCargoManifestSectionEntries(lines: string[], sections: string[]): string[] {
+  const entries = new Set<string>();
+  let section = "";
+  for (const line of lines) {
+    const trimmed = stripTomlComment(line);
+    if (!trimmed) continue;
+    const sectionName = readTomlSectionName(trimmed);
+    if (sectionName) {
+      section = sectionName;
+      continue;
+    }
+    if (!sections.includes(section)) continue;
+    const entry = readTomlKeyValuePreview(trimmed);
+    if (entry) entries.add(`${section}.${entry.key}`);
+    if (entries.size >= MAX_CARGO_MANIFEST_ITEM_PREVIEW) break;
+  }
+  return [...entries].slice(0, MAX_CARGO_MANIFEST_ITEM_PREVIEW);
+}
+
+function collectCargoTargetDependencyEntries(lines: string[]): string[] {
+  const entries = new Set<string>();
+  let section = "";
+  for (const line of lines) {
+    const trimmed = stripTomlComment(line);
+    if (!trimmed) continue;
+    const sectionName = readTomlSectionName(trimmed);
+    if (sectionName) {
+      section = sectionName;
+      continue;
+    }
+    if (!/^target\.[^.]+(?:\.[^.]+)*\.(?:dependencies|dev-dependencies|build-dependencies)$/.test(section)) continue;
+    const entry = readTomlKeyValuePreview(trimmed);
+    if (entry) entries.add(`${clampSingleLine(section, 80)}.${entry.key}`);
+    if (entries.size >= MAX_CARGO_MANIFEST_ITEM_PREVIEW) break;
+  }
+  return [...entries].slice(0, MAX_CARGO_MANIFEST_ITEM_PREVIEW);
+}
+
+function collectCargoTargetHints(lines: string[]): string[] {
+  const hints = new Set<string>();
+  for (const line of lines) {
+    const trimmed = stripTomlComment(line);
+    if (!trimmed) continue;
+    const sectionName = readTomlSectionName(trimmed);
+    if (sectionName) {
+      if (["lib", "bin", "example", "test", "bench"].includes(sectionName) || sectionName.startsWith("target.")) {
+        hints.add(sectionName);
+      }
+      continue;
+    }
+    const entry = readTomlKeyValuePreview(trimmed);
+    if (entry?.key === "build") hints.add(`build=${entry.value}`);
+    if (hints.size >= MAX_CARGO_MANIFEST_ITEM_PREVIEW) break;
+  }
+  return [...hints].slice(0, MAX_CARGO_MANIFEST_ITEM_PREVIEW);
+}
+
+function stripTomlComment(line: string): string {
+  let inSingle = false;
+  let inDouble = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const previous = index > 0 ? line[index - 1] : "";
+    if (char === "'" && !inDouble) inSingle = !inSingle;
+    if (char === '"' && !inSingle && previous !== "\\") inDouble = !inDouble;
+    if (char === "#" && !inSingle && !inDouble) return line.slice(0, index).trim();
+  }
+  return line.trim();
+}
+
+function readTomlSectionName(line: string): string | null {
+  const match = line.match(/^\[\[?([^\]]+)\]?\]$/);
+  return match?.[1]?.trim().toLowerCase() || null;
+}
+
+function readTomlKeyValuePreview(line: string): { key: string; value: string } | null {
+  const match = line.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.+)$/);
+  if (!match?.[1]) return null;
+  return {
+    key: match[1].toLowerCase(),
+    value: clampSingleLine(maskPotentialSecretValues(match[2] || ""), 80),
+  };
+}
+
+function summarizeGoModuleManifestFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, Math.min(MAX_GO_MODULE_MANIFEST_PREVIEW_BYTES, MAX_TEXT_BYTES * 16)).toString("utf8");
+    const lines = raw.replace(/\r\n/g, "\n").split("\n");
+    const directives = collectGoModuleDirectives(lines, extension);
+    const dependencies = collectGoModuleDependencyDirectives(lines);
+    const workspaceUses = collectGoWorkspaceUseDirectives(lines);
+    const replacements = collectGoDirectiveValues(lines, "replace");
+    const excludes = collectGoDirectiveValues(lines, "exclude");
+    return [
+      `Go module manifest preview (${extension === ".go.work" ? "go.work workspace" : "go.mod module"}, ${formatBytes(size)}).`,
+      directives.length > 0
+        ? `module/workspace directives (${directives.length}${directives.length >= MAX_GO_MODULE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${directives.join(", ")}.`
+        : "module/workspace directives: none detected in the bounded local preview.",
+      dependencies.length > 0
+        ? `Require directives (${dependencies.length}${dependencies.length >= MAX_GO_MODULE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${dependencies.join(", ")}.`
+        : "Require directives: none detected in the bounded local preview.",
+      workspaceUses.length > 0
+        ? `Workspace use directives (${workspaceUses.length}${workspaceUses.length >= MAX_GO_MODULE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${workspaceUses.join(", ")}.`
+        : "Workspace use directives: none detected in the bounded local preview.",
+      replacements.length > 0
+        ? `Replace directives (${replacements.length}${replacements.length >= MAX_GO_MODULE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${replacements.join(", ")}.`
+        : "Replace directives: none detected in the bounded local preview.",
+      excludes.length > 0
+        ? `Exclude directives (${excludes.length}${excludes.length >= MAX_GO_MODULE_MANIFEST_ITEM_PREVIEW ? "+" : ""}): ${excludes.join(", ")}.`
+        : "Exclude directives: none detected in the bounded local preview.",
+      raw.length >= MAX_GO_MODULE_MANIFEST_PREVIEW_BYTES
+        ? `Go module manifest preview was capped at ${formatBytes(MAX_GO_MODULE_MANIFEST_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; Go module manifest metadata was parsed from bounded workspace-local text only, with no go command, go env, module download, proxy lookup, checksum database lookup, dependency install, build/test execution, credential lookup, network call, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Go module manifest ready for explicit attachment (${formatBytes(size)}).`,
+      "Manifest preview could not read bounded local text.",
+      "No go command, go env, module download, proxy lookup, checksum database lookup, dependency install, build/test execution, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function collectGoModuleDirectives(lines: string[], extension: string): string[] {
+  const directives = new Set<string>();
+  for (const line of lines) {
+    const trimmed = stripGoManifestComment(line);
+    if (!trimmed) continue;
+    for (const key of extension === ".go.work" ? ["go", "toolchain", "use", "replace"] : ["module", "go", "toolchain", "require", "replace", "exclude", "retract"]) {
+      if (trimmed === `${key} (` || trimmed.startsWith(`${key} `)) {
+        directives.add(clampSingleLine(trimmed, 140));
+        break;
+      }
+    }
+    if (directives.size >= MAX_GO_MODULE_MANIFEST_ITEM_PREVIEW) break;
+  }
+  return [...directives].slice(0, MAX_GO_MODULE_MANIFEST_ITEM_PREVIEW);
+}
+
+function collectGoModuleDependencyDirectives(lines: string[]): string[] {
+  return collectGoBlockAwareDirectiveValues(lines, "require").map((value) => clampSingleLine(value, 140));
+}
+
+function collectGoWorkspaceUseDirectives(lines: string[]): string[] {
+  return collectGoBlockAwareDirectiveValues(lines, "use").map((value) => clampSingleLine(value, 140));
+}
+
+function collectGoDirectiveValues(lines: string[], directive: string): string[] {
+  return collectGoBlockAwareDirectiveValues(lines, directive).map((value) => clampSingleLine(value, 140));
+}
+
+function collectGoBlockAwareDirectiveValues(lines: string[], directive: string): string[] {
+  const values: string[] = [];
+  let inBlock = false;
+  for (const line of lines) {
+    const trimmed = stripGoManifestComment(line);
+    if (!trimmed) continue;
+    if (inBlock) {
+      if (trimmed === ")") {
+        inBlock = false;
+        continue;
+      }
+      values.push(trimmed);
+    } else if (trimmed === `${directive} (`) {
+      inBlock = true;
+    } else if (trimmed.startsWith(`${directive} `)) {
+      values.push(trimmed.slice(directive.length).trim());
+    }
+    if (values.length >= MAX_GO_MODULE_MANIFEST_ITEM_PREVIEW) break;
+  }
+  return values.slice(0, MAX_GO_MODULE_MANIFEST_ITEM_PREVIEW);
+}
+
+function stripGoManifestComment(line: string): string {
+  return line.replace(/\/\/.*$/g, "").trim();
+}
+
+function describeNodePackageManagerConfigFormat(filePath: string, extension: string): string {
+  const name = basename(filePath).toLowerCase();
+  if (extension === ".npmrc" || name.endsWith(".npmrc")) return "npm config";
+  if (extension === ".yarnrc") return "Yarn classic config";
+  if (extension === ".yarnrc.yml") return "Yarn Berry config";
+  if (extension === ".pnpmfile.cjs") return "pnpm hook config";
+  if (extension === ".npmignore") return "npm publish ignore file";
+  return "Node package-manager config";
+}
+
+function collectNodePackageManagerConfigSettings(lines: string[], extension: string): string[] {
+  const settings = new Set<string>();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith(";")) continue;
+    if (extension === ".npmignore") {
+      settings.add(trimmed.startsWith("!") ? "publish include override" : "publish ignore pattern");
+    } else if (extension === ".pnpmfile.cjs") {
+      for (const cue of ["hooks", "readPackage", "afterAllResolved", "packageExtensions", "peerDependencyRules"]) {
+        if (trimmed.includes(cue)) settings.add(cue);
+      }
+    } else {
+      const match = trimmed.match(/^([^:=\s]+)\s*[:=]\s*(.*)$/);
+      if (match?.[1]) settings.add(clampSingleLine(match[1], 100));
+    }
+    if (settings.size >= MAX_NODE_PACKAGE_MANAGER_CONFIG_ITEM_PREVIEW) break;
+  }
+  return [...settings].slice(0, MAX_NODE_PACKAGE_MANAGER_CONFIG_ITEM_PREVIEW);
+}
+
+function collectNodePackageManagerHints(lines: string[], extension: string): string[] {
+  const hints = new Set<string>();
+  const raw = lines.join("\n").toLowerCase();
+  if (extension === ".npmrc" || raw.includes("npm")) hints.add("npm");
+  if (extension === ".yarnrc" || extension === ".yarnrc.yml" || raw.includes("yarn")) hints.add("Yarn");
+  if (extension === ".pnpmfile.cjs" || raw.includes("pnpm")) hints.add("pnpm");
+  if (raw.includes("registry")) hints.add("registry");
+  if (raw.includes("cache") || raw.includes("store-dir")) hints.add("cache/store");
+  if (raw.includes("node-linker")) hints.add("node linker");
+  if (raw.includes("ignore") || extension === ".npmignore") hints.add("publish ignore");
+  if (raw.includes("_authtoken") || raw.includes("auth-token") || raw.includes("password")) hints.add("credential-shaped key redacted");
+  return [...hints].slice(0, MAX_NODE_PACKAGE_MANAGER_CONFIG_ITEM_PREVIEW);
+}
+
 function summarizeNodePackageDependencyMaps(record: Record<string, unknown>): string[] {
   return [
     "dependencies",
@@ -8855,9 +12794,7 @@ function collectTomlLockDependencyEdges(
   edges: Array<{ from: string; to: string; kind: string }>,
   seen: Set<string>,
 ): void {
-  const blocks = raw.matchAll(/^\[\[package\]\]\s*([\s\S]*?)(?=^\[\[package\]\]|\s*$)/gm);
-  for (const block of blocks) {
-    const body = block[1] || "";
+  for (const body of splitTomlPackageBlocks(raw)) {
     const from = body.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1];
     const dependencies = body.match(/^\s*dependencies\s*=\s*\[([\s\S]*?)\]/m)?.[1];
     if (!from || !dependencies) continue;
@@ -9213,6 +13150,118 @@ function summarizeLogText(raw: string, size: number): string {
   ].join("\n").slice(0, MAX_TEXT_BYTES);
 }
 
+function summarizeStylesheetFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_STYLESHEET_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    const stripped = stripStylesheetComments(normalized);
+    const lines = stripped.split("\n").map((line) => line.trim()).filter(Boolean);
+    const selectors = collectStylesheetSelectors(lines);
+    const atRules = collectStylesheetAtRules(lines);
+    const customProperties = collectStylesheetCustomProperties(lines);
+    const assetReferences = collectStylesheetAssetReferences(stripped);
+    const sample = lines
+      .filter((line) => !line.startsWith("@charset"))
+      .slice(0, 12)
+      .map(maskPotentialSecretValues)
+      .join("\n");
+    return [
+      `Stylesheet preview (${describeStylesheetFormat(extension)}, ${formatBytes(size)}).`,
+      `Lines in bounded preview: ${normalized.split("\n").length}; non-empty style lines: ${lines.length}.`,
+      selectors.length > 0
+        ? `Selectors (${selectors.length}${selectors.length >= MAX_STYLESHEET_ITEM_PREVIEW ? "+" : ""}): ${selectors.join(" | ")}.`
+        : "Selectors: none detected in the bounded preview.",
+      atRules.length > 0
+        ? `At-rules (${atRules.length}${atRules.length >= MAX_STYLESHEET_ITEM_PREVIEW ? "+" : ""}): ${atRules.join(" | ")}.`
+        : "At-rules: none detected in the bounded preview.",
+      customProperties.length > 0
+        ? `Custom properties (${customProperties.length}${customProperties.length >= MAX_STYLESHEET_ITEM_PREVIEW ? "+" : ""}): ${customProperties.join(", ")}.`
+        : "Custom properties: none detected in the bounded preview.",
+      assetReferences.length > 0
+        ? `Local asset references (${assetReferences.length}${assetReferences.length >= MAX_STYLESHEET_ITEM_PREVIEW ? "+" : ""}): ${assetReferences.join(", ")}.`
+        : "Local asset references: none detected in the bounded preview.",
+      normalized.length >= MAX_STYLESHEET_PREVIEW_BYTES ? `Preview was capped at ${formatBytes(MAX_STYLESHEET_PREVIEW_BYTES)}.` : "",
+      sample || "No readable stylesheet lines were found.",
+      "Ready for explicit attachment after visible review; stylesheet metadata was parsed from bounded workspace-local text only, with no Sass/Less/PostCSS compiler, browser renderer, CSSOM construction, asset fetch, network call, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Stylesheet file ready for explicit attachment (${formatBytes(size)}).`,
+      "Stylesheet preview read bounded local text only; no Sass/Less/PostCSS compiler, browser renderer, CSSOM construction, asset fetch, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function splitTomlPackageBlocks(raw: string): string[] {
+  return raw
+    .split(/^\s*\[\[package\]\]\s*$/m)
+    .map((block) => block.trim())
+    .filter(Boolean);
+}
+
+function describeStylesheetFormat(extension: string): string {
+  return (
+    {
+      ".css": "CSS",
+      ".scss": "SCSS",
+      ".sass": "Sass",
+      ".less": "Less",
+    }[extension] ?? "stylesheet"
+  );
+}
+
+function stripStylesheetComments(raw: string): string {
+  return raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
+function collectStylesheetSelectors(lines: string[]): string[] {
+  const selectors = new Set<string>();
+  for (const line of lines) {
+    if (!line.includes("{") || line.trim().startsWith("@")) continue;
+    const selector = line.split("{")[0]?.trim();
+    if (!selector || selector.startsWith("$") || selector.startsWith("@")) continue;
+    selectors.add(clampSingleLine(selector.replace(/\s+/g, " "), 140));
+    if (selectors.size >= MAX_STYLESHEET_ITEM_PREVIEW) break;
+  }
+  return [...selectors].slice(0, MAX_STYLESHEET_ITEM_PREVIEW);
+}
+
+function collectStylesheetAtRules(lines: string[]): string[] {
+  const atRules = new Set<string>();
+  for (const line of lines) {
+    const match = line.match(/^@([A-Za-z-]+)\b\s*([^;{]*)/);
+    if (!match?.[1]) continue;
+    const rule = match[2]?.trim() ? `@${match[1]} ${match[2].trim()}` : `@${match[1]}`;
+    atRules.add(clampSingleLine(rule, 140));
+    if (atRules.size >= MAX_STYLESHEET_ITEM_PREVIEW) break;
+  }
+  return [...atRules].slice(0, MAX_STYLESHEET_ITEM_PREVIEW);
+}
+
+function collectStylesheetCustomProperties(lines: string[]): string[] {
+  const properties = new Set<string>();
+  for (const line of lines) {
+    const match = line.match(/(--[A-Za-z0-9_-]+)\s*:/);
+    if (match?.[1]) properties.add(clampSingleLine(match[1], 100));
+    if (properties.size >= MAX_STYLESHEET_ITEM_PREVIEW) break;
+  }
+  return [...properties].slice(0, MAX_STYLESHEET_ITEM_PREVIEW);
+}
+
+function collectStylesheetAssetReferences(raw: string): string[] {
+  const references = new Set<string>();
+  for (const match of raw.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/gi)) {
+    const value = (match[1] || "").trim();
+    if (!value || /^(?:data:|https?:|file:|blob:)/i.test(value)) continue;
+    references.add(clampSingleLine(maskPotentialSecretValues(value), 120));
+    if (references.size >= MAX_STYLESHEET_ITEM_PREVIEW) break;
+  }
+  return [...references].slice(0, MAX_STYLESHEET_ITEM_PREVIEW);
+}
+
 function summarizeSourceCodeFile(filePath: string, extension: string, size: number): string {
   try {
     const raw = readFileHeader(
@@ -9484,6 +13533,326 @@ function summarizeSourceCodeReviewHints(lines: string[]): string {
     : "Static review hints: no TODO/FIXME markers, obvious secret keys, or very long lines detected in the bounded preview.";
 }
 
+function isPowerShellScriptExtension(extension: string): boolean {
+  return [".ps1", ".psm1", ".psd1"].includes(extension);
+}
+
+function isBatchScriptExtension(extension: string): boolean {
+  return [".bat", ".cmd"].includes(extension);
+}
+
+function summarizeBatchScriptFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_BATCH_SCRIPT_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    const lines = normalized.split("\n");
+    const preview = parseBatchScriptPreview(lines);
+    const sample = preview.sampleLines.length > 0
+      ? `Bounded text sample:\n${preview.sampleLines.join("\n")}`
+      : "Bounded text sample: no readable batch script lines were found.";
+    return [
+      `Windows batch script preview (${describeSourceCodeLanguage(extension)}, ${formatBytes(size)}).`,
+      preview.labels.length > 0
+        ? `Labels (${preview.labels.length}${preview.labels.length >= MAX_BATCH_SCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.labels.join(", ")}.`
+        : "Labels: none detected in the bounded preview.",
+      preview.variables.length > 0
+        ? `Environment variable assignments (${preview.variables.length}${preview.variables.length >= MAX_BATCH_SCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.variables.join(", ")}.`
+        : "Environment variable assignments: none detected in the bounded preview.",
+      preview.calls.length > 0
+        ? `CALL/START targets (${preview.calls.length}${preview.calls.length >= MAX_BATCH_SCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.calls.join(", ")}.`
+        : "CALL/START targets: none detected in the bounded preview.",
+      preview.commands.length > 0
+        ? `Command hints (${preview.commands.length}${preview.commands.length >= MAX_BATCH_SCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.commands.join(", ")}.`
+        : "Command hints: none detected in the bounded preview.",
+      preview.riskCues.length > 0
+        ? `Risk cues (${preview.riskCues.length}${preview.riskCues.length >= MAX_BATCH_SCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.riskCues.join(", ")}.`
+        : "Risk cues: none detected in the bounded preview.",
+      preview.comments.length > 0
+        ? `Comment hints (${preview.comments.length}${preview.comments.length >= MAX_BATCH_SCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.comments.join(" | ")}.`
+        : "Comment hints: none detected in the bounded preview.",
+      sample,
+      raw.length >= MAX_BATCH_SCRIPT_PREVIEW_BYTES
+        ? `Preview was capped at ${formatBytes(MAX_BATCH_SCRIPT_PREVIEW_BYTES)} or item limits.`
+        : "",
+      "Ready for explicit attachment after visible review; batch metadata was parsed from bounded workspace-local text only, secret-shaped values were masked, and no cmd.exe process, batch script execution, environment expansion, command dispatch, filesystem mutation, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Windows batch script ready for explicit attachment (${formatBytes(size)}).`,
+      "Batch preview could not read bounded local text; no cmd.exe process, batch script execution, environment expansion, command dispatch, filesystem mutation, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseBatchScriptPreview(lines: string[]): {
+  labels: string[];
+  variables: string[];
+  calls: string[];
+  commands: string[];
+  riskCues: string[];
+  comments: string[];
+  sampleLines: string[];
+} {
+  const labels = new Set<string>();
+  const variables = new Set<string>();
+  const calls = new Set<string>();
+  const commands = new Set<string>();
+  const riskCues = new Set<string>();
+  const comments = new Set<string>();
+  const sampleLines: string[] = [];
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) continue;
+    const commandLine = trimmed.replace(/^@+/, "").trim();
+    const lower = commandLine.toLowerCase();
+
+    if (lower.startsWith("rem ") || commandLine.startsWith("::")) {
+      if (comments.size < MAX_BATCH_SCRIPT_ITEM_PREVIEW) {
+        comments.add(clampSingleLine(maskPotentialSecretValues(commandLine.replace(/^(?:rem\s+|::)/i, "").trim()), 140));
+      }
+      continue;
+    }
+
+    const labelMatch = commandLine.match(/^:([A-Za-z_][\w.-]*)\b/);
+    if (labelMatch?.[1] && labelMatch[1].toLowerCase() !== "eof" && labels.size < MAX_BATCH_SCRIPT_ITEM_PREVIEW) {
+      labels.add(clampSingleLine(labelMatch[1], 100));
+    }
+
+    if (sampleLines.length < 10) {
+      sampleLines.push(clampSingleLine(maskPotentialSecretValues(commandLine), 220));
+    }
+
+    const variableMatch = commandLine.match(/^set(?:local)?(?:\s+\/[AP])?\s+["']?([A-Za-z_][\w.-]*)\s*=/i);
+    if (variableMatch?.[1] && variables.size < MAX_BATCH_SCRIPT_ITEM_PREVIEW) {
+      variables.add(clampSingleLine(variableMatch[1], 100));
+    }
+
+    collectBatchCallTarget(commandLine, calls);
+    collectBatchCommandHint(commandLine, commands);
+    collectBatchRiskCues(commandLine, riskCues);
+  }
+
+  return {
+    labels: [...labels],
+    variables: [...variables],
+    calls: [...calls],
+    commands: [...commands],
+    riskCues: [...riskCues],
+    comments: [...comments],
+    sampleLines,
+  };
+}
+
+function collectBatchCallTarget(line: string, calls: Set<string>): void {
+  if (calls.size >= MAX_BATCH_SCRIPT_ITEM_PREVIEW) return;
+  const callMatch = line.match(/^(?:call|start)\s+(?:"[^"]*"\s+)?["']?([^"'\s&|<>]+)["']?/i);
+  const target = callMatch?.[1] || "";
+  if (!target || /^(?:\/[a-z]+|cmd|cmd\.exe)$/i.test(target)) return;
+  calls.add(clampSingleLine(maskPotentialSecretValues(target), 140));
+}
+
+function collectBatchCommandHint(line: string, commands: Set<string>): void {
+  if (commands.size >= MAX_BATCH_SCRIPT_ITEM_PREVIEW) return;
+  const commandMatch = line.match(/^(?:if|for)\b.*?\b(?:do\s+)?([A-Za-z][\w.-]*)\b/i) || line.match(/^([A-Za-z][\w.-]*)\b/);
+  const command = commandMatch?.[1] || "";
+  if (!command || ["echo", "else", "not", "exist", "defined"].includes(command.toLowerCase())) return;
+  commands.add(clampSingleLine(command, 80));
+}
+
+function collectBatchRiskCues(line: string, riskCues: Set<string>): void {
+  if (/\b(?:curl|wget|bitsadmin|certutil|Invoke-WebRequest|iwr|irm)\b/i.test(line)) riskCues.add("network download/request");
+  if (/\b(?:start|call|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?|wscript|cscript|msiexec|rundll32|regsvr32)\b/i.test(line)) riskCues.add("process launch/dispatch");
+  if (/\b(?:del|erase|rd|rmdir|move|copy|xcopy|robocopy)\b/i.test(line)) riskCues.add("filesystem mutation");
+  if (/\b(?:reg|sc|schtasks|netsh|net\s+use)\b/i.test(line)) riskCues.add("system configuration");
+  if (/\b(?:runas|takeown|icacls|attrib)\b/i.test(line)) riskCues.add("permission or attribute change");
+  if (/%[A-Za-z_][\w.-]*%|![A-Za-z_][\w.-]*!/.test(line)) riskCues.add("environment-variable expansion");
+}
+
+function summarizePowerShellScriptFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(
+      filePath,
+      Math.min(MAX_POWERSHELL_SCRIPT_PREVIEW_BYTES, MAX_TEXT_BYTES * 24),
+    ).toString("utf8");
+    const normalized = normalizeTextPreview(raw);
+    const lines = normalized.split("\n");
+    const preview = parsePowerShellScriptPreview(lines, extension);
+    const sample = preview.sampleLines.length > 0
+      ? `Bounded text sample:\n${preview.sampleLines.join("\n")}`
+      : "Bounded text sample: no readable script lines were found.";
+    return [
+      `PowerShell script preview (${describeSourceCodeLanguage(extension)}, ${formatBytes(size)}).`,
+      preview.helpSections.length > 0
+        ? `Comment help sections: ${preview.helpSections.join(", ")}.`
+        : "Comment help sections: none detected in the bounded preview.",
+      preview.functions.length > 0
+        ? `Functions (${preview.functions.length}${preview.functions.length >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.functions.join(", ")}.`
+        : "Functions: none detected in the bounded preview.",
+      preview.parameters.length > 0
+        ? `Parameters (${preview.parameters.length}${preview.parameters.length >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.parameters.join(", ")}.`
+        : "Parameters: none detected in the bounded preview.",
+      preview.imports.length > 0
+        ? `Module/assembly imports (${preview.imports.length}${preview.imports.length >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.imports.join(", ")}.`
+        : "Module/assembly imports: none detected in the bounded preview.",
+      preview.commands.length > 0
+        ? `Command hints (${preview.commands.length}${preview.commands.length >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.commands.join(", ")}.`
+        : "Command hints: none detected in the bounded preview.",
+      preview.riskCues.length > 0
+        ? `Risk cues (${preview.riskCues.length}${preview.riskCues.length >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.riskCues.join(", ")}.`
+        : "Risk cues: none detected in the bounded preview.",
+      preview.manifestKeys.length > 0
+        ? `Manifest keys (${preview.manifestKeys.length}${preview.manifestKeys.length >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW ? "+" : ""}): ${preview.manifestKeys.join(", ")}.`
+        : "",
+      sample,
+      raw.length >= MAX_POWERSHELL_SCRIPT_PREVIEW_BYTES
+        ? `Preview was capped at ${formatBytes(MAX_POWERSHELL_SCRIPT_PREVIEW_BYTES)} or item limits.`
+        : "",
+      "Ready for explicit attachment after visible review; PowerShell metadata was parsed from bounded workspace-local text only, secret-shaped values were masked, and no PowerShell/pwsh process, script execution, execution-policy change, module import, remote session, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `PowerShell script ready for explicit attachment (${formatBytes(size)}).`,
+      "PowerShell preview could not read bounded local text; no PowerShell/pwsh process, script execution, execution-policy change, module import, remote session, credential lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parsePowerShellScriptPreview(lines: string[], extension: string): {
+  functions: string[];
+  parameters: string[];
+  imports: string[];
+  commands: string[];
+  riskCues: string[];
+  helpSections: string[];
+  manifestKeys: string[];
+  sampleLines: string[];
+} {
+  const functions = new Set<string>();
+  const parameters = new Set<string>();
+  const imports = new Set<string>();
+  const commands = new Set<string>();
+  const riskCues = new Set<string>();
+  const helpSections = new Set<string>();
+  const manifestKeys = new Set<string>();
+  const sampleLines: string[] = [];
+  let inBlockComment = false;
+
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (trimmed.startsWith("<#")) inBlockComment = true;
+    collectPowerShellHelpSection(trimmed, helpSections);
+    if (/^#requires\b/i.test(trimmed)) {
+      collectPowerShellImportHints(trimmed, imports);
+    }
+
+    if (trimmed.endsWith("#>")) {
+      inBlockComment = false;
+      continue;
+    }
+    if (!trimmed || trimmed.startsWith("#") || inBlockComment) continue;
+
+    const maskedLine = maskPotentialSecretValues(trimmed);
+    if (sampleLines.length < 10) sampleLines.push(clampSingleLine(maskedLine, 220));
+
+    const functionMatch = trimmed.match(/^function\s+(?:global:|script:|local:|private:)?([A-Za-z_][\w-]*)\b/i);
+    if (functionMatch?.[1] && functions.size < MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW) {
+      functions.add(clampSingleLine(functionMatch[1], 100));
+    }
+
+    for (const match of trimmed.matchAll(/\$([A-Za-z_][\w-]*)\b/g)) {
+      if (parameters.size >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW) break;
+      if (looksLikePowerShellParameterDeclaration(trimmed, match[1] || "")) {
+        parameters.add(clampSingleLine(match[1], 100));
+      }
+    }
+
+    collectPowerShellImportHints(trimmed, imports);
+    collectPowerShellCommandHints(trimmed, commands);
+    collectPowerShellRiskCues(trimmed, riskCues);
+    if (extension === ".psd1") collectPowerShellManifestKey(trimmed, manifestKeys);
+  }
+
+  return {
+    functions: [...functions],
+    parameters: [...parameters],
+    imports: [...imports],
+    commands: [...commands],
+    riskCues: [...riskCues],
+    helpSections: [...helpSections],
+    manifestKeys: [...manifestKeys],
+    sampleLines,
+  };
+}
+
+function collectPowerShellHelpSection(line: string, sections: Set<string>): void {
+  if (sections.size >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW) return;
+  const match = line.match(/^#?\s*\.(SYNOPSIS|DESCRIPTION|PARAMETER|EXAMPLE|INPUTS|OUTPUTS|NOTES|LINK|COMPONENT|ROLE|FUNCTIONALITY)\b/i);
+  if (match?.[1]) sections.add(match[1].toUpperCase());
+}
+
+function looksLikePowerShellParameterDeclaration(line: string, name: string): boolean {
+  if (!name || ["true", "false", "null", "args", "input", "psitem", "_"].includes(name.toLowerCase())) return false;
+  return /^\s*(?:\[[^\]]+\]\s*)?\$[A-Za-z_][\w-]*/.test(line) ||
+    /\bparam\s*\(/i.test(line) ||
+    /\[Parameter(?:\s*\(|\])/i.test(line);
+}
+
+function collectPowerShellImportHints(line: string, imports: Set<string>): void {
+  if (imports.size >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW) return;
+  const patterns = [
+    /^(?:Import-Module|using\s+module|using\s+namespace|using\s+assembly)\s+["']?([^"'\s;]+)["']?/i,
+    /^#requires\s+-Modules?\s+(.+)$/i,
+    /^\s*(?:RootModule|NestedModules|RequiredModules|ModuleToProcess)\s*=\s*(.+)$/i,
+  ];
+  for (const pattern of patterns) {
+    const match = line.match(pattern);
+    if (!match?.[1]) continue;
+    imports.add(clampSingleLine(maskPotentialSecretValues(match[1].replace(/[@()'"]/g, " ").replace(/\s+/g, " ")), 120));
+    if (imports.size >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW) return;
+  }
+}
+
+function collectPowerShellCommandHints(line: string, commands: Set<string>): void {
+  if (commands.size >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW) return;
+  for (const match of line.matchAll(/\b([A-Z][A-Za-z0-9]*-[A-Z][A-Za-z0-9]*)\b/g)) {
+    const command = match[1] || "";
+    if (/^(?:If|For|While|Switch|Where|ForEach)-/i.test(command)) continue;
+    commands.add(clampSingleLine(command, 100));
+    if (commands.size >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW) return;
+  }
+  const external = line.match(/^\s*&?\s*["']?([^"'\s;]+\.(?:exe|cmd|bat|ps1|psm1))["']?/i);
+  if (external?.[1]) commands.add(clampSingleLine(maskPotentialSecretValues(external[1]), 120));
+}
+
+function collectPowerShellRiskCues(line: string, riskCues: Set<string>): void {
+  if (riskCues.size >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW) return;
+  const cuePatterns: Array<[RegExp, string]> = [
+    [/\bInvoke-Expression\b|\biex\b/i, "dynamic execution"],
+    [/\bInvoke-Command\b|\bEnter-PSSession\b|\bNew-PSSession\b/i, "remote session"],
+    [/\bInvoke-WebRequest\b|\biwr\b|\bInvoke-RestMethod\b|\birm\b|DownloadString|Net\.WebClient/i, "network download/request"],
+    [/\bStart-Process\b|\bStart-Job\b|\bStart-ThreadJob\b|\bpowershell(?:\.exe)?\b|\bpwsh(?:\.exe)?\b/i, "process/job launch"],
+    [/\bSet-ExecutionPolicy\b/i, "execution policy change"],
+    [/\bRemove-Item\b|\bMove-Item\b|\bSet-Content\b|\bCopy-Item\b|\bNew-Item\b/i, "filesystem mutation"],
+    [/\bSet-ItemProperty\b|\bNew-ItemProperty\b|\bRemove-ItemProperty\b|HKLM:|HKCU:/i, "registry mutation"],
+    [/\bRegister-ScheduledTask\b|\bNew-ScheduledTask\b/i, "scheduled task mutation"],
+    [/\bConvertTo-SecureString\b|\bGet-Credential\b|\bPSCredential\b/i, "credential handling"],
+  ];
+  for (const [pattern, label] of cuePatterns) {
+    if (pattern.test(line)) riskCues.add(label);
+    if (riskCues.size >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW) return;
+  }
+}
+
+function collectPowerShellManifestKey(line: string, keys: Set<string>): void {
+  if (keys.size >= MAX_POWERSHELL_SCRIPT_ITEM_PREVIEW) return;
+  const match = line.match(/^\s*([A-Za-z][A-Za-z0-9_]*)\s*=/);
+  if (match?.[1]) keys.add(clampSingleLine(match[1], 100));
+}
+
 function normalizeTextPreview(raw: string): string {
   return raw
     .replace(/^\uFEFF/, "")
@@ -9530,8 +13899,16 @@ function extractConfigKeys(lines: string[], extension: string): string[] {
 function maskPotentialSecretValues(line: string): string {
   return line
     .replace(
+      /((?:"[^"\r\n]*(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)[^"\r\n]*"|[A-Za-z0-9_.-]*(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)[A-Za-z0-9_.-]*)\s*[:=]\s*)(["']?)[^"',;\r\n]+(\2)/gi,
+      "$1$2[redacted]$3",
+    )
+    .replace(
       /\b([A-Za-z0-9_.-]*(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)[A-Za-z0-9_.-]*\s*[:=]\s*)(["']?)[^\s"',;]+(\2)/gi,
       "$1$2[redacted]$3",
+    )
+    .replace(
+      /(--(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential)(?:=|\s+))(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s"',;\r\n]+)/gi,
+      "$1[redacted]",
     )
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]")
     .slice(0, 520);
@@ -10374,7 +14751,11 @@ function isDelimitedEnumCandidate(
 }
 
 function cleanPreviewCell(value: string): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, 120);
+  const cleaned = maskPotentialSecretValues(redactUrlQuerySecrets(value.replace(/\s+/g, " ").trim())).slice(0, 120);
+  if (/^(?:secret|token|password|passwd|pwd|credential|private[_-]?key|api[_-]?key)[-_:]/i.test(cleaned)) {
+    return "[redacted]";
+  }
+  return cleaned;
 }
 
 interface ApiSpecEndpointPreview {
@@ -10425,7 +14806,7 @@ function summarizeApiSpecFile(filePath: string, extension: string, size: number)
       endpointLines.length > 0
         ? `Endpoint samples:\n${endpointLines.join("\n")}`
         : "Endpoint samples: none detected in the bounded local preview.",
-      "Ready for explicit attachment after visible review; Postman/OpenAPI/Swagger metadata was parsed from bounded local text only, sensitive URL values were redacted, and no request execution, mock server startup, credential lookup, network call, or provider send was performed.",
+      "Ready for explicit attachment after visible review; Postman/OpenAPI/Swagger/Insomnia metadata was parsed from bounded local text only, sensitive URL values were redacted, and no request execution, mock server startup, credential lookup, network call, or provider send was performed.",
     ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
   } catch {
     return null;
@@ -10448,6 +14829,9 @@ function parseJsonApiSpecPreview(raw: string): ApiSpecPreview | null {
     if (schema.includes("postman.com") || readRecordString(parsed.info, "name") || parsed.item.length > 0) {
       return parsePostmanCollectionRecord(parsed);
     }
+  }
+  if (Array.isArray(parsed.resources) && readRecordString(parsed, "_type").toLowerCase().includes("export")) {
+    return parseInsomniaExportRecord(parsed);
   }
   return null;
 }
@@ -10641,8 +15025,137 @@ function extractPostmanServers(endpoints: ApiSpecEndpointPreview[]): string[] {
   return [...servers];
 }
 
+interface PostmanEnvironmentPreview {
+  scope: string;
+  name: string;
+  variableCount: number;
+  enabledCount: number;
+  disabledCount: number;
+  variableKeys: string[];
+  sensitiveKeys: string[];
+}
+
+function summarizePostmanEnvironmentFile(filePath: string, size: number): string | null {
+  try {
+    const raw = readFileHeader(filePath, MAX_POSTMAN_ENVIRONMENT_PREVIEW_BYTES).toString("utf8");
+    const preview = parsePostmanEnvironmentPreview(raw);
+    if (!preview) return null;
+    const keyText =
+      preview.variableKeys.length > 0
+        ? preview.variableKeys.slice(0, MAX_POSTMAN_ENVIRONMENT_ITEM_PREVIEW).join(", ")
+        : "none detected in the bounded local preview";
+    const sensitiveText =
+      preview.sensitiveKeys.length > 0
+        ? preview.sensitiveKeys.slice(0, MAX_POSTMAN_ENVIRONMENT_ITEM_PREVIEW).join(", ")
+        : "none detected in variable keys";
+    return [
+      `Postman environment/globals preview (${formatBytes(size)}).`,
+      `Scope: ${preview.scope}.`,
+      preview.name ? `Name: ${preview.name}.` : "",
+      `Variables: ${preview.variableCount}; enabled ${preview.enabledCount}; disabled ${preview.disabledCount}.`,
+      `Variable keys: ${keyText}.`,
+      `Sensitive-looking variable keys: ${sensitiveText}. Values were not expanded.`,
+      raw.length >= MAX_POSTMAN_ENVIRONMENT_PREVIEW_BYTES
+        ? `Preview was capped at ${formatBytes(MAX_POSTMAN_ENVIRONMENT_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; Postman environment metadata was parsed from bounded workspace-local JSON only, variable values were not expanded, and no request execution, environment resolution, Postman CLI launch, mock server startup, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return null;
+  }
+}
+
+function parsePostmanEnvironmentPreview(raw: string): PostmanEnvironmentPreview | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
+  } catch {
+    return null;
+  }
+  if (!isPlainRecord(parsed)) return null;
+  const scope = readRecordString(parsed, "_postman_variable_scope").toLowerCase();
+  const values = Array.isArray(parsed.values) ? parsed.values : [];
+  const isPostmanEnvironment =
+    (scope === "environment" || scope === "globals" || scope === "global") &&
+    values.some((entry) => isPlainRecord(entry) && readRecordString(entry, "key"));
+  if (!isPostmanEnvironment) return null;
+  const variableKeys: string[] = [];
+  const sensitiveKeys: string[] = [];
+  let enabledCount = 0;
+  let disabledCount = 0;
+  for (const entry of values) {
+    if (!isPlainRecord(entry)) continue;
+    const key = clampSingleLine(readRecordString(entry, "key"), 120);
+    if (!key) continue;
+    if (entry.enabled === false || entry.disabled === true) {
+      disabledCount += 1;
+    } else {
+      enabledCount += 1;
+    }
+    if (variableKeys.length < MAX_POSTMAN_ENVIRONMENT_ITEM_PREVIEW) {
+      variableKeys.push(key);
+    }
+    if (isSensitiveFieldName(key) && sensitiveKeys.length < MAX_POSTMAN_ENVIRONMENT_ITEM_PREVIEW) {
+      sensitiveKeys.push(key);
+    }
+  }
+  return {
+    scope: scope === "global" ? "globals" : scope,
+    name: clampSingleLine(readRecordString(parsed, "name"), 120),
+    variableCount: enabledCount + disabledCount,
+    enabledCount,
+    disabledCount,
+    variableKeys,
+    sensitiveKeys,
+  };
+}
+
+function parseInsomniaExportRecord(record: Record<string, unknown>): ApiSpecPreview {
+  const resources = Array.isArray(record.resources) ? record.resources : [];
+  const workspace = resources.find((resource) =>
+    isPlainRecord(resource) && readRecordString(resource, "_type") === "workspace",
+  );
+  const endpoints: ApiSpecEndpointPreview[] = [];
+  const security = new Set<string>();
+  const servers = new Set<string>();
+  for (const resource of resources) {
+    if (!isPlainRecord(resource) || readRecordString(resource, "_type") !== "request") continue;
+    const method = readRecordString(resource, "method") || "REQUEST";
+    const url = readRecordString(resource, "url") || readRecordString(resource, "path") || "unknown URL";
+    endpoints.push({
+      method: method.toUpperCase(),
+      path: clampSingleLine(url, 220),
+      name: clampSingleLine(readRecordString(resource, "name"), 120) || undefined,
+    });
+    const authentication = isPlainRecord(resource.authentication) ? resource.authentication : {};
+    const authType = readRecordString(authentication, "type") || readRecordString(resource, "authentication");
+    if (authType) security.add(clampSingleLine(authType, 120));
+    try {
+      const parsedUrl = new URL(url.replace(/\{\{([^}]+)\}\}/g, "example.local"));
+      servers.add(`${parsedUrl.protocol}//${parsedUrl.host}`);
+    } catch {
+      // Insomnia requests may use variables or relative paths.
+    }
+    if (endpoints.length >= MAX_API_ENDPOINT_PREVIEW * 2) break;
+  }
+  const environments = resources.filter((resource) =>
+    isPlainRecord(resource) && readRecordString(resource, "_type") === "environment",
+  ).length;
+  if (environments > 0) security.add(`${environments} environment record(s), values not expanded`);
+  return {
+    format: "Insomnia export",
+    title: isPlainRecord(workspace) ? readRecordString(workspace, "name") : readRecordString(record, "name"),
+    version: readRecordString(record, "__export_format") || readRecordString(record, "__export_date"),
+    servers: [...servers].slice(0, 8),
+    endpoints,
+    security: [...security].slice(0, MAX_API_SECURITY_PREVIEW),
+  };
+}
+
 function parseYamlApiSpecPreview(raw: string): ApiSpecPreview | null {
   const text = normalizeTextPreview(raw);
+  const insomniaPreview = parseYamlInsomniaExportPreview(text);
+  if (insomniaPreview) return insomniaPreview;
   if (!/^\s*(openapi|swagger)\s*:/im.test(text)) return null;
   const lines = text.split("\n");
   const formatLine = lines.find((line) => /^\s*(openapi|swagger)\s*:/i.test(line)) || "";
@@ -10697,6 +15210,175 @@ function parseYamlApiSpecPreview(raw: string): ApiSpecPreview | null {
   };
 }
 
+function parseYamlInsomniaExportPreview(text: string): ApiSpecPreview | null {
+  if (!/^\s*_type\s*:\s*export\b/im.test(text) || !/^\s*resources\s*:/im.test(text)) return null;
+  const lines = text.split("\n");
+  const endpoints: ApiSpecEndpointPreview[] = [];
+  const security = new Set<string>();
+  const servers = new Set<string>();
+  let title = "";
+  let version = "";
+  let currentType = "";
+  let currentName = "";
+  let currentMethod = "";
+  let currentUrl = "";
+
+  const flushRequest = () => {
+    if (currentType !== "request" || !currentMethod || !currentUrl) return;
+    endpoints.push({
+      method: currentMethod.toUpperCase(),
+      path: clampSingleLine(currentUrl, 220),
+      name: currentName ? clampSingleLine(currentName, 120) : undefined,
+    });
+    try {
+      const parsedUrl = new URL(currentUrl.replace(/\{\{([^}]+)\}\}/g, "example.local"));
+      servers.add(`${parsedUrl.protocol}//${parsedUrl.host}`);
+    } catch {
+      // Insomnia requests may use variables or relative paths.
+    }
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const exportFormat = trimmed.match(/^__export_format\s*:\s*(.+)$/);
+    if (!version && exportFormat?.[1]) version = cleanYamlScalar(exportFormat[1]);
+    const resourceStart = trimmed.match(/^-\s*_type\s*:\s*(.+)$/);
+    if (resourceStart?.[1]) {
+      flushRequest();
+      currentType = cleanYamlScalar(resourceStart[1]);
+      currentName = "";
+      currentMethod = "";
+      currentUrl = "";
+      continue;
+    }
+    if (!currentType) continue;
+    const nameMatch = trimmed.match(/^name\s*:\s*(.+)$/);
+    if (nameMatch?.[1]) {
+      const name = cleanYamlScalar(nameMatch[1]);
+      if (currentType === "workspace" && !title) title = name;
+      currentName = name;
+      continue;
+    }
+    const methodMatch = trimmed.match(/^method\s*:\s*(.+)$/);
+    if (methodMatch?.[1]) {
+      currentMethod = cleanYamlScalar(methodMatch[1]);
+      continue;
+    }
+    const urlMatch = trimmed.match(/^url\s*:\s*(.+)$/);
+    if (urlMatch?.[1]) {
+      currentUrl = cleanYamlScalar(urlMatch[1]);
+      continue;
+    }
+    const authTypeMatch = trimmed.match(/^type\s*:\s*(bearer|basic|digest|oauth2?|apikey|ntlm|hawk|aws|none)\b/i);
+    if (authTypeMatch?.[1]) security.add(authTypeMatch[1].toLowerCase());
+    if (endpoints.length >= MAX_API_ENDPOINT_PREVIEW * 2) break;
+  }
+  flushRequest();
+  if (endpoints.length === 0) return null;
+  return {
+    format: "Insomnia YAML export",
+    title,
+    version,
+    servers: [...servers].slice(0, 8),
+    endpoints,
+    security: [...security].slice(0, MAX_API_SECURITY_PREVIEW),
+  };
+}
+
+function summarizeBrunoCollectionFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_BRUNO_COLLECTION_PREVIEW_BYTES).toString("utf8");
+    const preview = parseBrunoCollectionPreview(raw);
+    const endpointLines = preview.endpoints
+      .slice(0, MAX_BRUNO_COLLECTION_ITEM_PREVIEW)
+      .map((endpoint, index) => {
+        const name = endpoint.name ? ` (${endpoint.name})` : "";
+        return `- ${index + 1}. ${endpoint.method.toUpperCase()} ${redactHarUrl(endpoint.path)}${name}`;
+      });
+    const securityText =
+      preview.security.length > 0
+        ? preview.security.slice(0, MAX_API_SECURITY_PREVIEW).join(", ")
+        : "none detected in the bounded local preview";
+    return [
+      `Bruno API request file preview (${formatBytes(size)}).`,
+      preview.title ? `Name: ${preview.title}.` : "",
+      `Security/auth hints: ${securityText}.`,
+      `Requests: ${preview.endpoints.length}${preview.endpoints.length > endpointLines.length ? `; showing first ${endpointLines.length}` : ""}.`,
+      endpointLines.length > 0
+        ? `Request samples:\n${endpointLines.join("\n")}`
+        : "Request samples: none detected in the bounded local preview.",
+      raw.length >= MAX_BRUNO_COLLECTION_PREVIEW_BYTES ? `Preview was capped at ${formatBytes(MAX_BRUNO_COLLECTION_PREVIEW_BYTES)}.` : "",
+      "Ready for explicit attachment after visible review; Bruno metadata was parsed from bounded workspace-local text only, request bodies and secret-shaped values were not expanded, and no HTTP request execution, Bruno CLI launch, environment file loading, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Bruno API request file ready for explicit attachment (${formatBytes(size)}).`,
+      "Bruno preview could not read bounded local text; no HTTP request execution, Bruno CLI launch, environment file loading, credential lookup, network call, or provider send was performed.",
+    ].join("\n");
+  }
+}
+
+function parseBrunoCollectionPreview(raw: string): ApiSpecPreview {
+  const text = normalizeTextPreview(raw).slice(0, MAX_BRUNO_COLLECTION_PREVIEW_BYTES);
+  const lines = text.split("\n");
+  const endpoints: ApiSpecEndpointPreview[] = [];
+  const security = new Set<string>();
+  let title = "";
+  let requestName = "";
+  let requestMethod = "";
+  let requestUrl = "";
+  let section = "";
+
+  const flushRequest = () => {
+    if (!requestMethod || !requestUrl) return;
+    endpoints.push({
+      method: requestMethod.toUpperCase(),
+      path: clampSingleLine(requestUrl, 220),
+      name: requestName ? clampSingleLine(requestName, 120) : undefined,
+    });
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const sectionMatch = trimmed.match(/^([A-Za-z][\w-]*)\s*\{$/);
+    if (sectionMatch?.[1]) {
+      section = sectionMatch[1].toLowerCase();
+      continue;
+    }
+    if (trimmed === "}") {
+      section = "";
+      continue;
+    }
+    const pairMatch = trimmed.match(/^([A-Za-z][\w-]*)\s*:\s*(.+)$/);
+    if (!pairMatch?.[1] || !pairMatch[2]) continue;
+    const key = pairMatch[1].toLowerCase();
+    const value = cleanBrunoScalar(pairMatch[2]);
+    if (section === "meta" && key === "name") {
+      title = value;
+      requestName = value;
+    }
+    if (section === "http" && key === "method") requestMethod = value;
+    if (section === "http" && key === "url") requestUrl = value;
+    if (section === "auth" && key === "mode" && value && value.toLowerCase() !== "none") {
+      security.add(value.toLowerCase());
+    }
+    if (endpoints.length >= MAX_BRUNO_COLLECTION_ITEM_PREVIEW) break;
+  }
+  flushRequest();
+  return {
+    format: "Bruno request",
+    title,
+    servers: extractPostmanServers(endpoints),
+    endpoints,
+    security: [...security].slice(0, MAX_API_SECURITY_PREVIEW),
+  };
+}
+
+function cleanBrunoScalar(value: string): string {
+  return clampSingleLine(value.replace(/^['"]|['"]$/g, ""), 180);
+}
+
 function cleanYamlScalar(value: string): string {
   return clampSingleLine(value.replace(/\s+#.*$/, "").replace(/^['"]|['"]$/g, ""), 160);
 }
@@ -10715,6 +15397,222 @@ interface KubernetesManifestPreview {
   format: string;
   resources: KubernetesResourcePreview[];
   truncated: boolean;
+}
+
+interface KubernetesPackageConfigPreview {
+  format: string;
+  name: string;
+  version: string;
+  apiVersion: string;
+  appVersion: string;
+  chartType: string;
+  dependencies: string[];
+  resources: string[];
+  images: string[];
+  patches: string[];
+  namespaces: string[];
+  truncated: boolean;
+}
+
+function summarizeKubernetesPackageConfigFile(filePath: string, extension: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_KUBERNETES_PACKAGE_CONFIG_PREVIEW_BYTES).toString("utf8");
+    const preview = parseKubernetesPackageConfigPreview(filePath, extension, raw);
+    return [
+      `Kubernetes package config preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.name ? `Name: ${preview.name}.` : "Name: none detected in the bounded local preview.",
+      preview.version ? `Version: ${preview.version}.` : "",
+      preview.apiVersion ? `API version: ${preview.apiVersion}.` : "",
+      preview.appVersion ? `App version: ${preview.appVersion}.` : "",
+      preview.chartType ? `Chart type: ${preview.chartType}.` : "",
+      preview.dependencies.length > 0
+        ? `Dependencies (${preview.dependencies.length}${preview.dependencies.length >= MAX_KUBERNETES_PACKAGE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.dependencies.join(" | ")}.`
+        : "Dependencies: none detected in the bounded local preview.",
+      preview.resources.length > 0
+        ? `Resources (${preview.resources.length}${preview.resources.length >= MAX_KUBERNETES_PACKAGE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.resources.join(", ")}.`
+        : "Resources: none detected in the bounded local preview.",
+      preview.images.length > 0
+        ? `Images (${preview.images.length}${preview.images.length >= MAX_KUBERNETES_PACKAGE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.images.join(" | ")}.`
+        : "Images: none detected in the bounded local preview.",
+      preview.patches.length > 0
+        ? `Patches (${preview.patches.length}${preview.patches.length >= MAX_KUBERNETES_PACKAGE_CONFIG_ITEM_PREVIEW ? "+" : ""}): ${preview.patches.join(", ")}.`
+        : "Patches: none detected in the bounded local preview.",
+      preview.namespaces.length > 0
+        ? `Namespaces: ${preview.namespaces.join(", ")}.`
+        : "Namespaces: none detected in the bounded local preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_KUBERNETES_PACKAGE_CONFIG_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; Helm/Kustomize metadata was parsed from bounded workspace-local YAML only, secret-looking values were redacted, and no helm/kubectl/kustomize command, chart dependency build, template rendering, cluster connection, registry lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Kubernetes package config file ready for explicit attachment (${formatBytes(size)}).`,
+      "No helm/kubectl/kustomize command, chart dependency build, template rendering, cluster connection, registry lookup, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseKubernetesPackageConfigPreview(
+  filePath: string,
+  extension: string,
+  raw: string,
+): KubernetesPackageConfigPreview {
+  const lines = normalizeTextPreview(raw).split("\n");
+  const name = basename(filePath).toLowerCase();
+  if (extension === ".helm-chart.yaml" || name === "chart.yaml" || name === "chart.yml") {
+    return {
+      format: "Helm Chart.yaml",
+      name: readTopLevelYamlScalar(lines, "name"),
+      version: readTopLevelYamlScalar(lines, "version"),
+      apiVersion: readTopLevelYamlScalar(lines, "apiVersion"),
+      appVersion: readTopLevelYamlScalar(lines, "appVersion"),
+      chartType: readTopLevelYamlScalar(lines, "type"),
+      dependencies: collectHelmDependencyPreviews(lines),
+      resources: [],
+      images: [],
+      patches: [],
+      namespaces: [],
+      truncated: raw.length >= MAX_KUBERNETES_PACKAGE_CONFIG_PREVIEW_BYTES,
+    };
+  }
+  return {
+    format: "Kustomize kustomization",
+    name: readTopLevelYamlScalar(lines, "namePrefix") || readTopLevelYamlScalar(lines, "nameSuffix"),
+    version: "",
+    apiVersion: readTopLevelYamlScalar(lines, "apiVersion"),
+    appVersion: "",
+    chartType: readTopLevelYamlScalar(lines, "kind"),
+    dependencies: [],
+    resources: collectYamlStringList(lines, ["resources", "bases", "components"], MAX_KUBERNETES_PACKAGE_CONFIG_ITEM_PREVIEW),
+    images: collectKustomizeImagePreviews(lines),
+    patches: collectYamlStringList(lines, ["patches", "patchesStrategicMerge", "patchesJson6902"], MAX_KUBERNETES_PACKAGE_CONFIG_ITEM_PREVIEW),
+    namespaces: [readTopLevelYamlScalar(lines, "namespace")].filter(Boolean),
+    truncated: raw.length >= MAX_KUBERNETES_PACKAGE_CONFIG_PREVIEW_BYTES,
+  };
+}
+
+function readTopLevelYamlScalar(lines: string[], key: string): string {
+  const pattern = new RegExp(`^${escapeRegExp(key)}\\s*:\\s*(.+)$`, "i");
+  for (const line of lines) {
+    if (/^\s/.test(line) || line.trim().startsWith("#")) continue;
+    const match = line.match(pattern);
+    if (match?.[1]) return sanitizeKubernetesPackageValue(match[1]);
+  }
+  return "";
+}
+
+function collectHelmDependencyPreviews(lines: string[]): string[] {
+  const dependencies = collectYamlObjectList(lines, "dependencies", ["name", "version", "repository"], MAX_KUBERNETES_PACKAGE_CONFIG_ITEM_PREVIEW);
+  return dependencies.map((dependency) => {
+    const parts = [
+      dependency.name || "(unnamed)",
+      dependency.version ? `version=${dependency.version}` : "",
+      dependency.repository ? `repo=${redactHarUrl(dependency.repository)}` : "",
+    ].filter(Boolean);
+    return parts.join(" ");
+  });
+}
+
+function collectKustomizeImagePreviews(lines: string[]): string[] {
+  return collectYamlObjectList(
+    lines,
+    "images",
+    ["name", "newName", "newTag", "digest"],
+    MAX_KUBERNETES_PACKAGE_CONFIG_ITEM_PREVIEW,
+  ).map((image) => {
+    const target = image.newName || image.name || "(unnamed)";
+    const tag = image.newTag ? `:${image.newTag}` : "";
+    const digest = image.digest ? `@${image.digest}` : "";
+    return image.name && image.name !== target
+      ? `${image.name}=>${target}${tag}${digest}`
+      : `${target}${tag}${digest}`;
+  });
+}
+
+function collectYamlStringList(lines: string[], keys: string[], maxItems: number): string[] {
+  const values: string[] = [];
+  let activeIndent: number | null = null;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    if (activeIndent !== null && indent <= activeIndent && !trimmed.startsWith("-")) {
+      activeIndent = null;
+    }
+    if (activeIndent === null) {
+      const keyMatch = trimmed.match(/^([A-Za-z][\w-]*)\s*:\s*(.*)$/);
+      if (!keyMatch?.[1] || !keys.includes(keyMatch[1])) continue;
+      activeIndent = indent;
+      if (keyMatch[2]?.trim()) values.push(sanitizeKubernetesPackageValue(keyMatch[2]));
+      continue;
+    }
+    if (indent <= activeIndent) continue;
+    const itemMatch = trimmed.match(/^-\s*(.+)$/);
+    if (itemMatch?.[1]) {
+      const value = itemMatch[1].includes(":")
+        ? itemMatch[1].replace(/^([A-Za-z][\w-]*)\s*:\s*/, "")
+        : itemMatch[1];
+      values.push(sanitizeKubernetesPackageValue(value));
+    }
+    if (values.length >= maxItems) break;
+  }
+  return uniquePreviewValues(values.filter(Boolean), maxItems);
+}
+
+function collectYamlObjectList(
+  lines: string[],
+  key: string,
+  fields: string[],
+  maxItems: number,
+): Record<string, string>[] {
+  const objects: Record<string, string>[] = [];
+  let activeIndent: number | null = null;
+  let current: Record<string, string> | null = null;
+
+  const flushCurrent = () => {
+    if (current && Object.keys(current).length > 0) objects.push(current);
+    current = null;
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    if (activeIndent !== null && indent <= activeIndent && !trimmed.startsWith("-")) {
+      flushCurrent();
+      activeIndent = null;
+    }
+    if (activeIndent === null) {
+      if (trimmed.match(new RegExp(`^${escapeRegExp(key)}\\s*:\\s*$`, "i"))) {
+        activeIndent = indent;
+      }
+      continue;
+    }
+    if (indent <= activeIndent) continue;
+    const listMatch = trimmed.match(/^-\s*(?:(\w[\w-]*)\s*:\s*(.+))?$/);
+    if (listMatch) {
+      flushCurrent();
+      current = {};
+      if (listMatch[1] && listMatch[2] && fields.includes(listMatch[1])) {
+        current[listMatch[1]] = sanitizeKubernetesPackageValue(listMatch[2]);
+      }
+      if (objects.length >= maxItems) break;
+      continue;
+    }
+    const pairMatch = trimmed.match(/^(\w[\w-]*)\s*:\s*(.+)$/);
+    if (current && pairMatch?.[1] && pairMatch[2] && fields.includes(pairMatch[1])) {
+      current[pairMatch[1]] = sanitizeKubernetesPackageValue(pairMatch[2]);
+    }
+  }
+  flushCurrent();
+  return objects.slice(0, maxItems);
+}
+
+function sanitizeKubernetesPackageValue(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactHarUrl(cleanYamlScalar(value))), 180);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function summarizeKubernetesManifestFile(filePath: string, extension: string, size: number): string | null {
@@ -10961,6 +15859,135 @@ function readYamlKubernetesResourcePreview(doc: string): KubernetesResourcePrevi
 
 function uniqueKubernetesValues(values: string[]): string[] {
   return [...new Set(values.map((value) => clampSingleLine(value, 180)).filter(Boolean))];
+}
+
+interface RestClientRequestPreview {
+  name?: string;
+  method: string;
+  target: string;
+}
+
+interface RestClientPreview {
+  requests: RestClientRequestPreview[];
+  headerNames: string[];
+  variables: string[];
+  truncated: boolean;
+}
+
+function summarizeRestClientRequestFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_REST_CLIENT_PREVIEW_BYTES).toString("utf8");
+    const preview = parseRestClientRequestPreview(raw);
+    const requestText =
+      preview.requests.length > 0
+        ? preview.requests
+            .slice(0, MAX_REST_CLIENT_REQUEST_PREVIEW)
+            .map((request) =>
+              `${request.name ? `${request.name}: ` : ""}${request.method} ${redactRestClientTarget(request.target)}`,
+            )
+            .join(" | ")
+        : "none detected in the bounded local preview";
+    const headerText =
+      preview.headerNames.length > 0
+        ? preview.headerNames.slice(0, MAX_REST_CLIENT_HEADER_PREVIEW).join(", ")
+        : "none detected in the bounded local preview";
+    const variableText =
+      preview.variables.length > 0
+        ? preview.variables.slice(0, MAX_REST_CLIENT_VARIABLE_PREVIEW).join(", ")
+        : "none detected in the bounded local preview";
+    return [
+      `REST Client request file preview (${formatBytes(size)}).`,
+      `Requests (${preview.requests.length}${preview.requests.length >= MAX_REST_CLIENT_REQUEST_PREVIEW ? "+" : ""}): ${requestText}.`,
+      `Header names (${preview.headerNames.length}${preview.headerNames.length >= MAX_REST_CLIENT_HEADER_PREVIEW ? "+" : ""}): ${headerText}.`,
+      `Variable references (${preview.variables.length}${preview.variables.length >= MAX_REST_CLIENT_VARIABLE_PREVIEW ? "+" : ""}): ${variableText}.`,
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_REST_CLIENT_PREVIEW_BYTES)} or item limits.` : "",
+      "Ready for explicit attachment after visible review; REST Client metadata was parsed from bounded workspace-local text only, request bodies and secret-shaped values were not expanded, and no HTTP request execution, mock server startup, environment file loading, credential lookup, network call, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `REST Client request file ready for explicit attachment (${formatBytes(size)}).`,
+      "REST Client preview could not read bounded local text; no HTTP request execution, mock server startup, environment file loading, credential lookup, network call, or provider send was performed.",
+    ].join("\n");
+  }
+}
+
+function parseRestClientRequestPreview(raw: string): RestClientPreview {
+  const text = normalizeRestClientPreview(raw);
+  const lines = text.split("\n");
+  const requests: RestClientRequestPreview[] = [];
+  const headerNames = new Set<string>();
+  const variables = new Set<string>();
+  let pendingName: string | undefined;
+  let inHeadersForRequest = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      inHeadersForRequest = false;
+      continue;
+    }
+
+    const nameMatch = trimmed.match(/^#{3,}\s*@?name\s+(.+)$/i) || trimmed.match(/^#\s*@name\s+(.+)$/i);
+    if (nameMatch?.[1]) {
+      pendingName = clampSingleLine(nameMatch[1], 80);
+      continue;
+    }
+
+    for (const variableMatch of trimmed.matchAll(/\{\{\s*([A-Za-z_][\w.-]*)\s*\}\}/g)) {
+      variables.add(clampSingleLine(variableMatch[1], 80));
+      if (variables.size >= MAX_REST_CLIENT_VARIABLE_PREVIEW) break;
+    }
+
+    const requestMatch = trimmed.match(/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE|CONNECT)\s+([^\s#]+)(?:\s+HTTP\/\d(?:\.\d)?)?/i);
+    if (requestMatch?.[1] && requestMatch[2]) {
+      requests.push({
+        name: pendingName,
+        method: requestMatch[1].toUpperCase(),
+        target: clampSingleLine(requestMatch[2], 220),
+      });
+      pendingName = undefined;
+      inHeadersForRequest = true;
+      if (requests.length >= MAX_REST_CLIENT_REQUEST_PREVIEW) continue;
+    } else if (/^#{3,}/.test(trimmed)) {
+      inHeadersForRequest = false;
+      pendingName = undefined;
+      continue;
+    }
+
+    if (inHeadersForRequest) {
+      const headerMatch = trimmed.match(/^([A-Za-z][A-Za-z0-9-]*)\s*:/);
+      if (headerMatch?.[1]) {
+        headerNames.add(headerMatch[1]);
+        if (headerNames.size >= MAX_REST_CLIENT_HEADER_PREVIEW) continue;
+      }
+    }
+  }
+
+  return {
+    requests: requests.slice(0, MAX_REST_CLIENT_REQUEST_PREVIEW),
+    headerNames: [...headerNames].slice(0, MAX_REST_CLIENT_HEADER_PREVIEW),
+    variables: [...variables].slice(0, MAX_REST_CLIENT_VARIABLE_PREVIEW),
+    truncated:
+      raw.length >= MAX_REST_CLIENT_PREVIEW_BYTES ||
+      requests.length >= MAX_REST_CLIENT_REQUEST_PREVIEW ||
+      headerNames.size >= MAX_REST_CLIENT_HEADER_PREVIEW ||
+      variables.size >= MAX_REST_CLIENT_VARIABLE_PREVIEW,
+  };
+}
+
+function normalizeRestClientPreview(raw: string): string {
+  return raw
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\u0000/g, "")
+    .slice(0, MAX_REST_CLIENT_PREVIEW_BYTES);
+}
+
+function redactRestClientTarget(target: string): string {
+  return target
+    .replace(/([?&][^=&#]*(?:token|secret|password|passwd|pwd|api[_-]?key|private[_-]?key|credential|auth|session|cookie|signature)[^=&#]*=)[^&#\s]+/gi, "$1[redacted]")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]");
 }
 
 interface GraphqlPreview {
@@ -11464,6 +16491,131 @@ interface FeedDocumentPreview {
   items: string[];
 }
 
+interface RobotsTxtPreview {
+  userAgents: string[];
+  allowed: string[];
+  disallowed: string[];
+  sitemaps: string[];
+  crawlDelays: string[];
+}
+
+interface SitemapPreview {
+  format: "sitemap urlset" | "sitemap index";
+  locations: string[];
+  lastModified: string[];
+  changeFrequencies: string[];
+  priorities: string[];
+}
+
+function summarizeWebCrawlMetadataFile(filePath: string, extension: string, size: number): string {
+  try {
+    if (extension === ".robots.txt") {
+      const raw = readFileHeader(filePath, MAX_WEB_CRAWL_METADATA_PREVIEW_BYTES).toString("utf8");
+      const preview = parseRobotsTxtPreview(raw);
+      return [
+        `Web crawl metadata preview (robots.txt, ${formatBytes(size)}).`,
+        preview.userAgents.length > 0
+          ? `User agents: ${preview.userAgents.join(", ")}.`
+          : "User agents: none detected in the bounded local preview.",
+        preview.disallowed.length > 0
+          ? `Disallow rules (${preview.disallowed.length}${preview.disallowed.length >= MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW ? "+" : ""}): ${preview.disallowed.join(", ")}.`
+          : "Disallow rules: none detected in the bounded local preview.",
+        preview.allowed.length > 0 ? `Allow rules: ${preview.allowed.join(", ")}.` : "Allow rules: none detected in the bounded local preview.",
+        preview.crawlDelays.length > 0 ? `Crawl delays: ${preview.crawlDelays.join(", ")}.` : "Crawl delays: none detected in the bounded local preview.",
+        preview.sitemaps.length > 0 ? `Sitemaps: ${preview.sitemaps.join(", ")}.` : "Sitemaps: none detected in the bounded local preview.",
+        "Ready for explicit attachment after visible review; robots.txt metadata was parsed from bounded workspace-local text only, remote URLs were not fetched, pages were not crawled, JavaScript was not executed, and no browser profile access, SEO scoring, network call, credential lookup, or provider send was performed.",
+      ].join("\n").slice(0, MAX_TEXT_BYTES);
+    }
+
+    const raw =
+      extension === ".sitemap.xml.gz"
+        ? gunzipSync(readFileHeader(filePath, MAX_WEB_CRAWL_METADATA_PREVIEW_BYTES)).toString("utf8")
+        : readFileHeader(filePath, MAX_WEB_CRAWL_METADATA_PREVIEW_BYTES).toString("utf8");
+    const preview = parseSitemapPreview(raw);
+    return [
+      `Web crawl metadata preview (${preview.format}, ${formatBytes(size)}).`,
+      preview.locations.length > 0
+        ? `Locations (${preview.locations.length}${preview.locations.length >= MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW ? "+" : ""}): ${preview.locations.join(" | ")}.`
+        : "Locations: none detected in the bounded local preview.",
+      preview.lastModified.length > 0 ? `Last modified values: ${preview.lastModified.join(", ")}.` : "Last modified values: none detected in the bounded local preview.",
+      preview.changeFrequencies.length > 0 ? `Change frequencies: ${preview.changeFrequencies.join(", ")}.` : "Change frequencies: none detected in the bounded local preview.",
+      preview.priorities.length > 0 ? `Priorities: ${preview.priorities.join(", ")}.` : "Priorities: none detected in the bounded local preview.",
+      "Ready for explicit attachment after visible review; sitemap metadata was parsed from bounded workspace-local XML only, compressed sitemap input was decompressed only from local bytes, remote URLs were not fetched, pages were not crawled, JavaScript was not executed, and no browser profile access, SEO scoring, network call, credential lookup, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Web crawl metadata ready for explicit attachment (${formatBytes(size)}).`,
+      "Preview could not parse bounded local robots/sitemap content; no URL fetch, crawl, JavaScript execution, browser profile access, SEO scoring, network call, credential lookup, or provider send was performed.",
+    ].join("\n");
+  }
+}
+
+function parseRobotsTxtPreview(raw: string): RobotsTxtPreview {
+  const userAgents = new Set<string>();
+  const allowed = new Set<string>();
+  const disallowed = new Set<string>();
+  const sitemaps = new Set<string>();
+  const crawlDelays = new Set<string>();
+  for (const rawLine of raw.replace(/^\uFEFF/, "").split(/\r?\n/)) {
+    const line = rawLine.replace(/#.*/, "").trim();
+    if (!line) continue;
+    const match = line.match(/^([A-Za-z-]+)\s*:\s*(.+)$/);
+    if (!match?.[1]) continue;
+    const key = match[1].toLowerCase();
+    const value = clampSingleLine(match[2], 140);
+    if (!value) continue;
+    if (key === "user-agent") userAgents.add(value);
+    if (key === "allow") allowed.add(value);
+    if (key === "disallow") disallowed.add(value);
+    if (key === "sitemap") sitemaps.add(redactUrlQuerySecrets(value));
+    if (key === "crawl-delay") crawlDelays.add(value);
+  }
+  return {
+    userAgents: [...userAgents].slice(0, MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW),
+    allowed: [...allowed].slice(0, MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW),
+    disallowed: [...disallowed].slice(0, MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW),
+    sitemaps: [...sitemaps].slice(0, MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW),
+    crawlDelays: [...crawlDelays].slice(0, MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW),
+  };
+}
+
+function parseSitemapPreview(raw: string): SitemapPreview {
+  const xml = raw.replace(/^\uFEFF/, "");
+  const format = /<sitemapindex\b/i.test(xml) ? "sitemap index" : "sitemap urlset";
+  return {
+    format,
+    locations: collectXmlTagValues(xml, "loc", MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW).map(redactUrlQuerySecrets),
+    lastModified: collectXmlTagValues(xml, "lastmod", MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW),
+    changeFrequencies: collectXmlTagValues(xml, "changefreq", MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW),
+    priorities: collectXmlTagValues(xml, "priority", MAX_WEB_CRAWL_METADATA_ITEM_PREVIEW),
+  };
+}
+
+function collectXmlTagValues(xml: string, tagName: string, limit: number): string[] {
+  const values: string[] = [];
+  const pattern = new RegExp(`<(?:[A-Za-z0-9_-]+:)?${escapeRegex(tagName)}\\b[^>]*>([\\s\\S]*?)<\\/(?:[A-Za-z0-9_-]+:)?${escapeRegex(tagName)}>`, "gi");
+  for (const match of xml.matchAll(pattern)) {
+    const value = clampSingleLine(cleanXmlText(match[1] ?? ""), 180);
+    if (value && !values.includes(value)) values.push(value);
+    if (values.length >= limit) break;
+  }
+  return values;
+}
+
+function cleanXmlText(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function redactUrlQuerySecrets(value: string): string {
+  return value.replace(/([?&](?:token|access_token|api[_-]?key|key|secret|password|signature|sig)=)[^&#\s]+/gi, "$1REDACTED");
+}
+
 function summarizeFeedDocumentFile(filePath: string, extension: string, size: number): string {
   try {
     const raw = readFileHeader(filePath, MAX_FEED_PREVIEW_BYTES).toString("utf8");
@@ -11592,6 +16744,297 @@ function firstAtomLink(xml: string): string | null {
   const attrs = alternate?.[1] || links[0]?.[1] || "";
   const href = attrs.match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1];
   return href ? clampSingleLine(decodeXmlEntities(href), 220) : firstXmlTagValue(xml, "link");
+}
+
+interface DevtoolsTracePreview {
+  eventCount: number;
+  processes: string[];
+  threads: string[];
+  categories: string[];
+  eventNames: string[];
+  longTasks: string[];
+  argumentKeys: string[];
+  truncated: boolean;
+}
+
+function isDevtoolsTraceFile(filePath: string, extension: string): boolean {
+  if (extension === ".trace.json") return true;
+  if (extension !== ".json") return false;
+  const name = basename(filePath).toLowerCase();
+  return name === "trace.json" || name.endsWith(".trace.json") || name.endsWith("-trace.json") || name.endsWith(".devtools.json");
+}
+
+function summarizeDevtoolsTraceFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_DEVTOOLS_TRACE_PREVIEW_BYTES).toString("utf8");
+    const value = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    const preview = parseDevtoolsTracePreview(value, raw.length >= MAX_DEVTOOLS_TRACE_PREVIEW_BYTES);
+    return [
+      `DevTools performance trace preview (${formatBytes(size)}).`,
+      `Events in bounded sample: ${preview.eventCount}${preview.truncated ? "+" : ""}.`,
+      preview.processes.length > 0
+        ? `Process labels (${preview.processes.length}${preview.processes.length >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW ? "+" : ""}): ${preview.processes.join(", ")}.`
+        : "Process labels: none detected in bounded trace metadata.",
+      preview.threads.length > 0
+        ? `Thread labels (${preview.threads.length}${preview.threads.length >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW ? "+" : ""}): ${preview.threads.join(", ")}.`
+        : "Thread labels: none detected in bounded trace metadata.",
+      preview.categories.length > 0
+        ? `Categories (${preview.categories.length}${preview.categories.length >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW ? "+" : ""}): ${preview.categories.join(", ")}.`
+        : "Categories: none detected in bounded trace metadata.",
+      preview.eventNames.length > 0
+        ? `Event names (${preview.eventNames.length}${preview.eventNames.length >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW ? "+" : ""}): ${preview.eventNames.join(", ")}.`
+        : "Event names: none detected in bounded trace metadata.",
+      preview.longTasks.length > 0
+        ? `Long task/layout hints (${preview.longTasks.length}${preview.longTasks.length >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW ? "+" : ""}): ${preview.longTasks.join(" | ")}.`
+        : "Long task/layout hints: none detected in bounded trace metadata.",
+      preview.argumentKeys.length > 0
+        ? `Argument keys (${preview.argumentKeys.length}${preview.argumentKeys.length >= MAX_DEVTOOLS_TRACE_ARG_PREVIEW ? "+" : ""}): ${preview.argumentKeys.join(", ")}.`
+        : "Argument keys: none detected in bounded trace metadata.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_DEVTOOLS_TRACE_PREVIEW_BYTES)} or event/key limits.` : "",
+      "Ready for explicit attachment after visible review; DevTools trace metadata was parsed from bounded workspace-local JSON only, argument values were not expanded, token-like values were masked, and no Chrome/Edge/DevTools/Lighthouse launch, trace replay, network call, credential lookup, profiler attach, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `DevTools performance trace file ready for explicit attachment (${formatBytes(size)}).`,
+      "Trace preview could not parse bounded local JSON; no Chrome/Edge/DevTools/Lighthouse launch, trace replay, network call, credential lookup, profiler attach, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseDevtoolsTracePreview(value: unknown, byteTruncated: boolean): DevtoolsTracePreview {
+  const traceEventsValue = readRecordValue(value, "traceEvents");
+  const traceEvents = Array.isArray(traceEventsValue) ? traceEventsValue : [];
+  const events = traceEvents.filter((event): event is Record<string, unknown> =>
+    Boolean(event) && typeof event === "object" && !Array.isArray(event),
+  );
+  const processes = new Map<string, string>();
+  const threads = new Map<string, string>();
+  const categories = new Set<string>();
+  const eventNames = new Set<string>();
+  const longTasks: string[] = [];
+  const argumentKeys = new Set<string>();
+
+  for (const event of events) {
+    const pid = readTraceId(event, "pid");
+    const tid = readTraceId(event, "tid");
+    const name = clampSingleLine(readRecordString(event, "name"), 120);
+    const category = clampSingleLine(readRecordString(event, "cat"), 160);
+    const duration = readTraceNumber(event, "dur");
+    const args = readRecordValue(event, "args");
+
+    if (category) {
+      for (const item of category.split(",")) {
+        const clean = clampSingleLine(item.trim(), 80);
+        if (clean) categories.add(clean);
+        if (categories.size >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW) break;
+      }
+    }
+    if (name) eventNames.add(name);
+
+    if (isRecord(args)) {
+      for (const key of Object.keys(args)) {
+        const cleanKey = clampSingleLine(key, 100);
+        if (cleanKey) argumentKeys.add(cleanKey);
+        if (argumentKeys.size >= MAX_DEVTOOLS_TRACE_ARG_PREVIEW) break;
+      }
+    }
+
+    if (name === "process_name" && pid && isRecord(args)) {
+      const processName = clampSingleLine(maskPotentialSecretValues(readRecordString(args, "name")), 120);
+      if (processName) processes.set(pid, `${pid}:${processName}`);
+    }
+    if (name === "thread_name" && pid && tid && isRecord(args)) {
+      const threadName = clampSingleLine(maskPotentialSecretValues(readRecordString(args, "name")), 120);
+      if (threadName) threads.set(`${pid}:${tid}`, `${pid}/${tid}:${threadName}`);
+    }
+
+    if (
+      duration >= 50_000 ||
+      ["Task", "RunTask", "EvaluateScript", "Layout", "UpdateLayoutTree", "Paint"].includes(name)
+    ) {
+      const label = [
+        name || "unnamed event",
+        duration ? `${Math.round(duration / 1000)}ms` : "",
+        category ? `cat=${category.split(",").slice(0, 2).join(",")}` : "",
+      ].filter(Boolean).join(" ");
+      if (longTasks.length < MAX_DEVTOOLS_TRACE_EVENT_PREVIEW) {
+        longTasks.push(clampSingleLine(maskPotentialSecretValues(label), 180));
+      }
+    }
+
+    if (
+      processes.size >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW &&
+      threads.size >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW &&
+      categories.size >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW &&
+      eventNames.size >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW &&
+      longTasks.length >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW &&
+      argumentKeys.size >= MAX_DEVTOOLS_TRACE_ARG_PREVIEW
+    ) {
+      break;
+    }
+  }
+
+  return {
+    eventCount: events.length,
+    processes: [...processes.values()].slice(0, MAX_DEVTOOLS_TRACE_EVENT_PREVIEW),
+    threads: [...threads.values()].slice(0, MAX_DEVTOOLS_TRACE_EVENT_PREVIEW),
+    categories: [...categories].slice(0, MAX_DEVTOOLS_TRACE_EVENT_PREVIEW),
+    eventNames: [...eventNames].slice(0, MAX_DEVTOOLS_TRACE_EVENT_PREVIEW),
+    longTasks: uniquePreviewValues(longTasks, MAX_DEVTOOLS_TRACE_EVENT_PREVIEW),
+    argumentKeys: [...argumentKeys].slice(0, MAX_DEVTOOLS_TRACE_ARG_PREVIEW),
+    truncated:
+      byteTruncated ||
+      events.length >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW ||
+      processes.size >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW ||
+      threads.size >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW ||
+      categories.size >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW ||
+      eventNames.size >= MAX_DEVTOOLS_TRACE_EVENT_PREVIEW ||
+      argumentKeys.size >= MAX_DEVTOOLS_TRACE_ARG_PREVIEW,
+  };
+}
+
+function readTraceId(record: Record<string, unknown>, key: string): string {
+  const value = readRecordValue(record, key);
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "string") return clampSingleLine(value, 80);
+  return "";
+}
+
+function readTraceNumber(record: Record<string, unknown>, key: string): number {
+  const value = readRecordValue(record, key);
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function uniquePreviewValues(values: string[], limit: number): string[] {
+  return [...new Set(values.filter(Boolean))].slice(0, limit);
+}
+
+interface LighthouseReportPreview {
+  requestedUrl: string;
+  finalUrl: string;
+  lighthouseVersion: string;
+  fetchTime: string;
+  formFactor: string;
+  userAgent: string;
+  categories: string[];
+  audits: string[];
+  truncated: boolean;
+}
+
+function isLighthouseReportFile(filePath: string, extension: string): boolean {
+  if (extension === ".lighthouse.json") return true;
+  if (extension !== ".json") return false;
+  const name = basename(filePath).toLowerCase();
+  return (
+    name === "lhr.json" ||
+    name === "lighthouse.json" ||
+    name.endsWith(".lhr.json") ||
+    name.endsWith(".lighthouse.json") ||
+    name.endsWith("-lighthouse.json")
+  );
+}
+
+function summarizeLighthouseReportFile(filePath: string, size: number): string {
+  try {
+    const raw = readFileHeader(filePath, MAX_LIGHTHOUSE_REPORT_PREVIEW_BYTES).toString("utf8");
+    const value = JSON.parse(raw.replace(/^\uFEFF/, ""));
+    const preview = parseLighthouseReportPreview(value, raw.length >= MAX_LIGHTHOUSE_REPORT_PREVIEW_BYTES);
+    return [
+      `Lighthouse report preview (${formatBytes(size)}).`,
+      `Requested URL: ${preview.requestedUrl || "none detected in the bounded local preview"}.`,
+      `Final URL: ${preview.finalUrl || "none detected in the bounded local preview"}.`,
+      `Lighthouse version: ${preview.lighthouseVersion || "unknown"}; fetched: ${preview.fetchTime || "unknown"}.`,
+      `Run settings: formFactor=${preview.formFactor || "unknown"}; userAgent=${preview.userAgent || "unknown"}.`,
+      preview.categories.length > 0
+        ? `Category scores (${preview.categories.length}${preview.categories.length >= MAX_LIGHTHOUSE_CATEGORY_PREVIEW ? "+" : ""}): ${preview.categories.join(", ")}.`
+        : "Category scores: none detected in the bounded local preview.",
+      preview.audits.length > 0
+        ? `Audit highlights (${preview.audits.length}${preview.audits.length >= MAX_LIGHTHOUSE_AUDIT_PREVIEW ? "+" : ""}): ${preview.audits.join(" | ")}.`
+        : "Audit highlights: none detected in the bounded local preview.",
+      preview.truncated ? `Preview was capped at ${formatBytes(MAX_LIGHTHOUSE_REPORT_PREVIEW_BYTES)} or audit/category limits.` : "",
+      "Ready for explicit attachment after visible review; Lighthouse report metadata was parsed from bounded workspace-local JSON only, audit details were not expanded, token-like URL values were masked, and no Chrome/Edge/DevTools/Lighthouse launch, page audit, trace replay, network call, credential lookup, profiler attach, or provider send was performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Lighthouse report file ready for explicit attachment (${formatBytes(size)}).`,
+      "Lighthouse preview could not parse bounded local JSON; no Chrome/Edge/DevTools/Lighthouse launch, page audit, trace replay, network call, credential lookup, profiler attach, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function parseLighthouseReportPreview(value: unknown, byteTruncated: boolean): LighthouseReportPreview {
+  const root: Record<string, unknown> = isRecord(value) ? value : {};
+  const configSettings = readRecordValue(root, "configSettings");
+  const environment = readRecordValue(root, "environment");
+  const categoriesValue = readRecordValue(root, "categories");
+  const auditsValue = readRecordValue(root, "audits");
+  const categories = isRecord(categoriesValue)
+    ? Object.entries(categoriesValue)
+        .slice(0, MAX_LIGHTHOUSE_CATEGORY_PREVIEW)
+        .map(([id, category]) => formatLighthouseCategory(id, category))
+        .filter(Boolean)
+    : [];
+  const audits = isRecord(auditsValue)
+    ? Object.entries(auditsValue)
+        .filter(([, audit]) => shouldPreviewLighthouseAudit(audit))
+        .slice(0, MAX_LIGHTHOUSE_AUDIT_PREVIEW)
+        .map(([id, audit]) => formatLighthouseAudit(id, audit))
+        .filter(Boolean)
+    : [];
+
+  return {
+    requestedUrl: sanitizeLighthouseUrl(readRecordString(root, "requestedUrl")),
+    finalUrl: sanitizeLighthouseUrl(readRecordString(root, "finalDisplayedUrl") || readRecordString(root, "finalUrl")),
+    lighthouseVersion: clampSingleLine(readRecordString(root, "lighthouseVersion"), 80),
+    fetchTime: clampSingleLine(readRecordString(root, "fetchTime"), 80),
+    formFactor: isRecord(configSettings) ? clampSingleLine(readRecordString(configSettings, "formFactor"), 80) : "",
+    userAgent: isRecord(environment) ? clampSingleLine(readRecordString(environment, "networkUserAgent"), 160) : "",
+    categories,
+    audits,
+    truncated:
+      byteTruncated ||
+      categories.length >= MAX_LIGHTHOUSE_CATEGORY_PREVIEW ||
+      audits.length >= MAX_LIGHTHOUSE_AUDIT_PREVIEW,
+  };
+}
+
+function sanitizeLighthouseUrl(value: string): string {
+  return clampSingleLine(maskPotentialSecretValues(redactUrlQuerySecrets(value)), 220);
+}
+
+function formatLighthouseCategory(id: string, value: unknown): string {
+  if (!isRecord(value)) return "";
+  const title = clampSingleLine(readRecordString(value, "title") || id, 80);
+  const score = formatLighthouseScore(readRecordValue(value, "score"));
+  return `${title}=${score}`;
+}
+
+function shouldPreviewLighthouseAudit(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const scoreDisplayMode = readRecordString(value, "scoreDisplayMode");
+  const score = readRecordValue(value, "score");
+  const numericValue = readRecordValue(value, "numericValue");
+  if (scoreDisplayMode === "notApplicable" || scoreDisplayMode === "manual") return false;
+  if (typeof score === "number" && Number.isFinite(score) && score < 0.9) return true;
+  return typeof numericValue === "number" && Number.isFinite(numericValue) && numericValue > 0;
+}
+
+function formatLighthouseAudit(id: string, value: unknown): string {
+  if (!isRecord(value)) return "";
+  const title = clampSingleLine(readRecordString(value, "title") || id, 100);
+  const score = formatLighthouseScore(readRecordValue(value, "score"));
+  const display = clampSingleLine(maskPotentialSecretValues(readRecordString(value, "displayValue")), 80);
+  return [title, `score=${score}`, display].filter(Boolean).join(" ");
+}
+
+function formatLighthouseScore(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
+  return `${Math.round(value * 100)}`;
 }
 
 function summarizeJsonDataFile(filePath: string, size: number): string {
@@ -11736,6 +17179,123 @@ function summarizeColumnarDataFile(filePath: string, extension: string, size: nu
       "Columnar data preview read bounded local bytes only; no DuckDB/PyArrow/Spark query, schema inference service, decompression scan, network call, code execution, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
+}
+
+function summarizeScientificContainerFile(filePath: string, extension: string, size: number): string {
+  try {
+    const head = readFileHeader(filePath, Math.min(size, MAX_SCIENTIFIC_CONTAINER_PREVIEW_BYTES));
+    const label =
+      extension === ".nc"
+        ? "NetCDF scientific data container"
+        : extension === ".mat"
+          ? "MATLAB MAT scientific data container"
+          : "HDF5 scientific data container";
+    const formatDetails =
+      extension === ".nc"
+        ? readNetcdfScientificContainerMetadata(head)
+        : extension === ".mat"
+          ? readMatlabScientificContainerMetadata(head)
+          : readHdf5ScientificContainerMetadata(head);
+    const stringSamples = extractLegacyOfficeBinaryStrings(head)
+      .map(maskPotentialSecretValues)
+      .filter((value) => value.length >= 4 && !/^(HDF|CDF)$/i.test(value))
+      .slice(0, MAX_SCIENTIFIC_CONTAINER_ITEM_PREVIEW);
+    return [
+      `Scientific data container preview (${label}, ${formatBytes(size)}).`,
+      ...formatDetails,
+      stringSamples.length > 0
+        ? `Readable header string samples (${stringSamples.length}${stringSamples.length >= MAX_SCIENTIFIC_CONTAINER_ITEM_PREVIEW ? "+" : ""}): ${stringSamples.join(" | ")}.`
+        : "Readable header string samples: none detected in bounded local header bytes.",
+      head.length >= MAX_SCIENTIFIC_CONTAINER_PREVIEW_BYTES
+        ? `Preview was capped at ${formatBytes(MAX_SCIENTIFIC_CONTAINER_PREVIEW_BYTES)}.`
+        : "",
+      "Ready for explicit attachment after visible review; scientific container metadata was parsed from bounded workspace-local header bytes only, with no HDF5/NetCDF/MATLAB runtime, Python process, dataset decoding, decompression, query execution, network call, or provider send performed.",
+    ].filter(Boolean).join("\n").slice(0, MAX_TEXT_BYTES);
+  } catch {
+    return [
+      `Scientific data container ready for explicit attachment (${formatBytes(size)}).`,
+      "Scientific container preview attempted bounded local header reads only; no HDF5/NetCDF/MATLAB runtime, Python process, dataset decoding, decompression, query execution, network call, or provider send was performed.",
+    ].join("\n").slice(0, MAX_TEXT_BYTES);
+  }
+}
+
+function readHdf5ScientificContainerMetadata(buffer: Buffer): string[] {
+  const signatureOffset = findHdf5SignatureOffset(buffer);
+  if (signatureOffset < 0) {
+    return [
+      "HDF5 signature: not recognized in bounded header bytes.",
+      `Header byte window: first ${formatBytes(buffer.length)}.`,
+    ];
+  }
+  const superblockVersion =
+    signatureOffset + 8 < buffer.length ? buffer[signatureOffset + 8] : undefined;
+  return [
+    `HDF5 signature: detected at byte ${signatureOffset}.`,
+    typeof superblockVersion === "number"
+      ? `HDF5 superblock version hint: ${superblockVersion}.`
+      : "HDF5 superblock version hint: unavailable from bounded header bytes.",
+    `Header byte window: first ${formatBytes(buffer.length)}.`,
+  ];
+}
+
+function readNetcdfScientificContainerMetadata(buffer: Buffer): string[] {
+  const magic = buffer.subarray(0, Math.min(4, buffer.length)).toString("latin1");
+  if (magic.startsWith("CDF")) {
+    const variant =
+      buffer[3] === 1
+        ? "classic"
+        : buffer[3] === 2
+          ? "64-bit offset"
+          : buffer[3] === 5
+            ? "CDF-5"
+            : `unknown variant byte ${buffer[3] ?? "unavailable"}`;
+    return [
+      `NetCDF signature: CDF ${variant}.`,
+      `Header byte window: first ${formatBytes(buffer.length)}.`,
+    ];
+  }
+  const hdf5 = readHdf5ScientificContainerMetadata(buffer);
+  return [
+    hdf5[0]?.includes("detected")
+      ? "NetCDF signature: NetCDF-4/HDF5 container signature detected."
+      : "NetCDF signature: not recognized in bounded header bytes.",
+    ...hdf5.slice(1),
+  ];
+}
+
+function readMatlabScientificContainerMetadata(buffer: Buffer): string[] {
+  const description = buffer.subarray(0, Math.min(116, buffer.length)).toString("latin1").replace(/\0/g, "").trim();
+  const hdf5Offset = findHdf5SignatureOffset(buffer);
+  if (hdf5Offset >= 0) {
+    return [
+      `MATLAB MAT signature: v7.3 HDF5-compatible container detected at byte ${hdf5Offset}.`,
+      `Header description: ${description ? clampSingleLine(description, 180) : "unavailable from bounded header bytes"}.`,
+      `Header byte window: first ${formatBytes(buffer.length)}.`,
+    ];
+  }
+  const looksLikeMat =
+    /^MATLAB\s+[0-9.]+\s+MAT-file/i.test(description) ||
+    description.toLowerCase().includes("matlab") ||
+    description.toLowerCase().includes("mat-file");
+  const version =
+    buffer.length >= 126 ? `0x${buffer.readUInt16LE(124).toString(16).padStart(4, "0")}` : "unavailable";
+  const endian = buffer.length >= 128 ? buffer.subarray(126, 128).toString("ascii") : "unavailable";
+  return [
+    `MATLAB MAT signature: ${looksLikeMat ? "MAT-file header detected" : "not recognized in bounded header bytes"}.`,
+    `MATLAB MAT version/endian hints: version ${version}, endian ${endian}.`,
+    `Header description: ${description ? clampSingleLine(description, 180) : "unavailable from bounded header bytes"}.`,
+    `Header byte window: first ${formatBytes(buffer.length)}.`,
+  ];
+}
+
+function findHdf5SignatureOffset(buffer: Buffer): number {
+  const signature = Buffer.from([0x89, 0x48, 0x44, 0x46, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const direct = buffer.subarray(0, signature.length).equals(signature);
+  if (direct) return 0;
+  for (let offset = 512; offset + signature.length <= buffer.length; offset *= 2) {
+    if (buffer.subarray(offset, offset + signature.length).equals(signature)) return offset;
+  }
+  return -1;
 }
 
 function readParquetFilePreview(head: Buffer, tail: Buffer, size: number): string[] {
@@ -12202,6 +17762,10 @@ function readRecordString(record: Record<string, unknown>, key: string): string 
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 }
 
+function readRecordValue(record: unknown, key: string): unknown {
+  return isRecord(record) ? record[key] : undefined;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -12231,9 +17795,14 @@ function summarizeXlsxDataFile(filePath: string, extension: string, size: number
       .filter((entry) => /^xl\/worksheets\/sheet\d+\.xml$/.test(entry.name))
       .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true }))
       .slice(0, MAX_XLSX_PREVIEW_SHEETS);
+    const formulaPreviews: string[] = [];
     const previews = sheetEntries.map((entry, index) => {
-      const rows = parseXlsxWorksheetPreview(entry.data.toString("utf8"), sharedStrings);
       const title = sheetNames.get(entry.name) || `Sheet ${index + 1}`;
+      for (const formula of parseXlsxWorksheetFormulaPreviews(entry.data.toString("utf8"), sharedStrings)) {
+        if (formulaPreviews.length >= MAX_XLSX_FORMULA_PREVIEW) break;
+        formulaPreviews.push(`${title}!${formula}`);
+      }
+      const rows = parseXlsxWorksheetPreview(entry.data.toString("utf8"), sharedStrings);
       const rowPreview = rows
         .map((row, rowIndex) => `Row ${rowIndex + 1}: ${row.join(" | ")}`)
         .join("\n");
@@ -12246,7 +17815,10 @@ function summarizeXlsxDataFile(filePath: string, extension: string, size: number
       `${workbookLabel} preview (${formatBytes(size)}).`,
       `Sheets previewed: ${sheetEntries.length}${sheetEntries.length >= MAX_XLSX_PREVIEW_SHEETS ? " from bounded sample" : ""}.`,
       ...previews,
-      "Ready for explicit attachment after visible review; cached cell values only were read from Office XML, and no spreadsheet runtime, VBA project inspection, macro execution, network call, or provider send was performed.",
+      formulaPreviews.length > 0
+        ? `Formula previews (${formulaPreviews.length}${formulaPreviews.length >= MAX_XLSX_FORMULA_PREVIEW ? "+" : ""}): ${formulaPreviews.join(" | ")}.`
+        : "Formula previews: none detected in bounded worksheet XML.",
+      "Ready for explicit attachment after visible review; cached cell values and formula text only were read from Office XML, formulas were not evaluated, external references were not resolved, and no spreadsheet runtime, VBA project inspection, macro execution, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   } catch {
     return [
@@ -12309,6 +17881,29 @@ function parseXlsxWorksheetPreview(xml: string, sharedStrings: string[]): string
         }),
     )
     .filter((row) => row.some((cell) => !cell.endsWith("=-")));
+}
+
+function parseXlsxWorksheetFormulaPreviews(xml: string, sharedStrings: string[]): string[] {
+  return [...xml.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)]
+    .map((cellMatch, index) => {
+      const attrs = readXmlAttributes(cellMatch[1] ?? "");
+      const reference = attrs.get("r") || `C${index + 1}`;
+      const cellXml = cellMatch[2] ?? "";
+      const formulaMatch = cellXml.match(/<f\b[^>]*>([\s\S]*?)<\/f>/);
+      if (!formulaMatch) return "";
+      const formula = sanitizeXlsxFormulaPreview(formulaMatch[1] ?? "");
+      const cachedValue = readXlsxCellValue(cellXml, attrs.get("t"), sharedStrings);
+      return `${reference}=${formula}${cachedValue ? ` cached=${cachedValue}` : ""}`;
+    })
+    .filter(Boolean)
+    .slice(0, MAX_XLSX_FORMULA_PREVIEW);
+}
+
+function sanitizeXlsxFormulaPreview(rawFormula: string): string {
+  return clampSingleLine(
+    maskPotentialSecretValues(redactUrlQuerySecrets(decodeXmlEntities(rawFormula).replace(/\s+/g, " ").trim())),
+    180,
+  );
 }
 
 function readXlsxCellValue(cellXml: string, type: string | undefined, sharedStrings: string[]): string {
@@ -12828,11 +18423,19 @@ function readFileHeader(filePath: string, maxBytes: number): Buffer {
 function summarizeAudio(filePath: string, extension: string, size: number): string {
   const header = readFileHeader(filePath, 256 * 1024);
   const metadata =
-    extension === ".wav" ? readWavAudioMetadata(header) : readMp3AudioMetadata(header, size);
+    extension === ".wav"
+      ? readWavAudioMetadata(header)
+      : extension === ".flac"
+        ? readFlacAudioMetadata(header)
+        : extension === ".m4a"
+          ? readM4aAudioMetadata(header)
+          : extension === ".ogg"
+            ? readOggAudioMetadata(header)
+            : readMp3AudioMetadata(header, size);
   if (!metadata) {
     return [
       `Audio file ready for explicit attachment (${formatBytes(size)}).`,
-      "Audio metadata preview did not find a supported WAV/MP3 header in this read-only importer.",
+      "Audio metadata preview did not find a supported WAV/MP3/FLAC/M4A/OGG header in this read-only importer.",
       "No microphone capture, transcription service, network call, or provider send was performed.",
     ].join("\n").slice(0, MAX_TEXT_BYTES);
   }
@@ -12892,6 +18495,38 @@ function readWavAudioMetadata(buffer: Buffer): ChannelAudioMetadata | null {
   };
 }
 
+function readFlacAudioMetadata(buffer: Buffer): ChannelAudioMetadata | null {
+  if (buffer.length < 42 || buffer.subarray(0, 4).toString("ascii") !== "fLaC") {
+    return null;
+  }
+  let offset = 4;
+  while (offset + 4 <= buffer.length) {
+    const header = buffer[offset];
+    const blockType = header & 0x7f;
+    const blockLength = buffer.readUIntBE(offset + 1, 3);
+    const dataOffset = offset + 4;
+    if (dataOffset + blockLength > buffer.length) break;
+    if (blockType === 0 && blockLength >= 34) {
+      const streamInfo = buffer.subarray(dataOffset, dataOffset + blockLength);
+      const sampleRate = streamInfo.readUIntBE(10, 3) >> 4;
+      const channels = ((streamInfo[12] >> 1) & 0x07) + 1;
+      const bitsPerSample = (((streamInfo[12] & 0x01) << 4) | (streamInfo[13] >> 4)) + 1;
+      const totalSamples = Number((BigInt(streamInfo[13] & 0x0f) << 32n) | BigInt(streamInfo.readUInt32BE(14)));
+      const durationSeconds = sampleRate > 0 && totalSamples > 0 ? totalSamples / sampleRate : 0;
+      return {
+        format: "FLAC",
+        ...(durationSeconds > 0 ? { duration: formatDuration(durationSeconds) } : {}),
+        ...(sampleRate > 0 ? { sampleRate: `${sampleRate} Hz` } : {}),
+        ...(channels > 0 ? { channels: formatChannelCount(channels) } : {}),
+        ...(bitsPerSample > 0 ? { bitsPerSample: `${bitsPerSample}-bit` } : {}),
+      };
+    }
+    offset = dataOffset + blockLength;
+    if (header & 0x80) break;
+  }
+  return { format: "FLAC", id3: "fLaC stream marker found; STREAMINFO unavailable in bounded header" };
+}
+
 function readMp3AudioMetadata(buffer: Buffer, size: number): ChannelAudioMetadata | null {
   if (buffer.length < 4) return null;
   const id3 = readId3Summary(buffer);
@@ -12925,6 +18560,86 @@ function readMp3AudioMetadata(buffer: Buffer, size: number): ChannelAudioMetadat
     };
   }
   return id3 ? { format: "MP3", id3 } : null;
+}
+
+function readM4aAudioMetadata(buffer: Buffer): ChannelAudioMetadata | null {
+  if (buffer.length < 12) return null;
+  const boxes = readMp4Boxes(buffer, 0, buffer.length, 8);
+  const ftyp = boxes.find((box) => box.type === "ftyp");
+  if (!ftyp) return null;
+  const majorBrand = readAsciiSafe(buffer, ftyp.contentOffset, ftyp.contentOffset + 4);
+  const compatibleBrands = readMp4CompatibleBrands(buffer, ftyp.contentOffset + 8, ftyp.end);
+  const moovChildren = boxes
+    .filter((box) => box.type === "moov")
+    .flatMap((box) => readMp4Boxes(buffer, box.contentOffset, box.end, 8));
+  const trakChildren = moovChildren
+    .filter((box) => box.type === "trak")
+    .flatMap((box) => readMp4Boxes(buffer, box.contentOffset, box.end, 8));
+  const mdiaChildren = trakChildren
+    .filter((box) => box.type === "mdia")
+    .flatMap((box) => readMp4Boxes(buffer, box.contentOffset, box.end, 8));
+  const mvhd = moovChildren.find((box) => box.type === "mvhd");
+  const mdhd = mdiaChildren.find((box) => box.type === "mdhd");
+  const hdlr = mdiaChildren.find((box) => box.type === "hdlr");
+  const duration = mvhd ? readMp4MovieDuration(buffer, mvhd.contentOffset, mvhd.end) : undefined;
+  const timescale = mdhd ? readMp4MediaTimescale(buffer, mdhd.contentOffset, mdhd.end) : undefined;
+  const handler = hdlr ? readAsciiSafe(buffer, hdlr.contentOffset + 8, hdlr.contentOffset + 12) : "";
+  const brands = [majorBrand, ...compatibleBrands].filter(Boolean).slice(0, 8).join(", ");
+  return {
+    format: "M4A/MP4 audio",
+    ...(duration ? { duration } : {}),
+    ...(timescale ? { sampleRate: `${timescale} Hz media timescale` } : {}),
+    ...(handler ? { channels: `handler ${handler}` } : {}),
+    ...(brands ? { id3: `brands ${brands}` } : {}),
+  };
+}
+
+function readOggAudioMetadata(buffer: Buffer): ChannelAudioMetadata | null {
+  if (buffer.length < 36 || buffer.subarray(0, 4).toString("ascii") !== "OggS") {
+    return null;
+  }
+  const segments = buffer[26];
+  const segmentTableEnd = 27 + segments;
+  if (segments <= 0 || segmentTableEnd > buffer.length) {
+    return { format: "Ogg", id3: "Ogg page marker found; segment table unavailable in bounded header" };
+  }
+  const firstPacketSize = [...buffer.subarray(27, segmentTableEnd)].reduce((sum, value) => sum + value, 0);
+  const packet = buffer.subarray(segmentTableEnd, Math.min(buffer.length, segmentTableEnd + firstPacketSize));
+  return (
+    readOggVorbisMetadata(packet) ||
+    readOggOpusMetadata(packet) ||
+    { format: "Ogg", id3: "Ogg page marker found; codec identification packet unavailable in bounded header" }
+  );
+}
+
+function readOggVorbisMetadata(packet: Buffer): ChannelAudioMetadata | null {
+  if (packet.length < 30 || packet[0] !== 1 || packet.subarray(1, 7).toString("ascii") !== "vorbis") {
+    return null;
+  }
+  const channels = packet[11];
+  const sampleRate = packet.readUInt32LE(12);
+  const nominalBitRate = packet.readInt32LE(20);
+  return {
+    format: "Ogg Vorbis",
+    ...(sampleRate > 0 ? { sampleRate: `${sampleRate} Hz` } : {}),
+    ...(channels > 0 ? { channels: formatChannelCount(channels) } : {}),
+    ...(nominalBitRate > 0 ? { bitRate: `${Math.round(nominalBitRate / 1000)} kbps nominal` } : {}),
+  };
+}
+
+function readOggOpusMetadata(packet: Buffer): ChannelAudioMetadata | null {
+  if (packet.length < 19 || packet.subarray(0, 8).toString("ascii") !== "OpusHead") {
+    return null;
+  }
+  const channels = packet[9];
+  const preSkip = packet.readUInt16LE(10);
+  const inputSampleRate = packet.readUInt32LE(12);
+  return {
+    format: "Ogg Opus",
+    sampleRate: inputSampleRate > 0 ? `${inputSampleRate} Hz input` : "48000 Hz playback",
+    ...(channels > 0 ? { channels: formatChannelCount(channels) } : {}),
+    id3: `pre-skip ${preSkip} samples`,
+  };
 }
 
 function readId3Size(buffer: Buffer): number {
@@ -13116,6 +18831,15 @@ function readMp4MovieDuration(buffer: Buffer, start: number, end: number): strin
     : BigInt(buffer.readUInt32BE(durationOffset));
   if (timescale <= 0 || rawDuration <= 0n || rawDuration > BigInt(Number.MAX_SAFE_INTEGER)) return undefined;
   return formatDuration(Number(rawDuration) / timescale);
+}
+
+function readMp4MediaTimescale(buffer: Buffer, start: number, end: number): number | undefined {
+  if (start + 16 > end) return undefined;
+  const version = buffer[start];
+  const timescaleOffset = version === 1 ? start + 20 : start + 12;
+  if (timescaleOffset + 4 > end) return undefined;
+  const timescale = buffer.readUInt32BE(timescaleOffset);
+  return timescale > 0 ? timescale : undefined;
 }
 
 function readMp4TrackDimensions(buffer: Buffer, start: number, end: number): string | undefined {
@@ -15621,25 +21345,37 @@ function getMime(extension: string): string {
   return (
     {
       ".7z": "application/x-7z-compressed",
+      ".aab": "application/vnd.android.aab",
       ".ansible-inventory": "text/x-ansible-inventory",
+      ".androidmanifest.xml": "application/vnd.android.package-archive.manifest+xml",
+      ".apk": "application/vnd.android.package-archive",
       ".appx": "application/vnd.ms-appx",
       ".appxmanifest": "application/vnd.ms-appxmanifest+xml",
       ".appxbundle": "application/vnd.ms-appxBundle",
+      ".arm-template.json": "application/vnd.microsoft.azure.arm-template+json",
       ".arrow": "application/vnd.apache.arrow.file",
       ".atom": "application/atom+xml",
       ".attestation": "application/vnd.in-toto+json",
       ".attestation.json": "application/vnd.in-toto+json",
       ".bat": "text/x-msdos-batch",
       ".bash": "text/x-shellscript",
+      ".bicep": "text/x-bicep",
+      ".bicepparam": "text/x-bicep-params",
       ".blg": "application/vnd.ms-perfmon",
       ".bmp": "image/bmp",
+      ".bru": "text/x-bruno",
       ".c": "text/x-c",
+      ".cabal": "text/x-cabal",
       ".cat": "application/vnd.ms-pki.seccat",
       ".cc": "text/x-c++",
+      ".checkstyle.xml": "application/vnd.checkstyle+xml",
       ".cjs": "text/javascript",
       ".cmd": "text/x-msdos-batch",
       ".cfg": "text/plain",
       ".codeowners": "text/x-codeowners",
+      ".cloudformation.json": "application/vnd.aws.cloudformation.template+json",
+      ".cloudformation.yaml": "application/vnd.aws.cloudformation.template+yaml",
+      ".composer.json": "application/vnd.composer+json",
       ".cpp": "text/x-c++",
       ".cs": "text/x-csharp",
       ".csproj": "application/msbuild+xml",
@@ -15654,6 +21390,8 @@ function getMime(extension: string): string {
       ".dll": "application/vnd.microsoft.portable-executable",
       ".docm": "application/vnd.ms-word.document.macroEnabled.12",
       ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ".dotnet-global.json": "application/vnd.microsoft.dotnet.global-json+json",
+      ".dot": "text/vnd.graphviz",
       ".drawio": "application/vnd.jgraph.mxfile",
       ".dwg": "image/vnd.dwg",
       ".dxf": "image/vnd.dxf",
@@ -15665,6 +21403,9 @@ function getMime(extension: string): string {
       ".cer": "application/pkix-cert",
       ".cdx.json": "application/vnd.cyclonedx+json",
       ".checksum": "text/plain",
+      ".cmake": "text/x-cmake",
+      ".cmakelists.txt": "text/x-cmake",
+      ".compile_commands.json": "application/json+compile-commands",
       ".crt": "application/x-x509-ca-cert",
       ".der": "application/pkix-cert",
       ".diff": "text/x-diff",
@@ -15673,7 +21414,12 @@ function getMime(extension: string): string {
       ".evtx": "application/vnd.ms-windows-eventlog",
       ".fsproj": "application/msbuild+xml",
       ".feather": "application/vnd.apache.arrow.file",
+      ".flac": "audio/flac",
+      ".gemfile": "text/x-ruby",
+      ".gemspec": "text/x-ruby-gemspec",
       ".gif": "image/gif",
+      ".go.mod": "text/x-go-mod",
+      ".go.work": "text/x-go-work",
       ".htm": "text/html",
       ".html": "text/html",
       ".gz": "application/gzip",
@@ -15682,33 +21428,51 @@ function getMime(extension: string): string {
       ".gltf": "model/gltf+json",
       ".gitattributes": "text/x-gitattributes",
       ".gitignore": "text/x-gitignore",
+      ".h5": "application/x-hdf5",
       ".har": "application/har+json",
       ".hcl": "text/x-hcl",
+      ".hdf5": "application/x-hdf5",
       ".hdmp": "application/vnd.microsoft.minidump",
+      ".helm-chart.yaml": "application/vnd.cncf.helm.chart+yaml",
       ".go": "text/x-go",
       ".gql": "application/graphql",
       ".gradle": "text/x-gradle",
       ".gradle.kts": "text/x-kotlin",
+      ".gradle.properties": "text/x-gradle-properties",
+      ".gv": "text/vnd.graphviz",
       ".gpx": "application/gpx+xml",
       ".graphql": "application/graphql",
       ".h": "text/x-c",
       ".hpp": "text/x-c++",
+      ".http": "message/http",
       ".ini": "text/plain",
       ".inf": "text/x-setup-inf",
+      ".info.plist": "application/x-apple-plist+xml",
       ".intoto.jsonl": "application/vnd.in-toto+jsonl",
+      ".ipa": "application/octet-stream+ios-app",
       ".ipynb": "application/x-ipynb+json",
+      ".ical": "text/calendar",
       ".ics": "text/calendar",
       ".ico": "image/x-icon",
+      ".jar": "application/java-archive",
+      ".war": "application/java-archive",
+      ".ear": "application/java-archive",
+      ".class": "application/java-vm",
       ".java": "text/x-java-source",
       ".junit.xml": "application/junit+xml",
+      ".lighthouse.json": "application/vnd.lighthouse.report+json",
+      ".test-results.json": "application/vnd.drsai.test-results+json",
+      ".trace.json": "application/x-chrome-trace+json",
       ".js": "text/javascript",
       ".jsx": "text/jsx",
       ".key": "application/pem-certificate-chain",
       ".kml": "application/vnd.google-earth.kml+xml",
       ".kt": "text/x-kotlin",
+      ".kustomization.yaml": "application/vnd.kubernetes.kustomization+yaml",
       ".kts": "text/x-kotlin",
       ".jpeg": "image/jpeg",
       ".jpg": "image/jpeg",
+      ".jvm.config": "text/x-jvm-config",
       ".less": "text/less",
       ".license": "text/plain",
       ".lcov": "text/x-lcov",
@@ -15716,15 +21480,20 @@ function getMime(extension: string): string {
       ".log": "text/plain",
       ".lock": "text/plain",
       ".lua": "text/x-lua",
+      ".makefile": "text/x-makefile",
       ".m": "text/x-objective-c",
+      ".mat": "application/x-matlab-data",
       ".mm": "text/x-objective-c++",
       ".mjs": "text/javascript",
       ".man": "application/vnd.ms-etw-manifest+xml",
+      ".maven.config": "text/x-maven-config",
       ".msi": "application/x-msi",
       ".msix": "application/vnd.ms-appx",
       ".msixbundle": "application/vnd.ms-appxBundle",
+      ".m4a": "audio/mp4",
       ".m4v": "video/x-m4v",
       ".mermaid": "text/vnd.mermaid",
+      ".metrics": "text/plain; version=0.0.4",
       ".mkv": "video/x-matroska",
       ".mov": "video/quicktime",
       ".mp4": "video/mp4",
@@ -15736,61 +21505,92 @@ function getMime(extension: string): string {
       ".mdmp": "application/vnd.microsoft.minidump",
       ".mhtml": "multipart/related",
       ".mbox": "application/mbox",
+      ".mix.exs": "text/x-elixir",
+      ".mix.lock": "application/vnd.elixir.mix-lock",
       ".msg": "application/vnd.ms-outlook",
+      ".nc": "application/x-netcdf",
       ".ndjson": "application/x-ndjson",
       ".notice": "text/plain",
+      ".nuget.config": "application/vnd.nuget.config+xml",
+      ".npmignore": "text/x-npmignore",
+      ".npmrc": "text/x-npmrc",
+      ".nuspec": "application/vnd.nuget.nuspec+xml",
       ".odp": "application/vnd.oasis.opendocument.presentation",
       ".ods": "application/vnd.oasis.opendocument.spreadsheet",
       ".odt": "application/vnd.oasis.opendocument.text",
+      ".ogg": "audio/ogg",
       ".otf": "font/otf",
       ".obj": "model/obj",
+      ".openmetrics": "application/openmetrics-text",
       ".patch": "text/x-diff",
       ".parquet": "application/vnd.apache.parquet",
       ".pcap": "application/vnd.tcpdump.pcap",
       ".pcapng": "application/x-pcapng",
       ".pem": "application/pem-certificate-chain",
+      ".package.yaml": "application/vnd.haskell.package-yaml",
+      ".packages.config": "application/vnd.nuget.packages-config+xml",
       ".php": "application/x-httpd-php",
       ".pipfile": "application/toml",
       ".pdf": "application/pdf",
+      ".podfile": "text/x-cocoapods-podfile",
+      ".podfile.lock": "text/x-cocoapods-lockfile",
+      ".podspec": "text/x-cocoapods-podspec",
       ".ppt": "application/vnd.ms-powerpoint",
       ".pptm": "application/vnd.ms-powerpoint.presentation.macroEnabled.12",
       ".png": "image/png",
       ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
       ".proto": "text/x-protobuf",
+      ".prom": "text/plain; version=0.0.4",
       ".props": "application/msbuild+xml",
       ".ps1": "text/x-powershell",
-      ".psd1": "text/x-powershell",
+      ".psd1": "text/x-powershell-data",
       ".psm1": "text/x-powershell",
+      ".pubspec.lock": "application/vnd.dart.pubspec.lock",
+      ".pubspec.yaml": "application/yaml",
       ".puml": "text/x-plantuml",
       ".plantuml": "text/x-plantuml",
+      ".pnpmfile.cjs": "text/javascript",
+      ".pmd.xml": "application/vnd.pmd+xml",
       ".py": "text/x-python",
       ".rb": "text/x-ruby",
       ".rar": "application/vnd.rar",
       ".reg": "text/x-windows-registry",
+      ".rest": "message/http",
       ".r": "text/x-r-source",
       ".rss": "application/rss+xml",
+      ".robots.txt": "text/plain",
       ".rs": "text/rust",
       ".rtf": "application/rtf",
+      ".sass": "text/x-sass",
       ".sarif": "application/sarif+json",
       ".sarif.json": "application/sarif+json",
       ".scss": "text/x-scss",
+      ".security-audit.json": "application/vnd.drsai.security-scan+json",
       ".sh": "text/x-shellscript",
       ".sha1": "text/plain",
       ".sha256": "text/plain",
       ".sha512": "text/plain",
       ".sig": "application/octet-stream",
+      ".sitemap.xml": "application/xml",
+      ".sitemap.xml.gz": "application/gzip",
       ".sln": "text/plain",
+      ".stack.yaml": "application/vnd.haskell.stack-yaml",
       ".scala": "text/x-scala",
       ".sql": "text/sql",
       ".spdx": "text/spdx",
       ".spdx.json": "application/spdx+json",
+      ".syft.json": "application/vnd.syft+json",
+      ".spotbugs.xml": "application/vnd.spotbugs+xml",
       ".srt": "application/x-subrip",
       ".stl": "model/stl",
       ".sum": "text/plain",
       ".svg": "image/svg+xml",
       ".swift": "text/x-swift",
+      ".swift-package": "text/x-swift-package-manifest",
       ".sqlite": "application/vnd.sqlite3",
       ".sqlite3": "application/vnd.sqlite3",
+      ".tap": "text/x-tap",
+      ".tap13": "text/x-tap",
       ".task": "application/vnd.ms-task+xml",
       ".tar": "application/x-tar",
       ".tar.gz": "application/gzip",
@@ -15798,6 +21598,7 @@ function getMime(extension: string): string {
       ".tgz": "application/gzip",
       ".tf": "text/x-terraform",
       ".tf.json": "application/x-terraform+json",
+      ".tfplan.json": "application/vnd.terraform.plan+json",
       ".tfvars": "text/x-terraform-vars",
       ".toml": "application/toml",
       ".topojson": "application/topo+json",
@@ -15831,6 +21632,8 @@ function getMime(extension: string): string {
       ".xml": "application/xml",
       ".yaml": "application/yaml",
       ".yml": "application/yaml",
+      ".yarnrc": "text/x-yarnrc",
+      ".yarnrc.yml": "application/yaml",
       ".zsh": "text/x-shellscript",
       ".zip": "application/zip",
     }[extension] ?? "application/octet-stream"

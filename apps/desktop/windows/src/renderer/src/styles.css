@@ -1556,7 +1556,8 @@ button {
 .titlebar-avatar {
   display: inline-grid;
   width: 28px;
-  height: 26px;
+  height: 28px;
+  overflow: hidden;
   place-items: center;
   border: 0;
   border-radius: 50%;
@@ -1622,6 +1623,8 @@ button {
   display: grid;
   width: 32px;
   height: 32px;
+  min-width: 32px;
+  overflow: hidden;
   place-items: center;
   border-radius: 50%;
   background: var(--app-sidebar-active);
@@ -1727,6 +1730,8 @@ button {
   background: transparent;
   color: var(--app-text-secondary);
   font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
 }
 
 .login-language button.active {
@@ -1774,7 +1779,7 @@ button {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 1px var(--right-panel-width, 420px);
+  grid-template-columns: minmax(0, 1fr) 1px minmax(280px, min(var(--right-panel-width, 420px), 38vw));
   gap: 1px;
   flex: 1;
   height: 100%;
@@ -2776,7 +2781,7 @@ button {
 
 .composer-input-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: end;
   gap: 6px;
 }
@@ -2821,11 +2826,33 @@ button {
   background: var(--app-accent-soft);
 }
 
+.composer-voice-button.recording {
+  color: var(--app-danger);
+  background: var(--app-danger-soft);
+}
+
 .composer-actions {
   display: flex;
   align-items: center;
   align-self: center;
   gap: 6px;
+}
+
+.composer-actions-meta {
+  margin-left: auto;
+}
+
+.composer-actions-meta .composer-icon-button,
+.composer-actions-meta .composer-submit {
+  height: 30px;
+}
+
+.composer-actions-meta .composer-icon-button {
+  width: 30px;
+}
+
+.composer-actions-meta .composer-submit {
+  padding: 0 11px;
 }
 
 .composer-submit {
@@ -2839,6 +2866,49 @@ button {
 
 .composer-submit.stop {
   background: var(--app-danger);
+}
+
+.composer-voice-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  margin: 2px 40px 0;
+  padding: 3px 0;
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.composer-voice-status span {
+  color: var(--app-text-secondary);
+  font-weight: 600;
+}
+
+.composer-voice-status small {
+  color: inherit;
+}
+
+.composer-voice-status.error span,
+.composer-voice-status.error small {
+  color: var(--app-danger);
+}
+
+.composer-voice-status button {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 6px;
+  color: var(--app-text-secondary);
+  background: var(--app-panel-soft);
+  font-size: 11px;
+}
+
+.composer-voice-status button:hover {
+  color: var(--app-danger);
+  background: var(--app-danger-soft);
+  border-color: rgba(220, 38, 38, 0.25);
 }
 
 .composer-tool-menu {
@@ -3023,7 +3093,7 @@ button {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  height: 100%;
+  height: auto;
   overflow: hidden;
   border-left: 1px solid var(--app-panel-border);
   background: #ffffff;
@@ -3726,6 +3796,25 @@ button {
   overflow: auto;
   padding: clamp(18px, 5vh, 44px) 24px clamp(18px, 4vh, 30px);
   background: var(--app-surface-bg);
+  color: var(--app-text-primary);
+  font-family: var(--app-font-family);
+  font-synthesis-weight: none;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.login-screen.debug-open {
+  gap: 24px;
+  justify-content: center;
+}
+
+.login-screen *,
+.login-screen button,
+.login-screen input,
+.login-screen select {
+  font-family: inherit;
+  letter-spacing: 0;
 }
 
 .login-window-drag-region {
@@ -3807,6 +3896,7 @@ button {
 
 .login-brand strong {
   color: var(--app-text-primary);
+  font-family: var(--app-font-family);
   font-size: 25px;
   font-weight: 700;
   line-height: 1;
@@ -3865,6 +3955,8 @@ button {
 }
 
 .login-heading h1 {
+  display: grid;
+  gap: 6px;
   margin: clamp(14px, 3vh, 28px) 0 0;
   color: var(--app-text-primary);
   font-family: var(--app-font-family);
@@ -3873,6 +3965,55 @@ button {
   line-height: 1.32;
   letter-spacing: 0;
   text-align: center;
+}
+
+.login-heading h1 strong,
+.login-heading h1 span {
+  display: block;
+}
+
+.login-heading h1 strong {
+  color: var(--app-text-primary);
+  font-size: clamp(25px, 3.6vw, 32px);
+  font-weight: 750;
+  line-height: 1.16;
+}
+
+.login-heading h1 span {
+  color: var(--app-text-secondary);
+  font-size: clamp(15px, 2vw, 18px);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.login-heading h1.login-heading-title-en {
+  gap: 5px;
+  max-width: 460px;
+  margin-right: auto;
+  margin-left: auto;
+  font-size: clamp(18px, 2.25vw, 22px);
+  font-weight: 500;
+  line-height: 1.4;
+  text-wrap: balance;
+}
+
+.login-heading-title-en strong,
+.login-heading-title-en span {
+  display: block;
+}
+
+.login-heading-title-en strong {
+  color: var(--app-text-primary);
+  font-size: clamp(23px, 3vw, 30px);
+  font-weight: 750;
+  line-height: 1.18;
+}
+
+.login-heading-title-en span {
+  color: var(--app-text-secondary);
+  font-size: clamp(15px, 1.85vw, 18px);
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .login-heading p {
@@ -3939,6 +4080,9 @@ button {
   border-radius: 13px;
   color: var(--app-text-primary);
   background: #ffffff;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
   text-align: center;
 }
 
@@ -3982,7 +4126,9 @@ button {
   border-radius: 999px;
   color: #ffffff;
   background: var(--app-text-primary);
+  font-size: 14px;
   font-weight: 700;
+  line-height: 1.2;
 }
 
 .login-submit:disabled {
@@ -4028,6 +4174,136 @@ button {
   font-size: 13px;
 }
 
+.login-debug-panel {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  width: min(420px, 36vw);
+  max-height: calc(100vh - 72px);
+  flex: 0 0 min(420px, 36vw);
+  flex-direction: column;
+  align-self: center;
+  overflow: hidden;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: var(--app-shadow-md);
+}
+
+.login-debug-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--app-panel-border);
+}
+
+.login-debug-header strong,
+.login-debug-item strong {
+  display: block;
+  color: var(--app-text-primary);
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.login-debug-header span {
+  display: block;
+  margin-top: 4px;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.login-debug-header button {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--app-panel-border);
+  border-radius: 999px;
+  color: var(--app-text-secondary);
+  background: #ffffff;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.login-debug-status {
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: var(--app-text-primary);
+  background: var(--app-accent-soft);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.login-debug-status.success {
+  background: #e8f7ef;
+}
+
+.login-debug-status.error {
+  background: #fdebea;
+}
+
+.login-debug-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 16px 16px;
+  overflow: auto;
+  list-style: none;
+}
+
+.login-debug-item {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--app-panel-border);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.login-debug-item.info {
+  border-left-color: var(--app-accent);
+}
+
+.login-debug-item.success {
+  border-left-color: #2f9f61;
+}
+
+.login-debug-item.error {
+  border-left-color: #d6453d;
+}
+
+.login-debug-item time {
+  color: var(--app-text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.login-debug-item p,
+.login-debug-empty {
+  margin: 4px 0 0;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.login-debug-item code {
+  display: block;
+  max-width: 100%;
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+  color: var(--app-text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .login-footnote {
   width: min(430px, 100%);
   padding-top: 0;
@@ -4060,7 +4336,9 @@ button {
   border-radius: 13px;
   color: var(--app-text-secondary);
   background: transparent;
+  font-size: 14px;
   font-weight: 600;
+  line-height: 1.25;
 }
 
 .login-mode-link:hover,
@@ -4117,6 +4395,19 @@ button {
     font-size: 20px;
   }
 
+  .login-heading h1.login-heading-title-en {
+    max-width: 380px;
+    line-height: 1.36;
+  }
+
+  .login-heading-title-en strong {
+    font-size: 22px;
+  }
+
+  .login-heading-title-en span {
+    font-size: 15px;
+  }
+
   .login-form {
     gap: 7px;
   }
@@ -4158,9 +4449,9 @@ button {
 .context-right-panel .files-context-panel,
 .context-right-panel .terminal-side-panel,
 .context-right-panel .side-placeholder {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-height: 0;
-  height: 100%;
+  height: auto;
   overflow: hidden;
 }
 
@@ -5266,8 +5557,9 @@ button {
 .files-context-header {
   grid-row: 1;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 10px;
   min-height: 48px;
   padding: 0 0 10px;
@@ -5310,8 +5602,10 @@ button {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex: 0 0 auto;
+  flex: 1 1 240px;
+  flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
 }
 
 .files-context-toolbar button {
@@ -5351,7 +5645,10 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: clamp(110px, 13vw, 180px);
+  flex: 1 1 120px;
+  width: auto;
+  max-width: 180px;
+  min-width: 110px;
   height: 30px;
   padding: 0 9px;
   border: 1px solid var(--app-panel-border);

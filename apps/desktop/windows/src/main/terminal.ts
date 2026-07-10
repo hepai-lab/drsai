@@ -43,6 +43,22 @@ interface TerminalSession extends TerminalSessionInfo {
 
 const sessions = new Map<string, TerminalSession>();
 const MAX_BUFFER_LENGTH = 200_000;
+const POWERSHELL_READLINE_SETUP = [
+  "if (Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue) {",
+  "Set-PSReadLineOption -HistorySaveStyle SaveNothing;",
+  "Set-PSReadLineOption -Colors @{",
+  "Command = '#111827';",
+  "Parameter = '#374151';",
+  "String = '#047857';",
+  "Operator = '#374151';",
+  "Variable = '#7c3aed';",
+  "Number = '#b45309';",
+  "Type = '#0369a1';",
+  "Member = '#0369a1';",
+  "Error = '#dc2626'",
+  "}",
+  "}",
+].join(" ");
 
 function clampDimension(
   value: unknown,
@@ -131,7 +147,7 @@ function resolveShell(profile: TerminalShellProfile): { file: string; args: stri
           "-NoProfile",
           "-NoExit",
           "-Command",
-          "Set-PSReadLineOption -HistorySaveStyle SaveNothing",
+          POWERSHELL_READLINE_SETUP,
         ],
       };
     if (profile === "cmd")
@@ -146,7 +162,7 @@ function resolveShell(profile: TerminalShellProfile): { file: string; args: stri
         "-NoProfile",
         "-NoExit",
         "-Command",
-        "Set-PSReadLineOption -HistorySaveStyle SaveNothing",
+        POWERSHELL_READLINE_SETUP,
       ],
     };
   }

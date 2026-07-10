@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 const strict = process.env.REQUIRE_RELEASE_READY === "1";
 const skipPublicRelease = process.env.SKIP_PUBLIC_RELEASE_CHECK === "1";
 const steps = [
+  ["Windows publishing plan", npmScript("verify:publishing"), true, {}],
   ["Project invariants", npmScript("verify"), true, {}],
   ["Renderer UI invariants", npmScript("verify:ui"), true, {}],
   ["Renderer mojibake guard", npmScript("verify:mojibake"), true, {}],
@@ -21,6 +22,7 @@ const steps = [
   ["Bundled backend source", npmScript("verify:backend-bundle"), true, {}],
   ["Release manifest", npmScript("verify:manifest"), true, {}],
   ["Release artifacts", npmScript("verify:artifacts"), true, {}],
+  ["Winget manifests", npmScript("verify:winget"), true, {}],
   [
     "Windows signatures",
     npmScript("verify:signatures"),

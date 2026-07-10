@@ -1107,13 +1107,13 @@ export function WorkspaceShell({
             onClick={() => setUserMenuOpen((open) => !open)}
             title={user?.name ?? (zh ? "本地用户" : "Local user")}
           >
-            {user?.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span>{userInitials}</span>}
+            <UserAvatar user={user} fallback={userInitials} />
           </button>
           {userMenuOpen && (
             <div className="titlebar-user-menu" role="menu">
               <div className="titlebar-user-card">
                 <div className="titlebar-user-avatar">
-                  {user?.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span>{userInitials}</span>}
+                  <UserAvatar user={user} fallback={userInitials} />
                 </div>
                 <div>
                   <strong>{user?.name ?? (zh ? "本地用户" : "Local user")}</strong>
@@ -2384,6 +2384,31 @@ function getEnabledNavItems(navSections: NavSection[], sectionId: NavSection["id
   return navSections.filter((section) => section.id === sectionId)[0]?.items.filter((item) => item.enabled) ?? [];
 }
 
+function UserAvatar({ user, fallback }: { user: AuthUser | null; fallback: string }) {
+  const [failed, setFailed] = useState(false);
+  const avatarUrl = user?.avatarUrl?.trim() || "";
+  const showImage = Boolean(avatarUrl) && !failed && !isDefaultAvatarUrl(avatarUrl);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [avatarUrl]);
+
+  if (showImage) {
+    return <img src={avatarUrl} alt="" onError={() => setFailed(true)} />;
+  }
+
+  return <span>{fallback}</span>;
+}
+
+function isDefaultAvatarUrl(url: string): boolean {
+  const normalized = url.trim().toLowerCase();
+  if (!normalized) return true;
+  if (normalized === "/user.png" || normalized.endsWith("/user.png")) return true;
+  if (normalized.includes("default") && normalized.includes("avatar")) return true;
+  if (normalized.includes("placeholder") && normalized.includes("avatar")) return true;
+  return false;
+}
+
 function getUserInitials(user: AuthUser | null, zh: boolean): string {
   const source = user?.name?.trim() || user?.email?.trim() || (zh ? "本地用户" : "Local user");
   const emailName = source.includes("@") ? source.split("@")[0] : source;
@@ -2391,8 +2416,8 @@ function getUserInitials(user: AuthUser | null, zh: boolean): string {
     .replace(/[._-]+/g, " ")
     .split(/\s+/)
     .filter(Boolean);
-  const initials = parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : emailName.slice(0, 2);
-  return initials.toUpperCase();
+  const initials = Array.from((parts.join("") || emailName).trim()).slice(0, 2).join("");
+  return (initials || "?").toLocaleUpperCase();
 }
 
 function clamp(value: number, min: number, max: number): number {

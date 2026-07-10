@@ -67,7 +67,16 @@ try {
   if (gatewayProcess) {
     killProcessTree(gatewayProcess.pid);
   }
-  rmSync(tempHome, { recursive: true, force: true });
+  cleanupTempDir(tempHome);
+}
+process.exit(process.exitCode ?? 0);
+
+function cleanupTempDir(path) {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    console.warn(`Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function resolvePython() {

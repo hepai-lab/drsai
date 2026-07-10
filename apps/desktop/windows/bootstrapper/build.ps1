@@ -11,7 +11,18 @@ $ErrorActionPreference = "Stop"
 
 $makensis = Get-Command makensis -ErrorAction SilentlyContinue
 if (-not $makensis) {
-    throw "NSIS makensis was not found. Install NSIS and make sure makensis.exe is on PATH."
+    $cacheRoot = Join-Path $env:LOCALAPPDATA "electron-builder\Cache"
+    if (Test-Path $cacheRoot) {
+        $cachedMakensis = Get-ChildItem -Path $cacheRoot -Recurse -Filter makensis.exe -ErrorAction SilentlyContinue |
+            Sort-Object FullName |
+            Select-Object -First 1
+        if ($cachedMakensis) {
+            $makensis = [pscustomobject]@{ Source = $cachedMakensis.FullName }
+        }
+    }
+}
+if (-not $makensis) {
+    throw "NSIS makensis was not found. Install NSIS or run npm run build:win once so electron-builder can cache NSIS."
 }
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null

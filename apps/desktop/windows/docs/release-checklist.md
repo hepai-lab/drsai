@@ -32,11 +32,18 @@ When executables are unsigned, `release-summary.json` marks
 artifacts.
 CI also uploads `release/visual-checks/*.png` as workflow artifacts for visual
 review. These screenshots are not required public Release assets.
+CI generates `release/winget/**/*.yaml` from the same release manifest and
+uploads those files as workflow artifacts for the Windows Package Manager PR.
+They do not need to be attached to the public GitHub Release.
 `minimumBootstrapperVersion` is enforced by the tiny installer; raise it when a
 future manifest requires newer bootstrapper behavior.
 Top-level npm dependencies are pinned to exact versions so Electron,
 electron-builder, electron-updater, Vite, React, and Tailwind do not drift during
 manual release preparation.
+`electron-builder.yml` keeps `npmRebuild: false` because `node-pty` ships
+Windows prebuilds and its source rebuild requires the Visual Studio Spectre
+mitigated runtime libraries on local builders. If the Electron or `node-pty`
+version changes, run a clean packaged smoke test before promoting the release.
 
 ## Code Signing
 
@@ -96,6 +103,39 @@ against `latest-windows.json`, verifies its sha512 against `latest.yml`, and
 checks its Authenticode signature on Windows.
 Both commands also verify that public `release-summary.json` matches the
 published assets and marks `distribution.publicDistributionReady` as `true`.
+
+## Store and Winget Follow-up
+
+The direct GitHub Release is the source of truth for the first public Windows
+channel. After it passes public verification, continue with
+`docs/windows-publishing-implementation-plan.md` for Microsoft Store and
+Windows Package Manager distribution.
+
+Generate winget manifests from the same verified release metadata:
+
+```powershell
+npm run winget:manifest
+npm run verify:winget
+```
+
+This writes a versioned `HepAI.OpenDrSai` manifest folder under
+`release/winget/`. CI also uploads this folder as a workflow artifact. Validate
+it with Windows Package Manager tooling before opening the
+`microsoft/winget-pkgs` pull request.
+
+For Microsoft Store submission, copy
+`store/electron-builder.appx.template.yml` to a private release config and fill
+the Partner Center package identity, publisher subject, and publisher display
+name. Use `store/store-listing.template.json` as the listing checklist for the
+privacy policy URL, support URL, screenshots, certification notes, and
+data-safety copy. Verify both templates before submission:
+
+```powershell
+npm run verify:store
+```
+
+If AppX packaging is blocked, submit the signed, versioned NSIS installer as a
+non-game Win32 direct-link package in Partner Center.
 
 Publishing the GitHub Release also triggers the
 `Windows Public Release Verification` workflow. Use its manual dispatch with a

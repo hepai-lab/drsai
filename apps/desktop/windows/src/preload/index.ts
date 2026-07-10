@@ -78,6 +78,11 @@ import type {
   DesktopCustomCommandDeleteResult,
   DesktopCustomCommandListRequest,
   DesktopCustomCommandUpsertRequest,
+  DesktopThreadSnapshot,
+  DesktopVoiceTranscriptHandoffRequest,
+  DesktopVoiceTranscriptHandoffResult,
+  DesktopVoiceTranscriptionRequest,
+  DesktopVoiceTranscriptionResult,
   DesktopScheduledTask,
   DesktopScheduledTaskCreateRequest,
   DesktopScheduledTaskListRequest,
@@ -119,6 +124,7 @@ import type {
   LoginResult,
   LogoutOptions,
   MyDrSaiConfig,
+  OidcLoginDebugEvent,
   SaveApiKeyResult,
   StartInstallOptions,
   UpdateMyDrSaiConfigRequest,
@@ -208,6 +214,10 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:create-thread", request),
   updateThread: (request: UpdateThreadRequest) =>
     ipcRenderer.invoke("desktop:update-thread", request),
+  getThreadSnapshot: (threadId: string): Promise<DesktopThreadSnapshot | null> =>
+    ipcRenderer.invoke("desktop:get-thread-snapshot", threadId),
+  updateThreadSnapshot: (snapshot: DesktopThreadSnapshot): Promise<DesktopThreadSnapshot> =>
+    ipcRenderer.invoke("desktop:update-thread-snapshot", snapshot),
   prepareForkWorktree: (
     request: DesktopForkWorktreeRequest,
   ): Promise<DesktopForkWorktreeResult> =>
@@ -216,6 +226,14 @@ const api: DesktopApi = {
     ipcRenderer.invoke("desktop:start-chat", request),
   abortChat: (requestId: string): Promise<boolean> =>
     ipcRenderer.invoke("desktop:abort-chat", requestId),
+  transcribeVoiceRecording: (
+    request: DesktopVoiceTranscriptionRequest,
+  ): Promise<DesktopVoiceTranscriptionResult> =>
+    ipcRenderer.invoke("desktop:voice-transcribe", request),
+  writeVoiceTranscriptHandoff: (
+    request: DesktopVoiceTranscriptHandoffRequest,
+  ): Promise<DesktopVoiceTranscriptHandoffResult> =>
+    ipcRenderer.invoke("desktop:voice-handoff-write", request),
   startAgentRun: (
     request: AgentRunRequest,
   ): Promise<{ requestId: string; sessionId: string; runId: string }> =>
@@ -497,6 +515,9 @@ const api: DesktopApi = {
   decidePendingApproval: (
     request: DesktopApprovalDecisionRequest,
   ): Promise<boolean> => ipcRenderer.invoke("desktop:decide-approval", request),
+  decideApproval: (
+    request: DesktopApprovalDecisionRequest,
+  ): Promise<boolean> => ipcRenderer.invoke("desktop:decide-approval", request),
   listPendingBrowserTaskApprovals: () =>
     ipcRenderer.invoke("desktop:browser-task-pending-approvals"),
   approveBrowserTaskAction: (
@@ -532,6 +553,16 @@ const api: DesktopApi = {
     ipcRenderer.on("desktop:install-progress", listener);
     return () =>
       ipcRenderer.removeListener("desktop:install-progress", listener);
+  },
+  onOidcLoginDebug: (
+    callback: (event: OidcLoginDebugEvent) => void,
+  ): (() => void) => {
+    const listener = (_event: IpcRendererEvent, event: OidcLoginDebugEvent) => {
+      callback(event);
+    };
+    ipcRenderer.on("desktop:oidc-login-debug", listener);
+    return () =>
+      ipcRenderer.removeListener("desktop:oidc-login-debug", listener);
   },
   onChatEvent: (callback: (event: ChatEvent) => void): (() => void) => {
     const listener = (_event: IpcRendererEvent, event: ChatEvent) => {

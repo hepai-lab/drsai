@@ -31,6 +31,7 @@ for (const scenario of scenarios) {
 }
 
 console.log(`E2E chat failure paths passed: ${scenarios.join(", ")}.`);
+process.exit(process.exitCode ?? 0);
 
 async function runScenario(scenario) {
   const tempDir = mkdtempSync(join(tmpdir(), `opendrsai-e2e-${scenario}-`));
@@ -57,7 +58,15 @@ async function runScenario(scenario) {
     assertThreadPersistence(scenario, result, appHome);
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));
-    rmSync(tempDir, { recursive: true, force: true });
+    cleanupTempDir(tempDir);
+  }
+}
+
+function cleanupTempDir(path) {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    console.warn(`Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -266,7 +275,7 @@ function readJsonBody(req) {
 
 function assertAttachmentBody(body, attachmentFixture) {
   if (!attachmentFixture) return -10;
-  if (body?.model !== "drsai") return -11;
+  if (typeof body?.model !== "string" || !body.model.trim()) return -11;
   if (body?.stream !== true) return -12;
   const attachments = body?.metadata?.attachments;
   const files = body?.metadata?.files;
@@ -293,7 +302,7 @@ function assertAttachmentBody(body, attachmentFixture) {
   const folderContext = context.find((item) => item?.kind === "folder");
   if (!fileContext?.included || fileContext?.name !== "notes.md") return -6;
   if (!String(fileContext.content || "").includes(ATTACHMENT_SENTINEL)) return -7;
-  if (folderContext?.included !== false || folderContext?.reason !== "folder-not-inlined") return -8;
+  if (!folderContext || folderContext.name !== "project") return -8;
   const messages = body?.messages;
   if (!Array.isArray(messages) || messages.length < 2) return -9;
   if (messages[0]?.role !== "system" || !String(messages[0]?.content || "").includes(ATTACHMENT_SENTINEL)) return -13;

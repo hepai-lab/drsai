@@ -146,6 +146,7 @@ assert(
     read("src/shared/desktopApi.ts").includes("closeMcpReusableSession") &&
     read("src/shared/desktopApi.ts").includes("cancelMcpActiveSession") &&
     read("src/shared/desktopApi.ts").includes("decidePendingApproval") &&
+    read("src/shared/desktopApi.ts").includes("decideApproval") &&
     read("src/shared/desktopApi.ts").includes("listPendingBrowserTaskApprovals") &&
     read("src/preload/index.ts").includes("desktop:propose-approval") &&
     read("src/preload/index.ts").includes("desktop:shell-command-approval") &&
@@ -161,6 +162,7 @@ assert(
     read("src/preload/index.ts").includes("desktop:mcp-reusable-session-close") &&
     read("src/preload/index.ts").includes("desktop:mcp-session-cancel") &&
     read("src/preload/index.ts").includes("desktop:decide-approval") &&
+    read("src/preload/index.ts").includes("decideApproval") &&
     read("src/preload/index.ts").includes("desktop:browser-task-pending-approvals") &&
     read("src/main/index.ts").includes("pendingDesktopApprovals") &&
     read("src/main/index.ts").includes("pendingShellCommandApprovals") &&

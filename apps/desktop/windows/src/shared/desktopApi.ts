@@ -111,6 +111,28 @@ export interface AuthSession {
   refreshable?: boolean;
 }
 
+export type OidcLoginDebugStage =
+  | "started"
+  | "callback-listening"
+  | "discovery"
+  | "authorize-url"
+  | "browser-opened"
+  | "waiting-callback"
+  | "callback-received"
+  | "token-exchange"
+  | "token-verified"
+  | "session-created"
+  | "cancelled"
+  | "failed";
+
+export interface OidcLoginDebugEvent {
+  stage: OidcLoginDebugStage;
+  status: "info" | "success" | "error";
+  message: string;
+  at: string;
+  url?: string;
+}
+
 export interface DesktopSsoStartResult {
   ok: boolean;
   message: string;
@@ -125,6 +147,58 @@ export interface DesktopSsoPollResult {
   state: "pending" | "authorized" | "expired" | "cancelled" | "error";
   message: string;
   session?: AuthSession | null;
+}
+
+export type DesktopVoiceRuntimeId =
+  | "mock-local"
+  | "gateway-provider"
+  | "local-whisper";
+
+export interface DesktopVoiceTranscriptionRequest {
+  workspacePath: string;
+  audioBase64?: string;
+  mimeType: string;
+  durationSeconds: number;
+  languageHint?: string;
+  sourceLabel?: string;
+  mockTranscriptText?: string;
+}
+
+export interface DesktopVoiceTranscriptionResult {
+  ok: boolean;
+  transcript: string;
+  language?: string;
+  durationSeconds: number;
+  confidence?: number;
+  runtimeId: DesktopVoiceRuntimeId;
+  sourceId: string;
+  createdAt: string;
+  truncated: boolean;
+  providerDisclosure: string;
+  message: string;
+  error?: string;
+}
+
+export interface DesktopVoiceTranscriptHandoffRequest {
+  workspacePath: string;
+  transcript: string;
+  title?: string;
+  speaker?: string;
+  language?: string;
+  durationSeconds?: number;
+  sourceId?: string;
+  runtimeId?: DesktopVoiceRuntimeId;
+  capturedAt?: string;
+}
+
+export interface DesktopVoiceTranscriptHandoffResult {
+  ok: boolean;
+  transcriptPath: string;
+  relativePath: string;
+  recordId: string;
+  itemCount: number;
+  importRequest: DesktopChannelContextImportRequest;
+  message: string;
 }
 
 export interface LoginRequest {
@@ -1476,6 +1550,23 @@ export interface DesktopThread {
   unread?: boolean;
 }
 
+export interface DesktopThreadMessageSnapshot extends ChatMessage {
+  id: string;
+  streaming?: boolean;
+  error?: boolean;
+  statusContent?: string;
+  startedAt?: number;
+  lastEventAt?: number;
+}
+
+export interface DesktopThreadSnapshot {
+  threadId: string;
+  title: string;
+  messages: DesktopThreadMessageSnapshot[];
+  updatedAt: number;
+  messageCount: number;
+}
+
 export interface DesktopThreadForkMetadata {
   sourceWorkspacePath: string;
   repoRoot: string;
@@ -2055,6 +2146,8 @@ export interface DesktopApi {
   updateMyDrSaiConfig(request: UpdateMyDrSaiConfigRequest): Promise<MyDrSaiConfig>;
   createThread(request: CreateThreadRequest): Promise<DesktopThread>;
   updateThread(request: UpdateThreadRequest): Promise<DesktopThread>;
+  getThreadSnapshot(threadId: string): Promise<DesktopThreadSnapshot | null>;
+  updateThreadSnapshot(snapshot: DesktopThreadSnapshot): Promise<DesktopThreadSnapshot>;
   prepareForkWorktree(
     request: DesktopForkWorktreeRequest,
   ): Promise<DesktopForkWorktreeResult>;
@@ -2064,6 +2157,12 @@ export interface DesktopApi {
     request: AgentRunRequest,
   ): Promise<{ requestId: string; sessionId: string; runId: string }>;
   abortAgentRun(requestId: string): Promise<boolean>;
+  transcribeVoiceRecording(
+    request: DesktopVoiceTranscriptionRequest,
+  ): Promise<DesktopVoiceTranscriptionResult>;
+  writeVoiceTranscriptHandoff(
+    request: DesktopVoiceTranscriptHandoffRequest,
+  ): Promise<DesktopVoiceTranscriptHandoffResult>;
   saveApiKey(apiKey: string, defaultModel?: string): Promise<SaveApiKeyResult>;
   pickFiles(): Promise<PickDialogResult>;
   pickFolder(): Promise<PickDialogResult>;
@@ -2222,6 +2321,7 @@ export interface DesktopApi {
   ): Promise<DesktopMcpSessionCancelResult>;
   listPendingApprovals(): Promise<DesktopPendingApproval[]>;
   decidePendingApproval(request: DesktopApprovalDecisionRequest): Promise<boolean>;
+  decideApproval(request: DesktopApprovalDecisionRequest): Promise<boolean>;
   listPendingBrowserTaskApprovals(): Promise<BrowserTaskPendingApproval[]>;
   approveBrowserTaskAction(request: BrowserTaskApprovalRequest): Promise<boolean>;
   openExternal(url: string): Promise<void>;
@@ -2239,6 +2339,7 @@ export interface DesktopApi {
   resizeTerminal(id: string, cols: number, rows: number): Promise<boolean>;
   killTerminal(id: string): Promise<boolean>;
   onInstallProgress(callback: (progress: InstallProgress) => void): () => void;
+  onOidcLoginDebug(callback: (event: OidcLoginDebugEvent) => void): () => void;
   onChatEvent(callback: (event: ChatEvent) => void): () => void;
   onAgentRunEvent(callback: (event: AgentRunEvent) => void): () => void;
   onUpdateStatus(callback: (status: UpdateStatus) => void): () => void;

@@ -145,8 +145,9 @@ OpenDrSai Windows 和 HAI backend 必须协同测试。
 
 - 本地 fake OIDC issuer E2E 覆盖完整主流程。
 - HAI OIDC discovery/JWKS/authorize/token/revoke 行为与桌面端 expectations 对齐。
-- 真实环境最终验收需使用：
-  - `https://aidev.ihep.ac.cn/backend`
+- 开发环境验收需使用：
+  - OIDC 平台前端：`http://localhost:3000`
+  - OIDC 平台后端：`http://localhost:8081/api`
   - IHEP SSO 可用账号
   - Windows 桌面端浏览器登录
 
@@ -236,7 +237,7 @@ OpenDrSai Windows 和 HAI backend 必须协同测试。
 
 - 从 `OPENDRSAI_OIDC_ISSUER` 读取 issuer。
 - fallback 到 `HAI_OIDC_ISSUER`。
-- fallback 到 `https://aidev.ihep.ac.cn/backend`。
+- fallback 到 `http://localhost:8081/api`。
 - 请求 `.well-known/openid-configuration`。
 - 校验 discovery issuer。
 - 缓存 metadata。
@@ -609,38 +610,49 @@ OpenDrSai Windows 和 HAI backend 必须协同测试。
 - 能配置好 Python 依赖后运行：
   `python -m pytest backend\webui\test\apps\webui\oidc\test_oidc_unit.py -q`
 
-### T24. 真实环境联调验收
+### T24. 开发环境联调验收
 
 仓库：两个仓库协同
 
 前置条件：
 
 - HAI backend 部署 `feature/oidc_auth` 或包含同等 OIDC 能力。
-- `HAI_OIDC_ISSUER=https://aidev.ihep.ac.cn/backend`。
+- OIDC 平台前端：
+  `http://localhost:3000`
+- OIDC 平台后端 / issuer：
+  `http://localhost:8081/api`
+- `HAI_OIDC_ISSUER=http://localhost:8081/api`。
 - IHEP SSO callback 注册：
-  `https://aidev.ihep.ac.cn/backend/oauth2/upstream/ihep/callback`
+  `http://localhost:8081/api/oauth2/upstream/ihep/callback`
+- 测试用回调前端：
+  `http://localhost:3000/`
 - 默认 desktop client 存在：
   `opendrsai-desktop`
 - Windows 端设置：
-  `OPENDRSAI_OIDC_ISSUER=https://aidev.ihep.ac.cn/backend`
+  `OPENDRSAI_OIDC_ISSUER=http://localhost:8081/api`
 
 测试步骤：
 
 1. 启动 HAI backend。
-2. 验证 discovery：
-   `GET https://aidev.ihep.ac.cn/backend/.well-known/openid-configuration`
-3. 验证 JWKS：
-   `GET https://aidev.ihep.ac.cn/backend/.well-known/jwks.json`
-4. 启动 OpenDrSai Windows app。
-5. 点击 IHEP SSO/AI 平台登录。
-6. 浏览器跳到 AI 平台/IHEP。
-7. 完成认证。
-8. 浏览器返回 `127.0.0.1:{port}/callback`。
-9. 桌面端显示已登录用户。
-10. 发送一次 chat/agent 请求，确认 HAI/API 收到 bearer token。
-11. 重启桌面端，确认 session restore。
-12. 强制 refresh，确认 token 更新。
-13. 点击退出，确认 revoke 和本地清理。
+2. 启动 OIDC 平台前端：
+   `http://localhost:3000`
+3. 运行开发环境前置检查：
+   `npm run verify:oidc-dev-env`
+4. 验证 discovery：
+   `GET http://localhost:8081/api/.well-known/openid-configuration`
+5. 验证 JWKS：
+   `GET http://localhost:8081/api/.well-known/jwks.json`
+6. 启动 OpenDrSai Windows app。
+7. 点击 IHEP SSO/AI 平台登录。
+8. 浏览器跳到本地 AI 平台/IHEP 登录前端 `http://localhost:3000`。
+9. 完成认证。
+10. 如需经过测试回调前端，确认前端地址为 `http://localhost:3000/`。
+11. 浏览器返回 `127.0.0.1:{port}/callback`。
+12. 桌面端显示已登录用户。
+13. 发送一次 chat/agent 请求，确认 HAI/API 收到 bearer token。
+14. 重启桌面端，确认 session restore。
+15. 强制 refresh，确认 token 更新。
+16. 点击退出，确认 revoke 和本地清理。
 
 验收标准：
 
@@ -668,7 +680,9 @@ C:\Users\win11\VSProjects\drsai\apps\desktop\windows
 npm run typecheck
 npm run build
 npm run verify:oidc-login
+npm run verify:oidc-dev-env
 npm run verify:e2e-oidc-login
+npm run verify:e2e-oidc-hai
 npm run verify:ui
 npm run verify:mojibake
 ```
@@ -708,9 +722,13 @@ python -m pytest backend\webui\test\apps\webui\oidc\test_oidc_unit.py -q
 
 1. OpenDrSai fake issuer E2E：
    `npm run verify:e2e-oidc-login`
-2. HAI backend OIDC 单测：
+2. 开发环境 OIDC 前置检查：
+   `npm run verify:oidc-dev-env`
+3. HAI issuer E2E：
+   `npm run verify:e2e-oidc-hai`
+4. HAI backend OIDC 单测：
    `python -m pytest backend\webui\test\apps\webui\oidc\test_oidc_unit.py -q`
-3. 真实 AI 平台/IHEP 浏览器登录：
+5. 开发环境 AI 平台/IHEP 浏览器登录：
    手工执行 T24。
 
 ## 完成定义
@@ -719,7 +737,7 @@ python -m pytest backend\webui\test\apps\webui\oidc\test_oidc_unit.py -q
 
 - F1-F8 全部实现。
 - T01-T23 通过本地验证。
-- T24 在真实环境通过。
+- T24 在开发环境通过。
 - Windows 端没有 raw token 暴露到 renderer public session。
 - logout 会 best-effort revoke refresh token。
 - 后续 chat/agent/API 请求使用 OIDC bearer token。
@@ -729,7 +747,8 @@ python -m pytest backend\webui\test\apps\webui\oidc\test_oidc_unit.py -q
 
 以下不是代码实现项，但会影响最终真实验收：
 
-- 需要可用的 `https://aidev.ihep.ac.cn/backend` 部署。
+- 需要可用的开发环境 OIDC 平台前端 `http://localhost:3000`。
+- 需要可用的开发环境 OIDC 平台后端 `http://localhost:8081/api`。
 - 需要可用的 IHEP SSO 测试账号。
 - 需要确认 IHEP SSO callback 已注册。
 - 当前本机 HAI pytest 环境依赖不完整时，pytest 可能超时或无法完成。

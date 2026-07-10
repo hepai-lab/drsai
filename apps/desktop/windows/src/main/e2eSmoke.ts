@@ -53,7 +53,13 @@ export function maybeRunE2eSmoke(window: BrowserWindow): void {
     writeResult(resultPath, {
       ok: false,
       checks: {},
-      details: {},
+      details: {
+        url: window.webContents.getURL(),
+        title: window.webContents.getTitle(),
+        isLoading: window.webContents.isLoading(),
+        isLoadingMainFrame: window.webContents.isLoadingMainFrame(),
+        startupTrace: (globalThis as { __OPENDRSAI_E2E_TRACE?: unknown }).__OPENDRSAI_E2E_TRACE,
+      },
       error: "Packaged app smoke timed out.",
     });
     process.exit(1);
@@ -1206,12 +1212,14 @@ async function runForkMergeSmoke(window: BrowserWindow): Promise<SmokeResult> {
     conflictHead,
     conflictStatus,
   };
-  result.checks.approvedSourceContainsForkChange = mergedContent === approvedFixture.expectedContent;
+  result.checks.approvedSourceContainsForkChange =
+    normalizeSmokeText(mergedContent) === normalizeSmokeText(approvedFixture.expectedContent);
   result.checks.approvedSourceHeadAdvanced = mergedHead !== approvedFixture.baseRef;
   result.checks.approvedMergeCommitHasTwoParents = mergeParents.trim().split(/\s+/).length === 3;
   result.checks.cleanupRemovedWorktree = !existsSync(approvedFixture.worktreePath);
   result.checks.cleanupDeletedMergedBranch = !cleanupBranchExists;
-  result.checks.conflictSourceContentPreserved = conflictContent === conflictFixture.sourceContent;
+  result.checks.conflictSourceContentPreserved =
+    normalizeSmokeText(conflictContent) === normalizeSmokeText(conflictFixture.sourceContent);
   result.checks.conflictSourceHeadPreserved = conflictHead === conflictFixture.sourceHead;
   result.checks.conflictMergeWasAborted = conflictStatus.trim() === "";
 
@@ -1220,8 +1228,8 @@ async function runForkMergeSmoke(window: BrowserWindow): Promise<SmokeResult> {
 }
 
 function prepareForkMergeApprovedFixture(): ForkMergeApprovedFixture {
-  const fixtureRoot = join(process.env.DRSAI_HOME || "", "e2e-fork-merge-approved");
-  if (!fixtureRoot || fixtureRoot === "e2e-fork-merge-approved") {
+  const fixtureRoot = join(process.env.DRSAI_HOME || "", "desktop", "fork-worktrees", "e2e-fork-merge-approved");
+  if (!process.env.DRSAI_HOME) {
     throw new Error("DRSAI_HOME is required for the approved fork merge-back fixture.");
   }
   rmSync(fixtureRoot, { recursive: true, force: true });
@@ -1258,8 +1266,8 @@ function prepareForkMergeApprovedFixture(): ForkMergeApprovedFixture {
 }
 
 function prepareForkMergeConflictFixture(): ForkMergeConflictFixture {
-  const fixtureRoot = join(process.env.DRSAI_HOME || "", "e2e-fork-merge-conflict");
-  if (!fixtureRoot || fixtureRoot === "e2e-fork-merge-conflict") {
+  const fixtureRoot = join(process.env.DRSAI_HOME || "", "desktop", "fork-worktrees", "e2e-fork-merge-conflict");
+  if (!process.env.DRSAI_HOME) {
     throw new Error("DRSAI_HOME is required for the conflict fork merge-back fixture.");
   }
   rmSync(fixtureRoot, { recursive: true, force: true });
@@ -1308,6 +1316,10 @@ function runSmokeGit(cwd: string, args: string[]): string {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   }).trim();
+}
+
+function normalizeSmokeText(value: string): string {
+  return value.replace(/\r\n/g, "\n");
 }
 
 function smokeGitSucceeds(cwd: string, args: string[]): boolean {
@@ -1374,6 +1386,76 @@ async function runOidcSmoke(window: BrowserWindow): Promise<SmokeResult> {
       const refreshed = await api.refreshAuthSession();
       details.refreshed = refreshed;
       checks.refreshSession = publicSessionLooksOidc(refreshed);
+
+      const health = await api.getHealth();
+      details.gateway = {
+        gatewayReady: health && health.gatewayReady,
+        gatewayManaged: health && health.gateway && health.gateway.managed,
+      };
+      checks.oidcGatewayReady = Boolean(health && health.gatewayReady && health.gateway && health.gateway.managed);
+
+      const chatRequestId = "e2e-oidc-chat-0001";
+      const chatEvents = [];
+      const unsubscribeChat = api.onChatEvent((event) => {
+        if (event.requestId === chatRequestId) chatEvents.push(event);
+      });
+      try {
+        const returnedChatRequestId = await api.startChat({
+          requestId: chatRequestId,
+          model: "drsai",
+          messages: [{ role: "user", content: "oidc chat bearer check" }],
+        });
+        details.oidcChatReturnedRequestId = returnedChatRequestId;
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline && !chatEvents.some((event) => ["done", "error", "aborted"].includes(event.type))) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      } finally {
+        unsubscribeChat();
+      }
+      details.oidcChatEvents = chatEvents.map((event) => ({
+        type: event.type,
+        requestId: event.requestId,
+        content: event.content,
+        error: event.error,
+      }));
+      checks.oidcChatStart = chatEvents.some((event) => event.type === "start");
+      checks.oidcChatChunk = chatEvents.some((event) => event.type === "chunk" && String(event.content || "").includes("oidc chat bearer ok"));
+      checks.oidcChatDone = chatEvents.some((event) => event.type === "done");
+      checks.oidcChatNoError = !chatEvents.some((event) => event.type === "error" || event.type === "aborted");
+
+      const agentRequestId = "e2e-oidc-agent-0001";
+      const agentEvents = [];
+      const unsubscribeAgent = api.onAgentRunEvent((event) => {
+        if (event.requestId === agentRequestId) agentEvents.push(event);
+      });
+      try {
+        const returnedAgent = await api.startAgentRun({
+          requestId: agentRequestId,
+          sessionId: "e2e-oidc-agent-session",
+          runId: "e2e-oidc-agent-run",
+          task: "oidc agent bearer check",
+          model: "drsai",
+          metadata: { source: "e2e-oidc" },
+        });
+        details.oidcAgentReturned = returnedAgent;
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline && !agentEvents.some((event) => ["done", "error", "aborted"].includes(event.type))) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      } finally {
+        unsubscribeAgent();
+      }
+      details.oidcAgentEvents = agentEvents.map((event) => ({
+        type: event.type,
+        requestId: event.requestId,
+        content: event.content,
+        error: event.error,
+      }));
+      checks.oidcAgentStart = agentEvents.some((event) => event.type === "start");
+      checks.oidcAgentChunk = agentEvents.some((event) => event.type === "chunk" && String(event.content || "").includes("oidc agent bearer ok"));
+      checks.oidcAgentDone = agentEvents.some((event) => event.type === "done");
+      checks.oidcAgentNoError = !agentEvents.some((event) => event.type === "error" || event.type === "aborted");
 
       return { checks, details };
     })()
@@ -1523,7 +1605,9 @@ async function runSmoke(window: BrowserWindow): Promise<SmokeResult> {
 
       const outsidePathResult = await api.openPath("C:\\\\\\\\Windows\\\\\\\\win.ini");
       details.outsidePathResult = outsidePathResult;
-      checks.openPathOutsideRejected = String(outsidePathResult).includes("outside DrSai home");
+      checks.openPathOutsideRejected =
+        String(outsidePathResult).includes("outside DrSai home") ||
+        String(outsidePathResult).includes("not registered as a DrSai or workspace path");
 
       return { checks, details };
     })()

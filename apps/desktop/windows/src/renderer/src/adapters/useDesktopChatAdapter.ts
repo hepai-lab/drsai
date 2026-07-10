@@ -11,6 +11,7 @@ import type {
   DesktopForkQueueStartApprovalResult,
   DesktopProjectMemoryEntry,
   DesktopThread,
+  DesktopThreadSnapshot,
   MyDrSaiModelConfig,
   WorkspaceContextOverview,
   WorkspaceInstructionSummary,
@@ -48,13 +49,7 @@ export interface DesktopChatAdapter {
   abort: () => Promise<void>;
 }
 
-export interface ChatThreadSnapshot {
-  threadId: string;
-  title: string;
-  messages: UiMessage[];
-  updatedAt: number;
-  messageCount: number;
-}
+export type ChatThreadSnapshot = DesktopThreadSnapshot;
 
 export function useDesktopChatAdapter({
   availableAgents,

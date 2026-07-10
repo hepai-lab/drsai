@@ -1,4 +1,5 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import type { OidcLoginDebugEvent } from "@shared/desktopApi";
 import drsaiLogo from "../assets/drsai-transparent.png";
 import type { AppLanguage } from "../navigation";
 import { useAuth } from "./AuthProvider";
@@ -17,16 +18,52 @@ export function LoginScreen(): React.JSX.Element {
   const auth = useAuth();
   const [language, setLanguage] = useState<AppLanguage>("zh");
   const [mode, setMode] = useState<LoginMode>("oidc");
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [loginEvents, setLoginEvents] = useState<OidcLoginDebugEvent[]>([]);
   const [apiKey, setApiKey] = useState("");
   const [defaultModel, setDefaultModel] = useState(DEFAULT_MODEL_OPTIONS[0].value);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(true);
   const zh = language === "zh";
+  const latestLoginEvent = loginEvents[loginEvents.length - 1] ?? null;
+  const loginDebugTitle = zh ? "登录调试" : "Login Debug";
+  const currentStepLabel = useMemo(() => {
+    if (!latestLoginEvent) return zh ? "尚未开始" : "Not started";
+    return getDebugStageLabel(latestLoginEvent.stage, zh);
+  }, [latestLoginEvent, zh]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key !== "F12") return;
+      event.preventDefault();
+      setDebugOpen((open) => !open);
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.openDrSai?.onOidcLoginDebug?.((event) => {
+      setLoginEvents((events) => [...events.slice(-79), event]);
+      setDebugOpen(true);
+    });
+    return () => unsubscribe?.();
+  }, []);
 
   async function handleSubmit(event: FormEvent): Promise<void> {
     event.preventDefault();
     if (mode === "oidc") {
+      setLoginEvents([
+        {
+          stage: "started",
+          status: "info",
+          message: "Clicked HepAI sign-in button.",
+          at: new Date().toISOString(),
+        },
+      ]);
+      setDebugOpen(true);
       await auth.startOidcLogin({ rememberMe });
     } else if (mode === "api_key") {
       await auth.login({ apiKey, defaultModel, rememberMe });
@@ -47,7 +84,7 @@ export function LoginScreen(): React.JSX.Element {
       if (mode === "oidc") return zh ? "正在等待浏览器登录..." : "Waiting for browser sign-in...";
       return zh ? "正在继续..." : "Continuing...";
     }
-    if (mode === "oidc") return zh ? "使用 IHEP SSO 登录" : "Continue with IHEP SSO";
+    if (mode === "oidc") return zh ? "使用 HepAI 继续" : "Continue with HepAI";
     if (mode === "api_key") return zh ? "使用 API key 登录" : "Continue with API key";
     return zh ? "继续" : "Continue";
   }
@@ -55,7 +92,7 @@ export function LoginScreen(): React.JSX.Element {
   function getModeLinkLabel(): string {
     if (mode === "oidc") return zh ? "改用 API key" : "Use API key instead";
     if (mode === "api_key") return zh ? "使用账号登录" : "Continue with account";
-    return zh ? "使用 IHEP SSO 登录" : "Continue with IHEP SSO";
+    return zh ? "使用 HepAI 继续" : "Continue with HepAI";
   }
 
   function nextMode(): LoginMode {
@@ -70,7 +107,7 @@ export function LoginScreen(): React.JSX.Element {
   }
 
   return (
-    <main className="login-screen">
+    <main className={`login-screen ${debugOpen ? "debug-open" : ""}`}>
       <div className="login-window-drag-region" aria-hidden />
       <section className="login-panel login-minimal" aria-label={zh ? "OpenDrSai 登录" : "OpenDrSai sign in"}>
         <div className="login-brand">
@@ -94,10 +131,17 @@ export function LoginScreen(): React.JSX.Element {
         <img className="login-glyph login-glyph-logo" src={drsaiLogo} alt="" aria-hidden />
 
         <div className="login-heading">
-          <h1>
-            {zh
-              ? "面向大科学装置科学发现的 AI"
-              : "AI for Scientific Discovery at Large-Scale Research Facilities"}
+          <h1 className={zh ? undefined : "login-heading-title-en"}>
+            {zh ? (
+              <>
+                <strong>科学发现的 AI</strong>
+              </>
+            ) : (
+              <>
+                <strong>The AI for Discovery</strong>
+                <span>at Large Scientific Facilities</span>
+              </>
+            )}
           </h1>
         </div>
 
@@ -197,8 +241,72 @@ export function LoginScreen(): React.JSX.Element {
             : "By continuing, you agree to OpenDrSai terms and privacy policy."}
         </div>
       </section>
+
+      {debugOpen && (
+        <aside className="login-debug-panel" aria-label={loginDebugTitle}>
+          <div className="login-debug-header">
+            <div>
+              <strong>{loginDebugTitle}</strong>
+              <span>{zh ? "当前步骤" : "Current step"}: {currentStepLabel}</span>
+            </div>
+            <button type="button" onClick={() => setDebugOpen(false)} aria-label={zh ? "关闭登录调试" : "Close login debug"}>
+              ×
+            </button>
+          </div>
+          <div className={`login-debug-status ${latestLoginEvent?.status ?? "info"}`}>
+            {latestLoginEvent?.message ?? (zh ? "按 F12 打开/关闭。点击登录后这里会显示流程进度。" : "Press F12 to toggle. Login progress appears here after clicking sign in.")}
+          </div>
+          <ol className="login-debug-list">
+            {loginEvents.length === 0 ? (
+              <li className="login-debug-empty">
+                {zh ? "暂无日志。点击“使用 HepAI 继续”开始。" : "No logs yet. Click “Continue with HepAI” to start."}
+              </li>
+            ) : (
+              loginEvents.map((event, index) => (
+                <li key={`${event.at}-${index}`} className={`login-debug-item ${event.status}`}>
+                  <time>{formatDebugTime(event.at)}</time>
+                  <div>
+                    <strong>{getDebugStageLabel(event.stage, zh)}</strong>
+                    <p>{event.message}</p>
+                    {event.url && <code>{event.url}</code>}
+                  </div>
+                </li>
+              ))
+            )}
+          </ol>
+        </aside>
+      )}
     </main>
   );
+}
+
+function getDebugStageLabel(stage: OidcLoginDebugEvent["stage"], zh: boolean): string {
+  const labels: Record<OidcLoginDebugEvent["stage"], [string, string]> = {
+    started: ["已开始", "Started"],
+    "callback-listening": ["本地回调监听中", "Loopback callback listening"],
+    discovery: ["已读取 Discovery", "Discovery loaded"],
+    "authorize-url": ["准备打开授权地址", "Authorization URL prepared"],
+    "browser-opened": ["已请求打开浏览器", "Browser open requested"],
+    "waiting-callback": ["等待浏览器回调", "Waiting for callback"],
+    "callback-received": ["已收到回调", "Callback received"],
+    "token-exchange": ["正在交换 token", "Exchanging token"],
+    "token-verified": ["token 已验证", "Token verified"],
+    "session-created": ["会话已创建", "Session created"],
+    cancelled: ["已取消", "Cancelled"],
+    failed: ["失败", "Failed"],
+  };
+  const [zhLabel, enLabel] = labels[stage];
+  return zh ? zhLabel : enLabel;
+}
+
+function formatDebugTime(raw: string): string {
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return raw;
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 export function AuthSplash(): React.JSX.Element {

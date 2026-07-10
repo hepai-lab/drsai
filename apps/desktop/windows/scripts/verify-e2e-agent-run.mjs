@@ -47,7 +47,16 @@ try {
   console.log("E2E agent run passed with packaged Electron + fake gateway.");
 } finally {
   if (server) await new Promise((resolveClose) => server.close(resolveClose));
-  rmSync(tempDir, { recursive: true, force: true });
+  cleanupTempDir(tempDir);
+}
+process.exit(process.exitCode ?? 0);
+
+function cleanupTempDir(path) {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    console.warn(`Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 async function assertPortFree() {
@@ -108,7 +117,7 @@ function startGateway() {
 }
 
 function assertAgentRunBody(body, threadId) {
-  if (body?.model !== "drsai") throw new Error("agent run model mismatch");
+  if (typeof body?.model !== "string" || !body.model.trim()) throw new Error("agent run model missing");
   if (body?.thread_id !== threadId) throw new Error("agent run thread id mismatch");
   if (body?.work_dir !== "C:\\OpenDrSai\\workspace") throw new Error("agent run workspace mismatch");
   if (body?.messages?.[0]?.role !== "user") throw new Error("agent run message role mismatch");

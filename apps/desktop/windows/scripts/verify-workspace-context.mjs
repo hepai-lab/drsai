@@ -516,12 +516,20 @@ for (const marker of [
   ".context-right-panel .right-tabs",
   ".context-right-panel .files-context-panel",
   ".context-right-panel .terminal-side-panel",
-  "height: 100%",
+  "flex: 1 1 0",
+  "height: auto",
   "overflow: hidden",
 ]) {
   if (!stylesContent.includes(marker)) {
     failures.push(`styles.css is missing right context layout marker: ${marker}`);
   }
+}
+const contextPanelLayoutRule =
+  stylesContent.match(
+    /\.context-right-panel \.workspace-context-panel,[\s\S]*?\.context-right-panel \.side-placeholder\s*\{[\s\S]*?\}/,
+  )?.[0] ?? "";
+if (/height:\s*100%/.test(contextPanelLayoutRule)) {
+  failures.push("right context child panels must not use height: 100%; use flex remaining space instead");
 }
 
 if (failures.length > 0) {

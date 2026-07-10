@@ -30,6 +30,9 @@ import type {
   DesktopProjectSkillDraft,
   DesktopWorkflowTemplate,
   DesktopThread,
+  DesktopThreadSnapshot,
+  DesktopVoiceTranscriptHandoffResult,
+  DesktopVoiceTranscriptionResult,
   DesktopWorkflowRun,
   DesktopWorkflowMarketplaceListResult,
   DesktopWorkflowRunStepCompleteResult,
@@ -39,6 +42,7 @@ import type {
   DesktopWorkflowRunStartResult,
   MyDrSaiCliConfig,
   MyDrSaiConfig,
+  OidcLoginDebugEvent,
   BrowserTaskEvent,
   DesktopPendingApproval,
   DesktopScheduledTask,
@@ -403,6 +407,7 @@ export function installMockDesktopApi(): void {
   let authSession = structuredClone(anonymousSession);
   let pendingAuthProvider: AuthSession["authProvider"] = "ihep";
   let threads: DesktopThread[] = [];
+  let threadSnapshots: Record<string, DesktopThreadSnapshot> = {};
   let workspaces: WorkspaceProject[] = [];
   let terminalSessions: TerminalSessionInfo[] = [];
   let myDrSaiCliConfig: MyDrSaiCliConfig = {
@@ -418,6 +423,7 @@ export function installMockDesktopApi(): void {
   const chatListeners = new Set<Listener<ChatEvent>>();
   const agentRunListeners = new Set<Listener<AgentRunEvent>>();
   const installListeners = new Set<Listener<InstallProgress>>();
+  const oidcLoginDebugListeners = new Set<Listener<OidcLoginDebugEvent>>();
   const updateListeners = new Set<Listener<UpdateStatus>>();
   const browserTaskListeners = new Set<Listener<BrowserTaskEvent>>();
   let pendingApprovals: DesktopPendingApproval[] = [];
@@ -769,6 +775,21 @@ export function installMockDesktopApi(): void {
     return next.toISOString();
   }
 
+  function emitOidcLoginDebug(
+    stage: OidcLoginDebugEvent["stage"],
+    message: string,
+    status: OidcLoginDebugEvent["status"] = "info",
+    url?: string,
+  ): void {
+    emit(oidcLoginDebugListeners, {
+      stage,
+      status,
+      message,
+      url,
+      at: new Date().toISOString(),
+    });
+  }
+
   const api: DesktopApi = {
     getAuthSession: async () => authSession,
     login: async (request) => {
@@ -834,6 +855,23 @@ export function installMockDesktopApi(): void {
       };
     },
     startOidcLogin: async () => {
+      emitOidcLoginDebug("started", "Starting mock HepAI OIDC login.");
+      emitOidcLoginDebug(
+        "discovery",
+        "Loaded mock discovery from http://localhost:8081/api.",
+        "success",
+        "http://localhost:8081/api/.well-known/openid-configuration",
+      );
+      emitOidcLoginDebug(
+        "browser-opened",
+        "Mock browser open request was sent.",
+        "success",
+        "http://localhost:3000/#/",
+      );
+      emitOidcLoginDebug(
+        "waiting-callback",
+        "Waiting for mock loopback callback.",
+      );
       authSession = {
         authenticated: true,
         user: {
@@ -852,13 +890,20 @@ export function installMockDesktopApi(): void {
         authMode: "oidc",
         authProvider: "hai",
       };
+      emitOidcLoginDebug("session-created", "Mock HepAI session was created.", "success");
       return {
         ok: true,
         session: authSession,
         message: "Mock HAI OIDC sign-in complete.",
       };
     },
-    cancelOidcLogin: async () => true,
+    cancelOidcLogin: async () => {
+      emitOidcLoginDebug(
+        "cancelled",
+        "Mock browser sign-in was cancelled by the user.",
+      );
+      return true;
+    },
     startDesktopSsoLogin: async () => {
       pendingAuthProvider = "ihep";
       return {
@@ -1171,6 +1216,14 @@ export function installMockDesktopApi(): void {
       });
       return thread;
     },
+    getThreadSnapshot: async (threadId) => threadSnapshots[threadId] ?? null,
+    updateThreadSnapshot: async (snapshot) => {
+      threadSnapshots = {
+        ...threadSnapshots,
+        [snapshot.threadId]: snapshot,
+      };
+      return snapshot;
+    },
     prepareForkWorktree: async (request) => {
       const slug = (request.intent || "subtask")
         .toLowerCase()
@@ -1204,6 +1257,46 @@ export function installMockDesktopApi(): void {
       emit(chatListeners, { requestId, type: "aborted" });
       return true;
     },
+    transcribeVoiceRecording: async (request): Promise<DesktopVoiceTranscriptionResult> => {
+      const durationSeconds = Math.max(0, Math.round(request.durationSeconds || 0));
+      const transcript =
+        request.mockTranscriptText ||
+        [
+          "[Voice recording captured]",
+          `Source: ${request.sourceLabel || "Mock desktop microphone"}.`,
+          `Duration: ${formatMockVoiceDuration(durationSeconds)}.`,
+          "Mock-local transcription is active; no audio left this machine.",
+        ].join("\n");
+      return {
+        ok: true,
+        transcript,
+        language: request.languageHint,
+        durationSeconds,
+        runtimeId: "mock-local",
+        sourceId: `mock-voice-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+        truncated: false,
+        providerDisclosure:
+          "Voice transcription used the mock desktop runtime; no network request, provider upload, or raw-audio persistence occurred.",
+        message:
+          "Mock voice recording was normalized into reviewed text for composer insertion.",
+      };
+    },
+    writeVoiceTranscriptHandoff: async (request): Promise<DesktopVoiceTranscriptHandoffResult> => ({
+      ok: true,
+      transcriptPath: `${request.workspacePath}\\.drsai\\voice-context.json`,
+      relativePath: ".drsai/voice-context.json",
+      recordId: `mock-voice-${Date.now()}`,
+      itemCount: 1,
+      importRequest: {
+        adapterId: "voice-input",
+        workspacePath: request.workspacePath,
+        voiceTranscriptPath: ".drsai/voice-context.json",
+        limit: 1,
+      },
+      message:
+        "Mock voice transcript handoff was written for explicit Channels review.",
+    }),
     startAgentRun: async (request) => {
       const requestId = request.requestId || crypto.randomUUID();
       const sessionId = request.sessionId || requestId;
@@ -3055,7 +3148,8 @@ export function installMockDesktopApi(): void {
             const relativePath = title;
             const isNotebook = title.toLowerCase().endsWith(".ipynb");
             const isDocument = isNotebook || title.toLowerCase().endsWith(".pdf") || title.toLowerCase().endsWith(".docx");
-            const isAudio = title.toLowerCase().endsWith(".mp3") || title.toLowerCase().endsWith(".wav");
+            const lowerTitle = title.toLowerCase();
+            const isAudio = [".flac", ".m4a", ".mp3", ".ogg", ".wav"].some((extension) => lowerTitle.endsWith(extension));
             const isVideo = title.toLowerCase().endsWith(".mp4") || title.toLowerCase().endsWith(".mov") || title.toLowerCase().endsWith(".webm");
             return {
               id: `file-input:selected-${index + 1}`,
@@ -3066,14 +3160,14 @@ export function installMockDesktopApi(): void {
               path: normalizedPath,
               relativePath,
               summary: isAudio
-                ? "Audio metadata preview (mock). Format: MP3/WAV. Ready for explicit attachment after visible review; no microphone capture, transcription service, network call, or provider send was performed."
+                ? "Audio metadata preview (mock). Format: WAV/MP3/FLAC/M4A/OGG. Ready for explicit attachment after visible review; no microphone capture, transcription service, network call, or provider send was performed."
                 : isVideo
                 ? "Video metadata preview (mock). Format: MP4/MOV/WebM. Ready for explicit attachment after visible review; no video player startup, media decoding, frame extraction, network call, or provider send was performed."
                 : isNotebook
                 ? "Notebook document with visible markdown/code cell summaries for explicit chat attachment."
                 : `Selected file context imported for visible review: ${title}`,
               size: 1024 + index,
-              mime: isAudio ? "audio/mpeg" : isVideo ? "video/mp4" : isNotebook ? "application/x-ipynb+json" : "text/plain",
+              mime: isAudio ? mockAudioMimeForTitle(lowerTitle) : isVideo ? "video/mp4" : isNotebook ? "application/x-ipynb+json" : "text/plain",
               truncated: false,
             };
           })
@@ -3849,6 +3943,7 @@ export function installMockDesktopApi(): void {
       pendingMcpLiveEnumerationApprovals = remainingMcpLiveApprovals;
       return before !== pendingApprovals.length;
     },
+    decideApproval: async (request) => api.decidePendingApproval(request),
     listPendingBrowserTaskApprovals: async () => [],
     approveBrowserTaskAction: async () => true,
     openExternal: async () => undefined,
@@ -3921,6 +4016,8 @@ export function installMockDesktopApi(): void {
       return true;
     },
     onInstallProgress: (callback) => subscribe(installListeners, callback),
+    onOidcLoginDebug: (callback) =>
+      subscribe(oidcLoginDebugListeners, callback),
     onChatEvent: (callback) => subscribe(chatListeners, callback),
     onAgentRunEvent: (callback) => subscribe(agentRunListeners, callback),
     onUpdateStatus: (callback) => subscribe(updateListeners, callback),
@@ -4345,11 +4442,11 @@ function createMockWorkspacePreview(
       message: "Extracted a basic text preview from the PDF.",
     };
   }
-  if (name.endsWith(".mp4") || name.endsWith(".mp3")) {
+  if (name.endsWith(".mp4") || [".flac", ".m4a", ".mp3", ".ogg", ".wav"].some((extension) => name.endsWith(extension))) {
     return {
       ...base,
       kind: "media",
-      mime: name.endsWith(".mp4") ? "video/mp4" : "audio/mpeg",
+      mime: name.endsWith(".mp4") ? "video/mp4" : mockAudioMimeForTitle(name),
       size: 2_420_000,
       message: "Media preview is rendered directly in the file preview pane.",
     };
@@ -4370,6 +4467,20 @@ function createMockWorkspacePreview(
     content:
       "# Workspace context\n\nThis file is shown to the human first, then attached explicitly for the agent when selected.",
   };
+}
+
+function mockAudioMimeForTitle(name: string): string {
+  if (name.endsWith(".flac")) return "audio/flac";
+  if (name.endsWith(".m4a")) return "audio/mp4";
+  if (name.endsWith(".ogg")) return "audio/ogg";
+  if (name.endsWith(".wav")) return "audio/wav";
+  return "audio/mpeg";
+}
+
+function formatMockVoiceDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${remainder.toString().padStart(2, "0")}`;
 }
 
 function createMockWorkspaceDiff(

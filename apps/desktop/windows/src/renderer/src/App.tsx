@@ -601,10 +601,28 @@ function AuthenticatedApp({
     }
     setActiveThreadId(threadId);
     setRightPanelCollapsed(true);
+    void hydrateThreadSnapshot(threadId);
     if (thread?.unread) {
       void handleThreadUpdate(threadId, { unread: false });
     }
     navigateTo(MENU_IDS.currentSession);
+  }
+
+  async function hydrateThreadSnapshot(threadId: string): Promise<void> {
+    try {
+      const snapshot = await desktopApi.getThreadSnapshot(threadId);
+      if (!snapshot) return;
+      setThreadSnapshots((current) => {
+        const existing = current[threadId];
+        if (existing && existing.updatedAt >= snapshot.updatedAt) return current;
+        return {
+          ...current,
+          [threadId]: snapshot,
+        };
+      });
+    } catch {
+      // Older app data may only have localStorage snapshots; keep the current view responsive.
+    }
   }
 
   function handleChatAgentSelect(agentId: string): void {
@@ -667,6 +685,9 @@ function AuthenticatedApp({
       ...current,
       [snapshot.threadId]: snapshot,
     }));
+    void desktopApi.updateThreadSnapshot(snapshot).catch(() => {
+      // The local snapshot is still kept in renderer state and localStorage if disk persistence fails.
+    });
     const thread = await desktopApi.updateThread({
       id: snapshot.threadId,
       kind: threads.find((item) => item.id === snapshot.threadId)?.kind ?? "chat",
@@ -913,6 +934,14 @@ function AuthenticatedApp({
           onSelectModel={handleChatModelSelect}
           onOpenExternal={(url) => desktopApi.openExternal(url)}
           onOpenPreviewBrowser={openPreviewBrowser}
+          onPickFiles={() => desktopApi.pickFiles()}
+          onPickFolder={() => desktopApi.pickFolder()}
+          onSummarizeWorkspaceFolder={(request) =>
+            desktopApi.summarizeWorkspaceFolder(request)
+          }
+          onTranscribeVoiceRecording={(request) =>
+            desktopApi.transcribeVoiceRecording(request)
+          }
           onAttachIdeCurrentFile={attachIdeCurrentFile}
           onAttachIdeCurrentSelection={attachIdeCurrentSelection}
           onRefreshIdeContext={() => {

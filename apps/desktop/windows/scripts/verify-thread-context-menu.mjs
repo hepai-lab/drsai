@@ -10,12 +10,14 @@ function read(relativePath) {
 
 const sharedApi = read("src/shared/desktopApi.ts");
 const threads = read("src/main/threads.ts");
+const main = read("src/main/index.ts");
 const app = read("src/renderer/src/App.tsx");
 const chatAdapter = read("src/renderer/src/adapters/useDesktopChatAdapter.ts");
 const shell = read("src/renderer/src/components/WorkspaceShell.tsx");
 const forkConflictAnalysis = read("src/renderer/src/components/forkConflictAnalysis.ts");
 const css = read("src/renderer/src/styles.css");
 const mock = read("src/renderer/src/mockDesktopApi.ts");
+const preload = read("src/preload/index.ts");
 
 const checks = [
   [
@@ -30,6 +32,28 @@ const checks = [
       sharedApi.includes("pinned?: boolean") &&
       sharedApi.includes("archived?: boolean") &&
       sharedApi.includes("unread?: boolean"),
+  ],
+  [
+    "shared api exposes persistent thread snapshots",
+    sharedApi.includes("export interface DesktopThreadSnapshot") &&
+      sharedApi.includes("getThreadSnapshot(threadId: string)") &&
+      sharedApi.includes("updateThreadSnapshot(snapshot: DesktopThreadSnapshot)"),
+  ],
+  [
+    "main process persists and reads thread snapshots",
+    threads.includes("THREAD_SNAPSHOTS_FILE") &&
+      threads.includes("export async function getThreadSnapshot") &&
+      threads.includes("export async function updateThreadSnapshot"),
+  ],
+  [
+    "thread snapshot ipc handlers are registered",
+    main.includes('secureHandle("desktop:get-thread-snapshot"') &&
+      main.includes('secureHandle("desktop:update-thread-snapshot"'),
+  ],
+  [
+    "preload bridge exposes thread snapshot methods",
+    preload.includes("getThreadSnapshot: (threadId: string)") &&
+      preload.includes("updateThreadSnapshot: (snapshot: DesktopThreadSnapshot)"),
   ],
   [
     "main thread store preserves pinned archived unread values",
@@ -64,6 +88,17 @@ const checks = [
     app.includes("thread?.workspacePath") &&
       app.includes("setActiveWorkspaceId(nextWorkspace.id)") &&
       app.includes("getComparablePath(thread.workspacePath)"),
+  ],
+  [
+    "selecting a conversation hydrates its persisted messages",
+    app.includes("void hydrateThreadSnapshot(threadId)") &&
+      app.includes("desktopApi.getThreadSnapshot(threadId)") &&
+      app.includes("[threadId]: snapshot"),
+  ],
+  [
+    "chat updates persist the conversation snapshot",
+    app.includes("desktopApi.updateThreadSnapshot(snapshot)") &&
+      app.includes("The local snapshot is still kept"),
   ],
   [
     "chat adapter refreshes displayed messages when the selected thread snapshot changes",
@@ -231,6 +266,12 @@ const checks = [
     mock.includes("pinned: request.pinned ?? existing?.pinned") &&
       mock.includes("archived: request.archived ?? existing?.archived") &&
       mock.includes("unread: request.unread ?? existing?.unread"),
+  ],
+  [
+    "mock desktop api supports persisted thread snapshots",
+    mock.includes("threadSnapshots: Record<string, DesktopThreadSnapshot>") &&
+      mock.includes("getThreadSnapshot: async (threadId)") &&
+      mock.includes("updateThreadSnapshot: async (snapshot)"),
   ],
 ];
 

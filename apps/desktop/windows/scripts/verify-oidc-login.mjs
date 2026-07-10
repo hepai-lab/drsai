@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-const haiRoot = resolve(process.env.HAI_BACKEND_ROOT || "C:\\Users\\win11\\VSProjects\\hai-ai-platform-backend");
+const haiRoot = resolve(process.env.HAI_BACKEND_ROOT || "C:\\Users\\win11\\VSProjects\\hai\\hai-ai-platform-backend");
 
 function read(relativePath) {
   return readFileSync(join(root, relativePath), "utf8");
@@ -26,11 +26,18 @@ const mock = read("src/renderer/src/mockDesktopApi.ts");
 const plan = read("docs/login_plan/oidc-login-plan.md");
 const e2eSmoke = read("src/main/e2eSmoke.ts");
 const e2eOidc = read("scripts/verify-e2e-oidc-login.mjs");
+const e2eHaiOidc = read("scripts/verify-e2e-oidc-hai.mjs");
+const devEnvVerifier = read("scripts/verify-oidc-dev-env.mjs");
+const packageJson = read("package.json");
 const publicSessionBody = /function toPublicSession\(session: StoredAuthSession\): AuthSession \{([\s\S]*?)\n\}/.exec(auth)?.[1] || "";
 
+const haiMainPath = join(haiRoot, "backend", "webui", "main.py");
 const haiServicePath = join(haiRoot, "backend", "webui", "oidc", "service.py");
+const haiSettingsPath = join(haiRoot, "backend", "webui", "oidc", "settings.py");
 const haiTestPath = join(haiRoot, "backend", "webui", "test", "apps", "webui", "oidc", "test_oidc_unit.py");
+const haiMain = existsSync(haiMainPath) ? readHai("backend/webui/main.py") : "";
 const haiService = existsSync(haiServicePath) ? readHai("backend/webui/oidc/service.py") : "";
+const haiSettings = existsSync(haiSettingsPath) ? readHai("backend/webui/oidc/settings.py") : "";
 const haiTest = existsSync(haiTestPath) ? readHai("backend/webui/test/apps/webui/oidc/test_oidc_unit.py") : "";
 
 const checks = [
@@ -48,16 +55,32 @@ const checks = [
   [
     "main process implements Authorization Code + PKCE over loopback",
     auth.includes("getOidcMetadata") &&
+      auth.includes('"http://localhost:8081/api"') &&
       auth.includes("/.well-known/openid-configuration") &&
+      auth.includes("Loading OIDC discovery") &&
       auth.includes("metadata.authorization_endpoint") &&
       auth.includes("metadata.token_endpoint") &&
       auth.includes("metadata.jwks_uri") &&
+      auth.includes("fetchOidcEndpoint") &&
+      auth.includes("OIDC_FETCH_TIMEOUT_MS") &&
     auth.includes("createPkceChallenge") &&
       auth.includes('code_challenge_method", "S256"') &&
       auth.includes("createLoopbackCallback(state)") &&
       auth.includes('server.listen(0, "127.0.0.1")') &&
       auth.includes("shell.openExternal(url)") &&
       auth.includes("OPENDRSAI_E2E_OIDC_AUTO_CALLBACK") &&
+      auth.includes("opendrsai://auth-complete") &&
+      auth.includes("window.location.href") &&
+      main.includes("setAsDefaultProtocolClient") &&
+      main.includes("requestSingleInstanceLock") &&
+      main.includes("handleDeepLinkArgv") &&
+      auth.includes('stage: "browser-opened"') &&
+      auth.includes('stage: "waiting-callback"') &&
+      auth.includes('stage: "cancelled"') &&
+      auth.includes("waitForCode.catch") &&
+      auth.includes("isOidcLoginCancelled") &&
+      main.includes('"desktop:oidc-login-debug"') &&
+      preload.includes('"desktop:oidc-login-debug"') &&
       auth.includes('response_type", "code"') &&
       auth.includes("exchangeOidcAuthorizationCode"),
   ],
@@ -145,14 +168,22 @@ const checks = [
     "renderer presents OIDC as primary login with cancel and fallbacks",
     login.includes('type LoginMode = "oidc" | "api_key" | "password"') &&
       login.includes('useState<LoginMode>("oidc")') &&
+      login.includes("login-debug-panel") &&
+      login.includes('event.key !== "F12"') &&
+      login.includes("onOidcLoginDebug") &&
       login.includes("auth.startOidcLogin({ rememberMe })") &&
       login.includes("auth.cancelOidcLogin()") &&
-      login.includes("Continue with IHEP SSO") &&
+      login.includes("Continue with HepAI") &&
       login.includes("Use API key instead") &&
       provider.includes("startOidcLogin") &&
+      provider.includes("Opening browser for HepAI sign-in") &&
+      provider.includes("Cancelling browser sign-in") &&
+      provider.includes("setLoginBusy(false)") &&
       provider.includes("cancelOidcLogin") &&
       mock.includes('authMode: "oidc"') &&
-      mock.includes('authProvider: "hai"'),
+      mock.includes('authProvider: "hai"') &&
+      mock.includes("oidcLoginDebugListeners") &&
+      mock.includes('"cancelled"'),
   ],
   [
     "plan documents implemented OIDC constraints",
@@ -168,8 +199,11 @@ const checks = [
     haiService.includes("from webui.oidc.settings import (") &&
       haiService.includes("OIDC_ISSUER") &&
       haiService.includes('f"{OIDC_ISSUER}/oauth2/upstream/ihep/login?request_id={auth_request.id}"') &&
+      haiSettings.includes('"http://localhost:8081"') &&
+      haiSettings.includes('"api"') &&
+      haiMain.includes('app.include_router(oidc_router, prefix="/api", tags=["oidc"])') &&
       haiTest.includes("test_authorize_uses_issuer_for_upstream_login") &&
-      haiTest.includes("https://aidev.ihep.ac.cn/backend/oauth2/upstream/ihep/login"),
+      haiTest.includes("http://localhost:8081/api/oauth2/upstream/ihep/login"),
   ],
   [
     "Electron OIDC E2E smoke exercises the real main-process login path",
@@ -179,9 +213,20 @@ const checks = [
       e2eSmoke.includes("publicSessionLooksOidc") &&
       mainProcess.includes("authContextHasBearerToken") &&
       mainProcess.includes("requireAuthContext()") &&
+      mainProcess.includes("waitForHeadlessGatewayTerminal") &&
+      mainProcess.includes("summarizeHeadlessGatewayEvents") &&
+      mainProcess.includes("oidc chat bearer check") &&
+      mainProcess.includes("oidc agent bearer check") &&
+      e2eSmoke.includes("oidc chat bearer check") &&
+      e2eSmoke.includes("oidc agent bearer check") &&
+      e2eSmoke.includes("oidcChatDone") &&
+      e2eSmoke.includes("oidcAgentDone") &&
       e2eSmoke.includes("sessionUsesEncryptedTokens") &&
       e2eSmoke.includes("logoutClearsSessionFile") &&
       e2eOidc.includes("startFakeOidcIssuer") &&
+      e2eOidc.includes("startFakeGateway") &&
+      e2eOidc.includes("assertGatewayHits") &&
+      e2eOidc.includes("DRSAI_GATEWAY_DEV_MANAGED") &&
       e2eOidc.includes("generateKeyPairSync") &&
       e2eOidc.includes("RS256") &&
       e2eOidc.includes("/.well-known/jwks.json") &&
@@ -190,6 +235,18 @@ const checks = [
       e2eOidc.includes("hits.revoke !== 1") &&
       e2eOidc.includes("resolveElectronRuntime") &&
       e2eOidc.includes("OPENDRSAI_E2E_OIDC_AUTO_CALLBACK") &&
+      e2eOidc.includes("OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER") &&
+      e2eOidc.includes("OPENDRSAI_E2E_OIDC_USE_SOURCE") &&
+      e2eHaiOidc.includes('OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER ||= "http://localhost:8081/api"') &&
+      e2eHaiOidc.includes('OPENDRSAI_E2E_OIDC_USE_SOURCE ||= "1"') &&
+      e2eHaiOidc.includes('await import("./verify-e2e-oidc-login.mjs")') &&
+      packageJson.includes('"verify:oidc-dev-env": "node scripts/verify-oidc-dev-env.mjs"') &&
+      devEnvVerifier.includes('"http://localhost:3000"') &&
+      devEnvVerifier.includes('"http://localhost:8081/api"') &&
+      devEnvVerifier.includes("/.well-known/openid-configuration") &&
+      devEnvVerifier.includes("/.well-known/jwks.json") &&
+      devEnvVerifier.includes("code_challenge_method") &&
+      devEnvVerifier.includes("authorize redirect must preserve state") &&
       e2eOidc.includes("E2E OIDC login passed with Electron main process + fake OIDC issuer"),
   ],
 ];

@@ -1,11 +1,23 @@
 import { randomUUID } from "crypto";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname, join } from "path";
-import type { CreateThreadRequest, DesktopThread, DesktopThreadForkMetadata, UpdateThreadRequest } from "../shared/desktopApi";
+import type {
+  CreateThreadRequest,
+  DesktopThread,
+  DesktopThreadForkMetadata,
+  DesktopThreadMessageSnapshot,
+  DesktopThreadSnapshot,
+  UpdateThreadRequest,
+} from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
 
 const THREADS_FILE = join(DRSAI_HOME, "desktop", "threads.json");
+const THREAD_SNAPSHOTS_FILE = join(DRSAI_HOME, "desktop", "thread-snapshots.json");
 const MAX_THREADS = 200;
+const MAX_THREAD_SNAPSHOTS = 200;
+const MAX_SNAPSHOT_MESSAGES = 200;
+const MAX_MESSAGE_CHARS = 200_000;
+const MAX_STATUS_CHARS = 80_000;
 const MAX_TITLE_CHARS = 120;
 const MAX_WORKSPACE_PATH_CHARS = 2048;
 const MAX_FORK_SUMMARY_CHARS = 500;
@@ -63,6 +75,23 @@ export async function updateThread(rawRequest: unknown): Promise<DesktopThread> 
   return next;
 }
 
+export async function getThreadSnapshot(rawThreadId: unknown): Promise<DesktopThreadSnapshot | null> {
+  const threadId = sanitizeThreadId(rawThreadId);
+  const snapshots = await readThreadSnapshots();
+  return snapshots[threadId] ?? null;
+}
+
+export async function updateThreadSnapshot(rawRequest: unknown): Promise<DesktopThreadSnapshot> {
+  const snapshot = validateThreadSnapshot(rawRequest);
+  const snapshots = await readThreadSnapshots();
+  const nextSnapshots = {
+    ...snapshots,
+    [snapshot.threadId]: snapshot,
+  };
+  await writeThreadSnapshots(nextSnapshots);
+  return snapshot;
+}
+
 export async function upsertThreadFromRun(input: {
   id: string;
   kind: DesktopThread["kind"];
@@ -91,6 +120,38 @@ async function writeThreads(threads: DesktopThread[]): Promise<void> {
   await writeFile(THREADS_FILE, `${JSON.stringify(threads, null, 2)}\n`, "utf8");
 }
 
+async function readThreadSnapshots(): Promise<Record<string, DesktopThreadSnapshot>> {
+  try {
+    const parsed = JSON.parse(await readFile(THREAD_SNAPSHOTS_FILE, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const entries = Object.values(parsed)
+      .map((value) => {
+        try {
+          return validateThreadSnapshot(value);
+        } catch {
+          return null;
+        }
+      })
+      .filter((value): value is DesktopThreadSnapshot => Boolean(value))
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, MAX_THREAD_SNAPSHOTS);
+    return Object.fromEntries(entries.map((snapshot) => [snapshot.threadId, snapshot]));
+  } catch {
+    return {};
+  }
+}
+
+async function writeThreadSnapshots(snapshots: Record<string, DesktopThreadSnapshot>): Promise<void> {
+  const capped = Object.fromEntries(
+    Object.values(snapshots)
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, MAX_THREAD_SNAPSHOTS)
+      .map((snapshot) => [snapshot.threadId, snapshot]),
+  );
+  await mkdir(dirname(THREAD_SNAPSHOTS_FILE), { recursive: true });
+  await writeFile(THREAD_SNAPSHOTS_FILE, `${JSON.stringify(capped, null, 2)}\n`, "utf8");
+}
+
 function validateCreateThreadRequest(rawRequest: unknown): CreateThreadRequest {
   if (!rawRequest || typeof rawRequest !== "object") {
     throw new Error("Thread request must be an object.");
@@ -112,9 +173,7 @@ function validateUpdateThreadRequest(rawRequest: unknown): UpdateThreadRequest {
     throw new Error("Thread update must be an object.");
   }
   const request = rawRequest as Partial<UpdateThreadRequest>;
-  if (typeof request.id !== "string" || !THREAD_ID_PATTERN.test(request.id) || /[\r\n]/.test(request.id)) {
-    throw new Error("Thread id is invalid.");
-  }
+  const id = sanitizeThreadId(request.id);
   if (request.kind !== undefined && request.kind !== "chat" && request.kind !== "agent_run") {
     throw new Error("Thread kind is invalid.");
   }
@@ -127,7 +186,7 @@ function validateUpdateThreadRequest(rawRequest: unknown): UpdateThreadRequest {
     throw new Error("Thread status is invalid.");
   }
   return {
-    id: request.id,
+    id,
     kind: request.kind,
     title: sanitizeTitle(request.title),
     workspacePath: sanitizeWorkspacePath(request.workspacePath),
@@ -140,6 +199,70 @@ function validateUpdateThreadRequest(rawRequest: unknown): UpdateThreadRequest {
     archived: typeof request.archived === "boolean" ? request.archived : undefined,
     unread: typeof request.unread === "boolean" ? request.unread : undefined,
   };
+}
+
+function validateThreadSnapshot(rawRequest: unknown): DesktopThreadSnapshot {
+  if (!rawRequest || typeof rawRequest !== "object") {
+    throw new Error("Thread snapshot must be an object.");
+  }
+  const request = rawRequest as Partial<DesktopThreadSnapshot>;
+  const messages = Array.isArray(request.messages)
+    ? request.messages.slice(0, MAX_SNAPSHOT_MESSAGES).map(sanitizeSnapshotMessage)
+    : [];
+  const updatedAt =
+    typeof request.updatedAt === "number" && Number.isFinite(request.updatedAt)
+      ? request.updatedAt
+      : Date.now();
+  const title = sanitizeTitle(request.title) || defaultTitle("chat");
+  return {
+    threadId: sanitizeThreadId(request.threadId),
+    title,
+    messages,
+    updatedAt,
+    messageCount: Number.isFinite(request.messageCount)
+      ? Math.max(0, Number(request.messageCount))
+      : messages.filter((message) => message.id !== "welcome").length,
+  };
+}
+
+function sanitizeSnapshotMessage(rawMessage: unknown, index: number): DesktopThreadMessageSnapshot {
+  if (!rawMessage || typeof rawMessage !== "object") {
+    throw new Error("Thread snapshot message is invalid.");
+  }
+  const message = rawMessage as Partial<DesktopThreadMessageSnapshot>;
+  if (message.role !== "system" && message.role !== "user" && message.role !== "assistant") {
+    throw new Error("Thread snapshot message role is invalid.");
+  }
+  if (typeof message.content !== "string") {
+    throw new Error("Thread snapshot message content is invalid.");
+  }
+  const id =
+    typeof message.id === "string" && message.id.trim() && !/[\r\n]/.test(message.id)
+      ? message.id.trim().slice(0, 160)
+      : `message-${index + 1}`;
+  return {
+    id,
+    role: message.role,
+    content: message.content.slice(0, MAX_MESSAGE_CHARS),
+    ...(message.streaming ? { streaming: true } : {}),
+    ...(message.error ? { error: true } : {}),
+    ...(typeof message.statusContent === "string"
+      ? { statusContent: message.statusContent.slice(0, MAX_STATUS_CHARS) }
+      : {}),
+    ...(typeof message.startedAt === "number" && Number.isFinite(message.startedAt)
+      ? { startedAt: message.startedAt }
+      : {}),
+    ...(typeof message.lastEventAt === "number" && Number.isFinite(message.lastEventAt)
+      ? { lastEventAt: message.lastEventAt }
+      : {}),
+  };
+}
+
+function sanitizeThreadId(value: unknown): string {
+  if (typeof value !== "string" || !THREAD_ID_PATTERN.test(value) || /[\r\n]/.test(value)) {
+    throw new Error("Thread id is invalid.");
+  }
+  return value;
 }
 
 function sanitizeTitle(title: unknown): string | undefined {

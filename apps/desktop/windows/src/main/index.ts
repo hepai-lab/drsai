@@ -11,12 +11,14 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  protocol,
   shell,
   type IpcMainInvokeEvent,
   type Session,
   type WebContents,
 } from "electron";
 import { dirname, isAbsolute, join, relative, resolve } from "path";
+import { pathToFileURL } from "url";
 import { is } from "@electron-toolkit/utils";
 import { cancelInstall, startInstall } from "./install";
 import {
@@ -40,7 +42,13 @@ import {
   assertExecutionAllowed,
   getDesktopExecutionPolicy,
 } from "./executionPolicyGate";
-import { createThread, listThreads, updateThread } from "./threads";
+import {
+  createThread,
+  getThreadSnapshot,
+  listThreads,
+  updateThread,
+  updateThreadSnapshot,
+} from "./threads";
 import {
   addProjectMemory,
   clearProjectMemory,
@@ -141,6 +149,10 @@ import {
   previewWorkspaceCheckpoint,
   restoreWorkspaceCheckpoint,
 } from "./workspaceCheckpoints";
+import {
+  transcribeVoiceRecording,
+  writeVoiceTranscriptHandoff,
+} from "./voice";
 import { saveApiKeyAndDefaultModel } from "./settings";
 import {
   cancelOidcLogin,
@@ -220,6 +232,8 @@ import type {
   DesktopShellCommandApprovalRequest,
   DesktopThread,
   DesktopThreadForkMetadata,
+  DesktopVoiceTranscriptHandoffRequest,
+  DesktopVoiceTranscriptionRequest,
   WorkspaceCheckpointRestoreRequest,
   WorkspaceCheckpointRestoreResult,
   DesktopWorkflowRunPrepareRequest,
@@ -236,8 +250,30 @@ let browserWebContentsPolicyRegistered = false;
 const configuredBrowserSessions = new WeakSet<Session>();
 const browserTaskSubscribers = new Set<WebContents>();
 
-const rendererHtmlPath = join(__dirname, "../renderer/index.html");
+function getRendererHtmlPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, "renderer", "index.html")
+    : join(__dirname, "../renderer/index.html");
+}
+
+function getRendererUrl(): string {
+  return app.isPackaged
+    ? `${RENDERER_PROTOCOL}://renderer/index.html`
+    : pathToFileURL(getRendererHtmlPath()).toString();
+}
 const TRUSTED_DEV_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
+const DEEP_LINK_PROTOCOL = "opendrsai";
+const RENDERER_PROTOCOL = "opendrsai-app";
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: RENDERER_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+    },
+  },
+]);
 const browserUseWorkerClient = new BrowserUseWorkerClient();
 const pendingBrowserTaskApprovals = new Map<
   string,
@@ -255,6 +291,40 @@ const pendingShellCommandApprovals = new Map<
     workflowStepId?: string;
   }
 >();
+
+const isE2eSmokeProcess =
+  process.env.OPENDRSAI_E2E_SMOKE === "1" ||
+  process.env.OPENDRSAI_E2E_CHAT === "1" ||
+  process.env.OPENDRSAI_E2E_CHAT_FAILURES === "1" ||
+  process.env.OPENDRSAI_E2E_AGENT_RUN === "1" ||
+  process.env.OPENDRSAI_E2E_AGENT_RUN_FAILURES === "1" ||
+  process.env.OPENDRSAI_E2E_THREADS === "1" ||
+  process.env.OPENDRSAI_E2E_FORK_MERGE === "1" ||
+  process.env.OPENDRSAI_E2E_OIDC === "1" ||
+  process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1";
+if (isE2eSmokeProcess) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("no-sandbox");
+  app.commandLine.appendSwitch("disable-gpu");
+  app.commandLine.appendSwitch("disable-gpu-compositing");
+  app.commandLine.appendSwitch("disable-gpu-sandbox");
+  app.commandLine.appendSwitch("in-process-gpu");
+}
+const singleInstanceLock = isE2eSmokeProcess || app.requestSingleInstanceLock();
+function recordE2eStartupTrace(event: string, details: Record<string, unknown> = {}): void {
+  if (!isE2eSmokeProcess) return;
+  const target = globalThis as { __OPENDRSAI_E2E_TRACE?: Array<Record<string, unknown>> };
+  target.__OPENDRSAI_E2E_TRACE ??= [];
+  target.__OPENDRSAI_E2E_TRACE.push({ event, at: new Date().toISOString(), ...details });
+}
+if (!singleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv) => {
+    handleDeepLinkArgv(argv);
+    focusMainWindow();
+  });
+}
 type WorkspaceMutationAction =
   | "stage-file"
   | "revert-file"
@@ -1875,6 +1945,7 @@ if (process.env.OPENDRSAI_E2E_DISABLE_GPU === "1") {
 }
 
 function createWindow(): void {
+  recordE2eStartupTrace("createWindow:start", { appPath: app.getAppPath() });
   const windowIcon = getWindowIconPath();
 
   mainWindow = new BrowserWindow({
@@ -1905,6 +1976,22 @@ function createWindow(): void {
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
   });
+  mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    recordE2eStartupTrace("createWindow:did-fail-load", {
+      errorCode,
+      errorDescription,
+      validatedURL,
+      isMainFrame,
+    });
+  });
+  mainWindow.webContents.on("did-finish-load", () => {
+    recordE2eStartupTrace("createWindow:did-finish-load", {
+      url: mainWindow?.webContents.getURL(),
+    });
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    recordE2eStartupTrace("createWindow:render-process-gone", { ...details });
+  });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowedExternalUrl(url)) {
@@ -1913,6 +2000,13 @@ function createWindow(): void {
     return { action: "deny" };
   });
   mainWindow.webContents.on("will-navigate", (event, url) => {
+    const allowedRendererNavigation = isAllowedRendererNavigationUrl(url);
+    recordE2eStartupTrace("createWindow:will-navigate", {
+      url,
+      currentUrl: mainWindow?.webContents.getURL(),
+      allowedRendererNavigation,
+    });
+    if (allowedRendererNavigation) return;
     if (url !== mainWindow?.webContents.getURL()) {
       event.preventDefault();
     }
@@ -1933,9 +2027,11 @@ function createWindow(): void {
       webPreferences.allowRunningInsecureContent = false;
     },
   );
+  configureMainWindowPermissionPolicy(mainWindow);
   registerBrowserWebContentsPolicy();
 
   maybeRunE2eSmoke(mainWindow);
+  recordE2eStartupTrace("createWindow:e2e-hook-registered");
 
   if (is.dev && process.env.ELECTRON_RENDERER_URL) {
     if (!isAllowedDevRendererUrl(process.env.ELECTRON_RENDERER_URL)) {
@@ -1944,9 +2040,132 @@ function createWindow(): void {
       );
     }
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
+    recordE2eStartupTrace("createWindow:load-dev-url", { url: process.env.ELECTRON_RENDERER_URL });
   } else {
-    mainWindow.loadFile(rendererHtmlPath);
+    const rendererHtmlPath = getRendererHtmlPath();
+    const rendererUrl = getRendererUrl();
+    recordE2eStartupTrace("createWindow:load-renderer", {
+      rendererHtmlPath,
+      rendererUrl,
+      exists: existsSync(rendererHtmlPath),
+    });
+    void mainWindow.loadURL(rendererUrl).then(() => {
+      recordE2eStartupTrace("createWindow:load-renderer-resolved");
+    }).catch((error) => {
+      recordE2eStartupTrace("createWindow:load-renderer-rejected", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      writeE2eStartupFailure("Renderer loadFile failed.", error);
+    });
   }
+}
+
+function writeE2eStartupFailure(message: string, error: unknown): void {
+  if (!isE2eSmokeProcess || !process.env.OPENDRSAI_E2E_RESULT) return;
+  const resultPath = process.env.OPENDRSAI_E2E_RESULT;
+  try {
+    mkdirSync(dirname(resultPath), { recursive: true });
+    writeFileSync(
+      resultPath,
+      `${JSON.stringify(
+        {
+          ok: false,
+          checks: {},
+          details: { rendererHtmlPath: getRendererHtmlPath(), appPath: app.getAppPath() },
+          error: `${message} ${error instanceof Error ? error.message : String(error)}`,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+  } catch {
+    // The smoke watchdog will still report a timeout if diagnostics cannot be written.
+  }
+}
+
+function registerDeepLinkProtocol(): void {
+  try {
+    if (process.defaultApp && process.argv.length >= 2) {
+      app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL, process.execPath, [
+        resolve(process.argv[1]),
+      ]);
+      return;
+    }
+    app.setAsDefaultProtocolClient(DEEP_LINK_PROTOCOL);
+  } catch (error) {
+    console.warn(
+      "[desktop] Failed to register deep link protocol:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+function registerRendererProtocol(): void {
+  protocol.registerFileProtocol(RENDERER_PROTOCOL, (request, callback) => {
+    try {
+      recordE2eStartupTrace("renderer-protocol:request", { url: request.url });
+      const rendererRoot = resolve(process.resourcesPath, "renderer");
+      const url = new URL(request.url);
+      const requestedPath = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
+      const relativePath = requestedPath || "index.html";
+      const targetPath = resolve(rendererRoot, relativePath);
+      const localRelative = relative(rendererRoot, targetPath);
+      if (
+        localRelative.startsWith("..") ||
+        isAbsolute(localRelative)
+      ) {
+        recordE2eStartupTrace("renderer-protocol:forbidden", { targetPath });
+        callback({ error: -10 });
+        return;
+      }
+      if (!existsSync(targetPath)) {
+        recordE2eStartupTrace("renderer-protocol:not-found", { targetPath });
+        callback({ error: -6 });
+        return;
+      }
+      recordE2eStartupTrace("renderer-protocol:served", { targetPath });
+      callback({ path: targetPath });
+    } catch (error) {
+      recordE2eStartupTrace("renderer-protocol:error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      callback({ error: -2 });
+    }
+  });
+}
+
+function findDeepLinkArg(argv: string[]): string | null {
+  return argv.find((arg) => arg.startsWith(`${DEEP_LINK_PROTOCOL}://`)) || null;
+}
+
+function handleDeepLinkArgv(argv: string[]): void {
+  const deepLink = findDeepLinkArg(argv);
+  if (!deepLink) return;
+  try {
+    const url = new URL(deepLink);
+    if (url.protocol !== `${DEEP_LINK_PROTOCOL}:`) return;
+    if (url.hostname !== "auth-complete") return;
+    focusMainWindow();
+  } catch (error) {
+    console.warn(
+      "[desktop] Ignored invalid deep link:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+function focusMainWindow(): void {
+  if (!app.isReady()) return;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
 }
 
 function registerBrowserWebContentsPolicy(): void {
@@ -1973,6 +2192,22 @@ function configureBrowserSessionPolicy(session: Session): void {
   });
   session.on("will-download", (event) => {
     event.preventDefault();
+  });
+}
+
+function configureMainWindowPermissionPolicy(window: BrowserWindow): void {
+  const allowedWebContentsId = window.webContents.id;
+  window.webContents.session.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const mediaTypes =
+      "mediaTypes" in details && Array.isArray(details.mediaTypes)
+        ? details.mediaTypes
+        : [];
+    callback(
+      permission === "media" &&
+        contents.id === allowedWebContentsId &&
+        mediaTypes.includes("audio") &&
+        !mediaTypes.includes("video"),
+    );
   });
 }
 
@@ -2009,6 +2244,12 @@ function isAllowedDevRendererUrl(rawUrl: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isAllowedRendererNavigationUrl(rawUrl: string): boolean {
+  if (is.dev && isAllowedDevRendererUrl(rawUrl)) return true;
+  if (app.isPackaged && rawUrl === getRendererUrl()) return true;
+  return false;
 }
 
 function isTrustedSender(event: IpcMainInvokeEvent): boolean {
@@ -2070,8 +2311,12 @@ function registerIpc(): void {
   registerBrowserController(new BrowserUseController(browserUseWorkerClient));
   secureHandle("desktop:get-auth-session", () => getAuthSession());
   secureHandle("desktop:login", (_event, request) => login(request));
-  secureHandle("desktop:start-oidc-login", (_event, request) =>
-    startOidcLogin(request),
+  secureHandle("desktop:start-oidc-login", (event, request) =>
+    startOidcLogin(request, (debugEvent) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send("desktop:oidc-login-debug", debugEvent);
+      }
+    }),
   );
   secureHandle("desktop:cancel-oidc-login", () => cancelOidcLogin());
   secureHandle("desktop:start-desktop-sso-login", () => startDesktopSsoLogin());
@@ -2248,6 +2493,12 @@ function registerIpc(): void {
   secureHandle("desktop:update-thread", (_event, request) =>
     updateThread(request),
   );
+  secureHandle("desktop:get-thread-snapshot", (_event, threadId) =>
+    getThreadSnapshot(threadId),
+  );
+  secureHandle("desktop:update-thread-snapshot", (_event, snapshot) =>
+    updateThreadSnapshot(snapshot),
+  );
   secureHandle("desktop:prepare-fork-worktree", (_event, request) =>
     prepareForkWorktree(request),
   );
@@ -2421,6 +2672,26 @@ function registerIpc(): void {
   );
   secureHandle("desktop:abort-chat", (_event, requestId: string) =>
     abortChat(requestId),
+  );
+  secureHandle(
+    "desktop:voice-transcribe",
+    async (_event, request: DesktopVoiceTranscriptionRequest) => {
+      const workspacePath = getStringProperty(request, "workspacePath");
+      if (!(await isAllowedOpenPath(workspacePath))) {
+        throw new Error("Voice transcription workspace is not registered or allowed.");
+      }
+      return transcribeVoiceRecording(request);
+    },
+  );
+  secureHandle(
+    "desktop:voice-handoff-write",
+    async (_event, request: DesktopVoiceTranscriptHandoffRequest) => {
+      const workspacePath = getStringProperty(request, "workspacePath");
+      if (!(await isAllowedOpenPath(workspacePath))) {
+        throw new Error("Voice handoff workspace is not registered or allowed.");
+      }
+      return writeVoiceTranscriptHandoff(request);
+    },
   );
   secureHandle("desktop:start-agent-run", (event, request) =>
     startAgentRun(event.sender, request),
@@ -2733,12 +3004,16 @@ async function autoStartGatewayWhenInstalled(): Promise<void> {
 }
 
 app.whenReady().then(() => {
+  if (!singleInstanceLock) return;
   if (process.env.OPENDRSAI_E2E_OIDC_HEADLESS === "1") {
     void runHeadlessOidcSmoke();
     return;
   }
+  registerDeepLinkProtocol();
+  registerRendererProtocol();
   registerIpc();
   createWindow();
+  handleDeepLinkArgv(process.argv);
   void recoverWorkflowRunStateAfterRestart().finally(() => {
     startScheduledTaskWorkerIfEnabled();
   });
@@ -2797,6 +3072,52 @@ async function runHeadlessOidcSmoke(): Promise<void> {
       authContext.session,
     );
 
+    const gatewayEvents: Array<{ channel: string; event: Record<string, unknown> }> = [];
+    const gatewayWebContents = {
+      send(channel: string, event: Record<string, unknown>) {
+        gatewayEvents.push({ channel, event });
+      },
+    } as unknown as WebContents;
+
+    const chatRequestId = "e2e-oidc-chat-0001";
+    result.details.oidcChatReturnedRequestId = startChat(gatewayWebContents, {
+      requestId: chatRequestId,
+      model: "drsai",
+      messages: [{ role: "user", content: "oidc chat bearer check" }],
+    });
+    await waitForHeadlessGatewayTerminal(gatewayEvents, chatRequestId);
+    const chatEvents = gatewayEvents
+      .filter((item) => item.channel === "desktop:chat-event" && item.event.requestId === chatRequestId)
+      .map((item) => item.event);
+    result.details.oidcChatEvents = summarizeHeadlessGatewayEvents(chatEvents);
+    result.checks.oidcChatStart = chatEvents.some((event) => event.type === "start");
+    result.checks.oidcChatChunk = chatEvents.some(
+      (event) => event.type === "chunk" && String(event.content || "").includes("oidc chat bearer ok"),
+    );
+    result.checks.oidcChatDone = chatEvents.some((event) => event.type === "done");
+    result.checks.oidcChatNoError = !chatEvents.some((event) => event.type === "error" || event.type === "aborted");
+
+    const agentRequestId = "e2e-oidc-agent-0001";
+    result.details.oidcAgentReturned = await startAgentRun(gatewayWebContents, {
+      requestId: agentRequestId,
+      sessionId: "e2e-oidc-agent-session",
+      runId: "e2e-oidc-agent-run",
+      task: "oidc agent bearer check",
+      model: "drsai",
+      metadata: { source: "e2e-oidc" },
+    });
+    await waitForHeadlessGatewayTerminal(gatewayEvents, agentRequestId);
+    const agentEvents = gatewayEvents
+      .filter((item) => item.channel === "desktop:agent-run-event" && item.event.requestId === agentRequestId)
+      .map((item) => item.event);
+    result.details.oidcAgentEvents = summarizeHeadlessGatewayEvents(agentEvents);
+    result.checks.oidcAgentStart = agentEvents.some((event) => event.type === "start");
+    result.checks.oidcAgentChunk = agentEvents.some(
+      (event) => event.type === "chunk" && String(event.content || "").includes("oidc agent bearer ok"),
+    );
+    result.checks.oidcAgentDone = agentEvents.some((event) => event.type === "done");
+    result.checks.oidcAgentNoError = !agentEvents.some((event) => event.type === "error" || event.type === "aborted");
+
     const storage = readHeadlessOidcStorage();
     result.details.storage = storage.details;
     result.checks.sessionFileExists = storage.checks.exists;
@@ -2825,18 +3146,57 @@ async function runHeadlessOidcSmoke(): Promise<void> {
   app.exit(result.ok ? 0 : 1);
 }
 
+async function waitForHeadlessGatewayTerminal(
+  events: Array<{ event: Record<string, unknown> }>,
+  requestId: string,
+): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (
+      events.some(
+        (item) =>
+          item.event.requestId === requestId &&
+          (item.event.type === "done" ||
+            item.event.type === "error" ||
+            item.event.type === "aborted"),
+      )
+    ) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+function summarizeHeadlessGatewayEvents(
+  events: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  return events.map((event) => ({
+    type: event.type,
+    requestId: event.requestId,
+    content: event.content,
+    error: event.error,
+  }));
+}
+
 function publicSessionLooksHeadlessOidc(
   session: Awaited<ReturnType<typeof getAuthSession>> | null,
 ): boolean {
   if (!session) return false;
   const asRecord = session as unknown as Record<string, unknown>;
+  const strictFakeUser =
+    !process.env.OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER &&
+    session.user?.id === "e2e-hai-user" &&
+    session.user?.email === "e2e-hai-user@ihep.ac.cn";
+  const externalIssuerUser =
+    Boolean(process.env.OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER) &&
+    Boolean(session.user?.id) &&
+    Boolean(session.user?.name || session.user?.email);
   return Boolean(
     session.authenticated === true &&
     session.authMode === "oidc" &&
     session.authProvider === "hai" &&
     session.user &&
-    session.user.id === "e2e-hai-user" &&
-    session.user.email === "e2e-hai-user@ihep.ac.cn" &&
+    (strictFakeUser || externalIssuerUser) &&
     session.refreshable === true &&
     !("accessToken" in asRecord) &&
     !("refreshToken" in asRecord) &&

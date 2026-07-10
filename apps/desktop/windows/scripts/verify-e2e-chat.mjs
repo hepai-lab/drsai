@@ -49,7 +49,16 @@ try {
   console.log("E2E chat passed with packaged Electron + real Python fake gateway.");
 } finally {
   if (gatewayProcess) killProcessTree(gatewayProcess.pid);
-  rmSync(tempDir, { recursive: true, force: true });
+  cleanupTempDir(tempDir);
+}
+process.exit(process.exitCode ?? 0);
+
+function cleanupTempDir(path) {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    console.warn(`Could not remove temporary directory ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 async function assertPortFree() {

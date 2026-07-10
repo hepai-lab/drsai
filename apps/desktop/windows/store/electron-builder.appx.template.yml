@@ -1,0 +1,32 @@
+# Copy this file to a private release config after reserving the app in Partner
+# Center. Do not commit real Partner Center identity values until the publisher
+# has decided they are public release metadata.
+
+extends: ../electron-builder.yml
+
+win:
+  executableName: OpenDrSai
+  icon: build/icon.ico
+  target:
+    - target: appx
+      arch:
+        - x64
+
+appx:
+  applicationId: __PARTNER_CENTER_APPLICATION_ID__
+  identityName: __PARTNER_CENTER_PACKAGE_IDENTITY_NAME__
+  publisher: __PARTNER_CENTER_PUBLISHER_SUBJECT__
+  publisherDisplayName: __PARTNER_CENTER_PUBLISHER_DISPLAY_NAME__
+  displayName: OpenDrSai
+  backgroundColor: "#1F2937"
+  languages:
+    - en-US
+    - zh-CN
+  capabilities:
+    - runFullTrust
+    - internetClient
+  setBuildNumber: true
+  minVersion: 10.0.17763.0
+  maxVersionTested: 10.0.22631.0
+
+publish: null

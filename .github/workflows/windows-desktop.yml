@@ -161,6 +161,9 @@ jobs:
       - name: Generate release summary
         run: npm run summary:win
 
+      - name: Generate winget manifests
+        run: npm run winget:manifest
+
       - name: Verify release manifest
         run: |
           npm run verify:manifest
@@ -190,6 +193,7 @@ jobs:
             apps/desktop/windows/release/latest-windows.json
             apps/desktop/windows/release/release-summary.json
             apps/desktop/windows/release/bootstrapper/OpenDrSai Installer.exe
+            apps/desktop/windows/release/winget/**/*.yaml
             apps/desktop/windows/release/visual-checks/*.png
 
       - name: Publish GitHub Release assets

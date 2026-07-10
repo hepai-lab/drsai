@@ -71,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
 
   async function startOidcLogin(request?: { rememberMe?: boolean }): Promise<boolean> {
     setLoginBusy(true);
-    setMessage(null);
+    setMessage("Opening browser for HepAI sign-in...");
     try {
       const result = await desktopApi.startOidcLogin(request);
       setMessage(result.message);
@@ -89,10 +89,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   }
 
   async function cancelOidcLogin(): Promise<void> {
+    setMessage("Cancelling browser sign-in...");
     try {
       const cancelled = await desktopApi.cancelOidcLogin();
       if (cancelled) {
         setMessage("Browser sign-in cancelled.");
+        setLoginBusy(false);
+      } else {
+        setMessage("No browser sign-in is waiting to be cancelled.");
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not cancel browser sign-in.");

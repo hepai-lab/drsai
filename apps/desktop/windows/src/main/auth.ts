@@ -18,6 +18,7 @@ import type {
   LoginRequest,
   LoginResult,
   LogoutOptions,
+  OidcLoginDebugEvent,
 } from "../shared/desktopApi";
 import { DRSAI_HOME } from "./paths";
 import { normalizeModelAlias } from "./modelDefaults";
@@ -35,10 +36,12 @@ const DESKTOP_AUTH_BASE_URL =
 const OIDC_ISSUER =
   process.env.OPENDRSAI_OIDC_ISSUER?.replace(/\/+$/, "") ||
   process.env.HAI_OIDC_ISSUER?.replace(/\/+$/, "") ||
-  "https://aidev.ihep.ac.cn/backend";
+  "http://localhost:8081/api";
 const OIDC_CLIENT_ID = process.env.OPENDRSAI_OIDC_CLIENT_ID || "opendrsai-desktop";
 const OIDC_BASE_SCOPE = "openid email profile roles groups hai_api";
 const OIDC_AUTH_TIMEOUT_MS = 5 * 60 * 1000;
+const OIDC_FETCH_TIMEOUT_MS = Number(process.env.OPENDRSAI_OIDC_FETCH_TIMEOUT_MS || "10000");
+const OIDC_AUTH_COMPLETE_DEEP_LINK = "opendrsai://auth-complete";
 
 interface StoredAuthSession extends AuthSession {
   sessionId: string;
@@ -60,8 +63,11 @@ interface SerializedStoredAuthSession extends Omit<StoredAuthSession, "accessTok
 }
 
 let pendingOidcLogin: Awaited<ReturnType<typeof createLoopbackCallback>> | null = null;
+let pendingOidcLoginDebug: OidcLoginDebugSink | null = null;
 let oidcJwksCache: { keys: JsonWebKey[]; fetchedAt: number } | null = null;
 let oidcMetadataCache: { metadata: OidcProviderMetadata; fetchedAt: number } | null = null;
+
+type OidcLoginDebugSink = (event: OidcLoginDebugEvent) => void;
 
 export interface AuthContext {
   session: AuthSession;
@@ -169,19 +175,55 @@ export async function login(rawRequest: unknown): Promise<LoginResult> {
   };
 }
 
-export async function startOidcLogin(rawRequest?: unknown): Promise<LoginResult> {
+export async function startOidcLogin(
+  rawRequest?: unknown,
+  debug?: OidcLoginDebugSink,
+): Promise<LoginResult> {
   const rememberMe = normalizeRememberMe(rawRequest);
   const verifier = generateTokenPart(64);
   const challenge = createPkceChallenge(verifier);
   const state = generateTokenPart(32);
   const nonce = generateTokenPart(32);
   let callback: Awaited<ReturnType<typeof createLoopbackCallback>> | null = null;
+  const emitDebug = (event: Omit<OidcLoginDebugEvent, "at">): void => {
+    debug?.({ ...event, at: new Date().toISOString() });
+  };
 
   try {
+    emitDebug({
+      stage: "started",
+      status: "info",
+      message: "Starting HepAI OIDC login.",
+    });
     pendingOidcLogin?.cancel("A new browser sign-in was started.");
+    pendingOidcLoginDebug?.({
+      stage: "cancelled",
+      status: "info",
+      message: "Previous browser sign-in was cancelled because a new login started.",
+      at: new Date().toISOString(),
+    });
     callback = await createLoopbackCallback(state);
     pendingOidcLogin = callback;
+    pendingOidcLoginDebug = debug ?? null;
+    emitDebug({
+      stage: "callback-listening",
+      status: "info",
+      message: `Loopback callback server is listening at ${callback.redirectUri}.`,
+      url: callback.redirectUri,
+    });
+    emitDebug({
+      stage: "discovery",
+      status: "info",
+      message: `Loading OIDC discovery from ${OIDC_ISSUER}.`,
+      url: `${OIDC_ISSUER}/.well-known/openid-configuration`,
+    });
     const metadata = await getOidcMetadata();
+    emitDebug({
+      stage: "discovery",
+      status: "success",
+      message: `Loaded OIDC discovery from ${OIDC_ISSUER}.`,
+      url: `${OIDC_ISSUER}/.well-known/openid-configuration`,
+    });
     const url = new URL(metadata.authorization_endpoint);
     url.searchParams.set("client_id", OIDC_CLIENT_ID);
     url.searchParams.set("redirect_uri", callback.redirectUri);
@@ -192,11 +234,52 @@ export async function startOidcLogin(rawRequest?: unknown): Promise<LoginResult>
     url.searchParams.set("state", state);
     url.searchParams.set("nonce", nonce);
 
+    emitDebug({
+      stage: "authorize-url",
+      status: "info",
+      message: `Opening authorization endpoint: ${metadata.authorization_endpoint}.`,
+      url: metadata.authorization_endpoint,
+    });
     await openOidcAuthorizeUrl(url.toString());
+    emitDebug({
+      stage: "browser-opened",
+      status: "success",
+      message: "Browser open request was sent. Continue login in the browser.",
+      url: url.toString(),
+    });
+    emitDebug({
+      stage: "waiting-callback",
+      status: "info",
+      message: `Waiting for the browser to return to ${callback.redirectUri}.`,
+      url: callback.redirectUri,
+    });
     const code = await callback.waitForCode();
+    emitDebug({
+      stage: "callback-received",
+      status: "success",
+      message: "Received authorization callback from browser.",
+      url: callback.redirectUri,
+    });
+    emitDebug({
+      stage: "token-exchange",
+      status: "info",
+      message: `Exchanging authorization code at ${metadata.token_endpoint}.`,
+      url: metadata.token_endpoint,
+    });
     const token = await exchangeOidcAuthorizationCode(code, callback.redirectUri, verifier);
     const session = await createOidcSession(token, rememberMe, { nonce });
+    emitDebug({
+      stage: "token-verified",
+      status: "success",
+      message: "OIDC tokens were verified with JWKS, issuer, audience, expiry, and nonce checks.",
+      url: metadata.jwks_uri,
+    });
     writeStoredSession(session);
+    emitDebug({
+      stage: "session-created",
+      status: "success",
+      message: "HepAI session was created and stored securely.",
+    });
     return {
       ok: true,
       session: toPublicSession(session),
@@ -204,6 +287,12 @@ export async function startOidcLogin(rawRequest?: unknown): Promise<LoginResult>
     };
   } catch (error) {
     callback?.close();
+    const cancelled = isOidcLoginCancelled(error);
+    emitDebug({
+      stage: cancelled ? "cancelled" : "failed",
+      status: cancelled ? "info" : "error",
+      message: error instanceof Error ? error.message : "OIDC sign-in failed.",
+    });
     return {
       ok: false,
       session: null,
@@ -212,14 +301,26 @@ export async function startOidcLogin(rawRequest?: unknown): Promise<LoginResult>
   } finally {
     if (pendingOidcLogin === callback) {
       pendingOidcLogin = null;
+      pendingOidcLoginDebug = null;
     }
   }
+}
+
+function isOidcLoginCancelled(error: unknown): boolean {
+  return error instanceof Error && error.message === "Browser sign-in cancelled.";
 }
 
 export function cancelOidcLogin(): boolean {
   if (!pendingOidcLogin) return false;
   pendingOidcLogin.cancel("Browser sign-in cancelled.");
+  pendingOidcLoginDebug?.({
+    stage: "cancelled",
+    status: "info",
+    message: "Browser sign-in was cancelled by the user.",
+    at: new Date().toISOString(),
+  });
   pendingOidcLogin = null;
+  pendingOidcLoginDebug = null;
   return true;
 }
 
@@ -852,7 +953,7 @@ async function revokeOidcRefreshToken(refreshToken: string): Promise<void> {
   try {
     const metadata = await getOidcMetadata();
     const endpoint = metadata.revocation_endpoint || `${OIDC_ISSUER}/oauth2/revoke`;
-    await fetch(endpoint, {
+    await fetchOidcEndpoint(endpoint, "OIDC token revocation", {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -870,7 +971,7 @@ async function revokeOidcRefreshToken(refreshToken: string): Promise<void> {
 
 async function postOidcToken(params: Record<string, string>): Promise<OidcTokenResponse> {
   const metadata = await getOidcMetadata();
-  const response = await fetch(metadata.token_endpoint, {
+  const response = await fetchOidcEndpoint(metadata.token_endpoint, "OIDC token request", {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -893,6 +994,29 @@ async function postOidcToken(params: Record<string, string>): Promise<OidcTokenR
     throw new Error(`${detail} Auth service: ${OIDC_ISSUER}`);
   }
   return payload as OidcTokenResponse;
+}
+
+async function fetchOidcEndpoint(
+  url: string,
+  label: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OIDC_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`${label} timed out after ${OIDC_FETCH_TIMEOUT_MS}ms: ${url}`);
+    }
+    const detail = error instanceof Error ? error.message : "Unknown error";
+    throw new Error(`${label} failed: ${url}. ${detail}`);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function readOidcErrorMessage(payload: {
@@ -928,7 +1052,7 @@ async function getOidcMetadata(): Promise<OidcProviderMetadata> {
     return oidcMetadataCache.metadata;
   }
   const discoveryUrl = `${OIDC_ISSUER}/.well-known/openid-configuration`;
-  const response = await fetch(discoveryUrl, {
+  const response = await fetchOidcEndpoint(discoveryUrl, "OIDC discovery", {
     headers: { Accept: "application/json" },
   });
   const payload = await response.json().catch(() => ({})) as Partial<OidcProviderMetadata>;
@@ -1016,7 +1140,7 @@ async function getOidcSigningJwk(kid: string | undefined): Promise<JsonWebKey> {
 
 async function fetchOidcJwks(): Promise<{ keys: JsonWebKey[]; fetchedAt: number }> {
   const metadata = await getOidcMetadata();
-  const response = await fetch(metadata.jwks_uri, {
+  const response = await fetchOidcEndpoint(metadata.jwks_uri, "OIDC JWKS request", {
     headers: { Accept: "application/json" },
   });
   const payload = await response.json().catch(() => ({})) as { keys?: JsonWebKey[] };
@@ -1062,11 +1186,19 @@ function audienceIncludes(audience: string | string[] | undefined, expected: str
 }
 
 async function openOidcAuthorizeUrl(url: string): Promise<void> {
-  if (process.env.OPENDRSAI_E2E_OIDC_AUTO_CALLBACK === "1") {
+  if (
+    process.env.OPENDRSAI_E2E_OIDC === "1" &&
+    process.env.OPENDRSAI_E2E_OIDC_AUTO_CALLBACK === "1"
+  ) {
     await followOidcAuthorizeRedirectForE2e(url);
     return;
   }
-  await shell.openExternal(url);
+  try {
+    await shell.openExternal(url);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Unknown error";
+    throw new Error(`Could not open the HepAI sign-in browser. Open this URL manually: ${url}. ${detail}`);
+  }
 }
 
 async function followOidcAuthorizeRedirectForE2e(url: string): Promise<void> {
@@ -1095,6 +1227,11 @@ async function createLoopbackCallback(expectedState: string): Promise<{
   const waitForCode = new Promise<string>((resolve, reject) => {
     resolveCode = resolve;
     rejectCode = reject;
+  });
+  waitForCode.catch(() => {
+    // Cancellation can be triggered by a separate IPC call before the login
+    // request has attached its await handler. Keep the rejection observable to
+    // the caller without letting Electron report it as unhandled.
   });
 
   const server = createServer((request, response) => {
@@ -1177,7 +1314,32 @@ function safeCloseServer(server: Server): void {
 }
 
 function successHtml(): string {
-  return "<!doctype html><title>Signed in</title><body style=\"font:16px sans-serif;text-align:center;padding:48px\"><h1>Signed in</h1><p>You can return to OpenDrSai Desktop.</p></body>";
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Signed in</title>
+    <style>
+      body { font: 16px sans-serif; text-align: center; padding: 48px; color: #172033; }
+      p { color: #536074; }
+    </style>
+  </head>
+  <body>
+    <h1>Signed in</h1>
+    <p id="message">正在打开 OpenDrSai...</p>
+    <p><a href="${OIDC_AUTH_COMPLETE_DEEP_LINK}">打开 OpenDrSai</a></p>
+    <script>
+      setTimeout(function () {
+        window.location.href = "${OIDC_AUTH_COMPLETE_DEEP_LINK}";
+      }, 150);
+      setTimeout(function () {
+        window.close();
+        document.getElementById("message").textContent =
+          "如果没有自动回到 OpenDrSai，可以点击“打开 OpenDrSai”，或手动关闭此标签页。";
+      }, 30000);
+    </script>
+  </body>
+</html>`;
 }
 
 function failureHtml(message: string): string {

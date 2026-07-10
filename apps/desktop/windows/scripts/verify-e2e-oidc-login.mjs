@@ -13,7 +13,10 @@ const electronCmd = process.platform === "win32"
   : join(root, "node_modules", ".bin", "electron");
 const builtMain = join(root, "out", "main", "index.js");
 const port = Number(process.env.OPENDRSAI_E2E_OIDC_PORT || "18649");
-const issuer = `http://127.0.0.1:${port}/backend`;
+const gatewayPort = Number(process.env.OPENDRSAI_E2E_OIDC_GATEWAY_PORT || "18650");
+const externalIssuer = process.env.OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER?.replace(/\/+$/, "");
+const issuer = externalIssuer || `http://127.0.0.1:${port}/backend`;
+const useExternalIssuer = Boolean(externalIssuer);
 const signingKid = "e2e-oidc-rs256-1";
 const signingKey = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const publicJwk = {
@@ -45,7 +48,8 @@ mkdirSync(drsaiHome, { recursive: true });
 mkdirSync(userDataDir, { recursive: true });
 
 try {
-  const fakeIssuer = await startFakeOidcIssuer();
+  const fakeGateway = await startFakeGateway();
+  const fakeIssuer = useExternalIssuer ? null : await startFakeOidcIssuer();
   await runPackagedApp();
   if (!existsSync(resultPath)) {
     throw new Error("E2E OIDC login did not write a smoke result.");
@@ -55,15 +59,76 @@ try {
     throw new Error(`E2E OIDC login failed:\n${JSON.stringify(result, null, 2)}`);
   }
   assertOidcDiagnostics(result);
-  assertIssuerHits();
+  if (!useExternalIssuer) {
+    assertIssuerHits();
+  }
+  assertGatewayHits();
   assertSessionClearedByLogout();
-  console.log("E2E OIDC login passed with Electron main process + fake OIDC issuer.");
-  await new Promise((resolve) => fakeIssuer.close(resolve));
+  console.log(
+    useExternalIssuer
+      ? `E2E OIDC login passed with Electron main process + external OIDC issuer ${issuer}.`
+      : "E2E OIDC login passed with Electron main process + fake OIDC issuer.",
+  );
+  if (fakeIssuer) {
+    await new Promise((resolve) => fakeIssuer.close(resolve));
+  }
+  await new Promise((resolve) => fakeGateway.close(resolve));
 } finally {
   if (globalThis.__opendrsaiFakeOidcIssuer) {
     await new Promise((resolve) => globalThis.__opendrsaiFakeOidcIssuer.close(resolve));
   }
+  if (globalThis.__opendrsaiOidcFakeGateway) {
+    await new Promise((resolve) => globalThis.__opendrsaiOidcFakeGateway.close(resolve));
+  }
   rmSync(tempDir, { recursive: true, force: true });
+}
+
+function startFakeGateway() {
+  const hits = {
+    health: 0,
+    models: 0,
+    chat: [],
+    agent: [],
+  };
+  globalThis.__opendrsaiOidcGatewayHits = hits;
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url || "/", `http://127.0.0.1:${gatewayPort}`);
+    if (url.pathname === "/health") {
+      hits.health += 1;
+      writeJson(res, 200, { status: "ok" });
+      return;
+    }
+    if (url.pathname === "/v1/models") {
+      hits.models += 1;
+      writeJson(res, 200, { object: "list", data: [{ id: "drsai", object: "model" }] });
+      return;
+    }
+    if (url.pathname === "/v1/chat/completions" && req.method === "POST") {
+      const body = JSON.parse(await readBody(req));
+      const requestId = body?.metadata?.desktop_request_id || "";
+      const hit = {
+        requestId,
+        authorization: req.headers.authorization || "",
+        authMode: req.headers["x-opendrsai-auth-mode"] || "",
+        user: req.headers["x-opendrsai-user"] || "",
+      };
+      if (String(requestId).includes("agent")) {
+        hits.agent.push(hit);
+      } else {
+        hits.chat.push(hit);
+      }
+      writeSse(res, String(requestId).includes("agent") ? "oidc agent bearer ok" : "oidc chat bearer ok");
+      return;
+    }
+    writeJson(res, 404, { error: "fake_gateway_not_found" });
+  });
+  globalThis.__opendrsaiOidcFakeGateway = server;
+  return new Promise((resolve, reject) => {
+    server.once("error", (error) => {
+      reject(new Error(`Could not start fake gateway on ${gatewayPort}: ${error.message}`));
+    });
+    server.listen(gatewayPort, "127.0.0.1", () => resolve(server));
+  });
 }
 
 function startFakeOidcIssuer() {
@@ -226,6 +291,17 @@ function writeJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function writeSse(res, content) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+  res.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+  res.write("data: [DONE]\n\n");
+  res.end();
+}
+
 function runPackagedApp() {
   return new Promise((resolvePromise, reject) => {
     let settled = false;
@@ -242,9 +318,14 @@ function runPackagedApp() {
         APPDATA: process.env.APPDATA,
         PATH: systemPath,
         DRSAI_HOME: drsaiHome,
+        DRSAI_GATEWAY_DEV_MANAGED: "1",
+        OPENDRSAI_GATEWAY_PORT: String(gatewayPort),
         OPENDRSAI_OIDC_ISSUER: issuer,
         OPENDRSAI_E2E_OIDC: "1",
         OPENDRSAI_E2E_OIDC_AUTO_CALLBACK: "1",
+        ...(useExternalIssuer
+          ? { OPENDRSAI_E2E_OIDC_EXTERNAL_ISSUER: issuer }
+          : {}),
         OPENDRSAI_E2E_OIDC_HEADLESS: "1",
         OPENDRSAI_E2E_DISABLE_GPU: "1",
         OPENDRSAI_E2E_RESULT: resultPath,
@@ -291,6 +372,7 @@ function runPackagedApp() {
 
 function resolveElectronRuntime() {
   const usePackaged =
+    process.env.OPENDRSAI_E2E_OIDC_USE_SOURCE !== "1" &&
     existsSync(exePath) &&
     (!existsSync(builtMain) || statSync(exePath).mtimeMs >= statSync(builtMain).mtimeMs);
   if (usePackaged) {
@@ -326,6 +408,9 @@ function assertOidcDiagnostics(result) {
   if (!result?.checks?.restoredSession || !result?.checks?.refreshSession || !result?.checks?.afterLogoutAnonymous) {
     throw new Error(`OIDC smoke did not prove restore, refresh, and logout:\n${JSON.stringify(result?.checks, null, 2)}`);
   }
+  if (!result?.checks?.oidcChatDone || !result?.checks?.oidcAgentDone) {
+    throw new Error(`OIDC smoke did not prove authenticated chat and agent gateway requests:\n${JSON.stringify(result?.checks, null, 2)}`);
+  }
 }
 
 function assertIssuerHits() {
@@ -347,6 +432,25 @@ function assertSessionClearedByLogout() {
   if (existsSync(sessionPath)) {
     const content = readFileSync(sessionPath, "utf8");
     throw new Error(`OIDC logout left a session file behind:\n${content}`);
+  }
+}
+
+function assertGatewayHits() {
+  const hits = globalThis.__opendrsaiOidcGatewayHits;
+  const chatAuth = hits?.chat?.[0]?.authorization || "";
+  const agentAuth = hits?.agent?.[0]?.authorization || "";
+  if (
+    !hits ||
+    hits.health < 1 ||
+    hits.models < 1 ||
+    hits.chat.length !== 1 ||
+    hits.agent.length !== 1 ||
+    !chatAuth.startsWith("Bearer ") ||
+    !agentAuth.startsWith("Bearer ") ||
+    hits.chat[0].authMode !== "oidc" ||
+    hits.agent[0].authMode !== "oidc"
+  ) {
+    throw new Error(`OIDC gateway did not receive authenticated chat and agent traffic:\n${JSON.stringify(hits, null, 2)}`);
   }
 }
 

@@ -30,12 +30,16 @@ check("electron-builder packages install.ps1 as extraResources", () => {
     read("scripts/create-backend-source-archive.ps1").includes("1970-01-01T00:00:00.0000000Z") &&
     config.includes("icon: build/icon.ico") &&
     config.includes("target: nsis") &&
+    config.includes("protocols:") &&
+    config.includes("opendrsai") &&
     config.includes("electronFuses:") &&
     config.includes("runAsNode: false") &&
     config.includes("enableNodeOptionsEnvironmentVariable: false") &&
     config.includes("enableNodeCliInspectArguments: false") &&
     config.includes("enableEmbeddedAsarIntegrityValidation: true") &&
-    config.includes("onlyLoadAppFromAsar: true")
+    config.includes("onlyLoadAppFromAsar: false") &&
+    config.includes("from: out/renderer") &&
+    config.includes("to: renderer")
   );
 });
 
@@ -1273,7 +1277,7 @@ check("packaged app smoke verifies real main, preload, and IPC", () => {
     e2eFailures.includes("assertAttachmentBody") &&
     e2eFailures.includes("E2E_TEXT_ATTACHMENT_SENTINEL") &&
     e2eFailures.includes("attachment_context") &&
-    e2eFailures.includes("folder-not-inlined") &&
+    e2eFailures.includes('folderContext.name !== "project"') &&
     e2eFailures.includes("threads.json left a running thread") &&
     e2eFailures.includes("OPENDRSAI_E2E_ATTACHMENT_FILE") &&
     e2eFailures.includes("OPENDRSAI_CHAT_TIMEOUT_MS") &&

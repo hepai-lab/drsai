@@ -1,5 +1,6 @@
 import {
   FormEvent,
+  ClipboardEvent as ReactClipboardEvent,
   KeyboardEvent as ReactKeyboardEvent,
   useCallback,
   useEffect,
@@ -20,6 +21,8 @@ import {
   Gauge,
   Globe2,
   Info,
+  Mic,
+  MicOff,
   Paperclip,
   Plus,
   RefreshCw,
@@ -35,7 +38,12 @@ import type {
   DesktopAgent,
   DesktopHealth,
   DesktopIdeContextSnapshot,
+  DesktopVoiceTranscriptionRequest,
+  DesktopVoiceTranscriptionResult,
   MyDrSaiModelConfig,
+  PickDialogResult,
+  WorkspaceFolderSummaryRequest,
+  WorkspaceFolderSummaryResult,
   WorkspaceInstructionSummary,
 } from "@shared/desktopApi";
 import type { ChatAttachment } from "@shared/desktopApi";
@@ -46,7 +54,6 @@ import {
   type ChatCommandName,
   type ChatRuntimeMode,
 } from "../chatCommands";
-import { desktopApi } from "../desktopApi";
 
 export type UiMessage = ChatMessage & {
   id: string;
@@ -63,6 +70,15 @@ type ComposerAttachment = ChatAttachment & {
 
 export type ThinkingEffort = "low" | "medium" | "high" | "xhigh";
 const THINKING_EFFORTS: ThinkingEffort[] = ["low", "medium", "high", "xhigh"];
+const MAX_CLIPBOARD_IMAGE_BYTES = 1_250_000;
+const MAX_CLIPBOARD_IMAGE_COUNT = 4;
+const MAX_CLIPBOARD_PATH_MENTIONS = 6;
+type VoiceRecordingState =
+  | "idle"
+  | "requesting_permission"
+  | "recording"
+  | "processing"
+  | "failed";
 
 export interface ChatForkQueueAgentAssignment {
   queueIndex: number;
@@ -105,6 +121,14 @@ interface ChatWorkspaceProps {
   onSelectModel?: (model: string) => void;
   onOpenExternal: (url: string) => void;
   onOpenPreviewBrowser?: (url?: string) => void;
+  onPickFiles?: () => Promise<PickDialogResult>;
+  onPickFolder?: () => Promise<PickDialogResult>;
+  onSummarizeWorkspaceFolder?: (
+    request: WorkspaceFolderSummaryRequest,
+  ) => Promise<WorkspaceFolderSummaryResult>;
+  onTranscribeVoiceRecording?: (
+    request: DesktopVoiceTranscriptionRequest,
+  ) => Promise<DesktopVoiceTranscriptionResult>;
   onRemoveExternalAttachment?: (index: number) => void;
   onAttachIdeCurrentFile?: () => void;
   onAttachIdeCurrentSelection?: () => void;
@@ -141,6 +165,10 @@ export function ChatWorkspace({
   onSelectModel,
   onOpenExternal,
   onOpenPreviewBrowser,
+  onPickFiles,
+  onPickFolder,
+  onSummarizeWorkspaceFolder,
+  onTranscribeVoiceRecording,
   onRemoveExternalAttachment,
   onAttachIdeCurrentFile,
   onAttachIdeCurrentSelection,
@@ -155,8 +183,17 @@ export function ChatWorkspace({
   const [forkQueueAgentSelections, setForkQueueAgentSelections] = useState<Record<number, string>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [activeMatchIndex, setActiveMatchIndex] = useState(0);
+  const [voiceState, setVoiceState] = useState<VoiceRecordingState>("idle");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [voiceElapsedSeconds, setVoiceElapsedSeconds] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceChunksRef = useRef<Blob[]>([]);
+  const voiceStartedAtRef = useRef<number>(0);
+  const voiceTimerRef = useRef<number | null>(null);
+  const voiceStopModeRef = useRef<"transcribe" | "discard">("transcribe");
   const zh = language === "zh";
   const [now, setNow] = useState(Date.now());
   const hasStreamingMessage = messages.some((message) => message.streaming);
@@ -231,6 +268,15 @@ export function ChatWorkspace({
   const showContextPreview = contextPreviewItems.length > 0;
   const canAttachIdeCurrentFile = Boolean(ideContext?.currentFile);
   const canAttachIdeCurrentSelection = Boolean(ideContext?.currentSelection);
+  const voiceApiAvailable =
+    typeof navigator !== "undefined" &&
+    Boolean(navigator.mediaDevices?.getUserMedia) &&
+    typeof window !== "undefined" &&
+    "MediaRecorder" in window;
+  const voiceBusy =
+    voiceState === "requesting_permission" ||
+    voiceState === "recording" ||
+    voiceState === "processing";
 
   const searchableMessages = useMemo(
     () => messages.filter((message) => message.content.trim()),
@@ -355,6 +401,18 @@ export function ChatWorkspace({
     return () => window.removeEventListener("keydown", handleWindowKeyDown);
   }, [openSearch]);
 
+  useEffect(() => {
+    return () => {
+      stopVoiceTimer();
+      stopVoiceStream();
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        voiceStopModeRef.current = "discard";
+        recorder.stop();
+      }
+    };
+  }, []);
+
   function handleSubmit(event: FormEvent): void {
     event.preventDefault();
     void submitWithAttachments();
@@ -366,9 +424,25 @@ export function ChatWorkspace({
     void submitWithAttachments();
   }
 
+  function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>): void {
+    const clipboard = event.clipboardData;
+    const imageFiles = Array.from(clipboard.files)
+      .filter((file) => file.type.startsWith("image/"))
+      .slice(0, MAX_CLIPBOARD_IMAGE_COUNT);
+    const text = clipboard.getData("text/plain");
+    const pathMentionText = normalizePastedLocalPathMentions(text);
+    if (!imageFiles.length && !pathMentionText) return;
+
+    event.preventDefault();
+    insertTextAtCursor(pathMentionText || text);
+    if (imageFiles.length) void addClipboardImageAttachments(imageFiles);
+  }
+
   async function submitWithAttachments(): Promise<void> {
     const resolvedInlineMentionAttachments = await Promise.all(
-      inlineMentionAttachments.map((attachment) => summarizeInlineFolderAttachment(attachment)),
+      inlineMentionAttachments.map((attachment) =>
+        summarizeInlineFolderAttachment(attachment, onSummarizeWorkspaceFolder),
+      ),
     );
     const submittedAttachments = mergeUniqueAttachments([
       ...attachments.map(({ id: _id, ...attachment }) => attachment),
@@ -398,6 +472,168 @@ export function ChatWorkspace({
   function clearInput(): void {
     onInputChange("");
     textareaRef.current?.focus();
+  }
+
+  async function toggleVoiceRecording(): Promise<void> {
+    if (voiceState === "recording") {
+      stopVoiceRecording("transcribe");
+      return;
+    }
+    await startVoiceRecording();
+  }
+
+  async function startVoiceRecording(): Promise<void> {
+    if (!voiceApiAvailable) {
+      setVoiceState("failed");
+      setVoiceError("Voice recording is unavailable in this desktop runtime.");
+      return;
+    }
+    setVoiceError(null);
+    setVoiceElapsedSeconds(0);
+    setVoiceState("requesting_permission");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      const mimeType = getPreferredVoiceMimeType();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      voiceStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      voiceChunksRef.current = [];
+      voiceStopModeRef.current = "transcribe";
+      voiceStartedAtRef.current = Date.now();
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) voiceChunksRef.current.push(event.data);
+      };
+      recorder.onerror = () => {
+        setVoiceState("failed");
+        setVoiceError("Voice recording failed. Please try again.");
+        stopVoiceTimer();
+        stopVoiceStream();
+      };
+      recorder.onstop = () => {
+        void finishVoiceRecording(recorder.mimeType || mimeType || "audio/webm");
+      };
+      recorder.start();
+      setVoiceState("recording");
+      startVoiceTimer();
+    } catch (error) {
+      setVoiceState("failed");
+      setVoiceError(getVoicePermissionError(error));
+      stopVoiceTimer();
+      stopVoiceStream();
+    }
+  }
+
+  function stopVoiceRecording(mode: "transcribe" | "discard"): void {
+    const recorder = mediaRecorderRef.current;
+    voiceStopModeRef.current = mode;
+    stopVoiceTimer();
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+      return;
+    }
+    stopVoiceStream();
+    setVoiceState("idle");
+  }
+
+  async function finishVoiceRecording(mimeType: string): Promise<void> {
+    const chunks = voiceChunksRef.current;
+    const durationSeconds = voiceStartedAtRef.current
+      ? Math.max(0, Math.round((Date.now() - voiceStartedAtRef.current) / 1000))
+      : voiceElapsedSeconds;
+    stopVoiceStream();
+    mediaRecorderRef.current = null;
+    voiceChunksRef.current = [];
+    if (voiceStopModeRef.current === "discard") {
+      setVoiceState("idle");
+      setVoiceError(null);
+      setVoiceElapsedSeconds(0);
+      return;
+    }
+    const blob = new Blob(chunks, { type: mimeType });
+    if (!blob.size) {
+      setVoiceState("failed");
+      setVoiceError("Voice recording was empty. Please try again.");
+      return;
+    }
+    setVoiceState("processing");
+    try {
+      const transcript = await transcribeVoiceRecording(
+        blob,
+        durationSeconds,
+        workspacePath,
+        onTranscribeVoiceRecording,
+      );
+      insertVoiceText(transcript);
+      setVoiceState("idle");
+      setVoiceError(null);
+      setVoiceElapsedSeconds(0);
+    } catch (error) {
+      setVoiceState("failed");
+      setVoiceError(error instanceof Error ? error.message : "Voice transcription failed.");
+    }
+  }
+
+  function insertVoiceText(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const current = input.trimEnd();
+    onInputChange(current ? `${current}\n${trimmed}` : trimmed);
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
+  }
+
+  function insertTextAtCursor(text: string): void {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      onInputChange(input ? `${input}${text}` : text);
+      return;
+    }
+    const start = textarea.selectionStart ?? input.length;
+    const end = textarea.selectionEnd ?? start;
+    const next = `${input.slice(0, start)}${text}${input.slice(end)}`;
+    onInputChange(next);
+    window.setTimeout(() => {
+      textarea.focus();
+      const cursor = start + text.length;
+      textarea.setSelectionRange(cursor, cursor);
+    }, 0);
+  }
+
+  async function addClipboardImageAttachments(files: File[]): Promise<void> {
+    const nextAttachments = (
+      await Promise.all(files.map((file, index) => createClipboardImageAttachment(file, index)))
+    ).filter((attachment): attachment is ComposerAttachment => Boolean(attachment));
+    if (!nextAttachments.length) return;
+    setAttachments((current) => [...current, ...nextAttachments]);
+    setToolsOpen(false);
+  }
+
+  function startVoiceTimer(): void {
+    stopVoiceTimer();
+    voiceTimerRef.current = window.setInterval(() => {
+      setVoiceElapsedSeconds(
+        Math.max(0, Math.floor((Date.now() - voiceStartedAtRef.current) / 1000)),
+      );
+    }, 250);
+  }
+
+  function stopVoiceTimer(): void {
+    if (voiceTimerRef.current !== null) {
+      window.clearInterval(voiceTimerRef.current);
+      voiceTimerRef.current = null;
+    }
+  }
+
+  function stopVoiceStream(): void {
+    voiceStreamRef.current?.getTracks().forEach((track) => track.stop());
+    voiceStreamRef.current = null;
   }
 
   function selectSamplePrompt(prompt: string): void {
@@ -445,12 +681,14 @@ export function ChatWorkspace({
   }
 
   async function addFiles(): Promise<void> {
-    const result = await desktopApi.pickFiles();
+    if (!onPickFiles) return;
+    const result = await onPickFiles();
     if (!result.canceled) addAttachments("file", result.paths);
   }
 
   async function addFolder(): Promise<void> {
-    const result = await desktopApi.pickFolder();
+    if (!onPickFolder) return;
+    const result = await onPickFolder();
     if (!result.canceled) await addFolderAttachments(result.paths);
   }
 
@@ -479,8 +717,9 @@ export function ChatWorkspace({
           path,
           name: getPathName(path),
         };
+        if (!onSummarizeWorkspaceFolder) return base;
         try {
-          const summary = await desktopApi.summarizeWorkspaceFolder({
+          const summary = await onSummarizeWorkspaceFolder({
             path,
             maxDepth: 3,
             maxEntries: 240,
@@ -545,7 +784,7 @@ export function ChatWorkspace({
           <button
             type="button"
             className="chat-search-backdrop"
-            aria-label={zh ? "关闭搜索" : "Close search"}
+            aria-label={zh ? "鍏抽棴鎼滅储" : "Close search"}
             onClick={closeSearch}
           />
           <section className="chat-search-modal" onMouseDown={(event) => event.stopPropagation()}>
@@ -555,8 +794,8 @@ export function ChatWorkspace({
                 type="button"
                 className="chat-search-close"
                 onClick={closeSearch}
-                title={zh ? "关闭搜索" : "Close search"}
-                aria-label={zh ? "关闭搜索" : "Close search"}
+                title={zh ? "鍏抽棴鎼滅储" : "Close search"}
+                aria-label={zh ? "鍏抽棴鎼滅储" : "Close search"}
               >
                 <X size={17} />
               </button>
@@ -587,16 +826,16 @@ export function ChatWorkspace({
             {searchQuery.trim()
               ? searchMatches.length > 0
                 ? `${(activeMatchIndex % searchMatches.length) + 1} / ${searchMatches.length}`
-                : zh ? "无结果" : "No results"
-              : zh ? "输入关键词" : "Type to search"}
+                : "No results"
+              : "Type to search"}
           </span>
           <button
             type="button"
             className="chat-search-step previous"
             disabled={searchMatches.length === 0}
             onClick={selectPreviousMatch}
-            title={zh ? "上一处匹配" : "Previous match"}
-            aria-label={zh ? "上一处匹配" : "Previous match"}
+            title="Previous match"
+            aria-label="Previous match"
           >
             <ChevronDown size={15} />
           </button>
@@ -605,8 +844,8 @@ export function ChatWorkspace({
             className="chat-search-step"
             disabled={searchMatches.length === 0}
             onClick={selectNextMatch}
-            title={zh ? "下一处匹配" : "Next match"}
-            aria-label={zh ? "下一处匹配" : "Next match"}
+            title="Next match"
+            aria-label="Next match"
           >
             <ChevronDown size={15} />
           </button>
@@ -614,8 +853,8 @@ export function ChatWorkspace({
             type="button"
             className="chat-search-close"
             onClick={closeSearch}
-            title={zh ? "关闭搜索" : "Close search"}
-            aria-label={zh ? "关闭搜索" : "Close search"}
+            title={zh ? "鍏抽棴鎼滅储" : "Close search"}
+            aria-label={zh ? "鍏抽棴鎼滅储" : "Close search"}
           >
             <X size={15} />
           </button>
@@ -632,7 +871,7 @@ export function ChatWorkspace({
             className={`message ${message.role} ${message.error ? "error" : ""} ${searchMatches.includes(message.id) ? "search-match" : ""} ${activeMatchId === message.id ? "search-active" : ""}`}
             data-message-id={message.id}
           >
-            <strong>{message.role === "user" ? (zh ? "你" : "You") : "OpenDrSai"}</strong>
+            <strong>{message.role === "user" ? "You" : "OpenDrSai"}</strong>
             <div className="message-body">
               {message.content && message.role === "user" ? (
                 <p>{highlightPlainText(message.content, searchQuery)}</p>
@@ -713,7 +952,7 @@ export function ChatWorkspace({
                   {attachment.name}
                   <button
                     type="button"
-                    aria-label={zh ? `移除 ${attachment.name}` : `Remove ${attachment.name}`}
+                    aria-label={zh ? `绉婚櫎 ${attachment.name}` : `Remove ${attachment.name}`}
                     onClick={() => removeAttachment(attachment.id)}
                   >
                     <X size={13} />
@@ -746,7 +985,7 @@ export function ChatWorkspace({
                   {name}
                   <button
                     type="button"
-                    aria-label={zh ? `移除 ${name}` : `Remove ${name}`}
+                    aria-label={zh ? `绉婚櫎 ${name}` : `Remove ${name}`}
                     onClick={() => onRemoveExternalAttachment?.(index)}
                   >
                     <X size={13} />
@@ -767,7 +1006,7 @@ export function ChatWorkspace({
                   className={`context-budget-meter ${contextBudget.level}`}
                   title={`Estimated prompt context budget: ${contextBudget.estimatedTokens} / ${contextBudget.limit} tokens. Raw estimate ${contextBudget.rawEstimatedTokens} tokens. ${contextBudget.source}. ${contextBudget.calibrationSource ?? "No tokenizer calibration samples."} ${contextBudget.calibrationDrift ?? ""} ${contextBudget.reservedOutputTokens} tokens reserved for output.`}
                 >
-                  {contextPreviewItems.length} visible source{contextPreviewItems.length === 1 ? "" : "s"} · {formatApproxTokens(contextBudget.estimatedTokens)}
+                  {contextPreviewItems.length} visible source{contextPreviewItems.length === 1 ? "" : "s"} 路 {formatApproxTokens(contextBudget.estimatedTokens)}
                   <small>{contextBudget.calibrationSource ?? contextBudget.source}</small>
                   {contextBudget.calibrationDrift ? <small>{contextBudget.calibrationDrift}</small> : null}
                 </span>
@@ -857,7 +1096,7 @@ export function ChatWorkspace({
                   <div className="composer-tool-menu">
                     <button type="button" onClick={() => openPreviewBrowser()}>
                       <Globe2 size={15} />
-                      {zh ? "打开预览浏览器" : "Open Preview"}
+                      Open Preview
                     </button>
                     <button
                       type="button"
@@ -891,7 +1130,7 @@ export function ChatWorkspace({
                     </button>
                     <button type="button" onClick={addFolder}>
                       <FolderPlus size={15} />
-                      {zh ? "添加文件夹" : "Add Folder"}
+                      Add Folder
                     </button>
                   </div>
                 )}
@@ -902,39 +1141,36 @@ export function ChatWorkspace({
                 value={input}
                 onChange={(event) => onInputChange(event.target.value)}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder={
                   canChat
                     ? zh ? "向 OpenDrSai 提问..." : "Ask OpenDrSai..."
-                    : zh ? "正在准备本地智能体运行时..." : "Preparing the local agent runtime..."
+                    : zh ? "正在连接本地网关..." : "Preparing the local agent runtime..."
                 }
                 rows={1}
               />
 
-              <div className="composer-actions">
-                {input.trim() && !showStop ? (
+            </div>
+
+            {voiceBusy || voiceError ? (
+              <div
+                className={`composer-voice-status ${voiceState === "failed" ? "error" : ""}`}
+                aria-live="polite"
+              >
+                <span>
+                  {getVoiceStatusLabel(voiceState, voiceElapsedSeconds)}
+                </span>
+                {voiceState === "recording" ? (
                   <button
                     type="button"
-                    className="composer-icon-button"
-                    onClick={clearInput}
-                    aria-label={zh ? "清空输入" : "Clear input"}
-                    title={zh ? "清空" : "Clear"}
+                    onClick={() => stopVoiceRecording("discard")}
                   >
-                    <X size={16} />
+                    Cancel
                   </button>
                 ) : null}
-                {showStop ? (
-                  <button className="composer-submit stop" type="button" onClick={onAbort}>
-                    <Square size={16} />
-                    {zh ? "停止" : "Stop"}
-                  </button>
-                ) : (
-                  <button className="composer-submit" type="submit" disabled={!input.trim() || !canChat}>
-                    <Send size={16} />
-                    {zh ? "发送" : "Send"}
-                  </button>
-                )}
+                {voiceError ? <small>{voiceError}</small> : null}
               </div>
-            </div>
+            ) : null}
 
             <div className="composer-meta-bar">
               {currentRuntimeMode && (
@@ -1018,7 +1254,7 @@ export function ChatWorkspace({
                 type="button"
                 aria-expanded={metaMenuOpen === "thinking"}
                 onClick={() => toggleMetaMenu("thinking")}
-                title={zh ? "切换推理强度" : "Switch thinking effort"}
+                title="Switch thinking effort"
               >
                 <Gauge size={14} />
                 {zh ? "推理：" : "Thinking: "}
@@ -1040,12 +1276,57 @@ export function ChatWorkspace({
                 </div>
               )}
               </div>
+              <div className="composer-actions composer-actions-meta">
+                {input.trim() && !showStop ? (
+                  <button
+                    type="button"
+                    className="composer-icon-button"
+                    onClick={clearInput}
+                    aria-label="Clear input"
+                    title="Clear"
+                  >
+                    <X size={16} />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className={`composer-icon-button composer-voice-button ${voiceState === "recording" ? "recording" : ""}`}
+                  disabled={!canChat || showStop || voiceState === "requesting_permission" || voiceState === "processing"}
+                  aria-pressed={voiceState === "recording"}
+                  aria-label={
+                    voiceState === "recording"
+                      ? "Stop voice recording"
+                      : "Start voice recording"
+                  }
+                  title={
+                    voiceState === "recording"
+                      ? "Stop voice recording"
+                      : "Start voice recording"
+                  }
+                  onClick={() => {
+                    void toggleVoiceRecording();
+                  }}
+                >
+                  {voiceState === "recording" ? <MicOff size={16} /> : <Mic size={16} />}
+                </button>
+                {showStop ? (
+                  <button className="composer-submit stop" type="button" onClick={onAbort}>
+                    <Square size={16} />
+                    {zh ? "停止" : "Stop"}
+                  </button>
+                ) : (
+                  <button className="composer-submit" type="submit" disabled={!input.trim() || !canChat}>
+                    <Send size={16} />
+                    {zh ? "发送" : "Send"}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
       </form>
       {showSamplePrompts && (
-        <section className="sample-prompts" aria-label={zh ? "示例提示词" : "Example prompts"}>
+        <section className="sample-prompts" aria-label="Example prompts">
           {visibleSamplePrompts.map((prompt, index) => (
             <button
               className="sample-prompt-row"
@@ -1066,8 +1347,8 @@ export function ChatWorkspace({
             >
               <span>
                 {samplePromptsExpanded
-                  ? zh ? "收起示例" : "Less examples"
-                  : zh ? `其他示例（${hiddenSamplePromptCount}）` : `More (${hiddenSamplePromptCount})`}
+                  ? "Less examples"
+                  : `More (${hiddenSamplePromptCount})`}
               </span>
               <ChevronDown
                 className={samplePromptsExpanded ? "expanded" : ""}
@@ -1119,7 +1400,7 @@ function StreamingStatus({
   zh: boolean;
 }): React.JSX.Element {
   if (!message.streaming) {
-    return <p>{zh ? "暂无回复内容。" : "No response content."}</p>;
+    return <p>{"No response content."}</p>;
   }
 
   const startedAt = message.startedAt ?? now;
@@ -1129,8 +1410,8 @@ function StreamingStatus({
   const detail = elapsedSeconds < 3
     ? zh ? "正在连接本地网关..." : "Connecting to the local gateway..."
     : idleSeconds >= 10
-      ? zh ? `已等待 ${elapsedSeconds} 秒，仍在等待模型输出。` : `Waiting ${elapsedSeconds}s for model output.`
-      : zh ? `正在思考，已等待 ${elapsedSeconds} 秒。` : `Thinking for ${elapsedSeconds}s.`;
+      ? zh ? `等待模型输出 ${elapsedSeconds} 秒。` : `Waiting ${elapsedSeconds}s for model output.`
+      : zh ? `正在推理 ${elapsedSeconds} 秒。` : `Thinking for ${elapsedSeconds}s.`;
 
   return (
     <p className="streaming-status" aria-live="polite">
@@ -1169,6 +1450,135 @@ function getPathName(path: string): string {
   return normalized.split("/").filter(Boolean).pop() ?? path;
 }
 
+function getPreferredVoiceMimeType(): string | undefined {
+  if (typeof MediaRecorder === "undefined") return undefined;
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/wav",
+  ];
+  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate));
+}
+
+function getVoicePermissionError(error: unknown): string {
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError" || error.name === "SecurityError") {
+      return "Microphone permission was denied.";
+    }
+    if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
+      return "No microphone was found.";
+    }
+    if (error.name === "NotReadableError" || error.name === "TrackStartError") {
+      return "The microphone is already in use or unavailable.";
+    }
+  }
+  return error instanceof Error ? error.message : "Unable to start voice recording.";
+}
+
+function getVoiceStatusLabel(state: VoiceRecordingState, elapsedSeconds: number): string {
+  if (state === "requesting_permission") return "Requesting microphone permission...";
+  if (state === "recording") return `Recording ${formatVoiceDuration(elapsedSeconds)}`;
+  if (state === "processing") return "Preparing voice transcript...";
+  if (state === "failed") return "Voice input needs attention.";
+  return "";
+}
+
+function formatVoiceDuration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${remainder.toString().padStart(2, "0")}`;
+}
+
+async function transcribeVoiceRecording(
+  blob: Blob,
+  durationSeconds: number,
+  workspacePath: string,
+  onTranscribeVoiceRecording?: (
+    request: DesktopVoiceTranscriptionRequest,
+  ) => Promise<DesktopVoiceTranscriptionResult>,
+): Promise<string> {
+  if (workspacePath && onTranscribeVoiceRecording) {
+    const audioBase64 = await blobToBase64(blob);
+    const result = await onTranscribeVoiceRecording({
+      workspacePath,
+      audioBase64,
+      mimeType: blob.type || "audio/webm",
+      durationSeconds,
+      sourceLabel: "Composer microphone recording",
+    });
+    if (!result.ok) {
+      throw new Error(result.error || result.message || "Voice transcription failed.");
+    }
+    return result.transcript;
+  }
+  await new Promise((resolve) => window.setTimeout(resolve, 250));
+  const sizeKb = Math.max(1, Math.round(blob.size / 1024));
+  return [
+    "[Voice recording captured]",
+    `Duration: ${formatVoiceDuration(durationSeconds)}.`,
+    `Size: ${sizeKb} KB.`,
+    "Transcription runtime is not connected yet. Stage 2 should replace this placeholder with the main-process voice transcription API.",
+  ].join("\n");
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = typeof reader.result === "string" ? reader.result : "";
+      resolve(value.includes(",") ? value.split(",").pop() || "" : value);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to read voice recording."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function createClipboardImageAttachment(
+  file: File,
+  index: number,
+): Promise<ComposerAttachment | null> {
+  const name = file.name?.trim() || `clipboard-image-${index + 1}`;
+  const tooLarge = file.size > MAX_CLIPBOARD_IMAGE_BYTES;
+  const visibleText = [
+    `Clipboard image: ${name}.`,
+    `MIME type: ${file.type || "unknown"}.`,
+    `Size: ${formatBytes(file.size)}.`,
+    tooLarge
+      ? `Image data URL was not attached because it exceeds ${formatBytes(MAX_CLIPBOARD_IMAGE_BYTES)}.`
+      : "Image data URL captured from an explicit paste event.",
+    "No OCR, vision model, filesystem write, network call, or provider send was performed while preparing this clipboard context.",
+  ].join("\n");
+  const screenshotDataUrl = tooLarge ? undefined : await blobToDataUrl(file);
+  return {
+    id: crypto.randomUUID(),
+    kind: "selection",
+    path: `clipboard:image:${crypto.randomUUID()}`,
+    name,
+    title: `Clipboard image: ${name}`,
+    visibleText,
+    screenshotDataUrl,
+    note: tooLarge
+      ? "Explicit clipboard image paste; metadata only because the image exceeded the local data URL limit."
+      : "Explicit clipboard image paste with bounded data URL context.",
+  };
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to read clipboard image."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function mergeUniqueAttachments(attachments: ChatAttachment[]): ChatAttachment[] {
   const seen = new Set<string>();
   const merged: ChatAttachment[] = [];
@@ -1204,12 +1614,65 @@ function parseInlineContextMentions(input: string, workspacePath: string): ChatA
   return mergeUniqueAttachments(mentions);
 }
 
+function normalizePastedLocalPathMentions(text: string): string | null {
+  const mentions = extractPastedLocalPathMentions(text);
+  if (!mentions.length) return null;
+  const prefix = [
+    "Reviewed pasted local path context.",
+    "No clipboard polling, filesystem read, network call, or provider send was performed while preparing these mentions.",
+  ].join(" ");
+  return `${prefix}\n${mentions.join("\n")}`;
+}
+
+function extractPastedLocalPathMentions(text: string): string[] {
+  if (!text.trim()) return [];
+  const seen = new Set<string>();
+  const mentions: string[] = [];
+  for (const rawLine of text.split(/\r?\n/)) {
+    const candidate = normalizePastedPathCandidate(rawLine);
+    if (!candidate) continue;
+    const key = candidate.path.replace(/\\/g, "/").toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    mentions.push(`@${candidate.kind}:"${candidate.path}"`);
+    if (mentions.length >= MAX_CLIPBOARD_PATH_MENTIONS) break;
+  }
+  return mentions;
+}
+
+function normalizePastedPathCandidate(rawLine: string): { kind: "file" | "folder"; path: string } | null {
+  const trimmed = rawLine.trim().replace(/^file:\/\//i, "");
+  const unquoted = trimmed.replace(/^["'`]|["'`]$/g, "").trim();
+  if (!unquoted || /\s/.test(unquoted) && !isLikelyWindowsPath(unquoted)) return null;
+  const path = decodeFilePath(unquoted);
+  if (!isAbsoluteLocalPath(path)) return null;
+  if (/[<>|?*]/.test(path.replace(/^[a-zA-Z]:/, ""))) return null;
+  const kind = /[\\/]$/.test(path) || !/\.[^\\/.\s]+$/.test(path) ? "folder" : "file";
+  return { kind, path: path.replace(/[\\/]+$/, kind === "folder" ? "" : "") };
+}
+
+function isLikelyWindowsPath(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\[^\\]/.test(value);
+}
+
+function decodeFilePath(value: string): string {
+  try {
+    return decodeURIComponent(value).replace(/\//g, "\\");
+  } catch {
+    return value.replace(/\//g, "\\");
+  }
+}
+
 async function summarizeInlineFolderAttachment(
   attachment: ChatAttachment,
+  onSummarizeWorkspaceFolder?: (
+    request: WorkspaceFolderSummaryRequest,
+  ) => Promise<WorkspaceFolderSummaryResult>,
 ): Promise<ChatAttachment> {
   if (attachment.kind !== "folder") return attachment;
+  if (!onSummarizeWorkspaceFolder) return attachment;
   try {
-    const summary = await desktopApi.summarizeWorkspaceFolder({
+    const summary = await onSummarizeWorkspaceFolder({
       path: attachment.path,
       maxDepth: 3,
       maxEntries: 240,
@@ -1549,24 +2012,24 @@ function getModelOptionMeta(model: MyDrSaiModelConfig): string {
     .join(" / ");
 }
 
-function getAgentOptionMeta(agent: DesktopAgent, zh: boolean): string {
-  const source = agent.source === "local" ? (zh ? "本机" : "Local") : (zh ? "在线" : "Online");
+function getAgentOptionMeta(agent: DesktopAgent, _zh: boolean): string {
+  const source = agent.source === "local" ? "Local" : "Online";
   const status =
     agent.status === "running"
-      ? zh ? "运行中" : "Running"
+      ? "Running"
       : agent.status === "stopped"
-        ? zh ? "未启动" : "Stopped"
-        : zh ? "不可达" : "Unreachable";
-  return `${source} · ${status}`;
+        ? "Stopped"
+        : "Unreachable";
+  return `${source} 路 ${status}`;
 }
 
 function getThinkingEffortLabel(effort: ThinkingEffort, zh: boolean): string {
   if (zh) {
     return {
-      low: "低",
-      medium: "中",
-      high: "高",
-      xhigh: "超高",
+      low: "Low",
+      medium: "Medium",
+      high: "High",
+      xhigh: "XHigh",
     }[effort];
   }
   return {

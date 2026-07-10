@@ -2,16 +2,20 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const exePath = join(root, "release", "win-unpacked", "OpenDrSai.exe");
 const port = Number(process.env.OPENDRSAI_PACKAGED_SMOKE_PORT || "18645");
+const e2eTimeoutMs = Number(process.env.OPENDRSAI_E2E_TIMEOUT_MS || "30000");
+const processTimeoutMs = e2eTimeoutMs + 15_000;
 const baseUrl = `127.0.0.1:${port}`;
 const systemPath = [
+  dirname(exePath),
   process.env.SystemRoot ? join(process.env.SystemRoot, "System32") : "C:\\Windows\\System32",
   process.env.SystemRoot || "C:\\Windows",
+  process.env.PATH || "",
 ].join(delimiter);
 
 if (process.platform !== "win32") {
@@ -25,9 +29,11 @@ if (!existsSync(exePath)) {
 
 const tempDir = mkdtempSync(join(tmpdir(), "opendrsai-packaged-smoke-"));
 const drsaiHome = join(tempDir, "drsai-home");
+const electronUserData = join(tempDir, "electron-user-data");
 const resultPath = join(tempDir, "result.json");
 const envPath = join(drsaiHome, ".env");
 mkdirSync(drsaiHome, { recursive: true });
+mkdirSync(electronUserData, { recursive: true });
 
 try {
   const fakeGateway = await startFakeGateway();
@@ -45,7 +51,15 @@ try {
   if (globalThis.__opendrsaiFakeGateway) {
     await new Promise((resolve) => globalThis.__opendrsaiFakeGateway.close(resolve));
   }
-  rmSync(tempDir, { recursive: true, force: true });
+  try {
+    rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    console.warn(
+      `Could not remove packaged smoke temp directory ${tempDir}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 function startFakeGateway() {
@@ -89,7 +103,14 @@ function verifyEnvFile(result) {
 function runPackagedApp() {
   return new Promise((resolvePromise, reject) => {
     let settled = false;
-    const child = spawn(exePath, [], {
+    const child = spawn(exePath, [
+      `--user-data-dir=${electronUserData}`,
+      "--no-sandbox",
+      "--disable-gpu",
+      "--disable-gpu-compositing",
+      "--disable-gpu-sandbox",
+      "--in-process-gpu",
+    ], {
       cwd: root,
       env: {
         SystemRoot: process.env.SystemRoot,
@@ -104,7 +125,7 @@ function runPackagedApp() {
         OPENDRSAI_GATEWAY_PORT: String(port),
         OPENDRSAI_E2E_SMOKE: "1",
         OPENDRSAI_E2E_RESULT: resultPath,
-        OPENDRSAI_E2E_TIMEOUT_MS: "30000",
+        OPENDRSAI_E2E_TIMEOUT_MS: String(e2eTimeoutMs),
       },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -116,7 +137,7 @@ function runPackagedApp() {
       settled = true;
       killProcessTree(child.pid);
       reject(new Error(`Packaged app smoke timed out.\n${stdout}\n${stderr}`));
-    }, 45_000);
+    }, processTimeoutMs);
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
     });

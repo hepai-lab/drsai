@@ -93,7 +93,7 @@ bearer token.
 Set a public issuer:
 
 ```text
-HAI_OIDC_ISSUER=https://aidev.ihep.ac.cn/backend
+HAI_OIDC_ISSUER=http://localhost:8081/api
 ```
 
 The issuer must match the public route used by the desktop app and by token
@@ -106,7 +106,7 @@ OPENDRSAI_OIDC_ISSUER
 ```
 
 If unset, it falls back to `HAI_OIDC_ISSUER`, then to
-`https://aidev.ihep.ac.cn/backend`.
+`http://localhost:8081/api`.
 
 At runtime, the app loads:
 
@@ -120,7 +120,7 @@ and uses the discovered `authorization_endpoint`, `token_endpoint`, and
 Register only this fixed callback in the IHEP SSO app:
 
 ```text
-https://aidev.ihep.ac.cn/backend/oauth2/upstream/ihep/callback
+http://localhost:8081/api/oauth2/upstream/ihep/callback
 ```
 
 Desktop redirect URIs do not need to be registered in IHEP SSO. HAI validates
