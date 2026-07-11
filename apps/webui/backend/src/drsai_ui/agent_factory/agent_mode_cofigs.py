@@ -162,7 +162,6 @@ def _mark_featured_and_default_agents(agents: List[Dict[str, Any]]) -> None:
                     break
 
 
-
 def get_agent_mode_config(
         user_id: str,
 ) -> list[dict[str, str]]:

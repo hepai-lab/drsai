@@ -1,4 +1,5 @@
 import type { Agent, AgentMode } from "@/types/common";
+import { useModeConfigStore } from "@/store/modeConfig";
 
 export type AgentModeConfig = Omit<Agent, "config" | "icon"> & {
   config: Record<string, any>;

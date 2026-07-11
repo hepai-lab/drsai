@@ -117,9 +117,32 @@ async def save_remote_agent(
     '''
     try:
         saved_agent_config = request.agent_config
-        agent_id: str|None = saved_agent_config.get("id")
-        if agent_id is None:
+        if saved_agent_config.get("id") is None:
             saved_agent_config.update({"id": str(uuid.uuid4())})
+        agent_id = str(saved_agent_config.get("id") or "")
+
+        mode_lc = str(saved_agent_config.get("mode") or "").lower()
+        if mode_lc in ("remote", "custom"):
+            proposed = _agent_entry_display_name(saved_agent_config)
+            if mode_lc == "remote" and not proposed:
+                raise HTTPException(
+                    status_code=400,
+                    detail="请填写智能体名称后再保存远程连接。",
+                )
+            if proposed:
+                taken = _existing_saved_agent_display_name_keys(db, request.user_id, agent_id)
+                if proposed.casefold() in taken:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="该名称与已有智能体重名，请更换名称后再保存。",
+                    )
+                if mode_lc == "remote":
+                    saved_agent_config["name"] = proposed
+                    cfg = saved_agent_config.get("config")
+                    if not isinstance(cfg, dict):
+                        cfg = {}
+                        saved_agent_config["config"] = cfg
+                    cfg["name"] = proposed
 
         # 获取用户现有的远程智能体配置
         response = db.get(UserRemoteAgents, filters={"user_id": request.user_id})
@@ -128,7 +151,7 @@ async def save_remote_agent(
             user_agents: UserRemoteAgents = response.data[0]
             agents_list = user_agents.agents or []
             for agent in agents_list:
-                if agent["id"] == agent_id:
+                if _same_agent_id(str(agent.get("id")), agent_id):
                     agents_list.remove(agent)
                     break
             agents_list.append(saved_agent_config)
@@ -145,6 +168,8 @@ async def save_remote_agent(
 
         return {"status": True, "message": "智能体配置保存/更新成功"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

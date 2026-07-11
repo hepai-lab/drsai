@@ -1,5 +1,6 @@
 import json
 import asyncio
+import time
 from typing import AsyncGenerator,Optional, List, Dict, Tuple, Sequence, Any, Awaitable, Callable, Union
 from loguru import logger
 # from datetime import datetime
@@ -43,6 +44,62 @@ from drsai.modules.baseagent import DrSaiAgent
 
 from hepai.tools.get_woker_functions import get_worker_sync_functions
 from openai import Stream
+
+def _trace_from_run_info(run_info: Dict[str, Any] | None, chat_id: str | None) -> str:
+    if isinstance(run_info, dict):
+        t = run_info.get("trace_id")
+        if isinstance(t, str) and t.strip():
+            return t.strip()
+    if isinstance(chat_id, str) and chat_id.strip():
+        return chat_id.strip()
+    return "no-trace"
+
+
+def _extract_text_from_terminal_worker_chunk(chunk: Dict[str, Any]) -> str | None:
+    """
+    When the remote worker sends a terminal chunk with `stop_reason` but no routed `type`,
+    we may still be able to recover assistant-visible text from common payload shapes.
+    """
+    c = chunk.get("content")
+    if isinstance(c, str) and c.strip():
+        return c
+    msg = chunk.get("message")
+    if isinstance(msg, str) and msg.strip():
+        return msg
+    msgs = chunk.get("messages")
+    if isinstance(msgs, list) and msgs:
+        last = msgs[-1]
+        if isinstance(last, dict):
+            mc = last.get("content")
+            if isinstance(mc, str) and mc.strip():
+                return mc
+    choices = chunk.get("choices")
+    if isinstance(choices, list) and choices:
+        ch0 = choices[0]
+        if isinstance(ch0, dict):
+            delta = ch0.get("delta")
+            if isinstance(delta, dict):
+                dc = delta.get("content")
+                if isinstance(dc, str) and dc.strip():
+                    return dc
+            msg2 = ch0.get("message")
+            if isinstance(msg2, dict):
+                mct = msg2.get("content")
+                if isinstance(mct, str) and mct.strip():
+                    return mct
+    return None
+
+
+def _needs_auto_continue_retry(final_message: BaseChatMessage | None) -> bool:
+    """True when the remote stream gave no assistant-visible text (retry with synthetic continue)."""
+    if final_message is None:
+        return True
+    if not hasattr(final_message, "content"):
+        return True
+    c = getattr(final_message, "content", None)
+    if isinstance(c, str):
+        return not c.strip()
+    return False
 
 
 from drsai.modules.managers.messages.agent_messages import (
@@ -397,15 +454,15 @@ class HepAIWorkerAgent(DrSaiAgent):
                 for chunk in stream:
                     # 检查暂停状态
                     if self.is_paused:
-                        logger.info(f"Stream detected pause signal, stopping consumer")
+                        logger.info(f"[trace={_trace_from_run_info(self._run_info, self._chat_id)}] Stream detected pause signal, stopping consumer")
                         break
                     loop.call_soon_threadsafe(queue.put_nowait, chunk)
             except Exception as e:
                 # 如果是连接关闭错误且已暂停,不记录为错误
                 if self.is_paused and "peer closed connection" in str(e).lower():
-                    logger.info(f"Connection closed due to pause, this is expected")
+                    logger.info(f"[trace={_trace_from_run_info(self._run_info, self._chat_id)}] Connection closed due to pause, this is expected")
                 else:
-                    logger.error(f"Error in sync consumer: {e}")
+                    logger.error(f"[trace={_trace_from_run_info(self._run_info, self._chat_id)}] Error in sync consumer: {e}")
                 loop.call_soon_threadsafe(queue.put_nowait, e)
             finally:
                 loop.call_soon_threadsafe(queue.put_nowait, None)  # 结束信号
@@ -416,13 +473,13 @@ class HepAIWorkerAgent(DrSaiAgent):
             while True:
                 # 检查是否被暂停
                 if self.is_paused:
-                    logger.info(f"Stream generator detected pause, stopping")
+                    logger.info(f"[trace={_trace_from_run_info(self._run_info, self._chat_id)}] Stream generator detected pause, stopping")
                     break
 
                 try:
                     item = await asyncio.wait_for(queue.get(), timeout=timeout)
                 except asyncio.TimeoutError:
-                    logger.warning(f"Stream timeout after {timeout} seconds")
+                    logger.warning(f"[trace={_trace_from_run_info(self._run_info, self._chat_id)}] Stream timeout after {timeout} seconds")
                     raise asyncio.TimeoutError("Model streaming timed out")
 
                 if item is None:  # 正常结束
@@ -432,13 +489,13 @@ class HepAIWorkerAgent(DrSaiAgent):
                 elif isinstance(item, Exception):
                     # 如果是连接错误且已暂停,不抛出异常
                     if self.is_paused and "peer closed connection" in str(item).lower():
-                        logger.info(f"Connection closed due to pause, stopping gracefully")
+                        logger.info(f"[trace={_trace_from_run_info(self._run_info, self._chat_id)}] Connection closed due to pause, stopping gracefully")
                         break
                     raise item
                 else:
                     yield item
         except asyncio.CancelledError:
-            logger.info(f"Stream generator was cancelled")
+            logger.info(f"[trace={_trace_from_run_info(self._run_info, self._chat_id)}] Stream generator was cancelled")
             raise
         finally:
             if not executor_task.done():
@@ -575,39 +632,25 @@ class HepAIWorkerAgent(DrSaiAgent):
             try:
                 async for chunk in self.async_stream_generator(stream, timeout=self._stream_timeout):
                     if self.is_paused:
-                        logger.info(f"{self.name} paused during streaming")
-                        raise asyncio.CancelledError("Agent paused during streaming")
-                    message_type = chunk.get("type", None)
-                    if message_type in self._message_factory._message_types:
-                        msg: BaseChatMessage|BaseAgentEvent = self._message_factory._message_types[message_type].model_validate(chunk)
-                        # if message_type in [
-                        #     "TextMessage",
-                        #     "ToolCallSummaryMessage",
-                        #     "StructuredMessage",
-                        #     "HandoffMessage",
-                        #     "MultiModalMessage",
-                        #     "StopMessage"]:
-                        #     full_response.append({msg.source: msg.content})
-                        final_message = msg
-                        yield msg
-                    if "stop_reason" in chunk:
-                        # taskresult = TaskResult.model_validate(chunk)
-                        # task_result = chunk
-                        break
-
-            except asyncio.CancelledError:
-                # 如果是由于暂停导致的取消,返回一个友好的消息
-                if self.is_paused:
-                    logger.info(f"{self.name} was paused, handling gracefully")
-                raise
-            except Exception as e:
-                # 检查是否是由于暂停导致的连接关闭
-                if self.is_paused and "peer closed connection" in str(e).lower():
-                    logger.info(f"Connection closed due to pause for {self.name}, handling as cancellation")
-                    raise asyncio.CancelledError("Agent paused")
-                else:
-                    logger.error(f"Error during streaming: {e}")
+                        logger.info(f"[trace={trace_id}] {self.name} was paused, handling gracefully")
                     raise
+                except Exception as e:
+                    if self.is_paused and "peer closed connection" in str(e).lower():
+                        logger.info(
+                            f"[trace={trace_id}] Connection closed due to pause for {self.name}, handling as cancellation"
+                        )
+                        raise asyncio.CancelledError("Agent paused")
+                    logger.error(
+                        f"[trace={trace_id}] Error during streaming: {e} "
+                        f"(chunks={chunk_count} got_stop_reason={got_stop_reason} last_type={last_message_type})"
+                    )
+                    raise
+                finally:
+                    logger.info(
+                        f"[trace={trace_id}] worker_stream end attempt={continuation_attempt} "
+                        f"chunks={chunk_count} got_stop_reason={got_stop_reason} last_type={last_message_type} "
+                        f"age_since_last_chunk_s={time.monotonic() - last_chunk_at:.3f}"
+                    )
 
             # full_response_str = ""
             # if len(full_response)>1:
@@ -709,14 +752,9 @@ class HepAIWorkerAgent(DrSaiAgent):
                     source=self.name
                 )
             )
-            yield Response(
-                chat_message=TextMessage(
-                    content=f"An error occurred while executing the task: {e}.",
-                    source=self.name,
-                    metadata={"internal": "no", "error_message": str(e)},
-                ),
-                inner_messages=inner_messages,
-            )
+            # IMPORTANT: propagate the error so the UI backend can emit a final completion(error)
+            # and terminate the run cleanly (avoids hanging in awaiting_input after upstream failures).
+            raise
         finally:
 
             # # Cancel the monitor task.

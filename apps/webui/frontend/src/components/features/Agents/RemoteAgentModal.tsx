@@ -15,7 +15,7 @@ interface RemoteAgentConfig {
 interface RemoteAgentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (config: RemoteAgentConfig, agentInfo?: any) => void;
+  onSave: (config: RemoteAgentConfig, agentInfo?: any) => void | Promise<void>;
 }
 
 const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
@@ -27,7 +27,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
   const { t } = useLang();
   const [modalRoot, setModalRoot] = useState<HTMLElement | null>(null);
   const [formData, setFormData] = useState<RemoteAgentConfig>({
-    name: "R1_test",
+    name: "DrSai_BESIII_v3.0",
     url: "https://aiapi.ihep.ac.cn/apiv2",
     api_key: "",
   });
@@ -63,17 +63,15 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
     setTestError("");
 
     try {
-      // 检查用户是否已登录
       if (!user?.email) {
         throw new Error("User not logged in");
       }
 
-      // 使用后端接口测试远程智能体连接
       const testResult = await agentWorkerAPI.testRemoteAgent(
         user.email,
-        formData.url,
-        formData.name,
-        formData.api_key // 使用用户输入的远程智能体API key
+        url,
+        name,
+        apiKey
       );
 
       setAgentInfo(testResult);
@@ -89,7 +87,7 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!connectionTestPassed) {
       message.error(t("remoteModal.testFirst"));
       return;
@@ -210,8 +208,16 @@ const RemoteAgentModal: React.FC<RemoteAgentModalProps> = ({
           </button>
           <button
             onClick={testConnection}
-            disabled={!formData.name || !formData.url || !formData.api_key || isTestingConnection}
-            className={`px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors inline-flex items-center gap-2 border ${!formData.name || !formData.url || !formData.api_key || isTestingConnection
+            disabled={
+              !formData.name.trim() ||
+              !formData.url.trim() ||
+              !formData.api_key.trim() ||
+              isTestingConnection
+            }
+            className={`px-3.5 py-1.5 text-sm font-medium rounded-lg transition-colors inline-flex items-center gap-2 border ${!formData.name.trim() ||
+              !formData.url.trim() ||
+              !formData.api_key.trim() ||
+              isTestingConnection
               ? darkMode === "dark"
                 ? "border-gray-700 text-gray-500 cursor-not-allowed"
                 : "border-gray-200 text-gray-400 cursor-not-allowed"

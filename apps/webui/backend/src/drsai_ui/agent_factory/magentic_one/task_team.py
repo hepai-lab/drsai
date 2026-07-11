@@ -418,6 +418,11 @@ async def create_magentic_round_team(
     # 配置chat_id
     # session_id = run_info.get("session_id")
     chat_id = run_info.get("uuid")
+    # Trace propagation: allow UI/ws side to pass trace_id for end-to-end debugging.
+    if isinstance(settings_config, dict):
+        t = settings_config.get("trace_id")
+        if isinstance(t, str) and t.strip():
+            run_info["trace_id"] = t.strip()
     # 配置用户信息
     user_id = run_info.pop("user_id")
     run_info["name"] = user_id
